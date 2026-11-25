@@ -22,14 +22,30 @@ function Scroller({ swap }: { swap: { current: (long: boolean) => void } }) {
   )
 }
 
+/** Records what is observed, and lets a test report a resize. */
 class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
+  static instances: ResizeObserverStub[] = []
+  targets = new Set<Element>()
+  constructor(private readonly callback: () => void) {
+    ResizeObserverStub.instances.push(this)
+  }
+  observe(target: Element) {
+    this.targets.add(target)
+  }
+  unobserve(target: Element) {
+    this.targets.delete(target)
+  }
+  disconnect() {
+    this.targets.clear()
+  }
+  resize() {
+    this.callback()
+  }
 }
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  ResizeObserverStub.instances = []
 })
 
 describe('ScrollThumb', () => {
@@ -108,5 +124,34 @@ describe('ScrollThumb', () => {
     await act(async () => swap.current(true))
     await act(async () => {})
     expect(thumb.style.visibility).toBe('visible')
+  })
+
+  it('watches the content that comes in, and follows a resize of it', async () => {
+    vi.stubGlobal('ResizeObserver', ResizeObserverStub)
+    const swap = { current: (() => {}) as (long: boolean) => void }
+    const { getByTestId, container } = render(<Scroller swap={swap} />)
+    const scroller = getByTestId('scroller')
+    const thumb = container.querySelector('[aria-hidden="true"] > span') as HTMLElement
+    const track = thumb.parentElement!
+    Object.defineProperty(track, 'clientHeight', { configurable: true, value: 100 })
+    const [observer] = ResizeObserverStub.instances
+    expect(observer!.targets.has(scroller)).toBe(true)
+    expect(observer!.targets.has(track)).toBe(true)
+
+    sized(scroller, 100, 100)
+    await act(async () => swap.current(true))
+    await act(async () => {})
+    const list = scroller.querySelector('ul')!
+    expect(observer!.targets.has(list)).toBe(true)
+    expect(thumb.style.visibility).toBe('hidden')
+
+    // The list grows with no scroll and no change of children: only the observer reports it.
+    sized(scroller, 100, 400)
+    act(() => observer!.resize())
+    expect(thumb.style.visibility).toBe('visible')
+
+    await act(async () => swap.current(false))
+    await act(async () => {})
+    expect(observer!.targets.has(list)).toBe(false)
   })
 })

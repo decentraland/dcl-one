@@ -107,8 +107,8 @@ type HudLook = {
 /**
  * Not in Figma: the Explorer HUD's icon control (close, back, a menu's toggle, a count). `square`,
  * `circle` and `pill` are a 30px box (`sm` 26px, `lg` 32px; a pill grows to its content) with a
- * `ghost` fill unless `variant` says otherwise. It sets `aria-pressed` from `active`; pass
- * `aria-pressed={undefined}` for a control that is not a toggle.
+ * `ghost` fill unless `variant` says otherwise. As a button it sets `aria-pressed` from `active`;
+ * pass `aria-pressed={undefined}` for a control that is not a toggle. As a link it sets none.
  */
 type HudControlLook = {
   appearance: 'hud'
@@ -192,7 +192,6 @@ function HudButton({
     const { href, target, rel, onClick, ...anchor } = native
     return (
       <a
-        aria-pressed={toggle ? active : undefined}
         {...anchor}
         {...common}
         dangerouslySetInnerHTML={undefined}

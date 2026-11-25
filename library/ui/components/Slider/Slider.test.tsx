@@ -79,6 +79,21 @@ describe('Slider', () => {
       expect(onChange).toHaveBeenCalledWith(100)
     })
 
+    it('names the steppers as the caller says', () => {
+      render(
+        <Slider
+          arrows
+          value={50}
+          onChange={() => {}}
+          aria-label="Volume"
+          decreaseLabel="Lower the volume"
+          increaseLabel="Raise the volume"
+        />
+      )
+      expect(screen.getByRole('button', { name: 'Lower the volume' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Raise the volume' })).toBeInTheDocument()
+    })
+
     it('holds both steppers while disabled', () => {
       render(<Slider arrows value={50} disabled onChange={() => {}} aria-label="Hour" />)
       expect(screen.getByRole('button', { name: 'decrease' })).toBeDisabled()

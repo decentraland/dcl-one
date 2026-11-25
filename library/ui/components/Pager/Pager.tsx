@@ -27,6 +27,12 @@ export type PagerProps = {
   variant?: 'backpack' | 'shop'
   /** The glyph of the previous arrow, 12px; the next arrow mirrors it. A chevron by default. */
   arrowIcon?: ReactNode
+  /** The landmark's accessible name. "Pages" by default. */
+  label?: string
+  /** The previous arrow's accessible name. "Previous page" by default. */
+  previousLabel?: string
+  /** The next arrow's accessible name. "Next page" by default. */
+  nextLabel?: string
   className?: string
 }
 
@@ -46,6 +52,9 @@ export function Pager({
   onChange,
   variant = 'backpack',
   arrowIcon = chevron,
+  label = 'Pages',
+  previousLabel = 'Previous page',
+  nextLabel = 'Next page',
   className
 }: PagerProps) {
   if (!(count > 1)) return null
@@ -55,12 +64,12 @@ export function Pager({
     <nav
       className={[styles.root, variant === 'shop' && styles.shop, className].filter(Boolean).join(' ')}
       data-variant={variant}
-      aria-label="Pages"
+      aria-label={label}
     >
       <button
         type="button"
         className={styles.arrow}
-        aria-label="Previous page"
+        aria-label={previousLabel}
         onClick={() => onChange(page === 0 ? count - 1 : page - 1)}
       >
         <span className={styles.glyph}>{arrowIcon}</span>
@@ -86,7 +95,7 @@ export function Pager({
       <button
         type="button"
         className={`${styles.arrow} ${styles.next}`}
-        aria-label="Next page"
+        aria-label={nextLabel}
         onClick={() => onChange(page >= count - 1 ? 0 : page + 1)}
       >
         <span className={styles.glyph}>{arrowIcon}</span>

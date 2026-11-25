@@ -4,7 +4,7 @@ This app is the React DOM port of the Decentraland in-world HUD. UI here is buil
 the design system: tokens plus the design primitives.
 
 The HUD shared with the Sites `/play` host lives in two layers. The UI is
-`library/ui/apps/hud` (`@hud/*`): the primitives (`@hud/design`), the tokens
+`library/ui/apps/hud` (`@hud/*`): the HUD's adapters of the shared components and its own primitives (`@hud/design`), the tokens
 (`@hud/styles/tokens.css`), the assets, the features and the session. The Explorer page's core is
 `library/explorer-core` (`@explorer-core/*`), with no React: the wire protocol and bindings
 (`@explorer-core/engine/*`), the drivers' contract, sign-in, shell messaging, analytics and server
@@ -32,10 +32,11 @@ Design source of truth: the checked-in tokens and design primitives, together wi
   (e.g. a one-off `gap: 4px`) — and even those should prefer a token when one fits.
 
 - **Primitives.** Reusable interactive elements and surfaces use the shared
-  components with the HUD's look (`Button`, `Tooltip`, `Switch`, `Checkbox`,
-  `TabsBar`, `Spinner` and `Skeleton` from `@dcl/one-ui`, with `appearance="hud"`
-  or their HUD variants) and the components in `@hud/design` — `IconButton`,
-  `ControlButton`, `Panel`, `Icon`, not a bespoke `<button>` + CSS for something
+  components from `@dcl/one-ui` (`Button`, `Tooltip`, `Switch`, `Checkbox`,
+  `TabsBar`, `Spinner` and `Skeleton` with `appearance="hud"` or their HUD
+  variants; `Panel`, `MenuPanel`, `MaskIcon`, `Chip`, `Slider`, `Pager` and
+  `EmptyState` as they are) and the components still in `@hud/design` — `IconButton`,
+  `ControlButton`, `Icon`, not a bespoke `<button>` + CSS for something
   a primitive already covers (close/back/menu/toggle buttons, nav controls,
   cards, popovers).
 

@@ -51,10 +51,18 @@
   }
 
   .label {
-    font-size: 16px;
+    font-size: var(--dcl-font-size-label-md-caps);
     font-weight: 600;
     text-transform: uppercase;
     white-space: nowrap;
+  }
+
+  /* The keyboard's focus: a ring in the chip's own text colour, so it shows on the light, the dark and the
+     selected chip. */
+  .main:focus-visible,
+  .clear:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
   }
 
   .clear {

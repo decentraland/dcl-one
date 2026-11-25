@@ -118,7 +118,7 @@
     border: 0;
     border-radius: 10px; /* = HUD --r-control */
     background: var(--dcl-brand-ruby);
-    color: #fff;
+    color: var(--dcl-neutrals-white);
     font: inherit;
     font-weight: 600;
     text-decoration: none;

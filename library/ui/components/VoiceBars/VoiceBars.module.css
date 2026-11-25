@@ -2,7 +2,7 @@
 
 /* Not in Figma: the speaking badge of a nametag. The green has no token. */
 @layer dcl.components {
-  /* 13×12 badge, 3px bars: sides 6px and middle 12px, swapping (Unity's --alt toggle). */
+  /* 13×12 badge, 3px bars: sides 6px and middle 12px, swapping. */
   .root {
     display: inline-flex;
     align-items: center;

@@ -29,6 +29,6 @@ describe('MaskIcon', () => {
   it('quotes a data URI, which holds spaces and quotes', () => {
     const src = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'/>"
     const { container } = render(<MaskIcon src={src} />)
-    expect(icon(container).style.maskImage).toContain('viewBox=')
+    expect(icon(container).style.maskImage).toBe(`url("${src}")`)
   })
 })

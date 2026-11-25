@@ -894,8 +894,6 @@ function subscribeLiveScale(onChange: () => void): () => void {
 const liveScale = (): string =>
   `Live viewport: ${window.innerWidth}×${window.innerHeight}px → ×${getHudScale().toFixed(3)}`
 
-// A short scroller with a fixed-length thumb beside it.
-// A short row that scrolls sideways, its thumb along the bottom.
 /** ArmedButton mounted again by SHOW AGAIN, so its wait can be tried: a press before ARM_MS counts nothing. */
 function ArmedShowcase(): React.JSX.Element {
   const [shown, setShown] = useState(0)

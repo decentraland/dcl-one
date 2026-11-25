@@ -777,15 +777,26 @@ describe('when a hud Button is an icon control', () => {
     expect(button).toHaveClass('mine')
   })
 
-  it('should not take the class of the plain hud button', () => {
+  it('should carry a shape, which the plain hud button does not', () => {
     render(
       <>
         <Button appearance="hud">Plain</Button>
         <Button appearance="hud" control="circle" aria-label="Menu" />
       </>
     )
-    const plain = screen.getByRole('button', { name: 'Plain' }).className
-    expect(screen.getByRole('button', { name: 'Menu' }).className).not.toBe(plain)
+    expect(screen.getByRole('button', { name: 'Plain' })).not.toHaveAttribute('data-shape')
+    expect(screen.getByRole('button', { name: 'Menu' })).toHaveAttribute('data-shape', 'circle')
+  })
+
+  it('should not report a link as pressed', () => {
+    render(
+      <Button appearance="hud" control="pill" href="/shop" active>
+        Shop
+      </Button>
+    )
+    const link = screen.getByRole('link', { name: 'Shop' })
+    expect(link).not.toHaveAttribute('aria-pressed')
+    expect(link).toHaveAttribute('data-active')
   })
 
   it('should mark an active control and report it as pressed', () => {

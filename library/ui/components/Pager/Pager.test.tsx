@@ -90,6 +90,22 @@ describe('Pager', () => {
       expect(screen.getAllByRole('button').filter((b) => b.hasAttribute('aria-current'))).toHaveLength(0)
     })
 
+    it('names the landmark and the arrows as the caller says', () => {
+      render(
+        <Pager
+          page={0}
+          count={3}
+          onChange={() => {}}
+          label="Catalog pages"
+          previousLabel="Previous catalog page"
+          nextLabel="Next catalog page"
+        />
+      )
+      expect(screen.getByRole('navigation', { name: 'Catalog pages' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Previous catalog page' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Next catalog page' })).toBeInTheDocument()
+    })
+
     it("draws the caller's glyph in both arrows", () => {
       render(<Pager page={0} count={3} onChange={() => {}} arrowIcon={<i data-testid="glyph" />} />)
       expect(screen.getAllByTestId('glyph')).toHaveLength(2)

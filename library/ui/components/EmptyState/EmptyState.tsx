@@ -41,11 +41,7 @@ function Action({ label, onClick, href, variant = 'solid', icon }: EmptyStateAct
   const className = [styles.cta, ACTION_CLASS[variant]].filter(Boolean).join(' ')
   const content = (
     <>
-      {icon != null && (
-        <span className={styles.ctaIcon} aria-hidden="true">
-          {icon}
-        </span>
-      )}
+      {icon != null && <span aria-hidden="true">{icon}</span>}
       {label}
     </>
   )

@@ -519,7 +519,7 @@ export const feedbackEntries: GalleryEntry[] = [
         id: 'button',
         title: 'Hover or focus the button',
         render: () => (
-          <Button variant="secondary" size="md" aria-label="Cancel request">
+          <Button appearance="hud" variant="secondary" aria-label="Cancel request">
             <SwapLabel idle="Request Sent" hover="Cancel Request" />
           </Button>
         )
@@ -791,7 +791,7 @@ export const feedbackEntries: GalleryEntry[] = [
 
 /** A white-on-transparent star, as a data URI: the gallery has no image asset of its own to mask. */
 const MASK_EXAMPLE =
-  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23fff' d='M12 2l3 7 7 .6-5.3 4.6 1.6 7L12 17.5 5.7 21.2l1.6-7L2 9.600l7-.6z'/%3E%3C/svg%3E"
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23fff' d='M12 2l3 7 7 .6-5.3 4.6 1.6 7L12 17.5 5.7 21.2l1.6-7L2 9.6l7-.6z'/%3E%3C/svg%3E"
 
 function ScrollThumbExample({ tone }: { tone: 'outline' | 'dark' | 'solid' }) {
   const scroller = useRef<HTMLDivElement>(null)

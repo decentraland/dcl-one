@@ -680,12 +680,12 @@
   cursor: pointer;
   color: var(--dcl-neutrals-snow);
   font-family: inherit;
-  font-size: 0.82rem;
+  font-size: 0.82rem; /* = HUD --fs-sm */
   font-weight: 600;
   line-height: 1;
   transition:
     background-color 140ms ease,
-    color 140ms ease;
+    color 140ms ease; /* = HUD --dur-fast */
 }
 .hudControl:disabled,
 .hudControl[data-disabled] {
@@ -743,11 +743,11 @@
 :where(.hudControl)[data-variant='dark'][data-active],
 :where(.hudControl)[data-variant='faint']:hover:not(:disabled),
 :where(.hudControl)[data-variant='faint'][data-active] {
-  background: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.24); /* = HUD --chat-hover */
 }
 :where(.hudControl)[data-variant='dark']:active:not(:disabled),
 :where(.hudControl)[data-variant='faint']:active:not(:disabled) {
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.18); /* = HUD --chat-pressed */
 }
 
 .hudHeader {
@@ -761,7 +761,7 @@
   color: var(--dcl-neutrals-white);
   font: inherit;
   cursor: pointer;
-  transition: background-color 100ms linear;
+  transition: background-color 100ms linear; /* = HUD --dur-tap */
 }
 .hudHeader:hover {
   background: rgb(31, 31, 31);

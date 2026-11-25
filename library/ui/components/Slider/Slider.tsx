@@ -18,6 +18,10 @@ export type SliderProps = {
   'aria-label'?: string
   /** Ids of elements that describe the control. */
   'aria-describedby'?: string
+  /** The accessible name of the decrease button. "decrease" by default. */
+  decreaseLabel?: string
+  /** The accessible name of the increase button. "increase" by default. */
+  increaseLabel?: string
 }
 
 /** A native range input with a ruby fill up to its value. */
@@ -31,7 +35,9 @@ export function Slider({
   arrows = false,
   variant = 'thin',
   'aria-label': ariaLabel,
-  'aria-describedby': ariaDescribedBy
+  'aria-describedby': ariaDescribedBy,
+  decreaseLabel = 'decrease',
+  increaseLabel = 'increase'
 }: SliderProps) {
   const pct = max > min ? ((value - min) / (max - min)) * 100 : 0
   const clamp = (next: number) => Math.min(max, Math.max(min, next))
@@ -60,7 +66,7 @@ export function Slider({
         type="button"
         className={arrow}
         disabled={disabled || value <= min}
-        aria-label="decrease"
+        aria-label={decreaseLabel}
         onClick={() => onChange(clamp(value - step))}
       >
         ‹
@@ -70,7 +76,7 @@ export function Slider({
         type="button"
         className={[arrow, pin && styles.pinNext].filter(Boolean).join(' ')}
         disabled={disabled || value >= max}
-        aria-label="increase"
+        aria-label={increaseLabel}
         onClick={() => onChange(clamp(value + step))}
       >
         ›
