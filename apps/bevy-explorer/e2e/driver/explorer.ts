@@ -60,6 +60,8 @@ export interface SettleReport {
   sceneState: SceneLifecycle
   /** scene ticks run during the wait */
   ticksWaited?: number
+  /** frames drawn since the scene was ready: 2 on a settled reply (the first of them has been
+   *  presented), 0 while it was not ready */
   renderedFrames: number
   settleMs: number
   settled: boolean
@@ -85,13 +87,22 @@ export interface ReloadReport extends SettleReport {
 export interface SceneStateReport {
   /** null until the player has a position */
   playerParcel: [number, number] | null
-  /** null on a parcel with no scene, or while its scene is not known yet */
+  /** the player has not landed yet (the scene under them loads first); null until the player has
+   *  a position */
+  outOfWorld: boolean | null
+  /** the parcel's scene, known once its pointer has resolved, before the scene spawns; null on a
+   *  parcel with no scene, or until then */
   sceneHash: string | null
   state: SceneLifecycle
-  /** the readiness `/teleport --wait` and `/reload --wait` wait for */
+  /** the scene readiness `/teleport --wait` and `/reload --wait` wait for: `state` is `running`.
+   *  A teleport's wait also needs the player landed (`outOfWorld` false) */
   isReady: boolean
   /** the load stage of the scene under the player, or why there is none */
   stage: string
+  /** what holds the scene under the player (`frozen`, `gltfs loading`, ...), sorted */
+  blockedBy: string[]
+  /** why each null reading above is null */
+  unavailable: Record<string, string>
   /** the player's own scene is still loading, which holds the others back */
   current: boolean
   spawned: number
@@ -737,15 +748,19 @@ export class Explorer {
     return until(() => this.worldState(), (state) => state.inWorld, { timeoutMs, what: 'the player to be in the world' })
   }
 
-  /** Teleport to a parcel and wait for the arrival and the scene: `/teleport --wait` replies once
-   *  the parcel's scene settled (or its wait ended: `teleport.settled` false, `teleport.warning`
-   *  says why), then the wait is for `arrivals` to grow and `inWorld`. */
+  /** Teleport to a parcel and wait inside the engine for the arrival and the scene:
+   *  `/teleport --wait` replies once the player has landed and the parcel's scene settled, or its
+   *  wait ended (`teleport.settled` false, `teleport.warning` says why), and the world state is
+   *  read once after it. Only a wait the engine ended before the landing (it waits less than the
+   *  transport's command timeout) is followed by a poll for `arrivals` to grow and `inWorld`, for
+   *  what is left of `timeoutMs`. */
   async teleport(x: number, y: number, options: { timeoutMs?: number } = {}): Promise<WorldState & { teleport: TeleportReport }> {
     const timeoutMs = options.timeoutMs ?? DEFAULT_ARRIVAL_TIMEOUT_MS
     const startedAt = Date.now()
     const before = (await this.worldState()).arrivals
     const teleport = await this.json<TeleportReport>(`/teleport ${x} ${y} --wait --timeout-seconds ${this.#settleSeconds(timeoutMs)}`)
-    const left = Math.max(1, timeoutMs - (Date.now() - startedAt))
+    if (teleport.arrived) return { ...(await this.worldState()), teleport }
+    const left = Math.max(0, timeoutMs - (Date.now() - startedAt))
     return { ...(await this.#waitArrival(before, left, `the arrival at ${x},${y}`)), teleport }
   }
 
@@ -762,12 +777,13 @@ export class Explorer {
     return Math.max(1000, (this.console.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS) - SETTLE_MARGIN_MS)
   }
 
+  /** `--timeout-seconds` for a wait of `timeoutMs`; the engine refuses one that is not above 0. */
   #settleSeconds(timeoutMs: number): number {
-    return Math.max(1, Math.min(timeoutMs, this.#maxSettleMs())) / 1000
+    return Math.min(timeoutMs, this.#maxSettleMs()) / 1000
   }
 
-  /** The parcel scene under the player (its hash, state and whether it is ready) and the counts
-   *  of every scene by load stage. */
+  /** The parcel scene under the player (its hash, state, what blocks it and whether it is ready)
+   *  and the counts of every scene by load stage. */
   sceneState(): Promise<SceneStateReport> {
     return this.json<SceneStateReport>('/scene_loading_state')
   }

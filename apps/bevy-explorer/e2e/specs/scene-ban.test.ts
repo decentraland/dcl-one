@@ -60,8 +60,8 @@ scenario(
   async ({ explorer }) => {
     assert.ok(stub)
     await explorer.teleport(...SCENE_PARCEL)
-    const loadingState = () => explorer.json<{ stage: string }>('/scene_loading_state')
-    await until(loadingState, (s) => s.stage === 'Running', {
+    const loadingState = () => explorer.sceneState()
+    await until(loadingState, (s) => s.isReady, {
       timeoutMs: ROOM_TIMEOUT_MS, what: 'the initial scene to load'
     })
     const target = await explorer.json<{ parcels: string[] }>('/scene_target')
