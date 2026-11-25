@@ -54,8 +54,10 @@ pub(super) fn connector_routes(
     )
 }
 
-// Takes the upgrade route's extractors as-is.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the upgrade route's extractors as-is"
+)]
 async fn connector_upgrade(
     method: axum::http::Method,
     uri: axum::http::Uri,
