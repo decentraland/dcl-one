@@ -461,25 +461,50 @@ export const colorByRole: Record<RoleType, string> = {
   [RoleType.MANAGER]: Color.LUISXVI_VIOLET,
 };
 
-/** Whether a LAND list came from the index, which carries the grantors' land. */
-function isLandsAccess(data: LandQueryResult | LandsAccessResult): data is LandsAccessResult {
-  return 'grantorParcels' in data;
-}
-
-/** `response.json()`, failing once `ms` pass, so a stalled body cannot hang the caller. */
+/**
+ * The body parsed as JSON, read through a reader of our own so the deadline can cancel
+ * it: past `ms` the stream is cancelled (the producer stops) and the read rejects.
+ */
 async function readJsonWithin<T>(response: Response, ms: number): Promise<T> {
+  if (!response.body) throw new Error('The LAND list answered without a body');
+  const reader = response.body.getReader();
+  const expired = new Error(`The LAND list did not finish within ${ms} ms`);
+  let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      void response.body?.cancel().catch(() => undefined);
-      reject(new Error(`The LAND list did not finish within ${ms} ms`));
+      timedOut = true;
+      reject(expired);
+      void reader.cancel().catch(() => undefined);
     }, ms);
   });
+  const chunks: Uint8Array[] = [];
   try {
-    return await Promise.race([response.json() as Promise<T>, deadline]);
+    for (;;) {
+      const { done, value } = await Promise.race([reader.read(), deadline]);
+      // A cancel resolves the pending read as done: that is the deadline, not the end.
+      if (timedOut) throw expired;
+      if (done) break;
+      chunks.push(value);
+    }
   } finally {
     clearTimeout(timer);
   }
+  const bytes = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes)) as T;
+}
+
+/** The index's answer, refused when a list the LAND page relies on is missing. */
+function checkedLandsAccess(data: LandsAccessResult): LandsAccessResult {
+  for (const list of ['grantorParcels', 'grantorEstates'] as const) {
+    if (!Array.isArray(data?.[list])) throw new Error(`The LAND list answered without ${list}`);
+  }
+  return data;
 }
 
 export class Lands {
@@ -544,11 +569,12 @@ export class Lands {
       LANDS_ACCESS_TIMEOUT_MS,
     );
     if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
+      // The status is the answer; releasing the body is best effort, never awaited.
+      void response.body?.cancel().catch(() => undefined);
       throw new Error(`Failed to fetch the LAND list: ${response.status}`);
     }
     const left = Math.max(0, LANDS_ACCESS_TIMEOUT_MS - (Date.now() - startedAt));
-    return readJsonWithin<LandsAccessResult>(response, left);
+    return checkedLandsAccess(await readJsonWithin<LandsAccessResult>(response, left));
   }
 
   private fetchGrantorLand(parcelOwners: string[], estateOwners: string[]) {
@@ -598,9 +624,14 @@ export class Lands {
       estateGrantors: grantorsOn(this.ESTATE_REGISTRY_ADDRESS),
     };
     // The index answers the grantors' land itself; the subgraph needs a second query.
-    const grantorLand = isLandsAccess(data)
-      ? { parcels: data.grantorParcels, estates: data.grantorEstates }
-      : await this.fetchGrantorLand([...access.landGrantors], [...access.estateGrantors]);
+    // The environment's source answers it: the index in its own list, the subgraph
+    // through a second query.
+    const grantorLand = this.subgraph
+      ? await this.fetchGrantorLand([...access.landGrantors], [...access.estateGrantors])
+      : {
+          parcels: (data as LandsAccessResult).grantorParcels,
+          estates: (data as LandsAccessResult).grantorEstates,
+        };
 
     // parcels and estates that I own
     for (const parcel of data.ownerParcels) {

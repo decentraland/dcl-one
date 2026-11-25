@@ -36,28 +36,46 @@ const estate = (id: string, owner = '0xme') => ({
   data: { name: 'Plaza', description: null },
 });
 
-const answer = (lists: Record<string, unknown>) => ({
-  ok: true,
-  status: 200,
-  json: () =>
-    Promise.resolve({
-      tenantParcels: [],
-      tenantEstates: [],
-      lessorParcels: [],
-      lessorEstates: [],
-      ownerParcels: [],
-      ownerEstates: [],
-      updateOperatorParcels: [],
-      updateOperatorEstates: [],
-      approvedParcels: [],
-      approvedEstates: [],
-      ownerAuthorizations: [],
-      operatorAuthorizations: [],
-      grantorParcels: [],
-      grantorEstates: [],
-      ...lists,
-    }),
-});
+const EMPTY = {
+  tenantParcels: [],
+  tenantEstates: [],
+  lessorParcels: [],
+  lessorEstates: [],
+  ownerParcels: [],
+  ownerEstates: [],
+  updateOperatorParcels: [],
+  updateOperatorEstates: [],
+  approvedParcels: [],
+  approvedEstates: [],
+  ownerAuthorizations: [],
+  operatorAuthorizations: [],
+  grantorParcels: [],
+  grantorEstates: [],
+};
+
+/** A real JSON response, as the peer sends it. */
+const answer = (lists: Record<string, unknown>) =>
+  new Response(JSON.stringify({ ...EMPTY, ...lists }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+
+/** Serves a fresh response per request (a body reads once). */
+const serve = (make: () => Response) => fetchMock.mockImplementation(() => Promise.resolve(make()));
+
+/** A body stream that sends `first`, then never ends; `cancelled` flips when it is cancelled. */
+function stalledStream(first: string) {
+  const state = { cancelled: false };
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(first));
+    },
+    cancel() {
+      state.cancelled = true;
+    },
+  });
+  return { stream, state };
+}
 
 const grant = (tokenAddress: string, isApproved: boolean) => ({
   type: 'UpdateManager',
@@ -74,7 +92,7 @@ describe('Lands.fetchLand from the land-authz index', () => {
 
   describe('when it asks for the LAND list', () => {
     beforeEach(() => {
-      fetchMock.mockResolvedValue(answer({}));
+      serve(() => answer({}));
     });
 
     it("should POST the wallet's rentals to the peer's lands-access route, once", async () => {
@@ -90,49 +108,63 @@ describe('Lands.fetchLand from the land-authz index', () => {
   });
 
   describe('when the peer cannot answer', () => {
-    let cancel: ReturnType<typeof vi.fn>;
+    let body: ReturnType<typeof stalledStream>;
 
     beforeEach(() => {
-      cancel = vi.fn().mockResolvedValue(undefined);
-      fetchMock.mockResolvedValue({ ok: false, status: 503, body: { cancel } });
+      body = stalledStream('{"error":');
+      serve(() => new Response(body.stream, { status: 503 }));
     });
 
-    it('should fail rather than answer no LAND, releasing the unread body', async () => {
+    it('should fail on the status at once, releasing the unread body', async () => {
       await expect(new Lands().fetchLand('0xme')).rejects.toThrow('503');
-      expect(cancel).toHaveBeenCalledTimes(1);
+      await Promise.resolve();
+      expect(body.state.cancelled).toBe(true);
     });
   });
 
   describe('when the headers arrive but the body stalls', () => {
-    let cancel: ReturnType<typeof vi.fn>;
+    let body: ReturnType<typeof stalledStream>;
 
     beforeEach(() => {
       vi.useFakeTimers();
-      cancel = vi.fn().mockResolvedValue(undefined);
-      fetchMock.mockResolvedValue({
-        ok: true,
-        status: 200,
-        body: { cancel },
-        json: () => new Promise(() => undefined),
-      });
+      body = stalledStream('{"ownerParcels":');
+      serve(() => new Response(body.stream, { status: 200 }));
     });
 
     afterEach(() => {
       vi.useRealTimers();
     });
 
-    it('should fail within the deadline and cancel the body', async () => {
+    it('should fail within the deadline and cancel the stream itself', async () => {
       const read = new Lands().fetchLand('0xme');
       const failed = expect(read).rejects.toThrow('did not finish');
       await vi.advanceTimersByTimeAsync(30_000);
       await failed;
-      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(body.state.cancelled).toBe(true);
+    });
+  });
+
+  describe('when the index answers without the grantor lists', () => {
+    beforeEach(() => {
+      const { grantorParcels: _p, grantorEstates: _e, ...partial } = EMPTY;
+      serve(
+        () =>
+          new Response(
+            JSON.stringify({ ...partial, operatorAuthorizations: [grant('0xland', true)] }),
+            { status: 200 },
+          ),
+      );
+    });
+
+    it('should refuse the answer, with no second request to another source', async () => {
+      await expect(new Lands().fetchLand('0xme')).rejects.toThrow('grantorParcels');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('when the wallet owns land and an owner made it an UpdateManager', () => {
     beforeEach(() => {
-      fetchMock.mockResolvedValue(
+      serve(() =>
         answer({
           ownerParcels: [parcel(1, 1)],
           ownerEstates: [estate('7')],
@@ -157,7 +189,7 @@ describe('Lands.fetchLand from the land-authz index', () => {
 
   describe('when the grant was revoked', () => {
     beforeEach(() => {
-      fetchMock.mockResolvedValue(answer({ operatorAuthorizations: [grant('0xland', false)] }));
+      serve(() => answer({ operatorAuthorizations: [grant('0xland', false)] }));
     });
 
     it('should list no managed land', async () => {
@@ -169,7 +201,7 @@ describe('Lands.fetchLand from the land-authz index', () => {
 
   describe('when the wallet made someone an UpdateManager of its LAND', () => {
     beforeEach(() => {
-      fetchMock.mockResolvedValue(
+      serve(() =>
         answer({
           ownerParcels: [parcel(1, 1)],
           ownerAuthorizations: [
