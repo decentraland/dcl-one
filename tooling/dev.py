@@ -1524,11 +1524,12 @@ def progress(processes, elapsed, log_positions=None):
 
 def wait_ready(timeout, postgres_only=False):
     config = settings()
-    # A fresh local mirror can serve traffic while its historical map indexes
-    # catch up. Its launch gate checks realm availability during that warmup.
-    api_probe = '/about' if config['profile'] == 'mirror' else '/health'
-    api_url = f"http://127.0.0.1:{config['port']}{api_probe}"
-    sites_url = f"http://127.0.0.1:{config['port'] + 2}/"
+    if not postgres_only:
+        # A fresh local mirror can serve traffic while its historical map indexes
+        # catch up. Its launch gate checks realm availability during that warmup.
+        api_probe = '/about' if config['profile'] == 'mirror' else '/health'
+        api_url = f"http://127.0.0.1:{config['port']}{api_probe}"
+        sites_url = f"http://127.0.0.1:{config['port'] + 2}/"
     started = reported = time.monotonic()
     deadline = started + timeout
     log_positions = {name: log_position(STATE / f'{name}.log') for name in ('web-install', 'api-build')}
