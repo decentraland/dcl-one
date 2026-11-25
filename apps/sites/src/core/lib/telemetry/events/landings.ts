@@ -54,7 +54,7 @@ export type LandingsEvents = {
   };
   cast_watch_left: Record<string, never>;
   cast_watch_lost: {
-    reason: string;
+    reason: "network" | "removed";
   };
   cast_watch_muted: Record<string, never>;
   cast_watch_refused: {

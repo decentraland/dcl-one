@@ -27,8 +27,18 @@ vi.mock("@/data/lib/catalyst/cast", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/cast")>()),
   ...cast,
 }));
-vi.mock("./session", () => ({ joinCast: vi.fn(), probeDevices: vi.fn(async () => ({ microphone: true, camera: true })) }));
-vi.mock("./CastStage", () => ({ useCastTracks: () => [], WatcherStage: () => null, StreamerStage: () => null }));
+vi.mock("./session", () => ({
+  joinCast: vi.fn(),
+  probeDevices: vi.fn(async () => ({ microphone: true, camera: true })),
+  canDecode: () => true,
+  onRoomLost: () => () => {},
+}));
+vi.mock("./CastStage", () => ({
+  useCastTracks: () => [],
+  useWatcherStage: () => ({ shown: null }),
+  WatcherStage: () => null,
+  StreamerStage: () => null,
+}));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => ({ identity: auth.identity }) }));
 vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
 vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children?: ReactNode }) => <>{children}</> }));
@@ -87,7 +97,12 @@ describe("the Cast watcher page", () => {
     subscribe: () => () => {},
     disconnected: () => false,
     canPlaybackAudio: () => true,
+    identity: () => "watch:room:uuid",
     participantCount: () => 1,
+    reconnecting: () => null,
+    undecodable: () => null,
+    onAir: () => false,
+    videoOnAir: () => false,
     disconnect: async () => {},
   } as unknown as CastSession;
 

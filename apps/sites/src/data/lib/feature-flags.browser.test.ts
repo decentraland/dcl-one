@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { primeRemoteFlags, remoteFlag, remoteFlagsPrimed, remoteFlagVariant, REMOTE_FLAG } from "@ui/shop/discovery/lib/remoteFlags";
+import { primeRemoteFlags, refreshRemoteFlags, remoteFlag, remoteFlagsPrimed, remoteFlagVariant, REMOTE_FLAG } from "@ui/shop/discovery/lib/remoteFlags";
 
 import { primeDappsFlags } from "./feature-flags.browser";
 
@@ -30,6 +30,14 @@ describe("rollout flags for a page the server did not render", () => {
     await primeDappsFlags();
     expect(remoteFlag(REMOTE_FLAG.creatorSales)).toBe(true);
     expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBeNull();
+  });
+
+  it("answers a flag hook's refresh from this server, never from the service (it refuses this site's origin)", async () => {
+    const fetchMock = vi.fn(async (_url: string) => new Response(JSON.stringify({ flags: { "dapps-shop-creator-sales": true }, variants: {} })));
+    vi.stubGlobal("fetch", fetchMock);
+    await refreshRemoteFlags();
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/internal/feature-flags?variants=1"]);
+    expect(remoteFlag(REMOTE_FLAG.creatorSales)).toBe(true);
   });
 
   it("asks nothing when a server render already primed them", async () => {

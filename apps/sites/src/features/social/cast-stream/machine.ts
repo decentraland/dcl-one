@@ -1,8 +1,11 @@
 import { delay, makeStepSlugs } from "@/core/lib/stories/index";
 import { toErrorMessage } from "@/core/lib/errors";
+import { CatalystError } from "@/data/lib/catalyst/client";
 import { and, assign, fromPromise, setup } from "xstate";
 
 import { track as defaultTrack, type TrackContext, type TrackFn } from "@/core/lib/telemetry/track";
+
+import { JOIN_TIMEOUT_MS, NO_ANSWER, failureWords } from "../cast-live/answer";
 
 export type { TrackFn };
 
@@ -88,10 +91,19 @@ type CastContext = {
   joinOnGrant: boolean;
   screenSharing: boolean;
   screenShareFailed: boolean;
+  /** Why the join failed, as the error says it: for telemetry and the console. */
   joinError?: string;
+  /** What the page says of that join: the server's own words for its refusal, what to do about
+   * the devices, or plain words. */
+  joinWords?: string;
   /** The room went away while live (closed, removed, or reconnection gave up). */
   connectionLost: boolean;
+  /** The server ended that room on purpose (a kick, a ban, a deleted room). */
+  removed: boolean;
+  /** Why the link check failed, as the error says it: for telemetry and the console. */
   invalidReason?: string;
+  /** The server's own words for a key it refused; none for a check that failed another way. */
+  invalidWords?: string;
 };
 
 type CastEvent =
@@ -103,7 +115,8 @@ type CastEvent =
   | { type: "BACK" }
   | { type: "TOGGLE_SCREENSHARE" }
   | { type: "SHARE_ENDED" }
-  | { type: "CONNECTION_LOST" }
+  /** `removed`: the server ended the room on purpose; without it the connection was lost. */
+  | { type: "CONNECTION_LOST"; removed?: boolean }
   | { type: "LEAVE" }
   | { type: "RETRY" };
 
@@ -125,6 +138,8 @@ export const CAST_EVENTS = {
   ended: "cast_ended",
 } as const;
 
+export { JOIN_TIMEOUT_MS, NO_ANSWER };
+
 export const STATE_TO_SLUG = {
   tokenCheck: "token-check",
   deviceSelect: "device-select",
@@ -135,6 +150,7 @@ export const STATE_TO_SLUG = {
   ending: "ending",
   ended: "ended",
   invalid: "invalid",
+  unreachable: "unreachable",
 } as const;
 
 type CastStateId = keyof typeof STATE_TO_SLUG;
@@ -153,7 +169,7 @@ export const slugToState: (slug: string | null | undefined) => CastStateId = ste
 export const DEFAULT_DEVICES: DeviceSelection = {
   mic: "Default - Microphone",
   speaker: "Default - Speakers",
-  camera: "FaceTime HD Camera",
+  camera: "Default - Camera",
 };
 
 const SIM_STREAM_INFO: StreamInfo = {
@@ -170,8 +186,9 @@ export const simulateResolveToken: ResolveTokenFn = async ({
 }) => {
   await delay(350, signal);
   const t = token.trim();
-  if (!t) throw new Error("Invalid streaming key");
-  if (t.toLowerCase() === "expired") throw new Error("Streaming token has expired");
+  // As the server refuses a key: in its own words, which the page shows.
+  if (!t) throw new CatalystError("Invalid streaming key", "", 400, true);
+  if (t.toLowerCase() === "expired") throw new CatalystError("Streaming token has expired", "", 401, true);
   return {
     info: SIM_STREAM_INFO,
     credentials: {
@@ -239,6 +256,29 @@ function unlessAborted<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T
   });
 }
 
+/** The server's own words for a refusal (a 4xx with a message): they are for the person. None
+ * for any other error, whose text is not. */
+function refusalWords(e: unknown): string | undefined {
+  return e instanceof CatalystError && e.serverMessage && e.status >= 400 && e.status < 500 ? e.message : undefined;
+}
+
+/** What the page says when the browser gives no camera and no microphone: the person or the
+ * browser refused them, or there is none to open. Another try alone changes nothing. */
+export const DEVICES_BLOCKED = "Allow access to your camera and microphone, then retry to continue.";
+export const DEVICES_MISSING =
+  "No camera or microphone was found, or another app uses it. Connect one or close that app, then retry.";
+
+/** The words for a join that failed at the devices, from the browser's error: refused
+ * (`NotAllowedError`, `SecurityError`, a permission message), or none to open (`NotFoundError`,
+ * `NotReadableError`: in use). None for any other error. */
+function deviceWords(e: unknown): string | undefined {
+  if (e instanceof CatalystError) return undefined;
+  const { name, message } = (e ?? {}) as { name?: unknown; message?: unknown };
+  if (name === "NotAllowedError" || name === "SecurityError") return DEVICES_BLOCKED;
+  if (name === "NotFoundError" || name === "NotReadableError") return DEVICES_MISSING;
+  return typeof message === "string" && /permission/i.test(message) ? DEVICES_BLOCKED : undefined;
+}
+
 export const castMachine = setup({
   types: {
     context: {} as CastContext,
@@ -303,7 +343,9 @@ export const castMachine = setup({
         }
         return "Invalid streaming key";
       },
+      invalidWords: ({ event }) => refusalWords((event as { error?: unknown }).error),
     }),
+    logInvalidReason: ({ context }) => console.warn("Cast link check failed:", context.invalidReason),
     trackInvalidToken: ({ context }) =>
       context.track(
         CAST_EVENTS.invalidToken,
@@ -347,16 +389,23 @@ export const castMachine = setup({
       credentials: ({ context, event }) =>
         "output" in event ? (event.output as StreamerCredentials) : context.credentials,
       joinError: undefined,
+      joinWords: undefined,
     }),
-    setJoinError: assign({
-      joinError: ({ event }) =>
-        toErrorMessage("error" in event ? (event as { error: unknown }).error : null, "Could not join the cast"),
+    setJoinError: assign(({ event }) => {
+      const e = "error" in event ? (event as { error: unknown }).error : null;
+      const joinError = toErrorMessage(e, "Could not join the cast");
+      return { joinError, joinWords: refusalWords(e) ?? deviceWords(e) ?? failureWords(joinError) };
     }),
+    logJoinError: ({ context }) => console.warn("Cast join failed:", context.joinError),
     trackJoinFailed: ({ context }) =>
       context.track(CAST_EVENTS.joinFailed, { reason: context.joinError }, context.trackCtx),
     stopShare: ({ context }) => context.stopShare(),
-    clearJoinError: assign({ joinError: undefined }),
-    setConnectionLost: assign({ connectionLost: true, screenSharing: false }),
+    clearJoinError: assign({ joinError: undefined, joinWords: undefined }),
+    setConnectionLost: assign({
+      connectionLost: true,
+      screenSharing: false,
+      removed: ({ event }) => event.type === "CONNECTION_LOST" && event.removed === true,
+    }),
     trackConnectionLost: ({ context }) =>
       context.track(
         CAST_EVENTS.connectionLost,
@@ -389,7 +438,13 @@ export const castMachine = setup({
     trackEnded: ({ context }) =>
       context.track(CAST_EVENTS.ended, { stub: isStub(context) }, context.trackCtx),
   },
+  delays: { tokenTimeout: 15_000, joinTimeout: JOIN_TIMEOUT_MS },
   guards: {
+    // The request failed (network, 5xx): the server did not refuse the key.
+    unanswered: ({ event }) => {
+      const e = (event as { error?: unknown }).error;
+      return e instanceof CatalystError && (e.status === 0 || e.status >= 500);
+    },
     granted: ({ event }) =>
       "output" in event && (event.output as { granted: boolean }).granted === true,
     joinOnGrant: ({ context }) => context.joinOnGrant,
@@ -415,6 +470,7 @@ export const castMachine = setup({
     screenSharing: false,
     screenShareFailed: false,
     connectionLost: false,
+    removed: false,
   }),
   initial: "tokenCheck",
   states: {
@@ -432,9 +488,15 @@ export const castMachine = setup({
           target: "deviceSelect",
           actions: ["setTokenResult", "trackTokenValid"],
         },
-        onError: {
-          target: "invalid",
-          actions: ["setInvalidReason", "trackInvalidToken"],
+        onError: [
+          { guard: "unanswered", target: "unreachable", actions: ["setInvalidReason", "logInvalidReason", "trackInvalidToken"] },
+          { target: "invalid", actions: ["setInvalidReason", "logInvalidReason", "trackInvalidToken"] },
+        ],
+      },
+      after: {
+        tokenTimeout: {
+          target: "unreachable",
+          actions: [assign({ invalidReason: NO_ANSWER, invalidWords: undefined }), "trackInvalidToken"],
         },
       },
     },
@@ -505,7 +567,10 @@ export const castMachine = setup({
           goLive: context.goLive,
         }),
         onDone: { target: "live", actions: "setLiveCredentials" },
-        onError: { target: "preview", actions: ["setJoinError", "trackJoinFailed"] },
+        onError: { target: "preview", actions: ["setJoinError", "logJoinError", "trackJoinFailed"] },
+      },
+      after: {
+        joinTimeout: { target: "preview", actions: [assign({ joinError: NO_ANSWER, joinWords: NO_ANSWER }), "trackJoinFailed"] },
       },
     },
 
@@ -566,7 +631,13 @@ export const castMachine = setup({
 
     ended: {
       entry: "trackEnded",
-      type: "final",
+      // Rejoin: the same link, checked again, then its lobby.
+      on: {
+        RETRY: {
+          target: "tokenCheck",
+          actions: assign({ connectionLost: false, removed: false, screenSharing: false, screenShareFailed: false }),
+        },
+      },
     },
 
     invalid: {
@@ -574,6 +645,9 @@ export const castMachine = setup({
         RETRY: { target: "tokenCheck" },
       },
     },
+
+    // The link check failed or got no answer: nothing says the key is bad.
+    unreachable: { on: { RETRY: { target: "tokenCheck" } } },
   },
 });
 
@@ -623,6 +697,7 @@ export function resolveCastSnapshot(args: {
     screenSharing: false,
     screenShareFailed: false,
     connectionLost: false,
+    removed: false,
     info: SIM_STREAM_INFO,
     credentials: {
       url: "wss://livekit.decentraland.org",

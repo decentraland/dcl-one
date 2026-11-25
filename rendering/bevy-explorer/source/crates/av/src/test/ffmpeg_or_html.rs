@@ -14,6 +14,7 @@ use dcl_component::{
 use dcl_types::SceneId;
 use ipfs::IpfsIoPlugin;
 use livestream_manager::{plugin::LivestreamManagerPlugin, ActiveReceiver, ReceiverImage};
+use media::AVCommand;
 use scene_runner::{
     renderer_context::RendererSceneContext, update_world::material::VideoTextureOutput,
     ContainerEntity, SceneRunnerPlugin,
@@ -964,9 +965,8 @@ pub(super) fn test_source_change() {
     assert_eq!(video_handle, repeat_video_handle);
 }
 
-fn spawn_playing_video_player(app: &mut App, src: &str) -> Entity {
-    let renderer_context = app
-        .world_mut()
+fn spawn_scene(app: &mut App) -> Entity {
+    app.world_mut()
         .spawn(RendererSceneContext::new(
             SceneId::DUMMY,
             "hash".to_owned(),
@@ -986,7 +986,11 @@ fn spawn_playing_video_player(app: &mut App, src: &str) -> Entity {
             false,
             false,
         ))
-        .id();
+        .id()
+}
+
+fn spawn_playing_video_player(app: &mut App, src: &str) -> Entity {
+    let renderer_context = spawn_scene(app);
 
     app.world_mut()
         .spawn((
@@ -1066,6 +1070,70 @@ fn test_clearing_a_stream_source_shows_black() {
     let cleared_handle = video_texture_output(&app, video_player);
     assert_ne!(stream_handle, cleared_handle);
     assert!(is_black(&app, &cleared_handle));
+}
+
+/// The command receivers of every backend a player had, oldest first.
+#[derive(Resource, Default)]
+struct Backends(Vec<tokio::sync::mpsc::UnboundedReceiver<AVCommand>>);
+
+/// Gives new sinks a command channel that the test reads. An empty source starts no av
+/// backend, so the channel stands in for one.
+fn hold_backend<T: AVPlayer>(
+    trigger: Trigger<OnInsert, AVSinks<T>>,
+    mut sinks: Query<&mut AVSinks<T>>,
+    mut backends: ResMut<Backends>,
+) {
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    sinks.get_mut(trigger.target()).unwrap().command_sender = Some(sender);
+    backends.0.push(receiver);
+}
+
+/// Replaces the source of `player` and counts the `Dispose` commands that each of its backends
+/// received, oldest first.
+fn disposals_after_source_replacement<T: AVPlayer>(player: T) -> Vec<usize> {
+    let mut app = min_test_app();
+    app.init_resource::<Backends>()
+        .add_observer(hold_backend::<T>);
+    let scene = spawn_scene(&mut app);
+    let new_source = player.source();
+    let player = app
+        .world_mut()
+        .spawn((
+            player,
+            ContainerEntity {
+                container: scene,
+                root: scene,
+                container_id: SceneEntityId::new(0, 0),
+            },
+        ))
+        .id();
+
+    app.world_mut().entity_mut(player).insert(new_source);
+
+    app.world_mut()
+        .resource_mut::<Backends>()
+        .0
+        .iter_mut()
+        .map(|backend| {
+            std::iter::from_fn(|| backend.try_recv().ok())
+                .filter(|command| matches!(command, AVCommand::Dispose))
+                .count()
+        })
+        .collect()
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn test_replaced_video_source_is_disposed_once() {
+    let disposals = disposals_after_source_replacement(VideoPlayer(PbVideoPlayer::default()));
+    assert_eq!(disposals, [1, 0]);
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn test_replaced_audio_source_is_disposed_once() {
+    let disposals = disposals_after_source_replacement(AudioStream(PbAudioStream::default()));
+    assert_eq!(disposals, [1, 0]);
 }
 
 #[test]

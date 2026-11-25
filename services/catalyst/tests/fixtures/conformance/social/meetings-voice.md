@@ -218,7 +218,10 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
      track and no `slideVideos[i].source`.
    - `/api/drive-video` and `/ping`.
    Not run: a scene client presenting through the Admin Toolkit; the Unity Explorer composing a
-   presentation of this node. No client of this tree sends `presenterIdentity` or the claim. The APIs image carries `cast-bot` and
+   presentation of this node. The Cast streamer page of this tree sends the claim when the bot
+   shows a slide whose presenter is not in the room
+   (`apps/sites/src/features/social/cast-live/presenter.ts`); no client of this tree sends
+   `presenterIdentity`. The APIs image carries `cast-bot` and
    sets `CAST_BOT_BIN` (`infra/containers/README.md`).
 6. **MV-6: The Bevy client ignores a moderator mute.** P1, S. `sync_local`
    (`B/crates/comms/src/voice_chat/state.rs:738-754`) reads role and speaker but not `muted`; a speaker

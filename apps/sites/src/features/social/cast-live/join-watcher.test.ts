@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { CatalystError } from "@/data/lib/catalyst/client";
 
-import { joinAsWatcher, type WatchDeps } from "./LiveCastWatch";
+import { NO_ANSWER } from "./answer";
+import { answeredIn, joinAsWatcher, type WatchDeps } from "./LiveCastWatch";
 import type { CastSession } from "./session";
 
 const identity = { signer: "0x00000000000000000000000000000000000abcd1" } as unknown as AuthIdentity;
@@ -41,6 +42,11 @@ describe("joinAsWatcher", () => {
     expect(join).not.toHaveBeenCalled();
   });
 
+  it("throws a token request that failed, which is no refusal", async () => {
+    const deps: WatchDeps = { getToken: vi.fn(async () => Promise.reject(new Error("offline"))), join: vi.fn() };
+    await expect(joinAsWatcher(identity, { location: "0,0" }, new AbortController().signal, deps)).rejects.toThrow("offline");
+  });
+
   it("disconnects a room that connected after the page left, and reports nothing", async () => {
     const session = fakeSession();
     const controller = new AbortController();
@@ -67,5 +73,29 @@ describe("joinAsWatcher", () => {
     };
     expect(await joinAsWatcher(identity, { location: "10,10" }, controller.signal, deps)).toBeNull();
     expect(join).not.toHaveBeenCalled();
+  });
+
+  it("stops a join nobody answers at its bound with the reason, and drops the room if it connects later", async () => {
+    const session = fakeSession();
+    let connect: (s: CastSession) => void = () => {};
+    const deps: WatchDeps = {
+      getToken: vi.fn(async () => CREDS),
+      join: vi.fn(() => new Promise<CastSession>((resolve) => (connect = resolve))),
+    };
+    const joined = answeredIn(5, new AbortController().signal, (signal) =>
+      joinAsWatcher(identity, { location: "10,10" }, signal, deps),
+    );
+    await expect(joined).rejects.toThrow(NO_ANSWER);
+    connect(session);
+    await vi.waitFor(() => expect(session.disconnect).toHaveBeenCalledTimes(1));
+  });
+
+  it("says nothing of a join the page left before its bound", async () => {
+    const controller = new AbortController();
+    const settled = vi.fn();
+    answeredIn(5, controller.signal, () => new Promise(() => {})).then(settled, settled);
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(settled).not.toHaveBeenCalled();
   });
 });

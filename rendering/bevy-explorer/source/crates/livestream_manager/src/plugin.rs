@@ -1,6 +1,6 @@
 use bevy::{
     asset::RenderAssetUsages,
-    ecs::relationship::RelationshipSourceCollection,
+    ecs::{relationship::RelationshipSourceCollection, world::OnDespawn},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
 };
@@ -23,6 +23,7 @@ impl Plugin for LivestreamManagerPlugin {
 
         app.add_observer(transmitter_kind_on_insert);
         app.add_observer(transmitter_kind_on_replace);
+        app.add_observer(transmitter_gone);
         app.add_observer(audio_transmitter_kind_on_insert);
         app.add_observer(audio_transmitter_kind_on_replace);
         app.add_observer(active_video_cast_on_add);
@@ -149,7 +150,8 @@ struct ManagingAudioStreams(Vec<Entity>);
 #[relationship(relationship_target = ManagingAudioStreams)]
 struct AudioStreamer(Entity);
 
-fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+/// The picture of a screen with no stream: opaque black.
+fn no_stream_image() -> Image {
     let mut image = Image::new_fill(
         Extent3d {
             width: 8,
@@ -157,7 +159,7 @@ fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        &[255, 0, 255, 255],
+        &[0, 0, 0, 255],
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::all(),
     );
@@ -166,7 +168,11 @@ fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     {
         image.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
     }
-    let handle = images.add(image);
+    image
+}
+
+fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    let handle = images.add(no_stream_image());
     let (state_sender, _) = tokio::sync::watch::channel(VideoState::VsLoading);
 
     commands.spawn(LivestreamManager {
@@ -174,6 +180,27 @@ fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         state: state_sender,
     });
     debug!("LivestreamManager setup");
+}
+
+/// A publication that is gone leaves no picture: the screens read no stream again, unless
+/// they show another publication.
+fn transmitter_gone(
+    trigger: Trigger<OnDespawn, TransmitterKind>,
+    livestream_manager: Single<&LivestreamManager>,
+    active_transmitters: Query<Entity, With<ActiveTransmitter>>,
+    mut images: ResMut<Assets<Image>>,
+    mut resized: EventWriter<TransmissionImageResized>,
+) {
+    if active_transmitters
+        .iter()
+        .any(|active| active != trigger.target())
+    {
+        return;
+    }
+    debug!("Transmitter {} is gone, no stream", trigger.target());
+    images.insert(livestream_manager.image.id(), no_stream_image());
+    livestream_manager.state.send_replace(VideoState::VsLoading);
+    resized.write(TransmissionImageResized);
 }
 
 fn transmitter_kind_on_insert(

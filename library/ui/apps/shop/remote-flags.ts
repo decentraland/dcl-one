@@ -75,11 +75,19 @@ export async function fetchRemoteFlags(signal?: AbortSignal): Promise<Record<str
   return (await readRemoteFlags(signal)).flags;
 }
 
+/** A host the service refuses (sites, on its own origin) refreshes the flags its own way. */
+let hostRefresh: (() => Promise<void>) | null = null;
+
+export function setRemoteFlagsRefresh(refresh: typeof hostRefresh): void {
+  hostRefresh = refresh;
+}
+
 /**
  * Reads the file again unless the flags were primed, a fresh answer is held, a read just failed or one is running.
  * `now` is the clock for all of it: the answer's age and the backoff are both measured from it.
  */
 export function refreshRemoteFlags(now = Date.now()): Promise<void> {
+  if (hostRefresh) return hostRefresh();
   if (typeof window === "undefined") return Promise.resolve();
   if (snapshot?.primed || (snapshot && now - snapshot.at < TTL_MS)) return Promise.resolve();
   if (failedAt !== null && now - failedAt < BACKOFF_MS) return Promise.resolve();

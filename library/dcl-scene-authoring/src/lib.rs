@@ -82,6 +82,84 @@ pub(crate) fn read_composite_text(files: &dyn SceneFiles, rel: &str) -> Result<S
     String::from_utf8(bytes).map_err(|e| format!("reading {rel}: {e}"))
 }
 
+/// What the generated entrypoint needs to start the scene's scripts.
+#[derive(Default)]
+pub struct Scripts {
+    /// `import * as script_<path> from "<root>/<path>"`, one line for each script file.
+    pub imports: String,
+    /// The second argument of `_initializeScripts`, with its comma: the
+    /// instances to start. Empty when the scene has no script.
+    pub argument: String,
+    /// The composites that cannot be instanced. Their components are ignored.
+    pub skipped: Vec<String>,
+}
+
+impl Scripts {
+    /// Whether the scene has no script to start.
+    pub fn is_empty(&self) -> bool {
+        self.imports.is_empty()
+    }
+}
+
+/// `@dcl/sdk-commands` `getAllComposites` and `collectScriptData`: each entry
+/// of an `asset-packs::Script` value is one instance of that file's module on
+/// its entity, and the instances of one file stay together. `root` is the
+/// scene folder as the bundler sees it.
+pub fn scripts(files: &dyn SceneFiles, root: &str) -> Scripts {
+    use serde_json::Value;
+    let mut normalizer = composite_norm::CompositeNormalizer::new();
+    let mut out = Scripts::default();
+    let mut modules: Vec<(String, Vec<Value>)> = Vec::new();
+    for rel in find_composites(files) {
+        let composite = read_composite_text(files, &rel)
+            .map_err(anyhow::Error::msg)
+            .and_then(|raw| normalizer.normalize(&raw))
+            .and_then(|json| Ok(serde_json::from_str::<Value>(&json)?));
+        let composite = match composite {
+            Ok(composite) => composite,
+            Err(err) => {
+                out.skipped.push(format!(
+                    "composite {rel} can't be instanced, so its components are ignored: {err:#}"
+                ));
+                continue;
+            }
+        };
+        let components = composite["components"].as_array().into_iter().flatten();
+        for component in components.filter(|c| c["name"] == "asset-packs::Script") {
+            for (entity, entry) in component["data"].as_object().into_iter().flatten() {
+                for script in entry["json"]["value"].as_array().into_iter().flatten() {
+                    let (Some(path), Ok(entity)) = (script["path"].as_str(), entity.parse::<u64>())
+                    else {
+                        continue;
+                    };
+                    let mut instance = script.clone();
+                    instance["entity"] = entity.into();
+                    match modules.iter_mut().find(|(file, _)| file == path) {
+                        Some((_, instances)) => instances.push(instance),
+                        None => modules.push((path.to_owned(), vec![instance])),
+                    }
+                }
+            }
+        }
+    }
+    let mut lines = Vec::new();
+    for (path, instances) in &modules {
+        let stem = path.strip_suffix(".tsx").or(path.strip_suffix(".ts"));
+        let name = stem
+            .unwrap_or(path)
+            .replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+        let file = Value::from(format!("{root}/{path}").replace('\\', "/"));
+        out.imports += &format!("import * as script_{name} from {file}\n");
+        for instance in instances {
+            lines.push(format!("  {{ ...{instance}, module: script_{name} }}"));
+        }
+    }
+    if !lines.is_empty() {
+        out.argument = format!(", [\n{}\n]", lines.join(",\n"));
+    }
+    out
+}
+
 /// The loader stub (`main` of a built scene) without its comment lines,
 /// blank lines and indentation, for a production build. `dcl-scene-cli` and
 /// `dcl-scene-build` both write it, so their outputs agree. Nothing is
@@ -124,6 +202,49 @@ mod tests {
             find_composites(&files),
             vec!["assets/scene/main.composite", "main.composite"]
         );
+    }
+
+    #[test]
+    fn scripts_keep_one_file_together_and_skip_a_bad_composite() {
+        use serde_json::json;
+        let none = scripts(&scene(&[]), "/scene");
+        assert!(none.imports.is_empty() && none.argument.is_empty() && none.skipped.is_empty());
+
+        let composite = |first: &str, data| {
+            let script = json!({"name": "asset-packs::Script", "jsonSchema": {"type": "object"}, "data": data});
+            json!({"version": 1, "components": [{"name": first, "data": {}}, script]}).to_string()
+        };
+        let a = json!({
+            "513": {"json": {"value": [{"path": "s/B.ts", "priority": 1}]}},
+            "512": {"json": {"value": [{"path": "s/A.tsx", "priority": 0}, {"path": "s/B.ts", "priority": 0}]}},
+        });
+        let b = json!({"514": {"json": {"value": [{"path": "s/C.ts", "priority": 0}]}}});
+        let files: BTreeMap<String, Vec<u8>> = [
+            (
+                "a.composite".to_string(),
+                composite("core::Transform", a).into(),
+            ),
+            (
+                "b.composite".to_string(),
+                composite("core::NotAThing", b).into(),
+            ),
+        ]
+        .into();
+        let found = scripts(&files, "/scene");
+        assert_eq!(
+            found.imports,
+            "import * as script_s_A from \"/scene/s/A.tsx\"\nimport * as script_s_B from \"/scene/s/B.ts\"\n"
+        );
+        assert_eq!(
+            found.argument,
+            r#", [
+  { ...{"path":"s/A.tsx","priority":0,"entity":512}, module: script_s_A },
+  { ...{"path":"s/B.ts","priority":0,"entity":512}, module: script_s_B },
+  { ...{"path":"s/B.ts","priority":1,"entity":513}, module: script_s_B }
+]"#
+        );
+        assert_eq!(found.skipped.len(), 1);
+        assert!(found.skipped[0].contains("b.composite can't be instanced"));
     }
 
     #[test]

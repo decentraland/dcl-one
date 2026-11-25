@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SuggestedForYouRow from "../components/SuggestedForYouRow";
 import { catalogClient, ShopHarness } from "../fixtures";
 import { invalidateShopQueries } from "../query";
-import { fetchRemoteFlags, parseRemoteFlags, primeRemoteFlags, readRemoteFlags, refreshRemoteFlags, REMOTE_FLAG, remoteFlagVariant, useRemoteFlag } from "./remoteFlags";
+import { fetchRemoteFlags, parseRemoteFlags, primeRemoteFlags, readRemoteFlags, refreshRemoteFlags, REMOTE_FLAG, remoteFlag, remoteFlagVariant, setRemoteFlagsRefresh, useRemoteFlag } from "./remoteFlags";
 
 type FlagsWindow = Window & { __SHOP_FEATURE_FLAGS__?: string };
 
@@ -52,6 +52,15 @@ describe("fetchRemoteFlags", () => {
     (window as FlagsWindow).__SHOP_FEATURE_FLAGS__ = "https://flags.example/";
     await fetchRemoteFlags();
     expect(requested).toEqual(["https://flags.example/dapps.json"]);
+  });
+});
+
+describe("a host that refreshes the flags its own way", () => {
+  it("should take the host's answer and never read the service", async () => {
+    setRemoteFlagsRefresh(async () => primeRemoteFlags(ON));
+    await refreshRemoteFlags().finally(() => setRemoteFlagsRefresh(null));
+    expect(remoteFlag(REMOTE_FLAG.suggestedForYou)).toBe(true);
+    expect(flagReads()).toBe(0);
   });
 });
 

@@ -72,6 +72,16 @@ const REGISTRY_KEYS: &[&str] = &[
 const SMART_REGISTRY_KEYS: &[&str] = &[
     "@dcl/asset-packs",
     "@dcl/asset-packs/dist/scene-entrypoint",
+    // The modules that the scripts of the catalogue items import. A script
+    // shares their state with the item runtime, so the scene chunk cannot
+    // hold a second copy.
+    "@dcl/asset-packs/dist/admin-toolkit-ui",
+    "@dcl/asset-packs/dist/admin-toolkit-ui/panel-api",
+    "@dcl/asset-packs/dist/components",
+    "@dcl/asset-packs/dist/definitions",
+    "@dcl/asset-packs/dist/events",
+    "@dcl/asset-packs/dist/helpers",
+    "@dcl/asset-packs/dist/triggers",
     "~sdk/script-utils",
 ];
 
@@ -134,9 +144,17 @@ pub fn core_registry_keys(project: &Project) -> Vec<&'static str> {
 /// the same chunk as the SDK.
 pub fn registry_keys(project: &Project) -> Vec<&'static str> {
     let mut keys = core_registry_keys(project);
-    if has_asset_packs(project) {
-        keys.push("@dcl/asset-packs");
-        keys.push("@dcl/asset-packs/dist/scene-entrypoint");
+    let packs = project
+        .node_module("@dcl/asset-packs")
+        .or_else(|| project.node_module("@dcl/inspector/node_modules/@dcl/asset-packs"));
+    if let Some(packs) = packs {
+        // An older `@dcl/asset-packs` has fewer of these modules.
+        keys.extend(SMART_REGISTRY_KEYS.iter().copied().filter(|key| {
+            key.strip_prefix("@dcl/asset-packs").is_some_and(|module| {
+                let module = packs.join(module.trim_start_matches('/'));
+                module.is_dir() || module.with_extension("js").is_file()
+            })
+        }));
     }
     keys
 }
@@ -416,6 +434,59 @@ mod tests {
         let current = core_registry_keys(&project);
         assert!(current.contains(&"@dcl/sdk/network/events"));
         assert!(current.contains(&"@dcl/sdk/server"));
+    }
+
+    #[test]
+    fn an_older_asset_packs_publishes_only_the_modules_it_has() {
+        let dir = crate::scene::Tmp::new("split-packs-modules");
+        for module in ["events.js", "admin-toolkit-ui/index.js"] {
+            dir.write(&format!("node_modules/@dcl/asset-packs/dist/{module}"), "");
+        }
+        let project = Project {
+            root: dir.0.clone(),
+            scene_json: serde_json::json!({}),
+        };
+        let mut packs = registry_keys(&project);
+        packs.retain(|key| key.contains("asset-packs"));
+        assert_eq!(
+            packs,
+            [
+                "@dcl/asset-packs",
+                "@dcl/asset-packs/dist/admin-toolkit-ui",
+                "@dcl/asset-packs/dist/events"
+            ]
+        );
+    }
+
+    /// A module that a catalogue script imports and the smart chunk does not
+    /// publish stops the scene when it loads.
+    #[test]
+    fn the_catalogue_scripts_import_only_published_modules() {
+        let packs = concat!(
+            env!("DCL_ONE_ROOT"),
+            "/apps/creator-hub/packages/asset-packs/packs"
+        );
+        let mut imports = 0;
+        for entry in ignore::WalkBuilder::new(packs).build().flatten() {
+            let path = entry.path();
+            if !path.extension().is_some_and(|e| e == "ts" || e == "tsx") {
+                continue;
+            }
+            let code = std::fs::read_to_string(path).unwrap();
+            let modules = code
+                .split("from '")
+                .skip(1)
+                .map(|rest| rest.split('\'').next().unwrap());
+            for module in modules.filter(|module| module.starts_with("@dcl/asset-packs")) {
+                imports += 1;
+                assert!(
+                    SMART_REGISTRY_KEYS.contains(&module),
+                    "{}: {module} is not a smart registry key",
+                    path.display()
+                );
+            }
+        }
+        assert!(imports > 0, "no script under {packs}");
     }
 
     #[test]

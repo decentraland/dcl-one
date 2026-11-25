@@ -1218,7 +1218,12 @@ pub fn process_transport_updates(
                     }
                 }
                 NetworkUpdate::NonPlayer(update) => {
-                    if update.address != "authoritative-server" {
+                    // the gatekeeper mints a Cast presentation bot's identity; the bot sends
+                    // only topic messages on `presentation` (type 3, topic length 12)
+                    let from_bot = matches!(&update.message, Message::Scene(scene)
+                        if update.address.starts_with("presentation-bot:")
+                            && scene.data.starts_with(b"\x03\x0c\x00presentation"));
+                    if update.address != "authoritative-server" && !from_bot {
                         warn!(
                             "skipping unexpected update from {}: {:?}",
                             update.address, update.message
@@ -2167,6 +2172,47 @@ mod tests {
         app.update();
         assert!(topics_rx.try_recv().is_ok());
         assert!(bus_rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn a_sender_without_a_wallet_delivers_only_the_presentation_bot_topic() {
+        use crate::scene_rooms::test_support::spawn_server_room;
+        let (mut app, context) = presence_app();
+        let (own, _) = spawn_server_room(&mut app, "bafyscene", context);
+        let (other, _) = spawn_server_room(&mut app, "bafyother", context);
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+        let sender = app.world().get::<GlobalCrdtState>(context).unwrap();
+        let sender = sender.get_sender();
+        let queue = |transport_id, address: &str, data: &[u8]| {
+            let update = NonPlayerUpdate {
+                transport_id,
+                address: address.to_owned(),
+                message: Message::Scene(rfc4::Scene {
+                    scene_id: "bafyscene".to_owned(),
+                    data: data.to_vec(),
+                }),
+            };
+            sender.try_send(update.into()).unwrap();
+        };
+        let bot = "presentation-bot:room:access:uuid";
+        let state = b"\x03\x0c\x00presentation{}";
+
+        // another identity, other topics, the message bus, another scene's room
+        queue(own, "stream:place:access:uuid", state);
+        queue(own, bot, &TOPIC_MESSAGE);
+        queue(own, bot, b"\x03\x0d\x00presentation2{}");
+        queue(own, bot, &BUS_MESSAGE);
+        queue(other, bot, state);
+        app.update();
+        assert!(topics_rx.try_recv().is_err());
+        assert!(bus_rx.try_recv().is_err());
+
+        queue(own, bot, state);
+        app.update();
+        assert_eq!(
+            topics_rx.try_recv().unwrap(),
+            (bot.to_owned(), state[1..].to_vec())
+        );
     }
 
     #[test]

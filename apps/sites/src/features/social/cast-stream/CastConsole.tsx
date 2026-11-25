@@ -7,8 +7,9 @@ import { StCastStreamer as CastStreamerView } from "@dcl/one-ui";
 
 import type { TrackContext } from "@/core/lib/telemetry/track";
 import SitesLayout from "../../components/chrome/SitesLayout";
+import { failureWords } from "../cast-live/answer";
 import { CastNotFoundScreen } from "../cast-not-found/CastNotFound";
-import { castMachine, resolveCastSnapshot, slugToState, stateToSlug, DEFAULT_DEVICES, type EndCastFn, type GoLiveFn, type RequestPermissionsFn, type ResolveTokenFn, type ShareScreenFn, type StopShareFn, type TrackFn } from "./machine";
+import { castMachine, resolveCastSnapshot, slugToState, stateToSlug, DEFAULT_DEVICES, DEVICES_BLOCKED, type EndCastFn, type GoLiveFn, type RequestPermissionsFn, type ResolveTokenFn, type ShareScreenFn, type StopShareFn, type TrackFn } from "./machine";
 
 /** What a real session adds to the console; the story pages leave it out. */
 export type LiveBindings = {
@@ -16,8 +17,9 @@ export type LiveBindings = {
   stopShare: StopShareFn;
   /** Calls `onEnded` when the browser ends the screen capture; answers the unsubscribe. */
   bindShareEnded: (onEnded: () => void) => () => void;
-  /** Calls `onLost` when the room goes away while live; answers the unsubscribe. */
-  bindConnectionLost: (onLost: () => void) => () => void;
+  /** Calls `onLost` when the room goes away while live, with `removed` when the server ended it
+   * on purpose; answers the unsubscribe. */
+  bindConnectionLost: (onLost: (removed: boolean) => void) => () => void;
   /** The published media and the room's audio, shown in the live view; `muted` mutes the audio. */
   stage?: (muted: boolean) => ReactNode;
   /** The microphone and camera as published, and their toggles. */
@@ -31,6 +33,8 @@ export type LiveBindings = {
   audioBlocked: boolean;
   enableAudio: () => void;
   participants?: number;
+  /** The room reconnects: the viewers do not receive this Cast. */
+  reconnecting: boolean;
 };
 
 type CastConsoleProps = {
@@ -145,7 +149,7 @@ function CastConsoleInner({
   useEffect(() => bindShareEnded?.(() => send({ type: "SHARE_ENDED" })), [bindShareEnded, send]);
   const bindConnectionLost = live?.bindConnectionLost;
   useEffect(
-    () => bindConnectionLost?.(() => send({ type: "CONNECTION_LOST" })),
+    () => bindConnectionLost?.((removed) => send({ type: "CONNECTION_LOST", removed })),
     [bindConnectionLost, send],
   );
 
@@ -205,7 +209,7 @@ function CastConsoleInner({
                   {
                     id: "perm",
                     title: "Camera & microphone blocked",
-                    message: "Allow access to your camera and microphone, then retry to continue.",
+                    message: DEVICES_BLOCKED,
                     action: { label: "Retry", onClick: () => send({ type: "RETRY_PERMISSIONS" }) },
                     onDismiss: () => send({ type: "BACK" }),
                   },
@@ -229,7 +233,7 @@ function CastConsoleInner({
                   {
                     id: "join",
                     title: "Could not join the cast",
-                    message: state.context.joinError,
+                    message: state.context.joinWords ?? failureWords(state.context.joinError),
                     action: { label: "Retry", onClick: () => send({ type: "JOIN", name }) },
                   },
                 ]
@@ -260,7 +264,17 @@ function CastConsoleInner({
           onLeaveStream={() => send({ type: "LEAVE" })}
           tabMuted={tabMuted}
           onToggleTabMute={() => setTabMuted((muted) => !muted)}
+          reconnecting={live?.reconnecting}
           toasts={[
+            ...(live?.reconnecting
+              ? [
+                  {
+                    id: "net",
+                    title: "Reconnecting\u{2026}",
+                    message: "Your viewers do not receive your Cast until the connection is back.",
+                  },
+                ]
+              : []),
             ...(state.context.screenShareFailed
               ? [
                   {
@@ -299,7 +313,18 @@ function CastConsoleInner({
         />
       )}
 
-      {value === "ended" && (
+      {value === "ended" && state.context.removed && (
+        // What the server ended has no Rejoin: the server would refuse it.
+        <StCastStreamer
+          state="error"
+          streamName={placeName}
+          errorTitle="You were removed from this Cast"
+          errorMessage="The server closed your connection. To cast again, get a new stream link from the Admin Smart Item in your scene."
+          toasts={[]}
+        />
+      )}
+
+      {value === "ended" && !state.context.removed && (
         <StCastStreamer
           state="error"
           streamName={placeName}
@@ -308,14 +333,23 @@ function CastConsoleInner({
           }
           errorMessage={
             state.context.connectionLost
-              ? "The connection to the scene was lost. Open the stream link again to rejoin."
+              ? "The connection to the scene was lost. Rejoin checks your stream link and opens its lobby."
               : "Thanks for casting. Start a new cast from the Admin Smart Item in your scene."
           }
-          // Opening the stream link again is a reload of this page.
-          onRetry={
-            live && state.context.connectionLost ? () => window.location.reload() : undefined
-          }
+          onRetry={() => send({ type: "RETRY" })}
           retryLabel="Rejoin"
+          toasts={[]}
+        />
+      )}
+
+      {value === "unreachable" && (
+        <StCastStreamer
+          state="error"
+          streamName={placeName}
+          errorTitle="Could not open this stream link"
+          errorMessage={failureWords(state.context.invalidReason)}
+          onRetry={() => send({ type: "RETRY" })}
+          retryLabel="Retry"
           toasts={[]}
         />
       )}
@@ -323,7 +357,7 @@ function CastConsoleInner({
       {value === "invalid" && (
         <CastNotFoundScreen
           description={
-            (state.context.invalidReason ?? "Invalid streaming key") +
+            (state.context.invalidWords ?? "Invalid streaming key") +
             ". Stream links are generated on-demand by the Admin Smart Item in Decentraland scenes."
           }
         />

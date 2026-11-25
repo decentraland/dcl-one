@@ -1099,6 +1099,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   scene it is dropped. The flag is true only while that room is connected. A client's room carries
   the scene the player is in. In a local preview or a world with one scene it carries every scene
   of the realm.
+- **A Cast presentation bot's topic messages reach the scene.** A scene message from a sender
+  that is not a wallet is dropped, except from `authoritative-server` and, on the `presentation`
+  topic only, from an identity that starts with `presentation-bot:`, which the scene reads as
+  the message's `sender`. The gatekeeper mints that identity for a holder of the place's
+  streaming key and LiveKit stamps each packet with the identity of its sender's token, so a
+  player, whose identity is a wallet address, cannot send as the bot.
 - **Native HUD preferences are persisted by the engine** (`hud-prefs.json`), because CEF's
   `localStorage` does not survive.
 - **Web is Chrome only.**

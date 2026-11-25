@@ -1,10 +1,10 @@
 (dcl-scene-cli golden v1 smart-item production)
-TOOLCHAIN sdk=7.29.1-34986384248.commit-bb45080 ecs=7.29.1-34986384248.commit-bb45080 bundler=rolldown-1.3.2 blob=sha256:50abfae7d8f97207
-SCENE_COMPILED_JS_SIZE_PROD=703.1k bytes
+TOOLCHAIN sdk=7.29.1-34986384248.commit-bb45080 ecs=7.29.1-34986384248.commit-bb45080 bundler=rolldown-1.3.2 blob=sha256:d3ddcd82626d02a9
+SCENE_COMPILED_JS_SIZE_PROD=706.8k bytes
   ARTIFACT bin/index.js               6436 sha256=a43b03471a172000
-  ARTIFACT bin/scene.js               1876 sha256=c22d2907c0387685
+  ARTIFACT bin/scene.js               2304 sha256=508206afe9b732a8
   ARTIFACT bin/sdk-runtime.js       544367 sha256=c0d3801b784a536a
-  ARTIFACT bin/sdk-smart-items.js   150450 sha256=9ec86f8a544a2874
+  ARTIFACT bin/sdk-smart-items.js   153711 sha256=bc6f5cfdcc964475
 LOADER sdk=bin/sdk-runtime.js smart=bin/sdk-smart-items.js scene=bin/scene.js max_composite_entity=512
 ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
   // BEGIN AUTO GENERATED CODE "~sdk/scene-entrypoint"
@@ -33,6 +33,7 @@ ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
   import * as entrypoint from "<SCENE>/src/index.ts"
   import { compositeFromLoader as __sceneComposites } from './all-composites.js'
   Object.assign(compositeFromLoader, __sceneComposites)
+  import * as script_assets_scene_Scripts_Counter from "<SCENE>/assets/scene/Scripts/Counter.ts"
 
 
   import { syncEntity } from '@dcl/sdk/network'
@@ -53,7 +54,9 @@ ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
   if ((entrypoint as any).main !== undefined) {
     function _INTERNAL_startup_system() {
       try {
-        _initializeScripts(engine)
+        _initializeScripts(engine, [
+    { ...{"path":"assets/scene/Scripts/Counter.ts","priority":0,"entity":512}, module: script_assets_scene_Scripts_Counter }
+  ])
 
         const maybePromise = (entrypoint as any).main()
         if (maybePromise && typeof maybePromise === 'object' && typeof (maybePromise as unknown as Promise<unknown>).then === 'function') {
@@ -91,12 +94,12 @@ ENTITY_NAMES assets/scene/entity-names.ts
     Counter_Box = "Counter Box",
   } 
 MAIN_CRDT main.crdt 235 bytes sha256=6c587977670027c8 (native, 1 composite)
-DEPLOY entity=bafkreiahfubmhgy5by3gea2yznmhcedih7mta7ljpmg3nlbdxeoesbaedm files=7 total=705.8k bytes
+DEPLOY entity=bafkreics4f4vcqm63qn4h5xrnbqyd2k5kdhicdpbak23htbkuixcu4eege files=7 total=709.5k bytes
   bafkreifcxq62bje63i3khsvr45s3bkmtbvdutbhwehvfhc3yvspj6jrvda scene.json 167 bytes
   bafkreidmlb4xozyae7ejrd7tnw6qct7ppr3j6w4s4qpdrvzahvgvbsekca main.crdt 235 bytes
-  bafkreie6zbxyuvckfb2bnwkspsfe5yqnannwr3tn3bak3xci6uhyjaqsaa bin/sdk-smart-items.js 150450 bytes
+  bafkreif4n5op3tewir2zjd2zo6p3rqufcivjdmdfldk34bsv4dgeconm6e bin/sdk-smart-items.js 153711 bytes
   bafybeibfr2sxal44eim7pczfhqwwxig2d2aczsr44xzjsigmi7q6rxsvle bin/sdk-runtime.js 544367 bytes
-  bafkreigcfuuqpqbyo2c3pul4xsjayjnbzgwigy6qftsnp3jidgt3vkcjtq bin/scene.js 1876 bytes
+  bafkreicqqidk72nxgkubbxpkmuij5jwsiuiksahzxkbm6diq5hotq5f2m4 bin/scene.js 2304 bytes
   bafkreifehmbuogqxeaaeykmzgierwhki7azrfq3meco5smuzlyd2szbo3u bin/index.js 6436 bytes
   bafkreidxhlr4biomfortriklj6fnne7kzhvayixkmd6ynx2dlsoswh654a assets/scene/main.composite 2230 bytes
 EVAL bin/index.js
@@ -118,6 +121,7 @@ CALL onStart()
   main.crdt: PUT_COMPONENT e=0x200 c=3981387903 t=0 data=null
   main.crdt: PUT_COMPONENT e=0x200 c=4149214247 t=0 data=null
 CALL onUpdate(0)
+  CONSOLE(log): Counter script started: src=assets/scene/Scripts entity=512
   Scene: PUT_COMPONENT e=0x200 c=1 t=1 data={"position":{"x":9,"y":1,"z":9},"rotation":{"x":0,"y":0,"z":0,"w":1},"scale":{"x":1,"y":1,"z":1},"parent":0}
 CALL onUpdate(0.1)
 CALL onUpdate(0.1)

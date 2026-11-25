@@ -268,6 +268,8 @@ type StCastStreamerProps = {
   /** Live: the chat and people buttons; each is shown only with its handler. */
   onOpenChat?: () => void
   onOpenPeople?: () => void
+  /** Live, without the LIVE pill: the viewers do not receive the Cast. */
+  reconnecting?: boolean
 }
 
 export default function StCastStreamer({
@@ -290,7 +292,7 @@ export default function StCastStreamer({
   devices = {
     mic: 'Default - Microphone',
     speaker: 'Default - Speakers',
-    camera: 'FaceTime HD Camera'
+    camera: 'Default - Camera'
   },
   onPickDevice,
   micOn,
@@ -304,7 +306,8 @@ export default function StCastStreamer({
   onLeaveStream,
   onToggleTabMute,
   onOpenChat,
-  onOpenPeople
+  onOpenPeople,
+  reconnecting = false
 }: StCastStreamerProps) {
   const pick = (kind: 'mic' | 'speaker' | 'camera') =>
     onPickDevice ? () => onPickDevice(kind) : undefined
@@ -379,10 +382,12 @@ export default function StCastStreamer({
           <div className="stcast__main">
             <div className="stcast__videocontainer">
               <div className="stcast__videoarea">
-                <div className="stcast__livepill">
-                  <LiveDotGlyph size={16} fill="#fff" />
-                  LIVE
-                </div>
+                {!reconnecting && (
+                  <div className="stcast__livepill">
+                    <LiveDotGlyph size={16} fill="#fff" />
+                    LIVE
+                  </div>
+                )}
 
                 {stage ? (
                   <div className="stcast__stage">{stage}</div>
@@ -430,7 +435,7 @@ export default function StCastStreamer({
                   onClick={onLeaveStream}
                 >
                   <CallEndGlyph size={20} fill="#fff" />
-                  LEAVE STREAM
+                  <span>LEAVE STREAM</span>
                 </button>
               </div>
 

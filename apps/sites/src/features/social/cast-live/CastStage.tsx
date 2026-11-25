@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import type { CastSession, StageTrack } from "./session";
-import { pickWatcherStage, streamerStage } from "./stage";
+import { streamerStage, watcherStage } from "./stage";
 
 const NONE: StageTrack[] = [];
 
@@ -14,13 +14,17 @@ export function useCastTracks(session: CastSession | null): StageTrack[] {
   });
   const version = useRef(0);
   const subscribe = useCallback(
-    (onChange: () => void) =>
-      session
-        ? session.subscribe(() => {
-            version.current += 1;
-            onChange();
-          })
-        : () => {},
+    (onChange: () => void) => {
+      if (!session) return () => {};
+      const changed = () => {
+        version.current += 1;
+        onChange();
+      };
+      const stop = session.subscribe(changed);
+      // A room event between the render and this call had no listener: the room is read again.
+      changed();
+      return stop;
+    },
     [session],
   );
   const snapshot = useCallback(() => {
@@ -34,7 +38,8 @@ export function useCastTracks(session: CastSession | null): StageTrack[] {
   return useSyncExternalStore(subscribe, snapshot, () => NONE);
 }
 
-function TrackVideo({ track, mirror }: { track: StageTrack; mirror: boolean }) {
+/** `unseen`: drawn, so that its media flows and its first frame is known, and not visible. */
+function TrackVideo({ track, mirror, unseen }: { track: StageTrack; mirror: boolean; unseen?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     const el = ref.current;
@@ -51,7 +56,7 @@ function TrackVideo({ track, mirror }: { track: StageTrack; mirror: boolean }) {
       playsInline
       muted
       data-source={track.source}
-      style={mirror ? { transform: "scaleX(-1)" } : undefined}
+      style={unseen ? { position: "absolute", inset: 0, opacity: 0 } : mirror ? { transform: "scaleX(-1)" } : undefined}
     />
   );
 }
@@ -82,12 +87,25 @@ function RoomAudio({ tracks, muted }: { tracks: StageTrack[]; muted: boolean }) 
   );
 }
 
-/** A watcher's view: the one track `pickWatcherStage` names, and the room's audio. */
-export function WatcherStage({ tracks, muted }: { tracks: StageTrack[]; muted: boolean }) {
-  const shown = pickWatcherStage(tracks);
+export type Stage = ReturnType<typeof watcherStage<StageTrack>>;
+
+/** `watcherStage` of the session's tracks; it remembers the track on the stage. */
+export function useWatcherStage(tracks: StageTrack[]): Stage {
+  const [owner, setOwner] = useState<string | null>(null);
+  const stage = watcherStage(tracks, owner);
+  const key = stage.shown?.key ?? null;
+  if (key !== owner) setOwner(key);
+  return stage;
+}
+
+/** A watcher's view: the stage's track, the one that waits for its first picture, and the room's
+ * audio. A track keeps its element when it takes the stage, so its picture stays. */
+export function WatcherStage({ tracks, stage, muted }: { tracks: StageTrack[]; stage: Stage; muted: boolean }) {
   return (
     <>
-      {shown ? <TrackVideo key={shown.key} track={shown} mirror={false} /> : null}
+      {[stage.shown, stage.next].map(
+        (t) => t && <TrackVideo key={t.key} track={t} mirror={false} unseen={t === stage.next} />,
+      )}
       <RoomAudio tracks={tracks} muted={muted} />
     </>
   );

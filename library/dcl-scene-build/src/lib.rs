@@ -51,7 +51,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use dcl_scene_authoring::composite_norm::CompositeNormalizer;
 use dcl_scene_authoring::crdt_gen::{self, GenError};
 use dcl_scene_authoring::{
-    COMPOSITE_FILE_MAX_BYTES, SceneFiles, entity_names, find_composites, is_pruned_dir,
+    COMPOSITE_FILE_MAX_BYTES, SceneFiles, Scripts, entity_names, find_composites, is_pruned_dir,
 };
 use rolldown::Bundler;
 use rolldown_common::{
@@ -216,10 +216,17 @@ async fn build_async(root: &Path, opts: &Options) -> Result<Report> {
         all_composites(&scene, opts.ignore_composite)?,
     )?;
     write(&work.join("sdk-boot.js"), SDK_BOOT)?;
+    // entrypoint::scripts, and its part of prebuilt::scene_needs_smart_chunk.
+    let mut scripts = dcl_scene_authoring::scripts(&scene, &root.display().to_string());
+    let has_scripts = !scripts.is_empty();
+    if opts.ignore_composite {
+        scripts = Default::default();
+    }
+    warnings.append(&mut scripts.skipped);
     let entrypoint = work.join("entrypoint.ts");
     write(
         &entrypoint,
-        entrypoint_code(&safe_entry, is_editor_scene(root)),
+        entrypoint_code(&safe_entry, is_editor_scene(root), &scripts),
     )?;
     let max_composite_entity = match opts.ignore_composite {
         true => 0,
@@ -259,6 +266,7 @@ async fn build_async(root: &Path, opts: &Options) -> Result<Report> {
     outputs.push(scene_rel.clone());
     let scene_code = std::fs::read_to_string(root.join(&scene_rel)).unwrap_or_default();
     let smart_items = is_editor_scene(root)
+        || has_scripts
         || scene_code.contains("require(\"@dcl/asset-packs")
         || scene_code.contains("require('@dcl/asset-packs");
     if smart_items {
@@ -649,8 +657,12 @@ const SDK_BOOT: &str = "import { engine, setCompositeProvider } from '@dcl/sdk/e
 /// dcl-scene-cli `entrypoint::entrypoint_code` for a split build. Its comments
 /// are part of the output: a development build inlines this file's source
 /// into the scene chunk's sourcemap.
-fn entrypoint_code(safe_entry: &str, editor_scene: bool) -> String {
-    let composite_fill = "import { compositeFromLoader as __sceneComposites } from './all-composites.js'\nObject.assign(compositeFromLoader, __sceneComposites)\n";
+fn entrypoint_code(safe_entry: &str, editor_scene: bool, scripts: &Scripts) -> String {
+    let composite_fill = format!(
+        "import {{ compositeFromLoader as __sceneComposites }} from './all-composites.js'\nObject.assign(compositeFromLoader, __sceneComposites)\n{}",
+        scripts.imports
+    );
+    let script_instances = &scripts.argument;
     let editor_block = if editor_scene {
         "\nimport { syncEntity } from '@dcl/sdk/network'\nimport players from '@dcl/sdk/players'\nimport { setCompositeProvider } from '@dcl/sdk/ecs'\nimport { initAssetPacks } from '@dcl/asset-packs/dist/scene-entrypoint'\nsetCompositeProvider(engine, compositeProvider)\ninitAssetPacks(engine, { syncEntity }, players)\n"
             .to_string()
@@ -695,7 +707,7 @@ function __reportSceneError(e: any) {{
 if ((entrypoint as any).main !== undefined) {{
   function _INTERNAL_startup_system() {{
     try {{
-      _initializeScripts(engine)
+      _initializeScripts(engine{script_instances})
 
       const maybePromise = (entrypoint as any).main()
       if (maybePromise && typeof maybePromise === 'object' && typeof (maybePromise as unknown as Promise<unknown>).then === 'function') {{
