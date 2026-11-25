@@ -14,7 +14,8 @@ The index process increments `catalyst_index_sales_repair_failures_total` by ind
 attempts by `mirror`, `network` and `outcome`. `proof_rejected` records
 invalid proof, including a conflicting chain or block hash.
 `proof_skipped_rpc_unavailable` records an unpinned graph pass started
-after the RPC retry window elapsed.
+after the RPC retry window elapsed. `rpc_auth_failed` counts HTTP 401/403
+responses and accompanies the error log for the configured RPC.
 
 ## Marketplace sales day rollups
 

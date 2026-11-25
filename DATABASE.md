@@ -2601,7 +2601,8 @@ Mainnet serves its last completed copy while a new proof retries. Its
 mirror jobs with a chain-bound RPC cap retry delays at five minutes. After
 ten minutes of RPC unavailability, a mainnet pass may read from the
 configured graph without a pin to keep prices fresh under the existing
-price freshness budget. A wrong-chain result or a conflicting block hash
+price freshness budget. Authentication errors and malformed RPC responses
+use the same retry window. A wrong-chain result or a conflicting block hash
 rejects the pass, and later RPC unavailability cannot override that result.
 A replacement mainnet writer can finish from a persisted pin even without
 an RPC. New mainnet passes on nodes without an RPC use the configured graph.

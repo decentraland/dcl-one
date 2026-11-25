@@ -165,6 +165,8 @@ struct FakeChain {
     strip_block_hash: std::sync::atomic::AtomicBool,
     /// `eth_chainId` answers an error.
     fail_chain_id: std::sync::atomic::AtomicBool,
+    /// Refuse every call with HTTP 401 or answer HTTP 200 with HTML.
+    invalid_http_response: AtomicUsize,
     /// Text the failing reads echo in their error message (a gateway that
     /// repeats the request it got).
     echo: Mutex<String>,
@@ -262,6 +264,7 @@ impl FakeChain {
             strip_timestamps: std::sync::atomic::AtomicBool::new(false),
             strip_block_hash: std::sync::atomic::AtomicBool::new(false),
             fail_chain_id: std::sync::atomic::AtomicBool::new(false),
+            invalid_http_response: AtomicUsize::new(0),
             echo: Mutex::new(String::new()),
             batches: AtomicUsize::new(0),
             drop_in_batch: Mutex::new(Vec::new()),
@@ -361,6 +364,13 @@ async fn rpc(
     axum::Json(body): axum::Json<Value>,
 ) -> axum::response::Response {
     chain.requests.fetch_add(1, Ordering::SeqCst);
+    match chain.invalid_http_response.load(Ordering::SeqCst) {
+        401 => return (StatusCode::UNAUTHORIZED, axum::Json(json!({
+            "jsonrpc":"2.0", "id":body["id"], "error":{"code":-32000,"message":"authentication failed"}
+        }))).into_response(),
+        200 => return axum::response::Html("<html>gateway response</html>").into_response(),
+        _ => {}
+    }
     if headers.contains_key("x-api-key") {
         chain.api_keys.fetch_add(1, Ordering::SeqCst);
     }
@@ -1997,7 +2007,7 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
     chain.chain_id.store(80_002, Ordering::SeqCst);
     let rpc = serve(chain.clone()).await;
     let good = chain.hash_of(90);
-    let meta = Arc::new(Mutex::new(json!({"number":90,"hash":"wrong"})));
+    let meta = Arc::new(Mutex::new(json!({"number":90,"hash":chain.hash_of(89)})));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let graph = format!("http://{}/", listener.local_addr().unwrap());
     let app = Router::new().route("/", post(|State(meta): State<Arc<Mutex<Value>>>, axum::Json(body): axum::Json<Value>| async move {
@@ -2109,7 +2119,7 @@ async fn a_lagging_mainnet_rpc_pins_a_matching_confirmed_block() {
             .chain_id
             .store(net.chain_id() as u64, Ordering::SeqCst);
         let rpc = serve(chain.clone()).await;
-        let published_hash = Arc::new(Mutex::new(Some("wrong chain".to_owned())));
+        let published_hash = Arc::new(Mutex::new(Some(chain.hash_of(99))));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let graph = format!("http://{}/", listener.local_addr().unwrap());
         let app = Router::new()
@@ -2407,6 +2417,13 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
         )
         .fetch_one(&db.pool)
     };
+    let recorder = dcl_metrics::Registry::new(&[mirrors::FAMILIES])
+        .unwrap()
+        .builder(dcl_metrics::PrometheusBuilder::new())
+        .unwrap()
+        .build_recorder();
+    let metric_handle = recorder.handle();
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
 
     let age_proof = || {
         sqlx::query(
@@ -2434,23 +2451,11 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
     age_proof().await.unwrap();
     let earlier = read().await.unwrap().unwrap();
     meta_ready.store(true, Ordering::SeqCst);
-    chain.fail_chain_id.store(true, Ordering::SeqCst);
-    assert!(
-        tick()
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("upstream refused")
-    );
+    chain.invalid_http_response.store(401, Ordering::SeqCst);
+    assert!(tick().await.unwrap_err().to_string().contains("status 401"));
     let pending = read().await.unwrap().unwrap();
     assert!(pending.pass_started_at > earlier.pass_started_at);
-    assert!(
-        tick()
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("upstream refused")
-    );
+    assert!(tick().await.unwrap_err().to_string().contains("status 401"));
     let retried = read().await.unwrap().unwrap();
     assert_eq!(retried.pass_started_at, pending.pass_started_at);
     assert_eq!(retried.last_complete_pass_at, earlier.last_complete_pass_at);
@@ -2476,9 +2481,28 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
         )
         .is_ok()
     );
+    assert!(metric_handle.render().lines().any(|line| {
+        line.starts_with("catalyst_catalogue_mirror_proof_outcomes_total{")
+            && line.contains("outcome=\"rpc_auth_failed\"")
+    }));
 
     price.store(300, Ordering::SeqCst);
-    chain.fail_chain_id.store(false, Ordering::SeqCst);
+    chain.invalid_http_response.store(200, Ordering::SeqCst);
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("malformed rpc body")
+    );
+    assert_eq!(stored_price().await.unwrap(), "200");
+    age_proof().await.unwrap();
+    tick().await.unwrap();
+    tick().await.unwrap();
+    assert_eq!(stored_price().await.unwrap(), "300");
+
+    price.store(400, Ordering::SeqCst);
+    chain.invalid_http_response.store(0, Ordering::SeqCst);
     chain.chain_id.store(80_002, Ordering::SeqCst);
     assert!(
         tick()
@@ -2502,7 +2526,7 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
         read().await.unwrap().unwrap().last_complete_pass_at,
         rejected.last_complete_pass_at
     );
-    assert_eq!(stored_price().await.unwrap(), "200");
+    assert_eq!(stored_price().await.unwrap(), "300");
     db.drop().await;
 }
 
