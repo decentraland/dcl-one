@@ -136,6 +136,38 @@ pub(super) fn land_page_sources(f: &NftFilters, land: LandNetwork) -> Option<Sou
     contracts.land.then_some(contracts)
 }
 
+/// The networks a page of `sources` can return for `f`: the collections'
+/// networks, and Ethereum for names and LAND.
+fn page_networks(f: &NftFilters, sources: Sources) -> Vec<ChainNet> {
+    let mut nets = if sources.collections {
+        collection_networks(f)
+    } else {
+        Vec::new()
+    };
+    if (sources.names || sources.land) && !nets.contains(&ChainNet::Ethereum) {
+        nets.push(ChainNet::Ethereum);
+    }
+    nets
+}
+
+/// Whether a read now may take `net`'s latest sales
+/// ([`super::sale_fold::last_sale_networks`] on a snapshot of its own). A
+/// database error reads as not admitted.
+pub async fn admits_last_sales(pool: &PgPool, net: ChainNet) -> bool {
+    let admitted = async {
+        let mut tx = pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        let nets = super::sale_fold::last_sale_networks(&mut tx, &[net], Utc::now()).await?;
+        anyhow::Ok(nets.contains(&net))
+    };
+    admitted.await.unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "cannot read the sales publication for the nfts' latest sales");
+        false
+    })
+}
+
 /// The networks the collection source reads for `f`.
 fn collection_networks(f: &NftFilters) -> Vec<ChainNet> {
     match f.network {
@@ -1527,12 +1559,17 @@ pub(super) async fn list_page_on(
     let now_ms = Utc::now().timestamp_millis();
     // The latest sales of a network whose sales publication is valid on
     // this read's snapshot; elsewhere `sold_at` keeps the legacy orders.
-    let last_sale = super::sale_fold::last_sale_networks(conn, Utc::now())
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = %e, "cannot read the sales publication for the nfts' latest sales");
-            ApiError::internal("cannot read the sales publication").into_response()
-        })?;
+    // Only the networks the page can return are checked.
+    let last_sale = super::sale_fold::last_sale_networks(
+        conn,
+        &page_networks(f, sources),
+        Utc::now(),
+    )
+    .await
+    .map_err(|e| {
+        tracing::warn!(error = %e, "cannot read the sales publication for the nfts' latest sales");
+        ApiError::internal("cannot read the sales publication").into_response()
+    })?;
     let last_sale = LastSale::of(&last_sale);
     let large_owner = match &f.owner {
         Some(owner) if sorts_on_orders(f) && !on_sale_only(f) => {
@@ -2448,6 +2485,39 @@ mod tests {
             .unwrap();
         assert_eq!(total, 19);
         own.drop().await;
+    }
+
+    /// A page checks the latest sales only of the networks it can return:
+    /// names and LAND read Ethereum, the collections their networks.
+    #[test]
+    fn a_page_checks_the_latest_sales_of_its_own_networks() {
+        let nets = |q: &[(&str, &str)], names: bool, land: bool| {
+            let f = parse_filters(&pairs(q)).unwrap();
+            let mut s = sources_for(&f);
+            s.names |= names;
+            s.land |= land;
+            page_networks(&f, s)
+        };
+        assert_eq!(
+            nets(&[("category", "ens")], false, false),
+            vec![ChainNet::Ethereum]
+        );
+        assert_eq!(
+            nets(&[("category", "parcel")], false, false),
+            vec![ChainNet::Ethereum]
+        );
+        assert_eq!(
+            nets(
+                &[("category", "wearable"), ("network", "MATIC")],
+                false,
+                false
+            ),
+            vec![ChainNet::Matic]
+        );
+        assert_eq!(
+            nets(&[], true, true),
+            vec![ChainNet::Ethereum, ChainNet::Matic]
+        );
     }
 
     /// `sold_at` takes a token's latest sale from `shop.nft_last_sale` on

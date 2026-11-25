@@ -357,6 +357,18 @@ fn is_land_routed(f: &NftFilters) -> bool {
         || only_land_registries(&f.contract_addresses)
 }
 
+/// Whether `f` reads only the node's DCL names: the `ens` category, or a
+/// contract filter naming only the registrar.
+fn names_only(state: &MarketplaceState, f: &NftFilters) -> bool {
+    let registrar = state.settings.catalogue().registrar();
+    f.category == Some(NftCategory::Ens)
+        || (f.category.is_none()
+            && !f.contract_addresses.is_empty()
+            && f.contract_addresses
+                .iter()
+                .all(|a| a.eq_ignore_ascii_case(registrar)))
+}
+
 /// A contract filter naming only the LAND, estate and NAME registries reads the
 /// marketplace source, as upstream's `?contractAddress&tokenId` lookup does: the
 /// collections subgraphs never hold those tokens.
@@ -933,6 +945,18 @@ async fn list_page(
 ) -> Result<(Vec<NftResult>, i64), Response> {
     if super::owned_items::walks_here(state)
         && state.settings.catalogue() == super::nft_index::Catalogue::Testnet
+    {
+        let (first, skip) = index_page(f);
+        return super::nft_reads::list_nfts(state, f, first, skip).await;
+    }
+    // A NAME page sorted by its latest sale reads the index where the
+    // node's latest sales are admitted, as its deep pages do: the graph's
+    // `soldAt` counts other sales.
+    if super::owned_items::walks_here(state)
+        && f.sort_by == Some(NftSortBy::RecentlySold)
+        && names_only(state, f)
+        && super::nft_reads::admits_last_sales(&state.pool, super::chain_walk::ChainNet::Ethereum)
+            .await
     {
         let (first, skip) = index_page(f);
         return super::nft_reads::list_nfts(state, f, first, skip).await;

@@ -17086,8 +17086,14 @@ CREATE TABLE shop.sale_publication (
     late_collections bigint NOT NULL,
     published_at timestamp without time zone,
     -- The block through which shop.nft_last_sale holds every published
-    -- sale of the network; NULL until the fold has filled it.
-    last_sale_through bigint
+    -- sale of the network, and the input history (epochs, revisions, late
+    -- collections) it was built from; NULL until the fold has filled it. A
+    -- table whose history differs from the publication's is not read and is
+    -- rebuilt.
+    last_sale_through bigint,
+    last_sale_epochs uuid[],
+    last_sale_revisions bigint[],
+    last_sale_late_collections bigint
 );
 
 -- The latest public sale of each token (`sale_reads/public_sales.sql`: a

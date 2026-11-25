@@ -130,6 +130,21 @@ struct Marker {
     late_collections: i64,
     published_at: Option<NaiveDateTime>,
     last_sale_through: Option<i64>,
+    last_sale_epochs: Option<Vec<Uuid>>,
+    last_sale_revisions: Option<Vec<i64>>,
+    last_sale_late_collections: Option<i64>,
+}
+
+impl Marker {
+    /// Whether `shop.nft_last_sale` was built from this publication's input
+    /// history. A writer from before step 0078 republishes without touching
+    /// the table, and a history it replaces no longer matches.
+    fn last_sale_matches(&self) -> bool {
+        self.last_sale_through.is_some()
+            && self.last_sale_epochs.as_ref() == Some(&self.input_epochs)
+            && self.last_sale_revisions.as_ref() == Some(&self.input_revisions)
+            && self.last_sale_late_collections == Some(self.late_collections)
+    }
 }
 
 async fn marker(c: &mut PgConnection, net: ChainNet) -> Result<Option<Marker>, sqlx::Error> {
@@ -315,22 +330,25 @@ async fn valid(
     )))
 }
 
-/// The networks whose `shop.nft_last_sale` a read on `c` may take at `now`:
-/// a valid, fresh publication whose `last_sale_through` reaches its block.
+/// Of `nets`, those whose `shop.nft_last_sale` a read on `c` may take at
+/// `now`: a valid, fresh publication whose table was built from its input
+/// history and reaches its block.
 pub async fn last_sale_networks(
     c: &mut PgConnection,
+    nets: &[ChainNet],
     now: DateTime<Utc>,
 ) -> anyhow::Result<Vec<ChainNet>> {
-    let mut nets = Vec::new();
-    for net in ChainNet::ALL {
+    let mut admitted = Vec::new();
+    for &net in nets {
         if let Some((marker, fresh_until)) = valid(c, net, now).await?
             && now <= fresh_until
+            && marker.last_sale_matches()
             && marker.last_sale_through >= Some(marker.block_number)
         {
-            nets.push(net);
+            admitted.push(net);
         }
     }
-    Ok(nets)
+    Ok(admitted)
 }
 
 pub(super) async fn write_rows(
@@ -530,9 +548,11 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     let mana = listings::mana_token(net.chain_id()).context("missing MANA deployment")?;
     let mut tx = pool.begin().await?;
     let mut days: Vec<i64> = Vec::new();
-    // The block through which `shop.nft_last_sale` holds the ledger. Without
-    // a previous publication nothing in it can be trusted.
-    let mut last_sale_through = match &previous {
+    // The block through which `shop.nft_last_sale` holds the ledger. A table
+    // without a publication built from its history (none yet, its coverage
+    // cleared, or a writer from before step 0078 republished another history)
+    // is rebuilt from the start.
+    let mut last_sale_through = match previous.as_ref().filter(|m| m.last_sale_matches()) {
         Some(m) => m.last_sale_through.unwrap_or(initial).max(initial),
         None => {
             sqlx::query("DELETE FROM shop.nft_last_sale WHERE network=$1")
@@ -558,7 +578,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     }
     write_rows(&mut tx, net, from, to).await?;
     let (creator_days, corrected_creators) = creators::write(&mut tx, rpc, net, from, to).await?;
-    let (payment_days, corrected_payments) =
+    let (payment_days, corrected_payments, minted) =
         settlements::write(&mut tx, rpc, net, from, to).await?;
     days.extend(creator_days);
     days.extend(payment_days);
@@ -624,6 +644,8 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     let last_sale_to = to.min(last_sale_through.saturating_add(last_sale::WINDOW_BLOCKS));
     last_sale::advance(&mut tx, net, last_sale_through, last_sale_to, mana).await?;
     last_sale_through = last_sale_through.max(last_sale_to);
+    // A retried receipt can set a token id below the table's block.
+    last_sale::refresh(&mut tx, net, &minted, last_sale_through, mana).await?;
     let point = rpc.block_header(to as u64).await?;
     ensure!(point.hash == *hash, "sales prefix changed during fold");
     let head = rpc.head_block().await?;
@@ -710,12 +732,14 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         || corrected_payments
         || corrected_buyers
         || (previously_published.is_none() && published_at.is_some());
-    sqlx::query("INSERT INTO shop.sale_publication (network,block_number,block_hash,input_version,input_epochs,input_revisions,late_collections,published_at,last_sale_through)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$10) ON CONFLICT (network) DO UPDATE SET block_number=EXCLUDED.block_number,
+    sqlx::query("INSERT INTO shop.sale_publication (network,block_number,block_hash,input_version,input_epochs,input_revisions,late_collections,published_at,
+            last_sale_through,last_sale_epochs,last_sale_revisions,last_sale_late_collections)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$10,$5,$6,$7) ON CONFLICT (network) DO UPDATE SET block_number=EXCLUDED.block_number,
         generation=CASE WHEN $9 THEN EXCLUDED.generation ELSE sale_publication.generation END,
         block_hash=EXCLUDED.block_hash,input_version=EXCLUDED.input_version,input_epochs=EXCLUDED.input_epochs,
         input_revisions=EXCLUDED.input_revisions,late_collections=EXCLUDED.late_collections,published_at=EXCLUDED.published_at,
-        last_sale_through=EXCLUDED.last_sale_through")
+        last_sale_through=EXCLUDED.last_sale_through,last_sale_epochs=EXCLUDED.last_sale_epochs,
+        last_sale_revisions=EXCLUDED.last_sale_revisions,last_sale_late_collections=EXCLUDED.last_sale_late_collections")
         .bind(net.db_name()).bind(to).bind(hash).bind(PUBLICATION_VERSION).bind(start.epochs()).bind(start.revisions())
         .bind(start.late_collections).bind(published_at).bind(replace_generation).bind(last_sale_through)
         .execute(&mut *tx).await?;

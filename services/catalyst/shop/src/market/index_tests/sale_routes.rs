@@ -1279,7 +1279,7 @@ async fn the_latest_sale_follows_the_published_ledger_across_a_rewind() {
     };
     let admitted = || async {
         let mut conn = db.pool.acquire().await.unwrap();
-        sale_fold::last_sale_networks(&mut conn, chrono::Utc::now())
+        sale_fold::last_sale_networks(&mut conn, &ChainNet::ALL, chrono::Utc::now())
             .await
             .unwrap()
     };
@@ -1342,6 +1342,70 @@ async fn the_latest_sale_follows_the_published_ledger_across_a_rewind() {
     .await
     .unwrap();
     assert_eq!(through, Some(b));
+    assert_eq!(admitted().await, vec![ChainNet::Ethereum]);
+
+    // A writer from before step 0078 replaces the history: parcel 1's only
+    // sale leaves the ledger and it republishes the new input revision,
+    // keeping the table's columns as they were. The table is not read, and
+    // the next pass of this writer rebuilds it from the ledger.
+    sqlx::query("DELETE FROM shop.nft_event WHERE network = 'ethereum' AND block_number = $1")
+        .bind(b - 10)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM shop.sale_execution WHERE network = 'ethereum' AND block_number > $1")
+        .bind(b - 11)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET sale_history_revision = sale_history_revision + 1
+         WHERE network = 'ethereum' AND indexer = 'nft'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.sale_publication p SET published_at = timezone('UTC', now()), generation = gen_random_uuid(),
+             input_revisions = (SELECT array_agg(c.sale_history_revision ORDER BY c.indexer) FROM shop.chain_cursor c
+                                WHERE c.network = p.network AND c.indexer IN ('nft', 'sales', 'trade_events'))
+         WHERE network = 'ethereum'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let valid = sale_fold::snapshot(&db.pool, &[net], chrono::Utc::now())
+        .await
+        .unwrap()
+        .is_some();
+    assert!(valid, "the old writer's publication is valid");
+    assert_eq!(rows().await, vec![("1".into(), 1_700_000_000, b - 10)]);
+    assert_eq!(
+        admitted().await,
+        Vec::<ChainNet>::new(),
+        "a table built from another history is not read"
+    );
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert_eq!(rows().await, vec![]);
+    assert_eq!(admitted().await, vec![ChainNet::Ethereum]);
+
+    // Clearing the coverage alone removes a row the ledger does not hold.
+    sqlx::query(
+        "INSERT INTO shop.nft_last_sale (network, contract_address, token_id, sold_at, block_number)
+         VALUES ('ethereum', $1, 99, 1, 1)",
+    )
+    .bind(LAND_REGISTRY_MAINNET)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.sale_publication SET last_sale_through = NULL WHERE network = 'ethereum'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert_eq!(rows().await, vec![]);
     assert_eq!(admitted().await, vec![ChainNet::Ethereum]);
     db.drop().await;
 }

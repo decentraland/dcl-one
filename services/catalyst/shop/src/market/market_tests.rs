@@ -5177,3 +5177,110 @@ async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
     assert_eq!(code, StatusCode::OK, "{result}");
     db.drop().await;
 }
+
+/// A shallow NAME page sorted by recently sold reads the index on a walker
+/// whose Ethereum latest sales are admitted: the graph ranks the two names
+/// one way by its own `soldAt`, the ledger the other. Without admitted
+/// latest sales the page reads the graph as before.
+#[tokio::test]
+async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph.clone()).await;
+    let Some((mut state, own)) = state_over_own(&url, false).await else {
+        return;
+    };
+    let settings = &mut Arc::get_mut(&mut state).unwrap().settings;
+    settings.market.indexes.sales_enabled = true;
+    settings.marketplace_subgraph_url = Some(url.clone());
+    let pool = &own.pool;
+    let registrar = super::nft_index::DCL_REGISTRAR;
+    let owner = "0x00000000000000000000000000000000000000aa";
+    let name = |token: &str, label: &str, sold: &str| {
+        json!({ "id": format!("{registrar}-{token}"), "tokenId": token, "contractAddress": registrar,
+                "category": "ens", "image": "", "createdAt": "1", "updatedAt": "1", "soldAt": sold,
+                "name": label, "owner": { "address": owner }, "ens": { "subdomain": label },
+                "activeOrder": null })
+    };
+    // The graph sold alpha last; the ledger sold beta last.
+    graph.set(
+        "nfts",
+        vec![name("1001", "alpha", "2000"), name("1002", "beta", "1000")],
+    );
+    let (_, deployment, _) = super::trade_events::deployments(1)[0];
+    let height = deployment as i64 + 1;
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
+          full_history,fold_through,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
+         SELECT ix,'ethereum',1,1,$1,$2,true,$1,$1,timezone('UTC',now()),$3,$1,0
+         FROM unnest(ARRAY['nft','sales','trade_events']) ix",
+    )
+    .bind(height)
+    .bind(format!("0x{:064x}", 91))
+    .bind(super::sale_history::VERSION)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.sale_publication(network,block_number,block_hash,input_version,input_epochs,
+            input_revisions,late_collections,published_at,last_sale_through,last_sale_epochs,last_sale_revisions,
+            last_sale_late_collections)
+         SELECT network,$1,$2,$3,array_agg(sale_input_epoch ORDER BY indexer),
+                array_agg(sale_history_revision ORDER BY indexer),0,timezone('UTC',now()),$1,
+                array_agg(sale_input_epoch ORDER BY indexer),array_agg(sale_history_revision ORDER BY indexer),0
+         FROM shop.chain_cursor WHERE indexer IN ('nft','sales','trade_events') GROUP BY network",
+    )
+    .bind(height)
+    .bind(format!("0x{:064x}", 91))
+    .bind(super::sale_fold::PUBLICATION_VERSION)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, ens_subdomain, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         VALUES ('ethereum', $1, 1001, $2, 'alpha', 1, 1, 1, 0, 1), ('ethereum', $1, 1002, $2, 'beta', 2, 2, 2, 0, 2); \
+         ",
+    )
+    .bind(registrar)
+    .bind(owner)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.nft_last_sale (network, contract_address, token_id, sold_at, block_number) \
+         VALUES ('ethereum', $1, 1001, 500, 1), ('ethereum', $1, 1002, 3000, 2)",
+    )
+    .bind(registrar)
+    .execute(pool)
+    .await
+    .unwrap();
+    let app = market_router(state.clone());
+    let path = "/v1/nfts?category=ens&sortBy=recently_sold&first=1";
+    let first = |body: &Value| {
+        (
+            body["data"][0]["nft"]["tokenId"]
+                .as_str()
+                .map(str::to_string),
+            body["data"][0]["nft"]["soldAt"].as_i64(),
+        )
+    };
+    let (status, body) = get(app.clone(), path).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        first(&body),
+        (Some("1002".into()), Some(3_000_000)),
+        "{body}"
+    );
+
+    sqlx::query("UPDATE shop.sale_publication SET last_sale_through = NULL")
+        .execute(pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app, path).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        first(&body),
+        (Some("1001".into()), Some(2_000_000)),
+        "{body}"
+    );
+    own.drop().await;
+}
