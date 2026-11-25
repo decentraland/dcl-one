@@ -282,7 +282,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 85] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 86] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -472,6 +472,10 @@ impl Config {
             ),
             ("CREDITS_SIGNER_KEY", &mut self.shop.credits_signer_key),
             ("CREDITS_REVOKER_KEY", &mut self.shop.credits_revoker_key),
+            (
+                "CREDITS_EXTERNAL_CALL_SIGNER_KEY",
+                &mut self.shop.credits_external_call_signer_key,
+            ),
             ("CREDITS_TRIAL_BUYERS", &mut self.shop.credits_trial_buyers),
             (
                 "CATALYRST_RPC_ADMIN_TOKEN",
@@ -523,14 +527,15 @@ impl Config {
     }
 
     /// The signing keys: each signs value on this node's behalf (treasury
-    /// credit claims, relayed transactions), so each is
+    /// credit claims, the calls a credit pays for, relayed transactions), so each is
     /// read from `<NAME>_FILE` alone (a `LoadCredential` or agenix file). A
     /// plain environment variable would sit in `/proc/<pid>/environ`,
     /// `systemctl show` and, set through a unit's `environment`, the unit
     /// file in the world-readable nix store.
-    pub const FILE_ONLY_SECRETS: [&'static str; 3] = [
+    pub const FILE_ONLY_SECRETS: [&'static str; 4] = [
         "CREDITS_SIGNER_KEY",
         "CREDITS_REVOKER_KEY",
+        "CREDITS_EXTERNAL_CALL_SIGNER_KEY",
         "RELAYER_PRIVATE_KEY",
     ];
 
@@ -844,6 +849,7 @@ mod tests {
         "STRIPE_WEBHOOK_SECRET",
         "CREDITS_SIGNER_KEY",
         "CREDITS_REVOKER_KEY",
+        "CREDITS_EXTERNAL_CALL_SIGNER_KEY",
         "CREDITS_TRIAL_BUYERS",
         "RPC_UPSTREAM_MAINNET",
         "RPC_UPSTREAM_ETHEREUM",
@@ -1319,6 +1325,7 @@ mod tests {
             "STRIPE_SECRET_KEY",
             "STRIPE_WEBHOOK_SECRET",
             "CREDITS_SIGNER_KEY",
+            "CREDITS_EXTERNAL_CALL_SIGNER_KEY",
             "CATALYRST_RPC_ADMIN_TOKEN",
             "RPC_UPSTREAM_MAINNET",
             "RPC_UPSTREAM_POLYGON",
