@@ -424,15 +424,18 @@ fn reads_land(state: &MarketplaceState, f: &OrderFilters) -> bool {
 /// (`IndexSettings::chain_id`) and, with `book`, the legacy order book caught
 /// up with that publication on each (`legacy_orders::caught_up`) and the
 /// trades mirror and its verdicts ready (`trades::ready_on`), each statement
-/// bounded by `nft_reads::READ_STATEMENT_TIMEOUT`. `Err` is the unavailable
-/// envelope naming the source that is not ready, or a 500.
+/// bounded by `nft_reads::READ_STATEMENT_TIMEOUT`, and the request's instant:
+/// taken once the snapshot is established, so a fold the snapshot sees was
+/// published before it (a fold published while the request waited for a
+/// connection is not read as published in the future), and shared by the
+/// checks, the rows and the totals. `Err` is the unavailable envelope naming
+/// the source that is not ready, or a 500.
 pub(crate) async fn book_snapshot(
     state: &MarketplaceState,
     nets: &[ChainNet],
     land: bool,
     book: bool,
-    now: DateTime<Utc>,
-) -> Result<Transaction<'static, Postgres>, Response> {
+) -> Result<(Transaction<'static, Postgres>, DateTime<Utc>), Response> {
     let db = |e: sqlx::Error| ApiError::internal(e.to_string()).into_response();
     let mut tx = if land {
         let snapshot = match state.land_network() {
@@ -456,6 +459,9 @@ pub(crate) async fn book_snapshot(
         .execute(&mut *tx)
         .await
         .map_err(db)?;
+    // The statement above established the snapshot (the land path's already
+    // had); every publication it sees was committed before this instant.
+    let now = Utc::now();
     let indexes = &state.settings.market.indexes;
     owned_items::check_on(
         &mut tx,
@@ -481,7 +487,7 @@ pub(crate) async fn book_snapshot(
         }
         super::trades::ready_on(state, &mut tx, now).await?;
     }
-    Ok(tx)
+    Ok((tx, now))
 }
 
 /// A statement of an order-book read failed: one Postgres cancelled at the
@@ -580,9 +586,8 @@ pub async fn trades_leg(
     state: &MarketplaceState,
     f: &OrderFilters,
 ) -> Result<(Vec<Keyed>, OwnerCheck), Response> {
-    let now = Utc::now();
     if owned_items::walks_here(state) {
-        let mut tx = book_snapshot(state, nets_of(f.network), false, false, now).await?;
+        let (mut tx, now) = book_snapshot(state, nets_of(f.network), false, false).await?;
         let rows = read_trades(&mut tx, state, f, OwnerCheck::Checked, now)
             .await
             .map_err(read_error)?;
@@ -594,7 +599,7 @@ pub async fn trades_leg(
             .acquire()
             .await
             .map_err(|e| ApiError::from(e).into_response())?;
-        let rows = read_trades(&mut conn, state, f, OwnerCheck::Unchecked, now)
+        let rows = read_trades(&mut conn, state, f, OwnerCheck::Unchecked, Utc::now())
             .await
             .map_err(read_error)?;
         Ok((rows, OwnerCheck::Unchecked))
@@ -1029,9 +1034,8 @@ pub async fn list_orders_checked(
     let window = offset + limit;
     let (mut merged, legacy_total, trades, check) = if owned_items::walks_here(state) {
         let land = reads_land(state, f);
-        let now = Utc::now();
+        let (mut tx, now) = book_snapshot(state, nets_of(f.network), land, true).await?;
         let now_ms = now.timestamp_millis();
-        let mut tx = book_snapshot(state, nets_of(f.network), land, true, now).await?;
         let (rows, total, trades) = async {
             let rows = book_rows(&mut tx, state, f, window, land, now_ms).await?;
             let cap = readers::count_cap(0, window);
@@ -1128,8 +1132,7 @@ pub async fn open_orders_by_items_checked(
     let mut per: Vec<(String, Vec<Keyed>)> = Vec::with_capacity(contracts.len());
     let check = if owned_items::walks_here(state) {
         let land = contracts.iter().any(|c| is_land_registry(state, c));
-        let now = Utc::now();
-        let mut tx = book_snapshot(state, &ChainNet::ALL, land, true, now).await?;
+        let (mut tx, now) = book_snapshot(state, &ChainNet::ALL, land, true).await?;
         for contract in &contracts {
             let f = filters(contract);
             let rows = async {

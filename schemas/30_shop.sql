@@ -584,24 +584,37 @@ CREATE TABLE shop.nft_order (
 -- the estate stats): WHERE status = 'open' AND expires_at > $now.
 CREATE INDEX nft_order_open_idx ON shop.nft_order (network, contract_address, expires_at) WHERE status = 'open';
 
--- How far each network's legacy order book (`shop.legacy_order`) is folded:
--- the nft walk's last block when the order fold last ran, in the nft fold's
--- transaction, or the nft fold's `fold_through` when the schema run seeded
--- the book. The order fold refolds the orders touched past the lower of this
--- and the nft fold's own marker, so the book catches up with nft folds that
--- ran without it (a replica on an earlier binary during a rollout); a reader
--- serves the book only while this reaches the published nft fold
--- (`folded_block`). A rewind lowers it to the rewind's point.
+-- How far each network's legacy order book (`shop.legacy_order`) is folded,
+-- and from which branch: the nft walk's last block and its hash when the
+-- order fold last ran, in the nft fold's transaction, or the nft fold's
+-- `fold_through` and that block's recovery point when the schema run seeded
+-- the book. The book stands only while the nft walk's recovery point at that
+-- block (`shop.chain_checkpoint`) still has that hash: a rewind (by any
+-- binary) drops the points past its target, so a branch republished at the
+-- same height brings another hash, and a book left behind past the kept
+-- points loses its point. The order fold refolds the orders touched past the
+-- lower of this block and the nft fold's own marker, so the book catches up
+-- with nft folds that ran without it (a replica on an earlier binary during a
+-- rollout); a book that no longer stands, or a rebuild, is refolded whole
+-- after its rows are deleted. A reader serves the book only while it stands
+-- and its block reaches the published nft fold (`folded_block`). This
+-- binary's rewind lowers the block to its target and clears the hash.
 CREATE TABLE shop.legacy_order_cursor (
     network text PRIMARY KEY,
     folded_through bigint NOT NULL,
+    through_hash text,
     CONSTRAINT legacy_order_cursor_network_known CHECK (network IN ('ethereum', 'matic'))
 );
 
 -- A database that predates the order book records the block its seed below
--- covers: what the nft fold has folded, never a walked block past it.
-INSERT INTO shop.legacy_order_cursor (network, folded_through)
-SELECT network, fold_through FROM shop.chain_cursor WHERE indexer = 'nft' AND fold_through IS NOT NULL;
+-- covers (what the nft fold has folded, never a walked block past it) and
+-- that block's recovery point; without one the book never stands and the
+-- first fold refolds it whole.
+INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash)
+SELECT c.network, c.fold_through, k.block_hash
+FROM shop.chain_cursor c
+LEFT JOIN shop.chain_checkpoint k ON k.indexer = c.indexer AND k.network = c.network AND k.block_number = c.fold_through
+WHERE c.indexer = 'nft' AND c.fold_through IS NOT NULL;
 
 -- Every legacy Marketplace order ever created, one row per order (the order
 -- book of /v1/orders, /v1/orders/open-by-items and the activity orders

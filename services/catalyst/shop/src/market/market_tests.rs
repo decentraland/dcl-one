@@ -4406,6 +4406,28 @@ async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
         .execute(&pool)
         .await
         .unwrap();
+    // Nor one folded on a branch the walk no longer has: an earlier binary
+    // republished block 100 with another hash.
+    let republish = |hash: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "UPDATE shop.chain_checkpoint SET block_hash = $1 WHERE indexer = 'nft' AND network = 'matic' AND block_number = 100",
+            )
+            .bind(hash)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    republish("0x1111111111111111111111111111111111111111111111111111111111111111").await;
+    let (status, body) = get(app(), "/v1/orders?network=MATIC").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    republish("0x0000000000000000000000000000000000000000000000000000000000000000").await;
     // Polygon alone needs no LAND index.
     let (status, body) = get(app(), "/v1/orders?network=MATIC&sortBy=cheapest").await;
     assert_eq!(status, StatusCode::OK, "{body}");

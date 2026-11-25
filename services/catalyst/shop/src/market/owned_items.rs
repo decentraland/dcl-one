@@ -786,10 +786,19 @@ pub(crate) mod test_support {
             .execute(pool)
             .await
             .unwrap();
-            // The fold that published it folded the legacy order book too.
+            // The fold that published it folded the legacy order book too,
+            // on the branch of the walk's recovery point at block 100.
             sqlx::query(
-                "INSERT INTO shop.legacy_order_cursor (network, folded_through) VALUES ($1, 100) \
-                 ON CONFLICT (network) DO UPDATE SET folded_through = 100",
+                "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) \
+                 VALUES ('nft', $1, 100, '0x' || repeat('0', 64), 0) ON CONFLICT DO NOTHING",
+            )
+            .bind(net.db_name())
+            .execute(pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash) VALUES ($1, 100, '0x' || repeat('0', 64)) \
+                 ON CONFLICT (network) DO UPDATE SET folded_through = 100, through_hash = EXCLUDED.through_hash",
             )
             .bind(net.db_name())
             .execute(pool)

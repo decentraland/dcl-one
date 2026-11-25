@@ -34,8 +34,15 @@
 //! rebuild that follows restores those that remain. The schema's seed
 //! statement fills a database that predates the table with the same rules,
 //! up to what the nft fold had folded (`fold_through`), and records that
-//! block. A reader serves the book only while its marker reaches the
-//! published nft fold ([`caught_up`]).
+//! block. The marker also names the branch: the hash of the nft walk's
+//! recovery point at its block. Every binary's rewind drops the recovery
+//! points past its target, so a branch an earlier binary rewound and
+//! republished at the same height brings another hash. A book whose point no
+//! longer has its hash does not stand: a reader does not serve it, and the
+//! next fold deletes the network's orders and refolds them whole, as it does
+//! on a rebuild, so no order of a lost branch survives. A reader serves the
+//! book only while it stands and its marker reaches the published nft fold
+//! ([`caught_up`]).
 
 use sqlx::PgConnection;
 
@@ -96,21 +103,35 @@ WHERE (legacy_order.contract_address, legacy_order.token_id, legacy_order.seller
        EXCLUDED.expires_at, EXCLUDED.status, EXCLUDED.created_block, EXCLUDED.created_log,
        EXCLUDED.updated_block, EXCLUDED.updated_log)";
 
-/// Folds `net`'s orders on the nft fold's transaction, the nft fold's
-/// `since` (`-1`: a rebuild) lowered to the book's own marker (a book never
-/// folded rebuilds), and records the nft walk's last block as the book's
-/// marker; the rows written.
+/// Whether `net`'s book stands on `conn`'s snapshot: its marker names a
+/// recovery point of the nft walk that still has the hash it recorded.
+const STANDS_SQL: &str = "SELECT b.folded_through FROM shop.legacy_order_cursor b \
+     JOIN shop.chain_checkpoint k ON k.indexer = $2 AND k.network = b.network \
+         AND k.block_number = b.folded_through AND k.block_hash = b.through_hash \
+     WHERE b.network = $1";
+
+/// Folds `net`'s orders on the nft fold's transaction and records the nft
+/// walk's last block and hash as the book's marker; the rows written. The
+/// nft fold's `since` (`-1`: a rebuild) is lowered to the book's marker
+/// while the book stands. A rebuild, or a book that does not stand (never
+/// folded, rewound, or on a branch the nft walk no longer has), deletes the
+/// network's orders first and refolds them whole.
 pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::Result<u64> {
-    let through: Option<i64> = sqlx::query_scalar(
-        "SELECT folded_through FROM shop.legacy_order_cursor WHERE network = $1",
-    )
-    .bind(net.db_name())
-    .fetch_optional(&mut *conn)
-    .await?;
-    let since = match through {
+    let stands: Option<i64> = sqlx::query_scalar(STANDS_SQL)
+        .bind(net.db_name())
+        .bind(super::chain_walk::INDEXER_NFT)
+        .fetch_optional(&mut *conn)
+        .await?;
+    let since = match stands {
         Some(through) if since >= 0 => since.min(through),
         _ => -1,
     };
+    if since < 0 {
+        sqlx::query("DELETE FROM shop.legacy_order WHERE network = $1")
+            .bind(net.db_name())
+            .execute(&mut *conn)
+            .await?;
+    }
     let written = sqlx::query(FOLD_SQL)
         .bind(net.db_name())
         .bind(since)
@@ -119,9 +140,9 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
         .await?
         .rows_affected();
     sqlx::query(
-        "INSERT INTO shop.legacy_order_cursor (network, folded_through) \
-         SELECT network, last_block FROM shop.chain_cursor WHERE indexer = $2 AND network = $1 \
-         ON CONFLICT (network) DO UPDATE SET folded_through = EXCLUDED.folded_through",
+        "INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash) \
+         SELECT network, last_block, last_block_hash FROM shop.chain_cursor WHERE indexer = $2 AND network = $1 \
+         ON CONFLICT (network) DO UPDATE SET folded_through = EXCLUDED.folded_through, through_hash = EXCLUDED.through_hash",
     )
     .bind(net.db_name())
     .bind(super::chain_walk::INDEXER_NFT)
@@ -130,24 +151,35 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
     Ok(written)
 }
 
-/// Whether `net`'s order book reaches the published nft fold on `conn`'s
-/// snapshot: its marker at or past the nft cursor's `folded_block`. False
-/// while the book has not caught up with nft folds that ran without it.
+/// Whether `net`'s order book may be read beside the published nft fold on
+/// `conn`'s snapshot: it stands (its marker's recovery point keeps the hash
+/// it recorded) and its marker is at or past the nft cursor's
+/// `folded_block`. False while the book has not caught up with nft folds
+/// that ran without it, and when an earlier binary rewound the walk under it.
 pub async fn caught_up(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<bool> {
-    sqlx::query_scalar(
-        "SELECT COALESCE((SELECT folded_through FROM shop.legacy_order_cursor WHERE network = $1), -1) \
-             >= COALESCE((SELECT folded_block FROM shop.chain_cursor WHERE indexer = $2 AND network = $1), 0)",
+    let stands: Option<i64> = sqlx::query_scalar(STANDS_SQL)
+        .bind(net.db_name())
+        .bind(super::chain_walk::INDEXER_NFT)
+        .fetch_optional(&mut *conn)
+        .await?;
+    let Some(through) = stands else {
+        return Ok(false);
+    };
+    let published: Option<i64> = sqlx::query_scalar(
+        "SELECT folded_block FROM shop.chain_cursor WHERE indexer = $2 AND network = $1",
     )
     .bind(net.db_name())
     .bind(super::chain_walk::INDEXER_NFT)
-    .fetch_one(conn)
-    .await
+    .fetch_optional(&mut *conn)
+    .await?
+    .flatten();
+    Ok(through >= published.unwrap_or(0))
 }
 
 /// Deletes `net`'s orders of the tokens (`contracts[i]`, `tokens[i]`) a
-/// rewind to `to` deleted events of, and lowers the book's marker to `to`,
-/// in the rewind's transaction; the rebuild that follows restores the
-/// orders whose creation remains.
+/// rewind to `to` deleted events of, and lowers the book's marker to `to`
+/// with no hash, in the rewind's transaction: the book does not stand until
+/// the rebuild that follows refolds it whole.
 pub async fn rewind(
     conn: &mut PgConnection,
     net: ChainNet,
@@ -156,7 +188,7 @@ pub async fn rewind(
     tokens: &[String],
 ) -> sqlx::Result<()> {
     sqlx::query(
-        "UPDATE shop.legacy_order_cursor SET folded_through = LEAST(folded_through, $2) WHERE network = $1",
+        "UPDATE shop.legacy_order_cursor SET folded_through = LEAST(folded_through, $2), through_hash = NULL WHERE network = $1",
     )
     .bind(net.db_name())
     .bind(to)
@@ -252,20 +284,55 @@ mod tests {
         .unwrap()
     }
 
-    /// The Polygon nft cursor: walked through `last`, its fold through
-    /// `fold_through`, published at `folded`.
-    async fn nft_cursor(pool: &PgPool, last: i64, fold_through: Option<i64>, folded: Option<i64>) {
+    /// Block `n`'s hash on branch `branch`.
+    fn hash(branch: u8, n: i64) -> String {
+        format!("0x{branch:02x}{n:062x}")
+    }
+
+    /// The Polygon nft cursor on branch `branch`: walked through `last`, its
+    /// fold through `fold_through`, published at `folded`, with the
+    /// recovery points of `last` and `fold_through`.
+    async fn nft_on(
+        pool: &PgPool,
+        branch: u8,
+        last: i64,
+        fold_through: Option<i64>,
+        folded: Option<i64>,
+    ) {
         sqlx::query(
             "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id) \
-             VALUES ('nft', 'matic', 1, $1, '0x' || repeat('0', 64), $2, $3, CASE WHEN $3 IS NOT NULL THEN timezone('UTC', now()) END, true, 137) \
-             ON CONFLICT (indexer, network) DO UPDATE SET last_block = $1, fold_through = $2, folded_block = $3, folded_at = EXCLUDED.folded_at",
+             VALUES ('nft', 'matic', 1, $1, $4, $2, $3, CASE WHEN $3 IS NOT NULL THEN timezone('UTC', now()) END, true, 137) \
+             ON CONFLICT (indexer, network) DO UPDATE SET last_block = $1, last_block_hash = $4, fold_through = $2, folded_block = $3, folded_at = EXCLUDED.folded_at",
         )
         .bind(last)
         .bind(fold_through)
         .bind(folded)
+        .bind(hash(branch, last))
         .execute(pool)
         .await
         .unwrap();
+        for block in [Some(last), fold_through].into_iter().flatten() {
+            sqlx::query(
+                "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) VALUES ('nft', 'matic', $1, $2, $1) \
+                 ON CONFLICT (indexer, network, block_number) DO UPDATE SET block_hash = EXCLUDED.block_hash",
+            )
+            .bind(block)
+            .bind(hash(branch, block))
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    async fn nft_cursor(pool: &PgPool, last: i64, fold_through: Option<i64>, folded: Option<i64>) {
+        nft_on(pool, 0, last, fold_through, folded).await;
+    }
+
+    async fn stands(pool: &PgPool) -> bool {
+        let mut tx = pool.begin().await.unwrap();
+        let caught = caught_up(&mut tx, ChainNet::Matic).await.unwrap();
+        tx.rollback().await.unwrap();
+        caught
     }
 
     async fn book_through(pool: &PgPool) -> Option<i64> {
@@ -445,10 +512,17 @@ mod tests {
         seed(&db.pool).await;
         assert_eq!(book(&db.pool).await, expected());
         assert_eq!(book_through(&db.pool).await, Some(100));
+        assert!(stands(&db.pool).await);
         assert_eq!(
-            fold_matic(&db.pool, -1).await,
+            fold_matic(&db.pool, 100).await,
             0,
-            "the fold finds every seeded order as it would write it"
+            "an incremental fold over the standing seed changes nothing"
+        );
+        fold_matic(&db.pool, -1).await;
+        assert_eq!(
+            book(&db.pool).await,
+            expected(),
+            "a whole refold writes the book the seed wrote"
         );
         db.drop().await;
     }
@@ -504,6 +578,90 @@ mod tests {
         fold_matic(&db.pool, 100).await;
         assert_eq!(status(book(&db.pool).await), vec!["cancelled"]);
         assert_eq!(book_through(&db.pool).await, Some(101));
+        db.drop().await;
+    }
+
+    /// A rollout where an earlier binary, which never writes the book,
+    /// rewinds the nft walk to 90 and republishes another branch at the same
+    /// height, without the order a sale closed at 97. The book's recovery
+    /// point at 100 now has another hash: it does not stand, so no reader
+    /// takes it beside the new ownership, and the next fold, an incremental
+    /// one by its marker, deletes the network's orders and refolds them
+    /// whole: the lost branch's order is gone and the book stands again. A
+    /// republish of the same branch leaves it standing.
+    #[tokio::test]
+    async fn a_branch_an_earlier_binary_republished_at_the_same_height_drops_the_book() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_branch").await
+        else {
+            return;
+        };
+        let (m1, _) = markets();
+        order_event(
+            &db.pool,
+            10,
+            "order_created",
+            m1,
+            2,
+            0xc,
+            OTHER,
+            None,
+            Some(300),
+        )
+        .await;
+        order_event(
+            &db.pool,
+            95,
+            "order_created",
+            m1,
+            1,
+            0xa,
+            SELLER,
+            None,
+            Some(100),
+        )
+        .await;
+        order_event(
+            &db.pool,
+            97,
+            "order_successful",
+            m1,
+            1,
+            0xa,
+            SELLER,
+            Some(BUYER),
+            Some(100),
+        )
+        .await;
+        nft_on(&db.pool, 0, 100, Some(100), Some(100)).await;
+        seed(&db.pool).await;
+        let ids = |rows: Vec<Row>| rows.into_iter().map(|r| (r.0, r.1)).collect::<Vec<_>>();
+        assert_eq!(
+            ids(book(&db.pool).await),
+            vec![(id(0xa), "sold".to_string()), (id(0xc), "open".to_string())]
+        );
+        assert!(stands(&db.pool).await);
+        // The same branch republished: the book stands.
+        nft_on(&db.pool, 0, 100, Some(100), Some(100)).await;
+        assert!(stands(&db.pool).await);
+        // An earlier binary rewinds to 90 (its log and recovery points past
+        // it go) and republishes another branch at 100.
+        sqlx::query("DELETE FROM shop.nft_event WHERE network = 'matic' AND block_number > 90")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM shop.chain_checkpoint WHERE indexer = 'nft' AND network = 'matic' AND block_number > 90")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        nft_on(&db.pool, 1, 100, Some(100), Some(100)).await;
+        assert!(!stands(&db.pool).await, "same height, another branch");
+        fold_matic(&db.pool, 100).await;
+        assert_eq!(
+            ids(book(&db.pool).await),
+            vec![(id(0xc), "open".to_string())],
+            "the lost branch's sold order is gone"
+        );
+        assert!(stands(&db.pool).await, "refolded whole on the new branch");
         db.drop().await;
     }
 

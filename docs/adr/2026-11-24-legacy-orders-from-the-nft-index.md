@@ -46,24 +46,34 @@ estate order could be answered, the land-authz index ready, whose snapshot
 the read then runs on. Otherwise the route answers the unavailable envelope
 naming the index that is not ready. The v3 listings leg reads the same
 snapshot behind its owner guard, so the order book no longer has a partial
-mode. One request reads both legs at one instant, and its total counts each
-network up to the reader's cap and sums them, as the subgraph reader did.
+mode. One request reads both legs at one instant, taken once its snapshot
+is established (so a fold published while the request waited is not read as
+published in the future), and its total counts each network up to the
+reader's cap and sums them, as the subgraph reader did.
 
 A node that does not walk the index (the switch off, or a network other
 than mainnet) keeps the collections subgraph reader for its legacy orders
 and serves the v3 listings unguarded, as before.
 
 The book keeps its own marker per network (`shop.legacy_order_cursor`): the
-nft walk's last block when the order fold last ran. The fold refolds the
-orders touched past the lower of that marker and the nft fold's, so the
-book catches up with nft folds that ran without it: during a rollout, a
-replica on an earlier binary folds the nft index and never writes the book.
-A reader serves the book only while its marker reaches the published nft
-fold. A database that predates the table fills it in the schema run that
-creates it: the fold's rules over every token, bounded by what the nft fold
-had folded (`fold_through`), which becomes the book's marker. So the seed
-holds no creation, supersession or end that the ownership it is read beside
-does not hold yet, and the next fold takes the rest.
+nft walk's last block when the order fold last ran, and that block's hash.
+The fold refolds the orders touched past the lower of that block and the nft
+fold's marker, so the book catches up with nft folds that ran without it:
+during a rollout, a replica on an earlier binary folds the nft index and
+never writes the book. The hash binds the book to a branch. Every binary's
+rewind drops the walk's recovery points (`shop.chain_checkpoint`) past its
+target, so a branch an earlier binary rewound and republished, even at the
+same height, carries another hash at the book's block, and a book left
+behind past the kept points loses its point. A book whose point no longer
+carries its hash does not stand: no reader serves it, and the next fold
+deletes the network's orders and refolds them whole, as every rebuild does,
+so no order of a lost branch survives. A reader serves the book only while
+it stands and its block reaches the published nft fold. A database that
+predates the table fills it in the schema run that creates it: the fold's
+rules over every token, bounded by what the nft fold had folded
+(`fold_through`), which becomes the book's marker with its recovery point's
+hash. So the seed holds no creation, supersession or end that the ownership
+it is read beside does not hold yet, and the next fold takes the rest.
 
 ## Consequences
 

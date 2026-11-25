@@ -4238,17 +4238,27 @@ Invariants:
   the orders of a mirrored collection, the LAND and Estate registries and
   the DCLRegistrar.
 - The book's marker per network (`shop.legacy_order_cursor`) is the nft
-  walk's last block when the order fold last ran. The fold refolds the
-  orders touched past the lower of it and the nft fold's `since`, so the book
-  catches up with nft folds a replica on an earlier binary ran during a
-  rollout without writing it. A rewind lowers the marker to its point.
-- A reader serves the book only while its marker reaches the published nft
-  fold (`folded_block`), checked on the read's snapshot; otherwise the
-  `nft-index` envelope.
+  walk's last block when the order fold last ran and that block's hash. The
+  fold refolds the orders touched past the lower of the block and the nft
+  fold's `since`, so the book catches up with nft folds a replica on an
+  earlier binary ran during a rollout without writing it.
+- The book stands only while the nft walk's recovery point at its block
+  (`shop.chain_checkpoint`) carries its hash. Every binary's rewind drops the
+  points past its target, so a branch republished at the same height carries
+  another hash; a book left behind past the 64 kept points loses its point.
+  A fold over a book that does not stand, and every rebuild (`since = -1`),
+  deletes the network's orders and refolds them whole, in the nft fold's
+  transaction, so no order of a lost branch survives. This binary's rewind
+  lowers the block to its target and clears the hash.
+- A reader serves the book only while it stands and its block reaches the
+  published nft fold (`folded_block`), checked on the read's snapshot;
+  otherwise the `nft-index` envelope.
 - A database that predates the table fills it in the schema run that creates
   it. The seed statements after each `CREATE TABLE` (follow-ups, so they run
-  only then) record each network's nft `fold_through` as the book's marker,
-  then apply the fold's rules to every token up to it. They hold no
+  only then) record each network's nft `fold_through` and its recovery
+  point's hash as the book's marker (no point: the book does not stand and
+  the first fold refolds it whole), then apply the fold's rules to every
+  token up to that block. They hold no
   creation, supersession or end past what the nft fold folded; the next fold
   takes the rest.
 
