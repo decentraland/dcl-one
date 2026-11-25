@@ -745,7 +745,7 @@
   },
   "library/ui/components/Pager/Pager.module.css": {
     "primitives": 0,
-    "tokens": 7
+    "tokens": 9
   },
   "library/ui/components/Panel/Panel.module.css": {
     "primitives": 0,
@@ -781,7 +781,7 @@
   },
   "library/ui/components/Slider/Slider.module.css": {
     "primitives": 0,
-    "tokens": 24
+    "tokens": 25
   },
   "library/ui/components/Spinner/Spinner.module.css": {
     "primitives": 0,

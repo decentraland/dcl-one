@@ -4428,7 +4428,7 @@
           }
         },
         "library/ui/figma/test/image-metadata.test.ts": {
-          "sha256": "7fb8647741150cab4dbbe84cbb0750df7b1529fb037faed0e2a26c9c18fc32ba",
+          "sha256": "d22b53fcdf285cde112333706ef769c8993e8fe1d26e53fb5e67ae1f3bac749b",
           "fds": null,
           "deviation": [
             "dcl-one-only",

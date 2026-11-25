@@ -1,7 +1,7 @@
 @layer dcl.reset, dcl.foundations, dcl.components;
 
 /* Not in Figma: the Explorer HUD's sign-in field. 46px tall with 12px corners; the ring sits 6px outside it.
-   Its focused fill, the ring's 30 % white and its red, the button's pressed ruby and 9.6px corners, the error
+   Its focused fill, the ring's 30 % white and its red, the button's hover ruby and 9.6px corners, the error
    text's pink and the 140ms timing have no token. */
 @layer dcl.components {
   .root {
