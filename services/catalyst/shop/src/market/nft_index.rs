@@ -28,6 +28,38 @@
 //! marker in the transaction that commits its rows.
 
 mod deployments;
+
+/// The paired Ethereum and Polygon catalogue served by this database.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Catalogue {
+    Mainnet,
+    Testnet,
+}
+
+impl Catalogue {
+    pub fn from_land(land: crate::land_authz::LandNetwork) -> Self {
+        if land == crate::land_authz::LAND_SEPOLIA {
+            Self::Testnet
+        } else {
+            Self::Mainnet
+        }
+    }
+
+    pub fn chain_id(self, net: ChainNet) -> i64 {
+        match self {
+            Self::Mainnet => net.chain_id(),
+            Self::Testnet => net.testnet_chain_id(),
+        }
+    }
+
+    pub fn registrar(self) -> &'static str {
+        match self {
+            Self::Mainnet => DCL_REGISTRAR,
+            Self::Testnet => deployments::REGISTRAR_SEPOLIA,
+        }
+    }
+}
+
 mod estate_repair;
 
 use deployments::Deployments;
@@ -1058,7 +1090,9 @@ impl ChainIndex for NftIndex {
             .await?;
         // The bids fold inferred sellers from these transfers: it infers
         // again the seller of every bid created past the rewind.
-        if self.net == ChainNet::Matic {
+        if self.net == ChainNet::Matic
+            || self.deployments.chain_id == ChainNet::Ethereum.testnet_chain_id()
+        {
             sqlx::query(
                 "INSERT INTO shop.bid_seller_recheck (network, from_block) VALUES ($1, $2)",
             )
@@ -1240,7 +1274,7 @@ pub async fn status(pool: &PgPool, settings: &chain_walk::IndexSettings) -> serd
         .unwrap_or(0);
         out.insert(net.db_name().to_string(), json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready_on(&c, settings.chain_id(net), chrono::Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,
+            "ready": chain_walk::fresh_fold_on(&c, settings.chain_id(net), chrono::Utc::now()).is_some(), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,
         }))));
     }
     serde_json::Value::Object(out)

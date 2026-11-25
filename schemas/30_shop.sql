@@ -244,6 +244,11 @@ CREATE TABLE shop.mirror_state (
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     chain_id bigint,
     pass_block_hash text,
+    marks_item_rows boolean NOT NULL DEFAULT false,
+    CONSTRAINT mirror_state_verified_item_rows CHECK (
+        mirror <> 'items' OR marks_item_rows OR
+        (pass_block_hash IS NULL AND COALESCE(chain_id,0) NOT IN (11155111,80002))
+    ),
     PRIMARY KEY (mirror, network),
     CONSTRAINT mirror_state_known_mirror CHECK (mirror IN ('collections', 'items')),
     CONSTRAINT mirror_state_network_known CHECK (network IN ('ethereum', 'matic'))

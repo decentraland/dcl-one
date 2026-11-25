@@ -11,6 +11,9 @@
 //! `royaltiesCutPerMillion()` once at the job's start and warns on a
 //! difference.
 
+//! Sepolia and Amoy publish raw bid and mint evidence. The economic
+//! publication for priced sales and settlements has its own coverage rule.
+
 use std::collections::HashMap;
 
 use alloy_primitives::U256;
@@ -56,26 +59,45 @@ pub const BID_V2_MATIC_START_BLOCK: u64 = 22_514_900;
 #[derive(Clone, Copy)]
 pub struct SalesIndex {
     chain: i64,
-    store: &'static str,
+    polygon: Option<CollectionVenues>,
     bid: &'static str,
     bid_start: u64,
+}
+#[derive(Clone, Copy)]
+struct CollectionVenues {
+    store: &'static str,
     market_v2: &'static str,
 }
 
 pub const POLYGON: SalesIndex = SalesIndex {
     chain: 137,
-    store: STORE_MATIC,
+    polygon: Some(CollectionVenues {
+        store: STORE_MATIC,
+        market_v2: "0x480a0f4e360e8964e68858dd231c2922f1df45ef",
+    }),
     bid: BID_V2_MATIC,
     bid_start: BID_V2_MATIC_START_BLOCK,
-    market_v2: "0x480a0f4e360e8964e68858dd231c2922f1df45ef",
 };
 
 pub const AMOY: SalesIndex = SalesIndex {
     chain: 80_002,
-    store: "0xe36abc9ec616c83caaa386541380829106149d68",
+    polygon: Some(CollectionVenues {
+        store: "0xe36abc9ec616c83caaa386541380829106149d68",
+        market_v2: "0x0c8ad1f6aadf89d2eb19f01a100a6143108fe2b0",
+    }),
     bid: "0x4b66eab79cc03a96fb6275cfcdf23c0db431606d",
     bid_start: 5_706_662,
-    market_v2: "0x0c8ad1f6aadf89d2eb19f01a100a6143108fe2b0",
+};
+
+/// marketplace-squid-core@85c6832e96e5459b37f0f315b8e384693684e12d,
+/// src/eth/addresses/sepolia.ts and abi/ERC721Bid.json. Its three bid
+/// events have the same signatures and indexed fields as the Polygon ABI.
+/// Creation receipt 0x44be8623150396ab165f8d1d5bd80e073c32deb0a3b485bcc75f7e8bca360a1f.
+pub const SEPOLIA: SalesIndex = SalesIndex {
+    chain: 11_155_111,
+    polygon: None,
+    bid: "0x2c2835b95852fd975e087b3b25297322728792e2",
+    bid_start: 3_831_237,
 };
 
 impl SalesIndex {
@@ -83,6 +105,7 @@ impl SalesIndex {
         match chain {
             137 => Some(POLYGON),
             80_002 => Some(AMOY),
+            11_155_111 => Some(SEPOLIA),
             _ => None,
         }
     }
@@ -128,7 +151,7 @@ fn decode_sale(
     log: &RpcLog,
     block_time: i64,
 ) -> Result<Option<SaleEvent>, DecodeError> {
-    let store = index.store;
+    let store = index.polygon.map(|venues| venues.store);
     let (block, index) = chain_walk::log_position(log);
     let index = index as i32;
     let err = |what: &'static str, why: String| DecodeError {
@@ -188,7 +211,7 @@ fn decode_sale(
             let (_issued, caller) =
                 <(sol_data::Uint<256>, sol_data::Address)>::abi_decode_params(&data)
                     .map_err(|e| err(kind, e.to_string()))?;
-            if format!("{caller:#x}") != store {
+            if Some(format!("{caller:#x}").as_str()) != store {
                 return Ok(None);
             }
             SaleEvent {
@@ -329,6 +352,7 @@ fn price_at(store: &str, rows: &mut [SaleEvent], logs: &[RpcLog]) {
 
 pub async fn insert_events(
     conn: &mut PgConnection,
+    net: ChainNet,
     rows: &[SaleEvent],
 ) -> Result<usize, sqlx::Error> {
     let mut written = 0;
@@ -341,7 +365,7 @@ pub async fn insert_events(
                   AS u(b, i, t, k, em, c, tok, it, bid, by, se, p, x, h) \
              ON CONFLICT (network, block_number, log_index) DO NOTHING",
         )
-        .bind(ChainNet::Matic.db_name())
+        .bind(net.db_name())
         .bind(chunk.iter().map(|r| r.block_number).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.log_index).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.block_time).collect::<Vec<_>>())
@@ -471,7 +495,7 @@ pub async fn fold(
     let (rechecks, recheck_from): (Option<Vec<i64>>, Option<i64>) = sqlx::query_as(
         "SELECT array_agg(id), min(from_block) FROM shop.bid_seller_recheck WHERE network = $1",
     )
-    .bind(ChainNet::Matic.db_name())
+    .bind(owner.net.db_name())
     .fetch_one(&mut *tx)
     .await?;
     sqlx::query("SET LOCAL statement_timeout = '3600s'")
@@ -479,7 +503,7 @@ pub async fn fold(
         .await?;
     chain_walk::analyze_if_stale(&mut tx, "shop", "sale_event", since < 0).await?;
     let bids = sqlx::query(FOLD_BIDS_SQL)
-        .bind(ChainNet::Matic.db_name())
+        .bind(owner.net.db_name())
         .bind(since)
         .bind(owner.chain_id)
         .bind(chain_walk::INDEXER_NFT)
@@ -513,11 +537,16 @@ impl ChainIndex for SalesIndex {
     }
 
     fn net(&self) -> ChainNet {
-        ChainNet::Matic
+        if self.chain == SEPOLIA.chain {
+            ChainNet::Ethereum
+        } else {
+            ChainNet::Matic
+        }
     }
 
     fn start_block(&self) -> u64 {
         match self.chain {
+            11_155_111 => self.bid_start,
             80_002 => 5_706_656,
             _ => nft_index::start_block(ChainNet::Matic),
         }
@@ -530,8 +559,10 @@ impl ChainIndex for SalesIndex {
         to: u64,
         anchor: (u64, i64),
     ) -> anyhow::Result<Vec<LogGroup>> {
-        let bound = chain_walk::time_at_most(ChainNet::Matic, anchor, to);
-        let collections: Vec<String> = sqlx::query_scalar(
+        let mut groups = Vec::new();
+        if let Some(venues) = self.polygon {
+            let bound = chain_walk::time_at_most(ChainNet::Matic, anchor, to);
+            let collections: Vec<String> = sqlx::query_scalar(
             "SELECT contract_address FROM shop.collections WHERE network = $1 AND created_at <= $2 AND chain_id = $3 AND ($4 OR testnet_verified) ORDER BY contract_address",
         )
         .bind(ChainNet::Matic.db_name())
@@ -540,18 +571,18 @@ impl ChainIndex for SalesIndex {
         .bind(self.chain == ChainNet::Matic.chain_id())
         .fetch_all(pool)
         .await?;
-        let mut groups = Vec::new();
-        if !collections.is_empty() {
+            if !collections.is_empty() {
+                groups.push(LogGroup {
+                    addresses: collections,
+                    topics: json!([[TOPIC_ISSUE]]),
+                });
+            }
+            // The store's Bought prices the mints of its transaction.
             groups.push(LogGroup {
-                addresses: collections,
-                topics: json!([[TOPIC_ISSUE]]),
+                addresses: vec![venues.store.to_string()],
+                topics: json!([[TOPIC_BOUGHT]]),
             });
         }
-        // The store's Bought prices the mints of its transaction.
-        groups.push(LogGroup {
-            addresses: vec![self.store.to_string()],
-            topics: json!([[TOPIC_BOUGHT]]),
-        });
         if to >= self.bid_start {
             groups.push(LogGroup {
                 addresses: vec![self.bid.to_string()],
@@ -579,8 +610,10 @@ impl ChainIndex for SalesIndex {
                 }
             }
         }
-        price_at(self.store, &mut rows, logs);
-        Ok(insert_events(conn, &rows).await?)
+        if let Some(venues) = self.polygon {
+            price_at(venues.store, &mut rows, logs);
+        }
+        Ok(insert_events(conn, self.net(), &rows).await?)
     }
 
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
@@ -592,7 +625,7 @@ impl ChainIndex for SalesIndex {
             "WITH gone AS (DELETE FROM shop.sale_event WHERE network = $1 AND block_number > $2 RETURNING contract_address, token_id, buyer, kind) \
              SELECT DISTINCT contract_address, token_id::text, buyer FROM gone WHERE kind <> 'mint'",
         )
-        .bind(ChainNet::Matic.db_name())
+        .bind(self.net().db_name())
         .bind(to)
         .fetch_all(&mut *conn)
         .await?;
@@ -608,7 +641,7 @@ impl ChainIndex for SalesIndex {
             "DELETE FROM shop.nft_bid b USING UNNEST($2::text[], $3::text[], $4::text[]) AS g(c, t, bd) \
              WHERE b.network = $1 AND b.contract_address = g.c AND b.token_id = g.t::numeric AND b.bidder = g.bd",
         )
-        .bind(ChainNet::Matic.db_name())
+        .bind(self.net().db_name())
         .bind(&contracts)
         .bind(&tokens)
         .bind(&bidders)
@@ -653,6 +686,9 @@ pub async fn check_venues(
     pool: &PgPool,
     index: SalesIndex,
 ) -> anyhow::Result<Vec<VenueCheck>> {
+    let Some(venues) = index.polygon else {
+        return Ok(Vec::new());
+    };
     if index.chain == AMOY.chain {
         // Existing databases already have sale_venue; the schema object pass
         // only seeds a newly created table. Preserve any existing pinned cut.
@@ -661,9 +697,9 @@ pub async fn check_venues(
              VALUES ('matic', $1, 'marketplace_v2', 25000), ('matic', $2, 'bid_v2', 25000), \
                     ('matic', $3, 'store', 0) ON CONFLICT (network, address) DO NOTHING",
         )
-        .bind(index.market_v2)
+        .bind(venues.market_v2)
         .bind(index.bid)
-        .bind(index.store)
+        .bind(venues.store)
         .execute(pool)
         .await?;
     }
@@ -672,7 +708,7 @@ pub async fn check_venues(
          WHERE network = $1 AND address IN ($2, $3) AND kind IN ('marketplace_v2', 'bid_v2') ORDER BY address",
     )
     .bind(ChainNet::Matic.db_name())
-    .bind(index.market_v2)
+    .bind(venues.market_v2)
     .bind(index.bid)
     .fetch_all(pool)
     .await?;
@@ -720,18 +756,21 @@ pub async fn ready(pool: &PgPool, now: DateTime<Utc>) -> bool {
         .is_some()
 }
 
-/// The index's state for the status route and the tests.
-pub async fn status(pool: &PgPool) -> Value {
-    let c = chain_walk::cursor(pool, INDEXER_SALES, ChainNet::Matic)
-        .await
-        .ok()
-        .flatten();
-    json!({
-        "matic": c.map(|c| json!({
+/// Per-network publication for the catalogue served by this process.
+pub async fn status(pool: &PgPool, settings: &chain_walk::IndexSettings) -> Value {
+    let mut out = serde_json::Map::new();
+    let now = Utc::now();
+    for net in ChainNet::ALL {
+        let cursor = chain_walk::cursor(pool, INDEXER_SALES, net)
+            .await
+            .ok()
+            .flatten();
+        out.insert(net.db_name().into(),json!(cursor.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
-        })),
-    })
+            "ready": chain_walk::fresh_fold_on(&c,settings.chain_id(net), now).is_some(), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
+        }))));
+    }
+    Value::Object(out)
 }
 
 #[cfg(test)]

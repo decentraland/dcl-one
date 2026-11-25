@@ -2036,6 +2036,63 @@ async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read(
 }
 
 #[tokio::test]
+async fn testnet_item_verification_requires_a_new_complete_pass_after_upgrade() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    const MIGRATION: &str = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0072_shop_verified_item_rows.sql"
+    ));
+    sqlx::raw_sql("ALTER TABLE shop.mirror_state DROP CONSTRAINT mirror_state_verified_item_rows;
+        INSERT INTO shop.mirror_state(mirror,network,source_url,chain_id,last_complete_pass_at,pass_block_hash,cursor_id)
+        VALUES ('items','matic','amoy',80002,now(),'old-hash','old-key'),
+               ('items','ethereum','mainnet',1,now(),NULL,'eth-key'),
+               ('collections','matic','amoy',80002,now(),'old-hash','collection-key')").execute(&db.pool).await.unwrap();
+    sqlx::raw_sql(MIGRATION).execute(&db.pool).await.unwrap();
+    let rows: Vec<(String,String,Option<i64>,Option<String>,bool)> = sqlx::query_as("SELECT mirror,network,chain_id,cursor_id,last_complete_pass_at IS NOT NULL FROM shop.mirror_state ORDER BY mirror,network").fetch_all(&db.pool).await.unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "collections".into(),
+                "matic".into(),
+                Some(80002),
+                Some("collection-key".into()),
+                true
+            ),
+            (
+                "items".into(),
+                "ethereum".into(),
+                Some(1),
+                Some("eth-key".into()),
+                true
+            ),
+            ("items".into(), "matic".into(), None, None, true)
+        ]
+    );
+    // The old writer's conflict insert cannot mark an unverified copy ready.
+    let old = sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url,chain_id,pass_block_hash) VALUES ('items','matic','amoy',80002,'pin')
+        ON CONFLICT (mirror,network) DO UPDATE SET chain_id=EXCLUDED.chain_id, pass_block_hash=EXCLUDED.pass_block_hash").execute(&db.pool).await.unwrap_err();
+    assert_eq!(
+        old.as_database_error().unwrap().constraint(),
+        Some("mirror_state_verified_item_rows")
+    );
+    sqlx::query("UPDATE shop.mirror_state SET chain_id=80002,marks_item_rows=true,pass_block_hash='proven' WHERE mirror='items' AND network='matic'").execute(&db.pool).await.unwrap();
+    sqlx::raw_sql(MIGRATION).execute(&db.pool).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT pass_block_hash FROM shop.mirror_state WHERE mirror='items' AND network='matic'"
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap(),
+        "proven"
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn an_unbound_mirror_keyset_is_adopted_only_for_the_same_mainnet_source() {
     use super::{
         graph::Network,
@@ -2070,7 +2127,7 @@ async fn an_unbound_mirror_keyset_is_adopted_only_for_the_same_mainnet_source() 
             .cursor_id
             .is_none()
     );
-    sqlx::query("UPDATE shop.mirror_state SET chain_id=80002")
+    sqlx::query("UPDATE shop.mirror_state SET chain_id=80002, marks_item_rows=true")
         .execute(&db.pool)
         .await
         .unwrap();
@@ -4962,6 +5019,46 @@ fn bid_id(byte: u8) -> String {
 }
 
 #[tokio::test]
+async fn sepolia_native_bids_walk_only_the_deployed_venue_and_fold_on_ethereum() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let index = sales_index::SEPOLIA;
+    let start = index.start_block();
+    assert_eq!(start, 3_831_237);
+    let token = v2_token(0, 1);
+    let bid = "0x2c2835b95852fd975e087b3b25297322728792e2";
+    let mut created =
+        sales_index::tests::bid_created_log(ALICE, token, BOB, 17, 19, 1_700_000_000, start, 0);
+    let mut accepted =
+        sales_index::tests::bid_accepted_log(ALICE, token, BOB, CARL, 17, 19, start + 1, 1);
+    let polygon = created.clone();
+    created.address = bid.into();
+    accepted.address = bid.into();
+    let chain = FakeChain::new(start + 100, vec![created, accepted, polygon], 10_000, 100);
+    chain.chain_id.store(11_155_111, Ordering::SeqCst);
+    let url = serve(chain).await;
+    let state = state_over(db.pool.clone(), &url, index_settings(100, 10_000), false);
+    assert!(pass(&state, &url, &index).await.published);
+    let rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT network,status,seller FROM shop.nft_bid")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![("ethereum".into(), "accepted".into(), CARL.into())]
+    );
+    let emitted: Vec<String> =
+        sqlx::query_scalar("SELECT emitter FROM shop.sale_event ORDER BY block_number,log_index")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(emitted, vec![bid, bid]);
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn amoy_sales_use_the_local_store_bid_and_collection_chain() {
     let Some(db) = ScratchDb::create().await else {
         return;
@@ -5282,7 +5379,7 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
     );
     assert!(publish(&st, &url, &POLYGON_SALES).await.published);
     assert!(sales_index::ready(&db.pool, chrono::Utc::now()).await);
-    let status = sales_index::status(&db.pool).await;
+    let status = sales_index::status(&db.pool, &IndexSettings::default()).await;
     assert_eq!(status["matic"]["ready"], true, "{status}");
 
     let kinds: Vec<(String, i64)> = sqlx::query_as(

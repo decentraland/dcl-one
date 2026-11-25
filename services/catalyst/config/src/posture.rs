@@ -782,8 +782,22 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn walks_catalogue(config: &Config) -> bool {
+    let market = &config.marketplace;
+    market.marketplace_nft_index_enabled
+        && matches!(
+            (
+                config.node.eth_network.trim(),
+                market.marketplace_index_chain_id_ethereum,
+                market.marketplace_index_chain_id_matic
+            ),
+            ("mainnet" | "ethereum" | "ethereum-mainnet", 1, 137)
+                | ("sepolia" | "ethereum-sepolia", 11155111, 80002)
+        )
+}
+
 /// A DCL NAME world's owner is its NAME's holder. A node that walks the nft
-/// index (`MARKETPLACE_NFT_INDEX_ENABLED` on mainnet) reads it there, so
+/// index (`MARKETPLACE_NFT_INDEX_ENABLED` for its chain pair) reads it there, so
 /// world writes need nothing more: while the index is not current, a DCL
 /// NAME world's owner writes answer 503. A node that does not reads
 /// `MARKETPLACE_SUBGRAPH_URL`; without it no DCL NAME world has an owner, so
@@ -792,8 +806,7 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
 /// and serves personal worlds only. The indexer takes no world writes, so
 /// only `serve` runs this.
 pub fn worlds_names_reader(config: &Config) -> anyhow::Result<Option<&'static str>> {
-    let walks = config.marketplace.marketplace_nft_index_enabled
-        && config.node.eth_network.trim() == "mainnet";
+    let walks = walks_catalogue(config);
     if !config.worlds.worlds_writes_enabled
         || walks
         || Config::non_empty(&config.market_upstreams.marketplace_subgraph_url).is_some()
@@ -803,7 +816,7 @@ pub fn worlds_names_reader(config: &Config) -> anyhow::Result<Option<&'static st
     if !config.validator.ignore_blockchain_access_checks {
         anyhow::bail!(
             "WORLDS_WRITES_ENABLED=true needs a DCL NAME holder reader: the nft index \
-             (MARKETPLACE_NFT_INDEX_ENABLED=true on mainnet) or MARKETPLACE_SUBGRAPH_URL. Set one, or \
+             (MARKETPLACE_NFT_INDEX_ENABLED=true for the configured chain pair) or MARKETPLACE_SUBGRAPH_URL. Set one, or \
              IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true on a node without chain access"
         );
     }
@@ -813,18 +826,17 @@ pub fn worlds_names_reader(config: &Config) -> anyhow::Result<Option<&'static st
 }
 
 /// Wearable and emote ownership is read from the nft index alone, which a
-/// node walks with `MARKETPLACE_NFT_INDEX_ENABLED` on mainnet. A node that
+/// node walks with `MARKETPLACE_NFT_INDEX_ENABLED` for its catalogue pair. A node that
 /// names a collections subgraph and does not walk the index gets the
 /// warning returned here: the subgraph checks no ownership.
 pub fn unchecked_profile_items(config: &Config) -> Option<&'static str> {
-    let walks = config.marketplace.marketplace_nft_index_enabled
-        && config.node.eth_network.trim() == "mainnet";
+    let walks = walks_catalogue(config);
     let upstreams = &config.market_upstreams;
     let subgraph = Config::non_empty(&upstreams.eth_collections_subgraph_url).is_some()
         || Config::non_empty(&upstreams.matic_collections_subgraph_url).is_some();
     (subgraph && !walks).then_some(
         "a collections subgraph URL is set, but this node does not walk the nft index \
-         (MARKETPLACE_NFT_INDEX_ENABLED off, or ETH_NETWORK other than mainnet): the subgraphs check \
+         (MARKETPLACE_NFT_INDEX_ENABLED off, or ETH_NETWORK and the chain pair disagree): the subgraphs check \
          no ownership, so profiles and outfits are served as deployed and the owned wearable and \
          emote routes answer the nft-index unavailable envelope",
     )
@@ -839,7 +851,7 @@ pub fn unchecked_profile_items(config: &Config) -> Option<&'static str> {
 /// which may not be blanked there, and the items are served as deployed. An
 /// island, with no ownership source, serves both as deployed.
 fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<()> {
-    if config.node.eth_network.trim() != "mainnet" {
+    if !walks_catalogue(config) && config.node.eth_network.trim() != "mainnet" {
         if Config::non_empty(&config.market_upstreams.marketplace_subgraph_url).is_none() {
             anyhow::bail!(
                 "{ENV}=mirror off mainnet checks every profile's names against their owner through \

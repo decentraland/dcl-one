@@ -174,10 +174,10 @@ pub async fn save(pool: &PgPool, c: &Cursor) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO shop.mirror_state \
              (mirror, network, source_url, pass_started_at, cursor_updated_at, cursor_id, pages_fetched, \
-              rows_upserted, last_complete_pass_at, last_complete_pass_rows, last_error, chain_id, pass_block_hash, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, timezone('UTC', now())) \
+              rows_upserted, last_complete_pass_at, last_complete_pass_rows, last_error, chain_id, pass_block_hash, marks_item_rows, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, timezone('UTC', now())) \
          ON CONFLICT (mirror, network) DO UPDATE SET \
-             source_url = EXCLUDED.source_url, chain_id = EXCLUDED.chain_id, pass_block_hash = EXCLUDED.pass_block_hash, pass_started_at = EXCLUDED.pass_started_at, \
+             source_url = EXCLUDED.source_url, marks_item_rows = EXCLUDED.marks_item_rows, chain_id = EXCLUDED.chain_id, pass_block_hash = EXCLUDED.pass_block_hash, pass_started_at = EXCLUDED.pass_started_at, \
              cursor_updated_at = EXCLUDED.cursor_updated_at, cursor_id = EXCLUDED.cursor_id, \
              pages_fetched = EXCLUDED.pages_fetched, rows_upserted = EXCLUDED.rows_upserted, \
              last_complete_pass_at = EXCLUDED.last_complete_pass_at, \
@@ -197,6 +197,7 @@ pub async fn save(pool: &PgPool, c: &Cursor) -> Result<(), sqlx::Error> {
     .bind(&c.last_error)
     .bind(c.chain_id)
     .bind(&c.pass_block_hash)
+    .bind(c.mirror == Mirror::Items && (c.pass_block_hash.is_some() || c.chain_id == Some(super::chain_walk::ChainNet::from(c.network).testnet_chain_id())))
     .execute(pool)
     .await?;
     Ok(())

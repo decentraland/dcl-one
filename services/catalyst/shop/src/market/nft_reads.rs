@@ -32,6 +32,8 @@ use super::catalog::{
     ACCESSORY_CATEGORIES, Builder, HEAD_CATEGORIES, escape_like, unified_trades_cte,
 };
 use super::chain_walk::ChainNet;
+use super::nft_index::Catalogue;
+#[cfg(test)]
 use super::nft_index::DCL_REGISTRAR;
 use super::nfts::{
     EmoteData, EnsData, EstateData, EstateParcel, Nft, NftData, NftFilters, NftResult, NftSortBy,
@@ -101,7 +103,7 @@ pub fn sources_for(f: &NftFilters) -> Sources {
 }
 
 /// Required sources for a walker page that can return a parcel or estate.
-pub(super) fn land_page_sources(f: &NftFilters) -> Option<Sources> {
+pub(super) fn land_page_sources(f: &NftFilters, land: LandNetwork) -> Option<Sources> {
     let sources = sources_for(f);
     if sources.land {
         return Some(sources);
@@ -121,11 +123,11 @@ pub(super) fn land_page_sources(f: &NftFilters) -> Option<Sources> {
     }
     let mut contracts = Sources::default();
     for address in &f.contract_addresses {
-        if address.eq_ignore_ascii_case(crate::land_authz::LAND_MAINNET.land_registry)
-            || address.eq_ignore_ascii_case(crate::land_authz::LAND_MAINNET.estate_registry)
+        if address.eq_ignore_ascii_case(land.land_registry)
+            || address.eq_ignore_ascii_case(land.estate_registry)
         {
             contracts.land = true;
-        } else if address.eq_ignore_ascii_case(DCL_REGISTRAR) {
+        } else if address.eq_ignore_ascii_case(Catalogue::from_land(land).registrar()) {
             contracts.names = true;
         } else {
             contracts.collections = true;
@@ -307,12 +309,17 @@ async fn open_read_conn(
         .execute(&mut *conn)
         .await
         .map_err(ReadConnError::Pool)?;
-    check_nft(&mut conn, f, sources)
-        .await
-        .map_err(|e| match e {
-            owned_items::ReadError::NotReady(source, m) => ReadConnError::NftUnavailable(source, m),
-            owned_items::ReadError::Db(e) => ReadConnError::Pool(e),
-        })?;
+    check_nft(
+        &mut conn,
+        land.map(Catalogue::from_land).unwrap_or(Catalogue::Mainnet),
+        f,
+        sources,
+    )
+    .await
+    .map_err(|e| match e {
+        owned_items::ReadError::NotReady(source, m) => ReadConnError::NftUnavailable(source, m),
+        owned_items::ReadError::Db(e) => ReadConnError::Pool(e),
+    })?;
     Ok(conn)
 }
 
@@ -353,13 +360,14 @@ fn nft_networks(f: &NftFilters, sources: Sources) -> (Vec<ChainNet>, Vec<ChainNe
 /// The nft index rule of a read of `sources` for `f`, on `conn`.
 async fn check_nft(
     conn: &mut PgConnection,
+    catalogue: Catalogue,
     f: &NftFilters,
     sources: Sources,
 ) -> Result<(), owned_items::ReadError> {
     let (collections, others) = nft_networks(f, sources);
     let now = Utc::now();
-    owned_items::check(conn, &collections, Rule::Fresh, true, now).await?;
-    owned_items::check(conn, &others, Rule::Fresh, false, now).await
+    owned_items::check(conn, catalogue, &collections, Rule::Fresh, true, now).await?;
+    owned_items::check(conn, catalogue, &others, Rule::Fresh, false, now).await
 }
 
 /// [`nft_prices`]'s error when the LAND index stopped being ready after
@@ -407,7 +415,13 @@ pub async fn require_ready(
 ) -> Result<(), Response> {
     let checked = async {
         let mut conn = pool.acquire().await?;
-        check_nft(&mut conn, f, sources).await
+        check_nft(
+            &mut conn,
+            land.map(Catalogue::from_land).unwrap_or(Catalogue::Mainnet),
+            f,
+            sources,
+        )
+        .await
     };
     // A database error reads as not ready: the envelope, never a guess.
     checked.await.map_err(|e| match e {
@@ -429,7 +443,16 @@ pub async fn require_ready(
 
 /// The collection candidates of one network (a v2 token by its item id, a
 /// v1 token by its collection URN and wearable id).
-fn collection_source(net: ChainNet) -> String {
+fn collection_source(net: ChainNet, catalogue: Catalogue) -> String {
+    let registrar = catalogue.registrar();
+    let proof = if catalogue == Catalogue::Testnet {
+        let chain = catalogue.chain_id(net);
+        format!(
+            "AND c.testnet_verified AND i.testnet_verified AND c.chain_id={chain} AND i.chain_id={chain}"
+        )
+    } else {
+        String::new()
+    };
     let item_join = match net {
         ChainNet::Matic => {
             "JOIN shop.items i ON i.network = n.network AND i.contract_address = n.contract_address AND i.item_id = n.item_id \
@@ -448,12 +471,13 @@ fn collection_source(net: ChainNet) -> String {
                 c.name AS collection_name, NULL::int AS x, NULL::int AS y, NULL::text AS parcel_estate_id, NULL::text AS parcel_estate_name, NULL::int AS estate_size, \
                 NULL::int AS distance_to_plaza, NULL::boolean AS adjacent_to_road \
          FROM shop.nft n {item_join} \
-         WHERE n.network = '{net}' AND n.owner IS NOT NULL AND n.contract_address <> '{DCL_REGISTRAR}'",
+         WHERE n.network = '{net}' AND n.owner IS NOT NULL AND n.contract_address <> '{registrar}' {proof}",
         net = net.db_name()
     )
 }
 
-fn names_source() -> String {
+fn names_source(catalogue: Catalogue) -> String {
+    let registrar = catalogue.registrar();
     format!(
         "SELECT n.network, n.contract_address, n.token_id, 'ens' AS category, n.owner, n.ens_subdomain AS name, '' AS image, \
                 n.minted_at AS created_at, n.transferred_at AS updated_at, n.sold_at, NULL::numeric AS issued_id, NULL::numeric AS item_blockchain_id, \
@@ -462,7 +486,7 @@ fn names_source() -> String {
                 NULL::boolean AS emote_has_geometry, NULL::text AS emote_outcome_type, NULL::text AS creator, NULL::text AS collection_name, \
                 NULL::int AS x, NULL::int AS y, NULL::text AS parcel_estate_id, NULL::text AS parcel_estate_name, NULL::int AS estate_size, \
                 NULL::int AS distance_to_plaza, NULL::boolean AS adjacent_to_road \
-         FROM shop.nft n WHERE n.network = 'ethereum' AND n.contract_address = '{DCL_REGISTRAR}' AND n.owner IS NOT NULL"
+         FROM shop.nft n WHERE n.network = 'ethereum' AND n.contract_address = '{registrar}' AND n.owner IS NOT NULL"
     )
 }
 
@@ -851,6 +875,7 @@ fn candidate_legs(
     from: Candidates,
     orders: bool,
 ) -> (String, Vec<String>) {
+    let catalogue = land.map(Catalogue::from_land).unwrap_or(Catalogue::Mainnet);
     let restricted = orders
         && match from {
             Candidates::Every => false,
@@ -863,7 +888,10 @@ fn candidate_legs(
         ("", String::new())
     } else {
         let ids = b.bind_strings(&f.unclaimed_land);
-        let venue = crate::rentals::index::RENTALS_MAINNET;
+        let venue = land
+            .and_then(|net| crate::rentals::index::RentalsChain::from_land_network(net.network))
+            .map(|chain| chain.venue())
+            .unwrap_or(crate::rentals::index::RENTALS_MAINNET);
         (
             ", FALSE AS held_for_lessor",
             format!(
@@ -876,11 +904,11 @@ fn candidate_legs(
         parts.extend(
             collection_networks(f)
                 .into_iter()
-                .map(|net| (collection_source(net), false, other_custody)),
+                .map(|net| (collection_source(net, catalogue), false, other_custody)),
         );
     }
     if sources.names {
-        parts.push((names_source(), false, other_custody));
+        parts.push((names_source(catalogue), false, other_custody));
     }
     if sources.land {
         parts.push((
@@ -1151,8 +1179,12 @@ fn row_to_result(
     r: &sqlx::postgres::PgRow,
     estates: &std::collections::HashMap<String, Vec<EstateParcel>>,
     land_image_base: &str,
+    catalogue: Catalogue,
 ) -> NftResult {
     let network = network_of(&r.get::<String, _>("network"));
+    let chain_id =
+        super::wire::ChainId::try_from(catalogue.chain_id(network.graph().into()) as u64)
+            .expect("supported NFT catalogue chain");
     let category: String = r.get("category");
     let contract: String = r.get("contract_address");
     let token_id: String = r.get("token_text");
@@ -1240,7 +1272,7 @@ fn row_to_result(
         created_at: r.get::<Option<i64>, _>("legacy_created_at").unwrap_or(0) * 1000,
         updated_at: r.get::<Option<i64>, _>("legacy_updated_at").unwrap_or(0) * 1000,
         network,
-        chain_id: network.chain_id(),
+        chain_id,
         issued_id: r.get("issued_text"),
         trade_id: Some(String::new()),
         payee: None,
@@ -1248,7 +1280,7 @@ fn row_to_result(
     let nft = Nft {
         active_order_id: order.as_ref().map(|o| o.id.clone()),
         category: category.clone(),
-        chain_id: network.chain_id(),
+        chain_id,
         contract_address: contract.clone(),
         created_at: r.get::<i64, _>("created_at") * 1000,
         data,
@@ -1311,6 +1343,9 @@ pub(super) async fn land_page_snapshot(
     sources: Sources,
 ) -> Result<ReadConn, Response> {
     let mut conn = read_conn(&state.pool, state.land_network(), f, sources).await?;
+    if sources.land && state.settings.catalogue() == Catalogue::Testnet {
+        super::rentals::require_sepolia_listings(&mut conn).await?;
+    }
     if needs_orders(f) {
         super::trades::ready_on(state, &mut conn, Utc::now()).await?;
     }
@@ -1332,6 +1367,19 @@ pub async fn list_nfts(
         );
     }
     let mut sources = sources_for(f);
+    if super::owned_items::walks_here(state)
+        && f.category.is_none()
+        && !f.contract_addresses.is_empty()
+        && f.contract_addresses
+            .iter()
+            .any(|addr| addr.eq_ignore_ascii_case(state.settings.catalogue().registrar()))
+    {
+        sources.names = true;
+        sources.collections = f
+            .contract_addresses
+            .iter()
+            .any(|addr| !addr.eq_ignore_ascii_case(state.settings.catalogue().registrar()));
+    }
     if super::nfts::merges_land(f) {
         // On the compatibility route, include the NAME and LAND legs when
         // available. Walking nodes take the strict catalogue snapshot before
@@ -1340,7 +1388,9 @@ pub async fn list_nfts(
             names: true,
             ..Default::default()
         };
-        sources.names = require_ready(&state.pool, None, f, names).await.is_ok();
+        sources.names = require_ready(&state.pool, state.land_network(), f, names)
+            .await
+            .is_ok();
         sources.land = match state.land_network() {
             Some(net) => land_ready(&state.pool, net).await,
             None => false,
@@ -1406,7 +1456,14 @@ pub(super) async fn list_page_on(
     let parcels = estate_parcels(conn, &estates).await.map_err(read_error)?;
     Ok((
         rows.iter()
-            .map(|r| row_to_result(r, &parcels, &state.settings.land_image_base_url))
+            .map(|r| {
+                row_to_result(
+                    r,
+                    &parcels,
+                    &state.settings.land_image_base_url,
+                    state.settings.catalogue(),
+                )
+            })
             .collect(),
         total.min(MAX_WINDOW),
     ))
@@ -1546,14 +1603,23 @@ fn describe(r: &sqlx::postgres::PgRow, land_image_base: &str) -> AssetDescriptio
 
 /// The source SQL that describes `contract`'s tokens; a LAND or estate
 /// registry of any network reads that network's rows.
-fn source_of(net: ChainNet, contract: &str) -> String {
-    if let Some(land) = land_network_of_registry(contract) {
-        land_source(Some(land), false, false)
-    } else if contract == DCL_REGISTRAR {
-        names_source()
+fn source_of(net: ChainNet, contract: &str, chain_id: i64) -> String {
+    let catalogue = if chain_id == net.testnet_chain_id() {
+        Catalogue::Testnet
     } else {
-        collection_source(net)
+        Catalogue::Mainnet
+    };
+    if net == ChainNet::Ethereum {
+        if let Some(land) = land_network_of_registry(contract)
+            && Catalogue::from_land(land) == catalogue
+        {
+            return land_source(Some(land), false, false);
+        }
+        if contract == catalogue.registrar() {
+            return names_source(catalogue);
+        }
     }
+    collection_source(net, catalogue)
 }
 
 /// [`asset_meta`] of many `(contract, token_id)` at once, one query per
@@ -1562,6 +1628,7 @@ pub async fn asset_metas(
     pool: &PgPool,
     land_image_base: &str,
     network: &str,
+    chain_id: i64,
     keys: &[(String, String)],
 ) -> Result<HashMap<(String, String), AssetDescription>, sqlx::Error> {
     let net = ChainNet::parse(network).unwrap_or(ChainNet::Matic);
@@ -1571,7 +1638,7 @@ pub async fn asset_metas(
             continue;
         }
         let g = groups
-            .entry(source_of(net, &contract.to_ascii_lowercase()))
+            .entry(source_of(net, &contract.to_ascii_lowercase(), chain_id))
             .or_default();
         g.0.push(contract.clone());
         g.1.push(token.clone());
@@ -1604,12 +1671,13 @@ pub async fn asset_meta<'e>(
     conn: impl sqlx::PgExecutor<'e>,
     land_image_base: &str,
     network: &str,
+    chain_id: i64,
     contract: &str,
     token_id: &str,
 ) -> Result<Option<AssetDescription>, sqlx::Error> {
     let net = ChainNet::parse(network).unwrap_or(ChainNet::Matic);
     let contract = contract.to_ascii_lowercase();
-    let sources = source_of(net, &contract);
+    let sources = source_of(net, &contract, chain_id);
     let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT owner, image, category, rarity, name FROM ({sources}) c WHERE c.contract_address = $1 AND c.token_id = $2::numeric LIMIT 1"
     )))
@@ -1951,6 +2019,7 @@ mod tests {
             &pool,
             "https://maps.example/",
             "ethereum",
+            1,
             LAND_REGISTRY_MAINNET,
             &ids[0],
         )
@@ -1965,6 +2034,7 @@ mod tests {
             &pool,
             "http://127.0.0.1:5210/api",
             "ethereum",
+            1,
             ESTATE_REGISTRY_MAINNET,
             &ids[3],
         )
