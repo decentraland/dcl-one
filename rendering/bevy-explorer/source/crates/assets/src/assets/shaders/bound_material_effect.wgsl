@@ -223,13 +223,9 @@ fn closest_point_on_segment_to_line(a: vec3<f32>, b: vec3<f32>, o: vec3<f32>, d:
 // base_opacity: the opacity the dither fades towards; 0 fades out fully
 // capsule: dither by the avatar capsule standing at capsule_root instead of by the fragment
 fn discard_dither(ndc_position: vec2<f32>, world_position: vec3<f32>, depth: f32, distance_dither: bool, base_opacity: f32, capsule_root: vec3<f32>, capsule: bool) -> Dither {
-    // player is left of the view forward by 0.25 * clamp(camera distance, 0, 3). we use half of that as our target
-    let view_fwd = -view.world_from_view[2].xyz;
-    let view_right = view.world_from_view[0].xyz;
-    let view_up = view.world_from_view[1].xyz;
-    let target_offset = depth * view_fwd - 0.125 * clamp(depth, 0.0, 3.0) * view_right; 
-
-    let view_direction = normalize(target_offset);
+    // the camera aims at the player's camera focus, `depth` away; a shoulder offset moves it at
+    // most 0.6 m to one side, well inside the cone
+    let view_direction = -view.world_from_view[2].xyz;
 
     var position = world_position;
     var radius = 0.0;

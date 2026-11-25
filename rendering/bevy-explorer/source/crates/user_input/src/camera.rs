@@ -1,5 +1,3 @@
-use std::f32::consts::PI;
-
 use bevy::{
     prelude::*,
     render::view::ViewUserValue,
@@ -10,11 +8,10 @@ use avatar::animate::{is_emoting, ActiveEmote, MaskedEmote};
 use common::{
     inputs::{Action, SystemAction, CAMERA_SET, CAMERA_ZOOM, POINTER_SET},
     structs::{
-        AppConfig, AvatarDynamicState, CameraOverride, ClientWindowFocus, CursorLocks, HeadSync,
-        MoveKind, PhotoMode, PrimaryCamera, PrimaryUser, RequestClientWindowFocus,
-        PLAYER_CAMERA_FOV,
+        AppConfig, AvatarDynamicState, CameraOverride, CameraShoulder, CameraView, CameraZoomLevel,
+        ClientWindowFocus, CursorLocks, HeadSync, MoveKind, PhotoMode, PrimaryCamera, PrimaryUser,
+        RequestClientWindowFocus, PLAYER_CAMERA_FOV,
     },
-    terrain::PlayerTerrainHeight,
     util::ModifyComponentExt,
 };
 use dcl_component::proto_components::sdk::components::common::camera_transition::TransitionMode;
@@ -22,7 +19,39 @@ use input_manager::{InputManager, InputPriority};
 use scene_runner::OutOfWorld;
 use tween::SystemTween;
 
-use crate::TRANSITION_TIME;
+use crate::{
+    camera_zoom::{pitch_limit, step_level, CameraZoom, ZoomDirection, FOCUS_HEIGHT},
+    TRANSITION_TIME,
+};
+
+/// Radians a scene's cinematic camera may pitch when the scene sets no range of its own.
+const CINEMATIC_PITCH_LIMIT: f32 = std::f32::consts::PI / 2.1;
+
+/// The `CursorLocks` entry held while the pointer turns the camera.
+const CAMERA_CURSOR_LOCK: &str = "camera";
+
+/// Which way the player asked to zoom this frame. The wheel asks on every frame it turns, a key or
+/// button once per press; out wins over in.
+fn zoom_request(input_manager: &InputManager) -> Option<ZoomDirection> {
+    let zoom_in = Action::System(SystemAction::CameraZoomIn);
+    let zoom_out = Action::System(SystemAction::CameraZoomOut);
+    let held = input_manager.is_button_down(zoom_in, InputPriority::Scene)
+        || input_manager.is_button_down(zoom_out, InputPriority::Scene);
+    let wheel = if held {
+        0.0
+    } else {
+        input_manager
+            .get_analog(CAMERA_ZOOM, InputPriority::Scene)
+            .y
+    };
+    if wheel < 0.0 || input_manager.just_down(zoom_out, InputPriority::Scene) {
+        Some(ZoomDirection::Out)
+    } else if wheel > 0.0 || input_manager.just_down(zoom_in, InputPriority::Scene) {
+        Some(ZoomDirection::In)
+    } else {
+        None
+    }
+}
 
 pub struct CinematicInitialData {
     base_yaw: f32,
@@ -32,7 +61,7 @@ pub struct CinematicInitialData {
 
 pub fn update_camera(
     time: Res<Time>,
-    mut camera: Query<(&Transform, &mut PrimaryCamera), Without<PhotoMode>>,
+    mut camera: Query<(&Transform, &mut PrimaryCamera, &mut CameraZoom), Without<PhotoMode>>,
     locks: Res<CursorLocks>,
     mut cinematic_data: Local<Option<CinematicInitialData>>,
     input_manager: InputManager,
@@ -41,7 +70,7 @@ pub fn update_camera(
 ) {
     let dt = time.delta_secs();
 
-    let Ok((camera_transform, mut options)) = camera.single_mut() else {
+    let Ok((camera_transform, mut options, mut zoom)) = camera.single_mut() else {
         return;
     };
 
@@ -81,10 +110,9 @@ pub fn update_camera(
         (options.yaw, options.pitch, options.roll) =
             (initial.base_yaw, initial.base_pitch, initial.base_roll);
     }
-    let in_cinematic = cinematic_data.is_some();
 
     let mut mouse_delta = input_manager.get_analog(CAMERA_SET, InputPriority::Scene) * 10.0;
-    if locks.0.contains("camera") {
+    if locks.0.contains(CAMERA_CURSOR_LOCK) {
         mouse_delta += input_manager.get_analog(POINTER_SET, InputPriority::Scroll);
     }
     let mouse_delta = config
@@ -107,22 +135,40 @@ pub fn update_camera(
             }
         }
 
-        options.pitch = (options.pitch - mouse_delta.y * options.sensitivity / 1000.0)
-            .clamp(-PI / 2.1, PI / 2.1);
+        options.pitch -= mouse_delta.y * options.sensitivity / 1000.0;
         options.yaw -= mouse_delta.x * options.sensitivity / 1000.0;
     }
 
-    // `distance` is the third-person follow distance; a cinematic camera has its own fov
-    if !in_cinematic {
-        let zoom = input_manager
-            .get_analog(CAMERA_ZOOM, InputPriority::Scene)
-            .y;
-        if zoom != 0.0 {
-            let zoom = zoom.clamp(-1000.0, 1000.0);
-            options.distance =
-                (((options.distance + 0.5) * 1.0005f32.powf(-zoom)) - 0.5).clamp(0.0, 100.0);
+    // the player steps the level and swaps shoulder only while no scene holds the camera
+    if options.scene_override.is_none() {
+        if let Some(direction) = zoom_request(&input_manager) {
+            options.level = step_level(options.level, direction, false).0;
+        }
+        if input_manager.just_down(SystemAction::CameraSwitchLevel, InputPriority::Scene) {
+            let direction = zoom.switch_direction.unwrap_or(ZoomDirection::Out);
+            let (level, stepped) = step_level(options.level, direction, true);
+            options.level = level;
+            if !stepped {
+                zoom.switch_direction = Some(direction.reversed());
+            }
+        }
+        if options.level != CameraZoomLevel::FirstPerson
+            && input_manager.just_down(SystemAction::CameraSwapShoulder, InputPriority::Scene)
+        {
+            options.shoulder = match options.shoulder {
+                CameraShoulder::Right => CameraShoulder::Left,
+                CameraShoulder::Left => CameraShoulder::Right,
+            };
         }
     }
+
+    let level = options.level_in_effect();
+    if let Some((yaw, pitch)) = zoom.set_level(level, options.yaw, options.pitch) {
+        options.yaw = yaw;
+        options.pitch = pitch;
+    }
+    let limit = level.map_or(CINEMATIC_PITCH_LIMIT, pitch_limit);
+    options.pitch = options.pitch.clamp(-limit, limit);
 
     if let Some(roll_range) = roll_range {
         options.roll = options.roll.clamp(roll_range.start, roll_range.end);
@@ -142,6 +188,7 @@ pub fn update_camera_position(
             Entity,
             &Transform,
             &PrimaryCamera,
+            &mut CameraZoom,
             &mut Projection,
             Option<&mut SystemTween>,
         ),
@@ -160,11 +207,12 @@ pub fn update_camera_position(
     mut prev_override: Local<Option<CameraOverride>>,
     mut prev_oow: Local<bool>,
     gt_helper: TransformHelper,
-    terrain_height: Option<Res<PlayerTerrainHeight>>,
+    time: Res<Time>,
+    locks: Res<CursorLocks>,
 ) {
     let (
         Ok((player_transform, dynamic_state, is_oow, mut head_sync, emotes)),
-        Ok((camera_ent, camera_transform, options, mut projection, maybe_tween)),
+        Ok((camera_ent, camera_transform, options, mut zoom, mut projection, maybe_tween)),
     ) = (player.single_mut(), camera.single_mut())
     else {
         return;
@@ -181,7 +229,7 @@ pub fn update_camera_position(
     let idle = dynamic_state.move_kind == MoveKind::Idle
         && !emotes.is_some_and(|(active, masked)| is_emoting(active, masked));
     let head_active = real_camera && idle;
-    let first_person = options.distance < 0.05;
+    let first_person = options.view() == CameraView::FirstPerson;
     head_sync.yaw_enabled = head_active && !first_person;
     head_sync.pitch_enabled = head_active;
     if head_active {
@@ -247,50 +295,40 @@ pub fn update_camera_position(
 
         commands.entity(camera_ent).try_insert(ViewUserValue(0.0));
     } else {
-        let mut distance = match options.scene_override {
-            Some(CameraOverride::Distance(d)) => d,
-            _ => options.distance,
-        } * 5.0;
-
-        target_transform.rotation =
-            Quat::from_euler(EulerRot::YXZ, options.yaw, options.pitch, options.roll);
-
-        let player_head = player_transform.translation + Vec3::Y * 1.81;
-        let head_offset = (target_transform.rotation.mul_vec3(Vec3::X) * Vec3::new(1.0, 0.0, 1.0))
-            .normalize_or_zero()
-            * 0.25
-            + Vec3::Y * -0.08;
-
-        let target_direction = target_transform.rotation.mul_vec3(Vec3::Z);
-        let target_translation =
-            player_head + head_offset * distance.clamp(0.0, 3.0) + target_direction * distance;
-
-        // keep above the ground: the empty-parcel terrain under the player, else zero
-        let ground = terrain_height.map_or(0.0, |height| height.0);
-        if target_translation.y - ground < distance * 0.25 {
-            distance = (player_head.y - ground) / (0.25 - target_direction.y);
+        zoom.tick(
+            time.delta_secs(),
+            options.pitch,
+            options.shoulder,
+            locks.0.contains(CAMERA_CURSOR_LOCK),
+        );
+        let focus = player_transform.translation + Vec3::Y * FOCUS_HEIGHT;
+        if let Some(pose) = zoom.pose(focus, options.yaw, options.pitch, options.roll) {
+            target_transform = pose.transform();
+            target_fov = pose.fov;
+            commands
+                .entity(camera_ent)
+                .try_insert(ViewUserValue((pose.position - focus).length()));
         }
-
-        target_transform.translation =
-            player_head + head_offset * distance.clamp(0.0, 3.0) + target_direction * distance;
-
-        commands
-            .entity(camera_ent)
-            .try_insert(ViewUserValue(distance));
     }
 
     // the camera never carries scale; scenes may set arbitrary scale on virtual camera entities
     target_transform.scale = Vec3::ONE;
 
-    let changed = (prev_override.is_some() != options.scene_override.is_some())
-        || prev_override
-            .as_ref()
-            .is_some_and(|prev| !prev.effectively_equals(options.scene_override.as_ref().unwrap()))
-        || *prev_oow != is_oow;
+    // a change of level blends in `CameraZoom`; only a scene camera taking or returning the view,
+    // or the player leaving the world, tweens here
+    let scene_camera = options
+        .scene_override
+        .as_ref()
+        .filter(|scene_override| matches!(scene_override, CameraOverride::Cinematic(_)));
+    let changed = match (prev_override.as_ref(), scene_camera) {
+        (Some(prev), Some(now)) => !prev.effectively_equals(now),
+        (None, None) => false,
+        _ => true,
+    } || *prev_oow != is_oow;
 
     if changed {
         debug!("changed cam to {:?}", options.scene_override);
-        prev_override.clone_from(&options.scene_override);
+        *prev_override = scene_camera.cloned();
         *prev_oow = is_oow;
         let time = match target_transition {
             TransitionMode::Time(t) => t,

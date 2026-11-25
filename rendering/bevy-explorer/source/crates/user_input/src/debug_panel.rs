@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::structs::{AvatarDynamicState, PrimaryCamera, PrimaryUser};
+
+use crate::camera_zoom::CameraZoom;
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::common::Vector3;
 use serde_json::json;
@@ -20,7 +22,11 @@ impl Plugin for InputDebugPanelPlugin {
                 title: "Camera",
                 query: "/camera_state",
                 fields: &[
-                    ("Follow distance (m)", "distance"),
+                    ("Zoom level", "level"),
+                    ("Level in effect", "levelInEffect"),
+                    ("Shoulder", "shoulder"),
+                    ("Shoulder offset right / up (m)", "shoulderOffset"),
+                    ("Blending between levels", "blending"),
                     ("Far clip (m)", "far"),
                     ("Vertical FOV (degrees)", "fov"),
                     ("Scene override", "override"),
@@ -89,10 +95,10 @@ fn camera_sensitivity(
 
 fn camera_state(
     mut cmd: ConsoleCommand<CameraState>,
-    camera: Query<(&PrimaryCamera, &Projection)>,
+    camera: Query<(&PrimaryCamera, &CameraZoom, &Projection)>,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
-    let Ok((camera, projection)) = camera.single() else {
+    let Ok((camera, zoom, projection)) = camera.single() else {
         cmd.reply_failed("player camera unavailable");
         return;
     };
@@ -100,7 +106,24 @@ fn camera_state(
         Projection::Perspective(p) => (Some(p.far), Some(p.fov.to_degrees())),
         _ => (None, None),
     };
-    cmd.reply_ok(json!({"sensitivity":camera.sensitivity, "distance":camera.distance, "far":far, "fov":fov, "override":camera.scene_override.is_some()}).to_string());
+    let level_name = |level| format!("{level:?}");
+    let shoulder_offset = zoom
+        .level()
+        .map(|level| zoom.shoulder_offset(level).to_array());
+    cmd.reply_ok(
+        json!({
+            "sensitivity": camera.sensitivity,
+            "level": level_name(camera.level),
+            "levelInEffect": zoom.level().map(level_name),
+            "shoulder": format!("{:?}", camera.shoulder),
+            "shoulderOffset": shoulder_offset,
+            "blending": zoom.blending(),
+            "far": far,
+            "fov": fov,
+            "override": camera.scene_override.is_some(),
+        })
+        .to_string(),
+    );
 }
 
 /// Read the active SDK movement settings and last frame of controller feedback.
