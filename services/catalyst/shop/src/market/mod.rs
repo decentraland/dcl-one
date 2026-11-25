@@ -50,7 +50,8 @@
 //! index (`owned_items.rs`). Local: `POST /v1/trades` (`listings.rs`, the old EIP-712
 //! policy, `ownerOf` on `TRADE_RPC_URLS`), lists and picks (`lists.rs`), the
 //! operator moderation (`admin.rs`, `MARKET_ADMIN_TOKEN`), a wallet's
-//! `/v1/activity` over the readers and the local trades (`activity.rs`),
+//! `/v1/activity` over the readers, the local trades and the nft index's
+//! transfers (`activity.rs`, `activity_transfers.rs`),
 //! the `/v1/nfts` rental legs over the local rentals listings (`rentals.rs`),
 //! the market federation's signed-action log and its feeds
 //! (`federation.rs`: `/v1/federation/*`, `/federation/market/*`).
@@ -60,10 +61,12 @@ pub use crate::chain_index::source::{Source, unavailable};
 
 pub mod accounts;
 pub mod activity;
+pub mod activity_transfers;
 pub mod admin;
 pub mod base_wearables;
 pub mod bid_notices;
 pub mod bids;
+mod cancelled_trades;
 pub mod catalog;
 pub mod chain_group;
 pub mod chain_jobs;
@@ -654,6 +657,10 @@ pub struct MarketplaceState {
     pub readers: readers::Caches,
     /// Bounds concurrent expensive sales analytics independently of other Shop reads.
     pub(crate) sales_analytics_slots: tokio::sync::Semaphore,
+    /// Concurrent uncached creator owner rankings.
+    pub(crate) top_owners_slots: tokio::sync::Semaphore,
+    /// Concurrent creator royalty scans.
+    pub(crate) royalty_analytics_slots: tokio::sync::Semaphore,
     pub(crate) sales_accounts_slots: tokio::sync::Semaphore,
     sales_seller_slots: tokio::sync::Semaphore,
     pub(crate) sales_pages_slots: tokio::sync::Semaphore,
@@ -752,6 +759,8 @@ impl MarketplaceState {
             contracts: contracts::Caches::default(),
             readers: readers::Caches::default(),
             sales_analytics_slots: tokio::sync::Semaphore::new(2),
+            top_owners_slots: tokio::sync::Semaphore::new(1),
+            royalty_analytics_slots: tokio::sync::Semaphore::new(1),
             sales_accounts_slots: tokio::sync::Semaphore::new(1),
             sales_seller_slots: tokio::sync::Semaphore::new(4),
             sales_pages_slots: tokio::sync::Semaphore::new(4),
@@ -1255,6 +1264,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route("/v1/collections", get(collections::get_collections))
         .route("/v1/accounts", get(accounts::get_accounts))
         .route("/v1/owners", get(owners::get_owners))
+        .route("/v1/owners/top", get(owners::get_top_owners))
         .route("/v1/catalog", get(catalog::get_catalog_v1))
         .route("/v2/catalog", get(catalog::get_catalog_v2))
         .route("/v3/catalog/shop", get(shop::get_shop_catalog))
@@ -1306,7 +1316,9 @@ pub fn market_router(state: SharedState) -> Router {
         )
         .route("/v1/bids", get(bids::get_bids))
         .route("/v1/sales/summary", get(sales::get_sales_summary))
+        .route("/v1/sales/royalties", get(sale_reads::get_royalties))
         .route("/v1/sales", get(sales::get_sales))
+        .route("/v1/cancelled-trades", get(cancelled_trades::get))
         .route("/v1/prices", get(prices::get_prices))
         .route("/v1/trendings", get(items::get_trendings))
         .route(
