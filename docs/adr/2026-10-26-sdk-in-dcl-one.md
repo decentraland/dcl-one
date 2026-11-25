@@ -85,8 +85,8 @@ It installs with pnpm as one workspace with a single lockfile
 
 - One pull request can change a proto, the engine and the SDK together; the SDK release that
   follows ships the protocol at that commit.
-- `@dcl/sdk@next` describes the Explorer dcl-one ships once publishing moves here; the bridge and
-  movement scenes stop needing the `experimental-bevy` dist-tag.
+- `@dcl/sdk@next` describes the Explorer dcl-one ships once publishing moves here; the bridge
+  scene stops needing the `experimental-bevy` dist-tag.
 - `library/` holds a second JavaScript project that is not a `dcl-*` crate (as `catalyst-api/` and
   `protocol/` already are); its lockfile and `node_modules` stay its own.
 
