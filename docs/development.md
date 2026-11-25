@@ -252,9 +252,8 @@ start and the build tools, without the web and media tools.
 The `tooling/tests` suite runs in its own job, Tooling tests, beside smoke. It needs
 only the dev shell: its PostgreSQL tests start their own clusters with the shell's
 binaries. It includes the workflow tests, so the CI gate requires it. The Changes job
-also runs `test_dev_workflow`, `test_ci_local`, `test_ui_gallery_receipt.WorkflowTest`
-and `test_image_cache.CompileWorkflowTest` on every pull request, because they read
-files outside the path list of `development.yml`.
+also runs some of them on every pull request, because they read files outside the path
+list of `development.yml`.
 
 The Rust job sets `FOUNDATION_DEV_DISPOSABLE_POSTGRES=1`. A cluster that
 `foundation-dev` initializes with it set runs without durability (`fsync`,
