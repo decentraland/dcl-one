@@ -190,17 +190,15 @@ impl RunnerSection {
         }
     }
 
-    /// The 🟢 and 🔴 frame-time verdicts.
-    fn frame_time_changes(&self, verdicts: &[FrameTimeVerdict; 6]) -> Vec<SignificantMetricChange> {
+    /// The 🟢 and 🔴 timing verdicts, each named by the metric at its index.
+    fn timing_changes(
+        &self,
+        verdicts: &[FrameTimeVerdict],
+        metrics: &[&'static str],
+    ) -> Vec<SignificantMetricChange> {
         verdicts
             .iter()
-            .zip(stats::FRAME_TIME_METRICS)
-            .chain(
-                comparison
-                    .load_time_verdicts
-                    .iter()
-                    .zip(stats::LOAD_TIME_METRICS),
-            )
+            .zip(metrics.iter().copied())
             .filter_map(|(verdict, metric)| match *verdict {
                 FrameTimeVerdict::Faster(by) => Some(self.found(metric, true, by)),
                 FrameTimeVerdict::Slower(by) => Some(self.found(metric, false, by)),
@@ -213,7 +211,9 @@ impl RunnerSection {
     fn release_metric_changes(&self) -> Vec<SignificantMetricChange> {
         self.release_comparison
             .as_ref()
-            .map(|comparison| self.frame_time_changes(&comparison.frame_time_verdicts))
+            .map(|comparison| {
+                self.timing_changes(&comparison.frame_time_verdicts, &stats::FRAME_TIME_METRICS)
+            })
             .unwrap_or_default()
     }
 
@@ -222,7 +222,10 @@ impl RunnerSection {
         let Some(comparison) = &self.baseline_comparison else {
             return Vec::new();
         };
-        let mut findings = self.frame_time_changes(&comparison.frame_time_verdicts);
+        let mut findings =
+            self.timing_changes(&comparison.frame_time_verdicts, &stats::FRAME_TIME_METRICS);
+        findings
+            .extend(self.timing_changes(&comparison.load_time_verdicts, &stats::LOAD_TIME_METRICS));
         match comparison.exceptions_per_run_verdict {
             IncidentsPerRunVerdict::More => {
                 findings.push(self.found(stats::EXCEPTIONS_METRIC, false, 0.0))
@@ -805,6 +808,7 @@ mod tests {
             exception_count: 0,
             exception_kinds: ExceptionKindCounts::default(),
             perf_summary: None,
+            load_time_ms: [None; 2],
         };
         let section = compare_builds(
             "apple-m1".to_owned(),
