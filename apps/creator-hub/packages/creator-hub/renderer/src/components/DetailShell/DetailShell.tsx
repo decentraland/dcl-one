@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import AvatarFace from '@ui/atoms/AvatarFace';
 import { Tab, Tabs } from '@ui/atoms/Tabs';
 
