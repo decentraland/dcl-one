@@ -82,6 +82,16 @@ describe("the renderer", () => {
 });
 
 describe("failures", () => {
+  test("Unity failing to start while the items change gives way to Babylon with the new items", () => {
+    const { change } = stage();
+    fromPreview({ type: "ready" });
+    change({ ...OUTFIT, urns: [HAT] });
+    fromPreview({ type: "error", payload: { message: "unity could not start" } });
+    expect(params().has("unity")).toBe(false);
+    expect(params().getAll("urn")).toEqual([HAT]);
+    expect(cover()).not.toBeNull();
+  });
+
   test("Unity failing gives way to Babylon, which stays for later changes", () => {
     const { change } = stage();
     fromPreview({ type: "error", payload: { message: "unity failed" } });

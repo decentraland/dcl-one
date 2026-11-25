@@ -111,8 +111,9 @@ function updateFor(mount: Mount, options: PreviewFrameOptions): Record<string, u
 /**
  * How long an update under Unity waits for the answer to the scene before it. Unity answers every reload with a `load`,
  * a superseded one included (Babylon drops those itself), so it is sent one scene at a time to tell which scene an answer
- * is for. A change only to the camera reloads nothing and gets no answer, and a slow scene should not hold the next one
- * for long: past this the update goes anyway.
+ * is for. A slow scene should not hold the next one for long: past this the next one mounts a fresh iframe instead, whose
+ * answers cannot be confused with the retired one's. (A change only to the camera reloads nothing and gets no answer, so
+ * the change after it mounts again too; the Shop makes none.)
  */
 export const UNITY_ANSWER_WAIT_MS = 3_000;
 
@@ -187,6 +188,10 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
         retry.current = window.setTimeout(() => push.current(), UNITY_ANSWER_WAIT_MS - waited);
         return;
       }
+      // The scene it is drawing may still answer, for options the page has left: these go to a fresh iframe instead.
+      live.current = liveFor(mount.n + 1, serialized, options);
+      setMount(mountWith(mount.n + 1, options));
+      return;
     }
     now.delivered = serialized;
     now.awaiting = serialized;
@@ -212,18 +217,21 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
         now.sentAt = performance.now();
         push.current();
       } else if (type === "load" || type === "error") {
+        const first = !now.answered;
         now.answered = true;
         // Under Unity an answer is for the scene it was drawing; one for options the page has moved on from is not the
         // page's. Babylon answers only for the scene it was last sent (Preview.tsx drops a superseded one).
         const answeredFor = now.awaiting;
         now.awaiting = null;
-        if (mount.options.unity !== true || answeredFor === null || answeredFor === latest.current) {
+        // Except a failed first scene: Unity that could not start applies no update after it, whatever options it was for.
+        const failedToStart = type === "error" && first;
+        if (mount.options.unity !== true || answeredFor === null || answeredFor === latest.current || failedToStart) {
           if (type === "load") {
             const renderer = payload?.renderer;
             callbacks.current.onLoad(renderer === "unity" || renderer === "babylon" ? renderer : undefined);
           } else callbacks.current.onError(payload?.message ?? "");
         }
-        push.current();
+        if (!(mount.options.unity === true && failedToStart)) push.current();
       }
     };
     window.addEventListener("message", onMessage);

@@ -130,17 +130,34 @@ describe("updates", () => {
     expect(updates().at(-1)!.payload.options.urns).toEqual([HOODIE]);
   });
 
-  test("under Unity a scene that never answers holds the next update only for a while", () => {
+  test("under Unity a scene that never answers holds the next one only for a while, which then gets a fresh iframe", () => {
     vi.useFakeTimers();
-    const { change } = mount({ urns: [HOODIE], profile: "default", ...UNITY });
-    const { updates } = booted("unity");
+    const { change, onLoad, onError } = mount({ urns: [HOODIE], profile: "default", ...UNITY });
+    const { win, updates } = booted("unity");
+    onLoad.mockClear();
     change({ urns: [HAT], profile: "default", ...UNITY });
     change({ urns: [HOODIE, HAT], profile: "default", ...UNITY });
     expect(updates()).toHaveLength(1);
     act(() => vi.advanceTimersByTime(2_999));
     expect(updates()).toHaveLength(1);
+    expect(frame().contentWindow).toBe(win);
+
     act(() => vi.advanceTimersByTime(1));
-    expect(updates()).toHaveLength(2);
+    expect(updates()).toHaveLength(1);
+    expect(frame().contentWindow).not.toBe(win);
+    expect(params().getAll("urn")).toEqual([HOODIE, HAT]);
+
+    // The retired iframe's late answers, for the scene before, count for nothing.
+    for (const data of [{ type: "load", payload: { renderer: "unity" } }, { type: "error", payload: { message: "late" } }]) {
+      act(() => {
+        window.dispatchEvent(new MessageEvent("message", { data, source: win, origin: MAINNET }));
+      });
+    }
+    expect(onLoad).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(onLoad).toHaveBeenCalledTimes(1);
   });
 
   test("over Babylon an update goes at once: Babylon drops the answer for a scene it was sent past", () => {
