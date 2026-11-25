@@ -3231,6 +3231,7 @@ a cleaned row deleted, and the place's `place_removal_state` row with it once
 neither catalogue holds the place and no pending row for it remains. Its context lookups read
 `explore.place_indexed`, joined to `content.active_pointers` and
 `content.deployments` for shared-scene rooms, by primary key or world name.
+Its cleanup ends the stream keys of the removed place ("Scene stream keys").
 Neither table has an FK: queue rows outlive catalogue deletion.
 
 Workload and invariants for removal notices: one immutable recipient set per
@@ -3399,6 +3400,76 @@ Invariants:
   (`infra/containers/README.md`, "Scene admin upgrade").
 - A kick intent queued before the release names the entity id; the removal
   job reads its ban again on the scene's place (`legacy_ban_key`).
+
+## Scene stream keys
+
+`social.scene_stream_access` (`schemas/40_social.sql`) holds at most one active
+stream key for each `place_id` (`scene_stream_access_active_place_key`). The
+place of a Genesis scene's key is the catalogue place based on its base parcel;
+the place of a world scene's key is the scene's place
+(`ActiveDeployment::place_key`, its `explore.world_scene_place` identity), so
+each scene of a world has its own key, streaming into its own room
+([ADR](docs/adr/2026-11-21-world-stream-keys-per-scene.md)).
+
+Workload: each scene-signed stream verb and stream link first rechecks the
+keys of its place and, for a world scene, of its room (one read each and one
+authority decision per key found, usually one or none), then reads the active
+key it acts on; a watcher token reads that key alone. Hundreds a day: a
+Genesis key by place (the partial unique index), a world scene's key by room
+(`scene_stream_access_active_room_idx`), over hundreds of active rows. A
+watcher of a world without a parcel, and a stream link of a world scene, count
+the world's `worlds.world_scenes` rows up to two; a watcher of a multi-scene
+world without a parcel reads the world's active scene-room keys up to two.
+A world scene's mint, reset and presenter routes read whether its world has a
+listed catalogue place (`explore.place`, `explore.place_world_local`, by
+`world_name`, not disabled other than by an opt-out, the reason read from
+`explore.place_moderation` by primary key); a revocation whose recheck ended a replaced key reads that
+key's room binding (`explore.world_scene_place`, `explore.world_scene_binding`,
+by primary key). A held row that cannot move is revoked after one LiveKit
+`ListIngress`.
+
+Invariants:
+
+- A world scene's key is the active key streaming into its room. A row under
+  the scene's place that streams into another room is not this scene's: an
+  imported world-scene identity is a place UUID and can equal the catalogue id
+  a world's single key was stored under, so the room, not the place, decides.
+  Before a world scene stores a key under its place, such a row moves to the
+  place of the scene of its room, which keeps its stream; when it cannot (its
+  room has no scene, or that scene has a key of its own) it is revoked while
+  idle and still under that place, before any ingress is minted; a live one
+  answers 409. The move bumps the row's `streaming_state_version`, so a
+  revocation read before a concurrent move is not stored.
+- A key minted under the world's catalogue place before keys were per scene
+  stays the key of the scene whose room it streams into: that scene reads,
+  resets and revokes it, and its replacement is stored under the scene's place.
+  It ends at its first replacement, a revocation or its expiry: four days, or
+  later while a broadcast that was live at the deadline goes on (at most the
+  four-hour streaming cap). Publisher identities keep the place they were
+  minted under; a revocation evicts by room and credential, whatever the place.
+- A removed world ends every active key whose room is one of its scene rooms
+  (`starts_with(room_id, <world room prefix>)`), the catalogue place's
+  included. Any removal event of a world place does, also one for a single
+  scene's Places row, as the grant cleanup revokes the grants of every scene
+  of the world. A removed Genesis place ends its own key and no key streaming
+  into a world scene room.
+- The notice of a world scene key's cleanup names the world (its catalogue
+  place, else the world alone) with the footprint of the scene of the key's
+  room, so the holders of its parcels are told; its owner is the world's.
+- Of several active keys streaming into one room, every reader by room
+  takes the one under its own scene's place (`place_id = admin_place_key`),
+  then the newest (`streaming::ROOM_KEY_ORDER`): the verbs and the presenter
+  routes act on the same key.
+- A held row is moved only to a current scene (one with an identity), and
+  revoked only while LiveKit reports its ingress idle.
+- Rollout: stop the old API replicas before the new binaries serve. An old
+  replica stores a world key under the world's catalogue place, with its
+  scene in `admin_place_key`; the `BEFORE INSERT` trigger
+  `scene_stream_access_scene_place` refuses a `w1:` room row whose
+  `admin_place_key` is set and differs from `place_id`, so its mint fails
+  instead of adding a second key to the room. Imported rows (`admin_place_key`
+  NULL), updates and stored rows are untouched. Drop the trigger before
+  rolling back to an older binary.
 
 ## Stream key notifications
 
