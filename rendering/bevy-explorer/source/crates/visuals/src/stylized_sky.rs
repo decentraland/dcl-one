@@ -536,9 +536,8 @@ impl Material for StylizedSkyMaterial {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        // as bevy_atmosphere's skybox: the sky's pixels keep the cleared depth, so post effects
-        // (depth of field, the stars) can tell the sky from geometry, while the main pass still
-        // tests it against the geometry
+        // as bevy_atmosphere's skybox: the sky's pixels keep the cleared depth, so the stars can
+        // tell the sky from geometry, while the main pass still tests it against the geometry
         if let Some(depth_stencil) = &mut descriptor.depth_stencil {
             depth_stencil.depth_write_enabled = false;
             depth_stencil.depth_compare = CompareFunction::GreaterEqual;

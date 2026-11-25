@@ -108,9 +108,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   sky material (`StylizedSkyMaterial`) evaluates the sky for every pixel, so the cloud strips
   and the disc keep their detail; it replaces bevy_atmosphere's skybox material, which shows the
   cube, on every skybox. The compute model draws the same sky into the 1024 cube, one texel in
-  64 a frame, for the reflections, the ambient and the stars' cloud cover: a cube texel is
-  coarser than a strip texel and its refresh smears scrolling cloud, which those uses do not
-  show. The strips ship at 1024 by 128, a quarter of their authored 4096 by 512 (about 2.8
+  64 a frame, for the reflections, the ambient and the stars' cloud cover: its refresh smears
+  scrolling cloud and its texels soften the disc's edge, which those uses do not show. The
+  strips ship at 1024 by 128, a quarter of their authored 4096 by 512 (about 2.8
   texels a degree around the sky, against 11): the wasm build resizes any image over 1024 to fit
   (`reduce_image_sizes`), so larger files would only add to the download and to startup, and
   the clouds look right at that size on web. Native uses the same files; it is not released, so
@@ -137,11 +137,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 
   Unity's environment profile at `0a8bafca9e62ced7f34ac182158b11edd0c842a4` writes the cloud
   values to the old cloud cubemap's material, which the strips do not read. The strips are
-  fixed art sampled at their full resolution: they have no mip chain. That loses nothing near
-  the horizon, where the screen magnifies the strips, but the overhead strip is seen to about
-  70 degrees up, where its U is minified about 3 times, and the
-  horizon noise is minified about 8 times in V, with no mips; Unity samples both with gradients
-  and mips, so they alias a little more here. The growth flow the preset switches off is not
+  fixed art sampled at their full resolution: they have no mip chain. That loses nothing at
+  1024 wide: the screen magnifies the strips, even about 70 degrees up, as far as the overhead
+  strip is seen (about 8 texels a degree of arc there). The horizon noise is still minified,
+  about 8 times in V, with no mips; Unity samples it with gradients and mips, so it aliases a
+  little more here. The growth flow the preset switches off is not
   ported. `/cloud <cover> [speed]` is the user's own setting on top: cover multiplies every
   strip's opacity (the scene's opacity times it), speed scales the strips' scroll and the horizon
   noise's drift, so `/cloud 0 0` clears the strips and holds them and the horizon noise in a
