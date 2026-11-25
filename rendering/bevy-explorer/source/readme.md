@@ -353,11 +353,14 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`). A hover
   lasts at most 1800 frames (`--frames`) and is never cut short by `--timeout-frames`.
 - Scenes: `/teleport x y [realm] --wait [--timeout-seconds S]` and `/reload --current --wait`
-  answer once the player has landed and the parcel's scene runs, shows its content (past tick 5,
-  nothing blocking it) and a frame with it was presented (`settled`, `sceneState`, `ticksWaited`, `renderedFrames`, `settleMs`; a
-  teleport adds `arrived`, `sceneReady`, `sceneHash`), or with `settled:false` and a `warning`
-  naming what it waited for. `/scene_loading_state` reads the parcel scene under the player
-  (`playerParcel`, `sceneHash`, `stage`, `state`, `isReady`) beside its counts of every scene by load stage.
+  answer once the parcel's scene runs, shows its content (past tick 5, nothing blocking it) and a
+  frame with it was presented (`settled`, `sceneState`, `ticksWaited`, `renderedFrames`,
+  `settleMs`), or with `settled:false` and a `warning` naming what it waited for. A teleport
+  waits for the player to land first and adds `arrived`, `sceneReady`, `sceneHash`; a reload
+  waits for the new instance of the scene and adds `reloaded` and a `hint`.
+  `/scene_loading_state` reads the parcel scene under the player (`playerParcel`, `outOfWorld`,
+  `sceneHash`, `stage`, `state`, `blockedBy`, `isReady`) beside its counts of every scene by load
+  stage.
 - Raycasts: `/raycast_stats` (the capped tier's `budgetMs`, `ran`, `deferred`, `spentMs` and the
   uncapped tier's `uncappedRan`, `uncappedSpentMs`) and `/raycast_budget [ms|auto]` (override the
   capped budget, a tenth of the target frame, from 0 to 10 ms). On the web, these and the two pointer commands go

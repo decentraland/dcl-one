@@ -10,8 +10,7 @@ use serde_json::{json, Value};
 use crate::{
     asset_preload::plugin::{LoadingPreloadedAsset, PreloadedAsset},
     initialize_scene::{
-        CurrentSceneLoading, LiveScenes, PointerResult, SceneHash, SceneLoading, ScenePointers,
-        SuperUserScene, PARCEL_SIZE,
+        CurrentSceneLoading, NoParcelScene, SceneLoading, SuperUserScene, PARCEL_SIZE,
     },
     renderer_context::RendererSceneContext,
     scene_traffic::{Batch, SceneTraffic, Tick},
@@ -19,7 +18,7 @@ use crate::{
         gltf_container::{GltfLoadingCount, SceneResourceLookup},
         mesh_collider::SceneColliderData,
     },
-    util::settle::{is_ready, state_name, SceneWaits},
+    util::settle::SceneWaits,
     vec3_to_parcel, ContainerEntity, ContainingScene,
 };
 
@@ -146,7 +145,13 @@ impl Plugin for SceneDebugPanelPlugin {
                 query: "/scene_loading_state",
                 fields: &[
                     ("Current parcel loading", "current"),
+                    ("Player parcel", "playerParcel"),
+                    ("Player out of world", "outOfWorld"),
+                    ("Current parcel scene", "sceneHash"),
                     ("Current parcel stage", "stage"),
+                    ("Current parcel state", "state"),
+                    ("Current parcel scene ready", "isReady"),
+                    ("Current parcel scene blocked by", "blockedBy"),
                     ("Pending glTF containers", "gltf"),
                     ("Pending SDK asset preloads", "preloads"),
                     ("Spawning", "spawned"),
@@ -271,40 +276,19 @@ struct SceneState;
 fn parcel_root(
     containing: &ContainingScene,
     player: Option<Entity>,
-    include_out_of_world: bool,
 ) -> Result<Entity, &'static str> {
     let (transform, outside) = player
         .and_then(|id| containing.transforms.get(id).ok())
-        .ok_or("Waiting for the player position.")?;
-    if outside && !include_out_of_world {
+        .ok_or(NO_POSITION)?;
+    if outside {
         return Err("The player has not entered the world.");
     }
-    scene_on_parcel(
-        Some(&*containing.pointers),
-        &containing.live_scenes,
-        vec3_to_parcel(transform.translation()),
-    )
+    containing
+        .parcel_scene(vec3_to_parcel(transform.translation()))
+        .map_err(NoParcelScene::reason)
 }
 
-/// Why [`scene_on_parcel`] finds no scene on a parcel that has none.
-pub(crate) const NO_SCENE: &str = "There is no scene on this parcel.";
-
-/// The live scene on `parcel`, or why there is none (yet).
-pub(crate) fn scene_on_parcel(
-    pointers: Option<&ScenePointers>,
-    live_scenes: &LiveScenes,
-    parcel: IVec2,
-) -> Result<Entity, &'static str> {
-    match pointers.and_then(|pointers| pointers.get(parcel)) {
-        Some(PointerResult::Exists { hash, .. }) => live_scenes
-            .scenes
-            .get(hash)
-            .copied()
-            .ok_or("Waiting for the parcel scene to load."),
-        Some(PointerResult::Nothing) => Err(NO_SCENE),
-        None => Err("Waiting for the parcel's scene definition."),
-    }
-}
+const NO_POSITION: &str = "Waiting for the player position.";
 
 /// The stage a scene's load or run is at: the one classification `/scene_loading_state` and the
 /// settling waits (`util::settle`) read.
@@ -317,6 +301,9 @@ pub(crate) enum Stage {
     Failed,
     Broken,
     Blocked,
+    /// Running, still in its startup ticks (`renderer_context::STARTUP_TICKS`).
+    Starting,
+    /// Started ([`RendererSceneContext::started`]) and not broken.
     Running,
     Unstarted,
 }
@@ -334,6 +321,7 @@ impl Stage {
             (Some(SceneLoading::Failed), _) => Self::Failed,
             (None, Some(context)) if context.broken() => Self::Broken,
             (None, Some(context)) if !context.blocked.is_empty() => Self::Blocked,
+            (None, Some(context)) if !context.started() => Self::Starting,
             (None, Some(_)) => Self::Running,
             (None, None) => Self::Unstarted,
         }
@@ -349,9 +337,45 @@ impl Stage {
             Self::Failed => "Failed",
             Self::Broken => "Broken",
             Self::Blocked => "Blocked",
+            Self::Starting => "Starting",
             Self::Running => "Running",
             Self::Unstarted => "Waiting for the parcel scene to start.",
         }
+    }
+
+    /// The lifecycle state the settling replies and `/scene_loading_state` give the stage:
+    /// `loading` (definition, main.crdt or JavaScript still being fetched), `failed`, `starting`,
+    /// `blocked`, `broken` or `running`.
+    pub(crate) fn state(self) -> &'static str {
+        match self {
+            Self::Failed => "failed",
+            Self::Broken => "broken",
+            Self::Blocked => "blocked",
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::Spawning
+            | Self::Definition
+            | Self::MainCrdt
+            | Self::Javascript
+            | Self::Unstarted => "loading",
+        }
+    }
+
+    /// The scene runs with its content shown: the readiness `/teleport --wait` and
+    /// `/reload --wait` wait for. A halted scene (`load_timing::scene_is_halted`) shows what it
+    /// has and is never ready.
+    pub(crate) fn is_ready(self) -> bool {
+        self == Self::Running
+    }
+}
+
+/// The lifecycle state of the scene looked up on a parcel: its stage's, `none` on a parcel with
+/// no scene, and `loading` while the parcel's scene is not known or has not spawned.
+pub(crate) fn state_of(scene: Result<Stage, NoParcelScene>) -> &'static str {
+    match scene {
+        Ok(stage) => stage.state(),
+        Err(NoParcelScene::Empty) => "none",
+        Err(NoParcelScene::Unresolved | NoParcelScene::NotSpawned) => Stage::Unstarted.state(),
     }
 }
 
@@ -387,7 +411,7 @@ fn scene_state(
     };
     let player = player.single().ok();
     let position = player.map(|(_, t)| t.translation() * Vec3::new(1.0, 1.0, -1.0));
-    let scene = parcel_root(&containing, player.map(|(id, _)| id), false).and_then(|root| {
+    let scene = parcel_root(&containing, player.map(|(id, _)| id)).and_then(|root| {
         let (scene, privileged) = scenes
             .get(root)
             .map_err(|_| "Waiting for the parcel scene to start.")?;
@@ -523,7 +547,7 @@ fn scene_content(
     if input.take().is_none() {
         return;
     }
-    let root = match parcel_root(&containing, player.single().ok(), false) {
+    let root = match parcel_root(&containing, player.single().ok()) {
         Ok(root) => root,
         Err(reason) => {
             input.reply_ok(json!({"unavailable": {"": reason}}).to_string());
@@ -616,8 +640,9 @@ fn scene_content(
 }
 
 /// How scene loading stands, as JSON: the parcel scene under the player (`playerParcel`,
-/// `sceneHash`, its `stage`, its lifecycle `state` and whether it `isReady`, the readiness
-/// `/teleport --wait` and `/reload --wait` wait for) and counts of every scene by stage
+/// `outOfWorld`, `sceneHash`, its `stage`, its lifecycle `state`, what it is `blockedBy` and
+/// whether it `isReady`, the scene readiness `/teleport --wait` and `/reload --wait` wait for)
+/// and counts of every scene by stage
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/scene_loading_state")]
 struct LoadingState;
@@ -630,7 +655,6 @@ fn loading_state(
     stages: Query<&SceneLoading>,
     scenes: Query<(&RendererSceneContext, Option<&GltfLoadingCount>)>,
     preloads: Query<&PreloadedAsset, With<LoadingPreloadedAsset>>,
-    hashes: Query<&SceneHash>,
     waits: Res<SceneWaits>,
 ) {
     if input.take().is_none() {
@@ -647,38 +671,37 @@ fn loading_state(
         }] += 1;
     }
     let [spawned, definition, crdt, javascript, failed] = stages_by_kind;
-    let player = player.single().ok();
-    let player_parcel = player
-        .and_then(|id| containing.transforms.get(id).ok())
-        .map(|(transform, _)| vec3_to_parcel(transform.translation()))
-        .map(|parcel| [parcel.x, parcel.y]);
-    let root = parcel_root(&containing, player, true);
-    let under_player = root.map(|root| {
-        (
-            stages.get(root).ok(),
-            scenes.get(root).ok().map(|(context, _)| context),
-        )
-    });
-    let (stage, state, ready) = match under_player {
-        Ok((loading, context)) => (
-            Stage::of(loading, context).name(),
-            state_name(loading, context),
-            is_ready(loading, context),
-        ),
-        Err(reason) => (
-            reason,
-            if reason == NO_SCENE {
-                "none"
-            } else {
-                "loading"
-            },
-            false,
-        ),
-    };
-    let scene_hash = root
+
+    // the parcel scene under the player, out of world included: it loads before the player lands
+    let player = player
+        .single()
         .ok()
-        .and_then(|root| hashes.get(root).ok())
-        .map(|hash| hash.0.as_str());
+        .and_then(|id| containing.transforms.get(id).ok())
+        .map(|(transform, outside)| (vec3_to_parcel(transform.translation()), outside));
+    let hash = player.map(|(parcel, _)| containing.parcel_hash(parcel));
+    let root = player.map(|(parcel, _)| containing.parcel_scene(parcel));
+    let context = root
+        .and_then(Result::ok)
+        .and_then(|root| scenes.get(root).ok())
+        .map(|(context, _)| context);
+    let stage = root.map(|root| root.map(|root| Stage::of(stages.get(root).ok(), context)));
+    let mut blocked_by: Vec<&str> = context
+        .map(|context| context.blocked.iter().copied().collect())
+        .unwrap_or_default();
+    blocked_by.sort_unstable();
+    let mut unavailable = serde_json::Map::new();
+    match hash {
+        None => {
+            for field in ["playerParcel", "outOfWorld", "sceneHash"] {
+                unavailable.insert(field.to_owned(), NO_POSITION.into());
+            }
+        }
+        Some(Err(none)) => {
+            unavailable.insert("sceneHash".to_owned(), none.reason().into());
+        }
+        Some(Ok(_)) => {}
+    }
+
     let (mut running, mut blocked, mut broken, mut gltf) = (0, 0, 0, 0);
     for (scene, loading) in &scenes {
         if scene.broken() {
@@ -703,8 +726,15 @@ fn loading_state(
             textures += 1;
         }
     }
-    input.reply_ok(json!({"current":current.0, "stage": stage, "state": state, "isReady": ready,
-        "sceneHash": scene_hash, "playerParcel": player_parcel, "spawned":spawned,"definition":definition,"crdt":crdt,"javascript":javascript,"failed":failed,
+    input.reply_ok(json!({"current":current.0,
+        "playerParcel": player.map(|(parcel, _)| [parcel.x, parcel.y]),
+        "outOfWorld": player.map(|(_, outside)| outside),
+        "sceneHash": hash.and_then(Result::ok),
+        "stage": stage.map_or(NO_POSITION, |stage| stage.map_or_else(NoParcelScene::reason, Stage::name)),
+        "state": stage.map_or(Stage::Unstarted.state(), state_of),
+        "isReady": stage.is_some_and(|stage| stage.is_ok_and(Stage::is_ready)),
+        "blockedBy": blocked_by, "unavailable": unavailable,
+        "spawned":spawned,"definition":definition,"crdt":crdt,"javascript":javascript,"failed":failed,
         "running":running,"blocked":blocked,"broken":broken,"gltf":gltf,"preloads":preloads_count,"texturePreloads":textures,
         "settleWaits":waits.pending()}).to_string());
 }
@@ -727,8 +757,13 @@ fn texture_state(mut input: ConsoleCommand<TextureState>, images: Res<Assets<Ima
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
+    use crate::{
+        initialize_scene::{LiveScenes, PointerResult, PortableScenes, ScenePointers},
+        renderer_context::{FROZEN_BLOCK, STARTUP_TICKS},
+        update_world::gltf_container::GLTF_LOADING,
+    };
     use bevy_console::{ConsoleCommandEntered, ConsoleResponder};
+    use common::structs::OutOfWorld;
     use common::sync::MutexExt;
     use dcl_component::{DclReader, SceneComponentId, SceneCrdtTimestamp, SceneEntityId};
     use dcl_types::interface::{CrdtStore, CrdtType};
@@ -770,34 +805,16 @@ mod tests {
         serde_json::from_str(&reply).unwrap()
     }
 
-    #[test]
-    fn loading_state_reports_the_readiness_of_the_scene_under_the_player() {
-        use crate::renderer_context::STARTUP_TICKS;
-
+    fn loading_state_app() -> App {
         let mut app = scene_state_app();
         app.init_resource::<CurrentSceneLoading>()
             .init_resource::<SceneWaits>()
             .add_console_command::<LoadingState, _>(loading_state);
-        app.world_mut()
-            .spawn((PrimaryUser::default(), GlobalTransform::IDENTITY));
+        app
+    }
 
-        // the parcel's pointer has not resolved yet
-        let report = read(&mut app, "/scene_loading_state");
-        assert_eq!(report["playerParcel"], json!([0, 0]));
-        assert_eq!(report["state"], "loading");
-        assert_eq!(report["isReady"], false);
-        assert!(report["sceneHash"].is_null());
-
-        // an empty parcel
-        app.world_mut()
-            .resource_mut::<ScenePointers>()
-            .insert(IVec2::ZERO, PointerResult::Nothing);
-        let report = read(&mut app, "/scene_loading_state");
-        assert_eq!(report["state"], "none");
-        assert_eq!(report["stage"], NO_SCENE);
-        assert_eq!(report["isReady"], false);
-
-        // a scene in its startup ticks, then past them
+    /// A scene "hash" on parcel (0, 0) at `tick`, its pointer resolved.
+    fn loading_scene(app: &mut App, tick: u32) -> Entity {
         let world = app.world_mut();
         let root = world.spawn_empty().id();
         let mut context = RendererSceneContext::new(
@@ -819,26 +836,63 @@ mod tests {
             false,
             false,
         );
-        context.tick_number = STARTUP_TICKS;
-        world
-            .entity_mut(root)
-            .insert((context, SceneHash("hash".to_owned())));
+        context.tick_number = tick;
+        world.entity_mut(root).insert(context);
         world
             .resource_mut::<LiveScenes>()
             .scenes
             .insert("hash".to_owned(), root);
-        world.resource_mut::<ScenePointers>().insert(
+        resolve_pointer(app);
+        root
+    }
+
+    fn resolve_pointer(app: &mut App) {
+        app.world_mut().resource_mut::<ScenePointers>().insert(
             IVec2::ZERO,
             PointerResult::Exists {
                 hash: "hash".to_owned(),
                 urn: None,
             },
         );
+    }
+
+    #[test]
+    fn loading_state_reports_the_readiness_of_the_scene_under_the_player() {
+        let mut app = loading_state_app();
+        app.world_mut()
+            .spawn((PrimaryUser::default(), GlobalTransform::IDENTITY));
+
+        // the parcel's pointer has not resolved yet
+        let report = read(&mut app, "/scene_loading_state");
+        assert_eq!(report["playerParcel"], json!([0, 0]));
+        assert_eq!(report["outOfWorld"], false);
+        assert_eq!(report["state"], "loading");
+        assert_eq!(report["stage"], NoParcelScene::Unresolved.reason());
+        assert_eq!(report["isReady"], false);
+        assert!(report["sceneHash"].is_null());
+        assert_eq!(
+            report["unavailable"]["sceneHash"],
+            NoParcelScene::Unresolved.reason()
+        );
+
+        // an empty parcel
+        app.world_mut()
+            .resource_mut::<ScenePointers>()
+            .insert(IVec2::ZERO, PointerResult::Nothing);
+        let report = read(&mut app, "/scene_loading_state");
+        assert_eq!(report["state"], "none");
+        assert_eq!(report["stage"], NoParcelScene::Empty.reason());
+        assert_eq!(report["isReady"], false);
+
+        // a scene in its startup ticks, then past them: one classification behind both names
+        let root = loading_scene(&mut app, STARTUP_TICKS);
         let report = read(&mut app, "/scene_loading_state");
         assert_eq!(report["sceneHash"], "hash");
-        assert_eq!(report["stage"], "Running");
+        assert_eq!(report["stage"], "Starting");
         assert_eq!(report["state"], "starting");
         assert_eq!(report["isReady"], false);
+        assert_eq!(report["blockedBy"], json!([]));
+        assert_eq!(report["unavailable"], json!({}));
         // the counts every caller already reads are still there
         assert_eq!(report["running"], 1);
         assert_eq!(report["settleWaits"], 0);
@@ -848,8 +902,86 @@ mod tests {
             .unwrap()
             .tick_number = STARTUP_TICKS + 1;
         let report = read(&mut app, "/scene_loading_state");
+        assert_eq!(report["stage"], "Running");
         assert_eq!(report["state"], "running");
         assert_eq!(report["isReady"], true);
+    }
+
+    #[test]
+    fn loading_state_without_a_player_names_what_it_waits_for() {
+        let mut app = loading_state_app();
+        loading_scene(&mut app, STARTUP_TICKS + 1);
+        let report = read(&mut app, "/scene_loading_state");
+        assert!(report["playerParcel"].is_null());
+        assert!(report["outOfWorld"].is_null());
+        assert!(report["sceneHash"].is_null());
+        assert_eq!(report["stage"], NO_POSITION);
+        assert_eq!(report["state"], "loading");
+        assert_eq!(report["isReady"], false);
+        assert_eq!(report["unavailable"]["playerParcel"], NO_POSITION);
+        // the counts do not need the player
+        assert_eq!(report["running"], 1);
+    }
+
+    #[test]
+    fn loading_state_reads_the_scene_under_a_player_still_out_of_world() {
+        let mut app = loading_state_app();
+        app.world_mut().spawn((
+            PrimaryUser::default(),
+            GlobalTransform::IDENTITY,
+            OutOfWorld::default(),
+        ));
+        loading_scene(&mut app, STARTUP_TICKS + 1);
+        let report = read(&mut app, "/scene_loading_state");
+        // the scene is ready before the player lands on it: `outOfWorld` tells the two apart
+        assert_eq!(report["outOfWorld"], true);
+        assert_eq!(report["isReady"], true);
+        assert_eq!(report["sceneHash"], "hash");
+    }
+
+    #[test]
+    fn loading_state_names_a_scene_that_has_not_spawned_by_its_pointer() {
+        let mut app = loading_state_app();
+        app.world_mut()
+            .spawn((PrimaryUser::default(), GlobalTransform::IDENTITY));
+        resolve_pointer(&mut app);
+        let report = read(&mut app, "/scene_loading_state");
+        assert_eq!(report["sceneHash"], "hash");
+        assert_eq!(report["stage"], NoParcelScene::NotSpawned.reason());
+        assert_eq!(report["state"], "loading");
+        assert_eq!(report["isReady"], false);
+    }
+
+    #[test]
+    fn loading_state_says_what_blocks_a_scene_and_when_it_is_broken() {
+        let mut app = loading_state_app();
+        app.world_mut()
+            .spawn((PrimaryUser::default(), GlobalTransform::IDENTITY));
+        let root = loading_scene(&mut app, STARTUP_TICKS + 1);
+        let mut context = app
+            .world_mut()
+            .get_mut::<RendererSceneContext>(root)
+            .unwrap();
+        context.blocked.insert(GLTF_LOADING);
+        context.blocked.insert(FROZEN_BLOCK);
+        let report = read(&mut app, "/scene_loading_state");
+        assert_eq!(report["stage"], "Blocked");
+        assert_eq!(report["state"], "blocked");
+        assert_eq!(report["isReady"], false);
+        assert_eq!(report["blockedBy"], json!([FROZEN_BLOCK, GLTF_LOADING]));
+        assert_eq!(report["blocked"], 1);
+
+        let mut context = app
+            .world_mut()
+            .get_mut::<RendererSceneContext>(root)
+            .unwrap();
+        context.blocked.clear();
+        context.state = crate::renderer_context::SceneState::Broken;
+        let report = read(&mut app, "/scene_loading_state");
+        assert_eq!(report["stage"], "Broken");
+        assert_eq!(report["state"], "broken");
+        assert_eq!(report["isReady"], false);
+        assert_eq!(report["broken"], 1);
     }
 
     #[test]

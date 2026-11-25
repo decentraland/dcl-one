@@ -1,5 +1,6 @@
 //! Waiting for a parcel scene to settle, for the commands that replace one (`/teleport --wait`,
-//! `/reload --wait`), and the readiness they wait for, which `/scene_loading_state` reports.
+//! `/reload --wait`). The readiness they wait for is the scene's [`Stage`], which
+//! `/scene_loading_state` reports.
 
 use bevy::{diagnostic::FrameCount, prelude::*};
 use common::{
@@ -9,10 +10,11 @@ use common::{
 use serde_json::{json, Value};
 
 use crate::{
-    debug_panel::{scene_on_parcel, Stage, NO_SCENE},
-    initialize_scene::{LiveScenes, SceneLoading, ScenePointers, SuperUserScene},
+    debug_panel::{state_of, Stage},
+    initialize_scene::{NoParcelScene, SceneLoading, SuperUserScene},
     load_timing::scene_is_halted,
-    renderer_context::{RendererSceneContext, STARTUP_TICKS},
+    renderer_context::RendererSceneContext,
+    ContainingScene,
 };
 
 /// Frames waited once the scene is ready, so the frame it first drew in has been presented: the
@@ -36,35 +38,8 @@ pub fn wait_timeout(wait: bool, timeout_seconds: Option<f32>) -> Result<Option<f
     Ok(Some(timeout))
 }
 
-/// A scene's lifecycle state as the settling replies and `/scene_loading_state` name it, from its
-/// [`Stage`]: `loading` (definition, main.crdt or JavaScript still being fetched), `failed`,
-/// `starting` (running, still in its [`STARTUP_TICKS`]), `blocked`, `broken` or `running`.
-pub(crate) fn state_name(
-    loading: Option<&SceneLoading>,
-    context: Option<&RendererSceneContext>,
-) -> &'static str {
-    match Stage::of(loading, context) {
-        Stage::Failed => "failed",
-        Stage::Broken => "broken",
-        Stage::Blocked => "blocked",
-        Stage::Running if context.is_some_and(|c| c.tick_number <= STARTUP_TICKS) => "starting",
-        Stage::Running => "running",
-        _ => "loading",
-    }
-}
-
-/// Whether the scene runs with its content shown ([`RendererSceneContext::content_shown`]: past
-/// its [`STARTUP_TICKS`], nothing blocking it). A halted scene shows what it has and is never
-/// ready ([`never_ready`]).
-pub(crate) fn is_ready(
-    loading: Option<&SceneLoading>,
-    context: Option<&RendererSceneContext>,
-) -> bool {
-    loading.is_none() && context.is_some_and(|c| c.content_shown() && !scene_is_halted(c))
-}
-
 /// Why the scene will never be ready, for one that failed to load or is halted
-/// ([`scene_is_halted`]: broken or frozen).
+/// ([`scene_is_halted`]: broken, or frozen with its glTFs loaded).
 fn never_ready(
     loading: Option<&SceneLoading>,
     context: Option<&RendererSceneContext>,
@@ -79,20 +54,56 @@ fn never_ready(
 }
 
 enum Target {
-    /// The parcel scene the player lands in after a teleport. `arrived` is the
-    /// [`ReturnedToWorld`] seen since the teleport.
-    Arrival {
-        parcel: IVec2,
-        arrived: Option<ReturnedToWorld>,
-    },
+    /// The parcel scene the player lands in after a teleport. `landed` once a
+    /// [`ReturnedToWorld`] was seen since the teleport.
+    Arrival { parcel: IVec2, landed: bool },
     /// A new instance of a reloaded scene: any entity for the hash but the one replaced.
     Reload { hash: String, replaced: Entity },
 }
 
+/// The scene a wait watches, or why it has none yet.
+enum Watched {
+    Scene(Entity),
+    /// The teleport landed on a parcel with no scene.
+    NoScene(IVec2),
+    Waiting(&'static str),
+}
+
+/// What a wait observed, for its reply.
+struct Outcome {
+    /// The player landed (a teleport's reply only).
+    arrived: bool,
+    /// The scene is ready (a teleport's reply only).
+    ready: bool,
+    state: &'static str,
+    /// Frames drawn since the scene was first seen ready.
+    rendered_frames: u32,
+    settled: bool,
+}
+
+/// What one frame gives every wait.
+struct Frame {
+    count: u32,
+    dt: f32,
+    /// A [`ReturnedToWorld`] arrived this frame.
+    landed: bool,
+    out_of_world: bool,
+}
+
+type Scenes<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Option<&'static SceneLoading>,
+        Option<&'static RendererSceneContext>,
+    ),
+    Without<SuperUserScene>,
+>;
+
 struct SceneWait {
     target: Target,
-    /// The teleport request a realm change waits on before the wait starts.
-    gate: Option<RpcResultReceiver<Result<(), String>>>,
+    /// The teleport request an arrival waits on first, until it is answered.
+    request: Option<RpcResultReceiver<Result<(), String>>>,
     /// The reply's fields known when the wait started.
     reply: Value,
     timeout: f32,
@@ -114,28 +125,28 @@ impl SceneWaits {
         self.0.len()
     }
 
-    /// Wait for the player to land on `parcel` and its scene to be ready, after `gate` (a realm
-    /// change's teleport request) resolves. The reply is `reply` with the outcome added.
+    /// Wait for the teleport `request` to be answered, the player to land on `parcel` and its
+    /// scene to be ready. The reply is `reply` with the outcome added.
     pub fn arrival(
         &mut self,
         parcel: IVec2,
         timeout: f32,
-        gate: Option<RpcResultReceiver<Result<(), String>>>,
+        request: RpcResultReceiver<Result<(), String>>,
         reply: Value,
     ) -> tokio::sync::oneshot::Receiver<Result<String, String>> {
         self.push(
             Target::Arrival {
                 parcel,
-                arrived: None,
+                landed: false,
             },
-            gate,
+            Some(request),
             reply,
             timeout,
         )
     }
 
     /// Wait for a new instance of the scene `hash` to be ready; `replaced` is the scene entity the
-    /// reload removed from [`LiveScenes`].
+    /// reload removed from `LiveScenes`.
     pub(super) fn reload(
         &mut self,
         hash: String,
@@ -149,14 +160,14 @@ impl SceneWaits {
     fn push(
         &mut self,
         target: Target,
-        gate: Option<RpcResultReceiver<Result<(), String>>>,
+        request: Option<RpcResultReceiver<Result<(), String>>>,
         reply: Value,
         timeout: f32,
     ) -> tokio::sync::oneshot::Receiver<Result<String, String>> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         self.0.push(SceneWait {
             target,
-            gate,
+            request,
             reply,
             timeout,
             elapsed: 0.0,
@@ -168,82 +179,56 @@ impl SceneWaits {
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub(super) fn settle_scenes(
     mut waits: ResMut<SceneWaits>,
     mut returned: EventReader<ReturnedToWorld>,
     time: Res<Time<Real>>,
     frame: Res<FrameCount>,
-    live: Res<LiveScenes>,
-    pointers: Option<Res<ScenePointers>>,
+    containing: ContainingScene,
     player: Query<Has<OutOfWorld>, With<PrimaryUser>>,
-    scenes: Query<(Option<&SceneLoading>, Option<&RendererSceneContext>), Without<SuperUserScene>>,
+    scenes: Scenes,
 ) {
-    let landed = returned.read().last().copied();
+    let landed = returned.read().last().is_some();
     if waits.0.is_empty() {
         return;
     }
-    let out_of_world = player.single().unwrap_or(true);
-    let dt = time.delta_secs();
+    let frame = Frame {
+        count: frame.0,
+        dt: time.delta_secs(),
+        landed,
+        out_of_world: player.single().unwrap_or(true),
+    };
+    waits
+        .0
+        .retain_mut(|wait| wait.advance(&frame, &containing, &scenes));
+}
 
-    waits.0.retain_mut(|wait| {
-        if wait.sender.as_ref().is_none_or(|s| s.is_closed()) {
+impl SceneWait {
+    /// One frame of the wait; `false` once it has replied, so `retain_mut` drops it.
+    fn advance(&mut self, frame: &Frame, containing: &ContainingScene, scenes: &Scenes) -> bool {
+        if self.sender.as_ref().is_none_or(|s| s.is_closed()) {
             return false;
         }
-        wait.elapsed += dt;
-        if let Some(gate) = wait.gate.as_mut() {
-            match gate.poll_once() {
-                Ok(None) if wait.elapsed < wait.timeout => return true,
-                // the realm change counts against the timeout too
-                Ok(None) => {
-                    wait.reply["arrived"] = json!(false);
-                    wait.reply["sceneReady"] = json!(false);
-                    wait.reply["sceneState"] = json!("loading");
-                    wait.reply["renderedFrames"] = json!(0);
-                    wait.reply["settleMs"] = json!((wait.elapsed * 1000.0).round());
-                    wait.reply["settled"] = json!(false);
-                    let warning = format!(
-                        "timed out after {} s. Waiting for the realm change.",
-                        wait.timeout
-                    );
-                    return wait.finish_with_warning(Some(warning));
-                }
-                Ok(Some(Ok(()))) => wait.gate = None,
-                Ok(Some(Err(e))) => return wait.finish(Err(e)),
-                Err(()) => return wait.finish(Err("the teleport was cancelled".to_owned())),
-            }
+        self.elapsed += frame.dt;
+        if let Some(keep) = self.poll_request() {
+            return keep;
         }
 
-        // the scene entity to watch, or why there is none yet
-        let entity = match &mut wait.target {
-            Target::Arrival { parcel, arrived } => {
-                if let Some(landed) = landed {
-                    arrived.get_or_insert(landed);
-                }
-                if arrived.is_none() || out_of_world {
-                    Err("Waiting for the player to land.")
-                } else {
-                    match scene_on_parcel(pointers.as_deref(), &live, *parcel) {
-                        Err(NO_SCENE) => {
-                            wait.reply["arrived"] = json!(true);
-                            wait.reply["sceneReady"] = json!(false);
-                            wait.reply["sceneHash"] = Value::Null;
-                            wait.reply["sceneState"] = json!("none");
-                            wait.reply["renderedFrames"] = json!(0);
-                            wait.reply["settled"] = json!(true);
-                            wait.reply["settleMs"] = json!((wait.elapsed * 1000.0).round());
-                            let warning =
-                                format!("there is no scene on parcel {},{}", parcel.x, parcel.y);
-                            return wait.finish_with_warning(Some(warning));
-                        }
-                        scene => scene,
-                    }
-                }
+        let entity = match self.watch(frame, containing) {
+            Watched::Scene(entity) => Ok(entity),
+            Watched::Waiting(why) => Err(why),
+            Watched::NoScene(parcel) => {
+                self.reply["sceneHash"] = Value::Null;
+                let outcome = Outcome {
+                    arrived: true,
+                    ready: false,
+                    state: state_of(Err(NoParcelScene::Empty)),
+                    rendered_frames: 0,
+                    settled: true,
+                };
+                let warning = format!("there is no scene on parcel {},{}", parcel.x, parcel.y);
+                return self.finish(outcome, Some(warning));
             }
-            Target::Reload { hash, replaced } => match live.scenes.get(hash.as_str()) {
-                Some(entity) if entity != replaced => Ok(*entity),
-                _ => Err("Waiting for the scene to spawn again."),
-            },
         };
 
         let (loading, context) = entity
@@ -251,52 +236,44 @@ pub(super) fn settle_scenes(
             .and_then(|e| scenes.get(e).ok())
             .unwrap_or((None, None));
         if let Ok(entity) = entity {
-            if wait.watched.is_none_or(|(watched, _)| watched != entity) {
-                let tick = match wait.target {
+            if self.watched.is_none_or(|(watched, _)| watched != entity) {
+                let tick = match self.target {
                     // a reloaded scene is a new one: every tick it has, it ran since
                     Target::Reload { .. } => 0,
                     Target::Arrival { .. } => context.map_or(0, |c| c.tick_number),
                 };
-                wait.watched = Some((entity, tick));
-                wait.ready = None;
+                self.watched = Some((entity, tick));
+                self.ready = None;
             }
         }
-        let state = state_name(loading, context);
-        let ready = entity.is_ok() && is_ready(loading, context);
-        if ready && wait.ready.is_none() {
-            wait.ready = Some(frame.0);
+        // no scene to watch reads as one that has not started
+        let stage = Stage::of(loading, context);
+        let ready = stage.is_ready();
+        if ready && self.ready.is_none() {
+            self.ready = Some(frame.count);
         } else if !ready {
-            wait.ready = None;
+            self.ready = None;
         }
 
-        let presented = wait
-            .ready
-            .is_some_and(|at| frame.0.wrapping_sub(at) >= PRESENT_FRAMES);
-        let halted = never_ready(loading, context).filter(|_| entity.is_ok());
-        let expired = wait.elapsed >= wait.timeout;
+        let rendered_frames = self.ready.map_or(0, |at| frame.count.wrapping_sub(at));
+        let presented = rendered_frames >= PRESENT_FRAMES;
+        let halted = never_ready(loading, context);
+        let expired = self.elapsed >= self.timeout;
         if !(presented || halted.is_some() || expired) {
             return true;
         }
 
         if let Some(context) = context {
-            wait.reply["sceneHash"] = json!(context.hash.as_ref());
-            wait.reply["title"] = json!(context.title);
-            let since = wait.watched.map_or(0, |(_, tick)| tick);
-            wait.reply["ticksWaited"] = json!(context.tick_number.saturating_sub(since));
+            self.reply["sceneHash"] = json!(context.hash.as_ref());
+            self.reply["title"] = json!(context.title);
+            let since = self.watched.map_or(0, |(_, tick)| tick);
+            self.reply["ticksWaited"] = json!(context.tick_number.saturating_sub(since));
             if !context.blocked.is_empty() {
                 let mut blocked: Vec<_> = context.blocked.iter().collect();
                 blocked.sort();
-                wait.reply["blocked"] = json!(blocked);
+                self.reply["blocked"] = json!(blocked);
             }
         }
-        if let Target::Arrival { arrived, .. } = &wait.target {
-            wait.reply["arrived"] = json!(arrived.is_some() && !out_of_world);
-            wait.reply["sceneReady"] = json!(ready);
-        }
-        wait.reply["sceneState"] = json!(state);
-        wait.reply["renderedFrames"] = json!(u32::from(presented));
-        wait.reply["settleMs"] = json!((wait.elapsed * 1000.0).round());
-        wait.reply["settled"] = json!(presented);
         let warning = if presented {
             None
         } else if let Some(halted) = halted {
@@ -305,38 +282,109 @@ pub(super) fn settle_scenes(
             let waiting = match entity {
                 Err(why) => why.to_owned(),
                 Ok(_) if ready => "Waiting for a frame to be drawn.".to_owned(),
-                Ok(_) => format!("Waiting for the scene to run (it is {state})."),
+                Ok(_) => format!("Waiting for the scene to run (it is {}).", stage.state()),
             };
             Some(format!(
                 "timed out after {} s. {waiting} Is the simulation paused?",
-                wait.timeout
+                self.timeout
             ))
         };
-        wait.finish_with_warning(warning)
-    });
-}
+        let outcome = Outcome {
+            arrived: matches!(self.target, Target::Arrival { landed: true, .. })
+                && !frame.out_of_world,
+            ready,
+            state: stage.state(),
+            rendered_frames,
+            settled: presented,
+        };
+        self.finish(outcome, warning)
+    }
 
-impl SceneWait {
+    /// Poll the teleport request an arrival waits on first: `Some` while the wait stops there
+    /// this frame, with what [`Self::advance`] returns.
+    fn poll_request(&mut self) -> Option<bool> {
+        match self.request.as_mut()?.poll_once() {
+            Ok(None) if self.elapsed < self.timeout => Some(true),
+            // the teleport request (a realm change, when it asks for one) counts against the
+            // timeout too
+            Ok(None) => {
+                let outcome = Outcome {
+                    arrived: false,
+                    ready: false,
+                    state: Stage::Unstarted.state(),
+                    rendered_frames: 0,
+                    settled: false,
+                };
+                let warning = format!(
+                    "timed out after {} s. Waiting for the teleport request to be answered.",
+                    self.timeout
+                );
+                Some(self.finish(outcome, Some(warning)))
+            }
+            Ok(Some(Ok(()))) => {
+                self.request = None;
+                None
+            }
+            Ok(Some(Err(e))) => Some(self.send(Err(e))),
+            Err(()) => Some(self.send(Err("the teleport was cancelled".to_owned()))),
+        }
+    }
+
+    /// The scene entity to watch this frame, or why there is none yet.
+    fn watch(&mut self, frame: &Frame, containing: &ContainingScene) -> Watched {
+        match &mut self.target {
+            Target::Arrival { parcel, landed } => {
+                *landed |= frame.landed;
+                if !*landed || frame.out_of_world {
+                    return Watched::Waiting("Waiting for the player to land.");
+                }
+                match containing.parcel_scene(*parcel) {
+                    Ok(entity) => Watched::Scene(entity),
+                    Err(NoParcelScene::Empty) => Watched::NoScene(*parcel),
+                    Err(none) => Watched::Waiting(none.reason()),
+                }
+            }
+            Target::Reload { hash, replaced } => {
+                match containing.live_scenes.scenes.get(hash.as_str()) {
+                    Some(entity) if entity != replaced => Watched::Scene(*entity),
+                    _ => Watched::Waiting("Waiting for the scene to spawn again."),
+                }
+            }
+        }
+    }
+
+    /// Fill the outcome into the reply and send it; `false`, as [`Self::send`].
+    fn finish(&mut self, outcome: Outcome, warning: Option<String>) -> bool {
+        let mut reply = std::mem::take(&mut self.reply);
+        match self.target {
+            Target::Arrival { .. } => {
+                reply["arrived"] = json!(outcome.arrived);
+                reply["sceneReady"] = json!(outcome.ready);
+            }
+            Target::Reload { .. } if outcome.settled => {
+                reply["hint"] = json!(
+                    "the scene started again from scratch: its state, counters and scene-UI ids \
+                     are new; its startup logs are in /scene_logs again"
+                );
+            }
+            Target::Reload { .. } => {}
+        }
+        reply["sceneState"] = json!(outcome.state);
+        reply["renderedFrames"] = json!(outcome.rendered_frames);
+        reply["settleMs"] = json!((self.elapsed * 1000.0).round());
+        reply["settled"] = json!(outcome.settled);
+        if let Some(warning) = warning {
+            reply["warning"] = json!(warning);
+        }
+        self.send(Ok(reply.to_string()))
+    }
+
     /// Send the reply; `false`, so `retain_mut` drops the wait.
-    fn finish(&mut self, result: Result<String, String>) -> bool {
+    fn send(&mut self, result: Result<String, String>) -> bool {
         if let Some(sender) = self.sender.take() {
             let _ = sender.send(result);
         }
         false
-    }
-
-    fn finish_with_warning(&mut self, warning: Option<String>) -> bool {
-        let mut reply = std::mem::take(&mut self.reply);
-        if matches!(self.target, Target::Reload { .. }) && reply["settled"] == json!(true) {
-            reply["hint"] = json!(
-                "the scene started again from scratch: its state, counters and scene-UI ids are \
-                 new; its startup logs are in /scene_logs again"
-            );
-        }
-        if let Some(warning) = warning {
-            reply["warning"] = json!(warning);
-        }
-        self.finish(Ok(reply.to_string()))
     }
 }
 
@@ -347,7 +395,11 @@ mod tests {
     use common::rpc::RpcResultSender;
     use dcl_types::SceneId;
 
-    use crate::{initialize_scene::PointerResult, renderer_context::FROZEN_BLOCK};
+    use crate::{
+        initialize_scene::{LiveScenes, PointerResult, PortableScenes, ScenePointers},
+        renderer_context::{FROZEN_BLOCK, STARTUP_TICKS},
+        update_world::gltf_container::GLTF_LOADING,
+    };
     use scene_material::SceneBounds;
 
     use super::*;
@@ -356,6 +408,8 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<SceneWaits>()
             .init_resource::<LiveScenes>()
+            .init_resource::<PortableScenes>()
+            .init_resource::<ScenePointers>()
             .init_resource::<FrameCount>()
             .init_resource::<Time<Real>>()
             .add_event::<ReturnedToWorld>()
@@ -414,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn a_scene_is_ready_once_its_content_is_shown() {
+    fn a_scene_is_ready_once_it_has_started() {
         let mut app = app();
         for (tick, state) in [
             (0, "starting"),
@@ -423,10 +477,15 @@ mod tests {
         ] {
             let root = scene(&mut app, "h", tick);
             let context = app.world().get::<RendererSceneContext>(root).unwrap();
-            assert_eq!(state_name(None, Some(context)), state);
-            // the rule the scene's stand-ins go by
-            assert_eq!(is_ready(None, Some(context)), context.content_shown());
-            assert_eq!(is_ready(None, Some(context)), state == "running");
+            let stage = Stage::of(None, Some(context));
+            assert_eq!(stage.state(), state);
+            // the rule the scene's stand-ins go by, and the one the teleport releases on
+            assert_eq!(stage.is_ready(), context.content_shown());
+            assert_eq!(
+                stage.is_ready(),
+                crate::load_timing::scene_has_loaded(context)
+            );
+            assert_eq!(stage.is_ready(), state == "running");
         }
         let root = scene(&mut app, "h", 10);
         let mut context = app
@@ -434,15 +493,21 @@ mod tests {
             .get_mut::<RendererSceneContext>(root)
             .unwrap();
         context.blocked.insert(FROZEN_BLOCK);
-        assert_eq!(state_name(None, Some(&*context)), "blocked");
+        let stage = Stage::of(None, Some(&*context));
+        assert_eq!(stage.state(), "blocked");
         // a frozen scene shows what it has, and is not ready
         assert!(context.content_shown());
-        assert!(!is_ready(None, Some(&*context)));
-        assert_eq!(state_name(Some(&SceneLoading::Failed), None), "failed");
+        assert!(!stage.is_ready());
         assert_eq!(
-            state_name(Some(&SceneLoading::SceneEntity), None),
+            Stage::of(Some(&SceneLoading::Failed), None).state(),
+            "failed"
+        );
+        assert_eq!(
+            Stage::of(Some(&SceneLoading::SceneEntity), None).state(),
             "loading"
         );
+        assert_eq!(state_of(Err(NoParcelScene::Empty)), "none");
+        assert_eq!(state_of(Err(NoParcelScene::NotSpawned)), "loading");
     }
 
     #[test]
@@ -475,13 +540,14 @@ mod tests {
         assert_eq!(reply["settled"], true);
         assert_eq!(reply["sceneState"], "running");
         assert_eq!(reply["ticksWaited"], STARTUP_TICKS + 1);
-        assert_eq!(reply["renderedFrames"], 1);
+        // the frame the scene was first ready in, presented by now, and the one after it
+        assert_eq!(reply["renderedFrames"], PRESENT_FRAMES);
         assert!(reply["hint"].is_string());
         assert!(reply.get("warning").is_none());
     }
 
     #[test]
-    fn a_frozen_scene_ends_the_wait_at_once() {
+    fn a_frozen_scene_ends_the_wait_once_its_gltfs_have_loaded() {
         let mut app = app();
         let old = scene(&mut app, "h", 40);
         app.world_mut()
@@ -492,12 +558,25 @@ mod tests {
             .world_mut()
             .resource_mut::<SceneWaits>()
             .reload("h".to_owned(), old, 60.0);
+        // the editor freezes a scene at tick 3, while its models still load
         let new = scene(&mut app, "h", 3);
-        app.world_mut()
+        let mut context = app
+            .world_mut()
             .get_mut::<RendererSceneContext>(new)
-            .unwrap()
-            .blocked
-            .insert(FROZEN_BLOCK);
+            .unwrap();
+        context.blocked.insert(FROZEN_BLOCK);
+        context.blocked.insert(GLTF_LOADING);
+        // the teleport's release holds the player for those too
+        assert!(!crate::load_timing::scene_has_loaded(&context));
+        assert!(step(&mut app, &mut rx, 0.1).is_none());
+        assert!(step(&mut app, &mut rx, 0.1).is_none());
+
+        let mut context = app
+            .world_mut()
+            .get_mut::<RendererSceneContext>(new)
+            .unwrap();
+        context.blocked.remove(GLTF_LOADING);
+        assert!(crate::load_timing::scene_has_loaded(&context));
         let reply = step(&mut app, &mut rx, 0.1).unwrap();
         assert_eq!(reply["settled"], false);
         assert_eq!(reply["sceneState"], "blocked");
@@ -528,24 +607,46 @@ mod tests {
     }
 
     #[test]
-    fn a_realm_change_that_never_answers_times_out() {
+    fn a_teleport_request_that_is_never_answered_times_out() {
         let mut app = app();
-        let (_response, gate) = RpcResultSender::<Result<(), String>>::channel();
+        let (_response, request) = RpcResultSender::<Result<(), String>>::channel();
         let mut rx = app.world_mut().resource_mut::<SceneWaits>().arrival(
             IVec2::ZERO,
             1.0,
-            Some(gate),
+            request,
             json!({ "realm": "a.dcl.eth" }),
         );
         assert!(step(&mut app, &mut rx, 0.6).is_none());
         let reply = step(&mut app, &mut rx, 0.6).unwrap();
         assert_eq!(reply["realm"], "a.dcl.eth");
         assert_eq!(reply["arrived"], false);
+        assert_eq!(reply["sceneReady"], false);
+        assert_eq!(reply["sceneState"], "loading");
+        assert_eq!(reply["renderedFrames"], 0);
         assert_eq!(reply["settled"], false);
         assert!(reply["warning"]
             .as_str()
             .unwrap()
-            .contains("Waiting for the realm change."));
+            .contains("Waiting for the teleport request to be answered."));
+        assert_eq!(app.world().resource::<SceneWaits>().pending(), 0);
+    }
+
+    #[test]
+    fn a_refused_teleport_request_fails_the_wait() {
+        let mut app = app();
+        let (response, request) = RpcResultSender::<Result<(), String>>::channel();
+        let mut rx = app.world_mut().resource_mut::<SceneWaits>().arrival(
+            IVec2::ZERO,
+            5.0,
+            request,
+            json!({}),
+        );
+        response.send(Err("no such spawn point".to_owned()));
+        app.update();
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            Err("no such spawn point".to_owned())
+        );
         assert_eq!(app.world().resource::<SceneWaits>().pending(), 0);
     }
 
@@ -564,17 +665,68 @@ mod tests {
         app.world_mut()
             .entity_mut(player)
             .insert(OutOfWorld::default());
-        let mut rx =
-            app.world_mut()
-                .resource_mut::<SceneWaits>()
-                .arrival(IVec2::ZERO, 5.0, None, json!({}));
+        let (response, request) = RpcResultSender::<Result<(), String>>::channel();
+        response.send(Ok(()));
+        let mut rx = app.world_mut().resource_mut::<SceneWaits>().arrival(
+            IVec2::ZERO,
+            5.0,
+            request,
+            json!({}),
+        );
         assert!(step(&mut app, &mut rx, 0.1).is_none());
 
         app.world_mut().entity_mut(player).remove::<OutOfWorld>();
         app.world_mut().send_event(ReturnedToWorld::SceneReady);
         let reply = step(&mut app, &mut rx, 0.1).unwrap();
+        assert_eq!(reply["arrived"], true);
         assert_eq!(reply["sceneReady"], false);
         assert_eq!(reply["sceneState"], "none");
+        assert_eq!(reply["settled"], true);
+        assert!(reply["sceneHash"].is_null());
         assert!(reply["warning"].as_str().unwrap().contains("no scene"));
+    }
+
+    #[test]
+    fn an_arrival_settles_on_the_scene_the_player_landed_in() {
+        let mut app = app();
+        let mut pointers = ScenePointers::default();
+        pointers.set_realm(IVec2::ZERO, IVec2::ONE);
+        pointers.insert(
+            IVec2::ZERO,
+            PointerResult::Exists {
+                hash: "h".to_owned(),
+                urn: None,
+            },
+        );
+        app.insert_resource(pointers);
+        let (response, request) = RpcResultSender::<Result<(), String>>::channel();
+        response.send(Ok(()));
+        let mut rx = app.world_mut().resource_mut::<SceneWaits>().arrival(
+            IVec2::ZERO,
+            5.0,
+            request,
+            json!({}),
+        );
+        app.world_mut().send_event(ReturnedToWorld::SceneReady);
+        // landed, and the parcel's scene has not spawned
+        assert!(step(&mut app, &mut rx, 0.1).is_none());
+
+        let root = scene(&mut app, "h", 2);
+        assert!(step(&mut app, &mut rx, 0.1).is_none());
+        app.world_mut()
+            .get_mut::<RendererSceneContext>(root)
+            .unwrap()
+            .tick_number = STARTUP_TICKS + 3;
+        assert!(step(&mut app, &mut rx, 0.1).is_none());
+        assert!(step(&mut app, &mut rx, 0.1).is_none());
+        let reply = step(&mut app, &mut rx, 0.1).unwrap();
+        assert_eq!(reply["arrived"], true);
+        assert_eq!(reply["sceneReady"], true);
+        assert_eq!(reply["sceneHash"], "h");
+        assert_eq!(reply["sceneState"], "running");
+        // the ticks the scene ran while the wait watched it
+        assert_eq!(reply["ticksWaited"], STARTUP_TICKS + 1);
+        assert_eq!(reply["settled"], true);
+        assert!(reply.get("warning").is_none());
     }
 }

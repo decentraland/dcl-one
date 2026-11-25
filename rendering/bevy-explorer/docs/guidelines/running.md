@@ -233,29 +233,37 @@ State, in every build:
 - `/teleport x y [realm] --wait [--timeout-seconds S]`: teleports, then answers JSON once the
   player has landed (`arrived`) and the parcel's scene is ready and drawn: `sceneReady`,
   `sceneHash`, `title`, `sceneState`, `ticksWaited` (scene ticks during the wait),
-  `renderedFrames` (1 once a frame with the ready scene was presented), `settleMs` and `settled`.
-  A parcel with no scene settles on landing (`sceneState:"none"`, a `warning`); a failed, broken
-  or frozen scene ends the wait at once with `settled:false` and a `warning`; the timeout (60 s by
-  default, at most 300, counted from the command, a realm change included) answers
-  `settled:false` with a `warning` naming what it waited for; one that expires during the realm
-  change has no `sceneHash`. Without `--wait` it answers at once, and `--timeout-seconds` without
-  `--wait` is an error.
+  `renderedFrames` (frames drawn since the scene was ready: 2 on a settled reply, the first of
+  them presented), `settleMs` and `settled`.
+  A parcel with no scene settles on landing (`sceneState:"none"`, a `warning`); a failed or broken
+  scene ends the wait at once with `settled:false` and a `warning`, and so does a frozen one once
+  its glTFs have loaded; the timeout (60 s by default, at most 300, counted from the command, a
+  realm change included) answers `settled:false` with a `warning` naming what it waited for; one
+  that expires before the teleport request is answered (during a realm change, say) has no
+  `sceneHash`. Without `--wait` it answers at once, and `--timeout-seconds` without `--wait` is an
+  error.
 - `/reload --current --wait [--timeout-seconds S]` (or `/reload <hash> --wait`): reloads the scene
   and answers once the new instance runs, shows its content and a frame with it was presented:
   `reloaded`, `sceneHash`, `sceneState`, `ticksWaited`, `renderedFrames`, `settleMs`, `settled`, a
   `hint` that the scene starts from scratch (its counters and scene-UI ids are new), or a
-  `warning` when it expired. A ready scene is `running` past tick 5 with nothing blocking it (its
+  `warning` when it expired. A ready scene is `running`: past tick 5 with nothing blocking it (its
   glTFs loaded), which is when its content replaces its stand-ins and a teleport releases the
-  player; until then it is `starting` or `blocked`. `/reload` with neither a hash nor `--current` reloads every scene and
+  player; until then it is `starting` or `blocked`. A teleport also releases the player onto a
+  scene that will load no further (broken, or frozen with its glTFs loaded), which is the scene a
+  wait gives up on. `/reload` with neither a hash nor `--current` reloads every scene and
   takes no `--wait`.
 - `/scene_loading_state`: JSON of how scene loading stands. Of the parcel scene under the player:
-  `playerParcel`, `sceneHash` (null on an empty parcel, or before its scene is known), `stage`
-  (its load stage, or why there is none), `state` (`loading`, `failed`, `starting`, `blocked`,
-  `broken`, `running`, or `none` on an empty parcel) and `isReady`, the readiness the two
-  `--wait` commands above wait for. Of every scene: counts by load stage (`spawned`,
-  `definition`, `crdt`, `javascript`, `failed`, `running`, `blocked`, `broken`), `gltf`,
-  `preloads`, `texturePreloads`, `current` and `settleWaits` (the `--wait` commands still
-  waiting). The scene's title (`name`), SDK version and tick are in `/current_scene_state`.
+  `playerParcel`, `outOfWorld` (the player has not landed; the scene under them loads first),
+  `sceneHash` (known once the parcel's pointer has resolved, before the scene spawns; null on an
+  empty parcel), `stage` (its load stage, or why there is none), `state` (`loading`, `failed`,
+  `starting`, `blocked`, `broken`, `running`, or `none` on an empty parcel; `stage` and `state`
+  name one classification), `blockedBy` (what holds it: `frozen`, `gltfs loading`) and `isReady`
+  (`state` is `running`), the scene readiness the two `--wait` commands above wait for; a
+  teleport's wait also needs the player landed. Every `null` has its reason in `unavailable`. Of
+  every scene: counts by load stage (`spawned`, `definition`, `crdt`, `javascript`, `failed`,
+  `running`, `blocked`, `broken`), `gltf`, `preloads`, `texturePreloads`, `current` and
+  `settleWaits` (the `--wait` commands still waiting). The scene's title (`name`), SDK version
+  and tick are in `/current_scene_state`, which reads the scene once the player has landed.
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
   slots), as rendered (built or not, wearables by category, hidden categories), the files it
   could not be built from (`loadFailures`: bodies and wearables its builds leave out, `noBody`

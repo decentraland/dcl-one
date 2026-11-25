@@ -69,7 +69,7 @@ pub fn change_location(
             response,
         }));
         if let Some(timeout) = timeout {
-            let rx = waits.arrival(parcel, timeout, Some(rx), json_reply);
+            let rx = waits.arrival(parcel, timeout, rx, json_reply);
             pending.push_oneshot(rx, |r| r, input.take_responder());
             return;
         }

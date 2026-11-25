@@ -58,10 +58,12 @@ does not have yet (durations, refusals, entity ids) is added here with its first
 - `/click_at` replies JSON: `x`, `y`, `normalized`, `button`, `screen` and, on the web, `input`.
 - A value holding a lone `"` is quoted or escaped on non-JSON commands.
 - `/teleport --wait` and `/reload --wait` reply once the parcel scene has settled. A scene is
-  ready when its content is shown (`RendererSceneContext::content_shown`: past its startup ticks
-  with nothing blocking it), the rule its stand-ins are removed by and the teleport releases the
-  player on. A broken or frozen scene will not get there (`load_timing::scene_is_halted`), so it
-  ends a wait at once. A realm change counts against the same timeout.
+  ready once it has started (`RendererSceneContext::started`: past its startup ticks with nothing
+  blocking it) and is not broken. A scene that will load no further
+  (`load_timing::scene_is_halted`: broken, or frozen with its glTFs loaded) will not get there, so
+  it ends a wait. The teleport releases the player on the same two rules
+  (`load_timing::scene_has_loaded`: started or halted). The teleport request, a realm change
+  included, counts against the same timeout.
 
 ## Alternatives considered
 
