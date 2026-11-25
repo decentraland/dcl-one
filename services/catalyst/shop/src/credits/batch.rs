@@ -1300,7 +1300,7 @@ fn listed_marketplace(venue: ContractRef) -> bool {
         .is_some_and(|routes| routes.marketplaces.contains(&venue.contract.address()))
 }
 
-fn getrandom_32() -> Option<[u8; 32]> {
+pub(super) fn getrandom_32() -> Option<[u8; 32]> {
     let mut buf = [0u8; 32];
     getrandom::fill(&mut buf).ok()?;
     Some(buf)

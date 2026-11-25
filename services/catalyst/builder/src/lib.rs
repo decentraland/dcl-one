@@ -70,6 +70,7 @@ pub mod network;
 pub mod onchain;
 pub mod publication;
 pub mod publication_chain;
+pub mod publication_fee;
 pub mod publication_store;
 pub mod rarities;
 pub mod review;

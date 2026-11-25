@@ -77,7 +77,7 @@ impl ItemsComponent {
 }
 
 /// The most items a standard publication takes.
-const MAX_ITEMS: usize = 50;
+pub(crate) const MAX_ITEMS: usize = 50;
 
 /// Refuses, before its snapshot loads item documents, probes the store or
 /// locks item rows: an absent collection of `signer`'s, a published one,
