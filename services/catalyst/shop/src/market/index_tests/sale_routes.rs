@@ -701,7 +701,7 @@ async fn volume_repairs_unallocated_payments_and_counts_only_priced_store_lines(
     .execute(&db.pool)
     .await
     .unwrap();
-    sqlx::query("UPDATE shop.sale_publication SET input_version=1 WHERE network='matic'")
+    sqlx::query("UPDATE shop.sale_publication SET input_version=2 WHERE network='matic'")
         .execute(&db.pool)
         .await
         .unwrap();
@@ -731,7 +731,7 @@ async fn volume_repairs_unallocated_payments_and_counts_only_priced_store_lines(
         VALUES('matic',$1,2,0,0,'store_fee',$2,250),('matic',$1,2,1,0,'seller',$2,45),
               ('matic',$1,2,1,1,'royalty',$3,5),('matic',$1,2,1,2,'store_fee',$2,10)")
         .bind(block).bind(CARL).bind(DAVE).execute(&db.pool).await.unwrap();
-    sqlx::query("UPDATE shop.sale_publication SET input_version=1 WHERE network='matic'")
+    sqlx::query("UPDATE shop.sale_publication SET input_version=2 WHERE network='matic'")
         .execute(&db.pool)
         .await
         .unwrap();
