@@ -6,6 +6,7 @@ import { createMarket, type Market, type MarketSeed } from './market'
 import {
   DEFAULT_EXTERNAL_DATA,
   requestOf,
+  NODE_SERVICE,
   route,
   type Bridge,
   type Credits,
@@ -101,6 +102,10 @@ const UPLOAD_CAPTURE_SCRIPT = `(() => {
 const WINDOW_OPEN_SCRIPT = `window.open = function (url) { window.__e2eOpen && window.__e2eOpen(String(url)); return null; };`
 
 // A beacon's body is a Blob the request interception cannot read; refused, the page posts the same text with fetch.
+/** A person's browser: the page sends no telemetry to a user agent that names a headless one. */
+const USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
+
 const NO_BEACON_SCRIPT = `navigator.sendBeacon = () => false;`
 
 /** A headless page on the e2e dev server with the wallet and every off-origin request mocked. */
@@ -135,6 +140,7 @@ async function openPage(browser: Browser, opts: LaunchOptions): Promise<App> {
   const mobile = opts.viewport === 'mobile'
   const context = await browser.newContext({
     viewport: VIEWPORTS[opts.viewport ?? 'desktop'],
+    userAgent: USER_AGENT,
     isMobile: mobile,
     hasTouch: mobile,
     permissions: ['clipboard-read', 'clipboard-write']
@@ -200,7 +206,7 @@ async function openPage(browser: Browser, opts: LaunchOptions): Promise<App> {
     }
     if (
       !['GET', 'HEAD', 'OPTIONS'].includes(req.method()) &&
-      url.origin !== ctx.appOrigin &&
+      (url.origin !== ctx.appOrigin || NODE_SERVICE.test(url.pathname)) &&
       !body.includes('"jsonrpc"')
     ) {
       writes.push(`${req.method()} ${url.pathname}`)

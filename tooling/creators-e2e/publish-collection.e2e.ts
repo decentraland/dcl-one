@@ -91,7 +91,7 @@ describe('publish a collection', () => {
     expect(publish?.args?.salt).toBe(app.builder.collections.get(draft.id)?.salt)
     expect(publish?.args?.name).toBe('Summer Drop')
     expect(publish?.args?.items).toHaveLength(2)
-    expect(app.writes).toContain(`POST /v1/collections/${draft.id}/tos`)
+    expect(app.writes).toContain(`POST /builder-api/v1/collections/${draft.id}/tos`)
 
     // Once mined, the server learns about the publication and the first review request opens.
     await clickTestId(page, 'publish-success-done')
@@ -123,7 +123,7 @@ describe('publish a collection', () => {
       used_credits: true,
       credits_amount: 20
     })
-    expect(app.writes).toContain('POST /credits/authorize-publication')
+    expect(app.writes).toContain('POST /credits/credits/authorize-publication')
     // The credits manager runs the publish itself: no createCollection is sent from the wallet.
     expect(app.transactions.map(tx => tx.fn)).toEqual(['useCredits'])
     const [payment] = app.transactions

@@ -138,6 +138,9 @@ function parseBody(req: Req): unknown {
   }
 }
 
+/** The services the page reaches on the node serving it, by path. */
+export const NODE_SERVICE = /^\/(builder-api\/v1|marketplace-api|transactions-api\/v1|credits|content|lambdas)(\/.*)$/
+
 /** Answers every request the page makes: the app's own assets pass through, everything else is mocked. */
 export function route(req: Req, ctx: RouteContext): Promise<void> {
   const url = new URL(req.url())
@@ -168,9 +171,11 @@ export function route(req: Req, ctx: RouteContext): Promise<void> {
   // The site reads the flag service on its server; the page only ever asks the site.
   if (url.origin === ctx.appOrigin && pathname === '/internal/feature-flags') return json(req, { flags: ctx.flags, variants: {} })
   if (url.origin === ctx.appOrigin && pathname === '/internal/client-error') return req.respond({ status: 204 })
-  // The site's own chrome reads the signed-in account's profile and credits through its server: neither exists here.
-  if (url.origin === ctx.appOrigin && /^\/(shop-api|lambdas)\//.test(pathname)) return json(req, {}, 404)
-  if (url.origin === ctx.appOrigin || url.protocol === 'data:' || url.protocol === 'blob:') return req.continue()
+  if (url.origin === ctx.appOrigin && pathname.startsWith('/shop-api/')) return json(req, {}, 404)
+  const [, service, path = ''] = (url.origin === ctx.appOrigin && pathname.match(NODE_SERVICE)) || []
+  if (!service && (url.origin === ctx.appOrigin || url.protocol === 'data:' || url.protocol === 'blob:')) {
+    return req.continue()
+  }
   // A failed preflight would surface as "Failed to fetch" and hide the forced error the spec asked for.
   if (method === 'OPTIONS') return req.respond({ status: 204, headers: CORS })
 
@@ -184,8 +189,7 @@ export function route(req: Req, ctx: RouteContext): Promise<void> {
     return json(req, { flags: ctx.flags })
   }
 
-  if (hostname.startsWith('builder-api.')) {
-    const path = pathname.replace(/^\/v1/, '')
+  if (service === 'builder-api/v1') {
     const storage = path.match(/^\/storage\/contents\/(.+)$/)
     if (storage) {
       const file = ctx.storage[storage[1]]
@@ -201,7 +205,8 @@ export function route(req: Req, ctx: RouteContext): Promise<void> {
     return json(req, { ok: false, error: 'unmocked e2e route' }, 501)
   }
 
-  if (hostname.startsWith('peer.')) {
+  if (service === 'content' || service === 'lambdas') {
+    if (pathname === '/lambdas/status') return json(req, { currentTime: Date.now() })
     if (pathname.startsWith('/lambdas/profiles/')) return json(req, { avatars: [] })
     if (pathname.startsWith('/lambdas/collections/wearables')) return json(req, { wearables: [] })
     if (pathname.startsWith('/content/contents/')) return req.respond({ status: 200, headers: CORS, body: PNG })
@@ -221,9 +226,9 @@ export function route(req: Req, ctx: RouteContext): Promise<void> {
 
   if (hostname === 'api.github.com') return json(req, { assets: [] })
 
-  if (hostname.startsWith('credits.')) {
-    if (/^\/users\/[^/]+\/credits$/.test(pathname)) return json(req, { usd: ctx.credits })
-    if (method === 'POST' && pathname === '/credits/authorize-publication') {
+  if (service === 'credits') {
+    if (/^\/users\/[^/]+\/credits$/.test(path)) return json(req, { usd: ctx.credits })
+    if (method === 'POST' && path === '/credits/authorize-publication') {
       return json(req, {
         credit: {
           id: '0x' + '55'.repeat(32),
@@ -236,12 +241,12 @@ export function route(req: Req, ctx: RouteContext): Promise<void> {
     }
   }
 
-  if (hostname.startsWith('marketplace-api.')) {
-    const answer = ctx.market.handle(method, pathname, url.searchParams, parseBody(req))
+  if (service === 'marketplace-api') {
+    const answer = ctx.market.handle(method, path, url.searchParams, parseBody(req))
     if (answer) return json(req, answer.body, answer.status)
   }
 
-  if (hostname.startsWith('transactions-api.') && method === 'POST' && pathname.endsWith('/transactions')) {
+  if (service === 'transactions-api/v1' && method === 'POST' && path === '/transactions') {
     return json(req, ctx.chain.relay(req.postData() ?? '{}'))
   }
 
