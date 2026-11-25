@@ -137,6 +137,7 @@ per writer:
 | *Build* | `bevy-explorer-ci-status.yml` | The web app and the headless engine with their artifacts, the web app's PR preview on the zone services (a row with the publish job's time, for a PR from this repository), and the `benchmark` runner per platform |
 | *Tests* | `bevy-explorer-ci-status.yml` | *Test Suite* per platform and *Headless Smoke*, with job times |
 | *Performance* | `bevy-explorer-benchmark.yml` | After each passed CI run that built the web app: running, not run and why, cancelled, or the report with a badge from its *Overall* line |
+| *SDK* | `sdk.yml` | For a PR from this repository that changes the SDK: the command that installs its preview packages. Such a PR gets the comment with this section alone when no explorer job reports |
 
 `bevy-explorer-ci-status.yml` runs after each `bevy-explorer-ci.yml` run (`workflow_run`), in the
 base context with write permission, and checks out only the action. It resolves the pull request

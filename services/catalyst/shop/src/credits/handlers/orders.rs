@@ -613,6 +613,20 @@ mod tests {
             "https://shop/credits?from=stripe&order=a%26b%3Dc&canceled=1",
             "an id from the path is encoded, never a parameter of its own"
         );
+        let hashed = Settings::parse(RawSettings {
+            checkout_success_url: "https://x/#/credits".into(),
+            checkout_cancel_url: "https://x/?tab=packs#/credits".into(),
+            ..RawSettings::default()
+        })
+        .unwrap();
+        assert_eq!(
+            hashed.checkout_session_urls(None, "ord_ab12"),
+            (
+                "https://x/?order=ord_ab12#/credits".to_string(),
+                "https://x/?tab=packs&order=ord_ab12&canceled=1#/credits".to_string()
+            ),
+            "a fragment stays last, so the page's server reads the query"
+        );
     }
 
     #[test]

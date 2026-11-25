@@ -10,7 +10,9 @@ use dcl_component::{
     SceneComponentId,
 };
 use dcl_types::interface::ComponentPosition;
-use livestream_manager::{ActiveReceiver, ReceiverImage, ReceiverVolume, TransmissionImageResized};
+use livestream_manager::{
+    ActiveReceiver, ReceiverImage, ReceiverVolume, SelectedVideoReceiver, TransmissionImageResized,
+};
 use scene_runner::{
     renderer_context::RendererSceneContext,
     update_world::{material::VideoTextureOutput, AddCrdtInterfaceExt},
@@ -23,9 +25,11 @@ use crate::audio_sink::AudioSinkPlugin;
 use crate::audio_source_native::AudioSourcePluginImpl;
 #[cfg(feature = "html")]
 use crate::audio_source_wasm::AudioSourcePluginImpl;
+#[cfg(test)]
+use crate::LIVEKIT_VIDEO_STREAM;
 use crate::{
     audio_source::AudioSourcePlugin, AVPlayer, AVPlayerConfig, AudioStream, InScene,
-    ShouldBePlaying, Stream, VideoPlayer, LIVEKIT_VIDEO_STREAM,
+    ShouldBePlaying, Stream, VideoPlayer,
 };
 #[cfg(any(feature = "ffmpeg", feature = "html"))]
 use crate::{video_player::VideoPlayerPlugin, video_stream::VideoSink, AVPlayerSinks, AVSinks};
@@ -186,6 +190,7 @@ fn av_player_on_remove<T: AVPlayer>(
         InScene,
         ShouldBePlaying<T>,
         Stream,
+        SelectedVideoReceiver,
     )>();
     #[cfg(feature = "ffmpeg")]
     commands.entity(entity).try_remove::<AVSinks<T>>();
@@ -432,7 +437,7 @@ fn video_player_should_be_playing(
     for (entity, source, config, has_in_scene, has_should_be_playing, global_transform) in
         av_players
     {
-        if !config.playing() || (&**source == LIVEKIT_VIDEO_STREAM && !has_in_scene) {
+        if !config.playing() || (source.starts_with("livekit-video://") && !has_in_scene) {
             if has_should_be_playing {
                 scratch_shouldnt_be_playing.push(entity);
             }
@@ -485,7 +490,7 @@ fn video_player_should_be_playing(
 }
 
 fn receiver_image_added(
-    trigger: Trigger<OnAdd, ReceiverImage>,
+    trigger: Trigger<OnInsert, ReceiverImage>,
     mut commands: Commands,
     video_players: Query<&ReceiverImage, (With<VideoPlayer>, With<Stream>)>,
 ) {
@@ -625,6 +630,40 @@ mod tests {
         ));
 
         world
+    }
+
+    #[test]
+    fn selected_tracks_keep_the_video_limit_and_current_scene_requirement() {
+        let mut world = base_world();
+        let mut screens = Vec::new();
+        for distance in [1., 2., 0.] {
+            let mut screen = world.spawn((
+                VideoPlayerSource("livekit-video://speaker/TR_camera".to_owned()),
+                VideoPlayerConfig {
+                    playing: true,
+                    volume: 1.,
+                    playback_rate: 1.,
+                    r#loop: false,
+                },
+                Transform::from_translation(Vec3::new(distance, 0., 0.)),
+            ));
+            if distance > 0. {
+                screen.insert(InScene);
+            }
+            screens.push(screen.id());
+        }
+        world
+            .run_system_cached(video_player_should_be_playing)
+            .unwrap();
+        assert!(world
+            .entity(screens[0])
+            .contains::<ShouldBePlaying<VideoPlayer>>());
+        assert!(!world
+            .entity(screens[1])
+            .contains::<ShouldBePlaying<VideoPlayer>>());
+        assert!(!world
+            .entity(screens[2])
+            .contains::<ShouldBePlaying<VideoPlayer>>());
     }
 
     #[test]

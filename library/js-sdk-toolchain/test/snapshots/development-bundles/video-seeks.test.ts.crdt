@@ -1,4 +1,4 @@
-SCENE_COMPILED_JS_SIZE_PROD=720.2k bytes
+SCENE_COMPILED_JS_SIZE_PROD=692.8k bytes
 THE BUNDLE HAS SOURCEMAPS
 (start empty vm 0.21.0-3680274614.commit-1808aa1)
   OPCODES ~= 0k
@@ -9,73 +9,66 @@ EVAL test/snapshots/development-bundles/video-seeks.test.js
   REQUIRE: ~system/EngineApi
   REQUIRE: ~system/EngineApi
   REQUIRE: ~system/Runtime
-  OPCODES ~= 84k
-  MALLOC_COUNT = 19018
-  ALIVE_OBJS_DELTA ~= 3.78k
+  REQUIRE: ~system/Runtime
+  OPCODES ~= 80k
+  MALLOC_COUNT = 18532
+  ALIVE_OBJS_DELTA ~= 3.65k
 CALL onStart()
   OPCODES ~= 0k
-  MALLOC_COUNT = 6
+  MALLOC_COUNT = -14
   ALIVE_OBJS_DELTA ~= 0.00k
 CALL onUpdate(0)
    ~system/Testing: plan {"tests":[{"name":"repeated video seeks preserve explicit intent"}]}
-  OPCODES ~= 3k
-  MALLOC_COUNT = 18
+  Scene: PUT_COMPONENT e=0x0 c=1218 t=1 data={"touchInputs":[{"inputAction":2,"hide":true},{"inputAction":10,"hide":true},{"inputAction":11,"hide":true},{"inputAction":12,"hide":true},{"inputAction":13,"hide":true}],"hideJoystick":false,"hideCrosshair":false}
+  OPCODES ~= 7k
+  MALLOC_COUNT = 30
   ALIVE_OBJS_DELTA ~= 0.01k
 CALL onUpdate(0.1)
   LOG: ["🧪 Running test repeated video seeks preserve explicit intent"]
-  LOG: ["⏱️ yield"]
   Scene: PUT_COMPONENT e=0x200 c=1043 t=1 data={"src":"video.mp4","playing":true,"volume":1}
   OPCODES ~= 5k
-  MALLOC_COUNT = 74
+  MALLOC_COUNT = 59
   ALIVE_OBJS_DELTA ~= 0.02k
 CALL onUpdate(0.1)
-  LOG: ["⏱️ yield"]
   Scene: PUT_COMPONENT e=0x200 c=1043 t=2 data={"src":"video.mp4","playing":true,"position":0,"volume":1,"positionRevision":1}
-  OPCODES ~= 5k
+  OPCODES ~= 6k
   MALLOC_COUNT = 0
   ALIVE_OBJS_DELTA ~= 0.00k
 CALL onUpdate(0.1)
   LOG: ["✅ Explicit seek advances revision"]
-  LOG: ["⏱️ yield"]
   Scene: PUT_COMPONENT e=0x200 c=1043 t=3 data={"src":"video.mp4","playing":true,"position":0,"volume":1,"positionRevision":2}
   OPCODES ~= 6k
   MALLOC_COUNT = 0
   ALIVE_OBJS_DELTA ~= 0.00k
 CALL onUpdate(0.1)
   LOG: ["✅ Explicit seek advances revision"]
-  LOG: ["⏱️ yield"]
   Scene: PUT_COMPONENT e=0x200 c=1043 t=4 data={"src":"video.mp4","playing":true,"position":0,"volume":1,"positionRevision":3}
   OPCODES ~= 6k
   MALLOC_COUNT = 0
   ALIVE_OBJS_DELTA ~= 0.00k
 CALL onUpdate(0.1)
   LOG: ["✅ Explicit seek advances revision"]
-  LOG: ["⏱️ yield"]
   Scene: PUT_COMPONENT e=0x200 c=1043 t=5 data={"src":"video.mp4","playing":false,"position":0,"volume":1,"positionRevision":3}
   OPCODES ~= 6k
   MALLOC_COUNT = 0
   ALIVE_OBJS_DELTA ~= 0.00k
 CALL onUpdate(0.1)
-  LOG: ["⏱️ yield"]
   Scene: PUT_COMPONENT e=0x200 c=1043 t=6 data={"src":"video.mp4","playing":false,"position":0,"volume":0.5,"positionRevision":3}
   OPCODES ~= 6k
   MALLOC_COUNT = 0
   ALIVE_OBJS_DELTA ~= 0.00k
 CALL onUpdate(0.1)
-  LOG: ["⏱️ yield"]
   Scene: PUT_COMPONENT e=0x200 c=1043 t=7 data={"src":"video.mp4","playing":true,"position":0,"volume":0.5,"positionRevision":3}
   OPCODES ~= 6k
   MALLOC_COUNT = 0
   ALIVE_OBJS_DELTA ~= 0.00k
 CALL onUpdate(0.1)
   LOG: ["✅ Playback settings retain revision"]
-  LOG: ["⏱️ yield"]
   Scene: PUT_COMPONENT e=0x200 c=1043 t=8 data={"src":"video.mp4","playing":false,"position":0,"volume":0.5,"positionRevision":3}
   OPCODES ~= 6k
   MALLOC_COUNT = 0
   ALIVE_OBJS_DELTA ~= 0.00k
 CALL onUpdate(0.1)
-  LOG: ["⏱️ yield"]
   Scene: PUT_COMPONENT e=0x200 c=1043 t=9 data={"src":"video.mp4","playing":true,"position":0,"volume":0.5,"positionRevision":4}
   OPCODES ~= 6k
   MALLOC_COUNT = 0
@@ -87,4 +80,4 @@ CALL onUpdate(0.1)
   OPCODES ~= 3k
   MALLOC_COUNT = -41
   ALIVE_OBJS_DELTA ~= -0.01k
-  MEMORY_USAGE_COUNT ~= 1736.87k bytes
+  MEMORY_USAGE_COUNT ~= 1698.00k bytes
