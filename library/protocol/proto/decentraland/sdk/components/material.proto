@@ -55,8 +55,6 @@ message PBMaterial {
     PbrMaterial pbr = 2;
   }
 
-  // sdk:hidden-begin
-
   message GltfMaterial {
     string gltf_src = 1;
     string name = 2;
@@ -68,7 +66,4 @@ message PBMaterial {
   // If this is provided and the `material` field is not provided, the renderer will update the material
   // field with data that reflects the gltf material once it is loaded.
   optional GltfMaterial gltf = 3;
-
-  // sdk:hidden-end
-
 }

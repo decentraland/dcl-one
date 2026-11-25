@@ -10,14 +10,16 @@ describe('Generated Avatar ModifierArea ProtoBuf', () => {
       area: { x: 1, y: 2, z: 3 },
       modifiers: [AvatarModifierType.AMT_DISABLE_PASSPORTS, AvatarModifierType.AMT_HIDE_AVATARS],
       excludeIds: ['exclude', 'testIdReal', 'numberAndString12837127371'],
-      useColliderRange: undefined
+      useColliderRange: undefined,
+      movementSettings: undefined
     })
 
     testComponentSerialization(AvatarModifierArea, {
       area: { x: 3, y: 4, z: 5 },
       modifiers: [],
       excludeIds: ['exclude_this', 'testId', '12837127371'],
-      useColliderRange: false
+      useColliderRange: false,
+      movementSettings: undefined
     })
   })
 })

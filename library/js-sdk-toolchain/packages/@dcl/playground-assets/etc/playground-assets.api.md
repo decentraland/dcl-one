@@ -218,6 +218,13 @@ export const AvatarAttach: LastWriteWinElementSetComponentDefinition<PBAvatarAtt
 export const AvatarBase: LastWriteWinElementSetComponentDefinition<PBAvatarBase>;
 
 // @public (undocumented)
+export const enum AvatarControlType {
+    CCT_NONE = 0,
+    CCT_RELATIVE = 1,
+    CCT_TANK = 2
+}
+
+// @public (undocumented)
 export const AvatarEmoteCommand: GrowOnlyValueSetComponentDefinition<PBAvatarEmoteCommand>;
 
 // Warning: (ae-missing-release-tag) "AvatarEquippedData" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -257,6 +264,28 @@ export const AvatarMovement: LastWriteWinElementSetComponentDefinition<PBAvatarM
 
 // @public (undocumented)
 export const AvatarMovementInfo: LastWriteWinElementSetComponentDefinition<PBAvatarMovementInfo>;
+
+// @public (undocumented)
+export interface AvatarMovementSettings {
+    allowWeightedMovement?: boolean | undefined;
+    // (undocumented)
+    controlMode?: AvatarControlType | undefined;
+    friction?: number | undefined;
+    gravity?: number | undefined;
+    jumpHeight?: number | undefined;
+    maxFallSpeed?: number | undefined;
+    runSpeed?: number | undefined;
+    turnSpeed?: number | undefined;
+    walkSpeed?: number | undefined;
+}
+
+// @public (undocumented)
+export namespace AvatarMovementSettings {
+    // (undocumented)
+    export function decode(input: _m0.Reader | Uint8Array, length?: number): AvatarMovementSettings;
+    // (undocumented)
+    export function encode(message: AvatarMovementSettings, writer?: _m0.Writer): _m0.Writer;
+}
 
 // @public (undocumented)
 export const AvatarNametag: LastWriteWinElementSetComponentDefinition<PBAvatarNametag>;
@@ -532,6 +561,26 @@ export const enum CameraType {
 //
 // @public (undocumented)
 export type Children = ReactEcs.JSX.ReactNode;
+
+// @public (undocumented)
+export interface CinematicSettings {
+    // Warning: (tsdoc-escape-greater-than) The ">" character should be escaped using a backslash to avoid confusion with an HTML tag
+    // Warning: (tsdoc-escape-greater-than) The ">" character should be escaped using a backslash to avoid confusion with an HTML tag
+    // Warning: (tsdoc-escape-greater-than) The ">" character should be escaped using a backslash to avoid confusion with an HTML tag
+    allowManualRotation?: boolean | undefined;
+    cameraEntity: number;
+    pitchRange?: number | undefined;
+    rollRange?: number | undefined;
+    yawRange?: number | undefined;
+}
+
+// @public (undocumented)
+export namespace CinematicSettings {
+    // (undocumented)
+    export function decode(input: _m0.Reader | Uint8Array, length?: number): CinematicSettings;
+    // (undocumented)
+    export function encode(message: CinematicSettings, writer?: _m0.Writer): _m0.Writer;
+}
 
 // @public (undocumented)
 export const enum ColliderLayer {
@@ -2829,6 +2878,8 @@ export interface PBAvatarModifierArea {
     area: PBVector3 | undefined;
     excludeIds: string[];
     modifiers: AvatarModifierType[];
+    // (undocumented)
+    movementSettings?: AvatarMovementSettings | undefined;
     useColliderRange?: boolean | undefined;
 }
 
@@ -2992,6 +3043,8 @@ export namespace PBCameraMode {
 // @public (undocumented)
 export interface PBCameraModeArea {
     area: PBVector3 | undefined;
+    // (undocumented)
+    cinematicSettings?: CinematicSettings | undefined;
     mode: CameraType;
     useColliderRange?: boolean | undefined;
 }
@@ -3048,6 +3101,7 @@ export interface PBEngineInfo {
     sceneHidden: boolean;
     tickNumber: number;
     totalRuntime: number;
+    totalRuntimeF64: number;
 }
 
 // @public (undocumented)
@@ -3228,8 +3282,13 @@ export namespace PBGltfContainer {
 
 // @public (undocumented)
 export interface PBGltfContainerLoadingState {
+    animationNames: string[];
     // (undocumented)
     currentState: LoadingState;
+    materialNames: string[];
+    meshNames: string[];
+    nodePaths: string[];
+    skinNames: string[];
 }
 
 // @public (undocumented)
@@ -3410,6 +3469,7 @@ export namespace PBMainCamera {
 
 // @public (undocumented)
 export interface PBMaterial {
+    gltf?: PBMaterial_GltfMaterial | undefined;
     // (undocumented)
     material?: {
         $case: "unlit";
@@ -3426,6 +3486,22 @@ export namespace PBMaterial {
     export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMaterial;
     // (undocumented)
     export function encode(message: PBMaterial, writer?: _m0.Writer): _m0.Writer;
+}
+
+// @public (undocumented)
+export interface PBMaterial_GltfMaterial {
+    // (undocumented)
+    gltfSrc: string;
+    // (undocumented)
+    name: string;
+}
+
+// @public (undocumented)
+export namespace PBMaterial_GltfMaterial {
+    // (undocumented)
+    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMaterial_GltfMaterial;
+    // (undocumented)
+    export function encode(message: PBMaterial_GltfMaterial, writer?: _m0.Writer): _m0.Writer;
 }
 
 // @public (undocumented)
@@ -3489,6 +3565,9 @@ export interface PBMeshCollider {
     } | {
         $case: "plane";
         plane: PBMeshCollider_PlaneMesh;
+    } | {
+        $case: "gltf";
+        gltf: PBMeshCollider_GltfMesh;
     } | undefined;
 }
 
@@ -3524,6 +3603,20 @@ export namespace PBMeshCollider_CylinderMesh {
     export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshCollider_CylinderMesh;
     // (undocumented)
     export function encode(message: PBMeshCollider_CylinderMesh, writer?: _m0.Writer): _m0.Writer;
+}
+
+// @public (undocumented)
+export interface PBMeshCollider_GltfMesh {
+    gltfSrc: string;
+    name: string;
+}
+
+// @public (undocumented)
+export namespace PBMeshCollider_GltfMesh {
+    // (undocumented)
+    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshCollider_GltfMesh;
+    // (undocumented)
+    export function encode(message: PBMeshCollider_GltfMesh, writer?: _m0.Writer): _m0.Writer;
 }
 
 // @public (undocumented)
@@ -3565,6 +3658,9 @@ export interface PBMeshRenderer {
     } | {
         $case: "plane";
         plane: PBMeshRenderer_PlaneMesh;
+    } | {
+        $case: "gltf";
+        gltf: PBMeshRenderer_GltfMesh;
     } | undefined;
 }
 
@@ -3601,6 +3697,20 @@ export namespace PBMeshRenderer_CylinderMesh {
     export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshRenderer_CylinderMesh;
     // (undocumented)
     export function encode(message: PBMeshRenderer_CylinderMesh, writer?: _m0.Writer): _m0.Writer;
+}
+
+// @public (undocumented)
+export interface PBMeshRenderer_GltfMesh {
+    gltfSrc: string;
+    name: string;
+}
+
+// @public (undocumented)
+export namespace PBMeshRenderer_GltfMesh {
+    // (undocumented)
+    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBMeshRenderer_GltfMesh;
+    // (undocumented)
+    export function encode(message: PBMeshRenderer_GltfMesh, writer?: _m0.Writer): _m0.Writer;
 }
 
 // @public (undocumented)
@@ -4031,9 +4141,11 @@ export interface PBRaycast {
         $case: "targetEntity";
         targetEntity: number;
     } | undefined;
+    includeWorld?: boolean | undefined;
     maxDistance: number;
     originOffset?: PBVector3 | undefined;
     queryType: RaycastQueryType;
+    shape?: RaycastShape | undefined;
     timestamp?: number | undefined;
 }
 
@@ -4624,6 +4736,7 @@ export interface PBUiTransform {
     borderTopWidth?: number | undefined;
     borderTopWidthUnit?: YGUnit | undefined;
     display: YGDisplay;
+    elementId?: string | undefined;
     // (undocumented)
     flexBasis: number;
     flexBasisUnit: YGUnit;
@@ -4692,6 +4805,8 @@ export interface PBUiTransform {
     positionType: YGPositionType;
     // (undocumented)
     rightOf: number;
+    scrollPosition?: ScrollPositionValue | undefined;
+    scrollVisible?: ShowScrollBar | undefined;
     // (undocumented)
     width: number;
     widthUnit: YGUnit;
@@ -5196,6 +5311,12 @@ export const enum RaycastQueryType {
 export const RaycastResult: LastWriteWinElementSetComponentDefinition<PBRaycastResult>;
 
 // @public (undocumented)
+export const enum RaycastShape {
+    RS_AVATAR = 1,
+    RS_RAY = 0
+}
+
+// @public (undocumented)
 export interface RaycastSystem {
     globalDirectionOptions(options?: Partial<GlobalDirectionRaycastOptions>): RaycastSystemOptions;
     globalTargetOptions(options?: Partial<GlobalTargetRaycastOptions>): RaycastSystemOptions;
@@ -5556,6 +5677,26 @@ export namespace Schemas {
 // @public
 export function ScreenInsetArea(props: UiScreenInsetAreaProps): ReactEcs.JSX.Element;
 
+// @public (undocumented)
+export interface ScrollPositionValue {
+    // (undocumented)
+    value?: {
+        $case: "position";
+        position: PBVector2;
+    } | {
+        $case: "reference";
+        reference: string;
+    } | undefined;
+}
+
+// @public (undocumented)
+export namespace ScrollPositionValue {
+    // (undocumented)
+    export function decode(input: _m0.Reader | Uint8Array, length?: number): ScrollPositionValue;
+    // (undocumented)
+    export function encode(message: ScrollPositionValue, writer?: _m0.Writer): _m0.Writer;
+}
+
 // @public
 export function setCompositeProvider(engine: IEngine, provider: CompositeProvider): void;
 
@@ -5566,6 +5707,18 @@ export function setGlobalPolyfill<T>(key: string, value: T): void;
 export interface SetMoveRotateScaleParams extends MoveRotateScaleModeParams {
     duration: number;
     easingFunction?: EasingFunction;
+}
+
+// @public (undocumented)
+export const enum ShowScrollBar {
+    // (undocumented)
+    SSB_BOTH = 0,
+    // (undocumented)
+    SSB_HIDDEN = 3,
+    // (undocumented)
+    SSB_ONLY_HORIZONTAL = 2,
+    // (undocumented)
+    SSB_ONLY_VERTICAL = 1
 }
 
 // @public (undocumented)
@@ -5769,6 +5922,9 @@ export interface TextureUnion {
     } | {
         $case: "videoTexture";
         videoTexture: VideoTexture;
+    } | {
+        $case: "uiTexture";
+        uiTexture: UiCanvasTexture;
     } | undefined;
 }
 
@@ -6065,6 +6221,22 @@ export const UiCanvas: LastWriteWinElementSetComponentDefinition<PBUiCanvas>;
 
 // @public (undocumented)
 export const UiCanvasInformation: LastWriteWinElementSetComponentDefinition<PBUiCanvasInformation>;
+
+// @public (undocumented)
+export interface UiCanvasTexture {
+    filterMode?: TextureFilterMode | undefined;
+    // (undocumented)
+    uiCanvasEntity: number;
+    wrapMode?: TextureWrapMode | undefined;
+}
+
+// @public (undocumented)
+export namespace UiCanvasTexture {
+    // (undocumented)
+    export function decode(input: _m0.Reader | Uint8Array, length?: number): UiCanvasTexture;
+    // (undocumented)
+    export function encode(message: UiCanvasTexture, writer?: _m0.Writer): _m0.Writer;
+}
 
 // @public (undocumented)
 export type UiComponent = () => ReactEcs.JSX.ReactNode;

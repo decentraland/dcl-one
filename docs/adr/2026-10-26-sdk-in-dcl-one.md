@@ -40,18 +40,16 @@ It installs with pnpm as one workspace with a single lockfile
   `repeated` field would otherwise make the generated type require it, so the two extended
   components from the SDK's `experimental-bevy` branch serialize an omitted value as `[]`, and a
   composite that names them registers the extended definitions. No export is removed, but the
-  generated types follow `library/protocol`, so two narrow: `PBAvatarShape.forceRender` and
-  `PBAvatarEquippedData.forceRender` are required. The first release from here lists these.
+  generated types follow `library/protocol`, so some narrow: `PBAvatarShape.forceRender` and
+  `PBAvatarEquippedData.forceRender` are required, `PBEngineInfo.totalRuntimeF64` and five arrays
+  on `PBGltfContainerLoadingState` are new required fields, and `PBMaterial`, `PBMeshCollider` and
+  `PBMeshRenderer` gain a `$case: 'gltf'` variant (an exhaustive `switch` stops compiling). The
+  first release from here lists these.
 - The SDK here is `decentraland/js-sdk-toolchain` `main` plus the part of its `experimental-bevy`
   layer the bridge scene uses: pointer drag events and the react-ecs drag listeners, `videoTexture`
   on a UI background and `getPlayer().forceRender`, each documented as supported only by the Bevy
-  Explorer.
-- A field the Explorer implements and no other client does stays out of the SDK until the clients
-  agree on it: the SDK's components are generated from `library/protocol` without the blocks marked
-  `// sdk:hidden-begin` … `// sdk:hidden-end`, so neither the types nor the serializers carry them.
-  Hidden today: UI scroll, glTF meshes and materials, shaped and cross-scene raycasts, avatar
-  movement settings, cinematic camera settings, UI canvas textures, `EngineInfo.total_runtime_f64`
-  and the name lists on `GltfContainerLoadingState`.
+  Explorer. The rest of that layer (react-ecs scroll and render-to-texture, `setGltfMesh`, shaped
+  raycasts) has no helper here; its fields stay in `library/protocol` and the generated components.
 - `protoc` comes from `SDK_PROTOC` when set: a name on `PATH` (`SDK_PROTOC=protoc` in the Nix
   shell, or brew's on a Mac without Rosetta) or a path, resolved to an absolute path. It is not
   `PROTOC`, which prost reads for the Rust crates. CI leaves it unset and uses the SDK's download

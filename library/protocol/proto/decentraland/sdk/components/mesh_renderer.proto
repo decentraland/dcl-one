@@ -32,27 +32,17 @@ message PBMeshRenderer {
     message SphereMesh {
     }
 
-    // sdk:hidden-begin
-
     // A mesh from a Gltf.
     message GltfMesh {
         string gltf_src = 1; // the GLTF file path as listed in the scene's manifest.
         string name = 2;  // the name of the mesh asset
     }
 
-    // sdk:hidden-end
-
     oneof mesh {
         BoxMesh box = 1;
         SphereMesh sphere = 2;
         CylinderMesh cylinder = 3;
         PlaneMesh plane = 4;
-
-        // sdk:hidden-begin
-
         GltfMesh gltf = 5;
-
-        // sdk:hidden-end
-
     }
 }

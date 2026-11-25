@@ -24,17 +24,9 @@ option (common.ecs_component_id) = 1071;
 message PBCameraModeArea {
   decentraland.common.Vector3 area = 1; // the 3D size of the region
   common.CameraType mode = 2;           // the camera mode to enforce
-
-  // sdk:hidden-begin
-
   optional CinematicSettings cinematic_settings = 3;
-
-  // sdk:hidden-end
-
   optional bool use_collider_range = 4; // if true, the player will be considered inside the area when they are within 0.3m of the area. default true
 }
-
-// sdk:hidden-begin
 
 message CinematicSettings {
   uint32 camera_entity = 1;           // Entity that defines the cinematic camera transform.
@@ -48,5 +40,3 @@ message CinematicSettings {
   optional float roll_range = 5;      // how far the camera can rotate around the z-axis / tilt, in radians. default unrestricted
   reserved 6, 7;                      // zoom_min, zoom_max (removed)
 }
-
-// sdk:hidden-end

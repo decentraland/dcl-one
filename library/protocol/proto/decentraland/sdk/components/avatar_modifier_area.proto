@@ -23,13 +23,7 @@ message PBAvatarModifierArea {
   decentraland.common.Vector3 area = 1;      // the 3D size of the region
   repeated string exclude_ids = 2;           // user IDs that can enter and remain unaffected
   repeated AvatarModifierType modifiers = 3; // list of modifiers to apply
-
-  // sdk:hidden-begin
-
   optional AvatarMovementSettings movement_settings = 4;
-
-  // sdk:hidden-end
-
   optional bool use_collider_range = 5;      // if true, the player will be considered inside the area when they are within 0.3m of the area. default true
 }
 
@@ -39,8 +33,6 @@ enum AvatarModifierType {
   AMT_DISABLE_PASSPORTS = 1; // selecting (e.g. clicking) an avatar will not bring up their profile.
   AMT_HIDE_NAMETAGS = 2;     // the name tag displayed above an avatar is hidden.
 }
-
-// sdk:hidden-begin
 
 message AvatarMovementSettings {
   optional AvatarControlType control_mode = 1;
@@ -60,5 +52,3 @@ enum AvatarControlType {
   CCT_RELATIVE = 1; // avatar moves relative to the camera origin
   CCT_TANK = 2;     // avatar moves like a tank: left/right rotate the player, forward/backward advance/retreat the player
 }
-
-// sdk:hidden-end
