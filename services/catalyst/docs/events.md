@@ -85,6 +85,21 @@ Event rows honor in-app preferences at their first insertion. A hidden row is re
 
 Every newly stored event notice also enters `social.notification_deliveries` for the `email` channel, governed by the recipient's social subscription (`ignore_all_email`, per-type settings, community opt-outs), not by the legacy `notify_by_email` profile flag; the old service's own email and web-push code was dead. See `docs/adr/2026-11-01-event-notification-delivery.md`.
 
+## Subscribers of the legacy events topic
+
+The legacy events service publishes its notices to the platform's shared SNS bus (the `event-driven-sns` stack, read from `AWS_SNS_ARN`), not to a topic of its own: `type` `event` with subtype `event-created`, `event-approved`, `event-rejected`, `event-deleted`, `event-starts-soon`, `event-started` or `event-ended`. This node publishes nothing to that bus, so once the legacy service stops, every subscriber whose filter admits `type = event` stops receiving these messages.
+
+| Subscriber | Receives | Uses them for | On this node |
+| --- | --- | --- | --- |
+| notifications-workers (`notifications-processor` queue) | every `event` subtype | inbox notices | Reproduced: the social `event-notifications` job and the notification intents (above). |
+| engagement-workers | the `notifications-processor` and `badges-processor` queues (it owns no subscription) | the same inbox notices | Reproduced, as for notifications-workers. |
+| social-service-ea | `event-ended` | community event metrics | Reproduced: `social.event_ended_occurrences` and `social.community_event_metrics`. |
+| badges processor (`badges-processor` queue) | every `event` subtype (its filter excludes only `badge`, `rewards`, `asset-bundle` and `credits-service`) | nothing: no observer handles `type = event` | Drop: no feed needed. |
+
+The other subscriptions to the bus filter `type = event` out: asset-bundle-registry and its abgen instance, the abgen converter lambda, bot-detection-server, credits-server, discovery-server, lods-generator, multiplayer-server, places, police-server, profile-images-worker, world-storage-service, worlds-content-server and wearable-validator. The asset-bundle converters and lod-generator-unity declare filtered queues but no subscription to the bus. discovery-server is also wired to publish `event-starts-soon`, `event-started` and `event-ended` to the bus; stopping the legacy service does not stop those.
+
+Of the subscriptions declared in infrastructure code, none outside the reproduced consumers needs a feed. That inventory comes from the `definitions` repository at `268fa33` (`src/services/*.ts`, `src/jobs/wearable-validator.ts`) and the `ops-lambdas` repository at `6de6eda` (`abgen.ts`); a search of the other Decentraland service and infrastructure repositories found no further subscription to the bus. The event types are those the legacy service publishes at `decentraland/events@2436e598` (`src/entities/Notifications/index.ts`). Subscriptions created outside infrastructure code, including any the `event-driven-sns` stack declares itself, are not covered: before the legacy service stops, list the bus's live subscriptions (`aws sns list-subscriptions-by-topic`) and check any not named above.
+
 ## Conditional repair for an early staging default
 
 No automatic historical rewrite is performed. This repair applies only to a deployment whose rows store the website's absolute default. Check the affected deployment and take a database backup before any authorized maintenance.
