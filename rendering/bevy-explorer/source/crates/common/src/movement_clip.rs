@@ -164,10 +164,11 @@ mod tests {
             // the folder and the extension do not count
             ("DoubleJump_Base", ClipMotion::DoubleJump),
             ("other\\folder\\Jump_Mid.gltf", ClipMotion::Jump),
-            // a jump's touchdown and fall are no jump
-            ("Jump_Land.glb", ClipMotion::None),
-            ("Jump_Landing.glb", ClipMotion::None),
-            ("Jump_Falling.glb", ClipMotion::None),
+            // a jump's touchdown and fall are no jump, though they share its prefix
+            ("other/folder/Jump_End.gltf", ClipMotion::None),
+            ("Jump_Fall_Loop", ClipMotion::None),
+            ("Run_Jump_End", ClipMotion::None),
+            ("Jog_Jump_Fall_Loop.gltf", ClipMotion::None),
             // names the movement scene does not play
             ("jump_start.glb", ClipMotion::None),
             ("avatar_jump.glb", ClipMotion::None),

@@ -14,8 +14,7 @@ pub const PLAYER_GROUND_THRESHOLD: f32 = 0.05;
 pub const PLAYER_LANDED_THRESHOLD: f32 = 0.2;
 
 /// True when the feet are within [`PLAYER_LANDED_THRESHOLD`] of the ground: the one test of landed
-/// against airborne for the animation, jump tracking, position broadcast, jump marker and
-/// analytics.
+/// against airborne.
 pub fn landed(ground_height: f32) -> bool {
     ground_height < PLAYER_LANDED_THRESHOLD
 }
