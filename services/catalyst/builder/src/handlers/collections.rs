@@ -125,12 +125,12 @@ async fn list_collections(
         Some(member) => {
             state
                 .items
-                .committee_collections(&CommitteeListing::new(&member, &q, review_flow)?, &state)
+                .committee_collections(&CommitteeListing::new(&member, &q, review_flow)?, state)
                 .await?
         }
         None => {
             let search = PublicSearch::new(&q, review_flow)?.ok_or_else(|| unauthorized_for(""))?;
-            let found = state.items.public_collections(&search, &state).await?;
+            let found = state.items.public_collections(&search, state).await?;
             crate::limits::charge(
                 state,
                 headers,
