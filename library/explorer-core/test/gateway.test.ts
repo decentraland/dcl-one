@@ -3,7 +3,7 @@
 // (infra/gateway/tests/explorer_routes.py); these cases pin the parse and profile-image edges.
 import { describe, expect, it } from 'vitest'
 import { SERVICES } from '../engine/generated/serviceTable'
-import { gatewayLaunchValue, gatewayProfileImage, gatewayServiceUrl, gatewaySignedPath, isTrustedGatewayLaunchValue, isTrustedGatewayPrefix, parseGateway } from '../lib/gateway'
+import { gatewayLaunchValue, gatewayLaunchWarning, gatewayProfileImage, gatewayServiceUrl, gatewaySignedPath, isTrustedGatewayLaunchValue, isTrustedGatewayPrefix, parseGateway } from '../lib/gateway'
 
 const service = (name: string) => SERVICES.find((s) => s.name === name)!
 
@@ -161,5 +161,10 @@ describe('the ?gateway= launch gate', () => {
     expect(isTrustedGatewayLaunchValue('https://gateway.example.test', foreign, 'decentraland.org')).toBe(false)
     // a value the parse refused is never trusted, whatever host it names
     expect(isTrustedGatewayLaunchValue('https://gateway.decentraland.org/?', null, 'decentraland.org')).toBe(false)
+  })
+
+  it('warns of what a parsed gateway sees, and that a refused value is ignored', () => {
+    expect(gatewayLaunchWarning(parseGateway('https://gateway.example.test'))).toMatch(/signed requests/)
+    expect(gatewayLaunchWarning(null)).toMatch(/ignores it/)
   })
 })

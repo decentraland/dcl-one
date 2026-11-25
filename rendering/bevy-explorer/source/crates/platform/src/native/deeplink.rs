@@ -243,6 +243,13 @@ mod test {
                 gateway: Some("https://gateway.decentraland.zone".into())
             }
         );
+        // an empty gateway is absent, as on the web
+        for link in [
+            "decentraland://open?position=1,2&gateway=",
+            "decentraland://open?position=1,2&gateway=%20",
+        ] {
+            assert_eq!(parse_place_link(link).unwrap().gateway, None, "{link}");
+        }
         assert!(parse_place_link("decentraland://open?dclenv=prod").is_err());
         assert!(parse_place_link("https://decentraland.org/?position=1,2").is_err());
     }

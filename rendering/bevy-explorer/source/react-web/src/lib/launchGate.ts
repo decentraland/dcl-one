@@ -8,7 +8,7 @@ import { BASE_DOMAIN, GATEWAY, hostBaseDomain, isTrustedBaseDomain, normaliseSer
 import { bootMode } from './bootMode'
 import { isTrustedSystemScene } from './systemScene'
 import { webParam } from '@explorer-core/lib/webParams'
-import { GATEWAY_LAUNCH_WARNING, gatewayLaunchValue, isTrustedGatewayLaunchValue } from '@explorer-core/lib/gateway'
+import { gatewayLaunchValue, gatewayLaunchWarning, isTrustedGatewayLaunchValue } from '@explorer-core/lib/gateway'
 import type { UntrustedParam } from '@explorer-core/hostContract'
 
 export type { UntrustedParam }
@@ -46,7 +46,7 @@ const GATES: Record<string, Gate> = {
   // gateway). Trusted: an https origin of the session's Decentraland deployment
   // (isTrustedGatewayPrefix). A value the parse refuses is shown too, never dropped silently.
   gateway: {
-    warning: GATEWAY_LAUNCH_WARNING,
+    warning: gatewayLaunchWarning(GATEWAY),
     read: (native) => (native ? null : gatewayLaunchValue(new URLSearchParams(location.search).get('gateway'), GATEWAY)),
     isTrusted: (value) => isTrustedGatewayLaunchValue(value, GATEWAY, BASE_DOMAIN)
   },

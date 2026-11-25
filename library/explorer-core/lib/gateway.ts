@@ -53,9 +53,12 @@ export function isTrustedGatewayPrefix(prefix: string, baseDomain: string, ownOr
   )
 }
 
-/** The untrusted-launch prompt's warning for `?gateway=`. */
-export const GATEWAY_LAUNCH_WARNING =
-  'Sends sign-in, profiles, comms admission and every other Decentraland API request through this server. Whoever runs it would see your signed requests and choose the answers. An address that is not an http(s) base url is ignored instead.'
+/** The untrusted-launch prompt's warning for `?gateway=`: what a parsed gateway does, or that a refused value is ignored. */
+export function gatewayLaunchWarning(gateway: Gateway | null): string {
+  return gateway != null
+    ? 'Sends sign-in, profiles, comms admission and every other Decentraland API request through this server. Whoever runs it would see your signed requests and choose the answers.'
+    : 'Is not an http(s) base url, so the Explorer ignores it and reaches every service directly. Check the link if you meant to use a gateway.'
+}
 
 /**
  * The `?gateway=` value the untrusted-launch prompt weighs: the parsed prefix, or the raw value

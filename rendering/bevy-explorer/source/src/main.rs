@@ -278,9 +278,9 @@ fn decentraland_app_arguments() -> Result<DecentralandArguments, UserError> {
     Ok(args)
 }
 
-/// A place link's launch options, under the explicit flags, which win. The link's gateway must be
-/// one a link may select for the session's base domain ([`common::gateway::Gateway::parse_link`])
-/// only when it applies.
+/// A place link's launch options, under the explicit flags, which win. The link's gateway applies
+/// only without `--gateway`, and must then be one [`common::gateway::Gateway::parse_link`] accepts
+/// for the session's base domain.
 fn apply_place_link(
     launch: &mut system_api_types::launch_options::LaunchOptions,
     place: platform::deeplink::PlaceLink,
