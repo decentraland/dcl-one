@@ -8,6 +8,20 @@ A local Polygon refold fixture replayed 288 legacy sales in 288 distinct blocks 
 
 The index process increments `catalyst_index_sales_repair_failures_total` by indexer and network when a historical sales repair fails. The error log includes the starting block and requests spent. The cursor keeps its last verified boundary.
 
+## Published sales reads
+
+A PostgreSQL 17 fixture held one million synthetic sales across Ethereum and Polygon, plus 32,000 sales for a single seller. The account plan used 40,004 published account totals and the creator plan included 9,900 mints. Timings are SQL execution times from local `EXPLAIN (ANALYZE, BUFFERS)`, measured with the publication present. The request statement budget is 10 seconds.
+
+| Read | Initial query | Indexed query |
+| --- | ---: | ---: |
+| First sales page in timestamp order, with total | 5,787 ms | 12.0 ms |
+| Seller summary, 100 matching sales | 4,386 ms | 615 ms |
+| Buyer page, 34 matching sales | 62 ms | 2.8 ms |
+| First accounts page by earned | Over 20 s | 6.76 s |
+| Lifetime creator ranking | Over 20 s | 4.68 s |
+
+The six sales read indexes occupied 359 MiB together after the load. The timestamp and price indexes accounted for 54 MiB and 114 MiB respectively. Daily sale counts supply the total for unfiltered pages. Indexed wallet and item lookups narrow rows before enriching them with payment evidence.
+
 ## Marketplace sales day rollups
 
 On PostgreSQL 17.6, a temporary table held 200,000 executions on one network,
