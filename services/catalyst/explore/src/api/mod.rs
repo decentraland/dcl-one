@@ -615,9 +615,10 @@ impl State {
     /// (doubling to an hour) and the next one starts over from the persisted
     /// marker. Upstream mirrors require `EXPLORER_MIRRORS_ENABLED`; the tile
     /// grid is built from this node's own database whatever that switch says
-    /// (`explorer-map-grid`, leased, every minute, a failed pass backing off
-    /// to five minutes); local maintenance, the denylist snapshot reload and
-    /// the tile grid reload (`explorer-map-grid-reload`) run on every process.
+    /// (`explorer-map-grid`, leased: a build when its inputs change, watched
+    /// every 5 s, a failed pass backing off to five minutes); local
+    /// maintenance, the denylist snapshot reload and the tile grid reload
+    /// (`explorer-map-grid-reload`, every 10 s) run on every process.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         auth_api::spawn_identity_sweeper(self, jobs);
         self.auth_sockets.spawn(self, jobs);
@@ -641,20 +642,14 @@ impl State {
             },
         );
         let s = self.clone();
-        jobs.spawn_periodic_leased(
-            map::JOB,
-            PeriodicCfg::every(map::BUILD_INTERVAL)
-                .with_jitter(Duration::from_secs(10))
-                .with_error_backoff(Duration::from_secs(300)),
-            move |ctx| {
-                let s = s.clone();
-                async move { map::run_pass(&s, &ctx).await }
-            },
-        );
+        jobs.spawn_leased(map::JOB, move |ctx| {
+            let s = s.clone();
+            async move { map::watch(&s, &ctx).await }
+        });
         let s = self.clone();
         jobs.spawn_periodic(
             map::RELOAD_JOB,
-            PeriodicCfg::every(map::BUILD_INTERVAL)
+            PeriodicCfg::every(map::FOLLOW_INTERVAL)
                 .with_jitter(Duration::from_secs(10))
                 .after_first_interval(),
             move |_ctx| {

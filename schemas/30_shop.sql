@@ -427,6 +427,9 @@ CREATE TABLE shop.chain_cursor (
     -- cleared by the rewind or by a pass that proves the cursor again.
     -- Readers of the height without the publication skip it meanwhile.
     diverged_at timestamp without time zone,
+    -- Raised by the rebuild that clears the projection and by the estate
+    -- repair's refold: with reorg_rewinds, every rewrite of rows in place.
+    rebuilds integer NOT NULL DEFAULT 0,
     -- An old binary omits this column when claiming its lease. It cannot
     -- take the Sepolia trades cursor and publish a history missing V1.
     sepolia_trade_v1 boolean NOT NULL DEFAULT false,
