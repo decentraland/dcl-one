@@ -191,6 +191,8 @@ pub enum SystemApi {
     GetNearbyMuteStream(RpcStreamSender<Vec<String>>),
     GetHoverStream(RpcStreamSender<HoverEvent>),
     GetProximityStream(RpcStreamSender<ProximityEvent>),
+    /// The time of day for the Skybox menu: the state now, then again on every change.
+    GetSkyTimeStream(RpcStreamSender<SkyTimeState>),
     GetPhotoModeStream(RpcStreamSender<PhotoModeState>),
     GetProfileChangedStream(RpcStreamSender<ProfileChangedEvent>),
     GetSceneLoadingUiStream(RpcStreamSender<SceneLoadingUi>),

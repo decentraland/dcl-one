@@ -11,6 +11,7 @@ import type {
   Color3,
   CommunityVoiceStatus,
   ConnectivitySnapshot,
+  SkyTimeState,
   HomeScene,
   MapPinInfo,
   OutfitData,
@@ -2591,6 +2592,8 @@ export type SceneToPage =
   | PlaceMessage
   | WorldAccessMessage
   | { kind: 'connectivity'; state: ConnectivitySnapshot }
+  /** The time of day for the Skybox menu: on bridge start, on `hello` and on every change. */
+  | { kind: 'skyTime'; state: SkyTimeState }
   | { kind: 'connectivityRetry'; requestId: string; error?: string }
   | BridgeUnavailableMessage
   | VoiceChatStateMessage

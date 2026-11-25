@@ -9,7 +9,7 @@ import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { fetchCrowd, recordVisit } from '@explorer-core/features/lobby/lobbyApi'
 import { type GotoTarget, randomParcel, worldOfRealm } from '@explorer-core/features/lobby/goto'
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
-import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
+import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, SkyTimeState, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
@@ -200,16 +200,10 @@ const SKYBOX_DAY_SPEED = 12
 const NEARBY_VOICE_RESTRICTION = 'Nearby voice disabled'
 
 // The engine's `/time` reply (day_night.rs timeofday_console_command) ends with
-// "speed <S> (elapsed: <seconds since midnight>), locked: <true|false>". The time is the one the
-// sky shows, and `locked` says the scene the player stands in holds it.
-interface EngineClock {
-  hours: number
-  speed: number
-  locked: boolean
-}
-function parseTimeReply(reply: string): EngineClock | null {
-  const m = /speed (-?[\d.]+) \(elapsed: ([\d.]+)\)(?:, locked: (true|false))?/.exec(reply)
-  return m ? { hours: Number(m[2]) / 3600, speed: Number(m[1]), locked: m[3] === 'true' } : null
+// "speed <S> (elapsed: <seconds since midnight>)".
+function parseTimeReply(reply: string): { hours: number; speed: number } | null {
+  const m = /speed (-?[\d.]+) \(elapsed: ([\d.]+)\)/.exec(reply)
+  return m ? { hours: Number(m[2]) / 3600, speed: Number(m[1]) } : null
 }
 
 // Unity's wording (BackpackEquipStatusController's in-world warning) when a profile deploy fails.
@@ -1819,6 +1813,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const chatAccountRef = useRef<string | null>(null)
   // The speed to restore when Time progression is turned back on (the last running speed seen).
   const skyboxDaySpeed = useRef(SKYBOX_DAY_SPEED)
+  // the engine's last report of the time of day
+  const skyTime = useRef<SkyTimeState | null>(null)
   // Catalog fetches done once per session (cache; relays re-emit on change).
   const fetchedRef = useRef<Set<string>>(new Set())
 
@@ -2288,6 +2284,19 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         case 'emotes':
           setEmotes(msg.emotes)
           break
+        case 'skyTime': {
+          const before = skyTime.current
+          skyTime.current = msg.state
+          setSkyboxSceneLocked(msg.state.locked)
+          if (msg.state.speed !== 0) skyboxDaySpeed.current = msg.state.speed
+          // A stopped clock's own echo is skipped while the player drags the slider, so that an
+          // older value cannot pull it back.
+          if (msg.state.locked || before == null || before.locked !== msg.state.locked || before.speed !== msg.state.speed) {
+            setSkyboxProgressingState(msg.state.speed !== 0)
+            if (msg.state.fixedHours != null) setSkyboxHoursState(msg.state.fixedHours)
+          }
+          break
+        }
         case 'mic':
           setMic((m) => ({ enabled: msg.enabled, available: msg.available, sceneBlocked: msg.sceneBlocked === true, refusals: msg.refusals ?? m.refusals }))
           break
@@ -3468,7 +3477,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     driverRef.current?.command?.(line) ?? Promise.reject(new Error('Engine console unavailable')), [])
 
   // The engine clock as `/time` (no args) reports it; null when there is no engine console.
-  const readClock = useCallback(async (): Promise<EngineClock | null> => {
+  const readClock = useCallback(async (): Promise<{ hours: number; speed: number } | null> => {
     const reply = await driverRef.current?.command?.('/time').catch(() => undefined)
     const clock = reply != null ? parseTimeReply(reply) : null
     if (clock != null && clock.speed !== 0) skyboxDaySpeed.current = clock.speed
@@ -3479,14 +3488,16 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       ?.command?.(`/time ${hours.toFixed(2)} ${speed}`)
       .catch((e: unknown) => console.warn('[hud] /time failed:', e))
   }, [])
+  const skyboxRead = useRef(0)
   const toggleSkybox = useCallback(
     () =>
       exclusive(setSkyboxOpen, () => {
+        // the running clock's hour is not pushed: read it, and drop the answer of an earlier open
+        const read = ++skyboxRead.current
         void readClock().then((clock) => {
-          if (clock == null) return
+          if (clock == null || read !== skyboxRead.current) return
           setSkyboxHoursState(clock.hours)
           setSkyboxProgressingState(clock.speed !== 0)
-          setSkyboxSceneLocked(clock.locked)
         })
       }),
     [exclusive, readClock]
@@ -3514,22 +3525,15 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     },
     [skyboxHours, readClock, setClock]
   )
-  // The open menu follows the engine: the running clock, so the slider tracks it, and the
-  // lock, which comes and goes as the player walks between scenes. A stopped clock is read again
-  // only when the lock changes, since the time reported under it is the scene's.
+  // While the day cycle runs and sets the sky, the open menu follows the engine clock, whose hour
+  // changes every frame. Everything else (the lock, a stopped clock, a scene's hour) is pushed on
+  // the `skyTime` message.
   useEffect(() => {
-    if (!skyboxOpen) return
+    if (!skyboxOpen || !skyboxProgressing || skyboxSceneLocked) return
     let live = true
     const id = setInterval(() => {
       void readClock().then((clock) => {
-        if (!live || clock == null) return
-        if (clock.locked !== skyboxSceneLocked) {
-          setSkyboxSceneLocked(clock.locked)
-          setSkyboxProgressingState(clock.speed !== 0)
-          setSkyboxHoursState(clock.hours)
-        } else if (clock.locked || (skyboxProgressing && clock.speed !== 0)) {
-          setSkyboxHoursState(clock.hours)
-        }
+        if (live && clock != null && clock.speed !== 0) setSkyboxHoursState(clock.hours)
       })
     }, 1000)
     return () => {

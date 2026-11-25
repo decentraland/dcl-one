@@ -674,6 +674,21 @@ module.exports.getProximityStream = async function() {
   return streamGenerator();
 }
 
+// the time of day for the Skybox menu, now and on every change; see SkyTimeState
+module.exports.getSkyTimeStream = async function() {
+  const rid = await Deno.core.ops.op_get_sky_time_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_sky_time_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
 // photo mode (the camera reel's in-world camera) as a stream of its state; see PhotoModeState
 module.exports.getPhotoModeStream = async function() {
   const rid = await Deno.core.ops.op_get_photo_mode_stream();

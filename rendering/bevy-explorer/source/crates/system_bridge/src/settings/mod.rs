@@ -85,7 +85,7 @@ pub mod player_settings;
 pub mod point_at_marker_visibility;
 pub mod render_scale_setting;
 mod rings;
-pub mod scene_control_override;
+mod scene_control_override;
 pub mod scene_threads;
 pub mod sensitivity;
 pub mod shadow_settings;

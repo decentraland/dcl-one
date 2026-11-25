@@ -477,12 +477,11 @@ fn sky_state(
     mut cmd: ConsoleCommand<SkyState>,
     time: Res<TimeOfDay>,
     clouds: Res<CloudCover>,
-    source: Res<crate::day_night::SkySource>,
-    lock: Res<common::structs::SceneTimeLock>,
+    hold: Single<&crate::day_night::SkyHold>,
     config: Res<AppConfig>,
 ) {
     if let Some(Ok(_)) = cmd.take() {
-        cmd.reply_ok(json!({"hour":time.time / 3600., "timeSource":source.name(), "sceneLocked":lock.0,
+        cmd.reply_ok(json!({"hour":time.time / 3600., "timeSource":hold.source.name(), "sceneLocked":hold.locked,
             "overrideAllowed":config.allow_scene_control_override,
             "cover":user_cover(clouds.cover), "density":clouds.density_cap,
             "shadow":clouds.shadow, "scale":clouds.scale, "steps":clouds.steps, "lacunarity":clouds.lacunarity, "sharpness":clouds.sharpness}).to_string());

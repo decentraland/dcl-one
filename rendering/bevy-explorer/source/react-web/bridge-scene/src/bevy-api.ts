@@ -13,6 +13,7 @@ import type {
   ChatReactionData,
   CommunityMemberConnectivityData,
   ConnectivitySnapshot,
+  SkyTimeState,
   CommunityVoiceUpdate,
   DmHistoryEntryData,
   DmUserStateData,
@@ -207,6 +208,9 @@ export type BevyApiInterface = {
   getHoverStream: () => Promise<AsyncIterable<SystemHoverEvent>>
   getProximityStream: () => Promise<AsyncIterable<SystemProximityEvent>>
   getConnectivityStream: () => Promise<AsyncIterable<ConnectivitySnapshot>>
+  /** The time of day for the Skybox menu: the state now, then on every change. Optional: absent
+   *  on runtimes whose SystemApi predates it. */
+  getSkyTimeStream?: () => Promise<AsyncIterable<SkyTimeState>>
   retryConnectivity: () => void
   /** Photo mode (the camera reel's in-world camera): its state whenever it changes. Optional:
    *  absent on runtimes whose SystemApi predates it. */

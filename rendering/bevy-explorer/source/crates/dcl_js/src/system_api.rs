@@ -22,7 +22,7 @@ use system_bridge::{
     ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
     PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
     ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
-    SetItemPurchaseState, SetPermanentPermission, SetSinglePermission, SystemApi,
+    SetItemPurchaseState, SetPermanentPermission, SetSinglePermission, SkyTimeState, SystemApi,
     TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
     WorldAccessEvent, WorldAccessVerdict,
 };
@@ -1239,6 +1239,26 @@ pub async fn op_read_proximity_stream(
     state: Rc<RefCell<impl State>>,
     rid: u32,
 ) -> Result<Option<ProximityEvent>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_sky_time_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetSkyTimeStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_sky_time_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<SkyTimeState>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
 }
 

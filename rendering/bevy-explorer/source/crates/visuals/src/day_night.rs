@@ -3,7 +3,7 @@ use bevy::{
     prelude::*,
 };
 use bevy_console::{AddConsoleCommand, ConsoleCommand};
-use common::structs::{AppConfig, PrimaryPlayerRes, SceneTime, SceneTimeLock, TimeOfDay};
+use common::structs::{AppConfig, PrimaryPlayerRes, SceneTime, SkyTime, SkyTimeState, TimeOfDay};
 use dcl_component::{
     proto_components::sdk::components::{PbSkyboxTime, TransitionMode},
     SceneComponentId,
@@ -37,13 +37,23 @@ struct RunningClock {
     /// Set by `/time --force`: the clock sets the sky whatever a scene asks for, until the next
     /// `/time` that sets a time or a speed. The scene editor pins its own lighting this way.
     pub forced: bool,
-    /// The player set a time or a speed with "Allow overriding scene controls" on: the clock
-    /// beats the time of the scene the player stands in, until a scene's time arrives again.
+    /// The player stopped the clock at a time with "Allow overriding scene controls" on: the
+    /// clock beats the time of the scene the player stands in, until a scene's time arrives
+    /// again or the clock runs again.
     pub player_holds: bool,
 }
 
+/// What holds the sky and where it is headed, as `follow_sky_source` last saw it.
+#[derive(Component, Default)]
+pub(crate) struct SkyHold {
+    pub(crate) source: SkySource,
+    /// The scene the player stands in holds the sky and the player may not take it.
+    pub(crate) locked: bool,
+    target: Option<SkyTarget>,
+}
+
 /// What sets the sky.
-#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum SkySource {
     /// A scene's SDK `SkyboxTime`.
     Skybox,
@@ -65,7 +75,7 @@ impl SkySource {
 
 /// The time of the scene the player stands in wins over the clock and over a portable's time,
 /// its SDK `SkyboxTime` before its `scene.json` time. With "Allow overriding scene controls" on
-/// (`allow_override`), a time the player set after the scene's arrived beats it. A portable's
+/// (`allow_override`), a time the player stopped the clock at after the scene's arrived beats it. A portable's
 /// time comes next and wins only over a running clock: a time the player set by hand beats it.
 /// A forced clock beats them all.
 fn sky_source(
@@ -165,8 +175,7 @@ impl Plugin for DayNightPlugin {
             ComponentPosition::RootOnly,
         );
 
-        app.init_resource::<SceneTimeLock>();
-        app.init_resource::<SkySource>();
+        app.init_resource::<SkyTime>();
         app.add_systems(Startup, start_clock);
         app.add_systems(
             First,
@@ -198,6 +207,7 @@ fn start_clock(mut commands: Commands) {
             forced: false,
             player_holds: false,
         },
+        SkyHold::default(),
     ));
 }
 
@@ -295,7 +305,7 @@ fn fetch_time_from_scene(
 fn fetch_time_from_skybox(
     mut commands: Commands,
     mut source: RootComponentSource<SkyboxTime>,
-    scenes: Query<(Ref<SkyboxTime>, &RendererSceneContext)>,
+    scenes: Query<(&SkyboxTime, &RendererSceneContext)>,
     time_keeper: Single<
         (
             Entity,
@@ -354,6 +364,7 @@ fn follow_sky_source(
     time_keeper: Single<
         (
             &mut RunningClock,
+            &mut SkyHold,
             Option<&SkyboxTime>,
             Option<&SkyboxTimeSource>,
             Option<&SceneTime>,
@@ -362,12 +373,10 @@ fn follow_sky_source(
         With<TimeKeeper>,
     >,
     config: Res<AppConfig>,
-    mut last_target: Local<Option<SkyTarget>>,
     mut time_of_day: ResMut<TimeOfDay>,
-    mut lock: ResMut<SceneTimeLock>,
-    mut holder: ResMut<SkySource>,
+    mut sky_time: ResMut<SkyTime>,
 ) {
-    let (mut clock, skybox_time, skybox, scene_time, scene) = time_keeper.into_inner();
+    let (mut clock, mut hold, skybox_time, skybox, scene_time, scene) = time_keeper.into_inner();
     let allow_override = config.allow_scene_control_override;
     if !allow_override && clock.player_holds {
         // turning the setting back on does not bring an old override back
@@ -375,14 +384,7 @@ fn follow_sky_source(
     }
 
     let source = sky_source(&clock, skybox, scene, allow_override);
-    holder.set_if_neq(source);
-    lock.set_if_neq(SceneTimeLock(scene_locks(
-        source,
-        skybox,
-        scene,
-        allow_override,
-    )));
-
+    let locked = scene_locks(source, skybox, scene, allow_override);
     let target = match (source, skybox_time, scene_time) {
         (SkySource::Skybox, Some(skybox_time), _) => SkyTarget::Skybox {
             time: skybox_time.fixed_time as f32,
@@ -393,10 +395,22 @@ fn follow_sky_source(
         },
         _ => SkyTarget::Clock,
     };
-    if *last_target == Some(target) {
+    sky_time.set_if_neq(SkyTime(SkyTimeState {
+        locked,
+        speed: clock.speed,
+        fixed_hours: match target {
+            SkyTarget::Skybox { time, .. } | SkyTarget::Scene { time } => Some(time / ONE_HOUR),
+            SkyTarget::Clock => (clock.speed == 0.0).then_some(clock.time / ONE_HOUR),
+        },
+    }));
+    if hold.source != source || hold.locked != locked {
+        hold.source = source;
+        hold.locked = locked;
+    }
+    if hold.target == Some(target) {
         return;
     }
-    *last_target = Some(target);
+    hold.target = Some(target);
 
     let from = time_of_day.time;
     let (time, end) = match target {
@@ -484,14 +498,13 @@ fn push_time_of_day_from_time_skip(
 
 fn push_time_of_day_from_running_clock(
     mut commands: Commands,
-    time_keeper: Single<&RunningClock, With<TimeKeeper>>,
-    holder: Res<SkySource>,
+    time_keeper: Single<(&RunningClock, &SkyHold), With<TimeKeeper>>,
     mut time_of_day: ResMut<TimeOfDay>,
 ) {
-    if *holder != SkySource::Clock {
+    let (running_clock, hold) = time_keeper.into_inner();
+    if hold.source != SkySource::Clock {
         return;
     }
-    let running_clock = time_keeper.into_inner();
     let end = nearest_end(time_of_day.time, running_clock.time);
     if (end - time_of_day.time).abs() > ONE_HOUR {
         debug!("Starting a TimeSkip from {} to {}.", time_of_day.time, end);
@@ -562,14 +575,13 @@ fn timeofday_console_command(
         if let Some(speed) = command.speed {
             running_clock.speed = speed;
         }
-        // a bare `/time` only reads
         if command.time.is_some() || command.speed.is_some() || command.resume {
             running_clock.forced = command.force;
-            // `--resume` hands the sky back to the scene
-            running_clock.player_holds = allow_override && !command.resume;
+            // only a stopped clock is a time the player chose: a running one, the HUD's Auto
+            // included, hands the sky back to the scene
+            running_clock.player_holds = allow_override && running_clock.speed == 0.0;
         }
 
-        // `follow_sky_source` moves the sky if this changed what holds it
         let new_time = effective_time(&running_clock);
         let locked = scene_locks(
             source(&running_clock),
@@ -619,8 +631,7 @@ mod tests {
         app.init_resource::<ScenePointers>()
             .init_resource::<LiveScenes>()
             .init_resource::<PortableScenes>()
-            .init_resource::<SceneTimeLock>()
-            .init_resource::<SkySource>()
+            .init_resource::<SkyTime>()
             .init_resource::<AppConfig>()
             .init_resource::<TestingData>()
             .init_resource::<Time>()
@@ -758,7 +769,11 @@ mod tests {
     }
 
     fn locked(app: &App) -> bool {
-        app.world().resource::<SceneTimeLock>().0
+        app.world().resource::<SkyTime>().0.locked
+    }
+
+    fn pushed(app: &App) -> SkyTimeState {
+        app.world().resource::<SkyTime>().0
     }
 
     fn elapsed(reply: &str) -> f32 {
@@ -794,6 +809,24 @@ mod tests {
         let reply = time(&mut app, "");
         assert_eq!(elapsed(&reply), NOON);
         assert!(reply.ends_with(", locked: false"));
+        assert_eq!(
+            pushed(&app),
+            SkyTimeState {
+                locked: false,
+                speed: 0.,
+                fixed_hours: Some(12.)
+            }
+        );
+        // the running clock's hour is not pushed: it changes every frame
+        time(&mut app, "12 12");
+        assert_eq!(
+            pushed(&app),
+            SkyTimeState {
+                locked: false,
+                speed: 12.,
+                fixed_hours: None
+            }
+        );
     }
 
     #[test]
@@ -817,6 +850,14 @@ mod tests {
             "/time reports the time the sky shows"
         );
         assert!(reply.ends_with(", locked: true"));
+        assert_eq!(
+            pushed(&app),
+            SkyTimeState {
+                locked: true,
+                speed: 0.,
+                fixed_hours: Some(22.)
+            }
+        );
 
         // running
         time(&mut app, "6 12");
@@ -1056,6 +1097,23 @@ mod tests {
         assert_eq!(sky(&app), 3. * ONE_HOUR);
         assert_eq!(elapsed(&reply), 3. * ONE_HOUR);
         assert!(reply.ends_with(", locked: false"));
+
+        assert_eq!(
+            pushed(&app),
+            SkyTimeState {
+                locked: false,
+                speed: 0.,
+                fixed_hours: Some(3.)
+            }
+        );
+
+        // a running clock is not a time the player chose: the scene has the sky again
+        time(&mut app, "3 12");
+        settle(&mut app);
+        assert_eq!(sky(&app), NIGHT);
+        time(&mut app, "3 0");
+        settle(&mut app);
+        assert_eq!(sky(&app), 3. * ONE_HOUR);
 
         // the override is not kept for the scene: its time is back on return
         stand(&mut app, false);

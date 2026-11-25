@@ -553,6 +553,22 @@ pub struct ProximityEvent {
     pub actions: Vec<HoverAction>,
 }
 
+/// The time of day as the HUD's Skybox menu shows it. Sent on subscribe and whenever a field
+/// changes.
+#[derive(Clone, Copy, Default, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct SkyTimeState {
+    /// The scene the player stands in holds the time of day and the player may not change it.
+    pub locked: bool,
+    /// The speed of the player's clock; 0 when it is stopped.
+    pub speed: f32,
+    /// The hour the sky is set to, 0 to 24, while a scene's time or a stopped clock sets it;
+    /// `None` while the running clock does.
+    pub fixed_hours: Option<f32>,
+}
+
 /// Photo mode as the HUD shows it: whether the in-world camera is open, what it is doing with
 /// the last photo, and how much room the player has. `event_seq` increments on each `event`,
 /// which carries the capture's preview (base64 JPEG) or the upload's failure message.

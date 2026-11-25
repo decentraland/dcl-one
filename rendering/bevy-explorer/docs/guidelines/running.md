@@ -269,8 +269,8 @@ State, in every build:
   `time H:M -> H:M, speed S (elapsed: <seconds since midnight>), locked: <true|false>`: the time
   the sky shows, and `locked` while the scene the player stands in holds it (the Skybox menu is
   off and a `/time` without `--force` moves the clock, not the sky). With the "Allow overriding
-  scene controls" setting on nothing is locked and a time set here wins until a scene's time
-  arrives again. `--force` (with a time) beats a scene's time whatever the setting, until the next
+  scene controls" setting on nothing is locked and a time the clock is stopped at here wins
+  until a scene's time arrives again or the clock runs again. `--force` (with a time) beats a scene's time whatever the setting, until the next
   `/time` that sets a time or a speed; `--resume` runs the clock again and hands the sky back.
   `/sky_state` adds `timeSource` (`skybox`, `scene` or `clock`), `sceneLocked` and
   `overrideAllowed`, the Skybox debug section's readings.

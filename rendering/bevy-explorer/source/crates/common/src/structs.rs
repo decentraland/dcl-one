@@ -2158,12 +2158,11 @@ pub struct SceneTime {
     pub time: f32,
 }
 
-/// Whether the scene the player stands in holds the time of day (`scene.json` `skyboxConfig` or
-/// the SDK's `SkyboxTime`) and the player may not change it: the "Allow overriding scene
-/// controls" setting is off. A portable's time does not count, and neither does a scene's while
-/// `/time --force` holds the sky.
-#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct SceneTimeLock(pub bool);
+/// The time of day as the HUD's Skybox menu shows it, kept by the day/night systems and sent on
+/// `SystemApi::GetSkyTimeStream`.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Debug)]
+pub struct SkyTime(pub SkyTimeState);
+pub use system_api_types::SkyTimeState;
 
 // porting aid, used to be one component
 pub type TextStyle = (TextFont, TextColor);

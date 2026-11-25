@@ -6023,7 +6023,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "8347d7e5ecb514f0cca00362e395b0dcaee78eaa80170b309a9b4de5bec3480c"
+      "sha256": "2fe23100e2eed39589b073cda99936422b7dd6530b6c25ce8fbd88d9b02f03ef"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -6128,6 +6128,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
       "sha256": "e1158dd00b70e175d36fd759f40719e5a8c0313315dbaf1efbc4649fd08e5922"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/skyTime.ts",
+      "sha256": "8e3a13eb0fbd6d578435c7a624605d082fefd0affcf3722c1f68c249a1e8f9a8"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/textureOptimization.ts",
@@ -6402,6 +6406,10 @@
       "sha256": "1b9dd9725cf6e07f62be872b8a046a36613fabe0c48adc7fa31a103ae96900dc"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSkyTime.test.ts",
+      "sha256": "522a196cf1258e2c67055a0154bf6fb1416af057519c4f4297b8a1061f030d3a"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
       "sha256": "9215e44d8c803335b125591254a6584453268644d0d65b4b59fb375322ef83aa"
     },
@@ -6539,7 +6547,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "ea5699c93130195ebfada2bd4b89ef6ec56277729e4a6a4f092c33f6ad55b863"
+      "sha256": "1b1f0a78ef7a06ab69bc95b087593c0d7dbf2d2eea8191cc1bdaf2f83d5a3f6b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -6607,6 +6615,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSceneLookup.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeSkyTime.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeTravel.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
@@ -6733,7 +6742,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "b5305a8fcae8da728e51384cefe4a588acd923521479ad85ac50941b6c6908c0"
+      "sha256": "90071234d91a94ab8e30c955dde10e4d01401777c8c130774d0c58487c769358"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -6833,7 +6842,7 @@
     },
     {
       "path": "library/explorer-core/features/editorHost/host/host.ts",
-      "sha256": "16d88f89ad87c847f7f16c3f74efac6ee6378149ae9515282c1aee836ad8a22e"
+      "sha256": "d8369137c9e891ee15c686a99ed336f2a7afc8916413a7718411e768dc982f84"
     },
     {
       "path": "library/explorer-core/features/editorHost/host/sign.ts",
@@ -10329,7 +10338,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "4b5cdb0e376ae636091c15e80738f1a822ceaa058e2e496fb347794b85ceb55b"
+      "sha256": "dfb033fa901bb170f28cd1a06b4b647027aeb655a84751b86fd48199b62b930c"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10429,7 +10438,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.tsx",
-      "sha256": "29a99ef6f73de6707d88cc9f985b825d3ed6b4f29820825a0d1a2ac4d3bba869"
+      "sha256": "b4ec6e0e6da967b6cffd766634837946f65e9139bafae04c724534771ee16269"
     },
     {
       "path": "library/ui/apps/hud/features/startup/GuestOrSignUp.module.css",
@@ -11101,7 +11110,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/skybox.test.tsx",
-      "sha256": "7769613bee64e5e9410b395037dfabb3ba8aa60f7592b8aa480a0766b4b0a51d"
+      "sha256": "8d15b5d3461e3ba96775d92132874c932b66e8f9affb22643744a4b988de797b"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
