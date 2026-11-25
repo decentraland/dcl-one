@@ -9,7 +9,11 @@ interface ToggleProps {
   disabled?: boolean
   /** sm: the compact 39×24 switch used in HUD popovers. */
   size?: 'md' | 'sm'
+  /** light: the switch sits on a light panel, so its off track is dark. */
+  surface?: 'dark' | 'light'
   'aria-label'?: string
+  /** Ids of elements that describe the control. */
+  'aria-describedby'?: string
 }
 
 export function Toggle({
@@ -17,7 +21,9 @@ export function Toggle({
   onChange,
   disabled = false,
   size = 'md',
-  'aria-label': ariaLabel
+  surface = 'dark',
+  'aria-label': ariaLabel,
+  'aria-describedby': ariaDescribedBy
 }: ToggleProps): React.JSX.Element {
   return (
     <button
@@ -25,8 +31,9 @@ export function Toggle({
       role="switch"
       aria-checked={checked}
       aria-label={ariaLabel}
+      aria-describedby={ariaDescribedBy}
       disabled={disabled}
-      className={`${styles.track} ${size === 'sm' ? styles.sm : ''} ${checked ? styles.on : ''}`.trim()}
+      className={`${styles.track} ${size === 'sm' ? styles.sm : ''} ${surface === 'light' ? styles.onLight : ''} ${checked ? styles.on : ''}`.trim()}
       onClick={() => onChange(!checked)}
     >
       <span className={styles.knob} />

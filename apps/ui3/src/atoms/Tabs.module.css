@@ -1,0 +1,91 @@
+.list {
+  display: flex;
+  min-height: 30px;
+  border-bottom: 1px solid var(--tabs-line, var(--line));
+  font-family: var(--font-family);
+}
+
+.list[data-orientation="vertical"] {
+  flex-direction: column;
+  border-right: 1px solid var(--tabs-line, var(--line));
+  border-bottom: 0;
+}
+
+.list[data-scrollable] {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.list[data-scrollable][data-orientation="vertical"] {
+  overflow-x: visible;
+  overflow-y: auto;
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-sizing: border-box;
+  min-width: 90px;
+  max-width: 360px;
+  min-height: 48px;
+  margin: 0;
+  padding: 12px 16px;
+  border: 0;
+  background: none;
+  color: var(--overlay-text-dim, var(--ink-7));
+  font: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.25;
+  letter-spacing: 0.02857em;
+  text-transform: capitalize;
+  white-space: nowrap;
+  cursor: pointer;
+  outline: none;
+}
+
+.tab[aria-selected="true"] {
+  color: var(--overlay-text, var(--text));
+  font-weight: 600;
+}
+
+.tab[aria-selected="true"]::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: var(--brand);
+  content: "";
+}
+
+.list[data-orientation="vertical"] .tab[aria-selected="true"]::after {
+  top: 0;
+  left: auto;
+  width: 2px;
+  height: auto;
+}
+
+.tab:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.tab:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.panel:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}

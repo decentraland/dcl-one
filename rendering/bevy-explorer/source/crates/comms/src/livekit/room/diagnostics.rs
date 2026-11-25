@@ -18,106 +18,110 @@ use crate::{
     },
     private_chat::PrivateChatRoom,
     room_connection::{RoomState, RoomStatus},
-    SceneRoom, Transport, TransportType,
+    SceneRoom, Transport,
 };
 use bevy::ecs::relationship::Relationship;
 
-pub(in crate::livekit) fn register(app: &mut App) {
-    app.add_console_command::<RoomDiagnostics, _>(room_diagnostics);
-    let client = client_can_control(
-        app.world()
-            .contains_resource::<common::structs::NoRenderApp>(),
-    );
-    if client {
-        app.add_console_command::<RoomConnectionCommand, _>(room_connection);
-    }
-    for (title, scope) in [
-        ("Island room", "island"),
-        ("Scene room", "scene"),
-        ("Private chat room", "chat"),
-    ] {
-        let mut fields = vec![
-            ("Connection policy", "policy"),
-            ("Room", "room.name"),
-            ("Connection state", "room.state"),
-            #[cfg(not(target_arch = "wasm32"))]
-            ("Room SID", "room.sid"),
-            ("Dial attempts", "room.attempts"),
-            ("Self SID", "room.selfSid"),
-            ("Local connection quality", "room.quality"),
-            ("Remote participants", "room.remoteCount"),
-        ];
-        if scope == "scene" {
-            fields.extend([
-                ("Scene ID", "room.scene"),
-                ("Associated base parcel (X / Y)", "room.baseParcelPosition"),
-            ]);
+pub(in crate::livekit) struct RoomDiagnosticsPlugin;
+
+impl Plugin for RoomDiagnosticsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_console_command::<RoomDiagnostics, _>(room_diagnostics);
+        let client = client_can_control(
+            app.world()
+                .contains_resource::<common::structs::NoRenderApp>(),
+        );
+        if client {
+            app.add_console_command::<RoomConnectionCommand, _>(room_connection);
         }
-        let command = format!("/room_connection {scope} {{value}}");
-        let inputs = [DebugInput {
-            label: "Connection",
-            field: "room.connectionEnabled",
-            command: &command,
-            kind: DebugInputKind::ActionButton {
-                enable: ("Connect", "connect"),
-                disable: ("Disconnect", "disconnect"),
-            },
-        }];
+        for (title, scope) in [
+            ("Island room", "island"),
+            ("Scene room", "scene"),
+            ("Private chat room", "chat"),
+        ] {
+            let mut fields = vec![
+                ("Connection policy", "policy"),
+                ("Room", "room.name"),
+                ("Connection state", "room.state"),
+                #[cfg(not(target_arch = "wasm32"))]
+                ("Room SID", "room.sid"),
+                ("Dial attempts", "room.attempts"),
+                ("Self SID", "room.selfSid"),
+                ("Local connection quality", "room.quality"),
+                ("Remote participants", "room.remoteCount"),
+            ];
+            if scope == "scene" {
+                fields.extend([
+                    ("Scene ID", "room.scene"),
+                    ("Associated base parcel (X / Y)", "room.baseParcelPosition"),
+                ]);
+            }
+            let command = format!("/room_connection {scope} {{value}}");
+            let inputs = [DebugInput {
+                label: "Connection",
+                field: "room.connectionEnabled",
+                command: &command,
+                kind: DebugInputKind::ActionButton {
+                    enable: ("Connect", "connect"),
+                    disable: ("Disconnect", "disconnect"),
+                },
+            }];
+            app.add_debug_section(DebugSection {
+                title,
+                query: &format!("/room_diagnostics {scope}"),
+                fields: &fields,
+                actions: &[],
+                inputs: if client { &inputs } else { &[] },
+            });
+        }
+        let indicators = app.is_plugin_added::<bevy::gizmos::GizmoPlugin>()
+            && !app
+                .world()
+                .contains_resource::<common::structs::NoRenderApp>();
+        if indicators {
+            app.init_resource::<RoomIndicators>()
+                .add_console_command::<RoomIndicatorsCommand, _>(room_indicators)
+                .add_systems(
+                    PostUpdate,
+                    draw_room_indicators.run_if(|enabled: Res<RoomIndicators>| enabled.0),
+                );
+        }
         app.add_debug_section(DebugSection {
-            title,
-            query: &format!("/room_diagnostics {scope}"),
-            fields: &fields,
+            title: "Room info",
+            query: "/room_diagnostics info",
+            fields: &[
+                ("Active remote players", "players"),
+                ("Players on LiveKit", "onLivekit"),
+                ("Players off LiveKit", "offLivekit"),
+                ("Participants without players", "unmatched"),
+            ],
             actions: &[],
-            inputs: if client { &inputs } else { &[] },
+            inputs: if indicators {
+                &[DebugInput {
+                    label: "Show room markers (gold Pulse, green island, blue scene)",
+                    field: "indicators",
+                    command: "/room_indicators {value}",
+                    kind: DebugInputKind::Toggle,
+                }]
+            } else {
+                &[]
+            },
+        })
+        .add_debug_section(DebugSection {
+            title: "Room throughput",
+            query: "/room_diagnostics throughput",
+            fields: &[
+                ("Island received (payload B/s)", "island.received"),
+                ("Island published (payload B/s)", "island.sent"),
+                ("Island participant quality (first 32)", "island.peers"),
+                ("Scene received (payload B/s)", "scene.received"),
+                ("Scene published (payload B/s)", "scene.sent"),
+                ("Scene participant quality (first 32)", "scene.peers"),
+            ],
+            actions: &[],
+            inputs: &[],
         });
     }
-    let indicators = app.is_plugin_added::<bevy::gizmos::GizmoPlugin>()
-        && !app
-            .world()
-            .contains_resource::<common::structs::NoRenderApp>();
-    if indicators {
-        app.init_resource::<RoomIndicators>()
-            .add_console_command::<RoomIndicatorsCommand, _>(room_indicators)
-            .add_systems(
-                PostUpdate,
-                draw_room_indicators.run_if(|enabled: Res<RoomIndicators>| enabled.0),
-            );
-    }
-    app.add_debug_section(DebugSection {
-        title: "Room info",
-        query: "/room_diagnostics info",
-        fields: &[
-            ("Active remote players", "players"),
-            ("Players on LiveKit", "onLivekit"),
-            ("Players off LiveKit", "offLivekit"),
-            ("Participants without players", "unmatched"),
-        ],
-        actions: &[],
-        inputs: if indicators {
-            &[DebugInput {
-                label: "Show room markers (gold Pulse, green island, blue scene)",
-                field: "indicators",
-                command: "/room_indicators {value}",
-                kind: DebugInputKind::Toggle,
-            }]
-        } else {
-            &[]
-        },
-    })
-    .add_debug_section(DebugSection {
-        title: "Room throughput",
-        query: "/room_diagnostics throughput",
-        fields: &[
-            ("Island received (payload B/s)", "island.received"),
-            ("Island published (payload B/s)", "island.sent"),
-            ("Island participant quality (first 32)", "island.peers"),
-            ("Scene received (payload B/s)", "scene.received"),
-            ("Scene published (payload B/s)", "scene.sent"),
-            ("Scene participant quality (first 32)", "scene.peers"),
-        ],
-        actions: &[],
-        inputs: &[],
-    });
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, PartialEq, Eq)]
@@ -147,7 +151,6 @@ struct RoomDiagnostics {
     scope: Scope,
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn room_diagnostics(
     mut input: ConsoleCommand<RoomDiagnostics>,
     policy: Res<State<ConnectionAvailability>>,
@@ -373,11 +376,7 @@ fn draw_room_indicators(
                 }
             }
         }
-        let pulse = player.transports.iter().any(|t| {
-            transports
-                .get(*t)
-                .is_ok_and(|t| t.transport_type == TransportType::Pulse)
-        });
+        let pulse = player.has_pulse_transport(&transports);
         let top = transform.translation() + Vec3::Y * 2.35;
         for (i, (present, color)) in [
             (pulse, Color::srgb(1.0, 0.75, 0.0)),
@@ -404,8 +403,10 @@ mod tests {
     use crate::{
         livekit::room::Connecting,
         room_connection::{FailureKind, RoomRecovery, RoomSuspended},
+        TransportType,
     };
     use bevy_console::ConsoleCommandEntered;
+    use common::sync::MutexExt;
     use std::sync::{Arc, Mutex};
 
     fn spawn_island(app: &mut App) -> Entity {
@@ -430,11 +431,11 @@ mod tests {
             command_name: name.into(),
             args: args.iter().map(|arg| arg.to_string()).collect(),
             responder: Some(Arc::new(move |result| {
-                *writer.lock().unwrap() = Some(result)
+                *writer.lock_ignore_poison() = Some(result)
             })),
         });
         app.update();
-        let result = reply.lock().unwrap().take().unwrap();
+        let result = reply.lock_ignore_poison().take().unwrap();
         result
     }
 
@@ -452,6 +453,8 @@ mod tests {
             crate::automation::CommsAutomationPlugin,
         ))
         .init_resource::<common::structs::MicState>()
+        .init_resource::<common::structs::AudioSettings>()
+        .insert_resource(common::structs::ClientWindowFocus::Focused)
         .init_resource::<wallet::Wallet>()
         .add_event::<crate::global_crdt::ChatEvent>()
         .insert_resource(State::new(ConnectionAvailability::Available))
@@ -561,7 +564,7 @@ mod tests {
         ))
         .insert_resource(State::new(ConnectionAvailability::Available))
         .add_console_command::<RoomConnectionCommand, _>(room_connection);
-        super::super::control::register(&mut app);
+        app.add_plugins(super::super::control::RoomControlPlugin);
         let room = spawn_island(&mut app);
         app.update();
         invoke(&mut app, "/room_connection", &["island", "disconnect"]).unwrap();

@@ -18,7 +18,7 @@
   gap: 8px;
 }
 
-.Metrics .Buttons .Button {
+.Metrics .Buttons .btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -30,20 +30,24 @@
   position: relative;
 }
 
-.Metrics .Buttons .Button.Active svg {
+.Metrics .Buttons .btn:hover {
+  background-color: transparent;
+}
+
+.Metrics .Buttons .btn.Active svg {
   color: var(--base-06);
 }
 
-.Metrics .Buttons .Button.Disabled {
+.Metrics .Buttons .btn.Disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }
 
-.Metrics .Buttons .Button svg {
+.Metrics .Buttons .btn svg {
   color: var(--base-02);
 }
 
-.Metrics .Buttons .Button .WarningDot {
+.Metrics .Buttons .btn .WarningDot {
   position: absolute;
   top: 4px;
   right: 4px;
@@ -155,13 +159,13 @@
   background-color: var(--base-13);
 }
 
-.Metrics .Buttons .Button.LimitExceeded svg,
+.Metrics .Buttons .btn.LimitExceeded svg,
 .Metrics > .Overlay .Item .Description.LimitExceeded,
 .Metrics > .Overlay .Item .Description.LimitExceeded .secondary {
   color: var(--warning-main);
 }
 
-.Metrics .Buttons .Button.Active.LimitExceeded svg {
+.Metrics .Buttons .btn.Active.LimitExceeded svg {
   color: var(--warning-main);
 }
 

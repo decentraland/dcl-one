@@ -38,11 +38,11 @@ fn start_signed_login(
         };
         let mut metadata = serde_json::json!({
             "intent": "dcl:explorer:comms-handshake", "signer": "dcl:explorer",
-            "isGuest": wallet.is_guest(), "origin": origin.origin().ascii_serialization(),
+            "isGuest": wallet.is_any_guest(), "origin": origin.origin().ascii_serialization(),
         });
         // A realm chooses its login endpoint. Do not let third-party realms correlate wallets
         // through the installation's persistent identifier.
-        if crate::adapter::allows_device_identifier(&event.address) {
+        if common::base_domain::device_identifier_domain(&event.address).is_some() {
             metadata["deviceIdentifier"] = serde_json::json!(config.user_id);
         }
         if let Some(secret) = &secret.0 {
@@ -90,8 +90,10 @@ mod tests {
             ("http://localhost:8000/login", false),
         ] {
             let mut app = App::new();
-            let mut realm = CurrentRealm::default();
-            realm.address = "https://realm.example".into();
+            let realm = CurrentRealm {
+                address: "https://realm.example".into(),
+                ..Default::default()
+            };
             app.insert_resource(realm)
                 .init_resource::<Wallet>()
                 .init_resource::<AppConfig>()

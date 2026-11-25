@@ -1,0 +1,59 @@
+.root {
+  position: relative;
+  min-width: 0;
+}
+
+/* Without a cover the chips take a row of their own above the title. */
+.root[data-cover='none'] {
+  padding-top: var(--dcl-space-48);
+}
+
+.chips {
+  position: absolute;
+  inset: var(--dcl-space-12) var(--dcl-space-12) auto;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-8);
+  pointer-events: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--dcl-space-4) var(--dcl-space-8);
+  border-radius: var(--dcl-radius-xs);
+  background: color-mix(in srgb, var(--dcl-neutrals-black) 75%, transparent);
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-label-xs-caps);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.chip[data-status] {
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.chip[data-status]::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.chip[data-status='pending'] {
+  color: var(--dcl-feedback-warning);
+}
+
+.chip[data-status='approved'] {
+  color: var(--dcl-feedback-success);
+}
+
+.chip[data-status='rejected'] {
+  color: var(--dcl-feedback-error);
+}

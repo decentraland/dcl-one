@@ -4714,17 +4714,21 @@
     "id": "events.profiles.list_edit_any_profile", "area": "events",
     "request": {"method": "GET", "path": "/api/profiles/settings", "auth": "signed:edit-any-profile"},
     "expected": {
-      "status": 403, "content_type": "application/json",
-      "body": {"ok": false, "error": "Forbidden", "code": "forbidden"}, "body_match": "exact"
+      "status": 200, "content_type": "application/json", "body": {"ok": true, "data": []},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "events.$defs.profile_settings",
+        "invariants": ["doc: only rows whose permissions array is non-empty", "doc: no subscriptions key"]
+      }
     },
     "source": {
       "kind": "source", "repo": "decentraland/events@b60d5bbd",
       "refs": [
-        "src/entities/ProfileSettings/routes/listProfileSettings.ts:11",
-        "src/entities/ProfileSettings/utils.ts:4-11"
+        "src/entities/ProfileSettings/routes.ts:11-30",
+        "src/entities/ProfileSettings/routes/listProfileSettings.ts:9-16",
+        "src/entities/ProfileSettings/model.ts:47-57"
       ]
-    },
-    "notes": "Accepted: dcl-one keeps private profile reads and permission grants moderator-only, so an edit_any_profile grantee is 403 where the old service admits it (ProfileSettings/utils.ts:4-11, getProfileSettings.ts:14-16, listProfileSettings.ts:11-13); the grant is stored and listed without effect."
+    }
   },
   {
     "id": "events.profiles.list_forbidden", "area": "events",
@@ -5005,14 +5009,21 @@
     "id": "events.profiles.get_by_id_edit_any_profile", "area": "events",
     "request": {"method": "GET", "path": "/api/profiles/{address}/settings", "auth": "signed:edit-any-profile"},
     "expected": {
-      "status": 403, "content_type": "application/json",
-      "body": {"ok": false, "error": "Forbidden", "code": "forbidden"}, "body_match": "exact"
+      "status": 200, "content_type": "application/json", "body": {"ok": true, "data": "<record>"},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "events.$defs.profile_settings",
+        "invariants": [
+          "doc: data == the stored row, or null when none (no default row)",
+          "data.user == '{address}' && data.email == 'subject@example.org' && data.permissions == [\"edit_any_event\"] (the seeded row)",
+          "doc: path address lowercased before lookup"
+        ]
+      }
     },
     "source": {
       "kind": "source", "repo": "decentraland/events@b60d5bbd",
-      "refs": ["src/entities/ProfileSettings/routes/getProfileSettings.ts:14"]
-    },
-    "notes": "Accepted: dcl-one keeps private profile reads and permission grants moderator-only, so an edit_any_profile grantee is 403 where the old service admits it (ProfileSettings/utils.ts:4-11, getProfileSettings.ts:14-16, listProfileSettings.ts:11-13); the grant is stored and listed without effect."
+      "refs": ["src/entities/ProfileSettings/routes/getProfileSettings.ts:12-27"]
+    }
   },
   {
     "id": "events.profiles.get_by_id_forbidden", "area": "events",
@@ -5097,14 +5108,22 @@
       "body": {"permissions": ["edit_any_schedule"]}, "auth": "signed:edit-any-profile"
     },
     "expected": {
-      "status": 403, "content_type": "application/json",
-      "body": {"ok": false, "error": "Forbidden", "code": "forbidden"}, "body_match": "exact"
+      "status": 201, "content_type": "application/json", "body": {"ok": true, "data": "<record>"},
+      "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "item_keys": "events.$defs.profile_settings",
+        "invariants": [
+          "data.permissions == [\"edit_any_schedule\"]",
+          "data.email == 'subject@example.org' && data.email_verified == false (unchanged)",
+          "doc: Slack notification only when the permission set changed"
+        ]
+      }
     },
     "source": {
       "kind": "source", "repo": "decentraland/events@b60d5bbd",
       "refs": ["src/entities/ProfileSettings/routes/updateProfileSettings.ts:35-49"]
     },
-    "notes": "Accepted: dcl-one keeps private profile reads and permission grants moderator-only, so an edit_any_profile grantee is 403 where the old service admits it (ProfileSettings/utils.ts:4-11, getProfileSettings.ts:14-16, listProfileSettings.ts:11-13); the grant is stored and listed without effect."
+    "harness": {"address": "subject_with_row"}
   },
   {
     "id": "events.profiles.patch_by_id_empty_permissions", "area": "events",

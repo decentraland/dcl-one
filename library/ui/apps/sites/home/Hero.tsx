@@ -19,16 +19,24 @@ type HeroProps = {
   imageAlt: string
   /** Wide screens: the download actions. */
   actions?: DownloadActionsProps
-  /** Narrow screens: their own heading, a subtitle and one store badge instead of the actions. Both
+  /** Narrow screens: their own heading, subtitle and store badges. Both
       layouts render and the viewport width picks one, as source does, so SSR markup is stable. */
-  mobile?: { title: ReactNode; subtitle: ReactNode; store: StoreBadgeProps }
+  mobile?: {
+    title: ReactNode
+    subtitle: ReactNode
+    store: StoreBadgeProps
+    alternateStore?: StoreBadgeProps
+  }
   /** Dialogs the actions open (the phone QR codes). */
   children?: ReactNode
 }
 
 const REDUCED_MOTION = '(prefers-reduced-motion: reduce)'
-// breakpoints.desktop in foundations/layout: the ambient video only plays in the wide layout.
-const WIDE = '(min-width: 1024px)'
+// decentraland.org's home page has its wide layout from 991px.
+const WIDE = '(min-width: 991px)'
+// breakpoints.desktop in foundations/layout: the ambient video only plays from there, so tablets in landscape
+// skip its download.
+const VIDEO_WIDE = '(min-width: 1024px)'
 // The video waits for an idle moment so it never competes with the hero image (the LCP).
 const VIDEO_IDLE_TIMEOUT_MS = 4000
 
@@ -40,7 +48,7 @@ function Hero({ title, imageAlt, actions, mobile, children }: HeroProps) {
   // a pending start and removes a playing video; turning back schedules the video again.
   useEffect(() => {
     const reduced = window.matchMedia(REDUCED_MOTION)
-    const wide = window.matchMedia(WIDE)
+    const wide = window.matchMedia(VIDEO_WIDE)
     let cancel = () => {}
     const schedule = () => {
       cancel()
@@ -83,13 +91,15 @@ function Hero({ title, imageAlt, actions, mobile, children }: HeroProps) {
         />
         {playVideo ? (
           <video
-            className={`${styles.media} ${styles.video}`}
+            // The page-parity tool (tooling/shop-parity) finds the video by the class hero-video-overlay.
+            className={`hero-video-overlay ${styles.media} ${styles.video}`}
             autoPlay
             loop
             muted
             playsInline
             preload="none"
             aria-hidden="true"
+            onCanPlay={(event) => event.currentTarget.setAttribute('data-ready', 'true')}
           >
             <source src={videoWebm} type="video/webm" />
             <source src={videoMp4} type="video/mp4" />
@@ -108,7 +118,12 @@ function Hero({ title, imageAlt, actions, mobile, children }: HeroProps) {
           <div className={`${styles.layout} ${styles.narrowOnly}`}>
             <h1 className={styles.title}>{mobile.title}</h1>
             <p className={styles.subtitle}>{mobile.subtitle}</p>
-            <StoreBadge {...mobile.store} appearance="source" />
+            <div className={styles.stores}>
+              <StoreBadge {...mobile.store} appearance="source" />
+              {mobile.alternateStore ? (
+                <StoreBadge {...mobile.alternateStore} appearance="source" />
+              ) : null}
+            </div>
           </div>
         ) : null}
       </div>
@@ -117,5 +132,5 @@ function Hero({ title, imageAlt, actions, mobile, children }: HeroProps) {
   )
 }
 
-export { Hero }
+export { Hero, WIDE }
 export type { HeroProps }

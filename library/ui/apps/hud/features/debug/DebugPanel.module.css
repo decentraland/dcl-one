@@ -1,9 +1,11 @@
 .panel {
   position: fixed;
-  top: 12px;
-  right: 12px;
-  max-width: calc((100vw - 24px) / var(--ui-scale));
-  max-height: calc((100dvh - 24px) / var(--ui-scale));
+  /* One layer above --z-modal. */
+  z-index: calc(var(--z-modal) + 1);
+  top: calc(12px * var(--ui-scale));
+  right: calc(12px * var(--ui-scale));
+  max-width: calc(100vw / var(--ui-scale) - 24px);
+  max-height: calc(100dvh / var(--ui-scale) - 24px);
   transform: scale(var(--ui-scale));
   transform-origin: top right;
   overflow-wrap: anywhere;
@@ -12,9 +14,13 @@
   padding: 8px 0;
   border-top: 1px solid var(--line);
 }
-/* Leave room for the development build's lower-right toggle while the panel scrolls. */
-.launcherLayer:not(:empty) + .panel {
+/* Leave room for the lower-right launcher while the panel scrolls. */
+.besideLauncher {
   max-height: calc((100dvh - 20px) / var(--ui-scale) - 44px);
+}
+/* One layer below --z-panel. */
+.underPage {
+  z-index: calc(var(--z-panel) - 1);
 }
 .chart { margin: 0; font-size: var(--fs-xs); }
 .chart svg { width: 100%; height: 32px; display: block; color: var(--brand); }

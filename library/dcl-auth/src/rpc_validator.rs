@@ -5,7 +5,12 @@
 //! deployment open; the request and answer shapes are the shared
 //! `http::jsonrpc` ones. Transport errors are reported without the URL: it may
 //! carry an API key, and the error text reaches logs and failure records.
+//! A response is read up to [`MAX_RPC_RESPONSE_BYTES`], and one served after a
+//! redirect is refused. Inside a signed-request validation ([`RpcBudget`]) every
+//! call also counts against the validation's budget and timeout.
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -17,6 +22,54 @@ use super::error::AuthError;
 use dcl_http::{jsonrpc, read_body_capped};
 
 pub const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The largest JSON-RPC response read.
+pub const MAX_RPC_RESPONSE_BYTES: usize = 1024 * 1024;
+
+/// The RPC work one signed-request validation may do: at most `max_calls`
+/// JSON-RPC calls, each within `per_call`. A failed call stops every later
+/// one, so the validation answers "unavailable" rather than "invalid".
+#[derive(Debug)]
+pub(crate) struct RpcBudget {
+    max_calls: usize,
+    per_call: Duration,
+    calls: AtomicUsize,
+    exceeded: AtomicBool,
+    failed: AtomicBool,
+}
+
+impl RpcBudget {
+    pub(crate) fn new(max_calls: usize, per_call: Duration) -> Arc<Self> {
+        Arc::new(Self {
+            max_calls,
+            per_call,
+            calls: AtomicUsize::new(0),
+            exceeded: AtomicBool::new(false),
+            failed: AtomicBool::new(false),
+        })
+    }
+
+    /// More calls were asked for than the budget allows.
+    pub(crate) fn exceeded(&self) -> bool {
+        self.exceeded.load(Ordering::SeqCst)
+    }
+
+    /// A call failed for a reason other than the contract's own revert.
+    pub(crate) fn failed(&self) -> bool {
+        self.failed.load(Ordering::SeqCst)
+    }
+}
+
+tokio::task_local! {
+    pub(crate) static RPC_BUDGET: Arc<RpcBudget>;
+}
+
+/// ERC-1271 answers one ABI word at most: `0x` and up to 32 bytes of hex.
+fn is_signature_call_result(result: &str) -> bool {
+    result.strip_prefix("0x").is_some_and(|hex| {
+        hex.len() <= 64 && hex.len() % 2 == 0 && hex.bytes().all(|b| b.is_ascii_hexdigit())
+    })
+}
 
 const IS_VALID_SIGNATURE_SELECTOR: [u8; 4] = [0x16, 0x26, 0xba, 0x7e];
 
@@ -49,19 +102,43 @@ pub fn encode_is_valid_signature(hash: &[u8], signature: &[u8]) -> Vec<u8> {
     buf
 }
 
+/// True only for one ABI word: the magic value followed by 28 zero bytes.
 pub fn is_magic_return(hex_response: &str) -> bool {
     let hex = hex_response.strip_prefix("0x").unwrap_or(hex_response);
-    if hex.len() < 8 {
-        return false;
-    }
-    let Ok(first4) = hex::decode(&hex[..8]) else {
+    let Ok(word) = hex::decode(hex) else {
         return false;
     };
-    first4.as_slice() == EIP1271_MAGIC_VALUE
+    word.len() == 32 && word[..4] == EIP1271_MAGIC_VALUE && word[4..].iter().all(|&b| b == 0)
+}
+
+/// A 20-byte hex address that is not in the precompile range.
+pub fn is_contract_signer_address(address: &str) -> bool {
+    let hex = address
+        .strip_prefix("0x")
+        .or_else(|| address.strip_prefix("0X"))
+        .unwrap_or(address);
+    if hex.len() != 40 {
+        return false;
+    }
+    let Ok(bytes) = hex::decode(hex) else {
+        return false;
+    };
+    // 0x00..00 to 0x00..ff are precompiles or reserved for them.
+    bytes[..19].iter().any(|&b| b != 0)
+}
+
+/// The client an [`RpcEip1654Validator`] needs: one that follows no redirect, so a
+/// call never reaches another node.
+pub fn rpc_client() -> reqwest::Result<Client> {
+    Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
 }
 
 pub struct RpcEip1654Validator {
     rpc_url: String,
+    /// The URL a response must come from; another one means a redirect was followed.
+    endpoint: Option<reqwest::Url>,
     client: Client,
     timeout: Duration,
 }
@@ -72,8 +149,10 @@ impl RpcEip1654Validator {
     }
 
     pub fn with_timeout(rpc_url: impl Into<String>, client: Client, timeout: Duration) -> Self {
+        let rpc_url = rpc_url.into();
         Self {
-            rpc_url: rpc_url.into(),
+            endpoint: reqwest::Url::parse(&rpc_url).ok(),
+            rpc_url,
             client,
             timeout,
         }
@@ -89,7 +168,6 @@ impl RpcEip1654Validator {
             .await?
         {
             Value::String(s) => Ok(s),
-            Value::Null => Err(failed("RPC returned null result with no error".into())),
             other => Err(failed(format!("Unexpected RPC result type: {other}"))),
         }
     }
@@ -108,6 +186,9 @@ impl RpcEip1654Validator {
             )));
         }
 
+        if !is_contract_signer_address(contract_address) {
+            return Ok(false);
+        }
         let calldata = encode_is_valid_signature(hash, signature);
         match self.eth_call(contract_address, &calldata, block).await {
             Ok(result_hex) => Ok(is_magic_return(&result_hex)),
@@ -117,11 +198,54 @@ impl RpcEip1654Validator {
     }
 
     async fn rpc(&self, method: &str, params: Value) -> Result<Value, EthCallError> {
+        let budget = RPC_BUDGET.try_with(Arc::clone).ok();
+        let mut timeout = self.timeout;
+        if let Some(budget) = &budget {
+            if budget.failed() || budget.exceeded() {
+                return Err(failed("RPC validation interrupted".into()));
+            }
+            if budget.calls.fetch_add(1, Ordering::SeqCst) >= budget.max_calls {
+                budget.exceeded.store(true, Ordering::SeqCst);
+                return Err(failed(format!(
+                    "Auth chain validation exceeded {} RPC calls",
+                    budget.max_calls
+                )));
+            }
+            timeout = timeout.min(budget.per_call);
+        }
+        let result = self.send(method, params, timeout).await;
+        // A malformed answer is the node's fault, never a refusal to read past.
+        let result = match result {
+            Ok(Value::String(answer))
+                if budget.is_some()
+                    && method == "eth_call"
+                    && !is_signature_call_result(&answer) =>
+            {
+                Err(failed("Invalid eth_call result".into()))
+            }
+            Ok(Value::Null) => Err(failed("RPC returned null result with no error".into())),
+            Ok(other) if method == "eth_call" && !other.is_string() => {
+                Err(failed(format!("Unexpected RPC result type: {other}")))
+            }
+            other => other,
+        };
+        if let (Some(budget), Err(EthCallError::Failed(_))) = (&budget, &result) {
+            budget.failed.store(true, Ordering::SeqCst);
+        }
+        result
+    }
+
+    async fn send(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, EthCallError> {
         let body = jsonrpc::request(1, method, params);
         let resp = self
             .client
             .post(&self.rpc_url)
-            .timeout(self.timeout)
+            .timeout(timeout)
             .json(&body)
             .send()
             .await
@@ -130,8 +254,16 @@ impl RpcEip1654Validator {
                 tests::observe_rpc_send_error(method, &e);
                 failed(format!("RPC request failed: {}", e.without_url()))
             })?;
+        if resp.status().is_redirection()
+            || self.endpoint.as_ref().is_some_and(|url| resp.url() != url)
+        {
+            return Err(failed("RPC redirect refused".into()));
+        }
         let status = resp.status().as_u16();
-        let bytes = read_body_capped(resp, jsonrpc::DEFAULT_BODY_CAP)
+        if !resp.status().is_success() {
+            return Err(failed(format!("RPC returned HTTP {status}")));
+        }
+        let bytes = read_body_capped(resp, MAX_RPC_RESPONSE_BYTES)
             .await
             .map_err(|e| failed(format!("Failed to read RPC response: {e}")))?;
         jsonrpc::parse_envelope(status, &bytes)
@@ -141,7 +273,9 @@ impl RpcEip1654Validator {
                 jsonrpc::RpcError::Malformed(m) => {
                     failed(format!("Failed to parse RPC response: {m}"))
                 }
-                jsonrpc::RpcError::Response { code, message } if is_revert(code, &message) => {
+                jsonrpc::RpcError::Response { code, message }
+                    if method == "eth_call" && is_revert(code, &message) =>
+                {
                     EthCallError::Reverted
                 }
                 jsonrpc::RpcError::Response { code, message } => {
@@ -185,8 +319,11 @@ impl Eip1654Validator for RpcEip1654Validator {
             .await
     }
 
-    async fn verification_time_block(&self, started_ms: i64) -> Result<u64, AuthError> {
-        VerificationBlocks::new(self).select(started_ms).await
+    async fn verification_time_block(&self, started_ms: i64) -> Result<Option<u64>, AuthError> {
+        VerificationBlocks::new(self)
+            .select(started_ms)
+            .await
+            .map(Some)
     }
 }
 
@@ -373,10 +510,45 @@ enum EthCallError {
     Failed(AuthError),
 }
 
-/// A JSON-RPC error that reports the call's own revert: code 3 with revert data, or the
-/// `execution reverted` text nodes send without it.
+/// A JSON-RPC error that reports the called contract's own failure rather than the
+/// node's: code 3 or -32015, or an execution-failure message as geth, Erigon, Besu,
+/// Nethermind, Reth and Hardhat-style nodes word it. Out of gas is not one: hosted RPCs
+/// cap `eth_call` gas, so it can be the provider's limit rather than the contract's answer.
 fn is_revert(code: i64, message: &str) -> bool {
-    code == 3 || message.to_ascii_lowercase().contains("revert")
+    code == 3 || code == -32015 || is_execution_failure_message(message)
+}
+
+fn is_execution_failure_message(message: &str) -> bool {
+    const FAILURES: [&str; 11] = [
+        "execution reverted",
+        "reverted",
+        "vm execution error",
+        "vm exception while processing transaction",
+        "invalid opcode",
+        "stack underflow",
+        "stack overflow",
+        "invalid jump destination",
+        "write protection",
+        "return data out of bounds",
+        "evm error",
+    ];
+    let lower = message.to_ascii_lowercase();
+    let rest = lower.strip_prefix("error: ").unwrap_or(&lower);
+    FAILURES.iter().any(|failure| {
+        let Some(after) = rest.strip_prefix(failure) else {
+            return false;
+        };
+        if *failure == "evm error"
+            && ["out of gas", "outof gas", "out ofgas", "outofgas", "oog"]
+                .iter()
+                .any(|gas| after.contains(gas))
+        {
+            return false;
+        }
+        after.chars().next().is_none_or(|c| {
+            crate::js_date::is_js_whitespace(c as u32) || matches!(c, ':' | '.' | '(')
+        })
+    })
 }
 
 #[cfg(test)]
@@ -781,7 +953,7 @@ mod tests {
     async fn complete_latest_pair_precedes_lookup_and_complete_history_pair() {
         use crate::eip1654::verify_eip1654_at_verification_time;
         let message = b"dcl-controlled-fallback";
-        let contract = "0x0000000000000000000000000000000000000001";
+        let contract = "0x0000000000000000000000000000000000000101";
         for (fixture, (latest, historical, accepted, expected_calls)) in [
             (vec![magic()], vec![], true, 1),
             (vec![rpc_error(), magic()], vec![], true, 2),
@@ -883,7 +1055,7 @@ mod tests {
             answers.truncate(3 + failure_at);
             let (rpc, calls, task) = scripted_rpc(answers).await;
             assert!(
-                verify_eip1654_at_verification_time(&rpc, "0xabc", b"message", &[1], 115000)
+                verify_eip1654_at_verification_time(&rpc, WALLET, b"message", &[1], 115000)
                     .await
                     .is_err()
             );
@@ -892,7 +1064,7 @@ mod tests {
         }
         let (rpc, calls, task) = scripted_rpc(vec![refusal(), refusal(), magic()]).await;
         assert!(
-            !verify_eip1654(&rpc, "0xabc", b"message", &[1])
+            !verify_eip1654(&rpc, WALLET, b"message", &[1])
                 .await
                 .unwrap()
         );
@@ -900,12 +1072,15 @@ mod tests {
         task.abort();
     }
 
+    /// Fixture contract signers start past the precompile range, which is never asked.
+    const CONTRACT_BASE: usize = 0x100;
+
     fn historical_chain(links: usize, payload: &str) -> crate::AuthChain {
         let mut chain = vec![
-            serde_json::json!({"type":"SIGNER","payload":"0x0000000000000000000000000000000000000001","signature":""}),
+            serde_json::json!({"type":"SIGNER","payload":format!("0x{:040x}", CONTRACT_BASE + 1),"signature":""}),
         ];
         for n in 1..links {
-            chain.push(serde_json::json!({"type":"ECDSA_EIP_1654_EPHEMERAL","payload":format!("Decentraland Login\nEphemeral address: 0x{:040x}\nExpiration: 2099-12-31T00:00:00.000Z",n+1),"signature":"0x1234"}));
+            chain.push(serde_json::json!({"type":"ECDSA_EIP_1654_EPHEMERAL","payload":format!("Decentraland Login\nEphemeral address: 0x{:040x}\nExpiration: 2099-12-31T00:00:00.000Z",CONTRACT_BASE+n+1),"signature":"0x1234"}));
         }
         chain.push(serde_json::json!({"type":"ECDSA_EIP_1654_SIGNED_ENTITY","payload":payload,"signature":"0x1234"}));
         serde_json::from_value(serde_json::json!(chain)).unwrap()
@@ -913,7 +1088,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_contract_link_uses_same_start_time_and_its_own_fresh_lookup() {
-        use crate::verify::verify_auth_chain_at_verification_time;
+        use crate::verify::verify_login_chain_at_verification_time;
         for links in 1..=9 {
             // Interior lookup, then raw historical refusal and prefixed historical success.
             let per_link = vec![
@@ -932,7 +1107,7 @@ mod tests {
             let (rpc, calls, task) =
                 scripted_rpc((0..links).flat_map(|_| per_link.iter().cloned()).collect()).await;
             let started = std::time::Instant::now();
-            verify_auth_chain_at_verification_time(
+            verify_login_chain_at_verification_time(
                 &historical_chain(links, "challenge"),
                 "challenge",
                 55000,
@@ -947,7 +1122,7 @@ mod tests {
                 assert_eq!(link_calls[0]["params"][1], "latest");
                 assert_eq!(
                     link_calls[0]["params"][0]["to"],
-                    format!("0x{:040x}", index + 1)
+                    format!("0x{:040x}", CONTRACT_BASE + index + 1)
                 );
                 assert_eq!(
                     link_calls[2]["params"],
@@ -970,7 +1145,7 @@ mod tests {
 
     #[tokio::test]
     async fn fresh_fallback_bypasses_nested_success_cache_without_changing_ordinary_callers() {
-        use crate::verify::{verify_auth_chain_async, verify_auth_chain_at_verification_time};
+        use crate::verify::{verify_auth_chain_async, verify_login_chain_at_verification_time};
         use crate::{Eip1654Validator, ValidationCache};
         let answers = vec![
             magic(),
@@ -990,7 +1165,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            verify_auth_chain_at_verification_time(
+            verify_login_chain_at_verification_time(
                 &chain,
                 "reused-delegation",
                 115000,
@@ -1013,7 +1188,7 @@ mod tests {
 
     #[tokio::test]
     async fn late_bad_link_wrong_payload_and_malformed_signature_never_accept_partial_history() {
-        use crate::verify::verify_auth_chain_at_verification_time;
+        use crate::verify::verify_login_chain_at_verification_time;
         let mut answers = vec![
             refusal(),
             refusal(),
@@ -1035,7 +1210,7 @@ mod tests {
         ]);
         let (rpc, calls, task) = scripted_rpc(answers).await;
         assert!(
-            verify_auth_chain_at_verification_time(
+            verify_login_chain_at_verification_time(
                 &historical_chain(2, "challenge"),
                 "challenge",
                 115000,
@@ -1050,14 +1225,14 @@ mod tests {
         let mut chain = historical_chain(1, "challenge");
         chain[1].signature = Some("0xZZ".into());
         assert!(
-            verify_auth_chain_at_verification_time(&chain, "challenge", 115000, Some(&rpc))
+            verify_login_chain_at_verification_time(&chain, "challenge", 115000, Some(&rpc))
                 .await
                 .is_err()
         );
         assert!(calls.lock().unwrap().is_empty());
         chain[1].signature = Some("0x1234".into());
         assert!(
-            verify_auth_chain_at_verification_time(&chain, "different", 115000, Some(&rpc))
+            verify_login_chain_at_verification_time(&chain, "different", 115000, Some(&rpc))
                 .await
                 .is_err()
         );
@@ -1227,7 +1402,17 @@ mod tests {
 
     #[tokio::test]
     async fn controlled_rpc_workload_measures_latest_and_fallback_at_the_verification_envelope() {
-        use crate::verify::verify_auth_chain_at_verification_time;
+        controlled_rpc_workload((1..=9).map(|links| (links, 32))).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires the provisioned auth stress tier"]
+    async fn provisioned_rpc_workload_runs_3000_verifiers_at_nine_links() {
+        controlled_rpc_workload(std::iter::once((9, 3000))).await;
+    }
+
+    async fn controlled_rpc_workload(cases: impl IntoIterator<Item = (usize, usize)>) {
+        use crate::verify::verify_login_chain_at_verification_time;
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         println!(
             "RPC_WORKLOAD_ENV {}",
@@ -1297,7 +1482,7 @@ mod tests {
             Client::new(),
         );
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        for (links, concurrency) in (1..=9).map(|k| (k, 32)).chain(std::iter::once((9, 3000))) {
+        for (links, concurrency) in cases {
             for historical in [false, true] {
                 fallback.store(historical, Ordering::SeqCst);
                 calls.store(0, Ordering::SeqCst);
@@ -1332,7 +1517,7 @@ mod tests {
                         let (calls, active, peak) = (&calls, &active, &peak);
                         async move {
                             let started = std::time::Instant::now();
-                            verify_auth_chain_at_verification_time(
+                            verify_login_chain_at_verification_time(
                                 chain,
                                 "challenge",
                                 115000,
@@ -1443,6 +1628,8 @@ mod tests {
         }
     }
 
+    const WALLET: &str = "0x5a0b54d5dc17e0aadc383d2db43b0a0d3e029c4c";
+
     #[test]
     fn encode_roundtrip() {
         let hash = [0xABu8; 32];
@@ -1507,6 +1694,82 @@ mod tests {
     }
 
     #[test]
+    fn a_magic_prefix_with_trailing_data_is_rejected() {
+        let echoed = format!(
+            "0x{}",
+            hex::encode(encode_is_valid_signature(&[7u8; 32], &[1u8; 65]))
+        );
+        assert!(!is_magic_return(&echoed));
+        assert!(!is_magic_return(&format!("0x1626ba7e{}01", "0".repeat(54))));
+        assert!(!is_magic_return(&format!("0x1626ba7e{}", "0".repeat(120))));
+        assert!(!is_magic_return(&format!("0x1626ba7e{}", "0".repeat(54))));
+    }
+
+    #[test]
+    fn precompiles_and_non_addresses_are_not_contract_signers() {
+        assert!(!is_contract_signer_address(
+            "0x0000000000000000000000000000000000000004"
+        ));
+        assert!(!is_contract_signer_address(
+            "0x0000000000000000000000000000000000000001"
+        ));
+        assert!(!is_contract_signer_address(
+            "0x00000000000000000000000000000000000000ff"
+        ));
+        assert!(!is_contract_signer_address(
+            "0x0000000000000000000000000000000000000000"
+        ));
+        assert!(!is_contract_signer_address("0xabc"));
+        assert!(!is_contract_signer_address(
+            "0xzz0b54d5dc17e0aadc383d2db43b0a0d3e029c4c"
+        ));
+        assert!(is_contract_signer_address(
+            "0x0000000000000000000000000000000000000100"
+        ));
+        assert!(is_contract_signer_address(WALLET));
+    }
+
+    /// A node whose callee returns its calldata, as the identity precompile does.
+    async fn echo_node() -> String {
+        use axum::{Json, Router, routing::post};
+        let app = Router::new().route(
+            "/",
+            post(|Json(body): Json<Value>| async move {
+                let data = body["params"][0]["data"].clone();
+                Json(serde_json::json!({ "jsonrpc": "2.0", "id": 1, "result": data }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        url
+    }
+
+    #[tokio::test]
+    async fn a_contract_that_echoes_calldata_is_not_a_valid_signer() {
+        let v = RpcEip1654Validator::new(echo_node().await, Client::new());
+        assert!(
+            !v.validate_signature(WALLET, &[7u8; 32], &[1u8; 65])
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_identity_precompile_is_refused_before_any_rpc() {
+        let v = RpcEip1654Validator::new("http://127.0.0.1:9/", Client::new());
+        assert!(
+            !v.validate_signature(
+                "0x0000000000000000000000000000000000000004",
+                &[7u8; 32],
+                &[1u8; 65]
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    #[test]
     fn zero_return_rejected() {
         let hex = "0x0000000000000000000000000000000000000000000000000000000000000000";
         assert!(!is_magic_return(hex));
@@ -1520,7 +1783,7 @@ mod tests {
             Duration::from_secs(5),
         );
         let err = v
-            .validate_signature("0xabc", &[0u8; 32], &[0u8; 65])
+            .validate_signature(WALLET, &[0u8; 32], &[0u8; 65])
             .await
             .unwrap_err();
         let text = err.to_string();
@@ -1567,12 +1830,12 @@ mod tests {
         let v = RpcEip1654Validator::new(fake_wallet(Some(prefixed)).await, Client::new());
         let raw = alloy_primitives::keccak256(message);
         assert!(
-            !v.validate_signature("0xabc", raw.as_slice(), &[0u8; 65])
+            !v.validate_signature(WALLET, raw.as_slice(), &[0u8; 65])
                 .await
                 .unwrap()
         );
         assert!(
-            super::super::eip1654::verify_eip1654(&v, "0xabc", message, &[0u8; 65])
+            super::super::eip1654::verify_eip1654(&v, WALLET, message, &[0u8; 65])
                 .await
                 .unwrap()
         );
@@ -1582,7 +1845,7 @@ mod tests {
     #[tokio::test]
     async fn a_failing_rpc_never_accepts() {
         let v = RpcEip1654Validator::new(fake_wallet(None).await, Client::new());
-        let err = super::super::eip1654::verify_eip1654(&v, "0xabc", b"m", &[0u8; 65])
+        let err = super::super::eip1654::verify_eip1654(&v, WALLET, b"m", &[0u8; 65])
             .await
             .unwrap_err();
         assert!(
@@ -1632,14 +1895,14 @@ mod tests {
         let v = RpcEip1654Validator::new(fake_chain(hash, 500, true).await, Client::new());
         let sig = [0u8; 65];
 
-        assert!(!v.validate_signature("0xabc", &hash, &sig).await.unwrap());
+        assert!(!v.validate_signature(WALLET, &hash, &sig).await.unwrap());
         assert!(
-            v.validate_signature_at_block("0xabc", &hash, &sig, 500)
+            v.validate_signature_at_block(WALLET, &hash, &sig, 500)
                 .await
                 .unwrap()
         );
         assert!(
-            !v.validate_signature_at_block("0xabc", &hash, &sig, 501)
+            !v.validate_signature_at_block(WALLET, &hash, &sig, 501)
                 .await
                 .unwrap()
         );
@@ -1650,7 +1913,7 @@ mod tests {
         let hash = [0x42u8; 32];
         let v = RpcEip1654Validator::new(fake_chain(hash, 999, false).await, Client::new());
         let err = v
-            .validate_signature_at_block("0xabc", &hash, &[0u8; 65], 500)
+            .validate_signature_at_block(WALLET, &hash, &[0u8; 65], 500)
             .await
             .unwrap_err();
         assert!(
@@ -1663,9 +1926,129 @@ mod tests {
     async fn short_hash_is_refused_before_any_rpc() {
         let v = RpcEip1654Validator::new("http://127.0.0.1:9/", Client::new());
         let err = v
-            .validate_signature("0xabc", &[0u8; 31], &[0u8; 65])
+            .validate_signature(WALLET, &[0u8; 31], &[0u8; 65])
             .await
             .unwrap_err();
         assert!(matches!(err, AuthError::Eip1654ValidationFailed(m) if m.contains("32 bytes")));
+    }
+}
+
+#[cfg(test)]
+mod revert_tests {
+    use super::*;
+
+    /// `isExecutionRevert` of `@dcl/crypto-middleware` 6.5.0 over the same messages.
+    #[test]
+    fn revert_messages_classify_as_the_reference_does() {
+        let table: [(&str, bool); 27] = [
+            ("execution reverted", true),
+            ("Execution Reverted: nope", true),
+            ("error: execution reverted", true),
+            ("reverted", true),
+            ("revert", false),
+            ("VM execution error.", true),
+            ("VM Exception while processing transaction: revert", true),
+            ("invalid opcode: INVALID", true),
+            ("stack underflow (0 <=> 1)", true),
+            ("stack overflow", true),
+            ("invalid jump destination", true),
+            ("write protection", true),
+            ("return data out of bounds", true),
+            ("EVM error: InvalidFEOpcode", true),
+            ("evm error OutOfGas", false),
+            ("EVM error: out of gas", false),
+            ("evm error oog", false),
+            ("evm error", true),
+            ("evm errors", false),
+            ("header not found", false),
+            ("missing trie node; reverted", false),
+            ("execution revertedx", false),
+            ("execution reverted\u{a0}x", true),
+            ("execution reverted\u{85}", false),
+            ("out of gas", false),
+            ("error: error: reverted", false),
+            ("", false),
+        ];
+        for (message, expected) in table {
+            assert_eq!(is_revert(-32000, message), expected, "{message:?}");
+        }
+        assert!(is_revert(3, "x"));
+        assert!(is_revert(-32015, "x"));
+        assert!(!is_revert(-32000, "x"));
+    }
+
+    #[test]
+    fn an_eth_call_answer_is_at_most_one_word() {
+        assert!(is_signature_call_result("0x"));
+        assert!(is_signature_call_result(&format!("0x{}", "ab".repeat(32))));
+        assert!(!is_signature_call_result(&format!("0x{}", "ab".repeat(33))));
+        assert!(!is_signature_call_result("0xabc"));
+        assert!(!is_signature_call_result("abcd"));
+        assert!(!is_signature_call_result("0xzz"));
+    }
+
+    /// Outside a request too, an HTTP error is a failed call whatever its body says.
+    #[tokio::test]
+    async fn a_server_error_is_never_an_answer() {
+        use axum::routing::post;
+        let app = axum::Router::new().route(
+            "/",
+            post(|| async {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    axum::Json(serde_json::json!({"jsonrpc":"2.0","id":1,"result":format!("0x1626ba7e{}", "0".repeat(56))})),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let rpc = RpcEip1654Validator::new(url, rpc_client().unwrap());
+        let err = rpc
+            .validate_signature(
+                "0x1234567890123456789012345678901234567890",
+                &[0u8; 32],
+                &[0u8; 65],
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("HTTP 500"), "{err}");
+    }
+
+    /// A redirect is refused: the validator's client does not follow it, and an answer
+    /// from another node is refused even from a client that does.
+    #[tokio::test]
+    async fn a_redirected_answer_is_refused() {
+        use axum::routing::post;
+        let app = axum::Router::new()
+            .route(
+                "/",
+                post(|| async { axum::response::Redirect::temporary("/elsewhere") }),
+            )
+            .route(
+                "/elsewhere",
+                post(|| async {
+                    axum::Json(serde_json::json!({"jsonrpc":"2.0","id":1,"result":format!("0x1626ba7e{}", "0".repeat(56))}))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let following = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::limited(2))
+            .build()
+            .unwrap();
+        for client in [rpc_client().unwrap(), following] {
+            let rpc = RpcEip1654Validator::new(url.clone(), client);
+            let err = rpc
+                .validate_signature(
+                    "0x1234567890123456789012345678901234567890",
+                    &[0u8; 32],
+                    &[0u8; 65],
+                )
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("redirect"), "{err}");
+        }
     }
 }

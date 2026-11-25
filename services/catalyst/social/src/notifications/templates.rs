@@ -8,12 +8,10 @@ use chrono::DateTime;
 use handlebars::{Handlebars, handlebars_helper, no_escape};
 use serde_json::{Map, Value as Json, json};
 
+pub use crate::shared::notifications::{EMAILABLE_SQL_LIST, EMAILABLE_TYPES, format_mana};
+
 macro_rules! templates {
     ($first:literal $(, $rest:literal)* $(,)?) => {
-        /// The types with a template: the old `EmailableNotificationTypeEnum`.
-        pub const EMAILABLE_TYPES: &[&str] = &[$first $(, $rest)*];
-        /// [`EMAILABLE_TYPES`] as a SQL list literal.
-        pub const EMAILABLE_SQL_LIST: &str = concat!("'", $first, "'" $(, ",'", $rest, "'")*);
         const SOURCES: &[(&str, &str, &str)] = &[
             (
                 $first,
@@ -29,53 +27,8 @@ macro_rules! templates {
     };
 }
 
-templates!(
-    "ban_lifted",
-    "ban_warning",
-    "banned",
-    "bid_accepted",
-    "bid_received",
-    "credits_on_demand_granted",
-    "credits_reminder_claim_credits",
-    "credits_reminder_complete_goals",
-    "credits_reminder_do_not_miss_out",
-    "credits_reminder_usage",
-    "credits_reminder_usage_24_hours",
-    "event_approved",
-    "event_deleted",
-    "event_rejected",
-    "events_started",
-    "events_starts_soon",
-    "governance_announcement",
-    "governance_authored_proposal_finished",
-    "governance_coauthor_requested",
-    "governance_new_comment_on_project_update",
-    "governance_new_comment_on_proposal",
-    "governance_pitch_passed",
-    "governance_proposal_enacted",
-    "governance_tender_passed",
-    "governance_voting_ended_voter",
-    "item_sold",
-    "referral_invited_users_accepted",
-    "referral_new_tier_reached",
-    "rental_ended",
-    "rental_started",
-    "reward_assignment",
-    "reward_campaign_out_of_funds",
-    "reward_campaign_out_of_stock",
-    "royalties_earned",
-    "streaming_key_expired",
-    "streaming_key_reset",
-    "streaming_key_revoke",
-    "streaming_place_updated",
-    "streaming_time_exceeded",
-    "tip_received",
-    "worlds_access_restored",
-    "worlds_access_restricted",
-    "worlds_missing_resources",
-    "worlds_permission_granted",
-    "worlds_permission_revoked",
-);
+// One list with the shared writer's `EMAILABLE_TYPES`.
+crate::shared::with_emailable_kinds!(templates);
 
 pub fn is_emailable(kind: &str) -> bool {
     EMAILABLE_TYPES.contains(&kind)
@@ -90,41 +43,6 @@ fn truthy(v: &Json) -> bool {
         Json::String(s) => !s.is_empty(),
         Json::Array(_) | Json::Object(_) => true,
     }
-}
-
-/// `(Number(mana || '0') / 1e18).toFixed(2)`.
-pub fn format_mana(mana: &Json) -> String {
-    let n = match mana {
-        Json::String(s) if !s.is_empty() => match s.trim() {
-            "" => 0.0,
-            t => t.parse::<f64>().unwrap_or(f64::NAN),
-        },
-        Json::Number(n) => n.as_f64().unwrap_or(f64::NAN),
-        Json::Bool(true) => 1.0,
-        Json::Null | Json::Bool(false) | Json::String(_) => 0.0,
-        Json::Array(_) | Json::Object(_) => f64::NAN,
-    };
-    to_fixed_2(n / 1e18)
-}
-
-/// `Number.prototype.toFixed(2)`: exact ties round away from zero, not to even.
-fn to_fixed_2(x: f64) -> String {
-    if x.is_nan() {
-        return "NaN".into();
-    }
-    if x.is_infinite() {
-        return if x > 0.0 { "Infinity" } else { "-Infinity" }.into();
-    }
-    if x == 0.0 {
-        return "0.00".into();
-    }
-    // A two-decimal tie is an odd multiple of 1/8.
-    let eighths = x * 8.0;
-    if eighths.fract() == 0.0 && eighths % 2.0 != 0.0 {
-        let r = (x.abs() * 100.0 + 0.5).floor() / 100.0;
-        return format!("{}{r:.2}", if x < 0.0 { "-" } else { "" });
-    }
-    format!("{x:.2}")
 }
 
 /// `JSON.stringify(v || '""')` without its first and last characters.
@@ -408,6 +326,19 @@ mod tests {
         .unwrap()
         .unwrap();
         assert!(big.content.contains("1500.00 MANA"), "{}", big.content);
+    }
+
+    #[test]
+    fn world_permission_emails_list_the_metadata_permissions() {
+        let metadata = json!({"world": "w.dcl.eth", "permissions": ["deployment", "streaming"]});
+        for kind in ["worlds_permission_granted", "worlds_permission_revoked"] {
+            let r = render(kind, "0xa", &metadata).unwrap().unwrap();
+            assert!(
+                r.content.contains("deployment/streaming"),
+                "{kind}: {}",
+                r.content
+            );
+        }
     }
 
     #[test]

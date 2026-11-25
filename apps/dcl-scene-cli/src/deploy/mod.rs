@@ -56,6 +56,9 @@ pub struct DeployOptions {
     pub no_browser: bool,
     pub ci: bool,
     pub port: Option<u16>,
+    /// Where the signing server listens and whom it answers:
+    /// [`crate::linker::signing_bind`] of `--host`.
+    pub signing: crate::linker::SigningBind,
     /// A caller hosting the signing routes on its own server (the preview
     /// server's `/deploy/sign/`); `None` (the CLI) serves the page itself.
     pub host_signer: Option<crate::linker::HostSigner>,
@@ -65,6 +68,11 @@ pub struct DeployOptions {
     /// A delegated identity that signs headlessly instead of hosting a
     /// browser signing page, while unexpired.
     pub identity: Option<DeployIdentity>,
+    /// `--[no-]optimize-textures` and `--[no-]keep-source-textures`, stored
+    /// as the project setting; with it on, models' textures are published as
+    /// UASTC KTX2, staged after the build and before the payload is read
+    /// ([`crate::textures`]).
+    pub textures: crate::textures::Overrides,
     /// A program drives the run: no browser, stdout carries one JSON line
     /// when the signing server is ready and one with the final state, and
     /// the CLI ends with the deployment.
@@ -143,11 +151,15 @@ pub fn catalyst_rotation() -> Vec<String> {
 /// one of these — a bundler's module-path comment, a `require('../package.json')`
 /// — without the explorer ever fetching it, so such a mention is not a lost
 /// asset.
-const DEVELOPER_DCL_IGNORE: [&str; 22] = [
+const DEVELOPER_DCL_IGNORE: [&str; 27] = [
     ".*",
     "package.json",
     "package-lock.json",
     "yarn-lock.json",
+    // The pnpm workspace file can hold local paths.
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "yarn.lock",
     "build.json",
     "export",
     "tsconfig.json",
@@ -166,6 +178,9 @@ const DEVELOPER_DCL_IGNORE: [&str; 22] = [
     "*.md",
     "*.mdc",
     "*.map",
+    // Editor and agent files scene templates ship without a leading dot.
+    "cursor.config",
+    "cursorignore",
 ];
 
 /// Built-in ignore rules over files scene code could otherwise name as
@@ -821,18 +836,25 @@ fn uses_release(root: &Path) -> bool {
     matches!(crate::build_script::command(root), Ok(None))
 }
 
-/// The payload's paths: the tree's publishable files plus any the release
-/// build alone emits (a chunk only the production build splits out).
-pub fn with_release_files(root: &Path, mut rels: Vec<String>) -> Vec<String> {
-    if !uses_release(root) {
-        return rels;
-    }
-    for rel in release_rel_files(&root.join(crate::build::RELEASE_OUT)) {
-        if !rels.contains(&rel) {
-            rels.push(rel);
+/// The payload's paths before the texture overlay: the tree's publishable
+/// files plus any the release build alone emits (a chunk only the production
+/// build splits out).
+pub(crate) fn tree_payload_files(root: &Path, mut rels: Vec<String>) -> Vec<String> {
+    if uses_release(root) {
+        for rel in release_rel_files(&root.join(crate::build::RELEASE_OUT)) {
+            if !rels.contains(&rel) {
+                rels.push(rel);
+            }
         }
     }
     rels
+}
+
+/// The payload's paths: the tree's publishable files plus any the release
+/// build alone emits, with the optimized-texture overlay applied when the
+/// project enables one. Read each through [`payload_path`].
+pub fn with_release_files(root: &Path, rels: Vec<String>) -> Vec<String> {
+    crate::textures::payload_publishable(root, tree_payload_files(root, rels))
 }
 
 /// Where a payload path is read from. rustc keeps debug and release
@@ -842,8 +864,17 @@ pub fn with_release_files(root: &Path, mut rels: Vec<String>) -> Vec<String> {
 /// builds stop clobbering one file — and a publish stops rewriting the very
 /// tree the page just fingerprinted. Every look at the payload — the sizes
 /// the preview states, the hashes the forecast asks about, the bytes the
-/// deploy signs — goes through here, so they describe the same file.
+/// deploy signs — goes through here, so they describe the same file. A
+/// model or KTX2 file the texture overlay staged is read from the stage.
 pub fn payload_path(root: &Path, rel: &str) -> PathBuf {
+    match crate::textures::payload_source(root, rel) {
+        Some(staged) => staged,
+        None => tree_payload_path(root, rel),
+    }
+}
+
+/// [`payload_path`] before the texture overlay: the release copy or the tree.
+pub(crate) fn tree_payload_path(root: &Path, rel: &str) -> PathBuf {
     if !uses_release(root) {
         return root.join(rel);
     }
@@ -1132,6 +1163,8 @@ mod tests {
             "bin/index.js",
             "bin/index.js.map",
             "yarn.lock",
+            "pnpm-lock.yaml",
+            "pnpm-workspace.yaml",
             "builder.json",
             "package.json",
             "package-lock.json",
@@ -1148,12 +1181,13 @@ mod tests {
             "assets/model.glb",
             ".dclignore-not-really/x.png",
             ".hidden.png",
+            "cursor.config",
+            "cursorignore",
         ]);
         let got = collect_publishable_files(&t.0).unwrap();
         assert_eq!(
             got,
             vec![
-                "yarn.lock",
                 "scene.json",
                 "builder.json",
                 "src/tex.png",

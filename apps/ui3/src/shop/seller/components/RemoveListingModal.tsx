@@ -6,7 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { markListingCancelled } from "../../market/lib/dead-listings";

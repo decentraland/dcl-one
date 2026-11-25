@@ -2,79 +2,90 @@ use bevy::prelude::*;
 
 use super::layout::{hidden_by_occupancy, TreeLayout};
 
-const GENESIS: &[u8] = include_bytes!(concat!(
+const LAYOUT_FILE: &[u8] = include_bytes!(concat!(
     env!("DCL_ONE_ROOT"),
-    "/rendering/bevy-explorer/source/crates/assets/src/assets/landscape/layout/genesis.trees"
+    "/rendering/bevy-explorer/source/crates/assets/src/assets/landscape/layout/landscape.trees"
 ));
 
+/// Bytes before the instances: the magic, the bounds and one count per parcel.
+const INSTANCES_AT: usize = 4 + 16 + 318 * 312;
+
 #[test]
-fn parses_genesis_header() {
-    let layout = TreeLayout::parse(GENESIS).unwrap();
-    assert_eq!(layout.min, IVec2::new(-152, -152));
-    assert_eq!(layout.max_excl, IVec2::new(166, 160));
-    assert_eq!(layout.len(), 303_020);
+fn parses_both_layouts() {
+    for worlds in [false, true] {
+        let layout = TreeLayout::parse(LAYOUT_FILE, worlds).unwrap();
+        assert_eq!(layout.min, IVec2::new(-152, -152));
+        assert_eq!(layout.max_excl, IVec2::new(166, 160));
+        assert_eq!(layout.len(), 303_020);
+    }
 }
 
 #[test]
-fn parses_worlds_layout() {
-    let layout = TreeLayout::parse(include_bytes!(concat!(
-        env!("DCL_ONE_ROOT"),
-        "/rendering/bevy-explorer/source/crates/assets/src/assets/landscape/layout/worlds.trees"
-    )))
-    .unwrap();
-    assert_eq!(layout.len(), 303_020);
+fn the_layouts_share_instances_and_differ_in_scale() {
+    let genesis = TreeLayout::parse(LAYOUT_FILE, false).unwrap();
+    let worlds = TreeLayout::parse(LAYOUT_FILE, true).unwrap();
+    // parcel (0,0)'s second instance: Genesis scale 0, Worlds scale 205
+    let (genesis, worlds) = (
+        genesis.instances(IVec2::ZERO)[1],
+        worlds.instances(IVec2::ZERO)[1],
+    );
+    assert_eq!(
+        (genesis.prototype, genesis.pos, genesis.rot_y),
+        (worlds.prototype, worlds.pos, worlds.rot_y)
+    );
+    assert_eq!((genesis.scale, worlds.scale), (0, 205));
 }
 
 #[test]
 fn truncated_file_is_an_error() {
-    assert!(TreeLayout::parse(&GENESIS[..100]).is_err());
-    // every cut through the header, the start table and the count
-    for cut in [0, 15, 16, 17, 4 * 318 * 312 + 16, 4 * 318 * 312 + 19] {
-        assert!(TreeLayout::parse(&GENESIS[..cut]).is_err(), "cut at {cut}");
+    assert!(TreeLayout::parse(&LAYOUT_FILE[..100], false).is_err());
+    // every cut through the magic, the header and the counts
+    for cut in [0, 3, 4, 19, 20, 21, INSTANCES_AT - 1, INSTANCES_AT] {
+        assert!(
+            TreeLayout::parse(&LAYOUT_FILE[..cut], false).is_err(),
+            "cut at {cut}"
+        );
     }
     // one byte short of the last instance
-    assert!(TreeLayout::parse(&GENESIS[..GENESIS.len() - 1]).is_err());
+    assert!(TreeLayout::parse(&LAYOUT_FILE[..LAYOUT_FILE.len() - 1], true).is_err());
 }
 
 #[test]
-fn inconsistent_starts_are_an_error() {
-    // a 2x1 layout with one instance: header, starts [0, 1], count 1, one 6-byte instance
-    let file = |starts: [i32; 2], count: i32, prototype: u8| {
-        let mut bytes = Vec::new();
+fn malformed_files_are_an_error() {
+    // a 2x1 layout: magic, header, the two parcels' counts, then 6-byte instances
+    let file = |counts: [u8; 2], instances: usize, prototype: u8| {
+        let mut bytes = b"TRL1".to_vec();
         for value in [0, 0, 2, 1] {
             bytes.extend_from_slice(&i32::to_le_bytes(value));
         }
-        for value in starts {
-            bytes.extend_from_slice(&i32::to_le_bytes(value));
-        }
-        bytes.extend_from_slice(&count.to_le_bytes());
-        for _ in 0..count.max(0) {
+        bytes.extend_from_slice(&counts);
+        for _ in 0..instances {
             bytes.extend_from_slice(&[prototype, 0, 0, 0, 0, 0]);
         }
         bytes
     };
-    let good = TreeLayout::parse(&file([0, 1], 1, 7)).unwrap();
+    let good = TreeLayout::parse(&file([1, 0], 1, 7), false).unwrap();
     assert_eq!(good.instances(IVec2::new(0, 0)).len(), 1);
-    // the last parcel's slice ends at the count
+    // the last parcel's slice ends at the instance count
     assert_eq!(good.instances(IVec2::new(1, 0)).len(), 0);
-    // a start past the count
-    assert!(TreeLayout::parse(&file([0, 2], 1, 0)).is_err());
-    // starts that decrease
-    assert!(TreeLayout::parse(&file([1, 0], 1, 0)).is_err());
-    // a negative start or count
-    assert!(TreeLayout::parse(&file([-1, 0], 1, 0)).is_err());
-    assert!(TreeLayout::parse(&file([0, 0], -1, 0)).is_err());
+    // counts that name more instances than follow, or fewer
+    assert!(TreeLayout::parse(&file([1, 1], 1, 0), false).is_err());
+    assert!(TreeLayout::parse(&file([1, 0], 2, 0), false).is_err());
     // a prototype with no entry in the table
-    assert!(TreeLayout::parse(&file([0, 1], 1, 8)).is_err());
+    assert!(TreeLayout::parse(&file([1, 0], 1, 8), false).is_err());
     // bounds whose maximum is below the minimum
-    let mut inverted = file([0, 1], 1, 0);
-    inverted[8..12].copy_from_slice(&(-1i32).to_le_bytes());
-    assert!(TreeLayout::parse(&inverted).is_err());
+    let mut inverted = file([1, 0], 1, 0);
+    inverted[12..16].copy_from_slice(&(-1i32).to_le_bytes());
+    assert!(TreeLayout::parse(&inverted, false).is_err());
+    // another file
+    let mut other = file([1, 0], 1, 0);
+    other[0] = b'X';
+    assert!(TreeLayout::parse(&other, false).is_err());
 }
 
 #[test]
 fn parcels_outside_bounds_have_no_instances() {
-    let layout = TreeLayout::parse(GENESIS).unwrap();
+    let layout = TreeLayout::parse(LAYOUT_FILE, false).unwrap();
     for parcel in [
         IVec2::new(-153, 0),
         IVec2::new(166, 0),
@@ -91,14 +102,15 @@ fn parcels_outside_bounds_have_no_instances() {
 
 #[test]
 fn instance_transform_matches_unity() {
-    // Bytes are {prototype, posX, posZ, rotY, scaleXZ, scaleY}. Parcel (0,0) holds two instances
-    // (indices 148482 and 148483 at file offsets 1287776 and 1287782); the third is from parcel
-    // (-1,-1) (index 147525, offset 1282034) so negative parcels are covered too.
+    // Bytes are {prototype, posX, posZ, rotY, genesisScale, worldsScale}; Genesis City's layout is
+    // checked. Parcel (0,0) holds two instances (indices 148482 and 148483 at file offsets 990128
+    // and 990134); the third is from parcel (-1,-1) (index 147525, offset 984386) so negative
+    // parcels are covered too.
     //
     // The reference formula, in the reference's left-handed frame (x east, z north):
     //   x = (parcel.x + posX / 255) * 16          z = (parcel.y + posZ / 255) * 16
     //   yaw = rotY * 360 / 255 degrees about +y   (+x turns towards -z)
-    //   scale = lerp(min, max, scaleXZ / 255) on x and z, lerp(min, max, scaleY / 255) on y
+    //   scale = lerp(min, max, scale / 255) on every axis (its horizontal and vertical ranges)
     // Bevy is right-handed with z south, so bevy z = -z, and mirroring z reverses the sense of a
     // yaw: the bevy rotation is about +y by -yaw. Local +x then lands on (cos yaw, 0, sin yaw).
     // The height callback here is 0.5 * x + 0.25 * bevy z, so y checks which z it was handed.
@@ -109,7 +121,7 @@ fn instance_transform_matches_unity() {
     //   yaw = 212 * 360 / 255 = 299.294118; quat about y by -yaw: (0, -sin(yaw/2), 0, cos(yaw/2))
     //     = (0, -0.505325, 0, -0.862929); local +x -> (cos yaw, 0, sin yaw) = (0.489293, 0, -0.872120)
     //   scale = 2 + 72 / 255 * (3 - 2) = 2.282353 on every axis
-    // B, parcel (0,0), bytes [0, 192, 62, 196, 0, 0], prototype 0 (2 to 3):
+    // B, parcel (0,0), bytes [0, 192, 62, 196, 0, 205], prototype 0 (2 to 3):
     //   x = 192 / 255 * 16 = 12.047059       bevy z = -(62 / 255 * 16) = -3.890196
     //   y = 0.5 * 12.047059 + 0.25 * -3.890196 = 5.050980
     //   yaw = 196 * 360 / 255 = 276.705882; quat (0, -0.664540, 0, -0.747253);
@@ -156,7 +168,7 @@ fn instance_transform_matches_unity() {
         },
     ];
 
-    let layout = TreeLayout::parse(GENESIS).unwrap();
+    let layout = TreeLayout::parse(LAYOUT_FILE, false).unwrap();
     assert_eq!(layout.instances(IVec2::new(0, 0)).len(), 2);
     assert_eq!(layout.instances(IVec2::new(-1, -1)).len(), 3);
     for case in expected {

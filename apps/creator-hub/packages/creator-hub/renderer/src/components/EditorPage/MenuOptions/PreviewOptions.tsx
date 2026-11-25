@@ -1,16 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import cx from 'classnames';
-import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import {
-  Checkbox,
-  Divider,
-  FormControlLabel,
-  FormGroup,
-  ListItemButton,
-  ListItemText,
-  Radio,
-  Tooltip,
-} from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
+import { ChevronRightIcon } from '@ui/atoms/icons-material';
+import Checkbox from '@ui/atoms/Checkbox';
+import Radio from '@ui/atoms/Radio';
+import Text from '@ui/atoms/Text';
+import { Tooltip } from '@dcl/one-ui';
 
 import { scene } from '#preload';
 
@@ -106,8 +100,8 @@ export function PreviewOptions({
       setSubmenuAlign(null);
       return;
     }
-    // Measured a frame late (rAF) on purpose: the outer Popper (popper.js) applies its own
-    // position transform in its own effect, and ordering against that isn't guaranteed —
+    // Measured a frame late (rAF) on purpose: the outer popover places itself
+    // in its own effect, and ordering against that isn't guaranteed —
     // measuring in the same layout-effect pass can read the row's pre-positioned rect. The
     // flyout stays unrendered (submenuAlign is null) until this resolves, so there's nothing
     // to flash on the wrong side in the meantime.
@@ -131,94 +125,94 @@ export function PreviewOptions({
           onMouseEnter={handleDesktopRowMouseEnter}
           onMouseLeave={handleDesktopRowMouseLeave}
         >
-          <FormControlLabel
-            control={
-              <Radio
-                checked={isDesktopClient}
-                onChange={handleClientSelect(PREVIEW_CLIENT.DESKTOP)}
-              />
-            }
-            label={t('editor.header.actions.preview_options.client.desktop')}
-          />
+          <Radio
+            className="control"
+            value={PREVIEW_CLIENT.DESKTOP}
+            checked={isDesktopClient}
+            onChange={handleClientSelect(PREVIEW_CLIENT.DESKTOP)}
+          >
+            {t('editor.header.actions.preview_options.client.desktop')}
+          </Radio>
           <ChevronRightIcon
             className="arrow"
             aria-hidden="true"
           />
           {showDesktopSubmenu && submenuAlign && (
             <div className={cx('client-submenu', { 'align-left': submenuAlign === 'left' })}>
-              <FormGroup className="options">
+              <div className="options">
                 <Tooltip
-                  title={
-                    terrainHiddenByScene
-                      ? t(
-                          'editor.header.actions.preview_options.landscape_terrain_disabled_by_scene',
-                        )
-                      : ''
-                  }
-                  placement="left"
+                  className="tooltip-row"
+                  label={t(
+                    'editor.header.actions.preview_options.landscape_terrain_disabled_by_scene',
+                  )}
+                  side="left"
+                  portal
+                  disabled={!terrainHiddenByScene}
                 >
                   <div className="checkbox-row">
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={terrainHiddenByScene ? false : !!options.enableLandscapeTerrains}
-                          disabled={terrainHiddenByScene}
-                          onChange={handleChange({
-                            enableLandscapeTerrains: !options.enableLandscapeTerrains,
-                          })}
-                        />
-                      }
-                      label={t('editor.header.actions.preview_options.landscape_terrain_enabled')}
-                    />
+                    <Checkbox
+                      className="control"
+                      checked={terrainHiddenByScene ? false : !!options.enableLandscapeTerrains}
+                      disabled={terrainHiddenByScene}
+                      onChange={handleChange({
+                        enableLandscapeTerrains: !options.enableLandscapeTerrains,
+                      })}
+                    >
+                      {t('editor.header.actions.preview_options.landscape_terrain_enabled')}
+                    </Checkbox>
                   </div>
                 </Tooltip>
                 {supportsMultiInstance && (
                   <div className="checkbox-row">
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={!!options.multiInstance}
-                          onChange={handleChange({ multiInstance: !options.multiInstance })}
-                        />
-                      }
-                      label={t('editor.header.actions.preview_options.multi_instance')}
-                    />
+                    <Checkbox
+                      className="control"
+                      checked={!!options.multiInstance}
+                      onChange={handleChange({ multiInstance: !options.multiInstance })}
+                    >
+                      {t('editor.header.actions.preview_options.multi_instance')}
+                    </Checkbox>
                   </div>
                 )}
                 {supportsMcp && (
                   <div className="checkbox-row">
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={!!options.mcp}
-                          onChange={handleChange({ mcp: !options.mcp })}
-                        />
-                      }
-                      label={t('editor.header.actions.preview_options.mcp')}
-                    />
+                    <Checkbox
+                      className="control"
+                      checked={!!options.mcp}
+                      onChange={handleChange({ mcp: !options.mcp })}
+                    >
+                      {t('editor.header.actions.preview_options.mcp')}
+                    </Checkbox>
                   </div>
                 )}
-              </FormGroup>
+              </div>
             </div>
           )}
         </div>
         <div className="client-row">
-          <FormControlLabel
-            control={
-              <Radio
-                checked={!isDesktopClient}
-                onChange={handleClientSelect(PREVIEW_CLIENT.BEVY_WEB)}
-              />
-            }
-            label={t('editor.header.actions.preview_options.client.bevy_web')}
-          />
+          <Radio
+            className="control"
+            value={PREVIEW_CLIENT.BEVY_WEB}
+            checked={!isDesktopClient}
+            onChange={handleClientSelect(PREVIEW_CLIENT.BEVY_WEB)}
+          >
+            {t('editor.header.actions.preview_options.client.bevy_web')}
+          </Radio>
         </div>
       </div>
-      <Divider />
+      <hr className="divider" />
       <div className="options">
-        <ListItemButton onClick={onShowMobileQR}>
-          <ListItemText primary={t('editor.header.actions.preview_options.mobile_preview')} />
-        </ListItemButton>
+        <button
+          type="button"
+          className="option"
+          onClick={onShowMobileQR}
+        >
+          <Text
+            as="span"
+            variant="body1"
+          >
+            {t('editor.header.actions.preview_options.mobile_preview')}
+          </Text>
+        </button>
       </div>
     </div>
   );

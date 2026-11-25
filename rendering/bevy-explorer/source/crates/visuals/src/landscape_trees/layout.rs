@@ -1,9 +1,11 @@
-//! The baked tree layout: every tree, bush and stone of a realm, grouped by parcel.
+//! The baked tree layouts: every tree, bush and stone of Genesis City and of the Worlds, grouped
+//! by parcel.
 //!
-//! The file is little-endian: `i32 min_x, min_z, max_x, max_z` (max exclusive), one `i32` start
-//! index per parcel in z-major order, `i32 count`, then `count` 6-byte instances
-//! `{prototype, pos_x, pos_z, rot_y, scale_xz, scale_y}`. A parcel's instances run from its start
-//! to the next parcel's start, or to `count` for the last parcel. Coordinates in the file are
+//! unity-explorer's two layouts place the same instances and differ only in their scales, so one
+//! file holds both (`crates/assets/landscape_tools/tree_layout.py` writes it from them). It is
+//! little-endian: `b"TRL1"`, `i32 min_x, min_z, max_x, max_z` (max exclusive), one `u8` instance
+//! count per parcel in z-major order, then the instances parcel by parcel, 6 bytes each:
+//! `{prototype, pos_x, pos_z, rot_y, genesis_scale, worlds_scale}`. Coordinates in the file are
 //! parcel coordinates, z growing north, which is bevy -z.
 
 use std::fmt;
@@ -16,19 +18,31 @@ use common::partition::PARCEL_SIZE;
 
 use super::prototypes::PROTOTYPES;
 
+const MAGIC: &[u8; 4] = b"TRL1";
 /// Largest width or depth, in parcels, the reference loader accepts.
 const SIZE_LIMIT: i32 = 512;
 /// Largest instance count the reference loader accepts.
-const INSTANCE_LIMIT: i32 = 1 << 19;
+const INSTANCE_LIMIT: usize = 1 << 19;
+/// The labels of the two realms' layouts in the file's asset.
+pub(crate) const GENESIS_LABEL: &str = "genesis";
+pub(crate) const WORLDS_LABEL: &str = "worlds";
 
+/// The layout of one kind of realm: Genesis City's, or the Worlds'.
 #[derive(Asset, TypePath)]
 pub(crate) struct TreeLayout {
     pub(super) min: IVec2,
     pub(super) max_excl: IVec2,
-    /// Validated by `parse`: never negative, never decreasing, never past `instances.len()`.
-    starts: Vec<i32>,
+    /// Each parcel's first instance; the next parcel's start, or the instance count for the last
+    /// parcel, ends it. Built by `parse` from the counts, so never decreasing and never past
+    /// `instances.len()`.
+    starts: Vec<u32>,
     instances: Vec<TreeInstance>,
 }
+
+/// The file's own asset; its two layouts are the labeled assets `GENESIS_LABEL` and
+/// `WORLDS_LABEL`.
+#[derive(Asset, TypePath)]
+pub(crate) struct TreeLayouts;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TreeInstance {
@@ -39,13 +53,14 @@ pub(crate) struct TreeInstance {
     pub(super) pos: [u8; 2],
     /// Yaw in 1/255ths of a turn, clockwise seen from above (east turns towards south).
     pub(super) rot_y: u8,
-    /// Horizontal and vertical scale, in 1/255ths of the prototype's range.
-    pub(super) scale_xz: u8,
-    pub(super) scale_y: u8,
+    /// Scale, in 1/255ths of the prototype's horizontal and vertical ranges.
+    pub(super) scale: u8,
 }
 
 #[derive(Debug)]
 pub(crate) enum LayoutError {
+    /// The file does not start with `MAGIC`.
+    Magic,
     /// The file ends at `len` bytes but `needed` bytes are required.
     Truncated {
         needed: usize,
@@ -56,13 +71,8 @@ pub(crate) enum LayoutError {
         min: IVec2,
         max_excl: IVec2,
     },
-    /// The instance count is negative or above `INSTANCE_LIMIT`.
-    Count(i32),
-    /// A parcel's start index is negative, below the previous parcel's, or past the count.
-    Start {
-        parcel: usize,
-        start: i32,
-    },
+    /// The parcels' counts add up to more than `INSTANCE_LIMIT`.
+    Count(usize),
     /// An instance names a prototype the table does not have.
     Prototype {
         instance: usize,
@@ -76,6 +86,7 @@ pub(crate) enum LayoutError {
 impl fmt::Display for LayoutError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Magic => write!(f, "tree layout does not start with {MAGIC:?}"),
             Self::Truncated { needed, len } => {
                 write!(f, "tree layout truncated: needs {needed} bytes, has {len}")
             }
@@ -83,12 +94,6 @@ impl fmt::Display for LayoutError {
                 write!(f, "tree layout bounds {min}..{max_excl} are invalid")
             }
             Self::Count(count) => write!(f, "tree layout instance count {count} is invalid"),
-            Self::Start { parcel, start } => {
-                write!(
-                    f,
-                    "tree layout start {start} of parcel index {parcel} is invalid"
-                )
-            }
             Self::Prototype {
                 instance,
                 prototype,
@@ -131,10 +136,14 @@ impl<'a> Cursor<'a> {
 }
 
 impl TreeLayout {
-    /// Decodes a layout file. Anything truncated, out of range or inconsistent is an error, so
-    /// `instances` can index without checks.
-    pub fn parse(bytes: &[u8]) -> Result<Self, LayoutError> {
+    /// Decodes the layout of Genesis City, or of the Worlds when `worlds`, from the file.
+    /// Anything truncated, out of range or inconsistent is an error, so `instances` can index
+    /// without checks.
+    pub fn parse(bytes: &[u8], worlds: bool) -> Result<Self, LayoutError> {
         let mut cursor = Cursor { bytes, at: 0 };
+        if cursor.take(MAGIC.len()).ok() != Some(MAGIC.as_slice()) {
+            return Err(LayoutError::Magic);
+        }
         let min_x = cursor.i32()?;
         let min_z = cursor.i32()?;
         let max_x = cursor.i32()?;
@@ -150,27 +159,19 @@ impl TreeLayout {
             return Err(LayoutError::Bounds { min, max_excl });
         };
 
-        let cells = width as usize * depth as usize;
-        let (words, _) = cursor.take(cells * 4)?.as_chunks::<4>();
-        let starts: Vec<i32> = words
-            .iter()
-            .map(|bytes| i32::from_le_bytes(*bytes))
-            .collect();
-
-        let count = cursor.i32()?;
-        if !(0..=INSTANCE_LIMIT).contains(&count) {
+        let counts = cursor.take(width as usize * depth as usize)?;
+        let mut starts = Vec::with_capacity(counts.len());
+        let mut count = 0;
+        for &parcel_count in counts {
+            starts.push(count as u32);
+            count += usize::from(parcel_count);
+        }
+        if count > INSTANCE_LIMIT {
             return Err(LayoutError::Count(count));
         }
 
-        let mut previous = 0;
-        for (parcel, &start) in starts.iter().enumerate() {
-            if start < previous || start > count {
-                return Err(LayoutError::Start { parcel, start });
-            }
-            previous = start;
-        }
-
-        let (records, _) = cursor.take(count as usize * 6)?.as_chunks::<6>();
+        let scale = if worlds { 5 } else { 4 };
+        let (records, _) = cursor.take(count * 6)?.as_chunks::<6>();
         let instances = records
             .iter()
             .enumerate()
@@ -185,8 +186,7 @@ impl TreeLayout {
                     prototype: bytes[0],
                     pos: [bytes[1], bytes[2]],
                     rot_y: bytes[3],
-                    scale_xz: bytes[4],
-                    scale_y: bytes[5],
+                    scale: bytes[scale],
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -245,8 +245,8 @@ impl TreeInstance {
         let yaw = (self.rot_y as f32 * (360.0 / 255.0)).to_radians();
         let prototype = &PROTOTYPES[usize::from(self.prototype)];
         let lerp = |(min, max): (f32, f32), byte: u8| min + fraction(byte) * (max - min);
-        let scale_xz = lerp(prototype.scale_xz, self.scale_xz);
-        let scale_y = lerp(prototype.scale_y, self.scale_y);
+        let scale_xz = lerp(prototype.scale_xz, self.scale);
+        let scale_y = lerp(prototype.scale_y, self.scale);
         Transform {
             translation: Vec3::new(x, height(x, z), z),
             rotation: Quat::from_rotation_y(-yaw),
@@ -287,12 +287,13 @@ pub(crate) fn hidden_by_occupancy(
         || (west && north && neighbour(-1, 1))
 }
 
-/// Loads `.trees` layout files as `TreeLayout` assets.
+/// Loads a `.trees` file as `TreeLayouts`, with Genesis City's and the Worlds' `TreeLayout` as
+/// its labeled assets.
 #[derive(Default)]
 pub(crate) struct TreeLayoutLoader;
 
 impl AssetLoader for TreeLayoutLoader {
-    type Asset = TreeLayout;
+    type Asset = TreeLayouts;
     type Settings = ();
     type Error = LayoutError;
 
@@ -300,14 +301,18 @@ impl AssetLoader for TreeLayoutLoader {
         &self,
         reader: &mut dyn Reader,
         _settings: &Self::Settings,
-        _load_context: &mut LoadContext<'_>,
+        load_context: &mut LoadContext<'_>,
     ) -> Result<Self::Asset, Self::Error> {
         let mut bytes = Vec::new();
         reader
             .read_to_end(&mut bytes)
             .await
             .map_err(LayoutError::Io)?;
-        TreeLayout::parse(&bytes)
+        let genesis = TreeLayout::parse(&bytes, false)?;
+        let worlds = TreeLayout::parse(&bytes, true)?;
+        load_context.add_labeled_asset(GENESIS_LABEL.to_owned(), genesis);
+        load_context.add_labeled_asset(WORLDS_LABEL.to_owned(), worlds);
+        Ok(TreeLayouts)
     }
 
     fn extensions(&self) -> &[&str] {

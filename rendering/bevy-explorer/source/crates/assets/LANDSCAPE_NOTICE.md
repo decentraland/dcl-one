@@ -2,10 +2,7 @@
 
 The files under `src/assets/landscape/`, the impostors excepted, come from the Decentraland Unity explorer,
 [decentraland/unity-explorer](https://github.com/decentraland/unity-explorer), and are embedded
-into the build as `embedded://landscape/...`. They are stored in Git LFS (see the repository's
-`.gitattributes`). Every CI job that builds the Explorer pulls only this folder from LFS after its
-checkout (`git lfs pull --include="rendering/bevy-explorer/source/crates/assets/src/assets/landscape/**"`),
-so the build embeds the files rather than their pointers; a local checkout needs `git lfs pull`.
+into the build as `embedded://landscape/...`.
 
 That repository is licensed under the Apache License 2.0 (its `LICENSE` file). The tree layouts are
 Decentraland's own placement data, and the tree, bush and stone models and their textures
@@ -13,7 +10,8 @@ Decentraland's own art, published there.
 
 Unity paths are relative to `Explorer/Assets/` in that repository.
 
-The models and their textures are converted with `landscape_tools/fbx_to_glb.py` in Blender 4.5.9 LTS,
+The two tree layouts are merged into one file with `landscape_tools/tree_layout.py` (its header
+gives the format). The models and their textures are converted with `landscape_tools/fbx_to_glb.py` in Blender 4.5.9 LTS,
 run as `blender --background --factory-startup --python-exit-code 1 --python landscape_tools/fbx_to_glb.py -- <arguments>`
 from this crate's folder, with `$U` standing for the Unity repository's `Explorer/Assets` folder. The
 `mesh` command keeps the first level of detail only and writes no textures; the `texture` command
@@ -40,8 +38,7 @@ bytes from run to run.
 
 | Files here | Unity repository and commit | Unity source path | Licence | Conversion | Tool and version |
 | --- | --- | --- | --- | --- | --- |
-| `src/assets/landscape/layout/genesis.trees` (2,215,004 bytes) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `StreamingAssets/GenesisTrees.bin` | Apache-2.0 | none (copied, renamed; the `.meta` file is not copied) | `cp` (GNU coreutils 8.32) |
-| `src/assets/landscape/layout/worlds.trees` (2,215,004 bytes) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `StreamingAssets/WorldsTrees.bin` | Apache-2.0 | none (copied, renamed; the `.meta` file is not copied) | `cp` (GNU coreutils 8.32) |
+| `src/assets/landscape/layout/landscape.trees` (1,917,356 bytes) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `StreamingAssets/GenesisTrees.bin` and `StreamingAssets/WorldsTrees.bin` | Apache-2.0 | merged losslessly: the two place the same instances, so each is stored once with both scales (`python landscape_tools/tree_layout.py $U/StreamingAssets/GenesisTrees.bin $U/StreamingAssets/WorldsTrees.bin`) | Python 3.12.6 |
 | `src/assets/landscape/trees/tree01.glb` (143,696 bytes) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `DCL/Landscape/Assets/TreeOptimisation/TreeOptimizationAssets/TreeOptimized_v01.fbx` | Apache-2.0 | `mesh --fbx $U/DCL/Landscape/Assets/TreeOptimisation/TreeOptimizationAssets/TreeOptimized_v01.fbx --object BirchOptimized_v01 --material LeafYellow --material Trunk --out src/assets/landscape/trees/tree01.glb` | Blender 4.5.9 LTS |
 | `src/assets/landscape/trees/tree02.glb` (176,320 bytes) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `DCL/Landscape/Assets/TreeOptimisation/TreeOptimizationAssets/TreeOptimized_v02.fbx` | Apache-2.0 | `mesh --fbx $U/DCL/Landscape/Assets/TreeOptimisation/TreeOptimizationAssets/TreeOptimized_v02.fbx --object BirchOptimized_v02 --material LeafPink --material Trunk --out src/assets/landscape/trees/tree02.glb` | Blender 4.5.9 LTS |
 | `src/assets/landscape/trees/tree03.glb` (188,420 bytes) | decentraland/unity-explorer `206efdac5b8d447899e70dd732f45af9482ed97b` | `DCL/Landscape/Assets/TreeOptimisation/TreeOptimizationAssets/TreeOptimized_v03.fbx` | Apache-2.0 | `mesh --fbx $U/DCL/Landscape/Assets/TreeOptimisation/TreeOptimizationAssets/TreeOptimized_v03.fbx --object BirchOptimized_v03 --material LeafGreen --material Trunk --out src/assets/landscape/trees/tree03.glb` | Blender 4.5.9 LTS |

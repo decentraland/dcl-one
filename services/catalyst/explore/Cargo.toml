@@ -15,12 +15,15 @@ catalyst-config = { path = "../config" }
 catalyst-storage = { path = "../storage" }
 catalyst-content = { path = "../content" }
 catalyst-land-authz = { path = "../land-authz" }
+catalyst-chain-index = { path = "../chain-index" }
 tokio.workspace = true
+async-trait.workspace = true
 axum.workspace = true
 tower-http.workspace = true
 sqlx.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+socketioxide.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
@@ -29,6 +32,8 @@ bytes.workspace = true
 uuid.workspace = true
 tokio-util.workspace = true
 dashmap.workspace = true
+ipnet.workspace = true
+dcl-metrics.workspace = true
 parking_lot.workspace = true
 hex.workspace = true
 libc.workspace = true

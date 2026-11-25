@@ -119,6 +119,10 @@ pub fn trade_verdict_check(verdict: Option<&(String, i32)>, uses: u64, index_rea
                 Check::pass("chainVerdict", format!("open, {executions} of {uses} uses"))
             }
             "open" => Check::fail("chainVerdict", format!("its {uses} uses are spent")),
+            "unverifiable" => Check::fail(
+                "chainVerdict",
+                "its V3 cancellation digest could not be established, so a cancellation would go unseen",
+            ),
             other => Check::fail("chainVerdict", other.to_string()),
         },
         _ => Check::unknown("chainVerdict", "the trade-events index is not published"),
@@ -186,16 +190,34 @@ pub async fn checks(
                 trade.checks.uses,
                 *index_ready,
             ));
-            let receives_mana = trade.received.iter().any(|a| {
-                (a.asset_type == 1
-                    && a.contract_address.trim().parse::<Address>().ok() == Some(chain.mana))
-                    || a.asset_type == 2
-            });
-            out.push(if trade.trade_type == "bid" || receives_mana {
+            out.push(if paid_in_mana(trade, chain) {
                 Check::pass("receivesMana", "")
             } else {
                 Check::fail("receivesMana", "the trade is not paid in the chain's MANA")
             });
+            let asset = if trade.trade_type == "bid" {
+                &trade.received
+            } else {
+                &trade.sent
+            };
+            if let [estate] = asset.as_slice()
+                && let Some(contract) = estate
+                    .contract_address
+                    .trim()
+                    .parse::<Address>()
+                    .ok()
+                    .filter(|c| chain.is_estate_registry(*c))
+            {
+                out.push(
+                    trade_fingerprint_check(
+                        reader,
+                        contract,
+                        estate.token_id.as_deref(),
+                        estate.extra.as_deref(),
+                    )
+                    .await,
+                );
+            }
             if let Some(sent) = trade.sent.first() {
                 let signer: Option<Address> = trade.signer.trim().parse().ok();
                 match (
@@ -430,6 +452,50 @@ pub async fn checks(
     (out, fingerprint, name_reads)
 }
 
+/// The price side (what a bid sends, what an order receives) is one asset
+/// in the chain's MANA or USD-pegged MANA: LAND and every secondary sale
+/// settle in MANA.
+pub fn paid_in_mana(trade: &TradeIn, chain: &Chain) -> bool {
+    let price = if trade.trade_type == "bid" {
+        &trade.sent
+    } else {
+        &trade.received
+    };
+    matches!(price.as_slice(), [a] if (a.asset_type == 1
+        && a.contract_address.trim().parse::<Address>().ok() == Some(chain.mana))
+        || a.asset_type == 2)
+}
+
+/// An Estate trade binds the fingerprint it was signed with (`extra`); the
+/// registry refuses it once the Estate's parcels change.
+async fn trade_fingerprint_check(
+    reader: Option<&Reader>,
+    estate: Address,
+    token_id: Option<&str>,
+    extra: Option<&str>,
+) -> Check {
+    let signed = extra.map(str::trim).filter(|e| !e.is_empty() && *e != "0x");
+    let (Some(signed), Some(token_id)) = (
+        signed,
+        token_id.and_then(|t| U256::from_str_radix(t.trim(), 10).ok()),
+    ) else {
+        return Check::fail("fingerprint", "the trade carries no Estate fingerprint");
+    };
+    let Some(reader) = reader else {
+        return Check::unknown("fingerprint", "no JSON-RPC endpoint for the chain");
+    };
+    match reader.estate_fingerprint(estate, token_id).await {
+        Ok(current) if format!("{current:#x}").eq_ignore_ascii_case(signed) => {
+            Check::pass("fingerprint", format!("{current:#x}"))
+        }
+        Ok(current) => Check::fail(
+            "fingerprint",
+            format!("signed {signed}, the Estate now has {current:#x}"),
+        ),
+        Err(e) => Check::unknown("fingerprint", e.to_string()),
+    }
+}
+
 async fn estate_fingerprint(
     reader: Option<&Reader>,
     out: &mut Vec<Check>,
@@ -568,5 +634,69 @@ mod tests {
         assert_eq!(trade_verdict_check(None, 1, true).ok, None);
         assert!(executable(&[Check::pass("a", ""), Check::unknown("b", "")]));
         assert!(!executable(&[Check::pass("a", ""), Check::fail("b", "")]));
+    }
+
+    #[test]
+    fn a_bid_or_an_order_is_executable_only_when_paid_in_the_chains_mana() {
+        let chain = super::super::venues::Book::production(|_| None)
+            .chain(crate::types::ChainId::POLYGON)
+            .unwrap()
+            .clone();
+        let order: TradeIn = {
+            let mut json: serde_json::Value =
+                serde_json::from_str(&fixtures::trade_json_on("0x1", "0x00", 137)).unwrap();
+            json["id"] = serde_json::json!("t");
+            serde_json::from_value(json).unwrap()
+        };
+        assert!(paid_in_mana(&order, &chain));
+        let mut bid = order.clone();
+        bid.trade_type = "bid".into();
+        std::mem::swap(&mut bid.sent, &mut bid.received);
+        assert!(paid_in_mana(&bid, &chain), "a bid pays with what it sends");
+        let mut foreign = bid.clone();
+        foreign.sent[0].contract_address = fixtures::NOT_MANA.into();
+        assert!(!paid_in_mana(&foreign, &chain), "a bid in another erc20");
+        let mut pegged = foreign.clone();
+        pegged.sent[0].asset_type = 2;
+        assert!(paid_in_mana(&pegged, &chain));
+        let mut twice = order.clone();
+        twice.received.push(twice.received[0].clone());
+        assert!(!paid_in_mana(&twice, &chain), "one price asset");
+    }
+
+    #[tokio::test]
+    async fn an_estate_trade_is_executable_only_with_the_estates_current_fingerprint() {
+        const CURRENT: &str = "0x00000000000000000000000000000000000000000000000000000000000f1a6e";
+        let estate: Address = crate::land_authz::ESTATE_REGISTRY_MAINNET.parse().unwrap();
+        let ok = |c: &Check| c.ok;
+        assert_eq!(
+            ok(&trade_fingerprint_check(None, estate, Some("5"), Some("0x")).await),
+            Some(false),
+            "no fingerprint signed"
+        );
+        assert_eq!(
+            ok(&trade_fingerprint_check(None, estate, Some("5"), Some(CURRENT)).await),
+            None,
+            "no endpoint: unknown, never a pass"
+        );
+        let reader = Reader::new(
+            crate::http::Outbound::for_tests(),
+            &fixtures::eth_call_stub(CURRENT).await,
+        );
+        assert_eq!(
+            ok(&trade_fingerprint_check(Some(&reader), estate, Some("5"), Some(CURRENT)).await),
+            Some(true)
+        );
+        assert_eq!(
+            ok(&trade_fingerprint_check(
+                Some(&reader),
+                estate,
+                Some("5"),
+                Some("0x00000000000000000000000000000000000000000000000000000000000f1a6f"),
+            )
+            .await),
+            Some(false),
+            "the Estate changed since the trade was signed"
+        );
     }
 }

@@ -2,6 +2,7 @@
 // the headless binary takes the same launch options
 pub mod automation;
 mod autopilot;
+mod client_window_focus;
 mod commands;
 mod debug_panel;
 mod deep_link;
@@ -10,6 +11,7 @@ mod gpu_memory;
 mod memory;
 #[cfg(test)]
 mod memory_tests;
+pub mod perf;
 #[cfg(target_arch = "wasm32")]
 mod web;
 pub mod world_state;
@@ -30,6 +32,7 @@ use ban_block::BanBlockPlugin;
 use bevy::window::{PresentMode, WindowResolution};
 use bevy::{
     app::{PluginGroupBuilder, Propagate, TaskPoolThreadAssignmentPolicy},
+    core_pipeline::prepass::DepthPrepass,
     log::LogPlugin,
     prelude::*,
     render::view::RenderLayers,
@@ -78,12 +81,9 @@ use scene_runner::{
     OutOfWorld, SceneRunnerPlugin,
 };
 use social::SocialPlugin;
-use system_api_types::{
-    launch_options::{
-        help_heading::{DEBUG, SETTINGS, SYSTEM_SCENES},
-        ClientOptions, LaunchOptions,
-    },
-    web_params::DEFAULT_PORTABLES,
+use system_api_types::launch_options::{
+    help_heading::{DEBUG, SETTINGS, SYSTEM_SCENES},
+    ClientOptions, LaunchOptions,
 };
 use system_bridge::{settings::NewCameraEvent, NativeUi, SystemBridgePlugin};
 #[cfg(not(target_arch = "wasm32"))]
@@ -120,8 +120,46 @@ pub const DISTRIBUTION: &str = "web";
 pub const CONFIG_READ_ATTEMPTS: u32 = 3;
 pub const CONFIG_READ_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// The settings file of the Explorer's config directory, or the defaults where there is none.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn serialized_app_config() -> AppConfig {
+    let config_file = platform::project_directories()
+        .unwrap()
+        .config_dir()
+        .join("config.json");
+    let mut base_config = read_config_file(&config_file)
+        .map(|f| {
+            info!("config file loaded from {config_file:?}");
+            AppConfig::from_json(&f)
+        })
+        .unwrap_or_else(|| {
+            warn!("config file not read from {config_file:?}, generating default");
+            Default::default()
+        });
+    base_config.reset_outdated_settings();
+
+    base_config
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_config_file(config_file: &std::path::Path) -> Option<Vec<u8>> {
+    for _ in 0..CONFIG_READ_ATTEMPTS {
+        match std::fs::read(config_file) {
+            Ok(f) => return Some(f),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(e) => {
+                warn!("failed to read config.json: {e}");
+                std::thread::sleep(CONFIG_READ_RETRY_PAUSE);
+            }
+        }
+    }
+    None
+}
+
 pub mod headless;
 pub mod launch;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod offline_app;
 
 pub struct DecentralandApp(App);
 
@@ -217,6 +255,10 @@ pub struct DecentralandArguments {
     /// Skip the sign-in screen with an auto guest-login (default HUD only; `?guest=1` on web)
     #[arg(long)]
     pub guest: bool,
+    /// Show the lower-right debug panel button in the HUD
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, help_heading = DEBUG)]
+    pub debug_panel: bool,
     /// Echo scene logs to the console
     #[arg(long = "scene_log_to_console", help_heading = DEBUG)]
     pub scene_log_to_console: bool,
@@ -224,7 +266,7 @@ pub struct DecentralandArguments {
     /// `--features inspect`
     #[arg(long, value_name = "scene_hash", help_heading = DEBUG)]
     pub inspect: Option<String>,
-    /// Target fps (default 60; overridden by the refresh rate when vsync is on). Also `/fps`
+    /// Target fps (default 60; 999 is Max; with vsync on, capped at the refresh rate). Also `/fps`
     #[arg(long = "fps", value_name = "n", help_heading = SETTINGS)]
     pub fps_target: Option<usize>,
     /// Run the portable/startup scenes in preview mode
@@ -240,7 +282,7 @@ pub struct DecentralandArguments {
     /// `/allowed/failures`
     #[arg(long = "test_scenes", value_name = "x,y;x,y", help_heading = DEBUG)]
     pub test_scenes: Option<TestScenes>,
-    /// Vsync (default off)
+    /// VSync (default on): caps the frame rate at the monitor's refresh rate, `--fps` still applies
     #[arg(long, value_name = "true|false", help_heading = SETTINGS)]
     pub vsync: Option<bool>,
     /// Scene load distance in meters (default 100). Also `/scene_distance`
@@ -360,11 +402,8 @@ impl DecentralandArguments {
 
     /// `--portables` / `?portables=`, else the default set.
     pub fn startup_scenes(&self) -> Vec<StartupScene> {
-        self.client
-            .portables
-            .as_deref()
-            .unwrap_or(DEFAULT_PORTABLES)
-            .split(';')
+        self.launch
+            .portable_sources()
             .map(|source| StartupScene {
                 source: source.to_owned(),
                 super_user: false,
@@ -435,6 +474,7 @@ impl DecentralandApp {
                 server,
                 position: launch.position.clone(),
                 guest: decentraland_app_config.arguments.guest,
+                debug_panel: decentraland_app_config.arguments.debug_panel,
                 autopilot,
             });
         }
@@ -451,9 +491,11 @@ impl DecentralandApp {
         };
         // Show out-of-bounds geometry in preview, on a loopback realm (local dev) and in
         // the editor, never on a public realm; the same runs are a local scene to analytics.
-        let show_out_of_bounds = decentraland_app_config.arguments.client.editor
-            || decentraland_app_config.arguments.launch.preview
-            || common::util::is_loopback_url(&boot_server);
+        let ShowOutOfBounds(show_out_of_bounds) = ShowOutOfBounds::for_run(
+            decentraland_app_config.arguments.client.editor,
+            decentraland_app_config.arguments.launch.preview,
+            Some(&boot_server),
+        );
 
         // Resources
         app.insert_resource(Version(version))
@@ -486,7 +528,7 @@ impl DecentralandApp {
                     .collect(),
             })
             .insert_resource(ShowOutOfBounds(show_out_of_bounds))
-            .insert_resource(LandscapeDistance(
+            .insert_resource(LandscapeDistance::from_config(
                 decentraland_app_config.app_config.landscape_distance,
             ))
             .insert_resource(SceneLoadDistance {
@@ -744,6 +786,21 @@ impl DecentralandApp {
         // (the first render frame warns, under `gpu_time`, about any node they do not)
         app.add_plugins(GpuTimePlugin);
 
+        // what the explorer measures about itself: the sampler, the frame-time breakdown and their
+        // debug panel section; with the `performance-profiler` feature, the scope profiler, Bevy's
+        // per-pass render timings (not in a `tracy` build, whose GPU context they would double)
+        // and its system information on Windows and Linux
+        app.add_plugins(client_window_focus::ClientWindowFocusPlugin);
+        app.add_plugins(perf::PerformanceMonitoringPlugin);
+        #[cfg(all(
+            feature = "performance-profiler",
+            not(feature = "tracy"),
+            not(target_arch = "wasm32")
+        ))]
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+        #[cfg(all(feature = "performance-profiler", any(windows, target_os = "linux")))]
+        app.add_plugins(bevy::diagnostic::SystemInformationDiagnosticsPlugin);
+
         // Systems
         app.configure_sets(Startup, SetupSets::Init.before(SetupSets::Main));
         app.add_systems(Startup, setup.in_set(SetupSets::Init));
@@ -757,10 +814,33 @@ impl DecentralandApp {
         app.add_console_command::<SceneThreadsCommand, _>(scene_threads);
         app.add_console_command::<FpsCommand, _>(set_fps);
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
-        debug_panel::register(&mut app);
+        app.add_plugins(debug_panel::MemoryDebugPanelPlugin);
+
+        run_small_schedules_in_order(&mut app);
 
         app
     }
+}
+
+/// Runs the main schedules other than `PostUpdate` one system after another, on the thread that
+/// runs the schedule (the engine worker on the web). Most of their systems take microseconds, and
+/// handing each to a compute thread and waiting for it costs more than running it. `PostUpdate`
+/// stays multi-threaded: its systems (transform propagation, visibility) are large enough to gain
+/// from the compute threads.
+fn run_small_schedules_in_order(app: &mut App) {
+    use bevy::{
+        app::{RunFixedMainLoop, SpawnScene},
+        ecs::schedule::{ExecutorKind, Schedule},
+    };
+
+    let in_order = |schedule: &mut Schedule| {
+        schedule.set_executor_kind(ExecutorKind::SingleThreaded);
+    };
+    app.edit_schedule(PreUpdate, in_order)
+        .edit_schedule(RunFixedMainLoop, in_order)
+        .edit_schedule(Update, in_order)
+        .edit_schedule(SpawnScene, in_order)
+        .edit_schedule(Last, in_order);
 }
 
 fn save_fresh_user_id(config: Res<AppConfig>) {
@@ -788,7 +868,7 @@ fn setup(
             )),
             Visibility::default(),
             config.player_settings.clone(),
-            OutOfWorld,
+            OutOfWorld::default(),
             AvatarDynamicState::default(),
             HeadSync::default(),
             PointAtSync::default(),
@@ -797,7 +877,10 @@ fn setup(
         ))
         .id();
     if boot_location.explicit {
-        commands.insert_resource(RealmInitialLocation::Parcel(boot_location.parcel));
+        commands.insert_resource(RealmInitialLocation::Parcel {
+            parcel: boot_location.parcel,
+            spawn_point: None,
+        });
     }
 
     // add a camera
@@ -812,6 +895,9 @@ fn setup(
                 ..Default::default()
             },
             default_camera_components(),
+            // the jump marker projects onto the depth prepass; the graphics settings add the
+            // normal prepass while the avatar outline is on
+            DepthPrepass,
             Projection::from(PerspectiveProjection {
                 far: 100000.0,
                 ..Default::default()

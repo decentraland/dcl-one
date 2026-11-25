@@ -30,8 +30,11 @@ runs:
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ inputs.node-version }}
-        cache: 'npm'
-        cache-dependency-path: apps/creator-hub/package-lock.json
+
+    # pnpm at the version apps/creator-hub/package.json pins.
+    - name: Enable pnpm
+      shell: bash
+      run: corepack enable
 
     - name: Cache node_modules
       id: cache-node-modules
@@ -42,9 +45,7 @@ runs:
           apps/creator-hub/packages/*/node_modules
           apps/creator-hub/packages/inspector/agents/bevy/node_modules
           apps/creator-hub/packages/creator-hub/.electron-vendors.cache.json
-        key: ${{ runner.os }}-nodemodules-${{ hashFiles('apps/creator-hub/package-lock.json', 'apps/creator-hub/packages/inspector/agents/bevy/package-lock.json', '.github/actions/creator-hub-setup/action.yml') }}
-        restore-keys: |
-          ${{ runner.os }}-nodemodules-
+        key: ${{ runner.os }}-pnpm-nodemodules-${{ hashFiles('apps/creator-hub/pnpm-lock.yaml', 'apps/creator-hub/pnpm-workspace.yaml', 'apps/creator-hub/packages/inspector/agents/bevy/pnpm-lock.yaml', 'apps/creator-hub/packages/inspector/agents/bevy/pnpm-workspace.yaml', 'apps/creator-hub/packages/zip-extract/**', '.github/actions/creator-hub-setup/action.yml') }}
 
     - name: Read protoc version from Makefile
       id: protoc-version
@@ -65,7 +66,7 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.os == 'Linux' && '~/.cache/ms-playwright' || runner.os == 'macOS' && '~/Library/Caches/ms-playwright' || '~\AppData\Local\ms-playwright' }}
-        key: ${{ runner.os }}-playwright-${{ hashFiles('apps/creator-hub/package-lock.json') }}
+        key: ${{ runner.os }}-playwright-${{ hashFiles('apps/creator-hub/pnpm-lock.yaml') }}
         restore-keys: |
           ${{ runner.os }}-playwright-
 
@@ -76,4 +77,4 @@ runs:
         path: |
           ${{ runner.os == 'Linux' && '~/.cache/electron' || runner.os == 'macOS' && '~/Library/Caches/electron' || '~\AppData\Local\electron\Cache' }}
           ${{ runner.os == 'Linux' && '~/.cache/electron-builder' || runner.os == 'macOS' && '~/Library/Caches/electron-builder' || '~\AppData\Local\electron-builder\Cache' }}
-        key: ${{ runner.os }}-electron-${{ hashFiles('apps/creator-hub/package-lock.json', 'apps/creator-hub/packages/creator-hub/package.json') }}
+        key: ${{ runner.os }}-electron-${{ hashFiles('apps/creator-hub/pnpm-lock.yaml', 'apps/creator-hub/packages/creator-hub/package.json') }}

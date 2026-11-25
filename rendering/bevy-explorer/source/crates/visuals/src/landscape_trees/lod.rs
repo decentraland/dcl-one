@@ -121,7 +121,7 @@ pub(crate) struct ImpostorDraw {
     pub materials: [Vec<Handle<TreeImpostor>>; 8],
 }
 
-/// An instance of the layout in range on confirmed empty land.
+/// An instance of the layout in range on empty land.
 struct Instance {
     parcel: IVec2,
     index: u32,

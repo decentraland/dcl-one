@@ -1,16 +1,17 @@
+import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from '@playwright/test';
-import { config as loadDotenv } from 'dotenv';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Loaded so the @live tier can read E2E_PRIVATE_KEY / E2E_NAME / E2E_WALLET from a
 // local .env.e2e. `.env*` is gitignored — never commit one.
-loadDotenv({ path: join(__dirname, '.env.e2e') });
+const envFile = join(__dirname, '.env.e2e');
+if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 /**
- * The suite drives the **packaged** app (`npm run compile` → `electron-builder --dir`),
+ * The suite drives the **packaged** app (`pnpm run compile` → `electron-builder --dir`),
  * not `electron .`. That is what lets every `process.env.E2E` branch stay out of
  * production source: `APP_UNPACKED_PATH` resolves correctly only when
  * `Contents/Resources/app.asar.unpacked` actually exists, which packaging provides.

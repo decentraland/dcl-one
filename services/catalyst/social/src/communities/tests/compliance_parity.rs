@@ -213,20 +213,35 @@ async fn provider_classification_retries_environment_and_cached_rejection_match_
 }
 #[tokio::test]
 async fn valid_slow_provider_outlives_the_shared_readers_twenty_five_second_budget() {
+    let delay = std::time::Duration::from_secs(26);
+    let shared_read = crate::http::HttpClientCfg::serve(1).read_timeout.unwrap();
+    assert!(shared_read < delay && delay < compliance::EFFECT_TIMEOUT);
     let case = goldens()["cases"][0].clone();
-    let provider = provider(&case, std::time::Duration::from_secs(26)).await;
+    let provider = provider(&case, delay).await;
     let Some(rig) = Rig::new(enabled_settings(&provider.url)).await else {
         return;
     };
     let name = format!("slow-{}", Uuid::new_v4());
-    rig.state
-        .validate_content(Content {
-            name: Some(&name),
-            description: None,
-            thumbnail: None,
+    let validated = rig.state.validate_content(Content {
+        name: Some(&name),
+        description: None,
+        thumbnail: None,
+    });
+    // Once the request reaches the provider, only controlled time moves.
+    let delayed = async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while provider.calls.load(Ordering::SeqCst) == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
         })
         .await
-        .unwrap();
+        .expect("validation must call the provider");
+        tokio::time::pause();
+        tokio::time::advance(delay).await;
+        tokio::time::resume();
+    };
+    let (validated, ()) = tokio::join!(validated, delayed);
+    validated.unwrap();
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     rig.finish();
 }
@@ -347,11 +362,9 @@ async fn cache_read_failure_is_generic_but_cache_write_failure_is_ai_unavailable
     let Some(rig) = Rig::new(enabled_settings(&provider.url)).await else {
         return;
     };
-    let recorder = crate::comms::metrics::prometheus_builder()
-        .unwrap()
-        .build_recorder();
+    let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
     let handle = recorder.handle();
-    let _guard = metrics::set_default_local_recorder(&recorder);
+    let _guard = dcl_metrics::set_default_local_recorder(&recorder);
     let name = format!("write-fail-{}", Uuid::new_v4());
     let input = Content {
         name: Some(&name),
@@ -505,11 +518,9 @@ async fn compliance_metrics_follow_source_live_cache_failure_and_read_failure_bo
         if scenario == "cache-read-failure" {
             rig.pool.close().await;
         }
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
+        let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
         let handle = recorder.handle();
-        let _guard = metrics::set_default_local_recorder(&recorder);
+        let _guard = dcl_metrics::set_default_local_recorder(&recorder);
         rig.state.validate_content(input).await.ok();
         assert_source_metric_counts(&handle.render(), scenario);
         rig.finish();

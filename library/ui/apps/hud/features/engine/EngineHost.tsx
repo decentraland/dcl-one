@@ -11,16 +11,12 @@ import { engineLaunch, PAGE_DIR, seedBridgeSession } from '@hud-host'
 import { inShell, shellRequest } from '@explorer-core/lib/shell'
 import type { LaunchOptions } from '@explorer-core/lib/webParams'
 
-// Engine media libs the wasm expects as globals (LivekitClient, Hls) — loaded from CDNs like the
+// Engine media libs the wasm expects as globals (LivekitClient) — loaded from CDNs like the
 // old boot page did. Pinned with integrity hashes: they run in the app, which the shell signs for.
 const CDN_LIBS = [
   {
     src: 'https://cdn.jsdelivr.net/npm/livekit-client@2.22.4/dist/livekit-client.umd.min.js',
     integrity: 'sha384-JNwhkdJAnQYgi7FD+ASalB7FiUYwy+oCbt+5PgiIKYp7//rkJN4Gm8JGw2/13hit'
-  },
-  {
-    src: 'https://cdn.jsdelivr.net/npm/hls.js@1.7.3/dist/hls.min.js',
-    integrity: 'sha384-cciJ0zi8d1uMKC2zJd7jvPY4HQt7W4ByUI/FlMkltvBi31aW61rcpVBhpmW8/NwX'
   }
 ]
 

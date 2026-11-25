@@ -1,17 +1,32 @@
+/* A caller sizes and tints the switch with custom properties, set on it or on any ancestor:
+   --toggle-w, --toggle-h, --toggle-pad (the knob fills the height inside the padding and travels
+   the rest of the width), --toggle-off, --toggle-on, --toggle-knob, --toggle-knob-on and
+   --toggle-knob-shadow. Unset, each takes the size variant's value (the --d-* below). */
 .track {
+  --d-w: 46px;
+  --d-h: 26px;
+  --d-pad: 3px;
+  --d-off: var(--fill-4);
+  --d-knob: #fff;
+  --d-knob-on: #fff;
+  --d-knob-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --w: var(--toggle-w, var(--d-w));
+  --h: var(--toggle-h, var(--d-h));
+  --pad: var(--toggle-pad, var(--d-pad));
+  flex: none;
   display: inline-flex;
   align-items: center;
-  width: 46px;
-  height: 26px;
-  padding: 3px;
+  width: var(--w);
+  height: var(--h);
+  padding: var(--pad);
   border: none;
   border-radius: var(--r-pill);
-  background: var(--fill-4);
+  background: var(--toggle-off, var(--d-off));
   cursor: pointer;
   transition: background-color var(--dur-fast) ease;
 }
 .on {
-  background: var(--brand);
+  background: var(--toggle-on, var(--brand));
 }
 .track:disabled {
   opacity: 0.45;
@@ -19,30 +34,29 @@
 }
 
 .knob {
-  width: 20px;
-  height: 20px;
+  width: calc(var(--h) - 2 * var(--pad));
+  height: calc(var(--h) - 2 * var(--pad));
   border-radius: var(--r-pill);
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  background: var(--toggle-knob, var(--d-knob));
+  box-shadow: var(--toggle-knob-shadow, var(--d-knob-shadow));
   transition: transform var(--dur-fast) var(--ease-out);
 }
 .on .knob {
-  transform: translateX(20px);
+  background: var(--toggle-knob-on, var(--toggle-knob, var(--d-knob-on)));
+  transform: translateX(calc(var(--w) - var(--h)));
 }
 .sm {
-  width: 39px;
-  height: 24px;
-  padding: 2px;
-  background: var(--switch-off);
+  --d-w: 39px;
+  --d-h: 24px;
+  --d-pad: 2px;
+  --d-off: var(--switch-off);
+  --d-knob: var(--switch-knob-off);
+  --d-knob-on: var(--text);
+  --d-knob-shadow: none;
 }
-.sm .knob {
-  background: var(--switch-knob-off);
-  box-shadow: none;
+.onLight:not(.on) {
+  background: var(--switch-off-on-light);
 }
-.sm.on {
-  background: var(--brand);
-}
-.sm.on .knob {
+.onLight .knob {
   background: var(--text);
-  transform: translateX(15px);
 }

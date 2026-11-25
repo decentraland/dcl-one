@@ -18,13 +18,13 @@ use axum::extract::ws::rejection::WebSocketUpgradeRejection;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, Uri};
 use axum::response::{IntoResponse, Response};
-use futures::{Sink, SinkExt};
+use dcl_metrics::ws::Socket;
+use futures::{Sink, SinkExt, StreamExt};
 use tokio::time::Instant;
 
 use crate::rpc::State;
 use crate::rpc::limits::Protocol;
 use crate::shared::identity::Address;
-use crate::shared::rpc::handshake::{HandshakeError, validator_ref, verify_handshake_number_ms};
 use crate::shared::rpc::ws::{
     AxumWsTransport, IdleAction, IdleTimer, RPC_TRANSPORT_CLOSED, SocketClose, close_message,
 };
@@ -57,6 +57,7 @@ pub async fn ws_upgrade(
         Err(rejection) => return rejection.into_response(),
     };
     if !state.initial_fanout_ready() {
+        dcl_metrics::ws::rejected("social_rpc", "unavailable");
         return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     // The mounted alias is retained for shipped clients; proxy headers do not
@@ -71,16 +72,14 @@ pub async fn ws_upgrade(
         .into_response()
 }
 
-async fn handle_connection(
-    state: Arc<State>,
-    paths: Vec<String>,
-    mut socket: WebSocket,
-) -> Result<()> {
+async fn handle_connection(state: Arc<State>, paths: Vec<String>, socket: WebSocket) -> Result<()> {
+    let mut socket = Socket::new(socket, "social_rpc");
     let max = state.settings.ws_max_concurrent_connections;
     let Some(slot) = state.ctx.open_socket(Protocol::Rpc, max) else {
+        dcl_metrics::ws::rejected("social_rpc", "capacity");
         tracing::warn!(max, "rejecting ws connection: pool is full");
         super::metrics::log("ws-handler", "warn");
-        metrics::counter!("ws_close_codes", "code" => "1013").increment(1);
+        dcl_metrics::counter!("ws_close_codes", "code" => "1013").increment(1);
         let _ = socket.send(close_message(POOL_FULL)).await;
         return Ok(());
     };
@@ -132,7 +131,7 @@ async fn handle_connection(
 async fn auth_handshake(
     state: &State,
     paths: &[String],
-    socket: &mut WebSocket,
+    socket: &mut Socket,
     close: &SocketClose,
     idle: &IdleTimer,
 ) -> Option<Address> {
@@ -151,23 +150,16 @@ async fn auth_handshake(
                 },
                 IdleAction::Expired => { close.peer_gone(); return None; },
             },
-            message = socket.recv() => match message {
-                Some(Ok(Message::Text(text))) => { metrics::counter!("ws_messages_received").increment(1); idle.activity(); break text.to_string(); },
-                Some(Ok(Message::Binary(bytes))) => { metrics::counter!("ws_messages_received").increment(1); idle.activity(); break String::from_utf8_lossy(&bytes).into_owned(); },
+            message = socket.next() => match message {
+                Some(Ok(Message::Text(text))) => { dcl_metrics::counter!("ws_messages_received").increment(1); idle.activity(); break text.to_string(); },
+                Some(Ok(Message::Binary(bytes))) => { dcl_metrics::counter!("ws_messages_received").increment(1); idle.activity(); break String::from_utf8_lossy(&bytes).into_owned(); },
                 Some(Ok(Message::Ping(_) | Message::Pong(_))) => { idle.activity(); continue; },
                 Some(Ok(Message::Close(frame))) => { close.peer_closed(frame.map_or(1005, |frame| frame.code)); return None; },
                 _ => { close.peer_gone(); return None; },
             },
         }
     };
-    let verification = verify_handshake_number_ms(
-        &frame,
-        "get",
-        paths,
-        state.settings.auth_signature_expiration_ms(),
-        chrono::Utc::now().timestamp_millis(),
-        validator_ref(&state.eip1654),
-    );
+    let verification = super::auth::verify_frame(state, paths, &frame);
     tokio::pin!(verification);
     // Upstream's timer runs until the verdict, and a frame sent meanwhile is
     // answered and dropped (`ws-handler.ts:374-384`).
@@ -186,7 +178,7 @@ async fn auth_handshake(
                 },
                 IdleAction::Expired => { close.peer_gone(); return None; },
             },
-            message = socket.recv() => match message {
+            message = socket.next() => match message {
                 Some(Ok(Message::Text(_) | Message::Binary(_))) => {
                     idle.activity();
                     super::metrics::log("ws-handler", "warn");
@@ -208,17 +200,15 @@ async fn auth_handshake(
     match verdict {
         Ok(address) => Some(address),
         Err(err) => {
-            let kind = match err {
-                HandshakeError::CatalystUnavailable(_) => "server_error",
-                _ => "client_rejected",
-            };
-            metrics::counter!(
+            let (reason, kind) = err.rejection_labels();
+            dcl_metrics::ws::rejected("social_rpc", reason);
+            dcl_metrics::counter!(
                 "ws_auth_errors_by_protocol",
                 "protocol" => Protocol::Rpc.label(),
                 "type" => kind
             )
             .increment(1);
-            metrics::counter!("ws_auth_errors", "type" => kind).increment(1);
+            dcl_metrics::counter!("ws_auth_errors", "type" => kind).increment(1);
             super::metrics::log(
                 "ws-handler",
                 if kind == "server_error" {

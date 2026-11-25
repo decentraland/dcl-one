@@ -142,7 +142,6 @@ pub async fn serve(state: AppState) -> u16 {
         state,
         true,
         Default::default(),
-        catalyst::comms::stats::http::test_support::matcher(),
         std::sync::Arc::new(catalyst::content::Denylist::default()),
     );
     let app = catalyst::comms::stats::http::merge_root(mounts.stats, mounts.statistics);

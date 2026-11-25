@@ -12,6 +12,22 @@ pub struct Error;
 pub trait Source: Send + Sync {
     async fn fetch(&self, pointers: &[String]) -> Result<Vec<OrderedJson>, Error>;
 }
+/// Fetches the active documents for a snapshot's hot-scene tiles, skipping the
+/// query when no tile is occupied. Callers take the snapshot and render the
+/// tiles first, so one retained view feeds both the query and the projection.
+pub async fn tile_documents(
+    source: &dyn Source,
+    tiles: &[(String, usize)],
+) -> Result<Vec<OrderedJson>, Error> {
+    if tiles.is_empty() {
+        return Ok(Vec::new());
+    }
+    let pointers = tiles
+        .iter()
+        .map(|(tile, _)| tile.clone())
+        .collect::<Vec<_>>();
+    source.fetch(&pointers).await
+}
 pub struct Content {
     pub pool: PgPool,
     pub denylist: Arc<crate::content::Denylist>,
@@ -76,12 +92,9 @@ fn thumbnail(scene: &OrderedJson, url: &str) -> Result<Option<OrderedJson>, Erro
     else {
         return Ok(None);
     };
-    if !truthy(value) {
-        return Ok(Some(value.clone()));
-    }
-    let name = value.as_str().ok_or(Error)?;
-    if name.starts_with("http") {
-        return Ok(Some(value.clone()));
+    // Only a file stored with the scene resolves to a thumbnail.
+    if !value.as_str().is_some_and(|name| !name.is_empty()) {
+        return Ok(None);
     }
     let Some(files) = scene.get("content").filter(|v| !v.is_null()) else {
         return Ok(None);

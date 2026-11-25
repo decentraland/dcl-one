@@ -37,6 +37,7 @@ use serde_json::{Value, json};
 
 use crate::auth::{AuthChain, AuthError, AuthLinkType, is_eth_address};
 use crate::comms::world_identity::{DCL_ETH_SUFFIX, ParcelSet, WorldName};
+use crate::content::entity::is_ipfs_v2;
 use crate::policy::Deploy;
 use crate::shared::identity::{Address, AuthorityNotEstablished};
 
@@ -51,8 +52,8 @@ use super::metrics as worlds_metrics;
 use super::partial;
 use super::store::{self, SceneDeployment};
 use super::upload_limits::DeployRejection;
-use super::upload_spool::{self, SpooledFile};
 use super::{SharedState, upload_limits};
+use catalyst_storage::upload_spool::SpooledFile;
 
 /// Payload cap for a deployment: every file chunk and field value, multipart framing excluded.
 pub const MAX_UPLOAD_SIZE_BYTES: usize = 350 * 1024 * 1024;
@@ -158,13 +159,24 @@ pub(super) async fn refuse_if_newer_scene(
     entity_id: &str,
     entity: &Value,
 ) -> Result<(), Response> {
+    store::entity_timestamp_value(entity).map_err(IntoResponse::into_response)?;
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(|e| internal(format!("newer-scene check: {e}")).into_response())?;
+    refuse_if_newer_scene_on(&mut conn, world, parcels, entity_id, entity).await
+}
+
+pub(super) async fn refuse_if_newer_scene_on(
+    conn: &mut sqlx::PgConnection,
+    world: &WorldName,
+    parcels: &[String],
+    entity_id: &str,
+    entity: &Value,
+) -> Result<(), Response> {
     let timestamp = store::entity_timestamp_value(entity).map_err(IntoResponse::into_response)?;
-    let newer = match state.pool.acquire().await {
-        Ok(mut conn) => {
-            store::newer_scene_deployed(&mut conn, world, parcels, entity_id, timestamp).await
-        }
-        Err(e) => Err(e),
-    };
+    let newer = store::newer_scene_deployed(conn, world, parcels, entity_id, timestamp).await;
     match newer {
         Ok(false) => Ok(()),
         Ok(true) => Err(failed(partial::NEWER_SCENE_MESSAGE).into_response()),
@@ -235,7 +247,7 @@ pub async fn deploy_entity(State(state): State<SharedState>, request: Request) -
 
     let mut bytes_lease = upload_limits::reserve_in_flight();
     let mut files_lease = upload_limits::reserve_in_flight_files();
-    let spool_root = upload_spool::spool_root(&state.storage);
+    let spool_root = super::spool_root(&state.storage);
     let receiving = Instant::now();
     let received = |outcome: &'static str, bytes: u64| {
         worlds_metrics::upload_received(
@@ -461,11 +473,6 @@ fn deprecated_config_error(entity: &Value) -> Option<&'static str> {
     None
 }
 
-/// `@dcl/schemas` `IPFSv2.validate`: `^(ba)[a-zA-Z0-9]{57}$`.
-fn is_ipfs_v2(name: &str) -> bool {
-    name.len() == 59 && name.starts_with("ba") && name.bytes().all(|b| b.is_ascii_alphanumeric())
-}
-
 /// The uploaded files in upload order, keyed by their form name (the form refuses a repeated
 /// name). Validation holds every name to the CIDv1 of its bytes before anything is stored.
 pub(super) struct Uploads {
@@ -676,6 +683,7 @@ pub(super) enum Check<'a> {
 /// now, or a partial upload's first batch.
 pub(super) async fn validate(
     state: &SharedState,
+    mut conn: Option<&mut sqlx::PgConnection>,
     entity: &Value,
     signer: &Address,
     entity_id: &str,
@@ -762,11 +770,11 @@ pub(super) async fn validate(
         return Err(failed(e));
     }
     let parcels = ParcelSet::parse(&pointers).map_err(|e| failed(e.to_string()))?;
-    let limits = state
-        .policy
-        .world_limits(&world)
-        .await
-        .map_err(|e| internal(format!("Failed to read the world limits of {world}: {e}")))?;
+    let limits = match conn.as_deref_mut() {
+        Some(conn) => state.policy.world_limits_on(conn, &world).await,
+        None => state.policy.world_limits(&world).await,
+    }
+    .map_err(|e| internal(format!("Failed to read the world limits of {world}: {e}")))?;
     if pointers.len() > limits.max_parcels as usize {
         return Err(failed(format!(
             "Max allowed scene dimensions is {} parcels.",
@@ -774,19 +782,32 @@ pub(super) async fn validate(
         )));
     }
 
-    if !state
-        .names
-        .check_name_deny_list(&state.pool, world_name)
-        .await
-    {
+    let name_allowed = match conn.as_deref_mut() {
+        Some(conn) => state.names.check_name_deny_list_on(conn, world_name).await,
+        None => {
+            state
+                .names
+                .check_name_deny_list(&state.pool, world_name)
+                .await
+        }
+    };
+    if !name_allowed {
         return Err(failed(format!(
             "Deployment failed: World \"{world_name}\" can not be deployed because the name is in the name deny list managed by Decentraland DAO."
         )));
     }
     let check_permission = !matches!(check, Check::Stage { permission: false });
-    let replacement = match check_permission {
-        false => None,
-        true => match state.policy.can_deploy(&world, signer, &parcels).await {
+    let replacement = if check_permission {
+        let decision = match conn.as_deref_mut() {
+            Some(conn) => {
+                state
+                    .policy
+                    .can_deploy_on(conn, &world, signer, &parcels)
+                    .await
+            }
+            None => state.policy.can_deploy(&world, signer, &parcels).await,
+        };
+        match decision {
             Ok(decision) => Some(decision),
             Err(AuthorityNotEstablished::RefusedLacksAuthority { detail }) => {
                 tracing::info!(world = %world, signer = %signer.as_str(), "deploy denied: {detail}");
@@ -805,9 +826,15 @@ pub(super) async fn validate(
                     "Not authorized: could not verify deployment permissions (deploy denied)",
                 ));
             }
-        },
+        }
+    } else {
+        None
     };
-    match store::is_world_disabled(&state.pool, &world).await {
+    let disabled = match conn.as_deref_mut() {
+        Some(conn) => store::is_world_disabled(conn, &world).await,
+        None => store::is_world_disabled(&state.pool, &world).await,
+    };
+    match disabled {
         Ok(false) => {}
         Ok(true) => return Err(forbidden(store::world_disabled(&world).public_message())),
         Err(e) => {
@@ -820,7 +847,11 @@ pub(super) async fn validate(
     let name_owner = match &replacement {
         None => None,
         Some(Deploy::Owner) => Some(signer.clone()),
-        Some(Deploy::Scoped(_)) => match state.policy.live_name_owner(&world).await {
+        Some(Deploy::Scoped(_)) => match state
+            .policy
+            .live_name_owner_using(conn.as_deref_mut(), &world)
+            .await
+        {
             Ok(Some(owner)) => Some(owner),
             Ok(None) => {
                 return Err(Refusal(
@@ -896,13 +927,33 @@ pub(super) async fn validate(
     }
     let size: i64 = sizes.values().copied().fold(0, i64::saturating_add);
     // A staging batch that skipped the permission resolves the owner here; it is refused alike.
-    let cap = state
-        .scene_cap(&world, &limits, name_owner.as_ref(), Some(pointers.as_slice()))
-        .await
-        .map_err(|e| {
-            tracing::warn!(world = %world, error = ?e, "deploy denied: storage allowance undetermined");
-            unavailable("Deployment failed: the storage allowance could not be determined right now")
-        })?;
+    let cap = match conn.as_deref_mut() {
+        Some(conn) => {
+            state
+                .scene_cap_on(
+                    conn,
+                    &world,
+                    &limits,
+                    name_owner.as_ref(),
+                    Some(pointers.as_slice()),
+                )
+                .await
+        }
+        None => {
+            state
+                .scene_cap(
+                    &world,
+                    &limits,
+                    name_owner.as_ref(),
+                    Some(pointers.as_slice()),
+                )
+                .await
+        }
+    }
+    .map_err(|e| {
+        tracing::warn!(world = %world, error = ?e, "deploy denied: storage allowance undetermined");
+        unavailable("Deployment failed: the storage allowance could not be determined right now")
+    })?;
     if size > cap.max {
         return Err(failed(super::quota::too_big(cap.max, size)));
     }
@@ -932,6 +983,48 @@ pub(super) async fn publish(
     validated: &Validated,
     completion: Option<&store::PartialCompletion<'_>>,
 ) -> Result<i64, Response> {
+    let mut conn = state.pool.acquire().await.map_err(|e| {
+        internal(format!(
+            "Failed to persist deployment {entity_id} to {}: {e:?}",
+            validated.world
+        ))
+        .into_response()
+    })?;
+    let deployed = persist_publish_on(
+        state,
+        &mut conn,
+        entity_id,
+        entity,
+        signer,
+        deployment_auth_chain,
+        validated,
+        completion,
+    )
+    .await?;
+    drop(conn);
+    Ok(finish_publish(
+        state,
+        headers,
+        entity_id,
+        signer,
+        validated,
+        completion.is_some(),
+        deployed,
+    )
+    .await)
+}
+
+#[allow(clippy::result_large_err, clippy::too_many_arguments)]
+pub(super) async fn persist_publish_on(
+    state: &SharedState,
+    conn: &mut sqlx::PgConnection,
+    entity_id: &str,
+    entity: &Value,
+    signer: &Address,
+    deployment_auth_chain: &Value,
+    validated: &Validated,
+    completion: Option<&store::PartialCompletion<'_>>,
+) -> Result<store::Deployed, Response> {
     let Validated {
         world,
         parcels,
@@ -945,8 +1038,8 @@ pub(super) async fn publish(
         return Err(internal("Publish without a deploy authorization").into_response());
     };
 
-    let persisted = store::deploy_scene_with(
-        &state.pool,
+    let persisted = store::deploy_scene_with_on(
+        &mut *conn,
         &state.storage,
         SceneDeployment {
             world,
@@ -990,6 +1083,27 @@ pub(super) async fn publish(
             .into_response());
         }
     };
+    Ok(deployed)
+}
+
+pub(super) async fn finish_publish(
+    state: &SharedState,
+    headers: &HeaderMap,
+    entity_id: &str,
+    signer: &Address,
+    validated: &Validated,
+    partial: bool,
+    deployed: store::Deployed,
+) -> i64 {
+    let Validated {
+        world,
+        replacement,
+        name_owner,
+        size,
+        ..
+    } = validated;
+    let replacement = replacement.as_ref().expect("persisted authorization");
+    let name_owner = name_owner.as_ref().expect("persisted owner");
     // A new holder's publish moved worlds.owner: re-decide the previous one now.
     if let Some(previous) = &deployed.previous_owner {
         state.policy.note_owner(world, Some(name_owner));
@@ -1001,7 +1115,7 @@ pub(super) async fn publish(
         signer = %signer.as_str(),
         world = %world,
         authz = match replacement { Deploy::Owner => "name-ownership", Deploy::Scoped(_) => "acl" },
-        partial = completion.is_some(),
+        partial,
         content_size = size,
         user_agent = headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("unknown"),
         forwarded = state.forwarder.is_some(),
@@ -1018,7 +1132,7 @@ pub(super) async fn publish(
     if let Some(forwarder) = &state.forwarder {
         forwarder.kick();
     }
-    Ok(deployed.created_at_ms)
+    deployed.created_at_ms
 }
 
 async fn deploy_entity_inner(
@@ -1077,6 +1191,7 @@ async fn deploy_entity_inner(
 
     let validated = match validate(
         state,
+        None,
         &entity,
         &signer,
         &entity_id,

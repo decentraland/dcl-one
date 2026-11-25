@@ -5,7 +5,7 @@
 // of fetchWearablesPage; equipping goes back through setAvatar.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Chip, ColorPicker, HintsButton, KeyCap, MaskIcon, OptionMenu, Pager, SearchField, Skeleton, Tabs, WearableCard, rarityPanel, rarityTile, type Rarity, type TabItem } from '../../design'
+import { Button, Chip, ColorPicker, HintsButton, KeyCap, MaskIcon, OptionMenu, Pager, SearchField, Skeleton, Tabs, WearableCard, rarityPanel, rarityTile, type Rarity, type TabItem, NameSeal } from '../../design'
 import allIcon from '../../assets/category-icons/all.png'
 import arrowLeftIcon from '../../assets/backpack/icon-arrow-left.webp'
 import emptySearchArt from '../../assets/backpack/empty-search.webp'
@@ -48,7 +48,7 @@ import { AvatarDragSurface } from '../engine/AvatarDragSurface'
 import { EngineViewport } from '../engine/EngineViewport'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { BackpackModal } from './BackpackModal'
-import type { AvatarColorTarget, Emote, Outfit, Wearable } from '@explorer-core/engine/protocol'
+import type { AvatarColorTarget, EngineViewportRegion, Emote, Outfit, Wearable } from '@explorer-core/engine/protocol'
 import type { BackpackState, EmotesState, OutfitHistory, ProfileState } from '../session/useEngineSession'
 import styles from './BackpackPage.module.css'
 import { withUtm } from '@explorer-core/lib/utm'
@@ -213,7 +213,8 @@ function EmptyResults({ search }: { search: boolean }): React.JSX.Element {
   )
 }
 
-function DetailPanel({ item }: { item: Wearable | Emote | null }): React.JSX.Element {
+// `onClose` is set where the panel lies over the avatar (the lobby's modal): it puts the selection away.
+function DetailPanel({ item, onClose }: { item: Wearable | Emote | null; onClose?: () => void }): React.JSX.Element {
   if (!item) {
     return (
       <aside className={`${styles.detail} ${styles.detailEmpty}`} style={{ '--panel-art': `url(${rarityPanel(null)})` } as React.CSSProperties}>
@@ -225,6 +226,11 @@ function DetailPanel({ item }: { item: Wearable | Emote | null }): React.JSX.Ele
   const category = 'category' in item ? item.category : 'emote'
   return (
     <aside className={styles.detail} style={{ '--panel-art': `url(${rarityPanel(rarity)})` } as React.CSSProperties}>
+      {onClose != null && (
+        <Button size="bare" radius="md" variant="shade" className={styles.detailClose} aria-label="Close item details" onClick={onClose}>
+          <MaskIcon src={closeIcon} size={10} />
+        </Button>
+      )}
       <div className={styles.detailImage}>
         <CatalystImg src={item.thumbnail} urn={item.urn} />
       </div>
@@ -299,19 +305,15 @@ function OutfitSlotCard({
   return (
     <div className={`${styles.outfitSlot} ${styles.outfitFull} ${equipped ? styles.outfitEquipped : ''}`.trim()}>
       <span className={styles.outfitHover} aria-hidden="true" />
-      <button
-        type="button"
-        className={styles.outfitThumbs}
-        style={{ backgroundImage: `url(${outfitArt})` }}
-        onDoubleClick={onEquip}
-        aria-label={`Outfit ${index + 1}`}
-      >
+      <span className={styles.outfitArt} style={{ backgroundImage: `url(${outfitArt})` }} aria-hidden="true">
         {thumbnail != null ? (
           <img className={styles.outfitPicture} src={thumbnail} alt="" />
         ) : (
-          <span className={styles.outfitNoPicture} style={{ maskImage: `url(${silhouette1})`, WebkitMaskImage: `url(${silhouette1})` }} aria-hidden="true" />
+          <span className={styles.outfitNoPicture} style={{ maskImage: `url(${silhouette1})`, WebkitMaskImage: `url(${silhouette1})` }} />
         )}
-      </button>
+      </span>
+      {/* the card's own button starts under the delete button's strip: the two never share an area */}
+      <button type="button" className={styles.outfitThumbs} onDoubleClick={onEquip} aria-label={`Outfit ${index + 1}`} />
       <span className={styles.outfitRing} aria-hidden="true" />
       <button type="button" className={styles.outfitDelete} onClick={onDelete} aria-label={`Delete Outfit ${index + 1}`}>
         <MaskIcon src={deleteIcon} size={24} />
@@ -321,17 +323,21 @@ function OutfitSlotCard({
   )
 }
 
+// The outlined seal with a tick on the NAME buttons.
 function NameBanner(): React.JSX.Element {
   return (
     <div className={styles.nameBanner}>
       <div className={styles.nameBannerText}>
         <h2 className={styles.nameBannerTitle}>Unlock 5 more Outfit slots by getting a NAME!</h2>
         <p className={styles.nameBannerBody}>
-          NAMEs are unique Decentraland usernames that come with a World, the ability to create Communities, 5 more Outfits slots,
+          NAMEs are unique Decentraland usernames that come with a <em>World</em>, the ability to create Communities, 5 more Outfits slots,
           and 100 Voting Power in the DAO.
         </p>
         <p className={styles.nameBannerBody}>Get your own for the full Decentraland experience!</p>
-        <a className={styles.nameBannerCta} href={NAMES_URL} target="_blank" rel="noopener noreferrer">GET A NAME</a>
+        <a className={styles.nameBannerCta} href={NAMES_URL} target="_blank" rel="noopener noreferrer">
+          <NameSeal />
+          GET A NAME
+        </a>
       </div>
       <img className={styles.nameBannerArt} src={nameBannerArt} alt="" />
     </div>
@@ -381,6 +387,7 @@ export function BackpackPage({
   onNavigate,
   modal = false,
   setEngineViewport,
+  previewReady = true,
   initialTab = 'wearables'
 }: {
   backpack: BackpackState
@@ -389,13 +396,18 @@ export function BackpackPage({
   onNavigate: (page: string) => void
   /** Over the lobby: a modal with its own close and no menu bar. */
   modal?: boolean
-  setEngineViewport: (region: 'map' | 'avatarPreview' | 'lobby', rect: { x: number; y: number; width: number; height: number } | null) => void
+  setEngineViewport: (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null) => void
+  /** The engine has drawn the avatar in the preview; until then the backdrop covers it. */
+  previewReady?: boolean
   /** Which tab to open on (e.g. the emote wheel's "Customise [E]" opens 'emotes'). */
   initialTab?: 'wearables' | 'emotes'
 }): React.JSX.Element | null {
   const [tab, setTab] = useState<BackpackTab>(initialTab)
   // The engine's camera view (the 960×960 preview), which the drag surface measures its zoom anchor on.
   const previewBox = useRef<HTMLDivElement>(null)
+  const previewFocus = useRef<HTMLDivElement>(null)
+  // Over the lobby the preview runs past the modal: the engine draws it only inside the page's box.
+  const pageBox = useRef<HTMLDivElement>(null)
   const [section, setSection] = useState<Section>('categories')
   const [cat, setCat] = useState('all')
   const [query, setQuery] = useState('')
@@ -525,6 +537,12 @@ export function BackpackPage({
     }
   }, [backpack.open, backpack.preview])
 
+  // A refused outfit save or delete is told in the Outfits tab until the player leaves it.
+  const showingOutfits = backpack.open && tab === 'wearables' && section === 'outfits'
+  useEffect(() => {
+    if (!showingOutfits) backpack.dismissOutfitError()
+  }, [showingOutfits, backpack.dismissOutfitError])
+
   if (!backpack.open) return null
 
   // The full equipped set = the decoupled equipped list (NOT the current page — the rest of the
@@ -589,8 +607,8 @@ export function BackpackPage({
       </MainMenuShell>
     )
   return shell(
-      <div className={`${styles.page} ${modal ? styles.inModal : ''}`.trim()}>
-        <div className={styles.backdrop} aria-hidden="true" />
+      <div ref={pageBox} className={`${styles.page} ${modal ? styles.inModal : ''}`.trim()}>
+        <div className={`${styles.backdrop} ${previewReady ? '' : styles.backdropShut}`.trim()} aria-hidden="true" />
         <header className={`${styles.head} ${styles.headIn}`}>
           <h1 className={styles.title}>Backpack</h1>
           <Tabs variant="section" className={styles.tabs} items={BACKPACK_TABS} value={tab} onChange={(t) => { setTab(t); setSelected(null) }} aria-label="Backpack sections" />
@@ -620,7 +638,8 @@ export function BackpackPage({
           <div className={`${styles.frame} ${styles.fadeIn}`}>
             {/* The engine draws the avatar preview here, seen through the backdrop's hole. */}
             <div ref={previewBox} className={styles.preview}>
-              <EngineViewport region="avatarPreview" report={setEngineViewport} />
+              <EngineViewport region="avatarPreview" report={setEngineViewport} focus={previewFocus} clip={modal ? pageBox : undefined} />
+              <div ref={previewFocus} className={styles.previewFocus} />
             </div>
             {/* Drag to turn the avatar, the wheel to zoom toward the pointer (HINTS); the zoom's anchor is
                 measured on the camera's whole view, wider than the column that takes the pointer. */}
@@ -655,6 +674,11 @@ export function BackpackPage({
                   aria-label="Saved outfits"
                   aria-busy={!backpack.outfitsLoaded}
                 >
+                  {backpack.warnAboutClearingExtraOutfits && (
+                    <p className={styles.outfitNotice}>
+                      Without a NAME, deleting any outfit in the second row clears the entire row.
+                    </p>
+                  )}
                   {[0, 1].map((row) => (
                     row === 1 && backpack.outfitSlots <= 5 ? <NameBanner key="banner" /> : (
                       <div key={row} className={styles.outfitRow}>
@@ -680,6 +704,9 @@ export function BackpackPage({
                       </div>
                     )
                   ))}
+                  {backpack.outfitError != null && (
+                    <p className={styles.outfitError} role="alert">{backpack.outfitError}</p>
+                  )}
                 </div>
               ) : (
               <div key="categories" className={`${styles.catalog} ${styles.slideFromLeft}`}>
@@ -827,7 +854,7 @@ export function BackpackPage({
             )}
 
           {/* Right: the selected wearable/emote. Not in Saved Outfits, nor beside an empty wearables grid. */}
-          {!inOutfits && !(tab === 'wearables' && !backpack.loading && pageItems.length === 0) && <DetailPanel item={selected} />}
+          {!inOutfits && !(tab === 'wearables' && !backpack.loading && pageItems.length === 0) && <DetailPanel item={selected} onClose={modal ? () => setSelected(null) : undefined} />}
           </section>
           </div>
         </div>

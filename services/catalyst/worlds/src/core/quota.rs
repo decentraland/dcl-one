@@ -230,9 +230,19 @@ pub async fn recheck_charge(
 impl CoreState {
     /// The DCL world keys `wallet` holds now; `None` without a names reader.
     pub async fn held_worlds(&self, wallet: &Address) -> Result<Option<Vec<String>>, String> {
+        self.held_worlds_using(None, wallet).await
+    }
+
+    /// [`Self::held_worlds`], read on `conn` when given (a session the caller
+    /// holds, never a second pool connection).
+    pub async fn held_worlds_using(
+        &self,
+        conn: Option<&mut sqlx::PgConnection>,
+        wallet: &Address,
+    ) -> Result<Option<Vec<String>>, String> {
         let labels = self
             .policy
-            .held_name_labels(wallet)
+            .held_name_labels_using(conn, wallet)
             .await
             .map_err(|e| e.to_string())?;
         Ok(labels.map(|labels| labels.iter().map(|l| format!("{l}.dcl.eth")).collect()))
@@ -260,6 +270,30 @@ impl CoreState {
         owner: Option<&Address>,
         parcels: Option<&[String]>,
     ) -> Result<SceneCap, CapError> {
+        self.scene_cap_using(None, world, limits, owner, parcels)
+            .await
+    }
+
+    pub async fn scene_cap_on(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        world: &WorldName,
+        limits: &WorldLimits,
+        owner: Option<&Address>,
+        parcels: Option<&[String]>,
+    ) -> Result<SceneCap, CapError> {
+        self.scene_cap_using(Some(conn), world, limits, owner, parcels)
+            .await
+    }
+
+    async fn scene_cap_using(
+        &self,
+        mut conn: Option<&mut sqlx::PgConnection>,
+        world: &WorldName,
+        limits: &WorldLimits,
+        owner: Option<&Address>,
+        parcels: Option<&[String]>,
+    ) -> Result<SceneCap, CapError> {
         if limits.size_overridden || !counts_against_allowance(world) {
             return Ok(SceneCap {
                 max: limits.max_size_bytes,
@@ -268,12 +302,12 @@ impl CoreState {
         }
         let owner = match owner {
             Some(owner) => owner.clone(),
-            None => self
-                .policy
-                .current_owner(world)
-                .await
-                .map_err(|e| CapError::Unavailable(e.to_string()))?
-                .ok_or(CapError::OwnerNotFound)?,
+            None => match conn.as_deref_mut() {
+                Some(conn) => self.policy.current_owner_on(conn, world).await,
+                None => self.policy.current_owner(world).await,
+            }
+            .map_err(|e| CapError::Unavailable(e.to_string()))?
+            .ok_or(CapError::OwnerNotFound)?,
         };
         // No allowance source: nothing to re-check, so no wallet lock.
         if !self.allowance.is_limited() {
@@ -288,7 +322,7 @@ impl CoreState {
             .await
             .map_err(CapError::Unavailable)?;
         let mut held = self
-            .held_worlds(&owner)
+            .held_worlds_using(conn.as_deref_mut(), &owner)
             .await
             .map_err(CapError::Unavailable)?;
         // `owner` was resolved as this world's holder.
@@ -297,7 +331,15 @@ impl CoreState {
         {
             held.push(world.key().to_string());
         }
-        let usage = wallet_usage(&self.pool, &owner, held.as_deref()).await?;
+        let mut acquired;
+        let conn: &mut sqlx::PgConnection = match conn {
+            Some(conn) => conn,
+            None => {
+                acquired = self.pool.acquire().await?;
+                &mut acquired
+            }
+        };
+        let usage = wallet_usage(&mut *conn, &owner, held.as_deref()).await?;
         let charged_world = usage.dcl_names.iter().find(|w| w.name == world.key());
         // Only scenes the owner's usage counts are credited.
         let credited: i64 = match (parcels, charged_world) {
@@ -309,7 +351,7 @@ impl CoreState {
                 )
                 .bind(world.key())
                 .bind(parcels)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *conn)
                 .await?
             }
             (None, Some(w)) => w.size,

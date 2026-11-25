@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import Button from '@ui/atoms/Button';
+import Checkbox from '@ui/atoms/Checkbox';
+import { ExpandMoreIcon, InfoOutlinedIcon, OpenInNewIcon } from '@ui/atoms/icons-material';
+import ProgressBar from '@ui/atoms/ProgressBar';
+import { Select, SelectOption } from '@ui/atoms/Select';
+import Slider from '@ui/atoms/Slider';
+import Text from '@ui/atoms/Text';
+import Toggle from '@ui/atoms/Toggle';
+import { Tooltip } from '@dcl/one-ui';
 
 import {
   DEFAULT_OPTIMIZE_OPTIONS,
@@ -9,21 +16,6 @@ import {
   type TextureFormat,
 } from '/shared/types/optimizer';
 import type { Project } from '/shared/types/projects';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import {
-  Box,
-  Button,
-  Checkbox,
-  FormControlLabel,
-  LinearProgress,
-  MenuItem,
-  Select,
-  Slider,
-  Switch,
-  TextField,
-  Tooltip,
-  Typography,
-} from 'decentraland-ui2';
 import { formatBytes } from '/shared/utils';
 import { misc, optimizer as optimizerPreload } from '#preload';
 import { useDispatch, useSelector } from '#store';
@@ -31,7 +23,7 @@ import { useSettings } from '/@/hooks/useSettings';
 import { actions } from '/@/modules/store/optimizer';
 import { t } from '/@/modules/store/translation/utils';
 
-import { Modal } from '../Modals';
+import { Modal, type ModalCloseReason } from '../Modals';
 import './styles.css';
 
 function formatDate(epochMs: number): string {
@@ -48,9 +40,12 @@ const DOCS_URL = 'https://docs.decentraland.org/creator/optimize-models';
 function InfoTip({ tip }: { tip: string }) {
   return (
     <Tooltip
-      title={tip}
-      placement="top"
+      label={tip}
+      side="top"
       arrow
+      portal
+      keepInViewport
+      maxWidth={300}
     >
       <InfoOutlinedIcon
         className="info-tip"
@@ -99,33 +94,65 @@ function SizeField({
   value: number;
   onChange: (value: number) => void;
 }) {
+  const labelId = useId();
   return (
-    <TextField
-      select
-      size="small"
-      label={label}
-      value={value}
-      onChange={event => onChange(Number(event.target.value))}
-    >
-      {TEXTURE_SIZES.map(size => (
-        <MenuItem
-          key={size}
-          value={size}
-        >
-          {size}
-        </MenuItem>
-      ))}
-    </TextField>
+    <div className="size-field">
+      <span id={labelId}>{label}</span>
+      <Select
+        size="small"
+        fullWidth
+        aria-labelledby={labelId}
+        value={String(value)}
+        onChange={size => onChange(Number(size))}
+      >
+        {TEXTURE_SIZES.map(size => (
+          <SelectOption
+            key={size}
+            value={String(size)}
+          >
+            {size}
+          </SelectOption>
+        ))}
+      </Select>
+    </div>
   );
 }
 
-// Label + info icon, for use as a FormControlLabel `label` or a standalone field label.
-function LabelWithInfo({ text, tip }: { text: string; tip: string }) {
+// Label + info icon, for a switch or a field. `id` lets the control take the text as its name.
+function LabelWithInfo({ id, text, tip }: { id?: string; text: string; tip: string }) {
   return (
     <span className="label-with-info">
-      {text}
+      <span id={id}>{text}</span>
       <InfoTip tip={tip} />
     </span>
+  );
+}
+
+function ToggleRow({
+  checked,
+  text,
+  tip,
+  onChange,
+}: {
+  checked: boolean;
+  text: string;
+  tip: string;
+  onChange: (checked: boolean) => void;
+}) {
+  const labelId = useId();
+  return (
+    <label className="toggle-row">
+      <Toggle
+        checked={checked}
+        ariaLabelledBy={labelId}
+        onChange={onChange}
+      />
+      <LabelWithInfo
+        id={labelId}
+        text={text}
+        tip={tip}
+      />
+    </label>
   );
 }
 
@@ -150,6 +177,8 @@ export function OptimizeModal({ project }: { project?: Project | null }) {
   const [showTools, setShowTools] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const { settings, updateAppSettings } = useSettings();
+  const formatLabelId = useId();
+  const qualityLabelId = useId();
 
   const projectPath = project?.path ?? null;
   const isRunning = runStatus === 'loading';
@@ -218,13 +247,11 @@ export function OptimizeModal({ project }: { project?: Project | null }) {
     if (!isRunning && !isReverting) dispatch(actions.close());
   }, [isRunning, isReverting, dispatch]);
 
-  // MUI calls onClose(event, reason) for the backdrop and Escape; the X passes a click event.
   // Configuring and running a job should not be lost to a stray click beside the dialog, so
-  // only the X, Escape and the buttons close it. ui2 types the prop as a plain click handler,
-  // so the reason is read off the rest args — a variadic handler is assignable to it as is.
+  // only the X, Escape and the buttons close it.
   const handleModalClose = useCallback(
-    (...args: unknown[]) => {
-      if (args[1] === 'backdropClick') return;
+    (_event?: unknown, reason?: ModalCloseReason) => {
+      if (reason === 'backdropClick') return;
       handleClose();
     },
     [handleClose],
@@ -282,12 +309,12 @@ export function OptimizeModal({ project }: { project?: Project | null }) {
     >
       {!acknowledged ? (
         <div className="OptimizeModal consent">
-          <Typography
+          <Text
             variant="body2"
             className="subtitle"
           >
             {t('optimize.consent.blurb')}
-          </Typography>
+          </Text>
           <Disclosure
             open={showTools}
             label={
@@ -331,86 +358,84 @@ export function OptimizeModal({ project }: { project?: Project | null }) {
               ))}
             </ul>
           )}
-          <Typography
+          <Text
             variant="caption"
             className="consent-note"
           >
             {tools?.status === 'missing'
               ? `${t('optimize.consent.download', { size: tools.downloadSizeMb })} ${t('optimize.consent.note')}`
               : t('optimize.consent.note')}
-          </Typography>
-          <FormControlLabel
+          </Text>
+          <Checkbox
             className="dont-show-again"
-            control={
-              <Checkbox
-                size="small"
-                checked={dontShowAgain}
-                onChange={e => setDontShowAgain(e.target.checked)}
-              />
-            }
-            label={t('optimize.consent.dont_show_again')}
-          />
-          <Box className="actions">
+            size="sm"
+            checked={dontShowAgain}
+            onChange={setDontShowAgain}
+          >
+            {t('optimize.consent.dont_show_again')}
+          </Checkbox>
+          <div className="actions">
             <Button
-              variant="contained"
+              variant="primary"
               disabled={!tools}
               onClick={handleAcknowledge}
             >
               {t('optimize.consent.continue')}
             </Button>
             <Button
-              variant="outlined"
+              variant="outline"
               onClick={handleClose}
             >
               {t('optimize.consent.cancel')}
             </Button>
-          </Box>
+          </div>
         </div>
       ) : tools?.status !== 'ready' ? (
         <div className="OptimizeModal installing">
-          <Typography
+          <Text
             variant="body2"
             className="subtitle"
           >
             {t('optimize.tools.installing_blurb')}
-          </Typography>
+          </Text>
           {installStatus === 'failed' ? (
             <>
-              <Typography className="error">
-                {t('optimize.tools.failed', { message: error ?? '' })}
-              </Typography>
-              <Box className="actions">
+              <Text className="error">{t('optimize.tools.failed', { message: error ?? '' })}</Text>
+              <div className="actions">
                 <Button
-                  variant="contained"
+                  variant="primary"
                   onClick={() => projectPath && dispatch(actions.installTools(projectPath))}
                 >
                   {t('optimize.tools.retry')}
                 </Button>
                 <Button
-                  variant="outlined"
+                  variant="outline"
                   onClick={handleClose}
                 >
                   {t('optimize.consent.cancel')}
                 </Button>
-              </Box>
+              </div>
             </>
           ) : (
-            <Box className="progress">
-              <LinearProgress variant="indeterminate" />
+            <div className="progress">
+              <ProgressBar
+                indeterminate
+                aria-label={t('optimize.tools.installing')}
+              />
               <span className="progress-message">
                 {progress?.phase === 'install' ? progress.message : t('optimize.tools.installing')}
               </span>
-            </Box>
+            </div>
           )}
         </div>
       ) : (
         <div className="OptimizeModal">
-          <Typography
+          <Text
             variant="body2"
             className="subtitle"
           >
             {t('optimize.subtitle')}
-          </Typography>
+          </Text>
 
           <button
             type="button"
@@ -422,9 +447,9 @@ export function OptimizeModal({ project }: { project?: Project | null }) {
           </button>
 
           {scanStatus === 'succeeded' && scan && (
-            <Box className="summary">
+            <div className="summary">
               {scan.glbCount === 0 ? (
-                <Typography className="empty">{t('optimize.scan.empty')}</Typography>
+                <Text className="empty">{t('optimize.scan.empty')}</Text>
               ) : (
                 <>
                   <span>{t('optimize.scan.glbs', { count: scan.glbCount })}</span>
@@ -450,95 +475,66 @@ export function OptimizeModal({ project }: { project?: Project | null }) {
                   )}
                 </>
               )}
-            </Box>
+            </div>
           )}
 
-          <Box className="options">
-            <Typography variant="h6">{t('optimize.options.mesh.title')}</Typography>
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={options.mesh.enabled}
-                  onChange={e => updateMesh({ enabled: e.target.checked })}
-                />
-              }
-              label={
-                <LabelWithInfo
-                  text={t('optimize.options.mesh.enabled')}
-                  tip={t('optimize.options.mesh.enabled_tip')}
-                />
-              }
+          <div className="options">
+            <Text variant="h6">{t('optimize.options.mesh.title')}</Text>
+            <ToggleRow
+              checked={options.mesh.enabled}
+              text={t('optimize.options.mesh.enabled')}
+              tip={t('optimize.options.mesh.enabled_tip')}
+              onChange={enabled => updateMesh({ enabled })}
             />
-            <Typography variant="h6">{t('optimize.options.textures.title')}</Typography>
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={options.textures.compress}
-                  onChange={e => updateTextures({ compress: e.target.checked })}
-                />
-              }
-              label={
-                <LabelWithInfo
-                  text={t('optimize.options.textures.compress')}
-                  tip={t('optimize.options.textures.compress_tip')}
-                />
-              }
+            <Text variant="h6">{t('optimize.options.textures.title')}</Text>
+            <ToggleRow
+              checked={options.textures.compress}
+              text={t('optimize.options.textures.compress')}
+              tip={t('optimize.options.textures.compress_tip')}
+              onChange={compress => updateTextures({ compress })}
             />
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={options.textures.dedup}
-                  onChange={e => updateTextures({ dedup: e.target.checked })}
-                />
-              }
-              label={
-                <LabelWithInfo
-                  text={t('optimize.options.textures.dedup')}
-                  tip={t('optimize.options.textures.dedup_tip')}
-                />
-              }
+            <ToggleRow
+              checked={options.textures.dedup}
+              text={t('optimize.options.textures.dedup')}
+              tip={t('optimize.options.textures.dedup_tip')}
+              onChange={dedup => updateTextures({ dedup })}
             />
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={options.textures.externalize}
-                  onChange={e => updateTextures({ externalize: e.target.checked })}
-                />
-              }
-              label={
-                <LabelWithInfo
-                  text={t('optimize.options.textures.externalize')}
-                  tip={t('optimize.options.textures.externalize_tip')}
-                />
-              }
+            <ToggleRow
+              checked={options.textures.externalize}
+              text={t('optimize.options.textures.externalize')}
+              tip={t('optimize.options.textures.externalize_tip')}
+              onChange={externalize => updateTextures({ externalize })}
             />
 
             {options.textures.compress && (
               <>
-                <Box className="row">
+                <div className="row">
                   <LabelWithInfo
+                    id={formatLabelId}
                     text={t('optimize.options.textures.format')}
                     tip={t('optimize.options.textures.format_tip')}
                   />
                   <Select
                     size="small"
+                    aria-labelledby={formatLabelId}
                     value={options.textures.format}
-                    onChange={e => updateTextures({ format: e.target.value as TextureFormat })}
+                    onChange={format => updateTextures({ format })}
                   >
                     {FORMATS.map(f => (
-                      <MenuItem
+                      <SelectOption
                         key={f}
                         value={f}
                       >
                         {f.toUpperCase()}
-                      </MenuItem>
+                      </SelectOption>
                     ))}
                   </Select>
-                </Box>
+                </div>
 
                 {options.textures.format !== 'png' && (
-                  <Box className="slider">
+                  <div className="quality-field">
                     <LabelWithInfo
+                      id={qualityLabelId}
                       text={t('optimize.options.textures.quality')}
                       tip={t('optimize.options.textures.quality_tip')}
                     />
@@ -546,19 +542,19 @@ export function OptimizeModal({ project }: { project?: Project | null }) {
                       min={1}
                       max={100}
                       value={options.textures.quality}
-                      valueLabelDisplay="auto"
-                      onChange={(_, v) => updateTextures({ quality: v as number })}
+                      ariaLabelledBy={qualityLabelId}
+                      onChange={quality => updateTextures({ quality })}
                     />
-                  </Box>
+                  </div>
                 )}
 
-                <Typography className="sizes-title">
+                <Text className="sizes-title">
                   <LabelWithInfo
                     text={t('optimize.options.textures.sizes')}
                     tip={t('optimize.options.textures.sizes_tip')}
                   />
-                </Typography>
-                <Box className="sizes">
+                </Text>
+                <div className="sizes">
                   {TEXTURE_CATEGORIES.map(cat => (
                     <SizeField
                       key={cat}
@@ -567,34 +563,35 @@ export function OptimizeModal({ project }: { project?: Project | null }) {
                       onChange={size => updateSize(cat, size)}
                     />
                   ))}
-                </Box>
+                </div>
               </>
             )}
-          </Box>
+          </div>
 
           {isRunning && (
-            <Box className="progress">
-              <LinearProgress
-                variant={progress && progress.total > 0 ? 'determinate' : 'indeterminate'}
+            <div className="progress">
+              <ProgressBar
+                indeterminate={!(progress && progress.total > 0)}
                 value={percent}
+                aria-label={t('optimize.running')}
               />
               <span className="progress-message">{progress?.message ?? t('optimize.running')}</span>
-            </Box>
+            </div>
           )}
 
           {error && (runStatus === 'failed' || revertStatus === 'failed') && (
-            <Typography className="error">
+            <Text className="error">
               {/* `error` is shared, and whichever action failed most recently owns it: both
                   pending reducers clear it, and starting a run resets revertStatus. */}
               {revertStatus === 'failed'
                 ? t('optimize.revert_error', { message: error })
                 : t('optimize.error', { message: error })}
-            </Typography>
+            </Text>
           )}
 
           {result && runStatus === 'succeeded' && (
-            <Box className="result">
-              <Typography variant="h6">{t('optimize.result.title')}</Typography>
+            <div className="result">
+              <Text variant="h6">{t('optimize.result.title')}</Text>
               <span className="saved">
                 {t('optimize.result.saved', {
                   saved: formatBytes(savings.saved),
@@ -699,14 +696,14 @@ export function OptimizeModal({ project }: { project?: Project | null }) {
                   })}
                 </div>
               )}
-            </Box>
+            </div>
           )}
 
-          <Box className="actions">
+          <div className="actions">
             {result && runStatus === 'succeeded' ? (
               <>
                 <Button
-                  variant="contained"
+                  variant="primary"
                   onClick={handleClose}
                 >
                   {t('optimize.done')}
@@ -721,7 +718,7 @@ export function OptimizeModal({ project }: { project?: Project | null }) {
               </>
             ) : (
               <Button
-                variant="contained"
+                variant="primary"
                 disabled={isRunning || !projectPath || scan?.glbCount === 0}
                 onClick={handleRun}
               >
@@ -730,14 +727,14 @@ export function OptimizeModal({ project }: { project?: Project | null }) {
             )}
             {scan?.hasBackup && (
               <Button
-                variant="outlined"
+                variant="outline"
                 disabled={isRunning || isReverting}
                 onClick={handleRevert}
               >
                 {isReverting ? t('optimize.reverting') : t('optimize.revert')}
               </Button>
             )}
-          </Box>
+          </div>
         </div>
       )}
     </Modal>

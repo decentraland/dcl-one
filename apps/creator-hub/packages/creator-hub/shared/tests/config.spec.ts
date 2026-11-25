@@ -1,11 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_CONFIG,
   dropCompressAssetsSettings,
   dropGuiEditorSetting,
+  mergeConfig,
   promoteAiAssistantSetting,
+  promoteScenesPath,
 } from '../types/config';
+import type { Config } from '../types/config';
 import type { AppSettings } from '../types/settings';
 
 type LegacySettings = Partial<AppSettings> & { guiEditor?: boolean };
@@ -164,5 +167,166 @@ describe('promoteAiAssistantSetting', () => {
 describe('DEFAULT_CONFIG', () => {
   it('should keep AI agents outside Creator Hub opt-in', () => {
     expect(DEFAULT_CONFIG.settings.exposeMcpServer).toBe(false);
+  });
+});
+
+describe('mergeConfig', () => {
+  let defaults: Config;
+
+  beforeEach(() => {
+    defaults = structuredClone(DEFAULT_CONFIG);
+    defaults.settings.scenesPath = '/home/creator/scenes';
+    defaults.workspace.paths = ['/default/scene'];
+  });
+
+  describe('when the stored config has only some of the keys', () => {
+    let merged: Config;
+
+    beforeEach(() => {
+      merged = mergeConfig(
+        {
+          workspace: { paths: ['/scenes/a', '/scenes/b'] },
+          settings: { previewOptions: { debugger: false } },
+        } as unknown as Partial<Config>,
+        defaults,
+      );
+    });
+
+    it('should keep the stored values', () => {
+      expect(merged.settings.previewOptions.debugger).toBe(false);
+    });
+
+    it('should take the other values from the defaults, at each depth', () => {
+      expect(merged.version).toBe(defaults.version);
+      expect(merged.settings.scenesPath).toBe('/home/creator/scenes');
+      expect(merged.settings.previewOptions.skipAuthScreen).toBe(true);
+    });
+
+    it('should replace a default array with the stored array, not join them', () => {
+      expect(merged.workspace.paths).toEqual(['/scenes/a', '/scenes/b']);
+    });
+
+    it('should not share an object with the defaults', () => {
+      merged.settings.previewOptions.showWarnings = false;
+
+      expect(defaults.settings.previewOptions.showWarnings).toBe(true);
+    });
+  });
+
+  describe('when the stored config has keys that the defaults do not have', () => {
+    it('should keep them after the keys of the defaults', () => {
+      const merged = mergeConfig({ userId: 'user', version: 1 }, defaults);
+
+      expect(merged.userId).toBe('user');
+      expect(Object.keys(merged)).toEqual([...Object.keys(defaults), 'userId']);
+    });
+  });
+
+  describe('when a stored value is of another type than the default', () => {
+    it('should keep the stored value', () => {
+      const merged = mergeConfig(
+        { editors: null, workspace: [] } as unknown as Partial<Config>,
+        defaults,
+      );
+
+      expect(merged.editors).toBeNull();
+      expect(merged.workspace).toEqual([]);
+    });
+  });
+
+  describe('when the stored config has a __proto__ key', () => {
+    it('should not change the prototype of the result', () => {
+      const stored = JSON.parse(
+        '{"__proto__":{"polluted":true},"settings":{"__proto__":{"polluted":true}}}',
+      );
+
+      const merged = mergeConfig(stored, defaults) as Config & { polluted?: boolean };
+
+      expect(merged.polluted).toBeUndefined();
+      expect((merged.settings as AppSettings & { polluted?: boolean }).polluted).toBeUndefined();
+      expect(Object.getPrototypeOf(merged)).toBe(Object.prototype);
+    });
+  });
+});
+
+describe('promoteScenesPath', () => {
+  const legacyPath = '/user/data/Scenes';
+  const defaultPath = '/home/me/Decentraland/Scenes';
+
+  describe('when the install still uses the hidden app data folder and it holds no scenes', () => {
+    it.each([legacyPath, `${legacyPath}/`, ''])(
+      'should move "%s" to the visible default and record that it has run',
+      scenesPath => {
+        const settings: StoredSettings = { scenesPath: scenesPath || defaultPath };
+
+        promoteScenesPath(settings, {
+          storedPath: scenesPath,
+          legacyPath,
+          defaultPath,
+          legacyHasScenes: false,
+        });
+
+        expect(settings).toEqual({ scenesPath: defaultPath, scenesPathPromoted: true });
+      },
+    );
+  });
+
+  describe('when the hidden app data folder holds scenes', () => {
+    it('should keep the folder and record that it has run', () => {
+      const settings: StoredSettings = { scenesPath: legacyPath };
+
+      promoteScenesPath(settings, {
+        storedPath: legacyPath,
+        legacyPath,
+        defaultPath,
+        legacyHasScenes: true,
+      });
+
+      expect(settings).toEqual({ scenesPath: legacyPath, scenesPathPromoted: true });
+    });
+
+    it('should keep it when the stored config names no folder', () => {
+      // The merge has already filled in the new default.
+      const settings: StoredSettings = { scenesPath: defaultPath };
+
+      promoteScenesPath(settings, {
+        storedPath: undefined,
+        legacyPath,
+        defaultPath,
+        legacyHasScenes: true,
+      });
+
+      expect(settings).toEqual({ scenesPath: legacyPath, scenesPathPromoted: true });
+    });
+  });
+
+  describe('when the user chose another folder', () => {
+    it('should keep it and record that it has run', () => {
+      const settings: StoredSettings = { scenesPath: '/projects/dcl' };
+
+      promoteScenesPath(settings, {
+        storedPath: '/projects/dcl',
+        legacyPath,
+        defaultPath,
+        legacyHasScenes: false,
+      });
+
+      expect(settings).toEqual({ scenesPath: '/projects/dcl', scenesPathPromoted: true });
+    });
+  });
+
+  describe('when it has already run', () => {
+    it('should leave a later choice of the old folder alone', () => {
+      const settings: StoredSettings = { scenesPath: legacyPath, scenesPathPromoted: true };
+
+      promoteScenesPath(settings, {
+        storedPath: legacyPath,
+        legacyPath,
+        defaultPath,
+        legacyHasScenes: false,
+      });
+
+      expect(settings).toEqual({ scenesPath: legacyPath, scenesPathPromoted: true });
+    });
   });
 });

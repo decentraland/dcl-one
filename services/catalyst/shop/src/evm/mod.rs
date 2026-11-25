@@ -37,6 +37,8 @@
 //!   (`CATALYRST_ECONOMY_ADMIN_TOKEN`; the old loopback exemption is gone
 //!   with the per-service listener) and the write gate.
 //! - `broker-reconcile` job: the three ledgers' unsettled rows -> receipts.
+//! - `relayer-accounts` job (every process): the OZ relayer's account list,
+//!   which `POST /v1/transactions` refuses as the user.
 //!
 //! Every write is local authority behind `DATA_WRITES_ENABLED`
 //! (`crate::shared::writes::DataWrites`, the social switch's twin): off, every
@@ -65,9 +67,9 @@ mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{get, post};
 use alloy_primitives::{Address, U256};
 use axum::Router;
-use axum::routing::{get, post};
 use chrono::NaiveDateTime;
 use sqlx::PgPool;
 
@@ -101,7 +103,10 @@ pub struct Settings {
     pub min_sale_value_in_wei: String,
     /// `MAX_TRANSACTIONS_PER_DAY` (10): the per-address relay quota.
     pub max_transactions_per_day: i64,
-    /// `CONTRACT_ADDRESSES_URL`: the dApps' contract-addresses JSON; unset, only the mirror admits.
+    /// `MAX_RELAYED_TRANSACTIONS_PER_DAY` (20,000): free (non-sale, non-credits) calls relayed per day across every address; 0 is no limit.
+    pub max_relayed_transactions_per_day: i64,
+    /// `CONTRACT_ADDRESSES_URL`: the dApps' contract-addresses JSON; unset, the copy this node
+    /// serves (`contracts::ADDRESSES_JSON`). Either way the collections mirror admits too.
     pub contract_addresses_url: Option<String>,
     /// `CONTRACT_ADDRESSES_CHAIN_KEY` (matic): the key inside that JSON.
     pub contract_addresses_chain_key: String,
@@ -124,8 +129,14 @@ pub struct Settings {
     pub trial_mode: bool,
     /// `CREDITS_TRIAL_BUYERS` under `CREDITS_TRIAL_MODE`: the only wallets whose signed
     /// meta-transactions the relay accepts (`TransactionComponent::check_data`), so the trial's
-    /// funded relayer pays gas for its buyers alone. `None` outside a trial.
+    /// funded relayer pays gas for its buyers alone, unless [`Self::trial_relay_all_wallets`].
+    /// `None` outside a trial.
     pub trial_buyers: Option<crate::credits::trial::TrialBuyers>,
+    /// `CREDITS_TRIAL_RELAY_ALL_WALLETS` (false): under `CREDITS_TRIAL_MODE`, the relay accepts
+    /// every wallet's meta-transactions, not only the buyers'. It changes nothing else: the
+    /// credits lane keeps its own copy of the buyers, and the trial's one capped route and the
+    /// per-address quota stay. Ignored outside a trial.
+    pub trial_relay_all_wallets: bool,
     /// `OZ_RELAYER_URL`, `OZ_RELAYER_ID`, `OZ_RELAYER_API_KEY` (`_FILE`): the OZ Defender relayer, active with all three.
     pub oz_relayer_url: Option<String>,
     pub oz_relayer_id: Option<String>,
@@ -134,11 +145,15 @@ pub struct Settings {
     pub oz_relayer_speed: String,
     pub oz_max_status_checks: u32,
     pub oz_sleep_between_checks: Duration,
+    /// How long a relay waits for the first read of the OZ relayer accounts (5s; not read from
+    /// the environment).
+    pub oz_accounts_first_wait: Duration,
     /// `META_TX_BROADCAST_ENABLED` (false): arms the direct signers.
     pub meta_tx_broadcast_enabled: bool,
     /// `RELAYER_PRIVATE_KEY` via `RELAYER_PRIVATE_KEY_FILE`: the relayer EOA's key.
     pub relayer_private_key: Option<String>,
-    /// `TRANSACTIONS_UPSTREAM_URL`, `TRANSACTIONS_UPSTREAM_TIMEOUT_MS` (30000): the forward fallback.
+    /// `TRANSACTIONS_UPSTREAM_URL`, `TRANSACTIONS_UPSTREAM_TIMEOUT_MS` (30000): the forward fallback
+    /// of a testnet relay; a Polygon mainnet relay refuses to start with it ([`Settings::validate`]).
     pub transactions_upstream_url: Option<String>,
     pub transactions_upstream_timeout: Duration,
     /// `CATALYRST_ECONOMY_ADMIN_TOKEN` (`_FILE`): the bearer of the money routes; unset refuses them.
@@ -148,6 +163,9 @@ pub struct Settings {
     /// `NAMES_CHAIN_ID` (1), `ETH_RPC_URL` (`Config::eth_rpc_url()`), `NAMES_MAX_PRICE_WEI`.
     pub names_chain_id: u64,
     pub eth_rpc_url: Option<String>,
+    /// `NAMES_SIGNER_ENABLED` (true): whether the relayer key also signs on the NAMEs chain.
+    /// False keeps `ETH_RPC_URL` for its readers and builds no NAMEs chain signer.
+    pub names_signer_enabled: bool,
     pub names_max_price_wei: Option<U256>,
     /// `RECEIPT_POLL_INTERVAL_MS` (3000), `RECEIPT_TIMEOUT_MS` (180000), `BROKER_RECONCILE_INTERVAL_MS` (60000).
     pub receipt_poll_interval: Duration,
@@ -170,6 +188,7 @@ impl Settings {
         Self {
             min_sale_value_in_wei: "1000000000000000000".to_string(),
             max_transactions_per_day: 10,
+            max_relayed_transactions_per_day: 20_000,
             contract_addresses_url: None,
             contract_addresses_chain_key: "matic".to_string(),
             collections_chain_id: 137,
@@ -180,12 +199,14 @@ impl Settings {
             relayer_max_fee_per_gas_wei: None,
             trial_mode: false,
             trial_buyers: None,
+            trial_relay_all_wallets: false,
             oz_relayer_url: None,
             oz_relayer_id: None,
             oz_relayer_api_key: None,
             oz_relayer_speed: "fast".to_string(),
             oz_max_status_checks: 150,
             oz_sleep_between_checks: Duration::from_millis(800),
+            oz_accounts_first_wait: relayer::ACCOUNTS_FIRST_WAIT,
             meta_tx_broadcast_enabled: false,
             relayer_private_key: None,
             transactions_upstream_url: None,
@@ -194,6 +215,7 @@ impl Settings {
             landiler_escrow_address: None,
             names_chain_id: 1,
             eth_rpc_url: None,
+            names_signer_enabled: true,
             names_max_price_wei: None,
             receipt_poll_interval: Duration::from_millis(3_000),
             receipt_timeout: Duration::from_millis(180_000),
@@ -216,6 +238,18 @@ impl Settings {
             data_writes_enabled: true,
             ops_writes_enabled: true,
             ..Self::defaults()
+        }
+    }
+
+    /// Why `State::eth_signer` is absent, in the order `State::new` decides it: the startup log and
+    /// the NAME routes' error name the setting to change.
+    pub fn names_signer_absence(&self) -> &'static str {
+        if self.trial_mode {
+            "off in a credits trial (CREDITS_TRIAL_MODE), where the relayer key signs on the collections chain alone"
+        } else if !self.names_signer_enabled {
+            "off (NAMES_SIGNER_ENABLED=false)"
+        } else {
+            "not provisioned (set META_TX_BROADCAST_ENABLED=true with RELAYER_PRIVATE_KEY_FILE + ETH_RPC_URL)"
         }
     }
 
@@ -273,7 +307,23 @@ impl Settings {
                 "CREDITS_TRIAL_MODE needs the relay to know the trial's buyers (CREDITS_TRIAL_BUYERS)"
             );
         }
+        // A relay for every wallet is bounded per address, and new addresses are free: only the
+        // budget across addresses caps how many free calls it reserves in 24 hours (the relayer's
+        // balance can still run out first).
+        if self.trial_relay_all_wallets && self.max_relayed_transactions_per_day <= 0 {
+            anyhow::bail!(
+                "CREDITS_TRIAL_RELAY_ALL_WALLETS needs a positive MAX_RELAYED_TRANSACTIONS_PER_DAY (0 is no limit across wallets)"
+            );
+        }
         Ok(())
+    }
+
+    /// The wallets the relay serves alone: the trial's buyers, unless the trial relays for every
+    /// wallet (`CREDITS_TRIAL_RELAY_ALL_WALLETS`). `None`: every wallet.
+    pub fn relay_only_for(&self) -> Option<&crate::credits::trial::TrialBuyers> {
+        self.trial_buyers
+            .as_ref()
+            .filter(|_| !self.trial_relay_all_wallets)
     }
 
     pub fn has_direct_broadcast(&self) -> bool {
@@ -307,7 +357,20 @@ impl Settings {
     /// (the guard refuses anything else at send time too; this names the
     /// variable at startup instead of at the first relay). `ETH_RPC_URL`
     /// is checked by `Config::eth_rpc_url()` already. Values are never echoed.
+    ///
+    /// A relay on Polygon mainnet (`COLLECTIONS_CHAIN_ID=137`) signs with a
+    /// relayer of its own or relays nothing: it refuses to start with
+    /// `TRANSACTIONS_UPSTREAM_URL`, so it never depends on the upstream
+    /// transactions API that is being retired. A testnet relay may still
+    /// forward there (the testnet development profile does).
     pub fn validate(&self) -> anyhow::Result<()> {
+        if crate::types::ChainId(self.collections_chain_id) == crate::types::ChainId::POLYGON
+            && Self::has(&self.transactions_upstream_url)
+        {
+            anyhow::bail!(
+                "TRANSACTIONS_UPSTREAM_URL is set on a Polygon mainnet relay (COLLECTIONS_CHAIN_ID=137), which does not forward to an upstream transactions API: unset it and provision a relayer, either OZ_RELAYER_URL, OZ_RELAYER_ID and OZ_RELAYER_API_KEY, or META_TX_BROADCAST_ENABLED=true with RELAYER_PRIVATE_KEY_FILE and RPC_ENDPOINT_POLYGON"
+            );
+        }
         for (var, value) in [
             ("RPC_ENDPOINT_POLYGON", &self.polygon_rpc_url),
             ("CONTRACT_ADDRESSES_URL", &self.contract_addresses_url),
@@ -356,6 +419,29 @@ pub struct State {
 
 pub type SharedState = Arc<State>;
 
+/// Starts this process's `relayer-accounts` job, which keeps the OZ relayer's account list (the
+/// accounts a relay refuses as the user) current, so a relay request never waits for that read.
+pub fn spawn_jobs(state: &SharedState, jobs: &crate::jobs::Jobs) {
+    if !state.transaction.has_oz_relayer() {
+        return;
+    }
+    let state = state.clone();
+    jobs.spawn_periodic(
+        "relayer-accounts",
+        crate::jobs::PeriodicCfg::every(relayer::ACCOUNTS_RETRY),
+        move |_ctx| {
+            let state = state.clone();
+            async move {
+                state
+                    .transaction
+                    .refresh_relayer_accounts()
+                    .await
+                    .map_err(anyhow::Error::msg)
+            }
+        },
+    );
+}
+
 impl State {
     /// Provisions the broadcast providers the settings describe (the old
     /// `build_state`, without the migrations: `schema.sql` owns the DDL).
@@ -364,6 +450,15 @@ impl State {
     pub fn new(pool: PgPool, http: Outbound, settings: Settings) -> anyhow::Result<Self> {
         if settings.trial_mode {
             settings.refuse_an_open_trial_relay()?;
+            if settings.trial_relay_all_wallets {
+                tracing::info!(
+                    "economy: the trial relay pays gas for every wallet's meta-transactions (CREDITS_TRIAL_RELAY_ALL_WALLETS); new credits still go to CREDITS_TRIAL_BUYERS only"
+                );
+            }
+        } else if settings.trial_relay_all_wallets {
+            tracing::warn!(
+                "economy: CREDITS_TRIAL_RELAY_ALL_WALLETS is set but CREDITS_TRIAL_MODE is false: ignored"
+            );
         }
         let chain = settings
             .polygon_rpc_url
@@ -381,6 +476,7 @@ impl State {
                 settings.oz_max_status_checks,
                 settings.oz_sleep_between_checks,
             )
+            .with_first_wait(settings.oz_accounts_first_wait)
         });
         let key = settings
             .relayer_private_key
@@ -426,7 +522,9 @@ impl State {
                 UpstreamForwarder::new(http.clone(), url, settings.transactions_upstream_timeout)
             });
         // A trial's relayer key signs on the collections chain alone: it is never reused as
-        // the NAMEs chain signer, whose ETH_RPC_URL a mirror always sets.
+        // the NAMEs chain signer, whose ETH_RPC_URL a mirror always sets. Nor is it with
+        // NAMES_SIGNER_ENABLED=false (the testnet development profile, whose ETH_RPC_URL is
+        // Sepolia's while NAMES_CHAIN_ID stays mainnet's).
         let eth_signer = match (
             settings
                 .eth_rpc_url
@@ -436,7 +534,7 @@ impl State {
             key,
             settings.meta_tx_broadcast_enabled,
         ) {
-            _ if settings.trial_mode => None,
+            _ if settings.trial_mode || !settings.names_signer_enabled => None,
             (Some(url), Some(_), true) => {
                 let eth_chain =
                     Arc::new(ChainComponent::new(http.clone(), url, DEFAULT_RPC_TIMEOUT));
@@ -469,7 +567,8 @@ impl State {
                 "economy: NAMEs chain signer enabled; ensure the relayer address holds ETH for gas and MANA on Ethereum"
             ),
             None => tracing::info!(
-                "economy: NAMEs chain signer not provisioned (ETH_RPC_URL + the key enable /v1/broker/names)"
+                "economy: NAMEs chain signer {}; /v1/broker/names broadcasts nothing",
+                settings.names_signer_absence()
             ),
         }
         let contracts = ContractsComponent::new(
@@ -509,13 +608,15 @@ impl State {
 /// broker, escrow, NAME custody and payments routes.
 ///
 /// The gate is `DATA_WRITES_ENABLED`, except under `CREDITS_TRIAL_MODE`. A
-/// trial's relay broadcasts only the trial buyers' meta-transactions, through
-/// its own capped signer ([`Settings::refuse_an_open_trial_relay`],
+/// trial's relay broadcasts only the trial buyers' meta-transactions (every
+/// wallet's with `CREDITS_TRIAL_RELAY_ALL_WALLETS`), through its own capped
+/// signer ([`Settings::refuse_an_open_trial_relay`],
 /// `TransactionComponent::check_data`): it is how those buyers spend their
 /// credits, so it opens with the credits switch, `OPS_WRITES_ENABLED`, and
-/// answers the credits 503. That plane stores no blobs, so restore stamps
-/// that leave them out release it. The relayer controls stay open on both
-/// gates.
+/// answers the credits 503. With `CREDITS_TRIAL_RELAY_ALL_WALLETS` that gate
+/// is deliberate too: the trial's relay is then a public relay for every
+/// wallet's admitted operations, open with the operator plane whatever
+/// `DATA_WRITES_ENABLED` says. The relayer controls stay open on both gates.
 pub fn router(state: SharedState) -> Router {
     let settings = &state.settings;
     let (trial, data_writes, ops_writes) = (
@@ -546,19 +647,22 @@ pub fn router(state: SharedState) -> Router {
             post(handlers::admin::relayer_signer),
         )
         .with_state(state);
-    if trial {
+    let guarded = if trial {
         crate::shared::writes::guard_with(
             api,
             crate::shared::writes::Gate {
                 enabled: ops_writes,
                 open_while_disabled: RELAYER_CONTROLS,
-                refuse: crate::credits::writes::refused_response,
-                blobs: false,
+                refuse: crate::credits::writes::disabled_response,
             },
         )
     } else {
         DataWrites::guard(api, data_writes)
-    }
+    };
+    // Outside the gate, so a refused write still carries the CORS headers.
+    guarded.layer(axum::middleware::from_fn(
+        crate::shared::cors::decentraland_cors,
+    ))
 }
 
 /// The relayer controls: process-local atomics behind the admin bearer, open
@@ -610,7 +714,10 @@ mod schema_tests {
 
     #[test]
     fn relay_mode_prefers_local_providers_and_validate_names_the_variable() {
-        let mut s = Settings::defaults();
+        let mut s = Settings {
+            collections_chain_id: 80_002,
+            ..Settings::defaults()
+        };
         assert_eq!(s.relay_mode(), "none");
         assert!(!s.can_relay());
         s.transactions_upstream_url = Some("https://transactions-api.decentraland.org".into());
@@ -637,5 +744,50 @@ mod schema_tests {
             err.contains("RPC_ENDPOINT_POLYGON") && !err.contains("127.0.0.1"),
             "{err}"
         );
+    }
+
+    /// A Polygon mainnet relay never forwards to the upstream transactions
+    /// API: the setting refuses the start, naming the variable and the
+    /// signers to provision instead, whatever else is provisioned. A
+    /// testnet relay may forward.
+    #[test]
+    fn a_polygon_mainnet_relay_refuses_the_upstream_forward() {
+        let upstream = Some("https://transactions-api.example/SECRET".to_string());
+        let mainnet = Settings {
+            transactions_upstream_url: upstream.clone(),
+            ..Settings::defaults()
+        };
+        assert_eq!(mainnet.collections_chain_id, 137);
+        let err = mainnet.validate().unwrap_err().to_string();
+        assert!(
+            err.contains("TRANSACTIONS_UPSTREAM_URL")
+                && err.contains("OZ_RELAYER_URL")
+                && err.contains("RELAYER_PRIVATE_KEY_FILE")
+                && !err.contains("SECRET"),
+            "{err}"
+        );
+        let with_signer = Settings {
+            meta_tx_broadcast_enabled: true,
+            relayer_private_key: Some("00".repeat(32)),
+            polygon_rpc_url: Some("https://polygon-rpc.example".into()),
+            ..mainnet
+        };
+        assert!(
+            with_signer.validate().is_err(),
+            "a signer of its own does not make the forward acceptable"
+        );
+        let signer_only = Settings {
+            transactions_upstream_url: None,
+            ..with_signer
+        };
+        assert!(signer_only.validate().is_ok());
+        assert_eq!(signer_only.relay_mode(), "direct");
+        let testnet = Settings {
+            collections_chain_id: 80_002,
+            transactions_upstream_url: upstream,
+            ..Settings::defaults()
+        };
+        assert!(testnet.validate().is_ok());
+        assert_eq!(testnet.relay_mode(), "upstream");
     }
 }

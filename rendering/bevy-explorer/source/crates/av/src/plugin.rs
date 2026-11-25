@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::BTreeSet};
 
-use bevy::{diagnostic::FrameCount, math::FloatOrd, prelude::*};
-use common::structs::{AppConfig, PrimaryUser};
+use bevy::{math::FloatOrd, prelude::*};
+use common::structs::{AppConfig, MonotonicTimestamp, PrimaryUser};
 use dcl_component::CrdtType;
 use dcl_component::{
     proto_components::sdk::components::{
@@ -45,9 +45,11 @@ impl Plugin for AVPlayerPlugin {
         app.add_plugins(VideoPlayerPlugin);
         #[cfg(all(not(test), feature = "ffmpeg"))]
         app.add_plugins(AudioSinkPlugin);
-        crate::debug_panel::register(app);
+        app.add_plugins(crate::debug_panel::MediaDebugPanelPlugin);
         app.add_plugins(AudioSourcePlugin);
         app.add_plugins(AudioSourcePluginImpl);
+        app.init_resource::<MonotonicTimestamp<PbAudioEvent>>();
+        app.init_resource::<MonotonicTimestamp<PbVideoEvent>>();
 
         app.add_crdt_lww_component::<PbAudioStream, AudioStream>(
             SceneComponentId::AUDIO_STREAM,
@@ -94,7 +96,6 @@ impl Plugin for AVPlayerPlugin {
     }
 }
 
-#[expect(clippy::type_complexity)]
 fn av_player_on_insert<T: AVPlayer>(
     trigger: Trigger<OnInsert, T>,
     mut commands: Commands,
@@ -155,7 +156,8 @@ fn av_player_on_remove<T: AVPlayer>(
     mut commands: Commands,
     mut av_players: AVPlayerQuery<T>,
     mut renderer_scene_contexts: Query<&mut RendererSceneContext>,
-    frame: Res<FrameCount>,
+    audio_timestamp: Res<MonotonicTimestamp<PbAudioEvent>>,
+    video_timestamp: Res<MonotonicTimestamp<PbVideoEvent>>,
     #[cfg(any(feature = "ffmpeg", feature = "html"))] time: Res<Time>,
 ) {
     let entity = trigger.target();
@@ -199,7 +201,8 @@ fn av_player_on_remove<T: AVPlayer>(
     push_state_to_crdt::<T>(
         &mut renderer_scene_context,
         container_entity,
-        &frame,
+        &audio_timestamp,
+        &video_timestamp,
         VideoState::VsNone,
         #[cfg(any(feature = "ffmpeg", feature = "html"))]
         av_sinks
@@ -208,7 +211,6 @@ fn av_player_on_remove<T: AVPlayer>(
     );
 }
 
-#[expect(clippy::type_complexity)]
 fn stream_on_add<T: AVPlayer>(
     trigger: Trigger<OnAdd, Stream>,
     mut commands: Commands,
@@ -249,7 +251,6 @@ fn video_texture_output_replaced(trigger: Trigger<OnReplace, VideoTextureOutput>
     debug!("VideoTextureOutput replaced into {}", entity);
 }
 
-#[expect(clippy::type_complexity)]
 fn should_be_playing_on_add<T: AVPlayer>(
     trigger: Trigger<OnAdd, ShouldBePlaying<T>>,
     mut commands: Commands,
@@ -279,7 +280,8 @@ fn should_be_playing_on_remove<T: AVPlayer>(
     mut commands: Commands,
     av_players: Query<(&ContainerEntity, Has<Stream>), With<T>>,
     mut renderer_scene_contexts: Query<&mut RendererSceneContext>,
-    frame: Res<FrameCount>,
+    audio_timestamp: Res<MonotonicTimestamp<PbAudioEvent>>,
+    video_timestamp: Res<MonotonicTimestamp<PbVideoEvent>>,
 ) {
     let entity = trigger.target();
     debug!("Stream {} no longer playing.", entity);
@@ -303,14 +305,14 @@ fn should_be_playing_on_remove<T: AVPlayer>(
     push_state_to_crdt::<T>(
         &mut renderer_scene_context,
         container_entity,
-        &frame,
+        &audio_timestamp,
+        &video_timestamp,
         VideoState::VsPaused,
         #[cfg(any(feature = "ffmpeg", feature = "html"))]
         None,
     );
 }
 
-#[expect(clippy::type_complexity)]
 fn av_player_is_in_scene(
     mut commands: Commands,
     av_players: Query<
@@ -338,7 +340,6 @@ fn av_player_is_in_scene(
     }
 }
 
-#[expect(clippy::type_complexity)]
 fn audio_stream_should_be_playing(
     mut commands: Commands,
     av_players: Query<(
@@ -395,7 +396,6 @@ impl Ord for ShouldBePlayingCandidate {
     }
 }
 
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn video_player_should_be_playing(
     mut commands: Commands,
     av_players: Query<(
@@ -499,34 +499,35 @@ fn receiver_image_updated(
 pub(crate) fn push_state_to_crdt<T: AVPlayer>(
     context: &mut RendererSceneContext,
     container: &ContainerEntity,
-    frame: &FrameCount,
+    audio_timestamp: &MonotonicTimestamp<PbAudioEvent>,
+    video_timestamp: &MonotonicTimestamp<PbVideoEvent>,
     new_state: VideoState,
     #[cfg(any(feature = "ffmpeg", feature = "html"))] video: Option<&mut VideoSink>,
 ) {
     if T::HAS_VIDEO {
         #[cfg(any(feature = "ffmpeg", feature = "html"))]
         if let Some(video) = video {
-            push_video_event(context, container, frame, new_state, video);
+            push_video_event(context, container, video_timestamp, new_state, video);
         } else {
-            push_timeless_video_event(context, container, frame, new_state);
+            push_timeless_video_event(context, container, video_timestamp, new_state);
         }
 
         #[cfg(not(any(feature = "ffmpeg", feature = "html")))]
-        push_timeless_video_event(context, container, frame, new_state);
+        push_timeless_video_event(context, container, video_timestamp, new_state);
     } else {
-        push_audio_event(context, container, frame, new_state);
+        push_audio_event(context, container, audio_timestamp, new_state);
     }
 }
 
 fn push_audio_event(
     context: &mut RendererSceneContext,
     container: &ContainerEntity,
-    frame: &FrameCount,
+    timestamp: &MonotonicTimestamp<PbAudioEvent>,
     new_state: VideoState,
 ) {
     trace!("send audio event = {:?}", new_state);
     let event = PbAudioEvent {
-        timestamp: frame.0,
+        timestamp: timestamp.next_timestamp(),
         state: new_state as i32,
     };
     context.update_crdt(
@@ -541,13 +542,13 @@ fn push_audio_event(
 fn push_video_event(
     context: &mut RendererSceneContext,
     container: &ContainerEntity,
-    frame: &FrameCount,
+    timestamp: &MonotonicTimestamp<PbVideoEvent>,
     new_state: VideoState,
     #[cfg(any(feature = "ffmpeg", feature = "html"))] video: &mut VideoSink,
 ) {
     trace!("send current time = {}", video.current_time);
     let event = PbVideoEvent {
-        timestamp: frame.0,
+        timestamp: timestamp.next_timestamp(),
         tick_number: context.tick_number,
         current_offset: video.current_time as f32,
         video_length: video.length.unwrap_or(-1.0) as f32,
@@ -564,12 +565,12 @@ fn push_video_event(
 fn push_timeless_video_event(
     context: &mut RendererSceneContext,
     container: &ContainerEntity,
-    frame: &FrameCount,
+    timestamp: &MonotonicTimestamp<PbVideoEvent>,
     new_state: VideoState,
 ) {
     trace!("send video event = {:?}", new_state);
     let event = PbVideoEvent {
-        timestamp: frame.0,
+        timestamp: timestamp.next_timestamp(),
         tick_number: context.tick_number,
         current_offset: -1.,
         video_length: -1.,

@@ -1,0 +1,92 @@
+.reviewBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  min-height: 56px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--editor-line);
+  background: var(--editor-surface);
+  color: var(--dcl-neutrals-white);
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: -6px 0;
+  border-radius: 50%;
+  color: var(--dcl-neutrals-white);
+
+  &:hover,
+  &:focus-visible {
+    background: var(--editor-surface-hover);
+  }
+}
+
+.name {
+  margin: 0;
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  font-size: 14px;
+  color: var(--editor-label);
+}
+
+.assigneeChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--editor-line);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--dcl-neutrals-white);
+  font-size: 14px;
+  font-weight: 600;
+
+  &:hover:not(:disabled),
+  &:focus-visible {
+    background: var(--editor-surface-hover);
+  }
+  &:disabled,
+  &[aria-disabled] {
+    cursor: default;
+  }
+  &[data-awaited] {
+    border-color: var(--color-warning-text);
+    color: var(--color-warning-text);
+  }
+
+  @media (max-width: 768px) {
+    min-height: 44px;
+  }
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}

@@ -1,10 +1,12 @@
-// The Events page's data: its requests to the bridge (signed reads of the events service, the
-// reminder on an event, the places events are held at) and their answers, kept in one store.
+// The Events page's and the lobby's data: their requests to the bridge (signed reads of the events
+// service, the reminder on an event, the places events are held at) and their answers, kept in one
+// store.
 
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 import { showToast } from '../../design/Toast'
 import type { LoginDriver } from '@explorer-core/engine/driver'
 import type { EventData, GetEventsRequest, SceneToPage } from '@explorer-core/engine/protocol'
+import { nextRequestId } from '@explorer-core/engine/requestIds'
 import { calendarRange, dayRange, startOfDay, sameDay } from './eventFormat'
 import { emptyEventsStore, eventsReducer, placeIds, type EventsQuery, type EventsStore } from './eventsStore'
 
@@ -21,9 +23,13 @@ export interface EventsData {
   store: EventsStore
   loadCalendar: (startDay: Date, days: number, withHighlighted: boolean) => void
   loadDay: (day: Date) => void
+  loadLobby: () => void
   /** Set or clear the user's reminder; the store changes when the service confirms. */
   setAttending: (event: EventData, attending: boolean) => void
+  /** Drops what the Events page read; the lobby's list stays. */
   clear: () => void
+  /** Drops everything, the lobby's list and requests in flight included. */
+  resetAll: () => void
 }
 
 type Pending = { request: number; timer: ReturnType<typeof setTimeout> | null }
@@ -32,11 +38,11 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
   const [store, dispatch] = useReducer(eventsReducer, undefined, emptyEventsStore)
   const storeRef = useRef(store)
   storeRef.current = store
-  const seq = useRef(0)
   const waiting = useRef<Partial<Record<EventsQuery, Pending>>>({})
-  const reminderTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  // a reminder in flight outlives the page that sent it, which can drop its event from the store
+  const reminderTimers = useRef(new Map<string, { timer: ReturnType<typeof setTimeout>; event: EventData }>())
   // reminders that ran out of time: the service may still confirm them
-  const reminderLate = useRef(new Set<string>())
+  const reminderLate = useRef(new Map<string, EventData>())
   const onReminderSetRef = useRef(onReminderSet)
   onReminderSetRef.current = onReminderSet
 
@@ -56,7 +62,7 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
   const read = useCallback(
     (query: EventsQuery, params: Omit<GetEventsRequest, 'kind' | 'request'>): void => {
       stop(query)
-      const request = ++seq.current
+      const request = nextRequestId()
       const pending: Pending = { request, timer: null }
       pending.timer = setTimeout(() => {
         pending.timer = null
@@ -83,31 +89,37 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
   )
 
   const loadDay = useCallback((day: Date): void => read('day', dayRange(day)), [read])
+  const loadLobby = useCallback((): void => read('lobby', {}), [read])
 
   const settleReminder = useCallback((eventId: string, attending: boolean, failed: boolean, timedOut = false): void => {
-    const timer = reminderTimers.current.get(eventId)
-    if (timer == null) {
+    const sent = reminderTimers.current.get(eventId)
+    let event: EventData
+    if (sent == null) {
       // the answer to a reminder that timed out: its error has shown, a success still applies
-      if (!reminderLate.current.delete(eventId) || failed) return
+      const late = reminderLate.current.get(eventId)
+      reminderLate.current.delete(eventId)
+      if (late == null || failed) return
+      event = late
     } else {
-      clearTimeout(timer)
+      clearTimeout(sent.timer)
       reminderTimers.current.delete(eventId)
-      if (timedOut) reminderLate.current.add(eventId)
+      if (timedOut) reminderLate.current.set(eventId, sent.event)
+      event = sent.event
     }
-    const before = storeRef.current.byId[eventId]
+    const before = storeRef.current.byId[eventId] ?? event
     dispatch({ type: 'attendingDone', eventId, attending, failed })
     if (failed) showToast(REMINDER_ERROR, { tone: 'error' })
-    else if (before != null) onReminderSetRef.current?.({ ...before, attending })
+    else onReminderSetRef.current?.({ ...before, attending })
   }, [])
 
   const setAttending = useCallback(
     (event: EventData, attending: boolean): void => {
       if (reminderTimers.current.has(event.id)) return
       reminderLate.current.delete(event.id)
-      reminderTimers.current.set(
-        event.id,
-        setTimeout(() => settleReminder(event.id, attending, true, true), EVENTS_REPLY_TIMEOUT_MS)
-      )
+      reminderTimers.current.set(event.id, {
+        timer: setTimeout(() => settleReminder(event.id, attending, true, true), EVENTS_REPLY_TIMEOUT_MS),
+        event
+      })
       dispatch({ type: 'attendingSent', eventId: event.id })
       driverRef.current?.send({ kind: 'setEventAttending', eventId: event.id, attending })
     },
@@ -115,12 +127,19 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
   )
 
   const clear = useCallback((): void => {
-    for (const query of Object.keys(waiting.current) as EventsQuery[]) stop(query)
-    reminderTimers.current.forEach((timer) => clearTimeout(timer))
-    reminderTimers.current.clear()
-    reminderLate.current.clear()
+    for (const query of Object.keys(waiting.current) as EventsQuery[]) if (query !== 'lobby') stop(query)
     dispatch({ type: 'reset' })
   }, [stop])
+  const dispose = useCallback((): void => {
+    for (const query of Object.keys(waiting.current) as EventsQuery[]) stop(query)
+    reminderTimers.current.forEach(({ timer }) => clearTimeout(timer))
+    reminderTimers.current.clear()
+    reminderLate.current.clear()
+  }, [stop])
+  const resetAll = useCallback((): void => {
+    dispose()
+    dispatch({ type: 'resetAll' })
+  }, [dispose])
 
   const onMessage = useCallback(
     (msg: SceneToPage): void => {
@@ -138,7 +157,7 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
         }
         dispatch({ type: 'loaded', query, events: msg.events })
         const unknown = placeIds(msg.events).filter((id) => storeRef.current.places[id] == null)
-        if (unknown.length > 0) driverRef.current?.send({ kind: 'getEventPlaces', request: ++seq.current, placeIds: unknown })
+        if (unknown.length > 0) driverRef.current?.send({ kind: 'getEventPlaces', request: nextRequestId(), placeIds: unknown })
       } else if (msg.kind === 'eventAttending') {
         settleReminder(msg.eventId, msg.attending, msg.failed === true)
       } else if (msg.kind === 'eventPlaces') {
@@ -149,7 +168,10 @@ export function useEventsData(driverRef: React.RefObject<LoginDriver | null>, on
     [driverRef, fail, settleReminder]
   )
 
-  useEffect(() => clear, [clear])
+  useEffect(() => dispose, [dispose])
 
-  return useMemo(() => ({ store, loadCalendar, loadDay, setAttending, clear, onMessage }), [store, loadCalendar, loadDay, setAttending, clear, onMessage])
+  return useMemo(
+    () => ({ store, loadCalendar, loadDay, loadLobby, setAttending, clear, resetAll, onMessage }),
+    [store, loadCalendar, loadDay, loadLobby, setAttending, clear, resetAll, onMessage]
+  )
 }

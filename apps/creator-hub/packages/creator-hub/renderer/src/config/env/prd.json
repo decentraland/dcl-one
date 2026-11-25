@@ -14,7 +14,6 @@
   "ATLAS_SERVER_API_URL": "https://api.decentraland.org/v2",
   "JUMP_URL": "https://decentraland.org/jump",
   "RPC_URL": "https://rpc.decentraland.org/mainnet",
-  "MARKETPLACE_SUBGRAPH": "https://subgraph.decentraland.org/marketplace",
   "ENS_SUBGRAPH": "https://subgraph.decentraland.org/ens",
   "RENTALS_SUBGRAPH": "https://subgraph.decentraland.org/rentals-ethereum-mainnet",
   "LAND_MANAGER_SUBGRAPH": "https://subgraph.decentraland.org/land-manager",
@@ -33,5 +32,6 @@
   "FEATURE_FLAGS_URL": "https://feature-flags.decentraland.org",
   "WORLDS_STORAGE_SERVICE_URL": "https://decentraland.org/storage",
   "METRICS_API_URL": "https://creators-data.decentraland.zone/v2",
-  "CREATOR_FUND_API_URL": "https://creators-data.decentraland.zone"
+  "CREATOR_FUND_API_URL": "https://creators-data.decentraland.zone",
+  "AI_SHARING_API_URL": ""
 }

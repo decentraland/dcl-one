@@ -29,6 +29,7 @@ import Icon from "../../discovery/components/Icon";
 import { useCreatorName } from "../../discovery/hooks";
 import { rarityCardPalette } from "@shop/discovery/lib/rarity";
 import type { CartLineDisplay } from "@shop/model/purchase";
+import { Link } from "react-router";
 import { SHOP_BASE } from "../../routes";
 import buyErrorArt from "../assets/buy-error.png?url";
 import packCoin from "../assets/pack-coin.webp?url";
@@ -247,6 +248,13 @@ export function NoFundsBody(props: {
   items: ReactNode;
   /** The cart's banner puts Learn More on a line of its own, as upstream's. */
   learnMoreBelow?: boolean;
+  /**
+   * The price is still being checked: the shortfall is the shown offer's, which the check may change (a lower price, an
+   * item gone), so no pack can be bought until the check confirms the Credits still fall short.
+   */
+  checking?: boolean;
+  /** A status line above the buttons (why the purchase waits). */
+  notice?: ReactNode;
   testId: string;
   /** Leaves the hand-off; returns its attempt, which a failure drops. */
   onLeave(): string | null;
@@ -260,6 +268,8 @@ export function NoFundsBody(props: {
   const cover = offer.packs.find((p) => p.credits >= props.shortfall) ?? offer.packs[offer.packs.length - 1];
   const [picked, setPicked] = useState<string | null>(null);
   const selectedId = picked ?? cover?.id ?? null;
+  // Only a pack the offer still holds can be bought: when a new shortfall drops the buyer's pick, nothing is selected
+  // until they pick again, rather than another pack they did not choose.
   const selected = offer.packs.find((p) => p.id === selectedId) ?? null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -282,12 +292,12 @@ export function NoFundsBody(props: {
   const iap = isIapMode();
 
   async function buy() {
-    if (!selectedId) return;
+    if (!selected || props.checking) return;
     setBusy(true);
     setError(null);
     const leaving = props.onLeave();
     try {
-      const session = await createPackCheckout(selectedId, client);
+      const session = await createPackCheckout(selected.id, client);
       if (!mounted.current) {
         props.onFailed(leaving);
         return;
@@ -358,12 +368,13 @@ export function NoFundsBody(props: {
           {error}
         </p>
       ) : null}
+      {props.notice}
       <DialogCtas>
         <DialogButton variant="outline" onClick={props.onCancel}>
           {TEXT.cancel}
         </DialogButton>
         {iap ? null : (
-          <DialogButton variant="gradient" onClick={() => void buy()} disabled={busy || !selectedId} data-testid={`${props.testId}-topup`}>
+          <DialogButton variant="gradient" onClick={() => void buy()} disabled={busy || !selected || !!props.checking} data-testid={`${props.testId}-topup`}>
             {TEXT.buy}
           </DialogButton>
         )}
@@ -438,7 +449,8 @@ export function ProcessingBody({ text }: { text: string }) {
 }
 
 /** The failure panel: the reason (or that the Credits are safe), and a retry when there is one to make. */
-export function ErrorBody({ message, onClose, onRetry }: { message: string | null; onClose(): void; onRetry?: () => void }) {
+/** The failure panel; `link`, a page that can clear it (another item whose purchase holds this one, say). */
+export function ErrorBody({ message, onClose, onRetry, link }: { message: string | null; onClose(): void; onRetry?: () => void; link?: { href: string; label: string } }) {
   return (
     <DialogBody>
       <div className={styles.error} data-testid="buy-error">
@@ -446,6 +458,11 @@ export function ErrorBody({ message, onClose, onRetry }: { message: string | nul
         <p className={styles.errorText}>
           <b>{TEXT.errorHeadline}</b> {message ?? TEXT.errorBody}
         </p>
+        {link ? (
+          <Link className={styles.errorLink} to={link.href} data-testid="buy-error-link">
+            {link.label}
+          </Link>
+        ) : null}
       </div>
       <DialogCtas>
         <DialogButton variant="outline" full={!onRetry} onClick={onClose}>

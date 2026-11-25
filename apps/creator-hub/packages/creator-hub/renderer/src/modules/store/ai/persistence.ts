@@ -152,6 +152,8 @@ function normalizeMessage(x: unknown): AiMessage | null {
     ...(typeof m.error === 'string' ? { error: m.error } : {}),
     ...(typeof m.mutations === 'number' ? { mutations: m.mutations } : {}),
     ...(m.reverted === true ? { reverted: true } : {}),
+    ...(typeof m.recordId === 'string' ? { recordId: m.recordId } : {}),
+    ...(m.rating === 'up' || m.rating === 'down' ? { rating: m.rating } : {}),
   };
 }
 

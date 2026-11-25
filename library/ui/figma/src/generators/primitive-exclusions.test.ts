@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { configSchema, loadConfigFile } from '../config.js'
 import type { TokenCollection } from '../ir/schemas.js'
 import { SnapshotSource } from '../sources/snapshot-source.js'
@@ -47,7 +47,7 @@ describe('excludedPrimitives', () => {
   let collections: TokenCollection[]
   let input: Parameters<typeof generateTokens>[0]
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     const source = snapshotSource()
     collections = withTestPrimitive(await source.getTokenCollections())
     input = {
@@ -76,7 +76,7 @@ describe('excludedPrimitives', () => {
     let before: Map<string, string>
     let after: Map<string, string>
 
-    beforeAll(() => {
+    beforeEach(() => {
       before = asMap(generateTokens(input, context))
       after = asMap(generateTokens({ ...input, excludedPrimitives: [EXCLUDED] }, context))
     })
@@ -115,17 +115,23 @@ describe('excludedPrimitives', () => {
   })
 
   describe('when an entry is not usable', () => {
-    it('should reject a name the capture does not have', () => {
-      const without = collections.map((collection) => ({
-        ...collection,
-        variables: collection.variables.filter(
-          (variable) => variable.name !== 'Primary/Primary blue TEST'
-        )
-      }))
+    describe('and the capture does not have the name', () => {
+      let without: TokenCollection[]
 
-      expect(() => excludePrimitives(without, [EXCLUDED])).toThrow(
-        `Excluded primitive ${EXCLUDED} is not a saved variable`
-      )
+      beforeEach(() => {
+        without = collections.map((collection) => ({
+          ...collection,
+          variables: collection.variables.filter(
+            (variable) => variable.name !== 'Primary/Primary blue TEST'
+          )
+        }))
+      })
+
+      it('should reject the name', () => {
+        expect(() => excludePrimitives(without, [EXCLUDED])).toThrow(
+          `Excluded primitive ${EXCLUDED} is not a saved variable`
+        )
+      })
     })
 
     it('should reject a name listed twice', () => {
@@ -148,7 +154,7 @@ describe('excludedPrimitives', () => {
     it('should fail closed through generation too', () => {
       expect(() =>
         generateTokens({ ...input, excludedPrimitives: ['Primitives/Primary/Primary'] }, context)
-      ).toThrow('is not a supported exclusion')
+      ).toThrow('Excluded primitive Primitives/Primary/Primary is not a supported exclusion')
     })
   })
 
@@ -185,39 +191,61 @@ describe('excludedPrimitives', () => {
   })
 
   describe('when the saved capture is ambiguous', () => {
-    it('should reject a primitive saved twice instead of removing both', () => {
-      const twice = collections.map((collection) =>
-        collection.name === 'Primitives'
-          ? {
-              ...collection,
-              variables: [
-                ...collection.variables,
-                {
-                  name: 'Primary/Primary blue TEST',
-                  type: 'COLOR' as const,
-                  values: { Value: { hex: '#00ff00', alpha: 1 } }
-                }
-              ]
-            }
-          : collection
-      )
-      const copy = structuredClone(twice)
+    describe('and the primitive is saved twice', () => {
+      let twice: TokenCollection[]
+      let copy: TokenCollection[]
 
-      expect(() => excludePrimitives(twice, [EXCLUDED])).toThrow(
-        `Excluded primitive ${EXCLUDED} is saved 2 times`
-      )
-      expect(twice).toEqual(copy)
+      beforeEach(() => {
+        twice = collections.map((collection) =>
+          collection.name === 'Primitives'
+            ? {
+                ...collection,
+                variables: [
+                  ...collection.variables,
+                  {
+                    name: 'Primary/Primary blue TEST',
+                    type: 'COLOR' as const,
+                    values: { Value: { hex: '#00ff00', alpha: 1 } }
+                  }
+                ]
+              }
+            : collection
+        )
+        copy = structuredClone(twice)
+      })
+
+      it('should reject the primitive instead of removing both', () => {
+        expect(() => excludePrimitives(twice, [EXCLUDED])).toThrow(
+          `Excluded primitive ${EXCLUDED} is saved 2 times`
+        )
+      })
+
+      it('should leave the collections unchanged', () => {
+        expect(() => excludePrimitives(twice, [EXCLUDED])).toThrow(
+          `Excluded primitive ${EXCLUDED} is saved 2 times`
+        )
+        expect(twice).toEqual(copy)
+      })
     })
 
-    it('should reject two Primitives collections', () => {
-      const primitives = collections.find((collection) => collection.name === 'Primitives')!
+    describe('and two Primitives collections are given', () => {
+      let duplicated: TokenCollection[]
 
-      expect(() => excludePrimitives([...collections, primitives], [EXCLUDED])).toThrow(
-        'Excluded primitives are ambiguous: 2 Primitives collections'
-      )
+      beforeEach(() => {
+        duplicated = [
+          ...collections,
+          collections.find((collection) => collection.name === 'Primitives')!
+        ]
+      })
+
+      it('should reject the collections as ambiguous', () => {
+        expect(() => excludePrimitives(duplicated, [EXCLUDED])).toThrow(
+          'Excluded primitives are ambiguous: 2 Primitives collections'
+        )
+      })
     })
 
-    it('should give the same result when applied again to the same input', () => {
+    it('should give the same result on a repeated application to the same input', () => {
       expect(excludePrimitives(collections, [EXCLUDED])).toEqual(
         excludePrimitives(collections, [EXCLUDED])
       )
@@ -225,8 +253,10 @@ describe('excludedPrimitives', () => {
   })
 
   describe('when an alias depends on the excluded primitive', () => {
-    it('should fail and name every dependent alias', () => {
-      const dependent = collections.map((collection) =>
+    let dependent: TokenCollection[]
+
+    beforeEach(() => {
+      dependent = collections.map((collection) =>
         collection.name === 'Semantic'
           ? {
               ...collection,
@@ -243,7 +273,9 @@ describe('excludedPrimitives', () => {
             }
           : collection
       )
+    })
 
+    it('should fail and name every dependent alias', () => {
       expect(() => excludePrimitives(dependent, [EXCLUDED])).toThrow(
         `Excluded primitive ${EXCLUDED} is used by aliases: Semantic/test/one, Semantic/test/two`
       )
@@ -251,8 +283,10 @@ describe('excludedPrimitives', () => {
   })
 
   describe('when only a later mode of an alias depends on the excluded primitive', () => {
-    it('should still fail', () => {
-      const multiMode = [
+    let multiMode: TokenCollection[]
+
+    beforeEach(() => {
+      multiMode = [
         ...collections,
         {
           name: 'Themes',
@@ -269,7 +303,9 @@ describe('excludedPrimitives', () => {
           ]
         }
       ]
+    })
 
+    it('should still fail and name the alias', () => {
       expect(() => excludePrimitives(multiMode, [EXCLUDED])).toThrow(
         `Excluded primitive ${EXCLUDED} is used by aliases: Themes/accent`
       )
@@ -277,32 +313,42 @@ describe('excludedPrimitives', () => {
   })
 
   describe('when sync generates from the saved capture', () => {
+    let directory: string
+    let file: string
+    let before: string
+    let result: Awaited<ReturnType<typeof generateAll>>
+
+    const digest = async () =>
+      createHash('sha256')
+        .update(await readFile(file))
+        .digest('hex')
+
     // This tree commits no capture: a copy of the synthetic capture saves the test primitive as the
     // real capture does, and generation must leave that file untouched.
+    beforeEach(async () => {
+      directory = await mkdtemp(path.join(os.tmpdir(), 'primitive-exclusions-'))
+      await copySnapshot(directory)
+      file = path.join(directory, 'variables.json')
+      const saved = JSON.parse(await readFile(file, 'utf8')) as { collections: TokenCollection[] }
+      await writeFile(file, JSON.stringify({ collections: withTestPrimitive(saved.collections) }))
+      const config = await testConfig()
+      before = await digest()
+      result = await generateAll(new SnapshotSource(directory), context, {
+        ...config,
+        excludedPrimitives: [EXCLUDED]
+      })
+    })
+
+    afterEach(async () => {
+      await rm(directory, { recursive: true, force: true })
+    })
+
     it('should leave variables.json byte for byte as captured', async () => {
-      const directory = await mkdtemp(path.join(os.tmpdir(), 'primitive-exclusions-'))
-      try {
-        await copySnapshot(directory)
-        const file = path.join(directory, 'variables.json')
-        const saved = JSON.parse(await readFile(file, 'utf8')) as { collections: TokenCollection[] }
-        await writeFile(file, JSON.stringify({ collections: withTestPrimitive(saved.collections) }))
-        const digest = async () =>
-          createHash('sha256')
-            .update(await readFile(file))
-            .digest('hex')
-        const config = await testConfig()
-        const before = await digest()
+      expect(await digest()).toBe(before)
+    })
 
-        const result = await generateAll(new SnapshotSource(directory), context, {
-          ...config,
-          excludedPrimitives: [EXCLUDED]
-        })
-
-        expect(await digest()).toBe(before)
-        expect(asMap(result.files).get('tokens/tokens.css')).not.toContain('primary-blue-test')
-      } finally {
-        await rm(directory, { recursive: true, force: true })
-      }
+    it('should drop the excluded primitive from the generated tokens', () => {
+      expect(asMap(result.files).get('tokens/tokens.css')).not.toContain('primary-blue-test')
     })
   })
 })

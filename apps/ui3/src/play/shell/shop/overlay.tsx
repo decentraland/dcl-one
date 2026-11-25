@@ -4,13 +4,13 @@
 import { MaskIcon } from '@hud/design'
 import emotesIcon from '@hud/assets/backpack/icon-emotes.webp'
 import { CategoryIcon } from '@hud/features/backpack/categoryIcons'
-import { ShopPurchaseDialog, type ShopPurchaseItem, type ShopPurchaseStep } from '../../features/shop/ui'
+import { ShopPurchaseDialog, type ShopPurchaseItem, type ShopPurchaseStep } from '@dcl/one-ui/apps/shop/ui'
 import { createShellDialogHost, ShellDialog } from '../dialogOverlay'
 import type { ShellPurchaseItem, ShellPurchaseView, ShellShopUi } from './purchase'
 
 function withIcon(item: ShellPurchaseItem): ShopPurchaseItem {
   const { category, ...rest } = item
-  const categoryIcon = category === 'emote' ? <MaskIcon src={emotesIcon} size={20} /> : category ? <CategoryIcon category={category} size={20} /> : undefined
+  const categoryIcon = category === 'emote' ? <MaskIcon src={emotesIcon} size={16} /> : category ? <CategoryIcon category={category} size={16} /> : undefined
   return { ...rest, categoryIcon }
 }
 

@@ -3,9 +3,7 @@ const child_process = require('child_process');
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
-const { future } = require('fp-future');
 const esbuild = require('esbuild');
-const dotenv = require('dotenv');
 const { ABOUT_FILE_PARTS, ABOUT_URL_PATH, rewriteAboutOrigin } = require('./bevy-agent-realm.js');
 const { getNotBundledModules } = require('./build-externals.js');
 
@@ -14,12 +12,26 @@ const PRODUCTION = process.argv.includes('--production');
 
 const externalModulesArray = getNotBundledModules();
 
+// The shared ui3 and library/ui components are bundled from source. Their files sit outside this
+// workspace, so `react` is pinned to the copy installed here: one React per bundle.
+const UI3_ALIAS = {
+  '@ui': path.resolve(__dirname, '../../../ui3/src'),
+  '@dcl/one-ui': path.resolve(__dirname, '../../../../library/ui'),
+  react: path.dirname(require.resolve('react/package.json')),
+  'react-dom': path.dirname(require.resolve('react-dom/package.json')),
+};
+
 async function main() {
+  // A one-shot build runs the type checker beside the bundles: it reads the sources only.
+  const typeChecker = WATCH_MODE ? undefined : runTypeChecker();
+  typeChecker?.catch(() => {}); // reported by the `await` at the end of this function
+
   const context = await esbuild.context({
     entryPoints: ['src/index.tsx'],
     bundle: true,
     platform: 'browser',
     outfile: 'public/bundle.js',
+    alias: UI3_ALIAS,
     sourcemap: 'linked',
     minify: PRODUCTION,
     loader: {
@@ -64,7 +76,7 @@ async function main() {
 
   await buildCommonJsDistributable();
   await buildAnsiDistributable();
-  await runTypeChecker();
+  await (typeChecker ?? runTypeChecker());
 }
 
 /**
@@ -235,42 +247,42 @@ async function buildAnsiDistributable() {
   }
 }
 
-function runTypeChecker() {
-  const args = [require.resolve('typescript/lib/tsc'), '-p', 'tsconfig.json'];
-  if (WATCH_MODE) args.push('--watch');
+/** Runs tsc with `args`. The promise settles when the process ends. */
+function runTsc(args) {
+  return new Promise((resolve, reject) => {
+    const tsc = path.join(path.dirname(require.resolve('typescript/package.json')), 'bin', 'tsc');
+    const ts = child_process.spawn('node', [tsc, ...args]);
+    ts.stdout.pipe(process.stdout);
+    ts.stderr.pipe(process.stderr);
+    ts.on('error', reject);
+    ts.on('close', code => {
+      if (code !== 0) {
+        reject(new Error(`Typechecker exited with code ${code}.`));
+        return;
+      }
+      resolve(code);
+    });
+  });
+}
 
+async function runTypeChecker() {
   console.time('> Running typechecker');
-  const ts = child_process.spawn('node', args, {
-    env: process.env,
-    cwd: process.cwd(),
-    encoding: 'utf8',
-  });
-  const typeCheckerFuture = future();
-
-  ts.on('close', code => {
-    console.timeEnd('> Running typechecker');
-    console.log('  Type checker exit code:', code);
-    if (code !== 0) {
-      typeCheckerFuture.reject(new Error(`Typechecker exited with code ${code}.`));
-      return;
-    }
-
-    typeCheckerFuture.resolve(code);
-  });
-
-  ts.stdout.pipe(process.stdout);
-  ts.stderr.pipe(process.stderr);
+  // tsconfig.json reads the types of the shared ui3 files from this referenced project.
+  await runTsc(['-p', 'tsconfig.ui3.json']);
 
   if (WATCH_MODE) {
-    typeCheckerFuture.resolve();
+    // Runs until the build stops and prints its own errors.
+    runTsc(['-p', 'tsconfig.json', '--watch']).catch(() => {});
+    return;
   }
 
-  return typeCheckerFuture;
+  await runTsc(['-p', 'tsconfig.json']);
+  console.timeEnd('> Running typechecker');
 }
 
 function getEnvVars() {
   const envVars = {};
-  dotenv.config();
+  if (fs.existsSync('.env')) process.loadEnvFile();
 
   for (const env in process.env) {
     // Skip environment variables with invalid characters for JavaScript identifiers

@@ -1,16 +1,20 @@
 //! `/lambdas/profiles`: the profile entity comes from `content.deployments`
 //! (peer sync), every wearable and emote it names is checked against the
-//! collections subgraphs (token ids included, re-emitted `<urn>:<tokenId>`
-//! as `ENSURE_ERC_721` does), its third-party wearables against their
+//! `nft` index (`owned_items`: token ids included, re-emitted
+//! `<urn>:<tokenId>` as `ENSURE_ERC_721` does, the newest transfer first
+//! when the profile names no token), its third-party wearables against their
 //! mappings and the chain (`third_party::sanitize_third_party_urns`,
 //! appended after the others as the old lambdas did) and `hasClaimedName`
 //! against the marketplace subgraph. The answer is decentraland/lamb2's
-//! `{ timestamp, avatars }`, the timestamp the entity's. With no collections
-//! subgraph the items are served as deployed (a node with no ownership
-//! source, such as an island); a reader that is configured but unreachable
-//! fails the request closed (503) rather than serving cosmetics nobody
-//! proved. The one exception is a linked third-party item whose chain read
-//! failed: only that profile's linked items are left out.
+//! `{ timestamp, avatars }`, the timestamp the entity's. A node that does
+//! not walk the index (`owned_items::walks_here`: an island, a journey, a
+//! testnet) serves the items as deployed. One that walks it reads the
+//! networks the items name once their index is complete
+//! (`owned_items::Rule::Complete`: an index published once since its last
+//! rewind, however long ago); before that the request fails closed (503)
+//! rather than serving cosmetics nobody proved or stripping items their
+//! owners hold. The one exception is a linked third-party item whose chain
+//! read failed: only that profile's linked items are left out.
 //!
 //! `POST /lambdas/profiles/metadata` serves the compact projection of the same
 //! processed profiles, as asset-bundle-registry's `/profiles/metadata`.
@@ -28,7 +32,7 @@ use serde_json::{Value, json};
 
 use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 
-use super::graph;
+use super::owned_items::{self, Rule};
 use super::third_party;
 use super::{MarketplaceState, SharedState, bad_request, lambdas_internal_error, not_found};
 
@@ -61,6 +65,41 @@ pub fn is_base_emote(urn: &str) -> bool {
 /// Pointers `default*` hold the curated default looks: they own nothing.
 fn is_default_pointer(address: &str) -> bool {
     address.starts_with("default")
+}
+
+/// Distinct pointers looked up in one entity read by the uncapped profile
+/// routes (`/profiles/metadata` here and on the Registry host): bounds the
+/// one `POST /entities/active` a read-through node sends upstream.
+pub(super) const PROFILE_LOOKUP_CHUNK: usize = 1000;
+
+/// Counts profile answers that left something out because a lookup layer
+/// failed, by `route` and `layer` (`entities`, `ownership`). The Registry
+/// and Lambdas can use their normal response statuses for these failures.
+pub(super) const PROFILE_LOOKUP_FAILURES: &str = "profiles_lookup_failures_total";
+const LOOKUP_FAILURE_COUNTER: dcl_metrics::CounterFamily<2> = dcl_metrics::CounterFamily::new(
+    PROFILE_LOOKUP_FAILURES,
+    "Profile lookups that failed, by route and failed lookup layer.",
+    Some(dcl_metrics::Unit::Count),
+    &["route", "layer"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[LOOKUP_FAILURE_COUNTER.descriptor];
+
+pub(super) fn count_lookup_failure(route: &'static str, layer: &'static str) {
+    LOOKUP_FAILURE_COUNTER.handle([route, layer]).increment(1);
+}
+
+/// A pointer that can name a profile: an address (`0x` and 40 hex digits,
+/// lowercased by the caller) or `default` followed by one to three digits.
+/// The body bounds address lookups; the default namespace has 1,110 distinct
+/// spellings. Other nonempty strings remain valid input but are not looked up.
+pub(super) fn is_profile_pointer(pointer: &str) -> bool {
+    let address = pointer
+        .strip_prefix("0x")
+        .is_some_and(|hex| hex.len() == 40 && hex.bytes().all(|b| b.is_ascii_hexdigit()));
+    let default = pointer
+        .strip_prefix("default")
+        .is_some_and(|n| (1..=3).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit()));
+    address || default
 }
 
 /// `splitUrnAndTokenId`: a seven-part non-third-party URN ends in its token id.
@@ -112,7 +151,7 @@ fn collect_ownership_urns(metadata: &Value) -> Vec<String> {
 /// An owned item as `profiles.ts` re-emits it: `<owned urn>:<the named token
 /// id, or the first one held>`; `None` when the URN is not held or the named
 /// token is not among the held ones. The URN must equal the inventory's
-/// exactly, as lamb2's `Map` lookup does: the subgraphs spell L1 `ethereum`,
+/// exactly, as lamb2's `Map` lookup does: the index spells L1 `ethereum`,
 /// so a `mainnet` spelling is not owned.
 fn owned_item(item: &str, owned: &OwnedTokens) -> Option<String> {
     let (urn, token_id) = split_urn_and_token_id(item);
@@ -127,8 +166,8 @@ fn owned_item(item: &str, owned: &OwnedTokens) -> Option<String> {
     })
 }
 
-/// Keeps the base items and the owned ones (`owned: None`, no collections
-/// reader: every item as deployed). An owned emote becomes exactly
+/// Keeps the base items and the owned ones (`owned: None`, no ownership
+/// source: every item as deployed). An owned emote becomes exactly
 /// `{ urn, slot }`. `emotes` is always present, `[]` when not deployed.
 fn filter_avatars_by_ownership(avatars: &mut [Value], owned: Option<&OwnedTokens>) {
     for avatar_val in avatars.iter_mut() {
@@ -178,8 +217,21 @@ fn filter_avatars_by_ownership(avatars: &mut [Value], owned: Option<&OwnedTokens
                 })
                 .collect(),
         };
+        let validated = validated.into_iter().map(normalize_slot).collect();
         avatar_obj.insert("emotes".to_string(), Value::Array(validated));
     }
+}
+
+/// An emote's or outfit's non-negative integral `slot` in float form (`1.0`,
+/// `1e0`, `1e10`), served as the integer the reference's JSON round trip emits.
+pub(super) fn normalize_slot(mut entry: Value) -> Value {
+    if let Some(slot) = entry.get_mut("slot")
+        && !slot.is_u64()
+        && let Some(n) = catalyst_shared::json_number::as_integral_u64(slot)
+    {
+        *slot = Value::from(n);
+    }
+    entry
 }
 
 /// Every non-base wearable the profile's avatars wear, for the third-party check.
@@ -342,6 +394,37 @@ pub fn entity_eth_address(entity: &Value) -> Option<String> {
         .map(|s| s.to_lowercase())
 }
 
+/// The legacy dcl URL resolver accepts one asset path segment.
+fn translate_body_shapes(metadata: &mut Value) {
+    let Some(avatars) = metadata.get_mut("avatars").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for avatar in avatars {
+        let Some(shape) = avatar.pointer_mut("/avatar/bodyShape") else {
+            continue;
+        };
+        let Some(legacy) = shape.as_str().filter(|value| value.starts_with("dcl://")) else {
+            continue;
+        };
+        let urn = url::Url::parse(legacy).ok().and_then(|url| {
+            let collection = url.host_str().filter(|host| !host.is_empty())?;
+            let item = url.path().strip_prefix('/')?;
+            if item.is_empty() || item.contains(['/', ':']) || collection.contains(':') {
+                return None;
+            }
+            // Both captured segments must be decodable by the URN resolver.
+            urlencoding::decode(collection).ok()?;
+            urlencoding::decode(item).ok()?;
+            let namespace = match collection {
+                "base-avatars" | "base-emotes" => "off-chain",
+                _ => "ethereum:collections-v1",
+            };
+            Some(format!("urn:decentraland:{namespace}:{collection}:{item}"))
+        });
+        *shape = Value::String(urn.unwrap_or_default());
+    }
+}
+
 /// The deployed metadata of a profile entity, links and snapshots fixed and
 /// its avatars carrying the pointer's identity; `None` without metadata.
 fn prepare_profile(state: &MarketplaceState, entity: &Value) -> Option<(String, Value)> {
@@ -349,6 +432,7 @@ fn prepare_profile(state: &MarketplaceState, entity: &Value) -> Option<(String, 
     let eid = entity.get("id").and_then(|v| v.as_str()).unwrap_or("");
     let address = entity_eth_address(entity).unwrap_or_default();
     sanitize_links(&mut metadata);
+    translate_body_shapes(&mut metadata);
     rewrite_snapshot_urls(
         eid,
         &mut metadata,
@@ -369,7 +453,26 @@ pub async fn process_profiles_positional(
     state: &MarketplaceState,
     entities: &[Value],
 ) -> Result<Vec<Option<Value>>, String> {
-    let collections = graph::any_collections_reader(&state.index);
+    Ok(process_profiles_observed(state, entities)
+        .await?
+        .into_iter()
+        .map(|(profile, _)| profile)
+        .collect())
+}
+
+/// [`process_profiles_positional`], each profile with the publications its
+/// chunk's ownership read observed (`None`: the chunk named no on-chain
+/// item, so nothing was read and the profile does not depend on the index).
+async fn process_profiles_observed(
+    state: &MarketplaceState,
+    entities: &[Value],
+) -> Result<Vec<(Option<Value>, Option<owned_items::Publications>)>, String> {
+    let collections = owned_items::walks_here(state);
+    // A node that walks the nft index reads the NAMEs in the items'
+    // snapshot (one observation for the whole answer); one that does not
+    // reads them from the subgraph beside the items, or claims none, as it
+    // serves the items as deployed.
+    let index_names = collections && state.name_authority.as_ref().is_some_and(|a| a.observes());
     state.warm_faces(
         entities
             .iter()
@@ -396,13 +499,22 @@ pub async fn process_profiles_positional(
             }
         }
         let mut owned: HashMap<String, OwnedTokens> = HashMap::new();
+        let mut observed: Option<owned_items::Publications> = None;
         let mut names_by_address: HashMap<String, Vec<String>> = HashMap::new();
         let mut third_party_by_address: HashMap<String, Vec<String>> = HashMap::new();
         if !addresses.is_empty() {
-            // `owned_names` answers empty without a marketplace subgraph.
-            let names_futs = addresses
-                .iter()
-                .map(|a| graph::owned_names(&state.index, a));
+            // Without the subgraph an address that is not read from the
+            // index claims no name.
+            let names_futs = addresses.iter().map(|a| async move {
+                match state.name_authority.as_ref() {
+                    Some(authority) if !authority.observes() => authority
+                        .owned_names(a, crate::chain_index::names::Purpose::Display)
+                        .await
+                        .map(|answer| answer.value)
+                        .map_err(|e| e.to_string()),
+                    _ => Ok(std::sync::Arc::new(Vec::new())),
+                }
+            });
             // A profile whose linked items could not be checked keeps
             // its v1 items only; the others in the batch are unaffected.
             let third_party_futs = addresses.iter().zip(&worn).map(|(a, worn)| async move {
@@ -424,10 +536,25 @@ pub async fn process_profiles_positional(
             use futures::stream::StreamExt;
             let (owned_res, names, third_party) = tokio::join!(
                 async {
-                    if collections && !requested.is_empty() {
-                        graph::owned_tokens(&state.index, &requested).await
+                    if index_names {
+                        // The items and the NAMEs, Ethereum always, in one
+                        // snapshot.
+                        owned_items::owned_tokens_and_names(
+                            &state.pool,
+                            &requested,
+                            &addresses,
+                            Rule::Complete,
+                        )
+                        .await
+                        .map(|(owned, names, seen)| (owned, Some(names), Some(seen)))
+                        .map_err(|e| e.to_string())
+                    } else if collections && !requested.is_empty() {
+                        owned_items::owned_tokens_observed(&state.pool, &requested, Rule::Complete)
+                            .await
+                            .map(|(owned, seen)| (owned, None, seen))
+                            .map_err(|e| e.to_string())
                     } else {
-                        Ok(HashMap::new())
+                        Ok((HashMap::new(), None, None))
                     }
                 },
                 futures::future::join_all(names_futs),
@@ -435,12 +562,25 @@ pub async fn process_profiles_positional(
                     .buffer_unordered(THIRD_PARTY_CONCURRENCY)
                     .collect::<HashMap<String, Vec<String>>>()
             );
-            owned = owned_res?;
-            for (address, names) in addresses.iter().zip(names) {
-                names_by_address.insert(
-                    address.clone(),
-                    names?.iter().map(|n| n.name.clone()).collect(),
-                );
+            let (read, indexed_names, seen) = owned_res?;
+            owned = read;
+            observed = seen.map(|seen| seen.publications);
+            match indexed_names {
+                Some(mut indexed) => {
+                    for address in &addresses {
+                        let names = indexed.remove(address.as_str()).unwrap_or_default();
+                        names_by_address
+                            .insert(address.clone(), names.into_iter().map(|n| n.name).collect());
+                    }
+                }
+                None => {
+                    for (address, names) in addresses.iter().zip(names) {
+                        names_by_address.insert(
+                            address.clone(),
+                            names?.iter().map(|n| n.name.clone()).collect(),
+                        );
+                    }
+                }
             }
             third_party_by_address = third_party;
         }
@@ -475,7 +615,7 @@ pub async fn process_profiles_positional(
             apply_claimed_name(metadata, names);
         }
         profiles.extend(chunk.iter().zip(prepared).map(|(entity, p)| {
-            p.map(|(_, mut metadata)| {
+            let profile = p.map(|(_, mut metadata)| {
                 json!({
                     "timestamp": entity.get("timestamp").cloned().unwrap_or(Value::Null),
                     "avatars": metadata
@@ -484,7 +624,8 @@ pub async fn process_profiles_positional(
                         .map(Value::take)
                         .unwrap_or_else(|| json!([])),
                 })
-            })
+            });
+            (profile, observed)
         }));
     }
     Ok(profiles)
@@ -497,6 +638,9 @@ pub(super) async fn active_entities(
     state: &MarketplaceState,
     pointers: &[String],
 ) -> Result<Vec<Value>, ()> {
+    if pointers.is_empty() {
+        return Ok(Vec::new());
+    }
     let mut docs = match &state.read_through {
         Some(read_through) => read_through.active_docs(false, pointers).await,
         None => active_entity_docs_by_pointers(&state.pool, pointers).await,
@@ -508,20 +652,28 @@ pub(super) async fn active_entities(
     Ok(docs.iter().filter_map(|d| d.to_value()).collect())
 }
 
-/// Processes a batch and fills the per-id cache (`Null` for absent pointers).
-async fn process_and_cache_profiles(
+/// Processes a batch and fills the per-id cache (`Null` for absent
+/// pointers). A profile whose items were checked is filed under the
+/// publications that check observed; one that named no on-chain item, and
+/// an absent pointer, under `looked_up` (the key read before, which they do
+/// not depend on).
+pub(super) async fn process_and_cache_profiles(
     state: &MarketplaceState,
     pointers: &[String],
     entities: &[Value],
+    looked_up: owned_items::Publications,
 ) -> Result<Vec<(String, Value)>, String> {
-    let processed = process_profiles_positional(state, entities).await?;
+    let processed = process_profiles_observed(state, entities).await?;
     let mut out = Vec::with_capacity(entities.len());
     let mut filled: HashSet<String> = Default::default();
-    for (entity, profile) in entities.iter().zip(processed) {
+    for (entity, (profile, observed)) in entities.iter().zip(processed) {
         let key = entity_eth_address(entity).unwrap_or_default();
         let profile = profile.unwrap_or(Value::Null);
         if !key.is_empty() && filled.insert(key.clone()) {
-            state.profile_cache.insert(key.clone(), profile.clone());
+            state.profile_cache.insert(
+                (key.clone(), observed.unwrap_or(looked_up)),
+                profile.clone(),
+            );
         }
         if !profile.is_null() {
             out.push((key, profile));
@@ -529,7 +681,9 @@ async fn process_and_cache_profiles(
     }
     for pointer in pointers {
         if filled.insert(pointer.clone()) {
-            state.profile_cache.insert(pointer.clone(), Value::Null);
+            state
+                .profile_cache
+                .insert((pointer.clone(), looked_up), Value::Null);
         }
     }
     Ok(out)
@@ -541,18 +695,17 @@ enum Failure {
 }
 
 impl Failure {
-    fn into_response(self) -> Response {
+    fn layer(&self) -> &'static str {
         match self {
-            Failure::Db => lambdas_internal_error(),
-            // lamb2's retryable 503 envelope (`ServiceOverloadedError`).
-            Failure::Reader(e) => {
-                tracing::warn!(error = %e, "profiles: ownership reader failed");
-                super::lambdas_error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Service overloaded, retry shortly",
-                    "ownership readers unavailable",
-                )
-            }
+            Failure::Db => "entities",
+            Failure::Reader(_) => "ownership",
+        }
+    }
+
+    fn log(&self, context: &str) {
+        match self {
+            Failure::Db => tracing::warn!("{context}: profile read failed"),
+            Failure::Reader(e) => tracing::warn!(error = %e, "{context}: ownership reader failed"),
         }
     }
 }
@@ -564,10 +717,18 @@ async fn profiles_via_cache(
     pointers: &[String],
 ) -> Result<Vec<(String, Value)>, Failure> {
     let wanted = unique_pointers(pointers);
+    // The key of every hit and fill: a profile read under another
+    // publication of the nft index is never served.
+    let publications = owned_items::Publications::current(state)
+        .await
+        .map_err(|_| Failure::Db)?;
     let mut found: HashMap<String, Value> = Default::default();
     let mut missing: Vec<String> = Vec::new();
     for pointer in &wanted {
-        match state.profile_cache.get_fresh(pointer) {
+        match state
+            .profile_cache
+            .get_fresh(&(pointer.clone(), publications))
+        {
             Some(v) => {
                 found.insert(pointer.clone(), v);
             }
@@ -578,7 +739,7 @@ async fn profiles_via_cache(
         let entities = active_entities(state, &missing)
             .await
             .map_err(|()| Failure::Db)?;
-        for (key, profile) in process_and_cache_profiles(state, &missing, &entities)
+        for (key, profile) in process_and_cache_profiles(state, &missing, &entities, publications)
             .await
             .map_err(Failure::Reader)?
         {
@@ -604,11 +765,14 @@ async fn processed_profiles(
     if pointers.len() <= PROFILE_BATCH_MAX {
         return profiles_via_cache(state, pointers).await;
     }
+    let publications = owned_items::Publications::current(state)
+        .await
+        .map_err(|_| Failure::Db)?;
     let entities = active_entities(state, pointers)
         .await
         .map_err(|()| Failure::Db)?;
     let mut by_pointer: HashMap<String, Value> = HashMap::new();
-    for (pointer, profile) in process_and_cache_profiles(state, pointers, &entities)
+    for (pointer, profile) in process_and_cache_profiles(state, pointers, &entities, publications)
         .await
         .map_err(Failure::Reader)?
     {
@@ -627,27 +791,14 @@ async fn fetch_profile_for_id(
     state: &MarketplaceState,
     id: &str,
 ) -> Result<Option<Value>, Failure> {
+    // Through the per-id cache, so a fill is filed under the publications its
+    // ownership read observed (`process_and_cache_profiles`).
     let key = id.to_lowercase();
-    let cached = state
-        .profile_cache
-        .get_or_fetch(key.clone(), || async {
-            let entities = active_entities(state, std::slice::from_ref(&key))
-                .await
-                .map_err(|()| Failure::Db)?;
-            let Some(entity) = entities.into_iter().next() else {
-                return Ok(Value::Null);
-            };
-            let processed = process_profiles_positional(state, std::slice::from_ref(&entity))
-                .await
-                .map_err(Failure::Reader)?;
-            Ok(processed
-                .into_iter()
-                .next()
-                .flatten()
-                .unwrap_or(Value::Null))
-        })
-        .await?;
-    Ok(if cached.is_null() { None } else { Some(cached) })
+    Ok(profiles_via_cache(state, std::slice::from_ref(&key))
+        .await?
+        .into_iter()
+        .next()
+        .map(|(_, profile)| profile))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -750,12 +901,26 @@ pub async fn profiles(
             Ok(profiles) => {
                 Json(profiles.into_iter().map(|(_, p)| p).collect::<Vec<_>>()).into_response()
             }
-            Err(f) => f.into_response(),
+            Err(f) => {
+                f.log("profiles");
+                count_lookup_failure("lambdas_profiles", f.layer());
+                Json(json!([])).into_response()
+            }
         };
     }
+    let publications = match owned_items::Publications::current(&state).await {
+        Ok(publications) => publications,
+        Err(_) => {
+            count_lookup_failure("lambdas_profiles", Failure::Db.layer());
+            return Json(json!([])).into_response();
+        }
+    };
     let entities = match active_entities(&state, &pointers).await {
         Ok(e) => e,
-        Err(()) => return lambdas_internal_error(),
+        Err(()) => {
+            count_lookup_failure("lambdas_profiles", Failure::Db.layer());
+            return Json(json!([])).into_response();
+        }
     };
 
     if let Some(threshold) = modified_since
@@ -764,12 +929,17 @@ pub async fn profiles(
         return StatusCode::NOT_MODIFIED.into_response();
     }
 
-    match process_and_cache_profiles(&state, &pointers, &entities).await {
+    match process_and_cache_profiles(&state, &pointers, &entities, publications).await {
         Ok(profiles) => {
             let profiles: Vec<Value> = profiles.into_iter().map(|(_, profile)| profile).collect();
             Json(Value::Array(profiles)).into_response()
         }
-        Err(e) => Failure::Reader(e).into_response(),
+        Err(e) => {
+            let failure = Failure::Reader(e);
+            failure.log("profiles");
+            count_lookup_failure("lambdas_profiles", failure.layer());
+            Json(json!([])).into_response()
+        }
     }
 }
 
@@ -792,19 +962,31 @@ pub struct ProfileMetadata {
 }
 
 /// `None` for a profile without an avatar, where upstream's mapper would throw.
-pub fn profile_metadata(pointer: &str, profile: &Value) -> Option<ProfileMetadata> {
-    let avatar = profile.get("avatars")?.as_array()?.first()?;
+/// The thumbnail is `thumbnail_url` when given, else the first avatar's
+/// `face256` snapshot.
+pub fn profile_metadata(
+    pointer: &str,
+    profile: &Value,
+    thumbnail_url: Option<&str>,
+) -> Option<ProfileMetadata> {
+    let avatar = profile
+        .get("avatars")?
+        .as_array()?
+        .first()
+        .filter(|avatar| avatar.is_object())?;
     let field = |key: &str| avatar.get(key).cloned();
+    let thumbnail_url = thumbnail_url.unwrap_or_else(|| {
+        avatar
+            .pointer("/avatar/snapshots/face256")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    });
     Some(ProfileMetadata {
         pointer: pointer.to_string(),
         has_claimed_name: field("hasClaimedName"),
         name: field("name"),
         name_color: field("nameColor"),
-        thumbnail_url: avatar
-            .pointer("/avatar/snapshots/face256")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        thumbnail_url: thumbnail_url.to_string(),
     })
 }
 
@@ -829,9 +1011,10 @@ fn unique_pointers(ids: &[String]) -> Vec<String> {
 /// node's processed profiles (the same ownership filtering and claimed-name
 /// check as `profiles`, so the compact and full answers agree). `ids` must be
 /// an array of non-empty strings; a body that is not JSON is the bare 500
-/// `request.json()` throws into. Unlike the registry, which reads precomputed
-/// rows, every id here costs an ownership pass, so the distinct ids are
-/// capped at `PROFILE_IDS_MAX` as on `/lambdas/profiles`.
+/// `request.json()` throws into. As the registry, the ids are not capped and
+/// a failed read answers `200` with what was found: only ids that can name a
+/// profile ([`is_profile_pointer`]) are looked up, [`PROFILE_LOOKUP_CHUNK`] at
+/// a time, and a chunk whose read fails is left out, never served unvalidated.
 pub async fn profiles_metadata(
     State(state): State<SharedState>,
     body: axum::body::Bytes,
@@ -846,42 +1029,83 @@ pub async fn profiles_metadata(
     else {
         return bad_request(METADATA_IDS_MSG);
     };
-    let pointers = unique_pointers(&ids);
-    if pointers.len() > PROFILE_IDS_MAX {
-        return early_profiles_response(ProfileIdsCheck::TooMany)
-            .expect("TooMany is an early response");
-    }
-    match processed_profiles(&state, &pointers).await {
-        Ok(found) => {
-            let compact: Vec<ProfileMetadata> = found
-                .iter()
-                .filter_map(|(pointer, profile)| profile_metadata(pointer, profile))
-                .collect();
-            Json(compact).into_response()
+    let pointers: Vec<String> = unique_pointers(&ids)
+        .into_iter()
+        .filter(|pointer| is_profile_pointer(pointer))
+        .collect();
+    let mut compact: Vec<ProfileMetadata> = Vec::new();
+    for chunk in pointers.chunks(PROFILE_LOOKUP_CHUNK) {
+        match processed_profiles(&state, chunk).await {
+            Ok(found) => compact.extend(
+                found
+                    .iter()
+                    .filter_map(|(pointer, profile)| profile_metadata(pointer, profile, None)),
+            ),
+            Err(failure) => {
+                failure.log("profiles/metadata: answering what was found");
+                count_lookup_failure("lambdas_profiles_metadata", failure.layer());
+            }
         }
-        Err(f) => f.into_response(),
     }
+    Json(compact).into_response()
 }
 
 pub async fn profile_by_id(State(state): State<SharedState>, Path(id): Path<String>) -> Response {
     match fetch_profile_for_id(&state, &id).await {
         Ok(Some(metadata)) => Json(metadata).into_response(),
         Ok(None) => not_found("Profile not found"),
-        Err(f) => f.into_response(),
+        Err(f) => {
+            f.log("profiles/:id");
+            count_lookup_failure("lambdas_profile_by_id", f.layer());
+            not_found("Profile not found")
+        }
     }
 }
 
 /// The singular alias never 404s: an unknown address is an empty profile.
 pub async fn profile_alias(State(state): State<SharedState>, Path(id): Path<String>) -> Response {
     match fetch_profile_for_id(&state, &id).await {
-        Ok(Some(processed)) => Json(processed).into_response(),
-        Ok(None) => Json(json!({ "avatars": [], "timestamp": 0 })).into_response(),
-        Err(f) => f.into_response(),
+        Ok(Some(processed)) => return Json(processed).into_response(),
+        Ok(None) => {}
+        Err(f) => {
+            f.log("profile/:id");
+            count_lookup_failure("lambdas_profile_alias", f.layer());
+        }
     }
+    Json(json!({ "avatars": [], "timestamp": 0 })).into_response()
 }
 
 #[cfg(test)]
 mod tests {
+    /// Only an address or a curated `default<n>` look is looked up by the
+    /// uncapped routes: anything else cannot name a profile.
+    #[test]
+    fn profile_pointers_are_addresses_or_default_looks() {
+        for pointer in [
+            "0x0000000000000000000000000000000000000000",
+            "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            "default1",
+            "default160",
+            "default000",
+            "default999",
+        ] {
+            assert!(is_profile_pointer(pointer), "{pointer}");
+        }
+        for pointer in [
+            "a0",
+            "0x",
+            "0xabc",
+            "0x00000000000000000000000000000000000000000",
+            "0xgggggggggggggggggggggggggggggggggggggggg",
+            "default",
+            "default1000",
+            "defaultx",
+            "bafkreiexample",
+        ] {
+            assert!(!is_profile_pointer(pointer), "{pointer}");
+        }
+    }
+
     use super::*;
     use std::sync::Arc;
 
@@ -919,7 +1143,7 @@ mod tests {
         let read_through = Arc::new(crate::content::read_through::ReadThrough::new(
             pool.clone(),
             storage,
-            reqwest::Client::new(),
+            crate::content::sync::test_sync_client(reqwest::Client::new()),
             vec![source],
             None,
             crate::content::read_through::Fills::new(1, std::time::Duration::from_secs(30)),
@@ -954,6 +1178,127 @@ mod tests {
         let resp = super::super::lambdas_catalog::outfits(State(with), Path(address.clone())).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// Actual upstream reads filter invalid pointers, retain every valid pointer,
+    /// cap each fill and reuse negative results on repeated HTTP requests.
+    #[tokio::test]
+    async fn registry_profile_routes_bound_actual_read_through_requests() {
+        use axum::body::{Body, to_bytes};
+        use axum::http::Request;
+        use axum::routing::post;
+        use tower::ServiceExt;
+
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+            return;
+        };
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<Vec<String>>::new()));
+        let observed = requests.clone();
+        let peer = axum::Router::new().route(
+            "/content/entities/active",
+            post(move |Json(body): Json<Value>| {
+                let observed = observed.clone();
+                async move {
+                    let pointers = serde_json::from_value(body["pointers"].clone()).unwrap();
+                    observed.lock().unwrap().push(pointers);
+                    Json(json!([]))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, peer).await.unwrap() });
+        let tmp = std::env::temp_dir().join(format!(
+            "catalyst-profile-budget-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = Arc::new(crate::storage::Storage::from_config(&tmp).await.unwrap());
+        let read_through = Arc::new(crate::content::read_through::ReadThrough::new(
+            pool.clone(),
+            storage,
+            crate::content::sync::test_sync_client(reqwest::Client::new()),
+            vec![format!("http://{address}/content")],
+            None,
+            crate::content::read_through::Fills::new(1, Duration::from_secs(30)),
+            crate::content::sync_deployer::SyncValidation::AuthChainOnly,
+        ));
+        let state = Arc::new(
+            MarketplaceState::new(
+                pool,
+                crate::http::Outbound::for_tests(),
+                super::super::Settings::for_tests(),
+            )
+            .with_read_through(Some(read_through)),
+        );
+        let app = super::super::router(state.clone())
+            .nest("/asset-bundle-registry", registry::router(state));
+        let pointer_tag = uuid::Uuid::new_v4().simple().to_string();
+        for (route_index, route) in [
+            "/asset-bundle-registry/profiles",
+            "/asset-bundle-registry/profiles/metadata",
+            "/lambdas/profiles/metadata",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            requests.lock().unwrap().clear();
+            let short_ids: Vec<_> = (0..30_000).map(|i| format!("a{i}")).collect();
+            let valid_ids: Vec<_> = (0..1001)
+                .map(|i| format!("0x{pointer_tag}{route_index:04x}{i:04x}"))
+                .chain([format!("default{}", route_index + 1)])
+                .collect();
+            for ids in [&short_ids, &valid_ids] {
+                let mut request_ids = ids.clone();
+                if ids.len() == valid_ids.len() {
+                    request_ids.push(valid_ids[0].to_uppercase());
+                    request_ids.push("not-a-profile".into());
+                }
+                let body = json!({"ids": request_ids}).to_string();
+                assert!(body.len() < 256 * 1024);
+                for _ in 0..2 {
+                    let response = app
+                        .clone()
+                        .oneshot(
+                            Request::post(route)
+                                .header("content-type", "application/json")
+                                .body(Body::from(body.clone()))
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(response.status(), StatusCode::OK);
+                    assert_eq!(
+                        to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
+                        b"[]"
+                    );
+                }
+                let calls = requests.lock().unwrap();
+                if ids.len() == short_ids.len() {
+                    assert!(
+                        calls.is_empty(),
+                        "{route}: invalid pointers must not reach upstream"
+                    );
+                } else {
+                    assert_eq!(
+                        calls.len(),
+                        2,
+                        "{route}: two bounded fills; repeat uses negative cache"
+                    );
+                    assert!(calls.iter().all(|call| call.len() <= PROFILE_LOOKUP_CHUNK));
+                    let mut actual: Vec<_> = calls.iter().flatten().cloned().collect();
+                    actual.sort();
+                    let mut expected = valid_ids.clone();
+                    expected.sort();
+                    assert_eq!(
+                        actual, expected,
+                        "{route}: every valid pointer is queried once"
+                    );
+                }
+            }
+        }
+        server.abort();
         let _ = std::fs::remove_dir_all(tmp);
     }
 
@@ -1064,6 +1409,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn integral_float_emote_slots_are_served_as_integers() {
+        let mut avatars: Vec<Value> = vec![
+            serde_json::from_str(
+                r#"{"avatar": {"emotes": [
+                    {"slot": 1.0, "urn": "wave"},
+                    {"slot": 2e0, "urn": "clap"},
+                    {"slot": -0.0, "urn": "kiss"},
+                    {"slot": 3.5, "urn": "money"},
+                    {"slot": 4, "urn": "shrug"},
+                    {"slot": 1e10, "urn": "dance"}
+                ]}}"#,
+            )
+            .unwrap(),
+        ];
+        filter_avatars_by_ownership(&mut avatars, None);
+        assert_eq!(
+            serde_json::to_string(&avatars[0]["avatar"]["emotes"]).unwrap(),
+            r#"[{"slot":1,"urn":"wave"},{"slot":2,"urn":"clap"},{"slot":0,"urn":"kiss"},{"slot":3.5,"urn":"money"},{"slot":4,"urn":"shrug"},{"slot":10000000000,"urn":"dance"}]"#
+        );
+    }
+
     /// No collections reader: the items stay as deployed, `emotes` still present.
     #[test]
     fn without_a_reader_items_stay_as_deployed() {
@@ -1105,6 +1472,33 @@ mod tests {
         assert_eq!(metadata["avatars"][0]["hasClaimedName"], true);
         assert_eq!(metadata["avatars"][1]["hasClaimedName"], false);
         assert_eq!(metadata["avatars"][2]["hasClaimedName"], false);
+    }
+
+    #[tokio::test]
+    async fn legacy_body_shapes_are_translated_when_profiles_are_assembled() {
+        let state = super::super::tests::support::state_without_db();
+        let inputs = [
+            (
+                "dcl://base-avatars/BaseFemale",
+                "urn:decentraland:off-chain:base-avatars:BaseFemale",
+            ),
+            (
+                "dcl://some-collection/shape",
+                "urn:decentraland:ethereum:collections-v1:some-collection:shape",
+            ),
+            ("dcl://base-avatars/invalid/path", ""),
+            ("dcl://base-avatars/", ""),
+            (
+                "urn:decentraland:off-chain:base-avatars:BaseMale",
+                "urn:decentraland:off-chain:base-avatars:BaseMale",
+            ),
+        ];
+        for (body_shape, expected) in inputs {
+            let entity =
+                json!({ "metadata": { "avatars": [{ "avatar": { "bodyShape": body_shape } }] } });
+            let (_, metadata) = prepare_profile(&state, &entity).unwrap();
+            assert_eq!(metadata["avatars"][0]["avatar"]["bodyShape"], expected);
+        }
     }
 
     /// `addBaseUrlToSnapshots`: face and body always rewritten, every other
@@ -1198,7 +1592,7 @@ mod tests {
     }
 
     fn metadata_json(pointer: &str, profile: &Value) -> String {
-        serde_json::to_string(&profile_metadata(pointer, profile).unwrap()).unwrap()
+        serde_json::to_string(&profile_metadata(pointer, profile, None).unwrap()).unwrap()
     }
 
     #[test]
@@ -1226,7 +1620,16 @@ mod tests {
 
     #[test]
     fn profile_metadata_skips_a_profile_without_avatars() {
-        assert!(profile_metadata("0xabc", &json!({ "avatars": [], "timestamp": 1 })).is_none());
+        assert!(
+            profile_metadata("0xabc", &json!({ "avatars": [], "timestamp": 1 }), None).is_none()
+        );
+        for first in [json!(null), json!(1), json!("avatar")] {
+            let profile = json!({ "avatars": [first], "timestamp": 1 });
+            assert!(
+                profile_metadata("0xabc", &profile, None).is_none(),
+                "{profile}"
+            );
+        }
     }
 
     #[test]

@@ -75,6 +75,14 @@ pub trait AccessPolicy: Send + Sync {
         world: &WorldName,
         parcels: &ParcelSet,
     ) -> Result<BTreeSet<Address>, AuthorityNotEstablished>;
+    /// The deployment/streaming grantees of `world` whose grant is
+    /// world-wide or touches `parcels`, without the owner: an authorization
+    /// question, so no owner fallback widens it on a fault.
+    async fn world_grantees(
+        &self,
+        world: &WorldName,
+        parcels: &ParcelSet,
+    ) -> Result<BTreeSet<Address>, AuthorityNotEstablished>;
 }
 
 /// The ONE room resolver as comms asks it; every method is the worlds
@@ -110,6 +118,9 @@ pub trait SceneIdentity: Send + Sync {
         &self,
         world: &WorldName,
     ) -> Result<Option<ActiveDeployment>, ResolveError>;
+    /// How many scenes the world has here, counted up to two: a Cast watcher
+    /// needs a parcel in a world with several.
+    async fn world_scene_count(&self, world: &WorldName) -> Result<usize, ResolveError>;
 }
 
 /// Name ownership is supplied by Shop, which owns both its NFT index and
@@ -184,8 +195,17 @@ pub enum ModerationNotificationKind {
     },
 }
 
-/// One user notice a lower domain produces (worlds' permission and storage
-/// quota notices); `id` is its idempotency key, `metadata` the inbox payload.
+pub use crate::shared::notifications::NotificationAlias as UserNotificationAlias;
+
+/// How a producer retains a notice when its source identity repeats.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UserNotificationPersistence {
+    Refresh,
+    InsertOnce { aliases: Vec<UserNotificationAlias> },
+}
+
+/// One user notice a lower domain produces; `id` is its source identity,
+/// `metadata` the inbox payload and `persistence` its replay policy.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UserNotification {
     pub id: uuid::Uuid,
@@ -193,6 +213,7 @@ pub struct UserNotification {
     pub kind: &'static str,
     pub metadata: serde_json::Value,
     pub occurred_at: NaiveDateTime,
+    pub persistence: UserNotificationPersistence,
 }
 
 /// Social owns membership, privacy and notification storage.
@@ -233,7 +254,7 @@ pub trait SocialDirectory: Send + Sync {
         notification: &ModerationNotification,
     ) -> Result<(), sqlx::Error>;
     /// Insert user notices (inbox and email delivery rows) in the producer's
-    /// transaction; a repeated `id` is ignored. No network work.
+    /// transaction using the producer's replay policy. No network work.
     async fn notify_user_notifications(
         &self,
         transaction: &mut sqlx::PgConnection,
@@ -251,10 +272,15 @@ pub mod test_support {
     pub struct StubDirectory {
         pub privacy: std::sync::Mutex<std::collections::BTreeMap<Address, String>>,
         pub streaming_notifications: std::sync::Mutex<Vec<StreamingNotification>>,
+        pub fail_streaming_recipient: std::sync::Mutex<Option<Address>>,
+        pub streaming_attempts: std::sync::Mutex<Vec<Address>>,
+        pub streaming_delay_ms: std::sync::atomic::AtomicU64,
         pub community_events: std::sync::Mutex<Vec<serde_json::Value>>,
         pub fail_community_notifications: std::sync::atomic::AtomicUsize,
         pub fail_moderation_notifications: std::sync::atomic::AtomicBool,
         pub user_notifications: std::sync::Mutex<Vec<UserNotification>>,
+        pub user_notification_keys:
+            std::sync::Mutex<std::collections::BTreeMap<(Address, uuid::Uuid), uuid::Uuid>>,
     }
 
     #[async_trait::async_trait]
@@ -330,6 +356,24 @@ pub mod test_support {
             &self,
             notification: &StreamingNotification,
         ) -> Result<(), sqlx::Error> {
+            self.streaming_attempts
+                .lock()
+                .unwrap()
+                .push(notification.recipient.clone());
+            let delay = self
+                .streaming_delay_ms
+                .load(std::sync::atomic::Ordering::SeqCst);
+            if delay > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
+            let mut failure = self.fail_streaming_recipient.lock().unwrap();
+            if failure.as_ref() == Some(&notification.recipient) {
+                failure.take();
+                return Err(sqlx::Error::Protocol(
+                    "injected streaming recipient failure".into(),
+                ));
+            }
+            drop(failure);
             let mut notifications = self.streaming_notifications.lock().unwrap();
             if !notifications.iter().any(|n| {
                 n.event_key == notification.event_key && n.recipient == notification.recipient
@@ -344,9 +388,50 @@ pub mod test_support {
             notifications: &[UserNotification],
         ) -> Result<(), sqlx::Error> {
             let mut saved = self.user_notifications.lock().unwrap();
+            let mut keys = self.user_notification_keys.lock().unwrap();
+            keys.retain(|(wallet, _), id| {
+                saved.iter().any(|n| n.id == *id && n.recipient == *wallet)
+            });
             for notification in notifications {
-                if !saved.iter().any(|n| n.id == notification.id) {
-                    saved.push(notification.clone());
+                match &notification.persistence {
+                    UserNotificationPersistence::Refresh => {
+                        if let Some(previous) = saved.iter_mut().find(|n| n.id == notification.id) {
+                            if previous.recipient == notification.recipient
+                                && previous.kind == notification.kind
+                            {
+                                previous.metadata = notification.metadata.clone();
+                                previous.occurred_at = notification.occurred_at;
+                            }
+                        } else {
+                            saved.push(notification.clone());
+                        }
+                    }
+                    UserNotificationPersistence::InsertOnce { aliases } => {
+                        for alias in aliases {
+                            let key = (notification.recipient.clone(), alias.daily_id);
+                            let has_daily = saved.iter().any(|n| {
+                                n.id == alias.daily_id && n.recipient == notification.recipient
+                            });
+                            if !keys.contains_key(&key)
+                                && !has_daily
+                                && let Some(previous) = saved.iter().find(|n| {
+                                    n.id == alias.legacy_id
+                                        && n.recipient == notification.recipient
+                                        && n.kind == alias.kind
+                                })
+                                && !keys.values().any(|id| *id == previous.id)
+                            {
+                                keys.insert(key, previous.id);
+                            }
+                        }
+                        let key = (notification.recipient.clone(), notification.id);
+                        if !keys.contains_key(&key)
+                            && !saved.iter().any(|n| n.id == notification.id)
+                        {
+                            saved.push(notification.clone());
+                            keys.insert(key, notification.id);
+                        }
+                    }
                 }
             }
             Ok(())
@@ -355,7 +440,7 @@ pub mod test_support {
 
     /// An [`AccessPolicy`] that gives every question the answer its field
     /// holds. The default is an unknown world, access allowed, not blocked, not
-    /// an admin, no LAND document and no protected wallet.
+    /// an admin, no LAND document, no protected wallet and no grantee.
     pub struct StubPolicy {
         pub access_type: Result<Option<AccessType>, AuthorityNotEstablished>,
         pub world_owner: Result<Option<Address>, AuthorityNotEstablished>,
@@ -364,6 +449,7 @@ pub mod test_support {
         pub admin: PermissionDecision,
         pub land: Result<Option<Arc<Option<LandOperators>>>, AuthorityNotEstablished>,
         pub protected: Result<BTreeSet<Address>, AuthorityNotEstablished>,
+        pub grantees: Result<BTreeSet<Address>, AuthorityNotEstablished>,
         /// `None`: the world exists with the `access_type` setting (unrestricted when unknown).
         pub admission: Option<WorldAdmission>,
     }
@@ -378,6 +464,7 @@ pub mod test_support {
                 admin: PermissionDecision::refused("stub: not an admin"),
                 land: Ok(None),
                 protected: Ok(BTreeSet::new()),
+                grantees: Ok(BTreeSet::new()),
                 admission: None,
             }
         }
@@ -450,6 +537,14 @@ pub mod test_support {
         ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
             self.protected.as_ref().cloned().map_err(copy)
         }
+
+        async fn world_grantees(
+            &self,
+            _world: &WorldName,
+            _parcels: &ParcelSet,
+        ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
+            self.grantees.as_ref().cloned().map_err(copy)
+        }
     }
 
     pub async fn classify_fixture(
@@ -495,9 +590,12 @@ pub mod test_support {
         }
     }
 
-    /// A [`SceneIdentity`] that gives every question the answer its field
-    /// holds, whatever was asked. The default is an unknown world: no room
-    /// resolves (`WorldHasNoScene`) and no scene is deployed.
+    /// A [`SceneIdentity`] that knows one room (`room`) and answers every
+    /// question with it, except two it honours: when that room has a
+    /// deployment, a parcel of another realm or outside it stands no scene
+    /// (`NoSceneAtParcel`); a world lobby is that world's room with no scene. The default is
+    /// an unknown world: no room resolves (`WorldHasNoScene`) and no scene is
+    /// deployed.
     pub struct StubScenes {
         pub room: Result<ResolvedRoom, ResolveError>,
         pub scene: Result<Option<ActiveDeployment>, ResolveError>,
@@ -521,8 +619,32 @@ pub mod test_support {
             classify_fixture(self, room).await
         }
 
-        async fn resolve(&self, _request: RoomRequest<'_>) -> Result<ResolvedRoom, ResolveError> {
-            self.room.as_ref().cloned().map_err(copy_resolve)
+        async fn resolve(&self, request: RoomRequest<'_>) -> Result<ResolvedRoom, ResolveError> {
+            let room = self.room.as_ref().cloned().map_err(copy_resolve)?;
+            match request {
+                RoomRequest::Parcel { realm, parcel } => {
+                    // A room without a deployment answers any parcel, as before.
+                    let stands = room.deployment.as_ref().is_none_or(|deployment| {
+                        *realm == room.realm && deployment.parcels.contains(&parcel)
+                    });
+                    if !stands {
+                        return Err(ResolveError::NoSceneAtParcel {
+                            realm: realm.to_string(),
+                            parcel: parcel.canonical(),
+                        });
+                    }
+                }
+                RoomRequest::WorldLobby { world } => {
+                    return Ok(ResolvedRoom {
+                        realm: crate::world_identity::RealmId::World(world.clone()),
+                        scene_id: None,
+                        deployment: None,
+                        room: crate::rooms::worlds_service_world_room(world),
+                    });
+                }
+                _ => {}
+            }
+            Ok(room)
         }
 
         async fn world_scene(
@@ -538,6 +660,12 @@ pub mod test_support {
             _world: &WorldName,
         ) -> Result<Option<ActiveDeployment>, ResolveError> {
             self.scene.as_ref().cloned().map_err(copy_resolve)
+        }
+        async fn world_scene_count(
+            &self,
+            world: &crate::world_identity::WorldName,
+        ) -> Result<usize, crate::rooms::ResolveError> {
+            Ok(usize::from(self.world_active_scene(world).await?.is_some()))
         }
     }
 
@@ -586,4 +714,29 @@ pub mod test_support {
             },
         }
     }
+}
+
+/// The root's deployment lease and durable generation binding, without any room state.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PulseGenerationBinding {
+    pub audience: String,
+    pub epoch: u64,
+    pub source_incarnation: String,
+}
+impl PulseGenerationBinding {
+    pub fn valid(&self) -> bool {
+        !self.audience.is_empty()
+            && self.audience.len() <= 256
+            && self.epoch > 0
+            && self.epoch <= i64::MAX as u64
+            && uuid::Uuid::parse_str(&self.source_incarnation)
+                .is_ok_and(|source| source.to_string() == self.source_incarnation)
+    }
+}
+
+/// Supplied by root/jobs. Pulse never allocates a generation or persists assignments.
+pub trait PulseGeneration: Send + Sync {
+    fn binding(&self) -> &PulseGenerationBinding;
+    fn lost(&self) -> &tokio_util::sync::CancellationToken;
 }

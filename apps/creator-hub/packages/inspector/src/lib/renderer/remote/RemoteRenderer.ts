@@ -1,5 +1,5 @@
-import mitt from 'mitt';
-import type { Emitter } from 'mitt';
+import { createEmitter } from '../../utils/emitter';
+import type { Emitter } from '../../utils/emitter';
 import type { Entity } from '@dcl/ecs';
 import type { Vector3 } from '@dcl/ecs-math';
 
@@ -45,7 +45,7 @@ const EMPTY_SNAPSHOT: RendererSnapshot = {
  * — that is the whole point of the boundary.
  */
 export class RemoteRenderer implements IRenderer {
-  readonly events: Emitter<RendererEvents> = mitt<RendererEvents>();
+  readonly events: Emitter<RendererEvents> = createEmitter<RendererEvents>();
 
   readonly camera: RendererCamera;
   readonly gizmos: RendererGizmos;
@@ -78,7 +78,7 @@ export class RemoteRenderer implements IRenderer {
         // Forward the renderer's reverse-channel events onto the local bus.
         // `event` and `payload` are a correlated pair on the wire but the type
         // system can't re-correlate them after deserialization, so `as never`
-        // bridges into mitt's `emit<K>(type, Events[K])`. Runtime-safe: the host
+        // bridges into the emitter's `emit<K>(type, Events[K])`. Runtime-safe: the host
         // only ever emits matching (event, payload) pairs (see EVENT_NAMES).
         this.events.emit(message.event, message.payload as never);
       } else {
@@ -121,7 +121,6 @@ export class RemoteRenderer implements IRenderer {
       !this.#warnedSkew
     ) {
       this.#warnedSkew = true;
-      // eslint-disable-next-line no-console
       console.warn(
         `[renderer] protocol version skew: inspector=${PROTOCOL_VERSION}, renderer=${partial.version}`,
       );
@@ -271,8 +270,8 @@ export class RemoteRenderer implements IRenderer {
     this.transport.sendCommand({ kind: 'setSelection', entities });
   }
 
-  getPointerWorldPoint(): Promise<Vector3 | null> {
-    return this.transport.request({ kind: 'getPointerWorldPoint' });
+  getPointerWorldPoint(ndc?: { x: number; y: number }): Promise<Vector3 | null> {
+    return this.transport.request({ kind: 'getPointerWorldPoint', ...(ndc ? { ndc } : {}) });
   }
 
   getEntityAnimations(entity: Entity): Promise<RendererAnimation[]> {

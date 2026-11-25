@@ -7,10 +7,7 @@ use common::{
     },
 };
 use console::PendingConsoleResponses;
-use scene_runner::{
-    initialize_scene::{parcels_in_range, ScenePointers},
-    OutOfWorld,
-};
+use scene_runner::initialize_scene::{parcels_in_range, ScenePointers};
 
 /// set location
 #[derive(clap::Parser, ConsoleCommand)]
@@ -22,41 +19,36 @@ pub struct ChangeLocationCommand {
     y: i32,
     /// realm the parcel is in (a world name or realm url): change realm, then land on the parcel
     realm: Option<String>,
+    /// name of the spawn point of the parcel's scene to land on
+    #[arg(long)]
+    spawn: Option<String>,
 }
 
 pub fn change_location(
     mut commands: Commands,
     mut input: ConsoleCommand<ChangeLocationCommand>,
-    mut player: Query<(Entity, &mut Transform), With<PrimaryUser>>,
     mut pending: ResMut<PendingConsoleResponses>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        if let Some(realm) = command.realm {
-            let (response, rx) = RpcResultSender::channel();
-            commands.send_event(RpcCallEvent::engine(RpcCall::TeleportPlayer {
-                to: Some(IVec2::new(command.x, command.y)),
-                realm: Some(realm.clone()),
-                response,
-            }));
-            let location = (command.x, command.y);
-            pending.push_receiver(
-                rx,
-                move |result| result.map(|()| format!("new location: {location:?} in {realm}")),
-                input.take_responder(),
-            );
-            return;
-        }
-        if let Ok((ent, mut transform)) = player.single_mut() {
-            transform.translation.x = command.x as f32 * 16.0 + 8.0;
-            transform.translation.z = -command.y as f32 * 16.0 - 8.0;
-            if let Ok(mut commands) = commands.get_entity(ent) {
-                commands.try_insert(OutOfWorld);
-            }
-            input.reply_ok(format!("new location: {:?}", (command.x, command.y)));
-            return;
-        }
-
-        input.reply_failed("failed to set location");
+        // the teleport scenes use, sent by the engine itself: with a realm a realm change (a full
+        // reconnect) landing on the parcel, without one a move inside the realm the player is in
+        let (response, rx) = RpcResultSender::channel();
+        let location = (command.x, command.y);
+        let reply = match &command.realm {
+            Some(realm) => format!("new location: {location:?} in {realm}"),
+            None => format!("new location: {location:?}"),
+        };
+        commands.send_event(RpcCallEvent::engine(RpcCall::TeleportPlayer {
+            to: Some(IVec2::new(command.x, command.y)),
+            realm: command.realm,
+            spawn_point: command.spawn,
+            response,
+        }));
+        pending.push_receiver(
+            rx,
+            move |result| result.map(|()| reply.clone()),
+            input.take_responder(),
+        );
     }
 }
 
@@ -205,12 +197,6 @@ pub fn session_graphics(
             }
             Some(None) => false,
         },
-        #[cfg(not(target_arch = "wasm32"))]
-        "render_scale" => {
-            input.reply_failed("render_scale only applies to the web canvas");
-            return;
-        }
-        #[cfg(target_arch = "wasm32")]
         "render_scale" => match value.map(str::parse::<f32>) {
             None => {
                 session.render_scale = None;

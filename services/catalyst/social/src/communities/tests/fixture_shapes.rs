@@ -68,22 +68,6 @@ fn entity_of(picture: &str) -> String {
         .to_string()
 }
 
-/// A presence source answering `/peers` with `online`.
-async fn peers(online: Vec<String>) -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let body = json!({ "ok": true, "peers": online.iter().map(|a| json!({ "id": a })).collect::<Vec<_>>() });
-    let app = axum::Router::new().route(
-        "/peers",
-        axum::routing::get(move || {
-            let body = body.clone();
-            async move { axum::Json(body) }
-        }),
-    );
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    format!("http://{addr}")
-}
-
 struct Seed<'a> {
     rig: &'a Rig,
 }
@@ -305,14 +289,13 @@ impl Seed<'_> {
     }
 }
 
-fn settings(presence: Option<String>) -> Settings {
+fn settings() -> Settings {
     Settings {
         faces: FaceUrls::new(
             Some(PROFILE_CDN),
             "http://127.0.0.1:9/profile-images/",
             false,
         ),
-        archipelago_stats_url: presence,
         ..Settings::for_tests()
     }
 }
@@ -329,7 +312,7 @@ fn fields(prefix: &str, kind: &str, names: &[&str]) -> Vec<String> {
 /// with the consumer that reads it.
 fn pinned() -> BTreeMap<&'static str, Vec<String>> {
     let page = Vec::new();
-    let posts = fields("data.posts[].", "extra", &["isLikedByUser"]);
+    let posts = fields("data.posts[].", "extra", &["isLikedByUser", "isOfficial"]);
     BTreeMap::from([
         ("community-by-id", page.clone()),
         ("community-v2-by-id", page),
@@ -359,9 +342,11 @@ async fn the_data_bound_social_api_fixtures_replay_against_their_seeded_rows() {
         .iter()
         .map(|r| r["memberAddress"].as_str().unwrap().to_string())
         .collect();
-    let Some(rig) = Rig::new(settings(Some(peers(online.clone()).await))).await else {
+    let Some(rig) = Rig::new(settings()).await else {
         return;
     };
+    let topology = Arc::new(crate::comms::topology::Topology::default());
+    rig.state.set_topology(topology.clone());
     let seed = Seed { rig: &rig };
     let mut got = BTreeMap::new();
 
@@ -395,6 +380,13 @@ async fn the_data_bound_social_api_fixtures_replay_against_their_seeded_rows() {
             assert!(!online.contains(&owner), "the owner must be offline here");
             seed.member(COMMUNITY, &owner, "owner", "2025-01-01T00:00:00.000Z")
                 .await;
+            // held, not received: a frame's receipt could expire on a slow run before the read;
+            // half online in a Genesis island, half only inside a World
+            let (islands, world) = online.split_at(online.len() / 2);
+            topology.hold_for_tests(islands.iter().map(String::as_str));
+            for (n, wallet) in world.iter().enumerate() {
+                topology.apply_world_event(&format!("PA_fixture_{n}"), wallet, true);
+            }
         }
         check(&rig, &mut got, &[name]).await;
     }

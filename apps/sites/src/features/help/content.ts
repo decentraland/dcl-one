@@ -1,14 +1,8 @@
-/**
- * The /help copy, in English exactly as decentraland/sites `component.landing.help.*` (src/intl/en.json) has it.
- * Sites in this repository has no translation layer yet.
- */
-
 export type HelpQuestion = { readonly question: string; readonly answer: string };
 
 export const HELP_COPY = {
-  pageTitle: "Decentraland - Help Center",
   title: "Help Center",
-  description: "Browse through FAQs and Support Updates or speak with the Support Team directly using the chat box on the bottom right.",
+  description: "Browse through FAQs and Support Updates or use the contact options below to get help.",
   tabs: {
     faq: "FAQ",
     creatorFund: "CREATOR FUND",
@@ -37,6 +31,8 @@ export const HELP_COPY = {
     title: "Need Help?",
     subtitle: "Our support team is here to answer your questions!",
     button: "CHAT NOW",
+    contactPrompt: "You can also reach support at",
+    supportEmail: "support@decentraland.org",
   },
 } as const;
 

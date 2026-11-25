@@ -1,9 +1,11 @@
 //! `GET /ws/{scene}`: the client socket. Handshake, then one signed auth
 //! frame within the deadline, then admission by the permission core, then
-//! the `Init` frame (the entity range and the state snapshot) and the CRDT
-//! relay until either side closes or the client is removed.
+//! (for an unhosted scene that opts in) the load, then the `Init` frame (the
+//! entity range and the state snapshot) and the CRDT relay until either side
+//! closes or the client is removed.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{OriginalUri, Path, State};
@@ -18,8 +20,23 @@ use crate::shared::identity::{Address, AuthorityNotEstablished};
 
 use super::auth::{candidate_paths, verify_auth_frame};
 use super::protocol::{MessageType, decode_message, encode_init_message, encode_message};
-use super::scene::Scene;
-use super::{SceneHostState, SceneKey, SharedState};
+use super::scene::{Scene, SceneIdentity};
+use super::{SceneHostState, SceneKey, SharedState, loader};
+
+/// What a socket joins: a hosted scene, or one loaded once the client is admitted.
+enum Target {
+    Hosted(Arc<Scene>),
+    Autoload(SceneIdentity),
+}
+
+impl Target {
+    fn identity(&self) -> &SceneIdentity {
+        match self {
+            Self::Hosted(scene) => &scene.identity,
+            Self::Autoload(identity) => identity,
+        }
+    }
+}
 
 /// Why a verified identity is not let into a scene.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,14 +72,14 @@ fn undetermined(e: AuthorityNotEstablished) -> AdmissionRefused {
 /// an authority fault leaves a client admitted as owner undetermined.
 pub async fn admit(
     state: &SceneHostState,
-    scene: &Scene,
+    scene: &SceneIdentity,
     address: &Address,
     secret: Option<&str>,
     prior: Option<AccessGrant>,
     now: NaiveDateTime,
 ) -> Result<Option<AccessGrant>, AdmissionRefused> {
-    let scene_id = scene.identity.scene_id();
-    match &scene.identity.key {
+    let scene_id = scene.scene_id();
+    match &scene.key {
         SceneKey::Local => Ok(None),
         SceneKey::World(world) => match state
             .policy
@@ -80,9 +97,19 @@ pub async fn admit(
             Access::InvalidSecret => Err(AdmissionRefused::InvalidSecret),
             Access::NotAllowed => Err(AdmissionRefused::NotAllowed),
         },
+        // A Genesis scene's bans are on its place, which a redeploy keeps.
         SceneKey::Genesis(_) | SceneKey::GenesisParcel(_) => match state
             .policy
-            .is_banned(address, scene_id, None, now)
+            .is_banned(
+                address,
+                scene
+                    .deployment
+                    .as_ref()
+                    .map(crate::comms::access::SceneBanKey::genesis)
+                    .as_ref(),
+                None,
+                now,
+            )
             .await
             .map_err(undetermined)?
         {
@@ -100,35 +127,42 @@ pub async fn ws_upgrade(
     State(state): State<SharedState>,
 ) -> axum::response::Response {
     let Ok(key) = SceneKey::parse(&scene_name) else {
-        return (
-            StatusCode::NOT_FOUND,
-            format!("{scene_name} is not currently loaded in the server"),
-        )
-            .into_response();
+        return not_loaded(&scene_name, None);
     };
-    let mut scene = state.scenes.get(&key.room_key());
-    if scene.is_none() && state.settings.autoload && key != SceneKey::Local {
-        if let Err(e) = state.load(&key).await {
-            tracing::info!(scene = %key, error = %e, "autoload refused");
-            let status = if e.to_string().contains("scene host is full") {
-                StatusCode::SERVICE_UNAVAILABLE
-            } else {
-                StatusCode::NOT_FOUND
-            };
-            return (
-                status,
-                format!("{scene_name} is not currently loaded in the server: {e}"),
-            )
-                .into_response();
+    let key = state.canonical_key(&key).await;
+    // Nothing is loaded before the client is admitted.
+    let target = match state.scenes.get(&key.room_key()) {
+        Some(scene) => Target::Hosted(scene),
+        None if state.settings.autoload && key != SceneKey::Local => {
+            if state.scenes.len() >= state.settings.max_scenes {
+                dcl_metrics::ws::rejected("scene_state", "capacity");
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!(
+                        "{scene_name} is not currently loaded in the server: scene host is full"
+                    ),
+                )
+                    .into_response();
+            }
+            match loader::resolve(&state, &key).await {
+                Ok(Some(resolved)) if resolved.authoritative => Target::Autoload(SceneIdentity {
+                    key: key.clone(),
+                    deployment: Some(resolved.deployment),
+                }),
+                Ok(Some(_)) => {
+                    return not_loaded(
+                        &scene_name,
+                        Some("the scene does not enable authoritativeMultiplayer"),
+                    );
+                }
+                Ok(None) => return not_loaded(&scene_name, Some("no local active deployment")),
+                Err(e) => {
+                    tracing::info!(scene = %key, error = %e, "autoload refused");
+                    return not_loaded(&scene_name, Some(&e.to_string()));
+                }
+            }
         }
-        scene = state.scenes.get(&key.room_key());
-    }
-    let Some(scene) = scene else {
-        return (
-            StatusCode::NOT_FOUND,
-            format!("{scene_name} is not currently loaded in the server"),
-        )
-            .into_response();
+        None => return not_loaded(&scene_name, None),
     };
 
     let route = format!("/ws/{scene_name}");
@@ -140,20 +174,32 @@ pub async fn ws_upgrade(
     let mgr = Arc::clone(&state);
     ws.on_upgrade(move |socket| async move {
         mgr.scenes.on_ws_connected();
-        handle_socket(&mgr, socket, scene, paths, caller_ip).await;
+        handle_socket(&mgr, socket, target, paths, caller_ip).await;
         mgr.scenes.on_ws_closed();
     })
     .into_response()
 }
 
+fn not_loaded(scene_name: &str, why: Option<&str>) -> axum::response::Response {
+    dcl_metrics::ws::rejected("scene_state", "unavailable");
+    let body = match why {
+        Some(why) => format!("{scene_name} is not currently loaded in the server: {why}"),
+        None => format!("{scene_name} is not currently loaded in the server"),
+    };
+    (StatusCode::NOT_FOUND, body).into_response()
+}
+
 async fn handle_socket(
     state: &SceneHostState,
     socket: WebSocket,
-    scene: Arc<Scene>,
+    target: Target,
     paths: Vec<String>,
     caller_ip: String,
 ) {
-    let (mut sink, mut stream) = socket.split();
+    let (mut sink, mut stream) = dcl_metrics::ws::Socket::new(socket, "scene_state").split();
+    let identity = target.identity().clone();
+    drop(target);
+    let name = identity.key.room_key();
 
     let auth = tokio::time::timeout(state.settings.auth_timeout, async {
         while let Some(Ok(msg)) = stream.next().await {
@@ -171,12 +217,12 @@ async fn handle_socket(
     let authed = match auth {
         Ok(Some(Ok(a))) => a,
         Ok(Some(Err(e))) => {
-            tracing::debug!(scene = %scene.name, error = %e, "ws auth failed");
+            tracing::debug!(scene = %name, error = %e, "ws auth failed");
             let _ = sink.close().await;
             return;
         }
         _ => {
-            tracing::debug!(scene = %scene.name, "ws auth missing or timed out");
+            tracing::debug!(scene = %name, "ws auth missing or timed out");
             let _ = sink.close().await;
             return;
         }
@@ -190,12 +236,12 @@ async fn handle_socket(
     let now = chrono::Utc::now().naive_utc();
     // Resolve authority without a secret first. Store failures close below, and a
     // world that changes to shared-secret access cannot skip its attempt budget.
-    let mut admission = admit(state, &scene, &authed.signer, None, None, now).await;
+    let mut admission = admit(state, &identity, &authed.signer, None, None, now).await;
     if matches!(admission, Err(AdmissionRefused::InvalidSecret))
         || (matches!(admission, Err(AdmissionRefused::Undetermined(_)))
             && authed.presented_secret().is_some())
     {
-        let SceneKey::World(world) = &scene.identity.key else {
+        let SceneKey::World(world) = &identity.key else {
             let _ = sink.close().await;
             return;
         };
@@ -214,7 +260,7 @@ async fn handle_socket(
         };
         admission = admit(
             state,
-            &scene,
+            &identity,
             &authed.signer,
             authed.presented_secret(),
             None,
@@ -231,19 +277,33 @@ async fn handle_socket(
     let grant = match admission {
         Ok(grant) => grant,
         Err(reason) => {
-            tracing::info!(scene = %scene.name, address = %authed.signer, %reason, "ws admission refused");
+            tracing::info!(scene = %name, address = %authed.signer, %reason, "ws admission refused");
             let _ = sink.close().await;
             return;
         }
     };
 
     let (tx, mut rx) = mpsc::channel::<Vec<u8>>(state.settings.limits.client_outbound_max.max(1));
-    let (client, init) = scene.add_client_admitted(authed.signer.as_str().to_string(), tx, grant);
+    let address = authed.signer.as_str().to_string();
+    let joined = state
+        .join(&identity, |scene| {
+            scene.add_client_admitted(address, tx, grant)
+        })
+        .await;
+    let (scene, (client, init)) = match joined {
+        Ok(joined) => joined,
+        Err(e) => {
+            tracing::info!(scene = %name, error = %e, "join refused");
+            let _ = sink.close().await;
+            return;
+        }
+    };
     let index = client.index;
+    let meter = init.outbound_meter.clone();
 
     if init.size == 0 {
         tracing::error!(scene = %scene.name, index, address = %authed.signer, "no entity range available; refusing the connection");
-        scene.remove_client(index);
+        scene.remove_connection(index, client.id);
         let _ = sink.close().await;
         return;
     }
@@ -255,7 +315,7 @@ async fn handle_socket(
         init.reserved_local_entities,
     );
     if sink.send(Message::Binary(init_frame.into())).await.is_err() {
-        scene.remove_client(index);
+        scene.remove_connection(index, client.id);
         return;
     }
     tracing::info!(scene = %scene.name, index, address = %authed.signer, ?grant, "ws authenticated");
@@ -265,12 +325,20 @@ async fn handle_socket(
             _ = client.cancel.cancelled() => {
                 tracing::debug!(scene = %scene.name, index, "ws closed by the host");
                 let _ = sink.close().await;
+                // A no-op after a host removal; after the runtime stopped, this
+                // removal is what frees the index.
+                scene.remove_connection(index, client.id);
                 return;
             }
 
             queued = rx.recv() => {
                 let Some(frame) = queued else { break };
-                if sink.send(Message::Binary(frame.into())).await.is_err() {
+                let len = frame.len();
+                let sent = sink.send(Message::Binary(frame.into())).await;
+                if let Some(meter) = &meter {
+                    let _ = meter.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| Some(n.saturating_sub(len)));
+                }
+                if sent.is_err() {
                     break;
                 }
             }
@@ -281,7 +349,10 @@ async fn handle_socket(
                     Message::Binary(bytes) => {
                         if let Some((MessageType::Crdt, body)) = decode_message(&bytes) {
                             if body.is_empty() { continue; }
-                            let outbound = scene.runtime.on_client_crdt(index, body);
+                            let Ok(outbound) = scene.runtime.on_client_crdt(index, body) else {
+                                tracing::info!(scene = %scene.name, index, "client over its inbound byte budget; closing");
+                                break;
+                            };
                             for out in outbound {
                                 let frame = encode_message(MessageType::Crdt, &out);
                                 scene.broadcast(&frame, index);
@@ -296,6 +367,7 @@ async fn handle_socket(
         }
     }
 
-    scene.remove_client(index);
+    // A kicked connection's index may already belong to someone else.
+    scene.remove_connection(index, client.id);
     tracing::debug!(scene = %scene.name, index, "ws closed");
 }

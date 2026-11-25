@@ -24,14 +24,14 @@ use boimp::{
 use super::{
     bake::{bake_radius, baked_prototypes, check_written, ImpostorBake, Stage, TILE_SIZE},
     impostor::{tree_impostor_plugin, TreeImpostor},
-    layout::TreeLayout,
+    layout::{TreeLayout, TreeLayouts},
     lod::{
         impostor_step_scale, impostor_transform, lod_for, screen_height, switch_distance,
         ImpostorDraw, ImpostorsEnabled, Lod, IMPOSTOR_SCALES,
     },
     material::{StoneMaterial, TreeMaterial},
     prototypes::PROTOTYPES,
-    spawn_tests::{open_land, GENESIS},
+    spawn_tests::{layout, open_land},
     LandscapeTreeAssets, LandscapeTreesPlugin, Tree, ASSET_DIR, IMPOSTOR_DIR,
 };
 use crate::solids::Solid;
@@ -282,7 +282,7 @@ fn bounds_match_the_models() {
 
 /// Tree01's first instance of the open land around the origin, its entity, and where it stands.
 fn a_tree01(app: &mut App) -> ((IVec2, u32), Vec3) {
-    let layout = TreeLayout::parse(GENESIS).unwrap();
+    let layout = layout(false);
     super::spawn_tests::spawned(app)
         .into_iter()
         .find(|tree| layout.instances(tree.parcel)[tree.index as usize].prototype == 5)
@@ -746,6 +746,7 @@ fn bake_landscape_impostors() {
 
     let mut app = gpu_app();
     app.init_asset::<TreeLayout>()
+        .init_asset::<TreeLayouts>()
         .init_asset_loader::<TreeLayoutLoader>()
         .init_resource::<TreeWind>()
         .add_systems(Startup, setup)
@@ -846,7 +847,7 @@ fn lod_cost_at(distance: f32) {
     use super::{desired_trees, lod::update_lods, lod::TreeInstances};
     use crate::terrain::TerrainSurface;
 
-    let layout = TreeLayout::parse(GENESIS).unwrap();
+    let layout = layout(false);
     let edge = Vec3::new(150.0 * 16.0 + 8.0, 0.0, -8.0);
     let desired = desired_trees(&layout, edge, distance, |_| true);
     let total = desired.len();

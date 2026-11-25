@@ -1,10 +1,5 @@
 import { z } from "zod";
 
-import { playUrl } from "../bases";
-import type { Event } from "../places/events";
-import { eventOccurrence, formatEventTime } from "../places/events";
-import type { Place } from "../schema";
-
 const LinkSchema = z.object({
   label: z.string(),
   href: z.string(),
@@ -84,101 +79,7 @@ export function parseHomeContent(raw: unknown): HomeContent {
   return HomeContentSchema.parse(raw);
 }
 
-function eventCategory(e: Event): string {
-  if (e.live) return "LIVE";
-  if (e.trending) return "TRENDING";
-  if (e.highlighted) return "FEATURED";
-  return "EVENT";
-}
-
-function eventToRailItem(e: Event): EventRailItem {
-  return {
-    id: e.id,
-    category: eventCategory(e),
-    title: e.name ?? "Untitled event",
-    when: formatEventTime(eventOccurrence(e).start ?? null),
-    live: e.live ?? false,
-    image: e.image ?? null,
-  };
-}
-
-const WEEKDAY_NAMES = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-];
-
-export function eventWeekday(e: Event): number | null {
-  const iso = eventOccurrence(e).start;
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.getUTCDay();
-}
-
-export function eventToRitualItem(e: Event): RitualRailItem {
-  const day = eventWeekday(e);
-  return {
-    id: e.id,
-    title: e.name ?? "Untitled event",
-    day: day == null ? null : WEEKDAY_NAMES[day] ?? null,
-    image: e.image ?? null,
-    href: `/whats-on/${encodeURIComponent(e.id)}`,
-  };
-}
-
-export function placeToHotspotItem(p: Place): HotspotRailItem {
-  return {
-    id: p.id,
-    title: p.title ?? "Untitled place",
-    online: p.user_count ?? null,
-    image: p.image ?? null,
-    href: playUrl({ position: p.base_position }),
-  };
-}
-
-export function withLiveEvents(content: HomeContent, live: Event[]): HomeContent {
-  if (!live.length) return content;
-  const items = live.map(eventToRailItem);
-  return {
-    ...content,
-    rails: content.rails.map((rail) =>
-      rail.kind === "events" ? { ...rail, items } : rail,
-    ),
-  };
-}
-
-export function withHotspots(
-  content: HomeContent,
-  hotspots: HotspotRailItem[],
-): HomeContent {
-  if (!hotspots.length) return content;
-  return {
-    ...content,
-    rails: content.rails.map((rail) =>
-      rail.kind === "hotspots" ? { ...rail, items: hotspots } : rail,
-    ),
-  };
-}
-
-export function withRituals(
-  content: HomeContent,
-  rituals: RitualRailItem[],
-): HomeContent {
-  if (!rituals.length) return content;
-  return {
-    ...content,
-    rails: content.rails.map((rail) =>
-      rail.kind === "rituals" ? { ...rail, items: rituals } : rail,
-    ),
-  };
-}
-
-export function eventItems(rail: Rail): EventRailItem[] {
+function eventItems(rail: Rail): EventRailItem[] {
   return rail.items
     .map((it) => EventRailItemSchema.safeParse(it))
     .filter((r): r is { success: true; data: EventRailItem } => r.success)
@@ -192,7 +93,7 @@ function hotspotItems(rail: Rail): HotspotRailItem[] {
     .map((r) => r.data);
 }
 
-export function ritualItems(rail: Rail): RitualRailItem[] {
+function ritualItems(rail: Rail): RitualRailItem[] {
   return rail.items
     .map((it) => RitualRailItemSchema.safeParse(it))
     .filter((r): r is { success: true; data: RitualRailItem } => r.success)

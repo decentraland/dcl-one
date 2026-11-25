@@ -1,4 +1,5 @@
-{ pkgs, craneLib }:
+# `vendorGit`: catalyst.nix's arguments for the git source of the lock both packages share.
+{ pkgs, craneLib, vendorGit }:
 let
   inherit (pkgs) lib stdenv;
   root = ../..;
@@ -65,6 +66,7 @@ let
       app
       (root + /library/dcl-auth)
       (root + /library/dcl-http)
+      (root + /library/dcl-metrics)
       (root + /library/dcl-livekit-token)
       (root + /library/dcl-preview-tunnel)
       (root + /library/dcl-preview-tunnel-protocol)
@@ -95,7 +97,7 @@ let
     ABGEN_EMBED_CACHE = "${abgenCache}";
     LIVEKIT_EMBED_CACHE = "${livekitCache}";
   };
-  cargoVendorDir = craneLib.vendorCargoDeps common;
+  cargoVendorDir = craneLib.vendorCargoDeps (common // vendorGit);
   cargoArtifacts = craneLib.buildDepsOnly (common // { inherit cargoVendorDir; });
 in craneLib.buildPackage (common // {
   inherit cargoArtifacts cargoVendorDir;

@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import uuid
+from urllib.parse import parse_qs, urlsplit
 
 
 class Upstream(BaseHTTPRequestHandler):
@@ -24,6 +25,21 @@ class Upstream(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        # Model replica-local Engine.IO sessions across separate HTTP connections.
+        target = urlsplit(self.path)
+        if target.path == "/auth-api/socket.io/":
+            query = parse_qs(target.query)
+            sid = socket.gethostname()
+            if query.get("sid", [sid]) != [sid]:
+                self.send_error(400, "Unknown session")
+                return
+            if query.get("transport") == ["polling"]:
+                body = b"6" if "sid" in query else b"0" + json.dumps({"sid": sid}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
         if self.headers.get("Upgrade", "").lower() == "websocket":
             key = self.headers["Sec-WebSocket-Key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
             self.send_response(101)
@@ -51,6 +67,8 @@ class Upstream(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Expose-Headers", "ETag, Content-Range, Accept-Ranges, Content-Length")
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Cache-Control", "public,max-age=31536000,s-maxage=31536000,immutable")
+            self.send_header("Content-Security-Policy", "sandbox")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -108,6 +126,16 @@ def websocket(host, path):
         assert stream.read(len(message)) == message
 
 
+def check_socket_affinity(host):
+    path = "/auth-api/socket.io/?EIO=4&transport="
+    status, packet = request(host, path + "polling")
+    assert status == 200 and packet.startswith(b"0"), (status, packet)
+    session = "&sid=" + json.loads(packet[1:])["sid"]
+    for _ in range(3):
+        assert request(host, path + "polling" + session) == (200, b"6")
+    websocket(host, path + "websocket" + session)
+
+
 def wait_ready(host, path="/_gateway/healthz"):
     deadline = time.monotonic() + 20
     delay = .1
@@ -135,7 +163,8 @@ def assert_budget(statuses, capacity):
 
 def client(args):
     table = json.loads(Path(args.table).read_text())
-    public, admitted, untrusted, trusted, accel, storage_trusted, late, rate_public, rate_trusted, rate_untrusted = args.targets
+    (public, admitted, untrusted, trusted, accel, storage_trusted, late, rate_public, rate_trusted,
+     rate_untrusted, rate_admitted) = args.targets
     for host in args.targets:
         wait_ready(host)
 
@@ -163,10 +192,10 @@ def client(args):
     for path in ["/", "/play", "/play/engine/pkg/webgpu_build_bg.wasm", "/shop",
                  "/places", "/places.data", "/places/place/1,2", "/places/place/1,2.data",
                  "/places/world/sample.dcl.eth", "/places/world/sample.dcl.eth.data", "/_root.data", "/internal/auth-config",
-                 "/internal/thirdweb-sign", "/api/screens/v1/play", "/api/creator-hub/drafts",
-                 "/profile/alice", "/assets/example.js", "/docs/index.md"]:
+                 "/internal/thirdweb-sign", "/api/screens/v1/play",
+                 "/profile/alice", "/cast", "/press", "/press/", "/assets/example.js", "/docs/index.md", "/download", "/download_success"]:
         hit(path, "sites")
-    for path in ["/about", "/content/contents/blob", "/lambdas/profiles", "/api/status",
+    for path in ["/about", "/press-release", "/content/contents/blob", "/lambdas/profiles", "/api/status",
                  "/places/api/status", "/places/api/status.data", "/places/place?position=1,2",
                  "/places/place/?position=1,2", "/places/world/?name=sample.dcl.eth",
                  "/places/world?name=sample.dcl.eth", "/events/api/status",
@@ -188,6 +217,8 @@ def client(args):
                  "/METRICS/x.data", "/%6detrics", "/x/../metrics",
                  "/internal/pulse", "/internal/pulse/room-authority/v1", "/internal/pulse/x.data",
                  "/INTERNAL/PULSE/X.data", "//internal//pulse/x.data", "/internal%2fpulse/x.data",
+                 "/internal/message-router", "/internal/message-router/token/v1",
+                 "/INTERNAL/MESSAGE-ROUTER/token/v1", "//internal//message-router/token/v1",
                  "/__protected_storage/0a/blob"]:
         for host in (public, admitted):
             status, body = request(host, path)
@@ -197,7 +228,10 @@ def client(args):
                       "/server", "/server.data", "/metabase/", "/metabase.data",
                       "/telemetry/dash/sql", "/telemetry/dash/sql.data",
                       "/telemetry/dash/flag.data", "/telemetry/dash/group/target.data",
-                      "/telemetry/dash/admin.data", "/telemetry/dash/admin/users"]
+                      "/telemetry/dash/admin.data", "/telemetry/dash/admin/users",
+                      "/rpc/admin/rpc/config", "/v1/admin/names/approve-mana", "/credits/admin/flags",
+                      "/market/v1/admin/audit", "/camera-reel/admin/images/1", "/scene-state/admin/scene/x/reset",
+                      "/worlds-content-server/gc", "/worlds-content-server/reprocess-ab"]
     forged = {"X-Forwarded-For": "198.51.100.7", "X-Real-IP": "198.51.100.7",
               "CF-Connecting-IP": "203.0.113.88", "True-Client-IP": "203.0.113.88",
               "X-Catalyst-Admin-Gate": "admitted", "X-Forwarded-Proto": "https",
@@ -224,6 +258,8 @@ def client(args):
     print("Internal paths, admin CIDRs, normalized paths and forwarded-header trust passed.", flush=True)
 
     hit("/about", "apis", vhost="peer.example.test")
+    hit("/comms-gatekeeper/scene-admin", "apis", vhost="worlds-content-server.example.test")
+    hit("/cast-presenter-service/presentations/p/slides/s.png", "apis", vhost="realm-provider-ea.example.test")
     hit("/peer/about?x=1", "apis", vhost="gateway.example.test", target="/about?x=1")
     data = hit("/comms-gatekeeper/get-scene-adapter", "apis", vhost="gateway.example.test")
     assert data["headers"]["x-original-path"] == "/get-scene-adapter"
@@ -274,6 +310,7 @@ def client(args):
         assert request(public, path, vhost=host)[0] == 404
     assert request(public, "/", vhost="attacker.invalid")[0] == 404
     assert request(public, "/", vhost="admin.extra.example.test")[0] == 404
+    check_socket_affinity(public)
     for path in ["/ws", "/social-rpc", "/rpc/mainnet"]:
         websocket(public, path)
     for path, vhost in [
@@ -295,6 +332,7 @@ def client(args):
                            "referrer-policy": "strict-origin-when-cross-origin",
                            "cross-origin-opener-policy": "same-origin",
                            "access-control-allow-origin": "*", "etag": '"gateway-fixture"',
+                           "content-security-policy": "sandbox",
                            "content-type": "image/png", "accept-ranges": "bytes",
                            "cache-control": "public,max-age=31536000,s-maxage=31536000,immutable",
                            "access-control-expose-headers":
@@ -333,6 +371,31 @@ def client(args):
                         headers={"X-Forwarded-For": f"198.51.100.{i + 1}"})[0] for i in range(8)]
     assert_budget(statuses, 3)
     print("Real-nginx storage read, write and trusted ceilings passed.", flush=True)
+    # Worlds reads are not limited on either mount; writes keep a budget,
+    # and a non-worlds read still has the server-wide one.
+    for i, (path, vhost) in enumerate([("/worlds-content-server/status", "example.test"),
+                                       ("/world/w.dcl.eth/about", "worlds.example.test"),
+                                       ("/status", "worlds-content-server.example.test")]):
+        statuses = [request(rate_public, path, vhost=vhost,
+                            headers={"X-Forwarded-For": f"198.51.100.{81 + i}"})[0] for _ in range(8)]
+        assert statuses == [200] * 8, ("worlds read", path, vhost, statuses)
+    for i, (method, path) in enumerate([("PUT", "/worlds-content-server/world/w.dcl.eth/permissions/deployment/0xa"),
+                                        ("GET", "/about")]):
+        statuses = [request(rate_public, path, method=method, body=b"{}" if method == "PUT" else None,
+                            headers={"X-Forwarded-For": f"198.51.100.{91 + i}"})[0] for _ in range(6)]
+        assert_budget(statuses, 3)
+    # Worlds admin calls are operator paths: a public client is refused before any budget.
+    statuses = [request(rate_public, "/worlds-content-server/admin/worlds",
+                        headers={"X-Forwarded-For": "198.51.100.99"})[0] for _ in range(6)]
+    assert statuses == [403] * 6, ("worlds admin", statuses)
+    # From an admin network they keep the read budget.
+    for i, (method, path) in enumerate([("GET", "/worlds-content-server/admin/worlds"),
+                                        ("POST", "/worlds-content-server/gc")]):
+        statuses = [request(rate_admitted, path, method=method, body=b"{}" if method == "POST" else None,
+                            headers={"X-Forwarded-For": f"198.51.100.{101 + i}"})[0] for _ in range(6)]
+        assert_budget(statuses, 3)
+    print("Real-nginx worlds reads are unlimited; worlds writes, other reads and admitted admin calls keep budgets; "
+          "public admin calls are gated.", flush=True)
 
 
 def rate_fixture(args):
@@ -342,7 +405,7 @@ def rate_fixture(args):
     nginx = re.search(r"--nginx ([^ \"']+)", wrapper)[1]
     mime = re.search(r"--mime ([^ \"']+)", wrapper)[1]
     text = gateway.render(json.loads(Path(args.table).read_text()), gateway.settings(os.environ), mime)
-    for zone, burst in [("storage", 2), ("storage_write", 1), ("storage_trusted", 5)]:
+    for zone, burst in [("storage", 2), ("storage_write", 1), ("storage_trusted", 5), ("read", 2), ("worlds", 2)]:
         text, n = re.subn(rf"(zone={zone}:10m rate=)[0-9]+r/s", r"\g<1>1r/m", text)
         assert n == 1, (zone, n)
         text = re.sub(rf"(limit_req zone={zone} burst=)[0-9]+", rf"\g<1>{burst}", text)
@@ -380,12 +443,14 @@ def smoke(args):
             storage.chmod(0o755)
             (storage / "contents/0a").mkdir(parents=True)
             (storage / "contents/0a/blob").write_bytes(b"authorized-blob")
-            containers.append(fixture)
-            docker("run", "-d", "--name", fixture, *common, "-v", f"{source}:/test:ro",
-                   "--entrypoint", "python3", image, "/test/smoke.py", "--serve")
+            replica_dns = token + "-api-pool"
+            for replica in (fixture, token + "-second-api"):
+                containers.append(replica)
+                docker("run", "-d", "--name", replica, *common, "--network-alias", replica_dns,
+                       "-v", f"{source}:/test:ro", "--entrypoint", "python3", image, "/test/smoke.py", "--serve")
             fixture_ip = json.loads(docker("inspect", fixture).stdout)[0]["NetworkSettings"]["Networks"][network]["IPAddress"]
             cases = [
-                ("public", {}),
+                ("public", {"GATEWAY_APIS_UPSTREAMS": replica_dns + ":8081"}),
                 ("admitted", {"GATEWAY_ADMIN_CIDRS": fixture_ip + "/32"}),
                 ("untrusted", {"GATEWAY_ADMIN_CIDRS": "198.51.100.7/32"}),
                 ("trusted", {"GATEWAY_ADMIN_CIDRS": "198.51.100.7/32",
@@ -397,6 +462,8 @@ def smoke(args):
                 ("rate-public", {"GATEWAY_TRUSTED_PROXY_CIDRS": fixture_ip + "/32"}),
                 ("rate-trusted", {"GATEWAY_STORAGE_TRUSTED_CIDRS": fixture_ip + "/32"}),
                 ("rate-untrusted", {"GATEWAY_STORAGE_TRUSTED_CIDRS": "198.51.100.0/24"}),
+                ("rate-admitted", {"GATEWAY_TRUSTED_PROXY_CIDRS": fixture_ip + "/32",
+                                   "GATEWAY_ADMIN_CIDRS": "198.51.100.0/24"}),
             ]
             targets = []
             for name, extra in cases:
@@ -438,7 +505,7 @@ if __name__ == "__main__":
     parser.add_argument("--client", action="store_true")
     parser.add_argument("--unresolved")
     parser.add_argument("--table")
-    parser.add_argument("--targets", nargs=10)
+    parser.add_argument("--targets", nargs=11)
     parser.add_argument("--rate-fixture")
     parser.add_argument("--image", default="foundation-gateway:nix")
     parser.add_argument("--revision")

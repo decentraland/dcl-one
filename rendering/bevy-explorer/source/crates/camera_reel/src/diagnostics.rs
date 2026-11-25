@@ -25,40 +25,44 @@ use crate::{
 #[derive(Resource, Default)]
 struct PhotoDeletes(Vec<(String, Task<Result<(), String>>)>);
 
-pub(crate) fn register(app: &mut App) {
-    app.init_resource::<PhotoDeletes>()
-        .add_console_command::<PhotoModeCommand, _>(photo_mode_command)
-        .add_console_command::<TakePhotoCommand, _>(take_photo_command)
-        .add_console_command::<DeletePhotoCommand, _>(delete_photo_command)
-        .add_systems(Update, finish_deletes)
-        .add_debug_section(DebugSection {
-            title: "Photo mode",
-            query: "/photo_mode",
-            fields: &[
-                ("Position (X / Y / Z)", "position"),
-                ("Yaw (degrees)", "yaw"),
-                ("Pitch (degrees)", "pitch"),
-                ("Roll (degrees)", "roll"),
-                ("Vertical FOV (degrees)", "fov"),
-                ("Cursor locked", "cursorLocked"),
-                ("Camera HUD hidden", "hudHidden"),
-                ("Opened by", "source"),
-                ("Photos kept (current / max)", "storage"),
-                ("Photo in flight", "phase"),
-                ("Captures this session", "captures"),
-                ("Uploads this session", "uploaded"),
-                ("Failures this session", "failed"),
-                ("Last photo id", "lastPhotoId"),
-                ("Last error", "lastError"),
-            ],
-            actions: &[("Take photo", "/take_photo")],
-            inputs: &[DebugInput {
-                label: "Photo mode",
-                field: "active",
-                command: "/photo_mode {value}",
-                kind: DebugInputKind::Toggle,
-            }],
-        });
+pub(crate) struct PhotoModeDiagnosticsPlugin;
+
+impl Plugin for PhotoModeDiagnosticsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<PhotoDeletes>()
+            .add_console_command::<PhotoModeCommand, _>(photo_mode_command)
+            .add_console_command::<TakePhotoCommand, _>(take_photo_command)
+            .add_console_command::<DeletePhotoCommand, _>(delete_photo_command)
+            .add_systems(Update, finish_deletes)
+            .add_debug_section(DebugSection {
+                title: "Photo mode",
+                query: "/photo_mode",
+                fields: &[
+                    ("Position (X / Y / Z)", "position"),
+                    ("Yaw (degrees)", "yaw"),
+                    ("Pitch (degrees)", "pitch"),
+                    ("Roll (degrees)", "roll"),
+                    ("Vertical FOV (degrees)", "fov"),
+                    ("Cursor locked", "cursorLocked"),
+                    ("Camera HUD hidden", "hudHidden"),
+                    ("Opened by", "source"),
+                    ("Photos kept (current / max)", "storage"),
+                    ("Photo in flight", "phase"),
+                    ("Captures this session", "captures"),
+                    ("Uploads this session", "uploaded"),
+                    ("Failures this session", "failed"),
+                    ("Last photo id", "lastPhotoId"),
+                    ("Last error", "lastError"),
+                ],
+                actions: &[("Take photo", "/take_photo")],
+                inputs: &[DebugInput {
+                    label: "Photo mode",
+                    field: "active",
+                    command: "/photo_mode {value}",
+                    kind: DebugInputKind::Toggle,
+                }],
+            });
+    }
 }
 
 /// Read photo mode, or open (`on`/`true`) or close (`off`/`false`) it. `source` names what
@@ -95,7 +99,6 @@ fn parse_source(source: Option<&str>) -> Result<PhotoModeSource, String> {
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn take_photo_command(
     mut cmd: ConsoleCommand<TakePhotoCommand>,
     mut requests: EventWriter<TakePhotoRequest>,
@@ -153,7 +156,6 @@ fn take_photo_command(
     );
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn photo_mode_command(
     mut cmd: ConsoleCommand<PhotoModeCommand>,
     mut requests: EventWriter<PhotoModeRequest>,
@@ -265,7 +267,6 @@ fn finish_deletes(
     });
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn state_json(
     transform: &Transform,
     primary: &PrimaryCamera,

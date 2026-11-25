@@ -1,8 +1,9 @@
 //! Empty-parcel terrain, matching unity-explorer's `TerrainGenerator` / `Landscape`.
 //!
 //! Heights come from a per-parcel chamfer distance to the nearest occupied parcel. X/Z are Unity
-//! coordinates here (negate Bevy Z). Parcels whose occupancy is not yet known count as occupied,
-//! so heights only ever rise as the realm resolves.
+//! coordinates here (negate Bevy Z). Parcels whose occupancy is not yet known count as occupied.
+//! In a city the embedded Genesis City occupancy is known from the start, so heights only change
+//! where a resolved pointer disagrees with it.
 
 use bevy::{ecs::resource::Resource, math::IVec2};
 
@@ -204,7 +205,7 @@ fn union(rect: Option<(IVec2, IVec2)>, min: IVec2, max: IVec2) -> Option<(IVec2,
 }
 
 impl TerrainTargets {
-    /// Drop all state, e.g. on realm change. Consumers should snap rather than ease.
+    /// Drop all state, e.g. on realm change.
     pub fn reset(&mut self, world: bool) {
         let epoch = self.epoch.wrapping_add(1);
         *self = Self {

@@ -1,9 +1,10 @@
 //! Trees, bushes and stones from unity-explorer's baked layout, so they stand where Unity's do.
 //!
-//! Only parcels confirmed empty carry them: a parcel that is unknown, occupied or outside the
-//! terrain counts as occupied, and an instance whose footprint reaches such a parcel is hidden.
-//! They stand within the Landscape Distance of the player, on the eased terrain, and draw their
-//! model, their baked impostor or nothing by their size on screen (`lod`).
+//! Only empty parcels carry them, as the realm's resolved pointers or, before those, Genesis City's
+//! published occupancy say: a parcel that is unknown, occupied or outside the terrain counts as
+//! occupied, and an instance whose footprint reaches such a parcel is hidden.
+//! They stand within the Landscape Distance of the player, on the terrain, and draw their model,
+//! their baked impostor or nothing by their size on screen (`lod`).
 
 use bevy::{
     asset::{embedded_asset, embedded_path, RenderAssetUsages},
@@ -19,17 +20,17 @@ use common::{
     partition::PARCEL_SIZE,
     sets::RealmLifecycle,
     structs::{LandscapeDistance, PrimaryUser},
+    terrain::Occupancy,
 };
 use console::DoAddConsoleCommand;
-use scene_runner::{
-    initialize_scene::{PointerResult, ScenePointers},
-    vec3_to_parcel,
-};
+use scene_runner::{initialize_scene::ScenePointers, vec3_to_parcel};
 use serde_json::json;
 
 use crate::terrain::{TerrainSet, TerrainSurface};
 use impostor::{tree_impostor_plugin, TreeImpostor};
-use layout::{hidden_by_occupancy, TreeLayout, TreeLayoutLoader};
+use layout::{
+    hidden_by_occupancy, TreeLayout, TreeLayoutLoader, TreeLayouts, GENESIS_LABEL, WORLDS_LABEL,
+};
 use lod::{
     impostor_step_scale, update_lods, ImpostorDraw, ImpostorsEnabled, TreeInstances,
     IMPOSTOR_SCALES,
@@ -50,6 +51,8 @@ pub(crate) mod prototypes;
 
 const ASSET_DIR: &str = "embedded://landscape/trees";
 const IMPOSTOR_DIR: &str = "embedded://landscape/impostors";
+/// Both realms' tree layouts (`layout`).
+const LAYOUT: &str = "embedded://landscape/layout/landscape.trees";
 
 pub(crate) struct LandscapeTreesPlugin;
 
@@ -62,6 +65,7 @@ impl Plugin for LandscapeTreesPlugin {
             .is_some_and(|preview| preview.is_preview);
         add_impostor_plugins(app, !preview);
         app.init_asset::<TreeLayout>()
+            .init_asset::<TreeLayouts>()
             .init_asset_loader::<TreeLayoutLoader>()
             .add_plugins((
                 MaterialPlugin::<TreeMaterial>::default(),
@@ -289,8 +293,8 @@ fn setup(
         }),
     });
     commands.insert_resource(LandscapeTreeAssets {
-        genesis: asset_server.load("embedded://landscape/layout/genesis.trees"),
-        worlds: asset_server.load("embedded://landscape/layout/worlds.trees"),
+        genesis: asset_server.load(format!("{LAYOUT}#{GENESIS_LABEL}")),
+        worlds: asset_server.load(format!("{LAYOUT}#{WORLDS_LABEL}")),
         scenes,
         impostors,
     });
@@ -517,8 +521,8 @@ fn desired_trees(
     desired
 }
 
-/// Keep the layout's instances in range of the player, and the drawn ones on the eased terrain.
-/// What each draws, if anything, `update_lods` decides after.
+/// Keep the layout's instances in range of the player, and the drawn ones on the terrain. What
+/// each draws, if anything, `update_lods` decides after.
 fn update_trees(
     mut commands: Commands,
     landscape: Landscape,
@@ -565,9 +569,10 @@ fn update_trees(
     if let (true, Some(layout)) = (state.pending, layout) {
         state.centre = Some(centre);
         state.pending = false;
-        // unknown parcels stay clear until the realm confirms they are empty
+        // unknown parcels stay clear until the realm or Genesis City's published occupancy says
+        // they are empty
         let desired = desired_trees(layout, position, distance.0, |parcel| {
-            surface.contains(parcel) && matches!(pointers.get(parcel), Some(PointerResult::Nothing))
+            surface.contains(parcel) && pointers.occupancy(parcel) == Occupancy::Empty
         });
         instances.replace(&mut commands, &surface, desired);
     }
@@ -576,11 +581,11 @@ fn update_trees(
     let resnap = |parcel: IVec2| {
         changes.relayout
             || changes.params
-            || changes.eased.is_some_and(|(min, max)| {
+            || changes.targets.is_some_and(|(min, max)| {
                 (min - 1).cmple(parcel).all() && (max + 1).cmpge(parcel).all()
             })
     };
-    if changes.relayout || changes.params || changes.eased.is_some() {
+    if changes.relayout || changes.params || changes.targets.is_some() {
         instances.resnap(&surface, resnap, |entity, y| {
             if let Ok(mut transform) = trees.get_mut(entity) {
                 transform.translation.y = y;

@@ -1,6 +1,43 @@
 name: Creator Hub
 on:
   workflow_call:
+    secrets:
+      CREATOR_HUB_RELEASES_APP_PRIVATE_KEY:
+        required: false
+      ES_PASSWORD:
+        required: false
+      ES_TOTP_SECRET:
+        required: false
+      ES_USERNAME:
+        required: false
+      MACOS_CSC_KEY_PASSWORD:
+        required: false
+      MACOS_CSC_LINK:
+        required: false
+      MACOS_NOTARIZATION_APPLE_ID:
+        required: false
+      MACOS_NOTARIZATION_PWD:
+        required: false
+      MACOS_NOTARIZATION_TEAM_ID:
+        required: false
+      SDK_TEAM_AWS_REGION:
+        required: false
+      SDK_TEAM_S3_BASE_URL:
+        required: false
+      SDK_TEAM_S3_BUCKET:
+        required: false
+      SENTRY_AUTH_TOKEN:
+        required: false
+      SENTRY_DSN:
+        required: false
+      VITE_ALLOWED_EXTERNAL_ORIGINS:
+        required: false
+      VITE_SEGMENT_CREATORS_HUB_API_KEY:
+        required: false
+      VITE_SEGMENT_INSPECTOR_API_KEY:
+        required: false
+      WINDOWS_CREDENTIAL_ID_SIGNER:
+        required: false
     inputs:
       dry-run:
         description: 'Compiles the app but not upload artifacts to distribution server'
@@ -19,9 +56,17 @@ on:
         description: 'Whether the version of the inspector package has changed'
         required: true
         type: boolean
+      macos-windows:
+        description: 'Build the macOS and Windows installers'
+        required: true
+        type: boolean
+      linux:
+        description: 'Build the Linux installers'
+        required: true
+        type: boolean
     outputs:
       version:
-        description: 'Version of the installers this run built (and, on main, published)'
+        description: 'Version of the installers this run built (and, on a release, published)'
         value: ${{ jobs.build.outputs.version }}
 
 concurrency:
@@ -39,16 +84,28 @@ jobs:
       # One leg failing must not show up as a cancellation of the other.
       fail-fast: false
       matrix:
-        os: [ macos-latest, windows-latest ]
+        os: [ macos-latest, windows-latest, ubuntu-22.04 ]
+        # The caller picks the platforms. An entry that names no leg drops nothing.
+        exclude:
+          - os: ${{ !inputs.macos-windows && 'macos-latest' || '' }}
+          - os: ${{ !inputs.macos-windows && 'windows-latest' || '' }}
+          - os: ${{ !inputs.linux && 'ubuntu-22.04' || '' }}
     runs-on: ${{ matrix.os }}
-    # Signing, notarization and the release-repo token live in the main-only environment.
-    environment: ${{ github.ref == 'refs/heads/main' && 'creator-hub-release' || '' }}
+    # Signing, notarization and the release-repo token live in the main-only environment. Only a
+    # release reads them.
+    environment: ${{ github.ref == 'refs/heads/main' && !inputs.dry-run && 'creator-hub-release' || '' }}
     permissions:
       contents: read
-      pull-requests: write
       id-token: write
     outputs:
       version: ${{ steps.version.outputs.version }}
+      # One output for each leg: the legs of a matrix share the job's outputs.
+      macos: ${{ steps.uploaded.outputs.macos }}
+      windows: ${{ steps.uploaded.outputs.windows }}
+      linux: ${{ steps.uploaded.outputs.linux }}
+      macos-seconds: ${{ steps.uploaded.outputs.macos-seconds }}
+      windows-seconds: ${{ steps.uploaded.outputs.windows-seconds }}
+      linux-seconds: ${{ steps.uploaded.outputs.linux-seconds }}
     env:
       # Dependabot runs (and re-runs of them) and fork PRs get no repository secrets and a
       # read-only token, so the S3 test build upload and its PR comment can't run there.
@@ -61,6 +118,10 @@ jobs:
           fetch-tags: true
           filter: blob:none
 
+      # The time in the pull request's test builds comment counts from here to the upload.
+      - name: Start the build clock
+        run: echo "BUILD_START_MS=$(node -p 'Date.now()')" >> "$GITHUB_ENV"
+
       - uses: ./.github/actions/creator-hub-setup
         id: setup
         with:
@@ -68,7 +129,7 @@ jobs:
 
       - name: install
         if: steps.setup.outputs.node-modules-cache-hit != 'true'
-        run: npm i --silent && make install-creator-hub
+        run: make install-creator-hub
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
@@ -83,23 +144,31 @@ jobs:
 
           if [[ "${{ github.ref }}" == "refs/heads/main" || ${{ inputs.inspector_changed }} == "false" ]]; then
             echo "Installing latest inspector version: ${{ inputs.inspector_version }}"
-            # The inspector job published this version seconds ago and npm serves a CDN-cached
-            # packument for 300s, so resolution needs a forced revalidate and a wait longer than that.
-            for ((i = 1; i <= 10; i++)); do
-              npm install --prefer-online "@dcl/inspector@${{ inputs.inspector_version }}" && exit 0
+            # The registry lists a just-published inspector after up to 12 minutes, then caches the old list for 300s.
+            for ((i = 1; i <= 50; i++)); do
+              pnpm add "@dcl/inspector@${{ inputs.inspector_version }}" && exit 0
               echo "@dcl/inspector@${{ inputs.inspector_version }} not resolvable yet (attempt $i); retrying in 30s"
               sleep 30
             done
-            npm view @dcl/inspector versions --json | tail -5 || true
+            pnpm view @dcl/inspector versions --json | tail -5 || true
             exit 1
           elif [[ -n "$INSPECTOR_S3_KEY" ]]; then
             echo "Installing inspector version from S3 bucket: $INSPECTOR_S3_KEY"
-            npm install "$S3_BASE_URL/$INSPECTOR_S3_KEY"
+            # A pull request's inspector package can name its asset-packs by S3 link, which pnpm
+            # refuses in a dependency's own dependencies unless told otherwise.
+            pnpm add --config.blockExoticSubdeps=false "$S3_BASE_URL/$INSPECTOR_S3_KEY"
           else
             # No S3 package (fork or Dependabot PR): build against the last published inspector.
             echo "::warning::No inspector package for this PR; building against @dcl/inspector@latest"
-            npm install @dcl/inspector@latest
+            pnpm add @dcl/inspector@latest
           fi
+
+      # node-pty has no Linux prebuild, so its install compiles it. Every Linux job shares the
+      # node_modules cache and the other jobs run on a newer image: compile it again here, so the
+      # installers need no newer glibc than this image has.
+      - name: Compile node-pty on the build image
+        if: runner.os == 'Linux'
+        run: pnpm rebuild node-pty
 
       - name: build
         run: make build-creator-hub
@@ -118,8 +187,8 @@ jobs:
       # native binding. electron-builder then packs BOTH the arm64 and x64 dmgs from that single
       # node_modules, leaving the Intel build with no loadable parser ("Failed to load native
       # binding"). Fetch the cross-arch binding straight from its tarball into node_modules
-      # (npm install --force would reconcile/prune the whole workspace right before packaging)
-      # so both dmgs ship a working parser.
+      # (an install would reconcile the whole workspace right before packaging) so both dmgs
+      # ship a working parser.
       - name: Provision cross-arch macOS oxc-parser binding
         if: matrix.os == 'macos-latest'
         run: |
@@ -131,9 +200,16 @@ jobs:
           if [ ! -e "$DIR/parser.darwin-$OTHER.node" ]; then
             echo "Host arch $HOST -> fetching @oxc-parser/binding-darwin-$OTHER@$OXC"
             TMP=$(mktemp -d)
-            ( cd "$TMP" && npm pack "@oxc-parser/binding-darwin-$OTHER@$OXC" >/dev/null )
+            SPEC="@oxc-parser/binding-darwin-$OTHER@$OXC"
+            curl -fsSL "$(pnpm view "$SPEC" dist.tarball)" -o "$TMP/binding.tgz"
+            # The registry's sha512 for that tarball, which npm pack checked on its own.
+            INTEGRITY="sha512-$(openssl dgst -sha512 -binary "$TMP/binding.tgz" | base64 | tr -d '\n')"
+            if [ "$INTEGRITY" != "$(pnpm view "$SPEC" dist.integrity)" ]; then
+              echo "::error::$SPEC does not match the registry's integrity"
+              exit 1
+            fi
             mkdir -p "$DIR"
-            tar -xzf "$TMP"/*.tgz -C "$DIR" --strip-components=1
+            tar -xzf "$TMP/binding.tgz" -C "$DIR" --strip-components=1
             rm -rf "$TMP"
           fi
           for A in arm64 x64; do
@@ -143,7 +219,7 @@ jobs:
 
       - name: Bump release version
         id: version
-        uses: paulhatch/semantic-version@502226b17e3e242e4befd0a45690fcbb27dd1373 # v6.0.3
+        uses: paulhatch/semantic-version@5ae1354e589c5a67345fb2c6e65b025ff676d7c7 # v6.0.7
         with:
           tag_prefix: "creator-hub@"
           version_format: ${major}.${minor}.${patch}
@@ -153,7 +229,10 @@ jobs:
           bump_each_commit_patch_pattern: "/^(patch|fix).+/"
           search_commit_body: true
           user_format_type: "json"
-          change_path: "apps/creator-hub"
+          # The renderer bundle also holds apps/ui3/src/atoms (the `@ui` alias in apps/creator-hub/packages/creator-hub/renderer/vite.config.js)
+          # and the LAND map with its helpers (the include list of apps/creator-hub/packages/creator-hub/renderer/tsconfig.ui3.json),
+          # built with the ui3 package (sideEffects) and compiler settings (jsx, paths).
+          change_path: "apps/creator-hub apps/ui3/package.json apps/ui3/tsconfig.json apps/ui3/src/atoms apps/ui3/src/shop/land apps/ui3/src/shop/checkout/chain apps/ui3/src/explorer/components/MapSurface.tsx apps/ui3/src/explorer/components/mapsurface.css apps/ui3/src/data apps/ui3/src/generated/bridge library/ui/components/Tooltip library/ui/package.json library/shop library/web-core/shop-chain-env.ts library/web-core/site.ts"
 
       # With no `creator-hub@X.Y.Z` tag, semantic-version counts from 0.0.0, and a release on main
       # would publish 0.1.0 installers. Tag the last released version first (cut-over runbook).
@@ -200,13 +279,13 @@ jobs:
           retry_wait_seconds: 15
           retry_on: error
           shell: 'bash'
-          command: cd apps/creator-hub && npx electron-builder --project packages/creator-hub --config electron-builder.cjs --config.extraMetadata.version=${{ steps.version.outputs.version }} ${{ matrix.os == 'macos-latest' && format('--config.mac.notarize={0}', true) || '' }} --publish ${{ inputs.dry-run && 'never' || 'always' }}
+          command: cd apps/creator-hub && pnpm exec electron-builder --project packages/creator-hub --config electron-builder.cjs --config.extraMetadata.version=${{ steps.version.outputs.version }} ${{ matrix.os == 'macos-latest' && format('--config.mac.notarize={0}', true) || '' }} --publish ${{ inputs.dry-run && 'never' || 'always' }}
         env:
-          # Disable hard links to avoid issues with npm
+          # Disable hard links to avoid issues with the installed packages
           USE_HARD_LINKS: false
           # Fix C++ standard for native dependencies
           CXXFLAGS: "-std=gnu++17"
-          # On PRs, build only the unsigned .zip (skip the slow .dmg); see electron-builder.cjs
+          # Every run but a release builds only the unsigned .zip (no .dmg); see electron-builder.cjs
           DRY_RUN: ${{ inputs.dry-run }}
           # Code Signing params
           # See https://www.electron.build/code-signing
@@ -236,6 +315,37 @@ jobs:
           INPUT_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
           INPUT_CREDENTIAL_ID: ${{ secrets.WINDOWS_CREDENTIAL_ID_SIGNER }}
 
+      # Installed apps on macOS 12 must not take a build that macOS 12 cannot open: electron-updater
+      # compares this Darwin version with os.release() (scripts/after-pack.js).
+      - name: Check that the macOS update file has the minimum Darwin version
+        if: ${{ matrix.os == 'macos-latest' }}
+        working-directory: apps/creator-hub/packages/creator-hub
+        run: |
+          grep -Eq "^minimumSystemVersion: '?22\.0\.0'?$" dist/latest-mac.yml && exit 0
+          echo "::error::dist/latest-mac.yml has no minimumSystemVersion 22.0.0"
+          cat dist/latest-mac.yml
+          exit 1
+
+      # Assistant Insights reads which system prompt, tools and skills denylist each release's AI
+      # assistant had from this file, checking its hashes against the shared turns'. Built on
+      # every run so a broken script fails the PR; attached to the release once, by the macOS leg.
+      - name: Build the assistant manifest
+        if: ${{ matrix.os == 'macos-latest' }}
+        working-directory: apps/creator-hub/packages/creator-hub
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          node scripts/assistant-manifest/run.mjs dist/assistant-manifest.json "$VERSION" "$GITHUB_SHA"
+
+      - name: Attach the assistant manifest to the release
+        if: ${{ matrix.os == 'macos-latest' && github.ref == 'refs/heads/main' && !inputs.dry-run }}
+        working-directory: apps/creator-hub/packages/creator-hub
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release upload "$VERSION" dist/assistant-manifest.json --repo decentraland/creator-hub --clobber
+
       # Installed Windows apps check each update's signature against `publisherName`
       # (electron-builder.cjs `win.signtoolOptions`). A certificate whose name differs would make
       # every Windows update fail, so a release whose installer doesn't match fails here, before
@@ -254,14 +364,65 @@ jobs:
           if ($name -ne $expected) { throw "The certificate is issued to '$name', but updates check for '$expected'" }
           Write-Output "Signed by '$name', as updates expect"
 
+      # electron-updater updates an app that has resources/package-type with that package manager.
+      # The deb target writes the file into the unpacked app, which the AppImage is also made from,
+      # so an AppImage with the file would install the deb as its update.
+      # The last check keeps the supported systems true: a native module or program compiled on a
+      # newer image needs a newer glibc or libstdc++ than Ubuntu 22.04 has. It reads app.asar too,
+      # since a native module packed there still loads.
+      - name: Check the AppImage
+        if: runner.os == 'Linux'
+        working-directory: apps/creator-hub/packages/creator-hub/dist
+        env:
+          NEWEST_GLIBC: GLIBC_2.35
+          NEWEST_GLIBCXX: GLIBCXX_3.4.30
+        run: |
+          appimage=$(ls "$PWD"/*.AppImage)
+          app=$(dirname "$PWD")
+          cd "$RUNNER_TEMP"
+          "$appimage" --appimage-extract > /dev/null
+          test -f squashfs-root/resources/app-update.yml
+          if [ -e squashfs-root/resources/package-type ]; then
+            echo "::error::The AppImage has resources/package-type ($(cat squashfs-root/resources/package-type))"; exit 1
+          fi
+          test -f squashfs-root/resources/app.asar.unpacked/node_modules/node-pty/build/Release/pty.node
+          (cd "$app" && node -e "require(require.resolve('@electron/asar', { paths: [require.resolve('app-builder-lib/package.json')] })).extractAll(process.argv[1], process.argv[2])" \
+            "$RUNNER_TEMP/squashfs-root/resources/app.asar" "$RUNNER_TEMP/app-asar")
+          # Prints the newest version of a symbol prefix (GLIBC_, GLIBCXX_) that the file needs.
+          newest() { objdump -T "$1" 2>/dev/null | grep -oE "$2[0-9.]+" | sort -uV | tail -n 1 || true; }
+          {
+            find squashfs-root/resources app-asar -name '*.node'
+            echo squashfs-root/resources/node-bin/bin/node
+          } | while read -r file; do
+            test -f "$file" || { echo "::error::$file is missing"; exit 1; }
+            for limit in "$NEWEST_GLIBC" "$NEWEST_GLIBCXX"; do
+              needs=$(newest "$file" "${limit%_*}_")
+              if [ -n "$needs" ] && [ "$(printf '%s\n' "$limit" "$needs" | sort -V | tail -n 1)" != "$limit" ]; then
+                echo "::error::$file needs $needs, newer than $limit"; exit 1
+              fi
+            done
+          done
+
       - name: Move artifacts to upload folder
         if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' }}
         working-directory: apps/creator-hub/packages/creator-hub
-        run: sh -c 'mkdir dist/upload && cp dist/*.dmg dist/*.exe dist/*.zip dist/upload 2> /dev/null || :'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # A test build's file name has the pull request and its head commit after the version, as
+        # the test builds comment links it (.github/actions/creator-hub-test-builds/section.sh).
+        run: |
+          mkdir dist/upload
+          for file in dist/*.dmg dist/*.exe dist/*.zip dist/*.AppImage dist/*.deb; do
+            [ -f "$file" ] || continue
+            name=${file##*/}
+            cp "$file" "dist/upload/${name/-$VERSION-/-$VERSION-$PR_NUMBER-${HEAD_SHA:0:7}-}"
+          done
 
       - name: AWS role for the SDK bucket
         if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' }}
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN }}
           aws-region: ${{ secrets.SDK_TEAM_AWS_REGION }}
@@ -274,62 +435,59 @@ jobs:
           S3_BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
           HEAD_REF: ${{ github.head_ref }}
         run: |
-          npx @dcl/cdn-uploader@next \
+          pnpm dlx @dcl/cdn-uploader@next \
             --bucket "$S3_BUCKET" \
             --local-folder dist/upload \
             --bucket-folder "creator-hub/branch/${HEAD_REF}"
 
-      - name: Set specific windows instructions
-        if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' && matrix.os == 'windows-latest' }}
-        id: windows-instructions
-        env:
-          S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
-          HEAD_REF: ${{ github.head_ref }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          echo "list<<EOF" >> $GITHUB_ENV
-          echo "[win-x64](${S3_BASE_URL}/creator-hub/branch/${HEAD_REF}/Decentraland%20Creator%20Hub-${VERSION}-win-x64.exe)" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
-      - name: Set specific macos instructions
-        if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' && matrix.os == 'macos-latest' }}
-        id: macos-instructions
-        env:
-          S3_BASE_URL: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
-          HEAD_REF: ${{ github.head_ref }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          echo "list<<EOF" >> $GITHUB_ENV
-          echo "[mac-x64](${S3_BASE_URL}/creator-hub/branch/${HEAD_REF}/Decentraland%20Creator%20Hub-${VERSION}-mac-x64.zip)" >> $GITHUB_ENV
-          echo "[mac-arm64](${S3_BASE_URL}/creator-hub/branch/${HEAD_REF}/Decentraland%20Creator%20Hub-${VERSION}-mac-arm64.zip)" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-          content=$(cat "$GITHUB_WORKSPACE/.github/workflows/creator-hub-macos-instructions.md")
-          echo "macos-instructions<<EOF" >> $GITHUB_ENV
-          echo "$content" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
-      - name: Find Comment
+      - name: Record that the test build is in the bucket
         if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' }}
-        uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4.0.0
-        id: fc
-        with:
-          issue-number: ${{ github.event.pull_request.number }}
-          comment-author: 'github-actions[bot]'
-          body-includes: Test this pull request on ${{ matrix.os }}
+        id: uploaded
+        env:
+          LEG: ${{ matrix.os == 'macos-latest' && 'macos' || matrix.os == 'windows-latest' && 'windows' || 'linux' }}
+        run: |
+          echo "$LEG=uploaded" >> "$GITHUB_OUTPUT"
+          echo "$LEG-seconds=$(node -p "((Date.now() - $BUILD_START_MS) / 1000).toFixed(3)")" >> "$GITHUB_OUTPUT"
 
-      - name: Create or update comment
-        if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' }}
-        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+  # One section of the pull request's test builds comment for every platform it built. It also runs
+  # when a leg failed, to show which one.
+  comment:
+    needs: build
+    if: ${{ !cancelled() && github.event.pull_request.number }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      # The same limit as the upload in `build`: without the secrets there is no test build, and
+      # the token cannot write the comment.
+      CAN_UPLOAD_PR_BUILD: ${{ secrets.SDK_TEAM_S3_BUCKET != '' && vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN != '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.CAN_UPLOAD_PR_BUILD == 'true' && needs.build.outputs.version != ''
         with:
-          comment-id: ${{ steps.fc.outputs.comment-id }}
-          issue-number: ${{ github.event.pull_request.number }}
-          body: |
-            # Test this pull request on ${{ matrix.os }}
-            #### Download the correct version for your architecture:
-              ${{ env.list }}
-
-              ${{ env.macos-instructions }}
-          edit-mode: replace
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/creator-hub-test-builds
+            .github/actions/bevy-explorer-ci-status
+          sparse-checkout-cone-mode: false
+      - name: Write the desktop section of the test builds comment
+        if: env.CAN_UPLOAD_PR_BUILD == 'true' && needs.build.outputs.version != ''
+        uses: ./.github/actions/creator-hub-test-builds
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+          section: desktop
+          github-token: ${{ github.token }}
+          base-url: ${{ secrets.SDK_TEAM_S3_BASE_URL }}
+          version: ${{ needs.build.outputs.version }}
+          branch: ${{ github.head_ref }}
+          # `skipped`: this run did not build that platform, so the section leaves it out.
+          macos: ${{ !inputs.macos-windows && 'skipped' || needs.build.outputs.macos }}
+          windows: ${{ !inputs.macos-windows && 'skipped' || needs.build.outputs.windows }}
+          linux: ${{ !inputs.linux && 'skipped' || needs.build.outputs.linux }}
+          macos-seconds: ${{ needs.build.outputs.macos-seconds }}
+          windows-seconds: ${{ needs.build.outputs.windows-seconds }}
+          linux-seconds: ${{ needs.build.outputs.linux-seconds }}
 
   # The installers' releases live in decentraland/creator-hub, so nothing tags this repository.
   # semantic-version reads `creator-hub@X.Y.Z` tags here to compute the next version.

@@ -1,68 +1,11 @@
 import { z } from "zod";
 
-import { CatalystError, catalystBase, errorFromResponse, getJSON, worldsBase, type GetOptions } from "../client";
+import { CatalystError, catalystBase, errorFromResponse, getJSON, postPublicJSON, worldsBase, type GetOptions } from "../client";
 import { EventRecordSchema } from "../generated-schemas/events";
-import { ApiDataTotalSchema, PlaceRowSchema, WorldRowSchema } from "../generated-schemas/places";
-import { reportSchemaDrift } from "../schema-drift";
 import { fetchEvent, fetchEvents } from "../places/events";
-import { fetchProfile } from "../social/profile";
-import { placesApiPath } from "../typed";
-import { isEnsRealm, type JumpEventRecord, type JumpPlaceRecord } from "./jump";
+import type { JumpEventRecord } from "./jump";
 
-const CARD_FIELDS = {
-  title: true,
-  description: true,
-  image: true,
-  base_position: true,
-  owner: true,
-  contact_name: true,
-  user_count: true,
-  world: true,
-  world_name: true,
-} as const;
-const PlaceRow = PlaceRowSchema.pick(CARD_FIELDS);
-const WorldRow = WorldRowSchema.pick(CARD_FIELDS);
-
-/** A row that fails the generated schema is reported as drift and left out, never shown half-parsed. */
-function parseRows(kind: "Place" | "World", raw: unknown): JumpPlaceRecord[] {
-  const schema = kind === "Place" ? PlaceRow : WorldRow;
-  const rows: JumpPlaceRecord[] = [];
-  for (const row of ApiDataTotalSchema(z.unknown()).parse(raw).data) {
-    const parsed = schema.safeParse(row);
-    if (parsed.success) rows.push(parsed.data);
-    else reportSchemaDrift(kind, parsed.error.issues);
-  }
-  return rows;
-}
-const parsePlaces = (raw: unknown) => parseRows("Place", raw);
-const parseWorlds = (raw: unknown) => parseRows("World", raw);
-
-const PLACES = placesApiPath("get", "/api/places");
-const WORLDS = placesApiPath("get", "/api/worlds");
-
-/**
- * A World link with a position asks for that World's scene; without one, the World-level record.
- * `/places?names=&positions=` reports the Genesis City parcel's occupancy, so the World's own count
- * from `/worlds` replaces it.
- */
-export async function loadJumpPlace(
-  target: { lookup: [number, number] | undefined; realm: string | undefined },
-  opts: GetOptions = {},
-): Promise<JumpPlaceRecord | null> {
-  const { lookup, realm } = target;
-  const positions = lookup ? lookup.join(",") : undefined;
-  if (realm && isEnsRealm(realm)) {
-    const names = realm;
-    if (!positions) return parseWorlds(await getJSON(WORLDS, { ...opts, query: { names } }))[0] ?? null;
-    const [scene] = parsePlaces(await getJSON(PLACES, { ...opts, query: { names, positions } }));
-    if (!scene) return null;
-    const world = await getJSON(WORLDS, { ...opts, query: { names } })
-      .then((raw) => parseWorlds(raw)[0] ?? null)
-      .catch(() => null);
-    return world?.user_count != null ? { ...scene, user_count: world.user_count } : scene;
-  }
-  return parsePlaces(await getJSON(PLACES, { ...opts, query: { positions } }))[0] ?? null;
-}
+export { loadJumpPlace } from "./place-lookup";
 
 const ActiveEntities = z.array(
   z.object({ id: z.string(), metadata: z.object({ owner: z.string().optional() }).passthrough().optional() }).passthrough(),
@@ -88,14 +31,43 @@ export function loadWorldEntity(realm: string, opts: GetOptions = {}): Promise<A
   return postActiveEntity(`${worldsBase()}/entities/active`, realm.toLowerCase(), opts);
 }
 
-export type JumpCreator = { address: string; name: string; avatar?: string };
+export type JumpCreator = { address: string; name: string; avatar?: string; hasClaimedName?: boolean };
 
-/** Null when the wallet has no profile name, so the card keeps the catalogue's name. */
+/** The fields a card reads from a profile. */
+const ProfileRow = z
+  .object({
+    avatars: z.array(
+      z
+        .object({
+          name: z.string().nullish(),
+          realName: z.string().nullish(),
+          hasClaimedName: z.boolean().nullish(),
+          ethAddress: z.string().nullish(),
+          avatar: z
+            .object({ snapshots: z.object({ face256: z.string().nullish() }).passthrough().nullish() })
+            .passthrough()
+            .nullish(),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough();
+
+/**
+ * Null when the wallet has no profile name, so the card keeps the catalogue's name. Asked as decentraland.org
+ * asks it: `POST /lambdas/profiles` with the one
+ * id, spelled as the deployment or event names it. The profile's own address feeds the avatar colour.
+ */
 export async function loadCreator(address: string, opts: GetOptions = {}): Promise<JumpCreator | null> {
-  const avatar = await fetchProfile(address, opts);
+  const avatar = z.array(ProfileRow).parse(await postPublicJSON("/lambdas/profiles", { ids: [address] }, opts))[0]?.avatars[0];
   const name = avatar?.name || avatar?.realName;
   if (!name) return null;
-  return { address, name, avatar: avatar?.avatar?.snapshots?.face256 };
+  return {
+    address: avatar.ethAddress || address,
+    name,
+    avatar: avatar.avatar?.snapshots?.face256 ?? undefined,
+    hasClaimedName: avatar.hasClaimedName ?? undefined,
+  };
 }
 
 const Deployments = z.object({ deployments: z.array(z.object({ deployedBy: z.string() }).passthrough()) });
@@ -104,7 +76,8 @@ const Deployments = z.object({ deployments: z.array(z.object({ deployedBy: z.str
 export async function loadParcelCreator(coordinates: [number, number], opts: GetOptions = {}): Promise<JumpCreator | null> {
   const entity = await postActiveEntity(`${catalystBase(opts.base)}/content/entities/active`, coordinates.join(","), opts);
   if (!entity) return null;
-  const raw = await getJSON("/content/deployments", { ...opts, query: { entityId: entity.id } });
+  // The slash is part of the path decentraland.org asks (`fetchPeerDeployment`).
+  const raw = await getJSON("/content/deployments/", { ...opts, query: { entityId: entity.id } });
   const deployedBy = Deployments.parse(raw).deployments[0]?.deployedBy;
   return deployedBy ? loadCreator(deployedBy, opts) : null;
 }
@@ -120,6 +93,7 @@ const JumpEventRow = EventRecordSchema.pick({
   coordinates: true,
   user: true,
   user_name: true,
+  scene_name: true,
   total_attendees: true,
   live: true,
   world: true,
@@ -132,8 +106,9 @@ const JumpEventRow = EventRecordSchema.pick({
 const toJumpEvent = (event: unknown): JumpEventRecord => JumpEventRow.parse(event);
 
 /**
- * The event a link names: by id, else the first one at the link's World or Genesis City parcel. A
- * Genesis City lookup excludes World events, which mostly sit at 0,0 too. Null when there is none.
+ * The event a link names: by id, else the first one at the link's World or Genesis City parcel. A Genesis
+ * City lookup asks for no World events, which mostly sit at 0,0 too. The node sends one row: the card shows
+ * one event. Null when there is none.
  */
 export async function loadJumpEvent(
   target: { id: string | null; lookup: [number, number] | undefined; realm: string | undefined },
@@ -150,7 +125,7 @@ export async function loadJumpEvent(
   }
   // A World link without a position asks for the World's events wherever they are in it.
   const position = target.lookup?.join(",");
-  const params = target.realm ? { position, world_names: target.realm } : { position, world: false };
-  const [first] = (await fetchEvents({ ...params, limit: 1 }, opts)).data;
-  return first ? toJumpEvent(first) : null;
+  const params = target.realm ? { position, world_names: target.realm, limit: 1 } : { position, world: false as const, limit: 1 };
+  const { data } = await fetchEvents(params, opts);
+  return data[0] ? toJumpEvent(data[0]) : null;
 }

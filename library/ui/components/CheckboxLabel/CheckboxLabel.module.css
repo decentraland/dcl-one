@@ -1,0 +1,114 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+/* Figma `checkbox-label` (Property 1=End|Start): the box and its text 4px apart when the box comes
+ * first, 8px apart when it comes last. */
+@layer dcl.components {
+  .root {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+    max-width: 100%;
+    color: var(--dcl-text-primary);
+  }
+
+  .root[data-position='start'] {
+    gap: var(--dcl-space-8);
+  }
+
+  .text {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--dcl-space-4);
+    min-width: 0;
+  }
+
+  .label {
+    composes: text626f64792f736d from '../../foundations/typography/text-styles.module.css';
+    min-width: 0;
+    /* The design's H7 Regular sets the line height to normal, not body/sm's 1.5. */
+    line-height: normal;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+  }
+
+  /* Not in the design: the disabled text uses the disabled text colour. */
+  .root[data-disabled] .label {
+    color: var(--dcl-text-disabled);
+    cursor: not-allowed;
+  }
+
+  .help {
+    position: relative;
+    flex: none;
+    display: inline-flex;
+  }
+
+  /* The 18px icon in a 24px target; the negative margin keeps the drawn spacing. */
+  .helpButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin: -3px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--dcl-radius-full);
+    background: none;
+    color: var(--dcl-transparencies-white-40);
+    cursor: pointer;
+  }
+
+  .helpButton:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 0;
+  }
+
+  /* Not in the design: the open help text, on the raised surface. */
+  .bubble {
+    composes: text626f64792f736d from '../../foundations/typography/text-styles.module.css';
+    position: absolute;
+    top: calc(100% + var(--dcl-space-8));
+    left: 50%;
+    z-index: 1;
+    width: max-content;
+    max-width: min(240px, calc(100vw - 16px));
+    padding: var(--dcl-space-8) var(--dcl-space-12);
+    border: 1px solid var(--dcl-border-subtle);
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-bg-surface-raised);
+    color: var(--dcl-text-primary);
+    transform: translateX(calc(-50% + var(--help-shift, 0px)));
+  }
+
+  .bubble[data-side='top'] {
+    top: auto;
+    bottom: calc(100% + var(--dcl-space-8));
+  }
+
+  .bubble[hidden] {
+    display: none;
+  }
+
+  .hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  @media (forced-colors: active) {
+    .helpButton {
+      color: ButtonText;
+    }
+
+    .bubble {
+      border-color: CanvasText;
+    }
+
+    .root[data-disabled] .label {
+      color: GrayText;
+    }
+  }
+}

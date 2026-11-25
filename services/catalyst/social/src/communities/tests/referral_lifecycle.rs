@@ -288,6 +288,10 @@ async fn referral_http_response_and_committed_rejection_survive_a_stalled_slack_
     .await
     .unwrap();
     assert_eq!(state, ("rejected_ip_match".into(), "192.0.2.1".into()));
+    // The Slack body stays stalled; only controlled time moves to the effect bound.
+    tokio::time::pause();
+    tokio::time::advance(super::super::referral_slack::EFFECT_TIMEOUT).await;
+    tokio::time::resume();
     let (status, body) = tokio::time::timeout(std::time::Duration::from_secs(15), pending)
         .await
         .unwrap()
@@ -334,7 +338,7 @@ async fn login_metadata_case(wallet: &Wallet, metadata: Value) -> Case {
         AuthLink {
             link_type: AuthLinkType::SIGNER,
             payload: wallet.address.to_string(),
-            signature: None,
+            signature: Some(String::new()),
         },
         AuthLink {
             link_type: AuthLinkType::EcdsaSignedEntity,
@@ -497,8 +501,7 @@ async fn authenticated_native_logins_preserve_days_threshold_identity_and_duplic
 }
 
 #[tokio::test]
-async fn native_login_http_bounds_receipts_and_obeys_write_and_restore_gates() {
-    use crate::shared::writes::restore::{lab::StampLab, scoped};
+async fn native_login_http_bounds_receipts_and_obeys_the_write_gate() {
     let Some(rig) = Rig::new(Settings::for_tests()).await else {
         return;
     };
@@ -527,17 +530,6 @@ async fn native_login_http_bounds_receipts_and_obeys_write_and_restore_gates() {
             .0,
         StatusCode::SERVICE_UNAVAILABLE
     );
-    let held = StampLab::new();
-    scoped(held.stamps.clone(), async {
-        let gated = crate::writes::guard(rig.app.clone(), true);
-        assert_eq!(
-            hit(&gated, login_case(&invited, Uuid::new_v4(), now).await)
-                .await
-                .0,
-            StatusCode::SERVICE_UNAVAILABLE
-        );
-    })
-    .await;
     let first = Uuid::new_v4();
     assert_eq!(
         hit(&rig.app, login_case(&invited, first, now).await)

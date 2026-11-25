@@ -44,18 +44,18 @@ To propose a `TOOLCHAIN`, look for an existing checkout. A plain sibling clone s
 
 If there's no checkout, ask before you clone one, then install it once with `git clone https://github.com/decentraland/js-sdk-toolchain <path> && make -C <path> install build`.
 
-Every tarball gets a timestamp in its file name. npm records a local tarball's integrity in the lockfile, so rebuilding under the same file name fails with `EINTEGRITY` or serves the old build.
+Every tarball gets a timestamp in its file name. A lockfile records a local tarball's integrity, so rebuilding under the same file name fails the integrity check or serves the old build.
 
 The monorepo packages keep version `0.1.0` in `package.json`, which npm never publishes (published versions are `7.x` for the inspector and `2.x` for asset-packs). So any `0.1.0` you see downstream is a local build.
 
 ## 1. Pack asset-packs
 
-Run this for every chain, including an inspector-only change. The inspector tarball must carry an asset-packs tarball, and packing only reads the asset-packs source. `npm pack` ships `dist`, `bin`, and `catalog.json`, so this runs the full build, not just `build:lib`.
+Run this for every chain, including an inspector-only change. The inspector tarball must carry an asset-packs tarball, and packing only reads the asset-packs source. `pnpm pack` ships `dist`, `bin`, and `catalog.json`, so this runs the full build, not just `build:lib`.
 
 ```bash
 . "$(git rev-parse --show-toplevel)/apps/creator-hub/.local-packages/env" \
   && make -C "$REPO" build-asset-packs \
-  && T=$(mktemp -d) && (cd "$REPO/packages/asset-packs" && npm pack --pack-destination "$T") \
+  && T=$(mktemp -d) && (cd "$REPO/packages/asset-packs" && pnpm pack --pack-destination "$T") \
   && mv "$T"/*.tgz "$PKGS/dcl-asset-packs-$(date +%Y%m%d%H%M%S).tgz" \
   && ls -t "$PKGS"/dcl-asset-packs-*.tgz | head -1
 ```
@@ -69,9 +69,9 @@ The inspector's `package.json` declares `@dcl/asset-packs` as `file:../asset-pac
 AP=$(ls -t "$PKGS"/dcl-asset-packs-*.tgz 2>/dev/null | head -1)
 test -n "$AP" || echo "No asset-packs tarball in $PKGS: run step 1 first."
 test -n "$AP" && make -C "$REPO" build-inspector && T=$(mktemp -d) \
-  && (cd "$REPO/packages/inspector" && npm pkg set "dependencies.@dcl/asset-packs=file:$AP" && npm pack --pack-destination "$T")
+  && (cd "$REPO/packages/inspector" && pnpm pkg set "dependencies[\"@dcl/asset-packs\"]=file:$AP" && pnpm pack --pack-destination "$T")
 PACKED=$?
-(cd "$REPO/packages/inspector" && npm pkg set "dependencies.@dcl/asset-packs=file:../asset-packs")
+(cd "$REPO/packages/inspector" && pnpm pkg set "dependencies[\"@dcl/asset-packs\"]=file:../asset-packs")
 git -C "$REPO" diff --exit-code -- packages/inspector/package.json \
   && test "$PACKED" -eq 0 \
   && mv "$T"/*.tgz "$PKGS/dcl-inspector-$(date +%Y%m%d%H%M%S).tgz" \
@@ -90,7 +90,7 @@ Because the packed inspector carries the asset-packs tarball as its own dependen
 ```bash
 . /abs/path/to/monorepo/.local-packages/env \
   && IN=$(ls -t "$PKGS"/dcl-inspector-*.tgz | head -1) && test -n "$IN" \
-  && (cd "$TOOLCHAIN/packages/@dcl/sdk-commands" && npm install --save-exact "$IN") \
+  && (cd "$TOOLCHAIN/packages/@dcl/sdk-commands" && pnpm add --save-exact "$IN") \
   && make -C "$TOOLCHAIN" build \
   && make -C "$TOOLCHAIN" test
 ```
@@ -114,22 +114,22 @@ This mirrors the toolchain's own `make init-test-scene`. Directory installs crea
   && npm run build
 ```
 
-Then open the scene in Creator Hub (`npm run start` in `packages/creator-hub`) and start the preview. When the editor offers to update `@dcl/sdk`, decline it. That prompt comes from the `npm outdated` check in `runProject` (`renderer/src/modules/store/workspace/thunks.ts`), and accepting it reinstalls `@dcl/sdk@latest` over your link.
+Then open the scene in Creator Hub (`pnpm run start` in `packages/creator-hub`) and start the preview. When the editor offers to update `@dcl/sdk`, decline it. That prompt comes from the `npm outdated` check in `runProject` (`renderer/src/modules/store/workspace/thunks.ts`), and accepting it reinstalls `@dcl/sdk@latest` over your link.
 
 ## 5. Swap to CI tarballs, then npm versions, before merge
 
 Local tarball paths must never reach a pushed `package.json`. Before you push the js-sdk-toolchain branch:
 
-1. Open the monorepo PR first. Its CI posts a "Test @dcl/inspector package" comment with an `npm install "<url>"` line (and an asset-packs one when asset-packs changed). Read it with `gh pr view <number> --comments`.
-2. In `$TOOLCHAIN/packages/@dcl/sdk-commands`, run `npm install --save-exact "<inspector tarball url>"`, then `make build test` again.
+1. Open the monorepo PR first. Its CI posts a "Creator Hub test builds" comment whose Inspector section has a `pnpm add "<url>"` line (and an Asset packs section with its own when asset-packs changed). Read it with `gh pr view <number> --comments`.
+2. In `$TOOLCHAIN/packages/@dcl/sdk-commands`, run `pnpm add --save-exact "<inspector tarball url>"`, then `make build test` again.
 3. Push the toolchain branch and open its PR. In the body, link the monorepo PR and state that it merges first.
-4. After the monorepo PR lands on `main`, CI publishes `@dcl/inspector` to npm under `latest`. Replace the URL with that exact version (`npm install --save-exact @dcl/inspector@<version>`) before the toolchain PR merges.
+4. After the monorepo PR lands on `main`, CI publishes `@dcl/inspector` to npm under `latest`. Replace the URL with that exact version (`pnpm add --save-exact @dcl/inspector@<version>`) before the toolchain PR merges.
 
 ## Rollback
 
 Each hop undoes cleanly. Source the env file first:
 
 - Inspector `package.json`: `git -C "$REPO" checkout -- packages/inspector/package.json`.
-- Toolchain: `git -C "$TOOLCHAIN" checkout -- packages/@dcl/sdk-commands/package.json packages/@dcl/sdk-commands/package-lock.json`, then `npm install` in that folder.
+- Toolchain: `git -C "$TOOLCHAIN" checkout -- packages/@dcl/sdk-commands/package.json pnpm-lock.yaml`, then `pnpm install` in `$TOOLCHAIN`.
 - Scene: `git -C "$SCENE" checkout -- package.json package-lock.json && (cd "$SCENE" && npm install)`.
 - Tarballs and env: `rm -rf "$PKGS"`.

@@ -11,7 +11,7 @@ The HUD shared with the Sites `/play` host lives in two layers. The UI is
 reads. Write shared code there, not in `src/`; the core never imports the UI. It imports nothing from a host: a behaviour the hosts do
 differently comes from `@hud-host` (`src/host.ts` here, implementing
 `library/explorer-core/hostContract.ts`). These guidelines apply to it as to `src/`, and
-`npm run typecheck` checks it. See `docs/ui-standards.md`, "Explorer HUD transition".
+`pnpm run typecheck` checks it. See `docs/ui-standards.md`, "Explorer HUD transition".
 
 Design source of truth: the checked-in tokens and design primitives, together with the Explorer design system supplied through authorized project context. Keep private design-file identifiers outside this public tree.
 
@@ -40,7 +40,11 @@ Design source of truth: the checked-in tokens and design primitives, together wi
   for a pattern that will recur. A new primitive must:
   1. Live in `library/ui/apps/hud/design/<Name>.tsx` (+ `.module.css`), token-driven only.
   2. Be exported from `library/ui/apps/hud/design/index.ts`.
-  3. Be added to `library/ui/apps/hud/design/Showcase.tsx` (viewable at `?showcase=1`).
+  3. Be added to the Showcase: a section in `library/ui/apps/hud/design/ShowcaseIndex.ts` that names
+     it, rendered in `Showcase.tsx` with local data (viewable at `?showcase=1` and in the UI gallery's
+     HUD section). The gallery's coverage test (`library/ui/gallery/test/hud/coverage.test.tsx`) fails
+     until a section mounts it. An export that is not a component (a function, a constant) gets its
+     reason in `SHOWCASE_NOT_COMPONENTS` in the same file instead.
   4. Support variants via props (size/variant/tone), not copy-paste.
 
 ## 2. When custom CSS is acceptable
@@ -87,7 +91,7 @@ server holds.
 
 ## 6. Checks
 
-- `npm run typecheck` must pass.
+- `pnpm run typecheck` must pass.
 - No new hardcoded brand/status colors, radii, or type sizes — grep your diff for raw
   `#` hex and `rgba(` and justify each (most should be a token).
 

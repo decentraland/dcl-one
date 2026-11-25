@@ -19,6 +19,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { commsDocTitle, updateCommsDocs } from "./docs-comms-prose.mts";
 import { validateDocs } from "./docs-validation.mts";
 import { DocsMedia, rasterKind, webpName } from "./docs-images.mts";
 import { RemoteImages } from "./docs-remote-images.mts";
@@ -279,6 +280,7 @@ function repairSource(body: string): string {
 }
 
 function stripFrontMatter(raw: string): { fm: string; body: string } {
+  raw = raw.replaceAll("\r\n", "\n");
   if (!raw.startsWith("---")) return { fm: "", body: raw };
   const end = raw.indexOf("\n---", 3);
   if (end === -1) return { fm: "", body: raw };
@@ -357,7 +359,8 @@ function parseSummary(space: string, text: string): NavNode {
     const title = (it[2] ?? it[4] ?? "").trim();
     const target = it[3] ?? null;
     if (!title) continue;
-    const node: NavNode = { type: "item", title, url: target ? resolveLink(`${space}/SUMMARY.md`, target) : null, icon: summaryIcon(space, target), children: [] };
+    const url = target ? resolveLink(`${space}/SUMMARY.md`, target) : null;
+    const node: NavNode = { type: "item", title: commsDocTitle(url) ?? title, url, icon: summaryIcon(space, target), children: [] };
     while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
     (stack.length ? stack[stack.length - 1].node : root).children.push(node);
     stack.push({ indent, node });
@@ -415,7 +418,7 @@ async function writeText(rel: string, content: string): Promise<void> {
   expected.add(rel);
   const file = path.join(OUT, rel);
   const current = await fs.readFile(file, "utf8").catch(() => null);
-  if (current === content) return;
+  if (current?.replaceAll("\r\n", "\n") === content) return;
   if (CHECK) { drift.push(`${current === null ? "missing" : "differs"}: ${rel}`); return; }
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, content);
@@ -449,11 +452,11 @@ async function addPage(entry: Omit<PageEntry, "file" | "tokens">, md: string): P
 
 async function writePage(srcRel: string): Promise<void> {
   const { fm, body } = stripFrontMatter(await fs.readFile(path.join(SRC, srcRel), "utf8"));
-  let cleaned = rewriteLinks(embeds(repairSource(body)), srcRel).trim();
-  const title = fmField(fm, "title") || (cleaned.match(/^#\s+(.+)$/m)?.[1]?.trim()) || path.basename(srcRel, ".md");
+  const url = cleanUrl(srcRel);
+  let cleaned = updateCommsDocs(srcRel, rewriteLinks(embeds(repairSource(body)), srcRel)).trim();
+  const title = commsDocTitle(url) ?? (fmField(fm, "title") || (cleaned.match(/^#\s+(.+)$/m)?.[1]?.trim()) || path.basename(srcRel, ".md"));
   const description = fmField(fm, "description");
   if (!/^#\s+/.test(cleaned)) cleaned = `# ${title}\n\n${cleaned}`;
-  const url = cleanUrl(srcRel);
   if (collisions.has(url) && collisions.get(url) !== srcRel)
     console.warn(`[docs-content] url collision ${url}: ${collisions.get(url)} vs ${srcRel}`);
   collisions.set(url, srcRel);

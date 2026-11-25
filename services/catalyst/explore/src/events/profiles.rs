@@ -3,7 +3,8 @@
 //! and decentraland-gatsby@9.0.1). Existing clients use plain JSON plus
 //! signed-fetch headers; federation envelopes remain supported.
 //!
-//! - `GET /api/profiles/settings` (rows holding permissions, for a moderator;
+//! - `GET /api/profiles/settings` (rows holding permissions, for a moderator
+//!   or an `edit_any_profile` grantee;
 //!   `ProfileSettings/routes/listProfileSettings.ts`),
 //!   `GET`/`PATCH /api/profiles/me/settings` (the signer's own;
 //!   `getAuthProfileSettings.ts`, `updateMyProfileSettings.ts`) and
@@ -20,12 +21,11 @@
 //!   `entities/Profile/routes.js`).
 //!
 //! "isAdmin" (gatsby's `ADMIN_ADDRESSES`) is a wallet in `explore.moderators`;
-//! the `edit_any_*` permissions count once a moderator granted them
-//! (`permissions_granted`), except `edit_any_profile`: private profile reads
-//! and permission grants stay moderator-only, the grant is stored and listed
-//! but delegates nothing. A plain signed-fetch body needs no
-//! `x-identity-metadata`; when it carries `body_sha256` the body must match
-//! it, and when it carries a `nonce` a replay answers 409.
+//! the `edit_any_*` permissions count once granted (`permissions_granted`);
+//! an `edit_any_profile` grantee reads and edits other profiles' settings as
+//! a moderator does (`ProfileSettings/utils.ts:4-11`). A plain signed-fetch
+//! body needs no `x-identity-metadata`; when it carries `body_sha256` the body
+//! must match it, and when it carries a `nonce` a replay answers 409.
 //! Every write is logged in `explore.signed_actions` and applied in one
 //! transaction: the signer's own settings and subscriptions behind
 //! `DATA_WRITES_ENABLED`, schedule and profile administration behind
@@ -45,6 +45,7 @@ use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use serde_json::{Map, Value, json};
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use sqlx::{PgConnection, PgPool};
 
@@ -119,13 +120,11 @@ async fn has_granted(pool: &PgPool, signer: &str, permission: &str) -> Result<bo
     .await?)
 }
 
-/// The readers and editors of other profiles: a moderator only. The old
-/// service also admits an `edit_any_profile` grant (`getProfileSettings.ts:14-16`,
-/// `listProfileSettings.ts:11-13`, `ProfileSettings/utils.ts:4-11`); here the
-/// grant reads no email and grants nothing (accepted entries
-/// `events.profiles.*_edit_any_profile`).
+/// The readers and editors of other profiles: `isAdmin(req.auth) ||
+/// canEditAnyProfile(profile)` (`getProfileSettings.ts:13-16`,
+/// `listProfileSettings.ts:10-13`, `ProfileSettings/utils.ts:4-11`).
 async fn require_profile_admin(pool: &PgPool, signer: &str) -> Result<(), ApiError> {
-    if is_moderator(pool, signer).await? {
+    if has_granted(pool, signer, "edit_any_profile").await? {
         Ok(())
     } else {
         Err(ApiError::forbidden("Forbidden"))
@@ -268,15 +267,39 @@ fn snapshot_url(
             .and_then(Value::as_str)
             .filter(|value| !value.is_empty())
     })?;
-    if value.contains("://") {
-        return Some(value.to_owned());
-    }
     // `events_asset_base` is `<PUBLIC_URL>/events` (`Settings::events_asset_base_for`).
     let own = events_asset_base
         .trim_end_matches('/')
         .strip_suffix("/events")
         .unwrap_or(events_asset_base);
+    if value.contains("://") && trusted_snapshot_host(value, own) {
+        return Some(value.to_owned());
+    }
+    // Any other host renders from this node instead of being redirected to.
     Some(format!("{own}/profile-images/entities/{entity_id}/{file}"))
+}
+
+/// An absolute snapshot is redirected to only on this node or a Decentraland
+/// host, so the route never forwards to an arbitrary site.
+fn trusted_snapshot_host(value: &str, own: &str) -> bool {
+    let Ok(url) = url::Url::parse(value) else {
+        return false;
+    };
+    let Some(host) = url.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    let own_host = url::Url::parse(own)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+    matches!(url.scheme(), "http" | "https")
+        && (own_host.as_deref() == Some(host.as_str())
+            || [
+                "decentraland.org",
+                "decentraland.zone",
+                "decentraland.today",
+            ]
+            .iter()
+            .any(|d| host == *d || host.ends_with(&format!(".{d}"))))
 }
 
 /// gatsby `redirectTo`: a non-URL falls back to the default avatar; the
@@ -597,8 +620,8 @@ fn profile_address(raw: &str) -> Result<String, ApiError> {
 }
 
 /// `GET /api/profiles/settings`: the rows holding permissions
-/// (`ProfileSettingsModel.list()`, `model.ts:47-57`), for a moderator
-/// (fixtures `events.profiles.list_*`).
+/// (`ProfileSettingsModel.list()`, `model.ts:47-57`), for a moderator or an
+/// `edit_any_profile` grantee (fixtures `events.profiles.list_*`).
 pub async fn list_profile_settings(
     State(state): State<SharedState>,
     method: Method,
@@ -736,7 +759,7 @@ pub async fn update_my_profile_settings(
         let signer = state.signer(&headers, "patch", uri.path()).await?;
         let patch = own_settings_patch(&body)?;
         let mut tx = state.pool.begin().await?;
-        record_signed_request(
+        super::audit::record_signed_request(
             &mut tx,
             &headers,
             &signer,
@@ -744,7 +767,7 @@ pub async fn update_my_profile_settings(
             "patch",
             uri.path(),
             &raw_body,
-            "ProfileSettingsUpdate",
+            super::audit::SignedWrite::Profile,
         )
         .await?;
         let (settings, _) = save_settings(&mut tx, &signer, &patch).await?;
@@ -773,89 +796,6 @@ pub async fn update_my_profile_settings(
         return Err(invalid_data());
     }
     Ok(ok(apply_profile_settings(&state, &signed, &signer).await?))
-}
-
-/// The audit row of a plain signed-fetch write, bound to its exact bytes
-/// when the client signed `body_sha256` and replay-protected when it signed
-/// a `nonce` (neither is required). The hash of a request
-/// without a nonce is its signer, timestamp and body, so an identical resend
-/// is logged once and never refused.
-#[allow(clippy::too_many_arguments)]
-async fn record_signed_request(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    headers: &HeaderMap,
-    signer: &str,
-    subject: &str,
-    method: &str,
-    path: &str,
-    body: &[u8],
-    action_type: &str,
-) -> Result<(), ApiError> {
-    let noun = if action_type == "ScheduleUpsert" {
-        "Schedule"
-    } else {
-        "Profile"
-    };
-    let metadata: Value = headers
-        .get("x-identity-metadata")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| serde_json::from_str(h).ok())
-        .unwrap_or_else(|| json!({}));
-    let digest = hex::encode(Sha256::digest(body));
-    if let Some(expected) = metadata.get("body_sha256").and_then(Value::as_str)
-        && expected != digest
-    {
-        return Err(ApiError::bad_request(format!(
-            "{noun} body must match signed body_sha256"
-        )));
-    }
-    let nonce = match metadata.get("nonce") {
-        None | Some(Value::Null) => None,
-        Some(nonce) => Some(
-            nonce
-                .as_str()
-                .filter(|nonce| {
-                    uuid::Uuid::parse_str(nonce).is_ok_and(|id| id.to_string() == *nonce)
-                })
-                .ok_or_else(|| {
-                    ApiError::bad_request(format!(
-                        "Signed {} nonce must be a canonical UUID",
-                        noun.to_ascii_lowercase()
-                    ))
-                })?,
-        ),
-    };
-    let timestamp = headers
-        .get("x-identity-timestamp")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.parse::<i64>().ok())
-        .ok_or_else(|| ApiError::bad_request("Invalid timestamp"))?;
-    let tag = format!("legacy-{}", noun.to_ascii_lowercase());
-    let hash = hex::encode(Sha256::digest(match nonce {
-        Some(nonce) => format!("{tag}:{signer}:{nonce}"),
-        None => format!("{tag}:{signer}:{timestamp}:{method}:{path}:{digest}"),
-    }));
-    let payload = json!({"method":method,"path":path,"body_sha256":digest,"nonce":nonce,"body":serde_json::from_slice::<Value>(body).unwrap_or(Value::Null)});
-    let fresh = fed::record_action(
-        tx,
-        &fed::Action {
-            scope: fed::Scope::Events,
-            signature_hash: &hash,
-            signer,
-            subject_id: Some(subject),
-            action_type,
-            payload: &payload,
-            signed_at: timestamp / 1000,
-        },
-    )
-    .await?;
-    if !fresh && nonce.is_some() {
-        return Err(ApiError::http(
-            409,
-            format!("{noun} request already applied"),
-        ));
-    }
-    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -888,7 +828,7 @@ pub(super) async fn event_permissions(
 }
 
 /// `GET /api/profiles/{profile_id}/settings` (`getProfileSettings.ts:12-27`):
-/// a moderator's read of the stored row,
+/// a moderator's or `edit_any_profile` grantee's read of the stored row,
 /// `null` when there is none; a non-address is 404 (fixtures
 /// `events.profiles.get_by_id_*`).
 pub async fn get_profile_settings(
@@ -908,7 +848,7 @@ pub async fn get_profile_settings(
 }
 
 /// `PATCH /api/profiles/{profile_id}/settings` (`updateProfileSettings.ts:19-50`):
-/// the target's `permissions`, by a moderator,
+/// the target's `permissions`, by a moderator or `edit_any_profile` grantee,
 /// with the Slack notice when the set changed (fixtures
 /// `events.profiles.patch_by_id_*`). The `ProfileSettingsUpdate` envelope,
 /// which may also set the target's own fields, stays a moderator's.
@@ -927,7 +867,7 @@ pub async fn update_profile_settings(
         let target = profile_address(&profile_id)?;
         let patch = permissions_patch(&body)?;
         let mut tx = state.pool.begin().await?;
-        record_signed_request(
+        super::audit::record_signed_request(
             &mut tx,
             &headers,
             &signer,
@@ -935,7 +875,7 @@ pub async fn update_profile_settings(
             "patch",
             uri.path(),
             &raw_body,
-            "ProfileSettingsUpdate",
+            super::audit::SignedWrite::Profile,
         )
         .await?;
         let (settings, changed) = save_settings(&mut tx, &target, &patch).await?;
@@ -1338,7 +1278,7 @@ async fn apply_legacy_schedule(
         }
         None => (uuid::Uuid::new_v4().to_string(), None),
     };
-    record_signed_request(
+    super::audit::record_signed_request(
         &mut tx,
         headers,
         &signer,
@@ -1346,7 +1286,7 @@ async fn apply_legacy_schedule(
         method,
         path,
         raw_body,
-        "ScheduleUpsert",
+        super::audit::SignedWrite::Schedule,
     )
     .await?;
     let answer = match existing {
@@ -1609,11 +1549,12 @@ mod tests {
     }
 
     /// `listProfileSettings.ts`, `getProfileSettings.ts`, `updateProfileSettings.ts`:
-    /// a moderator ("isAdmin") reads and administers other profiles; the list
-    /// holds the rows with permissions; an `edit_any_profile` grantee is listed
-    /// but stays 403 like a plain user, who cannot grant itself through `/me`.
+    /// a moderator ("isAdmin") or an `edit_any_profile` grantee
+    /// (`canEditAnyProfile`) reads and administers other profiles; the list
+    /// holds the rows with permissions; a plain user is 403 and cannot grant
+    /// itself through `/me`.
     #[tokio::test]
-    async fn profile_administration_is_moderator_only_and_lists_the_granted_rows() {
+    async fn profile_administration_is_for_moderators_and_edit_any_profile_grantees() {
         // Queues moderation-outbox rows: serialized with the outbox tests.
         let _outbox = crate::moderation_hooks::TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(4).await else {
@@ -1670,24 +1611,99 @@ mod tests {
             body["data"]["permissions"],
             json!(["edit_any_profile", "edit_any_event"])
         );
-        // The grant is listed but delegates nothing: the grantee stays 403 on
-        // the list, the read and the write of other profiles. The old service
-        // admits it (`ProfileSettings/utils.ts:4-11`): accepted entries
-        // `events.profiles.*_edit_any_profile`.
-        let target_lower = format!("/api/profiles/{}/settings", address(&target));
+        // The grantee administers profiles as a moderator does
+        // (`listProfileSettings.ts:11`, `getProfileSettings.ts:14`,
+        // `updateProfileSettings.ts:21`): the list carries the rows' emails,
+        // the read answers the stored row and the write grants any permission,
+        // `edit_any_profile` included (`types.ts:59-77`).
+        let other = Wallet::random();
+        let other_path = format!("/api/profiles/{}/settings", address(&other));
+        let (status, body) = call(
+            &app,
+            &other,
+            "patch",
+            "/api/profiles/me/settings",
+            Some(&json!({"email":"other@example.org"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let (status, body) = call(
+            &app,
+            &editor,
+            "patch",
+            &other_path,
+            Some(&json!({"permissions":["edit_any_profile","approve_any_event"]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(
+            body["data"]["permissions"],
+            json!(["edit_any_profile", "approve_any_event"])
+        );
+        assert_eq!(body["data"]["email"], "other@example.org");
+        let (status, body) = call(&app, &editor, "get", "/api/profiles/settings", None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let row = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["user"] == address(&other))
+            .cloned()
+            .expect("granted row listed");
+        assert_eq!(row["email"], "other@example.org");
+        let (status, body) = call(&app, &editor, "get", &other_path, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["data"]["permissions"],
+            json!(["edit_any_profile", "approve_any_event"])
+        );
+        // A non-permission key is 400 for the grantee too, and changes nothing.
+        let (status, answer) = call(
+            &app,
+            &editor,
+            "patch",
+            &other_path,
+            Some(&json!({"permissions":[],"email":"x@example.com"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+        let (_, body) = call(&app, &editor, "get", &other_path, None).await;
+        assert_eq!(
+            body["data"]["permissions"],
+            json!(["edit_any_profile", "approve_any_event"])
+        );
+        assert_eq!(body["data"]["email"], "other@example.org");
+        // A stored but ungranted `edit_any_profile` (a row the moderator never
+        // granted, `permissions_granted` false) delegates nothing.
+        let ungranted = Wallet::random();
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\", permissions, permissions_granted) VALUES ($1, '[\"edit_any_profile\"]'::jsonb, false)")
+            .bind(address(&ungranted)).execute(&pool).await.unwrap();
         for (verb, path, body) in [
             ("get", "/api/profiles/settings".to_owned(), None),
-            ("get", target_lower.clone(), None),
-            (
-                "patch",
-                target_lower,
-                Some(json!({"permissions":["edit_any_schedule"]})),
-            ),
+            ("get", other_path.clone(), None),
+            ("patch", other_path.clone(), Some(json!({"permissions":[]}))),
         ] {
-            let (status, answer) = call(&app, &editor, verb, &path, body.as_ref()).await;
+            let (status, answer) = call(&app, &ungranted, verb, &path, body.as_ref()).await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
             assert_eq!(answer["error"], "Forbidden");
         }
+        let (_, body) = call(&app, &moderator, "get", &other_path, None).await;
+        assert_eq!(
+            body["data"]["permissions"],
+            json!(["edit_any_profile", "approve_any_event"])
+        );
+        // Once the grant is withdrawn the old grantee is 403 again.
+        let (status, body) = call(
+            &app,
+            &moderator,
+            "patch",
+            &other_path,
+            Some(&json!({"permissions":["approve_any_event"]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let (status, answer) = call(&app, &other, "get", "/api/profiles/settings", None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
         let (status, body) = call(&app, &moderator, "get", "/api/profiles/settings", None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let listed: Vec<&str> = body["data"]
@@ -1795,8 +1811,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(lost, 1);
-        sqlx::query("DELETE FROM explore.moderation_hooks WHERE channel='events' AND kind='profile_permissions' AND subject IN ($1,$2)")
-            .bind(address(&editor)).bind(address(&target)).execute(&pool).await.unwrap();
+        sqlx::query("DELETE FROM explore.moderation_hooks WHERE channel='events' AND kind='profile_permissions' AND subject IN ($1,$2,$3)")
+            .bind(address(&editor)).bind(address(&target)).bind(address(&other)).execute(&pool).await.unwrap();
     }
 
     /// `updateMyProfileSettings.ts:26-78` and `types.ts:79-101`: the body's
@@ -1945,6 +1961,48 @@ mod tests {
             call_with(&app, &moderator, "post", schedules, Some(&schedule), &bound).await;
         assert_eq!(status, StatusCode::CONFLICT, "{answer}");
         assert_eq!(answer["error"], "Schedule request already applied");
+    }
+
+    /// A write signed over the events host's `/api/...` path passes the nest;
+    /// without the forwarded path it is refused.
+    #[tokio::test]
+    async fn a_write_signed_on_the_events_host_passes_the_rewrite() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let moderator = moderator(&pool).await;
+        let app = axum::Router::new().nest("/events", app(&pool));
+        let schedule = json!({"name":"Host","active_since":"2031-01-01T00:00:00.000Z","active_until":"2031-02-01T00:00:00.000Z"});
+        let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
+            &moderator,
+            "post",
+            "/api/schedules",
+            "{}",
+            true,
+            &Utc::now().timestamp_millis().to_string(),
+        )
+        .await;
+        for (original, expected) in [
+            (Some("/api/schedules"), StatusCode::CREATED),
+            (None, StatusCode::UNAUTHORIZED),
+        ] {
+            let mut request = Request::builder()
+                .method("POST")
+                .uri("/events/api/schedules")
+                .header("content-type", "application/json");
+            for (key, value) in headers.iter() {
+                request = request.header(key, value);
+            }
+            if let Some(original) = original {
+                request = request.header("x-original-path", original);
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::from(schedule.to_string())).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "{original:?}");
+        }
     }
 
     /// `Schedule/routes.ts:48-97`, `schema.ts:86-147`: the required triple,
@@ -2342,7 +2400,11 @@ mod tests {
             format!("http://localhost/profile-images/entities/{entity_id}/face.png")
         );
         let (_, headers, _) = get(&app, &format!("/api/profile/{known}/body.png")).await;
-        assert_eq!(headers["location"], "https://cdn.example/body.png");
+        assert_eq!(
+            headers["location"],
+            format!("http://localhost/profile-images/entities/{entity_id}/body.png"),
+            "a foreign snapshot host is rendered here, not redirected to"
+        );
         assert!(
             avatar_redirect(Some("javascript:alert(1)")).headers()["location"] == DEFAULT_AVATAR
         );
@@ -2423,8 +2485,41 @@ mod tests {
                 Snapshot::Body,
                 "https://node.example/events"
             ),
-            Some("https://cdn.example/body.png".into())
+            Some("https://node.example/profile-images/entities/bafyid/body.png".into()),
+            "a foreign host is not redirected to"
         );
+        for held in [
+            "https://profile-images.decentraland.org/entities/bafyid/body.png",
+            "https://node.example/content/contents/bafbody",
+        ] {
+            let metadata = json!({"avatars":[{"avatar":{"snapshots":{"body":held}}}]});
+            assert_eq!(
+                snapshot_url(
+                    &metadata,
+                    "bafyid",
+                    Snapshot::Body,
+                    "https://node.example/events"
+                ),
+                Some(held.into())
+            );
+        }
+        for foreign in [
+            "https://decentraland.org.evil.example/x.png",
+            "https://evil.example/?decentraland.org",
+            "ftp://decentraland.org/x.png",
+        ] {
+            let metadata = json!({"avatars":[{"avatar":{"snapshots":{"body":foreign}}}]});
+            assert_eq!(
+                snapshot_url(
+                    &metadata,
+                    "bafyid",
+                    Snapshot::Body,
+                    "https://node.example/events"
+                ),
+                Some("https://node.example/profile-images/entities/bafyid/body.png".into()),
+                "{foreign}"
+            );
+        }
         assert_eq!(
             snapshot_url(
                 &json!({"avatars":[]}),

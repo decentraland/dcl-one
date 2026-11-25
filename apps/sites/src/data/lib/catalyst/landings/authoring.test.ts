@@ -4,7 +4,6 @@ vi.mock("../../auth/signer", () => ({ signedFetch: vi.fn() }));
 import { postJSON } from "../client";
 import { signedFetch } from "../../auth/signer";
 import { buildHangoutSubmit, deleteHangout, emptyDraft as emptyHangout, eventToDraft, uploadHangoutPoster, type EditableHangout, type HangoutDraft } from "./submit-hangout";
-import { buildScheduleSubmit, emptyDraft as emptySchedule, scheduleToDraft, type Schedule, type ScheduleDraft } from "./schedules";
 import type { AuthIdentity } from "../../auth/types";
 
 describe("when submitting a hangout", () => {
@@ -42,6 +41,13 @@ describe("when submitting a hangout", () => {
     expect(postJSON).not.toHaveBeenCalled();
   });
 
+  it("should send no join link or campaigns when an editor who may edit any event creates one", async () => {
+    submit = buildHangoutSubmit(() => identity, undefined, () => true);
+    await submit({ draft });
+    expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
+    expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("schedules");
+  });
+
   describe("and editing an existing recurrence", () => {
     let original: EditableHangout;
     beforeEach(() => {
@@ -77,142 +83,63 @@ describe("when submitting a hangout", () => {
       expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("community_id");
     });
 
-    it("should preserve privileged fields by omitting them for an ordinary owner", async () => {
-      draft.scheduleIds = ["some-schedule"];
-      draft.joinUrl = "https://example.test/join";
-      await submit({ draft });
-      expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("schedules");
-      expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
+    describe("and the owner saves it after a rejection", () => {
+      beforeEach(() => {
+        original.approved = false;
+        original.rejected = true;
+        original.rejection_reason = "Invalid image";
+        submit = buildHangoutSubmit(() => identity, original);
+      });
+
+      it("should ask to send it back to review", async () => {
+        await submit({ draft });
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toMatchObject({ rejected: false });
+      });
+
+      it("should report the event back in review when the server cleared the rejection", async () => {
+        vi.mocked(postJSON).mockResolvedValueOnce({ ok: true, data: { ...original, approved: false, rejected: false, rejection_reason: null } });
+        await expect(submit({ draft })).resolves.toEqual({ id: "existing-event", approved: false, rejected: false });
+      });
+
+      it("should report the event still rejected when the server answers that it is", async () => {
+        vi.mocked(postJSON).mockResolvedValueOnce({ ok: true, data: { ...original, approved: false, rejected: true, rejected_by: "0x4444444444444444444444444444444444444444" } });
+        await expect(submit({ draft })).resolves.toEqual({ id: "existing-event", approved: false, rejected: true });
+      });
+    });
+
+    describe("and an authorized editor saves another creator's rejected event", () => {
+      beforeEach(() => {
+        original.user = "0x3333333333333333333333333333333333333333";
+        original.rejected = true;
+        submit = buildHangoutSubmit(() => identity, original, () => true);
+      });
+
+      it("should leave the review state to the moderation tools", async () => {
+        await submit({ draft });
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("rejected");
+      });
     });
 
     describe("and an authorized editor manages another creator's event", () => {
       beforeEach(() => {
         original.user = "0x3333333333333333333333333333333333333333";
         original.url = "https://example.test/old-join";
+        original.schedules = ["existing-campaign"];
         draft.contact = "private@example.test"; draft.details = "Hidden"; draft.communityId = "different-community";
-        draft.scheduleIds = ["campaign"]; draft.joinUrl = "";
+        draft.location = "land"; draft.coordX = -50; draft.coordY = 20;
         submit = buildHangoutSubmit(() => identity, original, () => true);
       });
-      it("should omit the owner's private fields and community while assigning campaigns", async () => {
+      it("should omit the owner's private fields and community", async () => {
         await submit({ draft });
         expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("contact");
         expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("details");
         expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("community_id");
-        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toMatchObject({ schedules: ["campaign"], url: null });
       });
-    });
-
-    describe("and a privileged editor moves the venue", () => {
-      beforeEach(() => {
-        original.url = "https://example.test/play/?position=10,10";
-        original.schedules = ["existing-campaign"];
-        draft = eventToDraft(original);
-        draft.location = "land";
-        draft.coordX = -50;
-        draft.coordY = 20;
-        submit = buildHangoutSubmit(() => identity, original, () => true);
-      });
-      it("should omit the unchanged join URL and campaigns so the server can regenerate travel", async () => {
+      it("should leave the stored join link and campaigns, which the editor does not edit, to the server", async () => {
         await submit({ draft });
         expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toMatchObject({ x: -50, y: 20 });
         expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
         expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("schedules");
-      });
-      describe("and the editor explicitly changes the join link", () => {
-        beforeEach(() => { draft.joinUrl = "https://example.test/custom"; });
-        it("should send the newly chosen custom URL", async () => {
-          await submit({ draft });
-          expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toHaveProperty("url", "https://example.test/custom");
-        });
-      });
-      describe("and the editor explicitly clears the join link", () => {
-        beforeEach(() => { draft.joinUrl = ""; });
-        it("should send null to restore generated travel", async () => {
-          await submit({ draft });
-          expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toHaveProperty("url", null);
-        });
-      });
-      describe("and the editor reorders unchanged campaign choices", () => {
-        beforeEach(() => { original.schedules = ["second", "first"]; draft.scheduleIds = ["first", "second"]; });
-        it("should avoid revalidating unchanged associations", async () => {
-          await submit({ draft });
-          expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("schedules");
-        });
-      });
-    });
-
-    describe("and the stored join link is the generated Genesis target", () => {
-      beforeEach(() => {
-        original.world = false;
-        original.server = null;
-        original.x = 10;
-        original.y = -20;
-        original.url = "https://decentraland.org/play/?position=10%2C-20";
-        draft = eventToDraft(original);
-        submit = buildHangoutSubmit(() => identity, original, () => true);
-      });
-      it("should leave the custom field blank so it shows the venue-default placeholder", () => {
-        expect(draft.joinUrl).toBe("");
-      });
-      it("should omit the default link after moving the venue", async () => {
-        draft.coordX = -50;
-        draft.coordY = 20;
-        await submit({ draft });
-        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
-      });
-      describe("and the editor chooses a custom destination", () => {
-        beforeEach(() => { draft.joinUrl = "https://example.test/custom"; });
-        it("should submit the explicit custom destination", async () => {
-          await submit({ draft });
-          expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toHaveProperty("url", "https://example.test/custom");
-        });
-      });
-    });
-
-    describe("and the stored join link is the generated world target", () => {
-      beforeEach(() => {
-        original.world = true;
-        original.server = "hello.dcl.eth&position=1,2";
-        original.url = "https://decentraland.org/play/?realm=hello.dcl.eth%26position%3D1%2C2";
-        draft = eventToDraft(original);
-        submit = buildHangoutSubmit(() => identity, original, () => true);
-      });
-      it("should leave the custom field blank", () => {
-        expect(draft.joinUrl).toBe("");
-      });
-      it("should omit the default link after changing worlds", async () => {
-        draft.worldName = "new.dcl.eth";
-        await submit({ draft });
-        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
-      });
-      describe("and the target uses the old unencoded realm format", () => {
-        beforeEach(() => {
-          original.url = "https://decentraland.org/play/?realm=hello.dcl.eth&position=1,2";
-          draft = eventToDraft(original);
-        });
-        it("should also represent legacy generated links as the venue default", async () => {
-          expect(draft.joinUrl).toBe("");
-          await submit({ draft });
-          expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
-        });
-      });
-      describe("and the link is a custom play destination", () => {
-        beforeEach(() => {
-          original.url = "https://decentraland.org/play/?realm=another.dcl.eth&position=4,5";
-          draft = eventToDraft(original);
-        });
-        it("should preserve the custom destination in the field and omit it if unchanged", async () => {
-          expect(draft.joinUrl).toBe(original.url);
-          await submit({ draft });
-          expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
-        });
-        describe("and the editor clears the custom destination", () => {
-          beforeEach(() => { draft.joinUrl = ""; });
-          it("should send null to restore the venue default", async () => {
-            await submit({ draft });
-            expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toHaveProperty("url", null);
-          });
-        });
       });
     });
 
@@ -269,56 +196,6 @@ describe("when submitting a hangout", () => {
   });
 });
 
-describe("when saving a moderator schedule", () => {
-  let identity: AuthIdentity;
-  let draft: ScheduleDraft;
-  let submit: ReturnType<typeof buildScheduleSubmit>;
-
-  beforeEach(() => {
-    identity = { signer: "0x1111111111111111111111111111111111111111", ephemeral: { address: "0x2222222222222222222222222222222222222222", privateKey: "0x01" }, expiration: "2099-01-01T00:00:00Z", authChain: [] };
-    draft = { ...emptySchedule(), name: "Festival", activeSinceDate: "2099-06-01", activeUntilDate: "2099-06-03" };
-    submit = buildScheduleSubmit(() => identity);
-    vi.mocked(postJSON).mockResolvedValue({ ok: true, data: { id: "saved-schedule", active: true } });
-  });
-
-  afterEach(() => { vi.resetAllMocks(); vi.unstubAllGlobals(); });
-
-  it("should use RFC3339 boundaries with the signed legacy schedule endpoint", async () => {
-    await submit({ draft });
-    expect(postJSON).toHaveBeenCalledWith("/events/api/schedules", expect.objectContaining({ active_since: "2099-06-01T00:00:00.000Z", active_until: "2099-06-03T23:59:59.000Z" }), expect.objectContaining({ identity, method: "POST" }));
-  });
-
-  it("should patch the selected schedule instead of creating another", async () => {
-    await submit({ draft, scheduleId: "saved-schedule" });
-    expect(postJSON).toHaveBeenCalledWith("/events/api/schedules/saved-schedule", expect.any(Object), expect.objectContaining({ method: "PATCH" }));
-  });
-
-  it("should surface permission failures from the server", async () => {
-    vi.mocked(postJSON).mockRejectedValueOnce(new Error("Moderator access required"));
-    await expect(submit({ draft })).rejects.toThrow("Moderator access required");
-  });
-
-  describe("and editing a schedule with precise times", () => {
-    let original: Schedule;
-    beforeEach(() => {
-      original = { id: "saved-schedule", name: "Festival", description: null, image: null, theme: null, background: [], active: true, active_since: "2099-06-01T12:34:56.789Z", active_until: "2099-06-03T16:45:12.345Z" , created_at: null, updated_at: null };
-      draft = scheduleToDraft(original);
-      submit = buildScheduleSubmit(() => identity, original);
-    });
-    it("should retain both times while editing an unrelated field", async () => {
-      await submit({ draft, scheduleId: original.id });
-      expect(postJSON).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ active_since: original.active_since, active_until: original.active_until }), expect.any(Object));
-    });
-    describe("and only the last day changes", () => {
-      beforeEach(() => { draft.activeUntilDate = "2099-06-04"; });
-      it("should retain the start time and use the new end day", async () => {
-        await submit({ draft, scheduleId: original.id });
-        expect(postJSON).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ active_since: original.active_since, active_until: "2099-06-04T23:59:59.000Z" }), expect.any(Object));
-      });
-    });
-  });
-});
-
 describe("when uploading event covers", () => {
   let identity: AuthIdentity;
   let file: File;
@@ -361,6 +238,17 @@ describe("when uploading event covers", () => {
     it("should forward the caller's abort signal", async () => {
       await expect(uploadHangoutPoster(identity, file, false, controller.signal)).rejects.toThrow();
       expect(signedFetch).toHaveBeenCalledWith(identity, expect.any(String), expect.objectContaining({ signal: controller.signal }));
+    });
+  });
+
+  describe("and the server returns a mounted poster URL", () => {
+    it.each([
+      "/events-assets-099ac00/poster-vertical/cover.png",
+      "https://events.decentraland.org:8443/prefix/events-assets-099ac00/poster-vertical/cover.png",
+    ])("should preserve %s for the next write", async (url) => {
+      vi.mocked(signedFetch).mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, data: { url } })));
+
+      await expect(uploadHangoutPoster(identity, file, true)).resolves.toBe(url);
     });
   });
 

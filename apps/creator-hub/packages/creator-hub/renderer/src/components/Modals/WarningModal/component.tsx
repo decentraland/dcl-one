@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Box, Button, Typography, Checkbox, FormControlLabel } from 'decentraland-ui2';
+import Button from '@ui/atoms/Button';
+import Checkbox from '@ui/atoms/Checkbox';
+import Text from '@ui/atoms/Text';
 
 import { t } from '/@/modules/store/translation/utils';
 import { useSettings } from '/@/hooks/useSettings';
@@ -24,10 +26,6 @@ export function WarningModal({ open, onClose }: Props) {
     }
   }, [open]);
 
-  const handleCheckboxChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    setDontShowAgain(event.target.checked);
-  }, []);
-
   const handleContinue = useCallback(() => {
     if (isLoading) return;
     setIsLoading(true);
@@ -49,43 +47,40 @@ export function WarningModal({ open, onClose }: Props) {
       size="tiny"
       open={open}
     >
-      <Box className="WarningModal">
-        <Typography variant="h5">{t('modal.warning.title')}</Typography>
-        <Typography
+      <div className="WarningModal">
+        <Text variant="h5">{t('modal.warning.title')}</Text>
+        <Text
           variant="body1"
           className="message"
         >
           {t('modal.warning.message')}
-        </Typography>
-        <Box className="CheckboxContainer">
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={dontShowAgain}
-                onChange={handleCheckboxChange}
-              />
-            }
-            label={t('modal.warning.dont_show_again')}
-          />
-        </Box>
-        <Box className="ButtonContainer">
+        </Text>
+        <div className="CheckboxContainer">
+          <Checkbox
+            checked={dontShowAgain}
+            onChange={setDontShowAgain}
+          >
+            {t('modal.warning.dont_show_again')}
+          </Checkbox>
+        </div>
+        <div className="ButtonContainer">
           <Button
-            variant="outlined"
+            variant="outline"
             className="actionButton"
             onClick={() => onClose()}
           >
             {t('modal.warning.cancel')}
           </Button>
           <Button
-            variant="contained"
+            variant="primary"
             className="actionButton"
             onClick={handleContinue}
             disabled={isLoading}
           >
             {t('modal.warning.continue')}
           </Button>
-        </Box>
-      </Box>
+        </div>
+      </div>
     </Modal>
   );
 }

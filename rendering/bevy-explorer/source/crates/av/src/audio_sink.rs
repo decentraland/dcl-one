@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use bevy::{prelude::*, render::view::RenderLayers};
 use common::{
-    structs::{AudioDecoderError, AudioSettings},
+    structs::{AudioDecoderError, AudioSettings, MicState},
     util::VolumePanning,
 };
 use comms::{
@@ -186,7 +186,6 @@ fn check_foreign_audio_source_still_playing(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_foreign_audio_player_volume(
     mut streams: Query<
         (
@@ -200,6 +199,7 @@ fn update_foreign_audio_player_volume(
     >,
     pan: VolumePanning,
     settings: Res<AudioSettings>,
+    mic_state: Res<MicState>,
     panning_settings: Res<NearbyPanning>,
     mutes: Res<NearbyMutes>,
     time: Res<Time>,
@@ -209,7 +209,7 @@ fn update_foreign_audio_player_volume(
     {
         let (volume, panning) =
             pan.volume_and_panning(emitter_transform.translation(), render_layers);
-        let volume = if mutes.is_muted(player.address) {
+        let volume = if mic_state.scene_blocked() || mutes.is_muted(player.address) {
             0.0
         } else {
             volume * settings.voice()

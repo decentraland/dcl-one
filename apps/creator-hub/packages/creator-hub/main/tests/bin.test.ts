@@ -15,6 +15,7 @@ vi.mock('electron-log/main', () => ({
 }));
 vi.mock('../src/modules/path', () => ({
   APP_UNPACKED_PATH: '/fake/app',
+  getNodeShimDir: () => '/fake/user-data/bin',
   getBinPath: mocks.getBinPath,
   joinEnvPaths: (...paths: (string | undefined)[]) => paths.filter(Boolean).join(':'),
 }));
@@ -24,7 +25,7 @@ vi.mock('../src/modules/node-runtime', async importOriginal => ({
   resolveNodeRuntime: mocks.resolveNodeRuntime,
 }));
 
-import { run } from '../src/modules/bin';
+import { isProcessRunning, run } from '../src/modules/bin';
 import type { NodeRuntime } from '../src/modules/node-runtime';
 
 describe('when the resolved runtime is a real Node binary', () => {
@@ -157,7 +158,7 @@ describe('when the resolved runtime is Electron', () => {
     mocks.resolveNodeRuntime.mockReturnValue({
       source: 'electron',
       node: process.execPath,
-      binDir: '/fake/app',
+      binDir: '/fake/user-data/bin',
       npmCli: '/fake/app/node_modules/npm/bin/npm-cli.js',
       npxCli: '/fake/app/node_modules/npm/bin/npx-cli.js',
     });
@@ -189,6 +190,33 @@ describe('when the resolved runtime is Electron', () => {
 
     const { env } = mocks.fork.mock.calls[0][2];
     expect(env.ELECTRON_RUN_AS_NODE).toBe('1');
-    expect(env.PATH.split(':')[0]).toBe('/fake/app');
+    expect(env.PATH.split(':')[0]).toBe('/fake/user-data/bin');
+  });
+});
+
+describe('when checking if a process is running', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('should tell that this process is running', () => {
+    expect(isProcessRunning(process.pid)).toBe(true);
+  });
+
+  it('should tell that a process that does not exist is not running', () => {
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
+    });
+
+    expect(isProcessRunning(12345)).toBe(false);
+    expect(process.kill).toHaveBeenCalledWith(12345, 0);
+  });
+
+  it('should tell that a process of another user is running', () => {
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+    });
+
+    expect(isProcessRunning(12345)).toBe(true);
   });
 });

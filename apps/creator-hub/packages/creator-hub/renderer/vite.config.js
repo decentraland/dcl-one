@@ -1,13 +1,24 @@
-/* eslint-env node */
-
 import { join } from 'node:path';
 import { sentryVitePlugin } from '@sentry/vite-plugin';
 import react from '@vitejs/plugin-react';
-import { renderer } from 'unplugin-auto-expose';
-import { chrome } from '../.electron-vendors.cache.json';
+import { searchForWorkspaceRoot } from 'vite';
+import vendors from '../.electron-vendors.cache.json' with { type: 'json' };
+import { rendererExpose } from '../preload/expose-plugin.js';
 
-const PACKAGE_ROOT = __dirname;
+const PACKAGE_ROOT = import.meta.dirname;
 const PACKAGE_DIR = join(PACKAGE_ROOT, '..');
+const UI3_SRC = join(PACKAGE_ROOT, '../../../../ui3/src').replaceAll('\\', '/');
+const SHOP_SRC = join(PACKAGE_ROOT, '../../../../../library/shop').replaceAll('\\', '/');
+const WEB_CORE_SRC = join(PACKAGE_ROOT, '../../../../../library/web-core').replaceAll('\\', '/');
+const TOOLTIP_SRC = join(PACKAGE_ROOT, '../../../../../library/ui/components/Tooltip').replaceAll(
+  '\\',
+  '/',
+);
+
+// The renderer tests run in UTC, so a date that code makes in local time does not depend on the
+// zone of the machine. This file runs before Vitest starts a worker, which is where Vitest says to
+// set the zone: a worker thread does not apply a `TZ` that a setup file or `test.env` gives it.
+if (process.env.VITEST) process.env.TZ = 'UTC';
 
 /**
  * @type {import('vite').UserConfig}
@@ -18,25 +29,39 @@ const config = {
   root: PACKAGE_ROOT,
   envDir: PACKAGE_DIR,
   resolve: {
-    alias: {
-      '/@/': join(PACKAGE_ROOT, 'src').replaceAll('\\', '/') + '/',
-      '/shared/': join(PACKAGE_ROOT, '../shared').replaceAll('\\', '/') + '/',
-      '/assets/': join(PACKAGE_ROOT, 'assets').replaceAll('\\', '/') + '/',
-      '#store': join(PACKAGE_ROOT, 'src', 'modules', 'store').replaceAll('\\', '/') + '/',
-    },
+    alias: [
+      { find: '/@/', replacement: join(PACKAGE_ROOT, 'src').replaceAll('\\', '/') + '/' },
+      {
+        find: '/shared/',
+        replacement: join(PACKAGE_ROOT, '../shared').replaceAll('\\', '/') + '/',
+      },
+      { find: '/assets/', replacement: join(PACKAGE_ROOT, 'assets').replaceAll('\\', '/') + '/' },
+      {
+        find: '#store',
+        replacement: join(PACKAGE_ROOT, 'src', 'modules', 'store').replaceAll('\\', '/') + '/',
+      },
+      { find: '@ui', replacement: UI3_SRC },
+      { find: '@shop', replacement: SHOP_SRC },
+      { find: '@web-core', replacement: WEB_CORE_SRC },
+      // This React 18 host supports only Tooltip. Extend the host types and tracked inputs with any new export.
+      { find: /^@dcl\/one-ui$/, replacement: join(TOOLTIP_SRC, 'Tooltip.tsx') },
+    ],
+    // The ui3 sources sit outside this workspace and must use the React installed here.
+    dedupe: ['react', 'react-dom'],
   },
   base: '',
   server: {
     fs: {
       strict: true,
+      allow: [searchForWorkspaceRoot(PACKAGE_ROOT), UI3_SRC, SHOP_SRC, WEB_CORE_SRC, TOOLTIP_SRC],
     },
   },
   build: {
     sourcemap: true,
-    target: `chrome${chrome}`,
+    target: `chrome${vendors.chrome}`,
     outDir: 'dist',
     assetsDir: '.',
-    rollupOptions: {
+    rolldownOptions: {
       input: [join(PACKAGE_ROOT, 'index.html')],
     },
     emptyOutDir: true,
@@ -51,7 +76,7 @@ const config = {
   },
   plugins: [
     react(),
-    renderer.vite({
+    rendererExpose({
       preloadEntry: join(PACKAGE_ROOT, '../preload/src/index.ts'),
     }),
     sentryVitePlugin({

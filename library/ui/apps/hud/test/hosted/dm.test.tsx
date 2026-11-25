@@ -190,4 +190,21 @@ describe('dm domain', () => {
     // re-read behind the delete, so an answer already queued cannot bring the rows back
     expect(h.driver.sentOf('dmHistory').length).toBe(reads + 1)
   })
+
+  it('deleteHistory on Nearby clears the HUD\'s own log and asks the engine nothing', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'chat', chat: { sender: '0x1', message: 'one', channel: 'Nearby', messageId: 'm1' } })
+    h.driver.emit({ kind: 'chat', chat: { sender: BOB, message: 'kept', channel: BOB, messageId: '' } })
+    expect(h.session().chat.nearby.map((m) => m.message)).toContain('one')
+    act(() => h.session().chat.deleteHistory('Nearby'))
+    expect(h.session().chat.nearby).toEqual([])
+    expect(h.session().chat.messages).toEqual([])
+    expect(h.driver.sentOf('dmDelete')).toEqual([])
+    expect(h.driver.sentOf('dmHistory')).toEqual([])
+    // the DM tab is untouched, and Nearby fills again from the next line
+    expect(h.session().chat.conversations.map((c) => c.address)).toEqual([BOB])
+    h.driver.emit({ kind: 'chat', chat: { sender: '0x1', message: 'two', channel: 'Nearby', messageId: 'm2' } })
+    expect(h.session().chat.nearby.map((m) => m.message)).toEqual(['two'])
+  })
 })

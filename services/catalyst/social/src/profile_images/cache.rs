@@ -143,8 +143,10 @@ impl ImageCache {
             .map(|ttl| now() - ttl)
     }
 
-    /// Stores the bytes as a blob, then the row that names them: a blob whose
-    /// row never lands is an orphan `storage::gc` collects.
+    /// Stores the bytes as a blob, then the row that names them, in one
+    /// transaction under the store lock's shared side (`gc::store_for_row`), so
+    /// an unlink batch either ran before the store or sees the row: a blob
+    /// whose row never lands is an orphan `storage::gc` collects.
     pub async fn put(
         &self,
         entity: &str,
@@ -153,7 +155,8 @@ impl ImageCache {
         data: &Bytes,
     ) -> anyhow::Result<()> {
         let cid = crate::auth::hash::hash_bytes_v1(data);
-        self.storage.store(&cid, data.clone()).await?;
+        let mut tx = self.pool.begin().await?;
+        crate::storage::gc::store_for_row(&mut tx, &self.storage, &cid, data.clone()).await?;
         sqlx::query(
             "INSERT INTO social.profile_images (entity_id, kind, blob_cid, byte_size, source, stored_at) \
              VALUES ($1, $2, $3, $4, $5, $6) \
@@ -166,8 +169,9 @@ impl ImageCache {
         .bind(i32::try_from(data.len())?)
         .bind(source.label())
         .bind(now())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         self.note_written(data.len() as u64);
         Ok(())
     }
@@ -193,7 +197,7 @@ impl ImageCache {
         self.written_since_sweep.store(0, Ordering::Relaxed);
         let pool = self.pool.clone();
         let sweeping = self.sweeping.clone();
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             match sweep_to_budget(&pool, max).await {
                 Ok(dropped) if dropped > 0 => {
                     tracing::info!(dropped, budget = max, "profile images evicted")

@@ -214,7 +214,6 @@ fn setup(
     commands.insert_resource(CoastAssets { cliff, water });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update(
     mut commands: Commands,
     surface: Res<TerrainSurface>,
@@ -285,11 +284,7 @@ fn update(
         if transform.translation != translation {
             transform.translation = translation;
         }
-        visibility.set_if_neq(if ocean_visible(bounds, position, distance.0) {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        });
+        visibility.set_if_neq(Visibility::Inherited);
     }
 
     let range = cliff_range(distance.0);
@@ -328,18 +323,6 @@ fn update(
 /// How far from the player's parcel cliffs are built for a Landscape Distance.
 fn cliff_range(distance: f32) -> f32 {
     CLIFF_RANGE.min(distance)
-}
-
-/// Whether the sea is within `distance` of the camera (bevy position): its nearest part, beyond
-/// the terrain bounds at sea level.
-fn ocean_visible(bounds: Vec4, camera: Vec3, distance: f32) -> bool {
-    let unity = Vec2::new(camera.x, -camera.z);
-    let inside = (unity - bounds.xy())
-        .min(bounds.zw() - unity)
-        .min_element()
-        .max(0.0);
-    let above = (camera.y - SEA_LEVEL).max(0.0);
-    Vec2::new(inside, above).length() < distance
 }
 
 /// Deterministic value in [0, 1] (pcg hash).

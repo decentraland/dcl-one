@@ -16,11 +16,11 @@ impl IntAppSetting for LandscapeDistanceSetting {
     }
 
     fn min() -> i32 {
-        500
+        LandscapeDistance::MIN as i32
     }
 
     fn max() -> i32 {
-        7000
+        LandscapeDistance::MAX as i32
     }
 }
 
@@ -44,7 +44,11 @@ impl AppSetting for LandscapeDistanceSetting {
     }
 
     fn load(config: &AppConfig) -> Self {
-        Self::from_int(config.landscape_distance.round() as i32)
+        Self::from_int(
+            LandscapeDistance::from_config(config.landscape_distance)
+                .0
+                .round() as i32,
+        )
     }
 
     fn apply(&self, mut distance: ResMut<LandscapeDistance>, _: Commands, _: &HashSet<Entity>) {
@@ -83,5 +87,8 @@ mod tests {
         assert_eq!(config.landscape_distance, 500.0);
         config.landscape_distance = 20000.0;
         assert_eq!(LandscapeDistanceSetting::load(&config).value(), 7000);
+        // a value that is not a number loads as the default, as at startup
+        config.landscape_distance = f32::NAN;
+        assert_eq!(LandscapeDistanceSetting::load(&config).value(), 1000);
     }
 }

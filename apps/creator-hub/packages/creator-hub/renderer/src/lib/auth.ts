@@ -1,7 +1,6 @@
 import { createPublicClient, http } from 'viem';
 import { type Socket, io } from 'socket.io-client';
 import { ChainId, ProviderType } from '@dcl/schemas';
-import { type AuthIdentity, type AuthChain } from '@dcl/crypto';
 import * as sso from '@dcl/single-sign-on-client';
 import { analytics } from '#preload';
 import {
@@ -9,6 +8,7 @@ import {
   createSignInVerifier,
   deriveSignInRequestId,
 } from './signInVerifier';
+import type { AuthChain, AuthIdentity } from './identity';
 
 const STORAGE_KEY_ADDRESS = 'auth-server-provider-address';
 const STORAGE_KEY_CHAIN_ID = 'auth-server-provider-chain-id';
@@ -37,7 +37,9 @@ export class SignInError extends Error {
   }
 }
 
-type RelayErrorReason = 'rejected' | 'expired' | 'no_identity';
+const RELAY_SETUP_TIMEOUT_MS = 15_000;
+
+type RelayErrorReason = 'rejected' | 'expired' | 'no_identity' | 'unavailable';
 
 export class RelayError extends Error {
   constructor(
@@ -106,11 +108,20 @@ function isErrorWithMessage(error: unknown): error is Error {
 export class AuthServerProvider {
   private static authServerUrl: string = '';
   private static authDappUrl: string = '';
+  private static identityFetcher?: (
+    url: string,
+    id: string,
+    verifier: string,
+  ) => Promise<{ status: number; body: string }>;
   private static openBrowser: (url: string, target?: string, features?: string) => void;
 
   /**
    * Set the url of the auth server to be consumed by this provider.
    */
+  static setIdentityFetcher(fetcher: NonNullable<typeof AuthServerProvider.identityFetcher>) {
+    AuthServerProvider.identityFetcher = fetcher;
+  }
+
   static setAuthServerUrl(url: string) {
     AuthServerProvider.authServerUrl = url;
   }
@@ -149,10 +160,17 @@ export class AuthServerProvider {
     identityId: string,
     verifier: string,
   ): Promise<{ identity: AuthIdentity; signer: string }> => {
-    const response = await fetch(
-      `${AuthServerProvider.authServerUrl}/identities/${encodeURIComponent(identityId)}`,
-      { headers: { [SIGN_IN_VERIFIER_HEADER]: verifier } },
+    const native = await AuthServerProvider.identityFetcher?.(
+      AuthServerProvider.authServerUrl,
+      identityId,
+      verifier,
     );
+    const response = native
+      ? new Response(native.body || null, { status: native.status })
+      : await fetch(
+          `${AuthServerProvider.authServerUrl}/identities/${encodeURIComponent(identityId)}`,
+          { headers: { [SIGN_IN_VERIFIER_HEADER]: verifier } },
+        );
 
     if (response.status === 404) {
       throw new SignInError('not_found', 'Sign in identity not found');
@@ -294,15 +312,32 @@ export class AuthServerProvider {
    * Creates a socket connection and waits for it to be connected before returning it.
    */
   private static getSocket = async () => {
-    const socket = io(AuthServerProvider.authServerUrl);
+    const url = AuthServerProvider.authServerUrl;
+    const base = URL.canParse(url) ? new URL(url) : null;
+    const path = base?.pathname.replace(/\/+$/, '');
+    const socket =
+      base && path
+        ? io(base.origin, { path: `${path}/socket.io`, transports: ['websocket'] })
+        : io(url, { transports: ['websocket'] });
 
-    await new Promise<void>(resolve => {
-      const onConnect = () => {
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(deadline);
         socket.off('connect', onConnect);
+        socket.off('connect_error', onFailure);
+      };
+      const onConnect = () => {
+        cleanup();
         resolve();
       };
-
+      const onFailure = () => {
+        cleanup();
+        socket.disconnect();
+        reject(new RelayError('unavailable', 'Could not connect to the signing relay. Try again.'));
+      };
+      const deadline = setTimeout(onFailure, RELAY_SETUP_TIMEOUT_MS);
       socket.on('connect', onConnect);
+      socket.on('connect_error', onFailure);
     });
 
     return socket;
@@ -316,11 +351,20 @@ export class AuthServerProvider {
     socket: Socket,
     payload: Payload & { authChain?: AuthChain },
   ) => {
-    const response = await socket.emitWithAck('request', {
-      method: payload.method,
-      params: payload.params,
-      authChain: payload.authChain,
-    });
+    const response = await socket
+      .timeout(RELAY_SETUP_TIMEOUT_MS)
+      .emitWithAck('request', {
+        method: payload.method,
+        params: payload.params,
+        authChain: payload.authChain,
+      })
+      .catch(() => {
+        socket.disconnect();
+        throw new RelayError(
+          'unavailable',
+          'The signing relay did not acknowledge the request. Try again.',
+        );
+      });
 
     if (response.error) {
       socket.disconnect();

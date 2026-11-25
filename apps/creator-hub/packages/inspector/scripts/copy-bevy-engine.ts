@@ -22,17 +22,18 @@ const PACKAGE = '@dcl-regenesislabs/bevy-explorer-web';
 
 console.log(`Copying "${PACKAGE}" into "public/bevy-engine"...`);
 
-// Try to find the engine package at different levels (workspace hoists to root).
+// Try to find the engine package at different levels.
 // `engine/boot.js` marks the react-web layout our host page boots against.
 const possiblePaths = [
-  resolve(__dirname, `../node_modules/${PACKAGE}`), // packages/inspector level
-  resolve(__dirname, `../../../node_modules/${PACKAGE}`), // root level
+  resolve(import.meta.dirname, `../node_modules/${PACKAGE}`), // packages/inspector level
+  resolve(import.meta.dirname, `../../../node_modules/${PACKAGE}`), // root level
 ];
 
 let sourceDir: string | null = null;
 for (const path of possiblePaths) {
   if (fs.existsSync(resolve(path, 'engine', 'boot.js'))) {
-    sourceDir = path;
+    // The real folder: copying a linked package folder would copy the link, not the files.
+    sourceDir = fs.realpathSync(path);
     console.log(`Found ${PACKAGE} at: ${path}`);
     break;
   }
@@ -41,11 +42,11 @@ for (const path of possiblePaths) {
 if (!sourceDir) {
   throw new Error(
     `Could not find ${PACKAGE} (with engine/boot.js) at packages/inspector or root ` +
-      'level. Run `npm install`.',
+      'level. Run `pnpm install`.',
   );
 }
 
-const destDir = resolve(__dirname, '../public/bevy-engine');
+const destDir = resolve(import.meta.dirname, '../public/bevy-engine');
 
 // Fresh copy each build so a bumped engine version can't leave stale files behind.
 fs.rmSync(destDir, { recursive: true, force: true });
@@ -58,7 +59,7 @@ fs.cpSync(sourceDir, destDir, {
 
 // Add our host page. The engine boots into THIS document (same-origin) rather
 // than the package's CDN React HUD.
-const hostSrc = resolve(__dirname, 'bevy-engine-host');
+const hostSrc = resolve(import.meta.dirname, 'bevy-engine-host');
 fs.cpSync(hostSrc, destDir, { recursive: true });
 
 console.log(`Copied bevy engine bundle + host page → ${destDir}`);

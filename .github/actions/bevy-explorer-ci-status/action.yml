@@ -1,7 +1,8 @@
 name: Upsert CI status comment
 description: >-
-  Create or update the one CI status comment on a pull request, replacing only the given section
-  (build | tests | performance | automation | inworld). Seeds a skeleton with every always-present
+  Create or update the one CI status comment on a pull request, replacing only the given sections
+  (build | tests | performance | automation | inworld; for the Creator Hub's comment, desktop |
+  inspector | asset-packs). Seeds a skeleton with every always-present
   section the first time it runs, appends a missing section fence to older comments (and for the
   on-demand automation and inworld sections), and re-reads and retries so concurrent writers never
   clobber each other's section. upsert-ci-status.sh has the details.
@@ -9,9 +10,24 @@ inputs:
   pr-number:
     description: Pull request number to comment on.
     required: true
+  comment:
+    description: >-
+      Which comment to write: bevy-explorer (the Explorer's CI status) or creator-hub (the Creator
+      Hub's test builds).
+    required: false
+    default: bevy-explorer
   section:
-    description: 'Which section to replace: one of build, tests, performance, automation, inworld.'
-    required: true
+    description: >-
+      Which section to replace: one of build, tests, performance, automation, inworld; for the
+      creator-hub comment, one of desktop, inspector, asset-packs. Give section or sections-dir.
+    required: false
+    default: ''
+  sections-dir:
+    description: >-
+      A directory whose <section>.md files replace those sections in one update, instead of
+      section with body or body-file (giving both is an error).
+    required: false
+    default: ''
   body:
     description: >-
       Markdown for this section (a badge line, then the message). Rendered between the section
@@ -37,7 +53,9 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         REPO: ${{ github.repository }}
         PR_NUMBER: ${{ inputs.pr-number }}
+        COMMENT: ${{ inputs.comment }}
         SECTION: ${{ inputs.section }}
+        SECTIONS_DIR: ${{ inputs.sections-dir }}
         SECTION_BODY: ${{ inputs.body }}
         SECTION_BODY_FILE: ${{ inputs.body-file }}
       run: bash "$GITHUB_ACTION_PATH/upsert-ci-status.sh"

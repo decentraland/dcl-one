@@ -1,5 +1,7 @@
 //! Read-side sanitizer for user-authored descriptions: a clicked `<link>` target reaches an unrestricted `Application.OpenURL` on the viewer's machine, so only http(s) links to public hosts are kept; all other markup is stripped.
 
+use crate::shared::js::is_js_whitespace;
+
 pub const INTERNAL_HOST_SUFFIXES: [&str; 8] = [
     ".localhost",
     ".local",
@@ -11,20 +13,24 @@ pub const INTERNAL_HOST_SUFFIXES: [&str; 8] = [
     ".home.arpa",
 ];
 
-pub(crate) const MAX_SANITIZE_PASSES: usize = 5;
+pub(crate) use crate::shared::markup::MAX_SANITIZE_PASSES;
+pub use crate::shared::markup::{RICH_TEXT_TAG_NAMES, strip_all_markup, strip_all_markup_opt};
+use crate::shared::markup::{
+    colour_tag_end, decode_bracket_escapes, drop_brackets, starts_tag_name,
+};
 
 /// Stripping a tag can fuse residual text into a new tag a single pass never revisits, so the strip is re-run to a fixed point; each changing pass strictly shortens the input, so it converges. An input that has not stabilized within [`MAX_SANITIZE_PASSES`] fails closed with every angle bracket removed.
 pub fn sanitize_markup_description(description: &str) -> String {
     let mut current = description.to_owned();
     for _ in 0..MAX_SANITIZE_PASSES {
-        let next = strip_pass(&current);
+        // Escapes are decoded in every pass: a strip can join a split one.
+        let next = strip_pass(&decode_bracket_escapes(&current));
         if next == current {
             return current;
         }
         current = next;
     }
-    current.retain(|c| !matches!(c, '<' | '>'));
-    current
+    drop_brackets(current)
 }
 
 fn strip_pass(description: &str) -> String {
@@ -68,16 +74,21 @@ fn strip_markup_once(description: &str) -> String {
 }
 
 fn markup_tag_end(bytes: &[u8], lt: usize) -> Option<usize> {
+    if let Some(end) = colour_tag_end(bytes, lt) {
+        return Some(end);
+    }
     let mut j = lt + 1;
     if bytes.get(j) == Some(&b'/') {
         j += 1;
     }
-    if !bytes.get(j)?.is_ascii_alphabetic() {
+    if !starts_tag_name(*bytes.get(j)?) {
         return None;
     }
     j += 1;
-    let rel = bytes[j..].iter().position(|b| *b == b'>')?;
-    Some(j + rel + 1)
+    // The client ends a tag at the next `<` too; stopping there also keeps
+    // the scan linear.
+    let rel = bytes[j..].iter().position(|b| matches!(b, b'<' | b'>'))?;
+    (bytes[j + rel] == b'>').then_some(j + rel + 1)
 }
 
 fn drop_unclosed_link_openers(text: &str) -> String {
@@ -103,6 +114,14 @@ fn opens_link_word(bytes: &[u8], lt: usize) -> bool {
     let mut j = lt + 1;
     if bytes.get(j) == Some(&b'/') {
         j += 1;
+    }
+    // A name holding an escape may decode to `link` on the client.
+    let name_end = bytes[j..]
+        .iter()
+        .position(|b| matches!(b, b' ' | b'=' | b'>' | b'<'))
+        .map_or(bytes.len(), |rel| j + rel);
+    if bytes[j..name_end].contains(&b'\\') {
+        return true;
     }
     let Some(word) = bytes.get(j..j + 4) else {
         return false;
@@ -152,7 +171,8 @@ fn link_open_target(tag: &str) -> Option<&str> {
 /// The host is read with a deliberately narrow parser rather than a URL library: anything it cannot fully account for -- a missing `://`, a non-numeric port, a percent-escaped or non-ASCII host, an unparseable IP literal -- fails closed, so a target is only ever kept when its host is unambiguous.
 pub fn is_safe_link_target(target: &str) -> bool {
     let trimmed = target.trim_matches(is_js_whitespace);
-    if trimmed.chars().any(is_js_whitespace) {
+    // The client decodes `\u` escapes in the target before it opens it.
+    if trimmed.chars().any(is_js_whitespace) || trimmed.contains('\\') {
         return false;
     }
     match http_link_host(trimmed) {
@@ -408,20 +428,6 @@ fn strip_prefix_ignore_ascii_case<'a>(s: &'a str, prefix: &str) -> Option<&'a st
         .then(|| &s[prefix.len()..])
 }
 
-pub fn is_js_whitespace(c: char) -> bool {
-    matches!(
-        c,
-        '\t' | '\n' | '\u{000B}' | '\u{000C}' | '\r' | ' ' | '\u{00A0}' | '\u{1680}' | '\u{2000}'
-            ..='\u{200A}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202F}'
-                | '\u{205F}'
-                | '\u{3000}'
-                | '\u{FEFF}'
-    )
-}
-
 #[cfg(test)]
 mod markup_tests {
     use super::*;
@@ -643,6 +649,107 @@ mod markup_tests {
     }
 
     #[test]
+    fn a_link_target_with_an_escape_is_not_kept() {
+        assert!(!is_safe_link_target("https://example.com\\u0040127.0.0.1/"));
+        assert!(!is_safe_link_target("https://example.com\\@127.0.0.1/"));
+        assert!(is_safe_link_target("https://example.com/"));
+        assert_eq!(
+            sanitize_markup_description("<link=\"https://example.com\\u0040127.0.0.1/\">x</link>"),
+            "x"
+        );
+        assert_eq!(
+            sanitize_markup_description("<link=\"https://example.com/\">x</link>"),
+            "<link=\"https://example.com/\">x</link>"
+        );
+    }
+
+    #[test]
+    fn an_unclosed_escaped_link_opener_is_dropped() {
+        for (input, expected) in [
+            ("x<\\u006Cink=\"file:///x\"", "x\\u006Cink=\"file:///x\""),
+            ("x<l\\u0069nk=\"file:///x\"", "xl\\u0069nk=\"file:///x\""),
+            ("x<link=\"file:///x\"", "xlink=\"file:///x\""),
+            ("5 < 10", "5 < 10"),
+        ] {
+            assert_eq!(sanitize_markup_description(input), expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn the_fail_closed_path_is_linear_on_layered_escapes() {
+        let k = 50_000;
+        let input = format!(
+            "<<<<<<<b>b>b>b>b>b>b>{}<{}",
+            "\\u003".repeat(k),
+            "C".repeat(k)
+        );
+        let started = std::time::Instant::now();
+        let out = sanitize_markup_description(&input);
+        let name = strip_all_markup(&input);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        for text in [out, name] {
+            assert!(!text.contains(['<', '>']));
+        }
+    }
+
+    #[test]
+    fn description_drops_tags_whose_name_starts_with_an_escape() {
+        for (input, expected) in [
+            ("<\\u006Cink=\"file:///x\">click</link>", "click"),
+            ("a <\\U0000006Cink=\"smb://h/s\">b</\\u006Cink>", "a b"),
+            ("<\\u0073ize=300>BIG", "BIG"),
+            ("C:\\path <3", "C:\\path <3"),
+        ] {
+            assert_eq!(sanitize_markup_description(input), expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn a_long_run_of_unclosed_openers_is_scanned_in_linear_time() {
+        let input = "<a".repeat(200_000);
+        let started = std::time::Instant::now();
+        let _ = sanitize_markup_description(&input);
+        let _ = strip_all_markup(&input);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn description_drops_tags_rebuilt_from_split_escapes() {
+        let input = "see \\u<b>003Clink=\"file:///x\"\\u<b>003Ehere\\u<b>003C/link\\u<b>003E";
+        let out = sanitize_markup_description(input);
+        assert_eq!(out, "see here");
+        assert_eq!(sanitize_markup_description(&out), out);
+        let failed_closed = sanitize_markup_description("<<<<<<\\u0<b>03Cb>b>b>b>b>b>");
+        assert!(!failed_closed.contains(['<', '>']), "{failed_closed}");
+        assert!(!failed_closed.contains("\\u003C"), "{failed_closed}");
+    }
+
+    #[test]
+    fn description_drops_escaped_tags() {
+        let out = sanitize_markup_description(
+            "see \\u003Clink=\"file:///x\"\\u003Ehere\\u003C/link\\u003E",
+        );
+        assert_eq!(out, "see here");
+    }
+
+    #[test]
+    fn description_strips_the_colour_shorthand_and_keeps_safe_links() {
+        assert_eq!(
+            sanitize_markup_description(
+                "<#ff0000>red</color> and <link=\"https://a.com\">a</link>"
+            ),
+            "red and <link=\"https://a.com\">a</link>"
+        );
+        assert_eq!(sanitize_markup_description("issue <#12"), "issue <#12");
+        assert_eq!(
+            sanitize_markup_description("see <#12 and a > b"),
+            "see <#12 and a > b",
+            "only a hex colour is a tag"
+        );
+        assert_eq!(sanitize_markup_description("<#f00a>x"), "x");
+    }
+
+    #[test]
     fn fails_closed_when_input_does_not_stabilize_within_the_pass_cap() {
         let out = sanitize_markup_description("<<<<<<b>b>b>b>b>b>");
         assert!(!out.contains('<') && !out.contains('>'), "{out}");
@@ -775,9 +882,9 @@ mod markup_tests {
     }
 
     #[test]
-    fn backslash_terminates_the_authority_like_a_slash() {
-        let kept = "<link=\"https://example.com\\@127.0.0.1/\">x</link>";
-        assert_eq!(sanitize_markup_description(kept), kept);
+    fn a_target_with_a_backslash_is_not_kept() {
+        let target = "<link=\"https://example.com\\@127.0.0.1/\">x</link>";
+        assert_eq!(sanitize_markup_description(target), "x");
     }
 
     #[test]
@@ -895,18 +1002,8 @@ pub fn sanitize_asset_url(url: &str) -> Result<String, String> {
     if trimmed == crate::events::posters::DEFAULT_EVENT_IMAGE {
         return Ok(trimmed.to_owned());
     }
-    if let Some(hash) = ["/poster/", "/poster-vertical/"]
-        .iter()
-        .find_map(|prefix| trimmed.strip_prefix(prefix))
-    {
-        if !hash.is_empty()
-            && hash
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
-        {
-            return Ok(trimmed.to_owned());
-        }
-        return Err("image must be a /poster/<hash> path or a safe http(s) URL".into());
+    if crate::node_assets::poster_path(trimmed).is_some() {
+        return Ok(trimmed.to_owned());
     }
     if is_safe_link_target(trimmed) {
         return Ok(trimmed.to_owned());
@@ -1103,7 +1200,7 @@ mod url_tests {
     fn accepts_poster_paths_and_safe_absolute_asset_urls() {
         for url in [
             "/poster/bafkreiabc123",
-            "/poster/hash-with.dots-1",
+            "/poster/hash_with.dots-1",
             "https://decentraland.org/poster.png",
         ] {
             assert_eq!(sanitize_asset_url(url), Ok(url.to_owned()), "{url}");
@@ -1111,6 +1208,7 @@ mod url_tests {
         for url in [
             "/poster/",
             "/poster/../etc/passwd",
+            "/poster/_not-a-node-key",
             "/poster/a/b",
             "/other/hash",
             "javascript:alert(1)",

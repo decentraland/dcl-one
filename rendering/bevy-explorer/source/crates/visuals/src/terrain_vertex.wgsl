@@ -1,5 +1,5 @@
 // Displaces ground and grass meshes by the empty-parcel terrain height. The height function
-// matches `common::terrain::height`, reading eased per-parcel step values from `terrain_steps`.
+// matches `common::terrain::height`, reading per-parcel step values from `terrain_steps`.
 
 #import bevy_pbr::{
     mesh_functions,
@@ -102,7 +102,7 @@ fn terrain_texel(parcel: vec2<i32>) -> f32 {
 }
 
 // 1 within the hill reach of the player (square, like the ground rings), falling to 0 over
-// REACH_FADE of it beyond (x and unity z)
+// REACH_FADE of it beyond (x and -bevy z)
 fn hill_fade(p: vec2<f32>) -> f32 {
     let player = (vec2<f32>(terrain.player_parcel) + terrain.player_offset) * 16.0;
     let offset = abs(p - player);
@@ -110,8 +110,9 @@ fn hill_fade(p: vec2<f32>) -> f32 {
     return 1.0 - smoothstep(reach, reach * (1.0 + REACH_FADE), max(offset.x, offset.y));
 }
 
-// x and unity z (= -bevy z). Within the hill reach, where the collider and the player stand, this
-// is `common::terrain::height`.
+// x and unity z (= -bevy z)
+// Within the hill reach, where the collider and the player stand, this is
+// `common::terrain::height`.
 fn terrain_height_unity(p: vec2<f32>) -> f32 {
     let fade = hill_fade(p);
     if terrain.max_steps <= 0.0 || fade <= 0.0 {
@@ -161,7 +162,7 @@ fn ring_cell(distance: f32) -> f32 {
     return cell;
 }
 
-// terrain.rs `ring_origin`: the corner of the `cell` holding `p` (x and unity z)
+// The corner of the `cell` holding `p` (x and -bevy z): a ring moves only in whole cells
 fn ring_origin(p: vec2<f32>, cell: f32) -> vec2<f32> {
     return floor(p / cell) * cell;
 }

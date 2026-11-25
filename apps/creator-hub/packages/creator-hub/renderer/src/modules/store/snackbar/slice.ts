@@ -11,6 +11,7 @@ import { actions as editorActions } from '../editor';
 import { actions as ensActions } from '../ens';
 import { actions as landActions } from '../land';
 import { actions as managementActions } from '../management';
+import { actions as placeAnalyticsActions } from '../placeAnalytics';
 import { actions as workspaceActions } from '../workspace';
 import { shouldNotifyUpdates } from '../workspace/utils';
 import { settleRequest } from '../requests';
@@ -168,6 +169,15 @@ export const slice = createSlice({
           }),
         );
       })
+      .addCase(placeAnalyticsActions.togglePin.rejected, state => {
+        const id = 'watchlist-not-saved';
+        state.notifications = state.notifications.filter($ => $.id !== id);
+        state.notifications.push(
+          createGenericNotification('error', t('snackbar.generic.watchlist_not_saved'), {
+            requestId: id,
+          }),
+        );
+      })
       .addCase(workspaceActions.duplicateProject.pending, (state, payload) => {
         const { requestId } = payload.meta;
         state.notifications.push(
@@ -233,26 +243,6 @@ export const slice = createSlice({
         state.notifications.push(
           createGenericNotification('success', t('snackbar.generic.dependencies_updated'), {
             requestId: 'updatePackages',
-          }),
-        );
-      })
-      .addCase(workspaceActions.installMultiplayerSdk.fulfilled, state => {
-        state.notifications = state.notifications.filter(
-          $ => $.requestId !== 'installMultiplayerSdk',
-        );
-        state.notifications.push(
-          createGenericNotification('success', t('snackbar.generic.multiplayer_sdk_installed'), {
-            requestId: 'installMultiplayerSdk',
-          }),
-        );
-      })
-      .addCase(workspaceActions.uninstallMultiplayerSdk.fulfilled, state => {
-        state.notifications = state.notifications.filter(
-          $ => $.requestId !== 'uninstallMultiplayerSdk',
-        );
-        state.notifications.push(
-          createGenericNotification('success', t('snackbar.generic.multiplayer_sdk_uninstalled'), {
-            requestId: 'uninstallMultiplayerSdk',
           }),
         );
       })

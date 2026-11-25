@@ -13,6 +13,7 @@ pub mod control_v4;
 pub mod enforcement;
 pub mod feed;
 pub mod handlers;
+pub mod metrics;
 pub mod observations;
 mod reconciliation;
 pub mod registry;
@@ -99,10 +100,11 @@ pub async fn build_state(
     let statistics_subscription = statistics.subscribe(gatekeeper.bus.as_ref());
     let observations = observations::Observations::new(gatekeeper.bus.clone(), jobs);
     let state = Arc::new(AppStateInner {
+        #[cfg(feature = "test-support")]
+        ws_ping_gate: Default::default(),
         statistics,
         _statistics_subscription: statistics_subscription,
         observations,
-        connector_metrics: crate::stats::runtime::Metrics::from_env(),
         started_at: std::time::Instant::now(),
         started: std::sync::atomic::AtomicBool::new(false),
         sockets: Arc::new(tokio::sync::Semaphore::new(
@@ -111,7 +113,17 @@ pub async fn build_state(
         handlers: Arc::new(tokio::sync::Semaphore::new(
             settings.server.max_sockets as usize,
         )),
+        pending_handshakes: state::PendingHandshakes::new(
+            settings
+                .server
+                .max_pending_handshakes
+                .clamp(1, settings.server.max_sockets) as usize,
+        ),
         restart: tokio_util::sync::CancellationToken::new(),
+        pending_handshakes_per_ip: state::IpSlots::new(
+            settings.server.max_pending_handshakes_per_ip,
+        ),
+        sockets_per_ip: state::IpSlots::new(settings.server.max_sockets_per_ip),
         settings,
         enforcement,
         registry,
@@ -131,6 +143,7 @@ pub async fn build_state(
 /// The connected-wallet moderation sweep.
 pub fn spawn_jobs(state: &AppState, jobs: &Jobs) {
     state.enforcement.spawn_jobs(jobs);
+    metrics::start_metrics(state, jobs);
 }
 
 /// Routes for the shared root, complete Stats host, and distinct connector host.
@@ -144,7 +157,6 @@ pub fn mounts(
     state: AppState,
     primary: bool,
     settings: crate::stats::http::Settings,
-    matcher: Arc<dyn crate::stats::http::MetricsMatcher>,
     denylist: Arc<crate::content::Denylist>,
 ) -> Mounts {
     let statistics = crate::stats::http::State::new(
@@ -155,7 +167,6 @@ pub fn mounts(
         }),
         crate::stats::runtime::Runtime::new(state.clone()),
         settings,
-        matcher,
     );
     let sockets = if primary {
         socket_router(state.clone())
@@ -361,13 +372,7 @@ mod tests {
         }
         let denylist = Arc::new(crate::content::Denylist::default());
         denylist.set_operator([ids[1].clone()]);
-        let mounted = mounts(
-            state,
-            false,
-            Default::default(),
-            crate::stats::http::test_support::matcher(),
-            denylist.clone(),
-        );
+        let mounted = mounts(state, false, Default::default(), denylist.clone());
         async fn request(app: Router, method: &str) -> (StatusCode, axum::http::HeaderMap, String) {
             let response = app
                 .oneshot(
@@ -492,7 +497,6 @@ mod tests {
             state,
             false,
             Default::default(),
-            crate::stats::http::test_support::matcher(),
             Arc::new(crate::content::Denylist::default()),
         );
         let response = mounts
@@ -533,7 +537,6 @@ mod tests {
             state,
             true,
             Default::default(),
-            crate::stats::http::test_support::matcher(),
             Arc::new(crate::content::Denylist::default()),
         );
         let response = mounts
@@ -594,7 +597,6 @@ mod tests {
             state.clone(),
             true,
             Default::default(),
-            crate::stats::http::test_support::matcher(),
             Arc::new(crate::content::Denylist::default()),
         );
         let shared = Router::new()
@@ -758,7 +760,6 @@ mod tests {
             known_peer_and_island().await,
             true,
             Default::default(),
-            crate::stats::http::test_support::matcher(),
             Arc::new(crate::content::Denylist::default()),
         );
         for (mount, router) in [("root", &mounts.root), ("stats", &mounts.stats)] {
@@ -799,7 +800,6 @@ mod tests {
             known_peer_and_island().await,
             true,
             Default::default(),
-            crate::stats::http::test_support::matcher(),
             Arc::new(crate::content::Denylist::default()),
         );
         for (mount, router) in [("root", &mounts.root), ("stats", &mounts.stats)] {
@@ -821,7 +821,6 @@ mod tests {
             known_peer_and_island().await,
             false,
             Default::default(),
-            crate::stats::http::test_support::matcher(),
             Arc::new(crate::content::Denylist::default()),
         );
         assert_eq!(

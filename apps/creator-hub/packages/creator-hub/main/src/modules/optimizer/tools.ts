@@ -6,7 +6,7 @@ import log from 'electron-log/main';
 
 import type { OptimizeToolInfo, OptimizeToolsInfo } from '/shared/types/optimizer';
 
-import { run } from '../bin';
+import { exists, installLocked } from '../downloaded-tools';
 import toolsLockfile from './tools/optimizer-tools.package-lock.json?raw';
 import toolsPackageJson from './tools/optimizer-tools.package.json?raw';
 
@@ -16,7 +16,7 @@ import toolsPackageJson from './tools/optimizer-tools.package.json?raw';
 //
 // Pinned to releases: optimizer-tools.package.json holds exact versions and its committed
 // lockfile carries the registry URL + integrity hash of every package, so `npm ci` installs
-// byte-for-byte what was reviewed. Bump a version there, then `npm run lock:optimizer-tools`.
+// byte-for-byte what was reviewed. Bump a version there, then `pnpm run lock:optimizer-tools`.
 //
 // Why not bundle: ~20 MB per architecture (15 MB of it libvips) and a cross-arch provisioning
 // step for the Intel dmg. Downloading keeps the installer lean and lets the worker run on the
@@ -86,15 +86,6 @@ export function getToolsDir(): string {
   return path.join(app.getPath('userData'), 'optimizer-tools');
 }
 
-async function exists(file: string): Promise<boolean> {
-  try {
-    await fs.access(file);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function isInstalled(): Promise<boolean> {
   const dir = getToolsDir();
   try {
@@ -153,7 +144,7 @@ async function assertSingleSharp(dir: string): Promise<void> {
     throw new Error(
       `The optimizer tools installed a second copy of sharp at ${nested}. Align the pinned ` +
         'sharp version with the one its dependents require, then re-run ' +
-        '`npm run lock:optimizer-tools`.',
+        '`pnpm run lock:optimizer-tools`.',
     );
   }
 }
@@ -162,36 +153,19 @@ export async function installTools(onProgress: (message: string) => void): Promi
   const dir = getToolsDir();
   await fs.mkdir(dir, { recursive: true });
   await fs.rm(path.join(dir, INSTALLED_MARKER), { force: true });
-  await fs.writeFile(path.join(dir, 'package.json'), toolsPackageJson);
-  await fs.writeFile(path.join(dir, 'package-lock.json'), toolsLockfile);
 
   onProgress(`Downloading optimizer tools (about ${DOWNLOAD_SIZE_MB} MB)…`);
   log.info(`[Optimizer] installing toolchain ${TOOLS_KEY} into ${dir}`);
-  // `npm ci` installs exactly the lockfile or fails; --ignore-scripts because nothing here
-  // needs a build step (sharp ships prebuilt bindings as platform optionalDependencies) and a
-  // downloaded package must not get to run code on install.
-  const install = run('npm', 'npm', {
-    args: ['ci', '--ignore-scripts', '--no-audit', '--no-fund', '--loglevel', 'error'],
-    cwd: dir,
+  // sharp ships prebuilt bindings as platform optionalDependencies, so nothing needs a build step.
+  await installLocked({
+    dir,
+    packageJson: toolsPackageJson,
+    lockfile: toolsLockfile,
+    expected: Object.keys(pinnedVersions),
+    timeoutMs: INSTALL_TIMEOUT_MS,
+    timeoutMessage: 'Downloading the optimizer tools took too long. Check your connection.',
+    what: 'The optimizer tools install',
   });
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(async () => {
-      await install.kill();
-      reject(new Error('Downloading the optimizer tools took too long. Check your connection.'));
-    }, INSTALL_TIMEOUT_MS);
-  });
-  try {
-    await Promise.race([install.wait(), timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-
-  for (const pkg of Object.keys(pinnedVersions)) {
-    if (!(await exists(path.join(dir, 'node_modules', pkg, 'package.json')))) {
-      throw new Error(`The optimizer tools install did not produce ${pkg}`);
-    }
-  }
   // sharp's native binding is a platform optionalDependency; if npm skipped it the worker would
   // throw on its first texture, so fail here where the message can say what happened.
   if (process.platform === 'darwin' || process.platform === 'win32') {

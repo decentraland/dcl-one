@@ -1,5 +1,5 @@
 import { getJSON, sendSignedJSON, serviceBase, type RequestOpts } from "./client";
-import { field, hasId, isRecord, keepRows } from "./rows";
+import { field, hasId, isRecord, keepRows } from "@web-core/catalyst/rows";
 import {
   CommunityEventSchema,
   CommunityMemberSchema,
@@ -39,7 +39,7 @@ export function normalizeCommunityThumbnail(v: unknown, site = siteHostname()): 
   }
   if (parsed.protocol !== "https:" || !COMMUNITY_THUMB_PATH.test(parsed.pathname)) return url;
   if (!isOwnAssetHost(parsed.hostname, site)) return url;
-  return `${serviceBase("communitiesCdn")}${parsed.pathname}`;
+  return `${serviceBase("communitiesCdn")}${parsed.pathname}${parsed.search}`;
 }
 
 export function normalizeCommunity(c: CommunityWire) {

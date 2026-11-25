@@ -7,17 +7,17 @@ import type { EventData } from '@explorer-core/engine/protocol'
 import { eventDestination } from '@explorer-core/features/events/eventsApi'
 import { track } from '@explorer-core/lib/analytics'
 import { useSession } from '../session/SessionContext'
-import { eventAnalytics, eventCalendarUrl, eventCopyLink, eventShareUrl, createEventUrl } from './eventFormat'
+import { eventAnalytics, eventCalendarUrl, eventCopyLink, eventShareUrl, createEventUrl, type EventLinkSource } from './eventFormat'
 
 export interface EventActions {
   remind: (event: EventData) => void
   reminding: (event: EventData) => boolean
-  addToCalendar: (event: EventData, start?: Date) => void
-  /** Travel to the event and close the Events page. False when the event names no world to
-   *  travel to, and nothing happened. */
+  addToCalendar: (event: EventLinkSource, start?: Date) => void
+  /** Travel to the event and close the Events page. False when nothing happened: the event names
+   *  no world to travel to, or the startup lobby is not taking picks yet. */
   jumpIn: (event: EventData) => boolean
-  shareOnX: (event: EventData) => void
-  copyLink: (event: EventData) => void
+  shareOnX: (event: EventLinkSource) => void
+  copyLink: (event: EventLinkSource) => void
   createEvent: (fromHeader: boolean) => void
 }
 
@@ -27,7 +27,7 @@ const openUrl = (url: string): void => {
 
 export function useEventActions(): EventActions {
   const session = useSession()
-  const { data, open, toggle } = session.events
+  const { data, close } = session.events
   const { changeRealm, teleportToPlace } = session.map
   const referrer = session.profile.data?.address ?? null
   const pending = data.store.pending
@@ -47,10 +47,11 @@ export function useEventActions(): EventActions {
           showToast('This event’s world cannot be reached.', { tone: 'error' })
           return false
         }
-        if (dest.kind === 'world') changeRealm(dest.realm)
-        else teleportToPlace(dest.x, dest.y)
+        const outcome = dest.kind === 'world' ? changeRealm(dest.realm) : teleportToPlace(dest.x, dest.y)
+        if (outcome === 'refused') return false
         track('event_jumped_in', eventAnalytics(event))
-        if (open) toggle()
+        // not a toggle: over the startup lobby the pick has closed the page already
+        close()
         return true
       },
       shareOnX: (event) => {
@@ -70,6 +71,6 @@ export function useEventActions(): EventActions {
         track('event_creation_opened', { from_header_button: fromHeader })
       }
     }),
-    [data, pending, referrer, changeRealm, teleportToPlace, open, toggle]
+    [data, pending, referrer, changeRealm, teleportToPlace, close]
   )
 }

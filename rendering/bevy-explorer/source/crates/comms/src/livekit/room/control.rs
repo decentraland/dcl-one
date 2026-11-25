@@ -60,7 +60,6 @@ pub(super) struct RoomConnections<'w, 's> {
     commands: Commands<'w, 's>,
     policy: Res<'w, State<ConnectionAvailability>>,
     no_render: Option<Res<'w, NoRenderApp>>,
-    #[allow(clippy::type_complexity)]
     rooms: Query<
         'w,
         's,
@@ -130,10 +129,14 @@ impl RoomConnections<'_, '_> {
     }
 }
 
-pub(super) fn register(app: &mut App) {
-    if client_can_control(app.world().contains_resource::<NoRenderApp>()) {
-        app.add_observer(close_paused_room)
-            .add_systems(Update, discard_paused_messages);
+pub(super) struct RoomControlPlugin;
+
+impl Plugin for RoomControlPlugin {
+    fn build(&self, app: &mut App) {
+        if client_can_control(app.world().contains_resource::<NoRenderApp>()) {
+            app.add_observer(close_paused_room)
+                .add_systems(Update, discard_paused_messages);
+        }
     }
 }
 

@@ -6,9 +6,8 @@ import { useEffect } from "react";
 import { preload } from "react-dom";
 import { Link } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import { SHOP_BASE } from "../../routes";
-import { fetchShopItems, fetchTrendingItems } from "@shop/discovery/api";
 import { useCampaignHero } from "../components/CampaignBanner";
 import heroDesktop from "../frames/assets/hero-credits-outfits.webp?url";
 import heroMobile from "../frames/assets/hero-credits-mobile.webp?url";
@@ -23,12 +22,13 @@ import TopCreators from "../components/TopCreators";
 import { indexUnavailable } from "@shop/discovery/freshness";
 import { useMarketplace } from "../../market/access";
 import { listingTypeFor } from "@shop/market/access-rule";
-import { isIapMode, shopFlags } from "../flags";
+import { isIapMode, useShopFlags } from "../flags";
 import { useListingsFreshness, useSeo } from "../hooks";
 import { t } from "@shop/discovery/intl";
 import { useShopQuery } from "../query";
 import "./overview.css";
 import { shopReads } from "../reads";
+import { RAIL_KEYS, readDeals, readListings, readTrending } from "./overviewRails";
 
 const MIN_DEALS = 3;
 
@@ -81,18 +81,16 @@ function Hero() {
 export default function Overview() {
   useSeo({ title: null });
   useHomeTitle();
-  const flags = shopFlags();
+  const flags = useShopFlags();
   // Trending lists resales too only for a visitor who sees the Marketplace (market/access.tsx).
   const listingType = listingTypeFor(useMarketplace());
 
-  const listings = useShopQuery(["overview-listings"], (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, shopReads(signal)));
+  const listings = useShopQuery(RAIL_KEYS.listings, (signal) => readListings(shopReads(signal)));
   // Widening to resales (a web3 visitor whose access resolves after hydration) keeps the primed rail until it lands.
-  const trending = useShopQuery(["overview-trending", listingType ?? "all"], (signal) => fetchTrendingItems({ first: 12, listingType }, shopReads(signal)), {
+  const trending = useShopQuery(RAIL_KEYS.trending(listingType), (signal) => readTrending(listingType, shopReads(signal)), {
     keepPrevious: listingType === undefined,
   });
-  const deals = useShopQuery(flags.creatorSales ? ["overview-deals"] : null, (signal) =>
-    fetchShopItems({ first: 12, discounted: true, sortBy: "discount", listingType: "primary" }, shopReads(signal)),
-  );
+  const deals = useShopQuery(flags.creatorSales ? RAIL_KEYS.deals : null, (signal) => readDeals(shopReads(signal)));
 
   const items = listings.data?.items ?? [];
   const trendingItems = trending.data ?? [];

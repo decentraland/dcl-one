@@ -1,0 +1,145 @@
+/* The design system's item-card (rarity glow, rim, corner flap, NEW tag), at whatever size the caller gives it. The
+   flap is drawn for the card's 120px reference and grows with the card as the design's instances do: the caller sets
+   --flap-scale (its width over 120). */
+.card {
+  --item-glow: var(--rarity);
+  --flap-scale: 1;
+  position: relative;
+  display: block;
+  flex: none;
+}
+.card[data-rarity='exotic'] {
+  --item-glow: var(--rarity-light);
+}
+
+/* The frame: Brand/Purple under the two glows, with the Light's 2.5px rim; the image covers it to its outer edge. */
+.art {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background:
+    radial-gradient(78% 78% at 8% 4%, var(--rarity-light) 0%, transparent 100%),
+    radial-gradient(100% 100% at 70% 68%, var(--item-glow) 0%, transparent 100%),
+    var(--brand-purple);
+}
+.art::after {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  border: 2.5px solid var(--rarity-light);
+  border-radius: inherit;
+  pointer-events: none;
+}
+.image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+/* The CategoryFlap: the rarity's corner with its shadow along the edge, and the 16px category glyph 4px in, all at the
+   card's scale. */
+.flap {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 0;
+  width: calc(45.283px * var(--flap-scale));
+  height: calc(45.1207px * var(--flap-scale));
+  color: var(--text);
+}
+.flapShape {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.flapSolid {
+  fill: var(--rarity);
+}
+.flapShadow {
+  fill: var(--panel);
+  opacity: 0.2;
+}
+.flapIcon {
+  position: absolute;
+  z-index: 1;
+  left: 4px;
+  top: 4px;
+  display: flex;
+  width: 16px;
+  height: 16px;
+  transform: scale(var(--flap-scale));
+  transform-origin: -4px -4px;
+}
+
+/* The NewLabel: 18px tall, 6px in from the bottom-left corner. */
+.new {
+  position: absolute;
+  z-index: 3;
+  left: 6px;
+  bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0 3.851px;
+  border-radius: var(--r-xs);
+  background: var(--brand);
+  color: var(--text);
+  font-size: var(--type-12);
+  font-weight: var(--fw-bold);
+  line-height: 1.21;
+  text-transform: uppercase;
+}
+
+/* The SmartItemBadge: 63.4 by 18.6px, 6px in from the top-right corner, the bolt then SMART on a pink gradient. */
+.smart {
+  position: absolute;
+  z-index: 3;
+  top: 6px;
+  right: 6.6px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  width: 63.4px;
+  height: 18.608px;
+  padding: 0 5px;
+  overflow: hidden;
+  border-radius: var(--r-xs);
+  background: var(--shop-smart);
+  color: var(--text);
+  font-size: var(--type-12);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+  letter-spacing: -0.1882px;
+}
+.smart > img {
+  flex: none;
+}
+
+/* The AmountLabel: 18px tall, 6px in from the bottom-right corner, on Black 40. */
+.amount {
+  position: absolute;
+  z-index: 3;
+  right: 6px;
+  bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 2px 4px;
+  box-sizing: border-box;
+  border-radius: var(--r-xs);
+  background: var(--black-40);
+  color: var(--text);
+  font-size: var(--type-12);
+  font-weight: var(--fw-bold);
+  line-height: 1.21;
+}

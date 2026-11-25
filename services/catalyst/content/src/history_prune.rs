@@ -1,11 +1,11 @@
-//! The content history prune: a sync-only node drops the deployments no
+//! The content history prune: a node drops the deployments no
 //! pointer is served by any more (superseded by a newer entity over the
 //! same pointers, or unpublished), their `content_files` rows and the blobs
 //! nothing else names, once they have been out of `active_pointers` for the
 //! grace period. `failed_deployments`, `processed_snapshots`, the cursors
 //! and `local_entities` are never touched, and a row `local_entities` names
-//! (this node's own deployment, tombstoned or not) is never pruned, nor is a
-//! row such a deployment superseded.
+//! (this node's own scene, tombstoned or not) is never pruned, nor is a row
+//! such a scene superseded.
 //!
 //! Peer sync does not need the history rows to stay correct. Its only
 //! already-known probe is `sync_deployer::is_entity_deployed` (the bloom
@@ -18,9 +18,11 @@
 //! covers what a restart can replay (minutes); the cost of a re-offer is a
 //! download, never a wrong pointer.
 //!
-//! An authoritative node (`CONTENT_WRITES_ENABLED`) keeps its history, so
-//! the job refuses to run beside the switch, and a pass with the switch off
-//! still keeps every row a local deployment superseded.
+//! Pruning is the operator's choice (`CONTENT_HISTORY_PRUNE_ENABLED`),
+//! independent of `CONTENT_WRITES_ENABLED`. Local scenes and the rows they
+//! superseded always stay; every other superseded version, local or peer,
+//! goes. Nothing needs those: the forwarder never sends a superseded row, a
+//! peer only needs the active entity, and only scenes can be unpublished.
 //!
 //! Superseded at: a row has no such column; it is the later of the row's own
 //! `local_timestamp` (a late replay lands already superseded) and its
@@ -31,7 +33,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use metrics::counter;
+use dcl_metrics::counter;
 use serde::Serialize;
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
@@ -76,8 +78,6 @@ pub const SERIES: [&str; 6] = [
 pub struct PruneOptions {
     /// `CONTENT_HISTORY_PRUNE_ENABLED`.
     pub enabled: bool,
-    /// `CONTENT_WRITES_ENABLED`: an authoritative node keeps its history.
-    pub content_writes_enabled: bool,
     /// How long a row stays after it left `active_pointers`
     /// (`CONTENT_HISTORY_PRUNE_GRACE_HOURS`).
     pub grace: Duration,
@@ -90,13 +90,15 @@ pub struct PruneOptions {
     pub interval: Duration,
     /// `GLOBAL_SCENES_URN`: scenes whose files are never unlinked.
     pub global_scenes_urn: Vec<String>,
+    /// How long an unlink batch waits for the exclusive store lock before the
+    /// pass defers ([`gc::STORE_LOCK_TIMEOUT`]).
+    pub store_lock_wait: Duration,
 }
 
 impl PruneOptions {
     pub fn from_config(config: &Config) -> Self {
         Self {
             enabled: config.content.content_history_prune_enabled,
-            content_writes_enabled: config.writes.content_writes_enabled,
             grace: Duration::from_secs(
                 config
                     .content
@@ -118,18 +120,13 @@ impl PruneOptions {
                 .as_deref()
                 .map(|r| r.split_whitespace().map(str::to_string).collect())
                 .unwrap_or_default(),
+            store_lock_wait: gc::STORE_LOCK_TIMEOUT,
         }
     }
 
     /// Why a pass would not run; `None` when it runs.
     pub fn skip_reason(&self) -> Option<&'static str> {
-        if !self.enabled {
-            Some("CONTENT_HISTORY_PRUNE_ENABLED=false")
-        } else if self.content_writes_enabled {
-            Some("CONTENT_WRITES_ENABLED=true: an authoritative node keeps its deployment history")
-        } else {
-            None
-        }
+        (!self.enabled).then_some("CONTENT_HISTORY_PRUNE_ENABLED=false")
     }
 }
 
@@ -249,18 +246,24 @@ async fn unlink(storage: &Storage, key: &str) -> Result<u64, crate::storage::Sto
 }
 
 /// The keys of a pruned batch that no domain names any more are unlinked;
-/// the reference check runs right before the unlink, after the rows are gone.
+/// the reference check runs right before the unlink, after the rows are gone,
+/// under the exclusive store lock. Every content writer that commits a
+/// deployment (local deploys, the peer-sync and read-through flush) takes its
+/// shared side and checks there that the files it names are stored, so a
+/// blob such a writer reuses is either named by its committed rows here or
+/// found gone by that writer, which then does not commit it.
 async fn unlink_unreferenced(
     pool: &PgPool,
     storage: &Storage,
     global_scenes_urn: &[String],
+    store_lock_wait: Duration,
     keys: &[String],
     report: &mut PruneReport,
 ) -> anyhow::Result<()> {
     if keys.is_empty() {
         return Ok(());
     }
-    let mut lock = gc::lock_store_exclusive(pool).await?;
+    let mut lock = gc::lock_store_exclusive_within(pool, store_lock_wait).await?;
     let referenced: HashSet<String> =
         gc::referenced_among_on(&mut lock, gc::Pins::new(storage, global_scenes_urn), keys).await?;
     for key in keys {
@@ -287,6 +290,7 @@ async fn unlink_unreferenced(
 /// the start, each select bounded to its window; a full batch continues
 /// inside the window, a short one moves on. The token fires and the report
 /// covers what ran. `Ok` with `skipped` set when the options refuse the run.
+/// A pass that ran counts as a collection run (`dcl_content_garbage_collection_*`).
 async fn run(
     pool: &PgPool,
     storage: &Storage,
@@ -294,6 +298,32 @@ async fn run(
     cancel: Option<&CancellationToken>,
 ) -> anyhow::Result<PruneReport> {
     let started = Instant::now();
+    let result = pass(pool, storage, opts, cancel, started).await;
+    let cancelled = cancel.is_some_and(CancellationToken::is_cancelled);
+    if let Some(outcome) = run_outcome(&result, cancelled) {
+        crate::series::gc_run(outcome);
+    }
+    result
+}
+
+/// How a pass counts: `success`, `deferred` when the exclusive store lock stayed busy, `error`
+/// on any other failure; a pass the options refused or that stopped for shutdown, not at all.
+fn run_outcome(result: &anyhow::Result<PruneReport>, cancelled: bool) -> Option<&'static str> {
+    match result {
+        Ok(report) if report.skipped.is_some() || cancelled => None,
+        Ok(_) => Some("success"),
+        Err(e) if matches!(e.downcast_ref(), Some(gc::GcError::LockTimeout)) => Some("deferred"),
+        Err(_) => Some("error"),
+    }
+}
+
+async fn pass(
+    pool: &PgPool,
+    storage: &Storage,
+    opts: &PruneOptions,
+    cancel: Option<&CancellationToken>,
+    started: Instant,
+) -> anyhow::Result<PruneReport> {
     let mut report = PruneReport::default();
     if let Some(reason) = opts.skip_reason() {
         report.skipped = Some(reason.to_string());
@@ -328,6 +358,7 @@ async fn run(
             pool,
             storage,
             &opts.global_scenes_urn,
+            opts.store_lock_wait,
             &pruned.keys,
             &mut report,
         )
@@ -382,8 +413,8 @@ pub async fn run_once(
     run(pool, storage, opts, None).await
 }
 
-/// Spawns the periodic job, or logs once why it does not run (the flag off,
-/// an authoritative node) and spawns nothing. Answers whether it runs.
+/// Spawns the periodic job, or logs once why it does not run (the flag off)
+/// and spawns nothing. Answers whether it runs.
 pub fn spawn(jobs: &Jobs, pool: PgPool, storage: Arc<Storage>, opts: PruneOptions) -> bool {
     if let Some(reason) = opts.skip_reason() {
         tracing::info!(reason, "content history prune: not running");
@@ -423,6 +454,33 @@ mod tests {
     use bytes::Bytes;
     use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
+    #[test]
+    fn a_pass_counts_by_how_it_ended() {
+        let ran = || Ok(PruneReport::default());
+        assert_eq!(run_outcome(&ran(), false), Some("success"));
+        assert_eq!(run_outcome(&ran(), true), None, "stopped for shutdown");
+        let refused = Ok(PruneReport {
+            skipped: Some("off".into()),
+            ..PruneReport::default()
+        });
+        assert_eq!(run_outcome(&refused, false), None);
+        let busy = Err(anyhow::Error::from(gc::GcError::LockTimeout));
+        assert_eq!(run_outcome(&busy, false), Some("deferred"));
+        let failed = Err(anyhow::anyhow!("database gone"));
+        assert_eq!(run_outcome(&failed, true), Some("error"));
+
+        let recorder = crate::series::test_support::recorder();
+        dcl_metrics::with_local_recorder(&recorder, || crate::series::gc_run("deferred"));
+        assert_eq!(
+            crate::series::test_support::sample(
+                &recorder.handle().render(),
+                crate::series::GC_RUNS.descriptor.name,
+                &[("outcome", "deferred")]
+            ),
+            Some(1.0)
+        );
+    }
+
     /// A pass prunes the whole table, so the per-process scratch database the
     /// other lib tests share is off limits: a database of its own on the
     /// `CATALYST_TEST_DATABASE_URL` cluster, as the collector test does.
@@ -435,38 +493,20 @@ mod tests {
             .connect_with(opts.database("postgres"))
             .await
             .unwrap();
-        let name = format!(
-            "catalyst_test_prune_{}",
-            &uuid::Uuid::new_v4().simple().to_string()[..12]
-        );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
-        let mut url = url::Url::parse(&base_url).unwrap();
-        url.set_path(&format!("/{name}"));
-        let pool = crate::db::connect_pool(
-            url.as_str(),
-            &crate::db::PoolSettings {
-                max_connections: 2,
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
+        let pool = crate::db::scratch::isolated_pool(2).await?;
+        let name = pool.connect_options().get_database().unwrap().to_string();
         Some((pool, admin, name))
     }
 
     fn options(grace: Duration, batch: usize) -> PruneOptions {
         PruneOptions {
             enabled: true,
-            content_writes_enabled: false,
             grace,
             batch,
             pause_between_batches: Duration::ZERO,
             interval: Duration::from_secs(3600),
             global_scenes_urn: Vec::new(),
+            store_lock_wait: gc::STORE_LOCK_TIMEOUT,
         }
     }
 
@@ -548,8 +588,8 @@ mod tests {
     /// superseder is too recent, and an orphan no pointer names: the pass
     /// drops the superseded and the orphan with their `content_files` and
     /// exclusive blobs (their entity files too), keeps the shared blob, the
-    /// active rows, the local row and the young ones; the switch and the
-    /// flag refuse a pass; a second pass finds nothing.
+    /// active rows, the local row and the young ones; the flag refuses a
+    /// pass; a second pass finds nothing.
     #[tokio::test]
     async fn superseded_rows_go_with_their_exclusive_blobs_and_everything_active_local_or_young_stays()
      {
@@ -614,24 +654,8 @@ mod tests {
         assert_eq!(rows, 7);
 
         let grace = Duration::from_secs(86_400);
-        let refused = run_once(
-            &pool,
-            &storage,
-            &PruneOptions {
-                content_writes_enabled: true,
-                ..options(grace, 1)
-            },
-        )
-        .await
-        .unwrap();
-        assert!(
-            refused
-                .skipped
-                .as_deref()
-                .unwrap()
-                .starts_with("CONTENT_WRITES_ENABLED=true"),
-            "{refused:?}"
-        );
+        let recorder = crate::series::test_support::recorder();
+        let metrics_guard = dcl_metrics::set_default_local_recorder(&recorder);
         let off = run_once(
             &pool,
             &storage,
@@ -665,6 +689,25 @@ mod tests {
             (4, 1, 0),
             "{report:?}"
         );
+        drop(metrics_guard);
+        {
+            use crate::series::{GC_RUNS, test_support::sample};
+            let rendered = recorder.handle().render();
+            assert_eq!(
+                sample(&rendered, BLOBS_UNLINKED, &[]),
+                Some(4.0),
+                "{rendered}"
+            );
+            assert_eq!(
+                sample(
+                    &rendered,
+                    GC_RUNS.descriptor.name,
+                    &[("outcome", "success")]
+                ),
+                Some(1.0),
+                "the refused pass is not a run"
+            );
+        }
         let freed = [&exclusive, &orphan_file, &superseded_entity, &orphan_entity];
         let expected_bytes: u64 = [
             format!("exclusive {tag}").len(),
@@ -763,9 +806,74 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A pass that runs while writes are off (a node that had them on and
-    /// turns them on again) keeps the scene a local deployment superseded,
-    /// however old; the local scene's unpublish leaves it superseded.
+    /// Only local scenes carry provenance: a local profile superseded by a
+    /// newer local profile is pruned like a peer row, and the active one stays.
+    #[tokio::test]
+    async fn a_superseded_local_profile_is_pruned_and_the_active_one_stays() {
+        use crate::write_deployer::WriteDeployer;
+        use catalyst_shared::test_keys::{ENTITY_KEY, address_of, signed_chain};
+
+        let Some((pool, admin, name)) = own_database().await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "catalyst-history-prune-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = Arc::new(Storage::from_config(&dir).await.unwrap());
+        let signer = address_of(ENTITY_KEY);
+        let now_ms = chrono::Utc::now().timestamp_millis();
+
+        let mut ids = Vec::new();
+        for (timestamp, version) in [(now_ms - 1_000, 1), (now_ms, 2)] {
+            let entity = serde_json::json!({
+                "version": "v3",
+                "type": "profile",
+                "pointers": [signer],
+                "timestamp": timestamp,
+                "content": [],
+                "metadata": {"avatars": [], "version": version}
+            });
+            let bytes = Bytes::from(serde_json::to_vec(&entity).unwrap());
+            let id = crate::auth::hash::hash_bytes_v1(&bytes);
+            let chain = serde_json::to_value(signed_chain(ENTITY_KEY, &id).await).unwrap();
+            // A fresh deployer per deploy: the profile rate limit is per instance.
+            WriteDeployer::with_partial_validation_for_tests(pool.clone(), storage.clone(), None)
+                .deploy_entity(vec![bytes], &id, chain, "LOCAL")
+                .await
+                .unwrap();
+            ids.push(id);
+        }
+        let (old, new) = (&ids[0], &ids[1]);
+        let provenance: i64 = sqlx::query_scalar("SELECT count(*) FROM content.local_entities")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(provenance, 0, "a local profile records no provenance");
+
+        let report = run_once(&pool, &storage, &options(Duration::ZERO, 10))
+            .await
+            .unwrap();
+        assert_eq!(report.deployments, 1, "{report:?}");
+        assert!(
+            !entity_exists(&pool, old).await,
+            "the superseded version goes"
+        );
+        assert!(!storage.exist(old).await.unwrap(), "with its entity file");
+        assert!(entity_exists(&pool, new).await, "the active version stays");
+        assert!(storage.exist(new).await.unwrap());
+
+        pool.close().await;
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE \"{name}\" WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pass keeps the scene a local scene superseded, however old; the
+    /// local scene's unpublish leaves it superseded.
     #[tokio::test]
     async fn the_predecessor_of_a_local_deployment_is_kept() {
         let Some((pool, admin, name)) = own_database().await else {
@@ -808,6 +916,75 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(active, None, "the predecessor is not restored");
+
+        pool.close().await;
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE \"{name}\" WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pass whose unlink batch finds the exclusive store lock held past its wait (a
+    /// deployment holds the shared side) fails with `LockTimeout` and counts as `deferred`.
+    #[tokio::test]
+    async fn a_pass_behind_a_held_store_lock_counts_as_deferred() {
+        let Some((pool, admin, name)) = own_database().await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "catalyst-history-prune-deferred-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = Storage::from_config(&dir).await.unwrap();
+        let tag = uuid::Uuid::new_v4().simple().to_string();
+        let blob = put(&storage, format!("deferred {tag}").as_bytes()).await;
+        let entity = crate::auth::hash::hash_bytes_v1(format!("entity deferred {tag}").as_bytes());
+        let orphan = deployment(&pool, &entity, &format!("{tag}:0,0"), 172_800, None).await;
+        content_file(&pool, orphan, &blob, "d.glb").await;
+
+        let mut deploying = pool.begin().await.unwrap();
+        gc::lock_store_shared(&mut deploying).await.unwrap();
+        let recorder = crate::series::test_support::recorder();
+        let metrics_guard = dcl_metrics::set_default_local_recorder(&recorder);
+        let result = run_once(
+            &pool,
+            &storage,
+            &PruneOptions {
+                store_lock_wait: Duration::from_millis(100),
+                ..options(Duration::from_secs(86_400), 10)
+            },
+        )
+        .await;
+        drop(metrics_guard);
+        deploying.rollback().await.unwrap();
+        let err = result.expect_err("the unlink batch cannot take the store lock");
+        assert!(
+            matches!(err.downcast_ref(), Some(gc::GcError::LockTimeout)),
+            "{err:?}"
+        );
+        assert!(storage.exist(&blob).await.unwrap(), "nothing is unlinked");
+        {
+            use crate::series::{GC_RUNS, test_support::sample};
+            let rendered = recorder.handle().render();
+            assert_eq!(
+                sample(
+                    &rendered,
+                    GC_RUNS.descriptor.name,
+                    &[("outcome", "deferred")]
+                ),
+                Some(1.0),
+                "{rendered}"
+            );
+            for outcome in ["success", "error"] {
+                assert_eq!(
+                    sample(&rendered, GC_RUNS.descriptor.name, &[("outcome", outcome)]),
+                    None,
+                    "{rendered}"
+                );
+            }
+        }
 
         pool.close().await;
         let _ = sqlx::query(sqlx::AssertSqlSafe(format!(

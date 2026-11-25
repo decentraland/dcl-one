@@ -7,7 +7,7 @@
 //! The room is deliberately not a [`Transport`](crate::Transport): nothing broadcast to the
 //! realm's transports can reach it, and its participants never touch the avatar store.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use alloy_core::primitives::Address;
 use bevy::{ecs::relationship::Relationship, prelude::*};
@@ -22,7 +22,7 @@ use dcl_component::proto_components::kernel::comms::rfc4;
 use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use system_bridge::SystemApi;
+use system_bridge::{ListenedCommunity, SystemApi};
 use wallet::Wallet;
 
 use crate::{
@@ -133,13 +133,20 @@ struct DroppedCommunityPackets {
 /// The community channels the local user listens to: the communities they are a member of,
 /// minus those whose chat they closed, as lowercased ids. Pushed by the HUD
 /// (`SystemApi::SetCommunityChannels`); packets on any other community channel are dropped
-/// before they are recorded. Cleared with the identity.
+/// before they are recorded. Cleared with the identity. Each carries its community's name as
+/// far as the HUD knew it when it pushed the channels: a community message shows it over its
+/// author's nametag.
 #[derive(Resource, Default)]
-pub struct CommunityChannels(pub HashSet<String>);
+pub struct CommunityChannels(pub HashMap<String, Option<String>>);
 
 impl CommunityChannels {
     pub fn contains(&self, community_id: &str) -> bool {
-        self.0.contains(&community_id.to_ascii_lowercase())
+        self.0.contains_key(&community_id.to_ascii_lowercase())
+    }
+
+    /// The name of a community listened to, when the HUD knew it.
+    pub fn name(&self, community_id: &str) -> Option<&str> {
+        self.0.get(&community_id.to_ascii_lowercase())?.as_deref()
     }
 }
 
@@ -223,7 +230,7 @@ fn connect_private_chat_room(
     }
     let url = common::base_domain::url(Service::CommsGatekeeper, "/private-messages/token");
     let mut metadata = serde_json::json!({"signer": "dcl:explorer"});
-    if crate::adapter::allows_device_identifier(&url) {
+    if common::base_domain::device_identifier_domain(&url).is_some() {
         metadata["deviceIdentifier"] = serde_json::json!(config.user_id);
     }
     commands.spawn((
@@ -245,14 +252,14 @@ fn apply_community_channels(
     mut channels: ResMut<CommunityChannels>,
 ) {
     for request in requests.read() {
-        let SystemApi::SetCommunityChannels(ids) = request else {
+        let SystemApi::SetCommunityChannels(communities) = request else {
             continue;
         };
-        let mut next = HashSet::new();
-        for id in ids {
+        let mut next = HashMap::new();
+        for ListenedCommunity { id, name } in communities {
             match community_id(&channel_for(id)) {
                 Some(id) => {
-                    next.insert(id.to_owned());
+                    next.insert(id.to_owned(), name.clone());
                 }
                 None => warn!(target: "comms::private_chat", "ignoring community channel `{id}`"),
             }
@@ -334,7 +341,6 @@ fn participant_metadata_changed(
 /// A packet on the private chat room: a DM or a reaction to one, addressed to us by topic and
 /// sent by the partner themselves; or a community message or reaction, on a community channel's
 /// topic, relayed by the router with the author stamped in. Anything else is dropped.
-#[allow(clippy::too_many_arguments)]
 fn participant_payload(
     trigger: Trigger<ParticipantPayload>,
     mut rooms: Query<&mut CommunityChatStats, With<PrivateChatRoom>>,
@@ -710,7 +716,7 @@ fn community_channels(
                 return;
             };
             if action == "add" {
-                channels.0.insert(valid.to_owned());
+                channels.0.insert(valid.to_owned(), None);
             } else {
                 channels.0.remove(valid);
             }
@@ -722,7 +728,7 @@ fn community_channels(
             return;
         }
     }
-    let mut listed: Vec<_> = channels.0.iter().cloned().collect();
+    let mut listed: Vec<_> = channels.0.keys().cloned().collect();
     listed.sort();
     input.reply_ok(format!("community channels: {listed:?}"));
 }
@@ -760,7 +766,7 @@ fn community_state_json(
     channels: &CommunityChannels,
     stats: Option<&CommunityChatStats>,
 ) -> serde_json::Value {
-    let mut listed: Vec<_> = channels.0.iter().cloned().collect();
+    let mut listed: Vec<_> = channels.0.keys().cloned().collect();
     listed.sort();
     let mut state = json!({
         "routerIdentity": router,
@@ -795,7 +801,6 @@ fn community_state_json(
 #[command(name = "/dm_room")]
 struct DmRoomCommand;
 
-#[allow(clippy::type_complexity)]
 fn dm_room(
     mut input: ConsoleCommand<DmRoomCommand>,
     rooms: Query<
@@ -939,6 +944,7 @@ mod tests {
                 .spawn(crate::global_crdt::GlobalCrdtState::new(None));
             app.world_mut().send_event(crate::SetCurrentScene {
                 realm_name: "realm".into(),
+                realm_about_url: about_url.into(),
                 scene_id: scene_id.into(),
             });
             app.update();
@@ -1054,7 +1060,7 @@ mod tests {
         world.init_resource::<Events<CommunityChatReceived>>();
         world.init_resource::<Events<ChatReactionEvent>>();
         let mut channels = CommunityChannels::default();
-        channels.0.insert(COMMUNITY.to_owned());
+        channels.0.insert(COMMUNITY.to_owned(), None);
         world.insert_resource(channels);
         let room = world
             .spawn((PrivateChatRoom, CommunityChatStats::default()))

@@ -1,10 +1,10 @@
 import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
-import cx from 'classnames';
-import { Box } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
 import { useDispatch, useSelector } from '#store';
 import { useFeatureFlags } from '/@/hooks/useFeatureFlags';
 import { FeatureFlag } from '/@/modules/store/featureFlags';
+import { selectors as creatorFundSelectors } from '/@/modules/store/creatorFund';
 import type { AppState } from '#store';
 import { useAuth } from '/@/hooks/useAuth';
 import { useEditor } from '/@/hooks/useEditor';
@@ -14,6 +14,7 @@ import { AppSettings, SettingsTab } from '../Modals/AppSettings';
 import { About } from '../Modals/About';
 import { CreateButton } from '../CreateButton';
 import { Header } from '../Header';
+import { NotificationDot } from '../NotificationDot';
 import { LogoMenu } from './LogoMenu';
 import './styles.css';
 
@@ -62,12 +63,16 @@ export function Navbar(props: { active: NavbarItem }) {
   const { isEnabled } = useFeatureFlags();
   const { isSignedIn } = useAuth();
   const enrollment = useSelector((state: AppState) => state.creatorFund.enrollment);
+  const payoutSetupPending = useSelector(creatorFundSelectors.isPayoutSetupPending);
+  const notJoined = enrollment.status === 'succeeded' && enrollment.data === null;
+  let earnLabel: string | undefined;
+  if (notJoined) earnLabel = t('navbar.earn_not_joined');
+  else if (payoutSetupPending) earnLabel = t('navbar.earn_payout_pending');
   const showEarnDot =
     isSignedIn &&
     isEnabled(FeatureFlag.CREATOR_FUND) &&
     props.active !== NavbarItem.EARN &&
-    enrollment.status === 'succeeded' &&
-    enrollment.data === null;
+    !!earnLabel;
   const dispatch = useDispatch();
   const { version } = useEditor();
   const [openAbout, setOpenAbout] = useState(false);
@@ -142,14 +147,9 @@ export function Navbar(props: { active: NavbarItem }) {
             item={NavbarItem.EARN}
             active={props.active}
             disable={!isEnabled(FeatureFlag.CREATOR_FUND)}
-            label={showEarnDot ? t('navbar.earn_not_joined') : undefined}
+            label={showEarnDot ? earnLabel : undefined}
           >
-            {showEarnDot && (
-              <span
-                className="notification-dot"
-                aria-hidden="true"
-              />
-            )}
+            {showEarnDot && <NotificationDot />}
           </MenuItem>
           <MenuItem
             data-testid="navbar-menu-learn"
@@ -164,9 +164,9 @@ export function Navbar(props: { active: NavbarItem }) {
         </div>
       </>
       <>
-        <Box className="actions">
+        <div className="actions">
           <CreateButton />
-        </Box>
+        </div>
         <AppSettings
           open={openAppSettings}
           initialTab={settingsTab}

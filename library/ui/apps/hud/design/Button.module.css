@@ -95,6 +95,21 @@
   opacity: 0.5;
 }
 
+/* a dialog's CTA in the design system's Explorer modal (the Shop's purchase dialog): its button size=lg, 48px, bold
+   caps 0.5px apart, 12px corners, 40% opaque while off; the dialog sets its width */
+.dialog {
+  height: 48px;
+  padding: 0 24px;
+  border-radius: var(--r-md);
+  font-size: var(--type-15);
+  font-weight: var(--fw-bold);
+  line-height: 1.25;
+  letter-spacing: 0.5px;
+}
+.dialog:disabled {
+  opacity: 0.4;
+}
+
 /* a page's CTA beside a field (the Shop's CLAIM NAME): 52px, semibold caps, 24px each side */
 .cta {
   height: 52px;
@@ -105,6 +120,19 @@
   letter-spacing: 0;
 }
 .cta:disabled {
+  opacity: 0.5;
+}
+
+/* the sign-in screens' CTA (PLAY AS GUEST, LOGIN OR SIGNUP): 56px, semibold caps */
+.start {
+  height: 56px;
+  padding: 0 24px;
+  border-radius: var(--r-sm);
+  font-size: var(--type-18);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0;
+}
+.start:disabled {
   opacity: 0.5;
 }
 
@@ -181,6 +209,29 @@
   background: var(--fill-5);
 }
 
+/* whisper: a faint grey film (the sign-in screens' body type button) */
+.whisper {
+  background: var(--signin-film);
+}
+.whisper:hover:not(:disabled) {
+  background: var(--signin-film-hover);
+}
+/* method: a sign-in method (GOOGLE, METAMASK, the More options row): black 60%, grows a little on hover */
+.method {
+  background: var(--black-60);
+}
+.method:hover:not(:disabled) {
+  background: var(--black-70);
+  transform: scale(1.05);
+}
+/* darkOutline: the see-through black fill with a white outline (the sign-in screens' LOGIN OR SIGNUP) */
+.darkOutline {
+  background: var(--black-40);
+  box-shadow: inset 0 0 0 2px var(--text);
+}
+.darkOutline:hover:not(:disabled) {
+  background: var(--black-50);
+}
 /* outline: thin white outline on dark (e.g. SHOP) */
 .outline {
   height: 40px;
@@ -257,6 +308,22 @@
 }
 .clear:active:not(:disabled) {
   background: var(--tint-clear-press);
+}
+.navigate {
+  background: var(--map-nav-tint);
+  color: var(--brand);
+}
+.navigate:hover:not(:disabled),
+.navigate:focus-visible {
+  background: var(--map-nav-hover);
+}
+.navigate:active:not(:disabled) {
+  background: var(--map-nav-press);
+}
+.navigateExit {
+  border: 2px solid var(--map-live);
+  background: var(--white);
+  color: var(--map-live);
 }
 
 /* bare: sized by the caller's class. Not dimmed when disabled: the caller shows that state. */

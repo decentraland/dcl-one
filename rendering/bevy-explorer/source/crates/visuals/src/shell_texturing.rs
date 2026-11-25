@@ -722,8 +722,9 @@ mod test {
 
     /// The softened sun shadow overrides compile on this machine's adapter, in a renderer with no
     /// window: a grass shell (`shell_texturing.wgsl`), a landscape tree surface and a stone
-    /// (`landscape_tree.wgsl` and `soft_shadows.wgsl`), the flat ground (`terrain_flat.wgsl`), a cliff (`coast_cliff.wgsl`) and the ocean
-    /// (`coast_water.wgsl`) in front of an HDR camera with the prepasses and a shadowing light.
+    /// (`landscape_tree.wgsl` and `soft_shadows.wgsl`), the flat ground (`terrain_flat.wgsl`), a
+    /// cliff (`coast_cliff.wgsl`) and the ocean (`coast_water.wgsl`) in front of an HDR camera
+    /// with the prepasses and a shadowing light.
     /// Needs a GPU, so `#[ignore]`d and skipped by CI:
     ///
     /// ```text
@@ -734,9 +735,6 @@ mod test {
     fn soft_shadow_pipelines_compile() {
         use std::path::Path;
 
-        use assets::test_support::{
-            compile_pipelines, fragment_pipelines, headless_app, render_target,
-        };
         use bevy::{
             asset::{io::embedded::EmbeddedAssetRegistry, RenderAssetUsages},
             core_pipeline::prepass::{DepthPrepass, NormalPrepass},
@@ -745,6 +743,7 @@ mod test {
                 render_resource::{Extent3d, TextureDimension, TextureFormat},
             },
         };
+        use pipeline_test::{compile_pipelines, fragment_pipelines, headless_app, render_target};
 
         use crate::{
             coast::{CliffExtension, CliffMaterial, WaterExtension, WaterMaterial},
@@ -753,8 +752,8 @@ mod test {
         };
 
         let mut app = headless_app();
-        // the shaders as `ShellTexturingPlugin`, `LandscapeTreesPlugin`, `TerrainPlugin` and `CoastPlugin`
-        // embed them; those plugins need the scene runner and the terrain
+        // the shaders as `ShellTexturingPlugin`, `LandscapeTreesPlugin`, `TerrainPlugin` and
+        // `CoastPlugin` embed them; those plugins need the scene runner and the terrain
         let registry = app.world().resource::<EmbeddedAssetRegistry>();
         for (name, source) in [
             ("shell_texturing.wgsl", include_str!("shell_texturing.wgsl")),

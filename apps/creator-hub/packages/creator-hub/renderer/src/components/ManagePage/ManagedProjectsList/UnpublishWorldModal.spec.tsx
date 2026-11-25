@@ -1,9 +1,8 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import { Provider } from 'react-redux';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import type * as WorldsModule from '/@/lib/worlds';
 import { en } from '/@/modules/store/translation/locales';
@@ -11,6 +10,7 @@ import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
 import { createTestStore } from '../../../../tests/utils/testStore';
 import { UnpublishWorldModal } from './UnpublishWorldModal';
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 const unpublishEntireWorld = vi.fn();
 
@@ -66,12 +66,12 @@ describe('UnpublishWorldModal', () => {
     const onClose = vi.fn();
     render(
       <Provider store={createTestStore() as never}>
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <UnpublishWorldModal
             worldName="plaza.dcl.eth"
             onClose={onClose}
           />
-        </ThemeProvider>
+        </TestProviders>
       </Provider>,
     );
 

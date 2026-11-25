@@ -7,6 +7,7 @@ use bevy::{
         hash::FixedHasher,
     },
     prelude::*,
+    render::camera::CameraUpdateSystem,
     transform::systems::{mark_dirty_trees, propagate_parent_transforms, sync_simple_transforms},
 };
 use common::{anim_last_system, sets::PostUpdateSets, util::ModifyComponentExt};
@@ -82,9 +83,11 @@ pub fn configure_post_update_sets(app: &mut App) {
             PostUpdateSets::PlayerUpdate,
             PostUpdateSets::CameraUpdate,
             PostUpdateSets::InverseKinematics,
+            PostUpdateSets::SpringBones,
             PostUpdateSets::Nametag,
             PostUpdateSets::AttachSync,
             PostUpdateSets::Billboard,
+            PostUpdateSets::CameraFit,
         )
             .chain()
             .after(GltfLinkSet)
@@ -92,9 +95,12 @@ pub fn configure_post_update_sets(app: &mut App) {
             .before(TransformSystem::TransformPropagate)
             .before(process_scene_lifecycle),
     );
+    app.configure_sets(
+        PostUpdate,
+        PostUpdateSets::CameraFit.after(CameraUpdateSystem),
+    );
 }
 
-#[allow(clippy::type_complexity)]
 pub(crate) fn process_transform_and_parent_updates(
     mut commands: Commands,
     mut scenes: Query<(
@@ -327,7 +333,6 @@ impl ParentPositionSyncStage for AvatarAttachStage {}
 pub struct SceneProxyStage;
 impl ParentPositionSyncStage for SceneProxyStage {}
 
-#[allow(clippy::type_complexity)]
 pub fn parent_position_sync<T: ParentPositionSyncStage>(
     mut commands: Commands,
     syncees: Query<(

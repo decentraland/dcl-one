@@ -1,8 +1,10 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import cx from 'classnames';
-import { Typography, Checkbox } from 'decentraland-ui2';
+import { Link } from 'react-router-dom';
+import { cx } from '/@/lib/cx';
+import Checkbox from '@ui/atoms/Checkbox';
+import Text from '@ui/atoms/Text';
 
-import { misc } from '#preload';
+import { analytics, misc } from '#preload';
 import { useDispatch, useSelector } from '#store';
 
 import { type File, type Info, type Status } from '/@/lib/deploy';
@@ -29,22 +31,23 @@ import {
 
 import { t } from '/@/modules/store/translation/utils';
 import { HELP_FAQ_URL, getSceneJumpInDeeplink, getSceneJumpInUrl } from '/@/modules/utils';
+import { getProjectWorldName } from '/@/lib/project-world';
 import { formatSize } from '/@/modules/file';
 
 import { PublishModal } from '/@/components/Modals/PublishProject/PublishModal';
 import { ConnectedSteps } from '/@/components/Step';
-import { Button } from '/@/components/Button';
+import Button from '@ui/atoms/Button';
 import { Loader } from '/@/components/Loader';
 import { ExpandMore } from '/@/components/ExpandMore';
 import { ReportIssue } from '/@/components/Modals/ReportIssue';
 import { ExternalLink } from '/@/components/ExternalLink';
+import { CheckBoxIcon, CheckBoxOutlineBlankIcon } from '@ui/atoms/icons-material';
 
 import type { Step } from '/@/components/Step/types';
 import type { Props } from '/@/components/Modals/PublishProject/types';
 import { ProjectStepWrapper } from '/@/components/Modals/PublishProject/ProjectStepWrapper';
 import { parseCoords } from '/@/components/Modals/PublishProject/utils';
 
-import { SettingsLink } from './Deploy.styled';
 import { DeployProgress, type DeployCancel } from './DeployProgress';
 import styles from './Deploy.module.css';
 
@@ -76,7 +79,7 @@ export function Deploy(props: Props) {
   const [reportOpen, setReportOpen] = useState(false);
   const deployment = getDeployment(project.path);
   const isWorld = previousStep === 'publish-to-world' || !!deployment?.info.isWorld;
-  const worldName = project.worldConfiguration?.name;
+  const worldName = deploymentMetadata?.worldName || getProjectWorldName(project);
   const ownsWorld =
     !!wallet &&
     !!worldName &&
@@ -95,7 +98,7 @@ export function Deploy(props: Props) {
   }, [isWorld, deploymentMetadata?.isMultiScene, worldScenes, project.scene.parcels]);
 
   /** Publishing empties the world first: the same condition `handlePublish` undeploys on. */
-  const willEmptyWorld = needsUndeploy && !!wallet && !!project.worldConfiguration?.name;
+  const willEmptyWorld = needsUndeploy && !!wallet && !!worldName;
 
   // Only the idle view shows the limit. A deployment whose publish server never answered
   // (initializeDeployment rejected, e.g. offline) is failed and carries no parcels.
@@ -103,7 +106,7 @@ export function Deploy(props: Props) {
     deployment?.status === 'idle'
       ? {
           isWorld,
-          worldName: project.worldConfiguration?.name,
+          worldName,
           parcels: deployment.info.parcels,
           replacesWorld: willEmptyWorld,
           deploymentId: deployment.id,
@@ -123,18 +126,16 @@ export function Deploy(props: Props) {
     setShowWarning(false);
     updateProjectInfo(project.path, { skipPublishWarning: skipWarning }); // write skip warning flag
 
-    if (willEmptyWorld && wallet && project.worldConfiguration?.name) {
+    if (willEmptyWorld && wallet && worldName) {
       setUndeployStatus('pending');
       try {
         await dispatch(
           managementActions.unpublishEntireWorld({
-            worldName: project.worldConfiguration.name,
+            worldName,
           }),
         ).unwrap();
         setUndeployStatus('complete');
-        await dispatch(
-          managementActions.fetchWorldScenes({ worldName: project.worldConfiguration.name }),
-        );
+        await dispatch(managementActions.fetchWorldScenes({ worldName }));
       } catch {
         setUndeployStatus('failed');
         return; // Stop here if undeploy fails
@@ -142,7 +143,15 @@ export function Deploy(props: Props) {
     }
 
     executeDeployment(project.path);
-  }, [skipWarning, project, willEmptyWorld, wallet, executeDeployment, updateProjectInfo]);
+  }, [
+    skipWarning,
+    project,
+    willEmptyWorld,
+    worldName,
+    wallet,
+    executeDeployment,
+    updateProjectInfo,
+  ]);
 
   const handleBack = useCallback(() => {
     setShowWarning(false);
@@ -185,20 +194,25 @@ export function Deploy(props: Props) {
 
   const jumpInLocation = useMemo(() => {
     const [x, y] = parseCoords(deployment?.info.baseParcel ?? project.scene.base);
-    const world =
-      deployment?.info.isWorld && project.worldConfiguration
-        ? project.worldConfiguration.name
-        : undefined;
+    const world = deployment?.info.isWorld && worldName ? worldName : undefined;
     return { world, x, y };
-  }, [deployment, project]);
+  }, [deployment, project, worldName]);
 
   /** Web link shown and copied for sharing: it opens for people without the desktop client. */
   const shareUrl = useMemo(() => getSceneJumpInUrl(jumpInLocation), [jumpInLocation]);
 
-  /** Jump In opens the installed desktop client; the share link stays the web one. */
-  const handleJumpIn = useCallback(() => {
-    void misc.openExternal(getSceneJumpInDeeplink(jumpInLocation));
-  }, [jumpInLocation]);
+  /** Jump In opens the installed desktop client, or the web link when there is none. */
+  const handleJumpIn = useCallback(async () => {
+    const opened = await misc
+      .openDeepLink(getSceneJumpInDeeplink(jumpInLocation))
+      .catch(() => false);
+    if (!opened) void misc.openExternal(shareUrl);
+    void analytics.track('Jump In Published Scene', {
+      project_id: project.id,
+      is_world: !!jumpInLocation.world,
+      opened_in: opened ? 'client' : 'web',
+    });
+  }, [jumpInLocation, shareUrl, project.id]);
 
   const handleReportIssue = useCallback(() => setReportOpen(true), []);
 
@@ -314,24 +328,26 @@ export function Deploy(props: Props) {
               </div>
             </div>
             <div className="actions">
-              <label className="dont-show-again">
-                <Checkbox
-                  value={skipWarning}
-                  onChange={() => setSkipWarning(!skipWarning)}
-                />
+              <Checkbox
+                className="dont-show-again"
+                icon={<CheckBoxOutlineBlankIcon />}
+                checkedIcon={<CheckBoxIcon />}
+                checked={skipWarning}
+                onChange={setSkipWarning}
+              >
                 {t('modal.publish_project.deploy.warning.checkbox')}
-              </label>
+              </Checkbox>
               <span className="buttons">
                 <Button
-                  color="secondary"
-                  variant="outlined"
-                  size="medium"
+                  variant="outline"
+                  className="hub-button hub-button--secondary hub-button--outlined"
                   onClick={handleBack}
                 >
                   {t('modal.publish_project.deploy.warning.back')}
                 </Button>
                 <Button
-                  size="medium"
+                  variant="text"
+                  className="hub-button hub-button--primary"
                   data-testid="publish-modal-deploy-warning-continue-button"
                   onClick={handlePublish}
                 >
@@ -344,15 +360,13 @@ export function Deploy(props: Props) {
           <ProjectStepWrapper
             isWorld={isWorld}
             project={project}
-            name={project.worldConfiguration?.name}
+            name={worldName}
             className="scene"
           >
             {loadingPublish ? (
               <div className="header Loading">
                 <Loader />
-                <Typography variant="h5">
-                  {t('modal.publish_project.deploy.deploying.publish')}
-                </Typography>
+                <Text variant="h5">{t('modal.publish_project.deploy.deploying.publish')}</Text>
               </div>
             ) : hasError ? (
               <Error
@@ -494,7 +508,9 @@ export function Idle({
       <div className="actions">
         <p className="error">{errorMessage}</p>
         <Button
-          size="large"
+          variant="text"
+          size="lg"
+          className="hub-button hub-button--primary"
           onClick={onClick}
           disabled={!!error || exceedsSceneSize || isSceneSizeLimitLoading}
         >
@@ -519,7 +535,7 @@ function Deploying({ steps, children }: DeployingProps) {
     >
       <div className="header">
         <Loader />
-        <Typography variant="h5">{t('modal.publish_project.deploy.deploying.publish')}</Typography>
+        <Text variant="h5">{t('modal.publish_project.deploy.deploying.publish')}</Text>
       </div>
       <ConnectedSteps steps={steps} />
       {children}
@@ -575,7 +591,7 @@ function Error({
     >
       <div className="header">
         <div className="Warning" />
-        <Typography variant="h5">{t('modal.publish_project.deploy.deploying.failed')}</Typography>
+        <Text variant="h5">{t('modal.publish_project.deploy.deploying.failed')}</Text>
       </div>
       <p className="description">{renderErrorMessage(errorMessage)}</p>
       {errorCause && (
@@ -593,15 +609,17 @@ function Error({
           {t('modal.report_issue.help_center')}
         </ExternalLink>
         <Button
-          size="large"
-          variant="outlined"
-          color="secondary"
+          variant="outline"
+          size="lg"
+          className="hub-button hub-button--secondary hub-button--outlined"
           onClick={onReportIssue}
         >
           {t('modal.publish_project.deploy.deploying.actions.report_issue')}
         </Button>
         <Button
-          size="large"
+          variant="text"
+          size="lg"
+          className="hub-button hub-button--primary"
           data-testid="publish-modal-deploy-error-retry"
           onClick={onRetry}
         >
@@ -635,12 +653,13 @@ export function Success({ info, url, worldName, onClick, onClose }: SuccessProps
           url={url}
         />
         {worldName && (
-          <SettingsLink
+          <Link
+            className={styles.settingsLink}
             to={`/manage/world/${encodeURIComponent(worldName)}/settings`}
             onClick={onClose}
           >
             {t('modal.publish_project.deploy.success.world_settings')}
-          </SettingsLink>
+          </Link>
         )}
         <div className="indexing-note">
           {t('modal.publish_project.deploy.success.indexing_note')}
@@ -648,7 +667,9 @@ export function Success({ info, url, worldName, onClick, onClose }: SuccessProps
       </div>
       <div className="actions">
         <Button
-          size="large"
+          variant="text"
+          size="lg"
+          className="hub-button hub-button--primary"
           onClick={onClick}
         >
           {t('modal.publish_project.deploy.success.jump_in')}

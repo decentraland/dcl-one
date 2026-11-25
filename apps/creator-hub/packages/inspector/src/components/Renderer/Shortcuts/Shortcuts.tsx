@@ -5,7 +5,7 @@ import {
   MdKeyboard as KeyboardIcon,
 } from 'react-icons/md';
 import { HiOutlineViewfinderCircle as ResetCameraIcon } from 'react-icons/hi2';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { useContainerSize } from '../../../hooks/useContainerSize';
 import { useOutsideClick } from '../../../hooks/useOutsideClick';
@@ -44,14 +44,26 @@ const Shortcuts: React.FC<Props> = ({ viewport, onResetCamera, onZoomIn, onZoomO
   return (
     <div className="Shortcuts">
       <div className="Buttons">
-        <Button onClick={onResetCamera}>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={onResetCamera}
+        >
           <ResetCameraIcon size={ICON_SIZE} />
         </Button>
         <div className="ZoomButtons">
-          <Button onClick={onZoomIn}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onZoomIn}
+          >
             <ZoomInIcon size={ICON_SIZE} />
           </Button>
-          <Button onClick={onZoomOut}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onZoomOut}
+          >
             <ZoomOutIcon size={ICON_SIZE} />
           </Button>
         </div>
@@ -59,6 +71,8 @@ const Shortcuts: React.FC<Props> = ({ viewport, onResetCamera, onZoomIn, onZoomO
           text="View Shortcuts"
           trigger={
             <Button
+              variant="secondary"
+              size="sm"
               className={cx({ Active: showShortcuts })}
               onClick={handleToggleShortcutsOverlay}
             >

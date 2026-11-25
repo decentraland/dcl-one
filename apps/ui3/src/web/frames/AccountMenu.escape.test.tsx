@@ -17,7 +17,7 @@ describe("when AccountMenu shares keyboard dismissal with an outer dialog", () =
   });
   afterEach(() => {
     document.removeEventListener("keydown", onDocumentKey);
-    vi.restoreAllMocks();
+    vi.resetAllMocks();
   });
 
   it.each(["trigger", "item"])(
@@ -70,68 +70,87 @@ describe("when AccountMenu shares keyboard dismissal with an outer dialog", () =
     expect(screen.getByRole("button", { name: "Outside" })).toHaveFocus();
   });
 
-  it("should retain the menu for null-relatedTarget pointer blur before item activation", async () => {
-    const navigate = vi.fn(() => true);
-    render(
-      <AccountMenu
-        links={[{ label: "Profile", href: "/profile" }]}
-        onNavigate={navigate}
-      >
-        Account
-      </AccountMenu>,
-    );
-    const trigger = screen.getByRole("button", { name: "My account" });
-    await user.click(trigger);
-    fireEvent.blur(trigger, { relatedTarget: null });
-    expect(screen.queryByRole("menu")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Profile" }));
-    expect(navigate).toHaveBeenCalledWith("/profile");
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-    expect(outerEscape).not.toHaveBeenCalled();
-  });
+  describe("and the app navigation handles the link", () => {
+    let navigate: ReturnType<typeof vi.fn<(href: string) => boolean>>;
+    beforeEach(() => {
+      navigate = vi.fn<(href: string) => boolean>().mockReturnValueOnce(true);
+    });
 
-  it("should retain app navigation without restoring the account trigger", async () => {
-    const navigate = vi.fn();
-    render(
-      <AccountMenu
-        onNavigate={navigate}
-        links={[{ label: "Profile", href: "/profile" }]}
-      >
-        Account
-      </AccountMenu>,
-    );
-    const trigger = screen.getByRole("button", { name: "My account" });
-    await user.click(trigger);
-    await user.click(screen.getByRole("menuitem", { name: "Profile" }));
-    expect(navigate).toHaveBeenCalledWith("/profile");
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-    expect(trigger).not.toHaveFocus();
-  });
-
-  it.each(["switch", "signOut"])(
-    "should retain the %s callback without restoring focus",
-    async (action) => {
-      const callback = vi.fn();
+    it("should retain the menu for null-relatedTarget pointer blur before item activation", async () => {
       render(
         <AccountMenu
-          onSwitchAccount={action === "switch" ? callback : undefined}
-          onSignOut={action === "signOut" ? callback : undefined}
+          links={[{ label: "Profile", href: "/profile" }]}
+          onNavigate={navigate}
         >
           Account
         </AccountMenu>,
       );
       const trigger = screen.getByRole("button", { name: "My account" });
       await user.click(trigger);
-      await user.click(
-        screen.getByRole("menuitem", {
-          name: action === "switch" ? "Switch account" : "Log out",
-        }),
-      );
-      expect(callback).toHaveBeenCalledOnce();
-      expect(trigger).not.toHaveFocus();
+      fireEvent.blur(trigger, { relatedTarget: null });
+      expect(screen.queryByRole("menu")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("menuitem", { name: "Profile" }));
+      expect(navigate).toHaveBeenCalledWith("/profile");
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-    },
-  );
+      expect(outerEscape).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("and the app navigation is set", () => {
+    let navigate: ReturnType<typeof vi.fn<(href: string) => void>>;
+    beforeEach(() => {
+      navigate = vi.fn<(href: string) => void>();
+    });
+
+    it("should retain app navigation without restoring the account trigger", async () => {
+      render(
+        <AccountMenu
+          onNavigate={navigate}
+          links={[{ label: "Profile", href: "/profile" }]}
+        >
+          Account
+        </AccountMenu>,
+      );
+      const trigger = screen.getByRole("button", { name: "My account" });
+      await user.click(trigger);
+      await user.click(screen.getByRole("menuitem", { name: "Profile" }));
+      expect(navigate).toHaveBeenCalledWith("/profile");
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      expect(trigger).not.toHaveFocus();
+    });
+  });
+
+  describe("and an account action callback is set", () => {
+    let callback: ReturnType<typeof vi.fn<() => void>>;
+    beforeEach(() => {
+      callback = vi.fn<() => void>();
+    });
+
+    it.each(["switch", "signOut"])(
+      "should retain the %s callback without restoring focus",
+      async (action) => {
+        render(
+          <AccountMenu
+            onSwitchAccount={action === "switch" ? callback : undefined}
+            onSignOut={action === "signOut" ? callback : undefined}
+          >
+            Account
+          </AccountMenu>,
+        );
+        const trigger = screen.getByRole("button", { name: "My account" });
+        await user.click(trigger);
+        await user.click(
+          screen.getByRole("menuitem", {
+            name: action === "switch" ? "Switch account" : "Log out",
+          }),
+        );
+        expect(callback).toHaveBeenCalledOnce();
+        expect(trigger).not.toHaveFocus();
+        expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      },
+    );
+  });
+
   it("should keep Escape ownership after clicking the menu padding without canceling pointer defaults", async () => {
     render(<AccountMenu>Account</AccountMenu>);
     const trigger = screen.getByRole("button", { name: "My account" });
@@ -170,14 +189,16 @@ describe("when AccountMenu shares keyboard dismissal with an outer dialog", () =
     },
   );
 
-  it("should focus the trigger on pointer opening when the browser does not focus clicked buttons", async () => {
-    render(<AccountMenu>Account</AccountMenu>);
-    const trigger = screen.getByRole("button", { name: "My account" });
-    expect(document.activeElement).not.toBe(trigger);
-    fireEvent.click(trigger);
-    expect(trigger).toHaveFocus();
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-    expect(outerEscape).not.toHaveBeenCalled();
+  describe("and the browser does not focus a clicked button", () => {
+    it("should focus the trigger on pointer opening", async () => {
+      render(<AccountMenu>Account</AccountMenu>);
+      const trigger = screen.getByRole("button", { name: "My account" });
+      expect(document.activeElement).not.toBe(trigger);
+      fireEvent.click(trigger);
+      expect(trigger).toHaveFocus();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      expect(outerEscape).not.toHaveBeenCalled();
+    });
   });
 });

@@ -7,6 +7,7 @@
 //! into the one [`SyncStatus`] the status routes read.
 
 pub mod dao;
+pub mod metrics;
 pub mod orchestrator;
 pub mod pointer_changes;
 pub mod repository;
@@ -124,9 +125,7 @@ pub fn names_a_source(raw: &str) -> bool {
         .any(|entry| !normalize_source(entry).is_empty())
 }
 
-/// The `SYNC_ENTITY_TYPES` allowlist: `None` (empty) means every type. The
-/// existing implementation marks snapshots processed for the configured subset,
-/// so widening this later needs explicit replay/resync handling.
+/// The `SYNC_ENTITY_TYPES` allowlist: `None` (empty) means every type.
 pub fn parse_entity_types(raw: &str) -> Result<Option<HashSet<String>>, SyncConfigError> {
     let mut set = HashSet::new();
     for t in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
@@ -138,9 +137,118 @@ pub fn parse_entity_types(raw: &str) -> Result<Option<HashSet<String>>, SyncConf
     Ok((!set.is_empty()).then_some(set))
 }
 
+/// The client for peer sync, the read-through and the failed-deployments
+/// retries: it follows no redirect on its own (file downloads follow theirs
+/// through [`crate::http::get_following_checked_redirects`], dialling a hop to
+/// another origin with a paired client that trusts no name), uses no proxy
+/// and dials only public addresses, except for the [`trusted_hosts`].
+pub fn sync_http_client(
+    config: &crate::config::Config,
+) -> anyhow::Result<crate::http::CheckedRedirectClient> {
+    checked_client(config.content.connections_max_idle, trusted_hosts(config)?)
+}
+
+/// [`sync_http_client`] for an operator command that reads `sources` (`SYNC_SOURCE` entries,
+/// trusted as sync trusts them).
+pub fn sources_http_client(
+    sources: &[String],
+) -> anyhow::Result<crate::http::CheckedRedirectClient> {
+    checked_client(1, hosts_of(sources.iter().map(String::as_str)))
+}
+
+fn checked_client(
+    max_idle: usize,
+    trusted: Vec<String>,
+) -> anyhow::Result<crate::http::CheckedRedirectClient> {
+    let client = crate::http::HttpClientCfg {
+        max_redirects: None,
+        ..crate::http::HttpClientCfg::serve(max_idle)
+    }
+    .builder()
+    .dns_resolver(crate::http::PublicAddressResolver::trusting(trusted))
+    .no_proxy()
+    .build()?;
+    Ok(crate::http::CheckedRedirectClient::new(
+        client,
+        crate::http::PublicAddressResolver::trusting([]),
+        max_idle,
+    )?)
+}
+
+/// [`sync_http_client`]'s pair over `client`, for tests.
+#[cfg(any(test, feature = "test-support"))]
+pub fn test_sync_client(client: reqwest::Client) -> crate::http::CheckedRedirectClient {
+    crate::http::CheckedRedirectClient::new(
+        client,
+        crate::http::PublicAddressResolver::trusting([]),
+        1,
+    )
+    .expect("test sync client")
+}
+
+/// The operator-configured hosts the sync client reads, which may be private:
+/// `SYNC_SOURCE`, plus `WORLDS_CONTENT_MIRROR_SOURCE` when the read-through is
+/// on and the DAO list's RPC when `SYNC_FROM_DAO` is. Peers read from the DAO
+/// list are not among them.
+fn trusted_hosts(config: &crate::config::Config) -> anyhow::Result<Vec<String>> {
+    let content = &config.content;
+    let mirror = if content.read_through_enabled {
+        config.worlds_content.worlds_content_mirror_source.as_str()
+    } else {
+        ""
+    };
+    let rpc = if content.sync_from_dao {
+        content.eth_rpc_url()?
+    } else {
+        None
+    };
+    Ok(hosts_of(
+        [content.sync_source.as_str(), mirror]
+            .into_iter()
+            .flat_map(|raw| raw.split(','))
+            .chain(rpc.as_deref()),
+    ))
+}
+
+/// The host each URL in `entries` names; an entry that is no URL names none.
+fn hosts_of<'a>(entries: impl Iterator<Item = &'a str>) -> Vec<String> {
+    entries
+        .filter_map(|entry| url::Url::parse(normalize_source(entry).as_str()).ok())
+        .filter_map(|url| url.host_str().map(str::to_string))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_sources_in_use_are_trusted() {
+        let hosts = |flags: &[&str]| {
+            let mut argv = vec![
+                "x",
+                "--database-url",
+                "postgres:///catalyst",
+                "--sync-source",
+                "https://peer.example/content",
+                "--worlds-content-mirror-source",
+                "https://mirror.example",
+                "--eth-rpc-url",
+                "https://rpc.example",
+            ];
+            argv.extend_from_slice(flags);
+            trusted_hosts(&crate::config::Config::parse_for_tests(&argv).unwrap()).unwrap()
+        };
+        assert_eq!(hosts(&[]), ["peer.example"]);
+        assert_eq!(
+            hosts(&["--read-through-enabled", "true"]),
+            ["peer.example", "mirror.example"]
+        );
+        assert_eq!(
+            hosts(&["--sync-from-dao", "true"]),
+            ["peer.example", "rpc.example"]
+        );
+    }
 
     #[test]
     fn sources_are_normalized_deduplicated_and_ordered() {

@@ -1,6 +1,6 @@
 
 import { z } from "zod";
-import type { PlaceView } from "./catalyst/places";
+import type { PlaceView } from "@web-core/catalyst/places";
 import type { StoredAuthIdentity } from "./auth/engineLogin";
 
 const AuthLinkSchema = z.looseObject({

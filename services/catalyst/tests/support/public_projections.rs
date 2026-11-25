@@ -64,7 +64,7 @@ impl Projection {
         });
         let configured = Arc::try_unwrap(gatekeeper).ok().unwrap();
         let cluster = configured.cluster.clone();
-        let gatekeeper = Arc::new(configured.with_cluster(cluster).unwrap());
+        let gatekeeper = Arc::new(configured.with_cluster_for_test(cluster).unwrap());
         let jobs = catalyst::jobs::Jobs::new();
         let state = catalyst::comms::archipelago::build_state(config(), gatekeeper, &jobs)
             .await
@@ -77,6 +77,10 @@ impl Projection {
             None,
             state.gatekeeper.clone(),
         ));
+        state
+            .gatekeeper
+            .presence
+            .attach_topology(state.feed.topology.clone());
         social.start_topology(&jobs, state.feed.topology.clone());
         let files = std::env::temp_dir().join(format!(
             "catalyst-public-projections-{}",
@@ -101,7 +105,6 @@ impl Projection {
             state.clone(),
             true,
             Default::default(),
-            catalyst::comms::stats::http::test_support::matcher(),
             content.denylist.clone(),
         )
         .stats
@@ -127,7 +130,6 @@ impl Projection {
             denylist: String::new(),
             feature_flags: String::new(),
             registry: String::new(),
-            map: String::new(),
             ab_cdn: String::new(),
         };
         let mut settings = catalyst::explore::api::Settings::for_tests(sources);
@@ -250,7 +252,7 @@ impl Projection {
     }
 
     async fn island(&mut self, socket: &mut WsStream) -> IslandChangedMessage {
-        let receiving = actual_island(socket);
+        let receiving = actual_island(socket, "public projection selected assignment");
         tokio::pin!(receiving);
         let mut tick = tokio::time::interval(Duration::from_millis(100));
         loop {
@@ -376,15 +378,20 @@ async fn baseline_livekit_only_client_has_expected_online_projection() {
         fixture.social.ctx.is_online(&address),
         "positional legacy client is bridged"
     );
-    for identity in [
-        "0x00000000000000000000000000000000000000aa",
-        "0x00000000000000000000000000000000000000bb",
-    ] {
-        assert!(
-            !fixture.social.ctx.is_online(identity),
-            "LiveKit-only is offline under decision32"
-        );
-    }
+    assert!(
+        fixture
+            .social
+            .ctx
+            .is_online("0x00000000000000000000000000000000000000aa"),
+        "inside a World counts as online"
+    );
+    assert!(
+        !fixture
+            .social
+            .ctx
+            .is_online("0x00000000000000000000000000000000000000bb"),
+        "a Genesis scene room alone is not: Genesis presence comes from Pulse"
+    );
     assert_eq!(
         fixture
             .state

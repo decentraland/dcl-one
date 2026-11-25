@@ -4,10 +4,11 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { renderSession, enterAsGuest, type Harness } from '../harness'
-import { openPopup, resetPopups, PopupHost } from '../../design'
+import { hasOpenPopup, openPopup, resetPopups, PopupHost, ToastHost } from '../../design'
 import { setBindingsSnapshot } from '../../lib/bindingLabels'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { lockInput } from '@explorer-core/lib/inputLock'
+import { closeDebugPanel, isDebugPanelOpen, toggleDebugPanel } from '../../features/debug/useDebugPanel'
 import { pending } from '@explorer-core/lib/analytics'
 import { MainMenuShell } from '../../features/menu/MainMenuShell'
 
@@ -25,6 +26,7 @@ const action = (name: string, pressed = true): { kind: 'systemAction'; action: s
 
 afterEach(() => {
   resetPopups()
+  act(() => closeDebugPanel())
   act(() => setBindingsSnapshot([])) // module store leaks across tests
   document.body.innerHTML = ''
 })
@@ -86,6 +88,33 @@ describe('system-action menu shortcuts', () => {
     act(() => h.session().editor.setMode('off'))
     h.driver.emit(action('Places'))
     expect(h.session().places.open).toBe(true)
+  })
+
+  it('HideUi cycles: Explorer HUD hidden, then the scene UI too, then everything back', async () => {
+    const h = await world()
+    render(<ToastHost />)
+    const showUi = (): string[][] => h.driver.sentOf('consoleCommand').filter((m) => m.command === 'show_ui').map((m) => m.args ?? [])
+    h.driver.emit(action('HideUi'))
+    expect(h.session().hudHidden).toBe(true)
+    expect(showUi()).toEqual([])
+    expect(screen.getByText(/to hide the scene UI/)).toBeInTheDocument()
+    h.driver.emit(action('HideUi'))
+    expect(h.session().hudHidden).toBe(true)
+    expect(showUi()).toEqual([['all', 'false']])
+    expect(screen.getByText(/to show the UI again/)).toBeInTheDocument()
+    h.driver.emit(action('HideUi'))
+    expect(h.session().hudHidden).toBe(false)
+    expect(showUi()).toEqual([['all', 'false'], ['all', 'true']])
+  })
+
+  it('a panel shortcut brings the whole UI back with its panel', async () => {
+    const h = await world()
+    h.driver.emit(action('HideUi'))
+    h.driver.emit(action('HideUi'))
+    h.driver.emit(action('Map'))
+    expect(h.session().hudHidden).toBe(false)
+    expect(h.session().map.open).toBe(true)
+    expect(h.driver.sentOf('consoleCommand').filter((m) => m.command === 'show_ui').map((m) => m.args ?? []).at(-1)).toEqual(['all', 'true'])
   })
 
   it('ignores release edges', async () => {
@@ -260,6 +289,48 @@ describe('system-action menu shortcuts', () => {
     await waitFor(() =>
       expect(h.driver.last('uiFocus')).toEqual({ kind: 'uiFocus', ui: false, text: true, scroll: false, covered: false, menu: null })
     )
+  })
+
+  it('an open debug panel declares no ui focus and lets hotkeys through', async () => {
+    const h = await world()
+    act(() => toggleDebugPanel())
+    h.driver.clearSent()
+    h.driver.emit(action('Places'))
+    expect(h.session().places.open).toBe(true)
+    h.driver.emit(action('Places'))
+    await waitFor(() =>
+      expect(h.driver.last('uiFocus')).toEqual({ kind: 'uiFocus', ui: false, text: false, scroll: false, covered: false, menu: null })
+    )
+    expect(isDebugPanelOpen()).toBe(true)
+  })
+
+  it("a 'Cancel' action closes a popup, then a panel opened over the debug panel, then the debug panel", async () => {
+    const h = await world()
+    act(() => toggleDebugPanel())
+    h.driver.emit(action('Places'))
+    act(() => {
+      openPopup(() => <div>a popup</div>)
+    })
+    act(() => h.driver.emit(action('Cancel')))
+    expect(hasOpenPopup()).toBe(false)
+    expect(h.session().places.open).toBe(true)
+    act(() => h.driver.emit(action('Cancel')))
+    expect(h.session().places.open).toBe(false)
+    expect(isDebugPanelOpen()).toBe(true)
+    act(() => h.driver.emit(action('Cancel')))
+    expect(isDebugPanelOpen()).toBe(false)
+  })
+
+  it("a 'Cancel' action closes the in-world lobby before the debug panel under it", async () => {
+    const h = await world()
+    act(() => toggleDebugPanel())
+    act(() => h.session().lobbyPage.toggle())
+    expect(h.session().lobbyPage.open).toBe(true)
+    act(() => h.driver.emit(action('Cancel')))
+    expect(h.session().lobbyPage.open).toBe(false)
+    expect(isDebugPanelOpen()).toBe(true)
+    act(() => h.driver.emit(action('Cancel')))
+    expect(isDebugPanelOpen()).toBe(false)
   })
 
   it('Scroll edges scroll the hovered scrollable panel while held (gamepad/key scrolling)', async () => {

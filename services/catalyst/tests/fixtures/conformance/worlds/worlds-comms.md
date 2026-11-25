@@ -297,7 +297,7 @@ The name deny list: `isWorldValid` asks `checkNameDenyList` before the row
 | other event or room | 200 `{"message":"Skipping event"}` | 200 empty body | intended (WC-16) |
 | join/leave applied | 200, body = the request body echoed | 200 empty body | intended (WC-16) |
 | effect: NATS | `peer.<identity>.world.join` / `.leave` | `comms.room_events.v1` only | intended (worlds-compatibility.md "Room events"; WC-17) |
-| effect: presence | the in-process `peersRegistry` (feeds `connected-world`) | invalidates the presence generation, which triggers a LiveKit re-read (~5 s); voice, streaming, room metadata and the access log run too | intended (worlds-compatibility.md "Presence from LiveKit"; WC-21) |
+| effect: presence | the in-process `peersRegistry` (feeds `connected-world`) | invalidates the presence generation, which triggers a LiveKit re-read (~5 s), and every `serve` applies the published World join or leave to social online status; voice, streaming, room metadata and the access log run too | intended (worlds-compatibility.md "Presence from LiveKit"; WC-21) |
 
 LiveKit only looks at the status, so the body differences reach no client. A status other than
 2xx on a bad signature (500 here, 401 in dcl-one) is a failure either way.
@@ -315,20 +315,20 @@ LiveKit only looks at the status, so the body differences reach no client. A sta
   - On a LiveKit failure it answers zeros with `lastUpdated` = now (`comms-adapter.ts:165-175`).
 - dcl-one `presence/mod.rs` `live_data` reads the recovered view (`recovery.rs`), polled every
   30 s, or 5–6 s after a webhook hint (`recovery.rs` `spawn_recovery`):
-  - Lobby rooms only (`counts_of`, `presence/mod.rs:231-248`), counting identities other than
+  - Lobby rooms only (`Presence::counts_of`), counting identities other than
     `authoritative-server`.
   - `perWorld` is sorted by name.
-  - `lastUpdated` is the last complete observation, `1970-01-01T00:00:00.000Z` before the first.
-  - After 90 s without a complete observation, `data` is `{"totalUsers":0,"perWorld":[]}` with the
-    old `lastUpdated` (`recovery_tests.rs:134-200`).
+  - `lastUpdated` is the time of the last complete observation.
+  - Before the first complete observation and after 90 s without one, the route answers 503
+    with `Retry-After: 1`. A fresh empty observation answers zero.
 
 | field | upstream | dcl-one | verdict |
 |---|---|---|---|
-| shape | `{data:{totalUsers, perWorld:[{worldName, users}]}, lastUpdated}` | the same (`presence/mod.rs:399-454`) | MATCH |
+| shape | `{data:{totalUsers, perWorld:[{worldName, users}]}, lastUpdated}` | the same | MATCH |
 | lobby-only count | yes | yes | MATCH |
-| `lastUpdated` with no data | now | epoch, or the last success | intended (worlds-compatibility.md "Presence from LiveKit"; WC-20) |
+| LiveKit source unavailable | 200 with zero participants and a new `lastUpdated` | serves the last complete observation until it expires, then 503 | divergent (WC-20) |
 | `perWorld` order | LiveKit list order | name order | intended (WC-20, harmless) |
-| freshness | ≤60 s | ≤30 s, ~5 s after an event; empty after 90 s of failures | intended (WC-20) |
+| freshness | ≤60 s | nominally 30 s, ~5 s after a local webhook hint | intended (WC-20) |
 | one refused room in LiveKit | counted or ignored | left out; the observation publishes (`recovery_tests.rs` `a_refused_room_is_left_out_and_keeps_only_its_own_world_undetermined`) | MATCH (WC-19) |
 | CORS | server CORS | `cors_middleware` | MATCH |
 
@@ -344,13 +344,13 @@ LiveKit only looks at the status, so the body differences reach no client. A sta
   - 200 `{"wallet": <as given>, "world": <lowercase world>}`.
   - 404 `{"error":"Not Found","message":"Wallet <w> is not connected to any world"}`.
 - dcl-one `presence/mod.rs` `connected_world`, `get_peer_world`:
-  - The world comes from the recovered LiveKit view, so all replicas agree.
-  - Every world room counts, scene rooms and ENS worlds included.
+  - Each replica recovers the view from the same LiveKit source.
+  - Scene rooms, including legacy spellings that resolve to a unique catalogue scene, and ENS worlds count.
   - Case-insensitive, `authoritative-server` excluded.
   - A wallet in rooms of two different worlds is in the one it joined last (LiveKit's
-    `joinedAtMs`, else `joinedAt`); two joins at the same instant, or with no join time, answer
-    503 `Connected world could not be decided; retry shortly.`
-  - After 90 s without a complete observation, every wallet is 404.
+    `joinedAtMs`, else `joinedAt`). Equal or missing join times select the first world in name order.
+  - Before the first complete observation and after 90 s without one, the route answers 503
+    with `Retry-After: 1`. A fresh observation with no matching wallet answers 404.
 
 | case | upstream | dcl-one | verdict |
 |---|---|---|---|
@@ -358,7 +358,7 @@ LiveKit only looks at the status, so the body differences reach no client. A sta
 | not connected | 404 `{"error":"Not Found","message":"Wallet 0x… is not connected to any world"}` | the same | MATCH |
 | `/wallet//connected-world` | 404 (router, `@dcl/http-server` body not read) | 404 (no route) | MATCH (body unread) |
 | only in a scene room / an ENS world | 404 | 200 | intended (worlds-compatibility.md "Presence from LiveKit"; WC-21) |
-| in two worlds at once | 200, the last joined | 200, the last joined (503 on a tie) | MATCH (WC-21) |
+| in two worlds at once | 200, the last joined | 200, the last joined, with ties settled by world name | MATCH for distinct join times (WC-21) |
 | right after a join | immediate (on this replica) | after the next observation (~5–35 s) | intended (WC-21) |
 
 ---
@@ -575,7 +575,8 @@ Both trees advertise
 17. **WC-17 · `/livekit-webhook` · NATS `peer.<identity>.world.join|leave` is not published.** Status: intended (worlds-compatibility.md "Room events").
     - Upstream: `nats.publish('peer.<identity>.world.<join|leave>')` for `.dcl.eth` lobby rooms
       (`livekit-webhook-handler.ts:62`).
-    - dcl-one: `comms.room_events.v1` only.
+    - dcl-one: `comms.room_events.v1` only. Social online status still applies World joins and
+      leaves on every replica (docs/adr/2026-11-21-world-presence-counts-as-online.md).
     - Drop-in impact: a consumer outside this tree on the same NATS that listens for the upstream
       subjects gets nothing. None exists in this tree.
     - Decision: keep. A compatibility publisher is added only if such a consumer is attached.
@@ -585,7 +586,7 @@ Both trees advertise
     - Upstream: `POST /livekit-webhook` at the root.
     - dcl-one: `serve` merges `webhook_router` at the root, under `/worlds-content-server` and under
       `/comms-gatekeeper` (`src/serve.rs:1400-1420`), behind the social writes guard, which keeps
-      `/livekit-webhook` open (`social/src/writes.rs:39-48`). The gateway alias
+      `/livekit-webhook` open (`social/src/writes.rs:38-47`). The gateway alias
       `= /livekit-webhook` → `/comms-gatekeeper$uri` (`infra/gateway/root-aliases.nix:102-108`)
       reaches the same handler. No test builds the whole `serve` router.
     - Severity: none (closed).
@@ -593,18 +594,13 @@ Both trees advertise
 19. **WC-19 · presence (routes 1–3, 5, 6) · a refused LiveKit room.** Status: MATCH, no work.
     - Upstream: `/live-data` and the capacity read take whatever LiveKit lists, prefix-filtered
       (`comms-adapter.ts:144-176`).
-    - dcl-one: `inventory` (`comms/src/presence/recovery.rs:117-193`) leaves out a room that
-      `classify_room` refuses (no catalogue row, an upstream-format `world-scene-room-…` name, an
-      uppercase or ambiguous name) and a canonical room delivered under another spelling. It fails
-      only a scope that could hold the room (`Scope::may_hold`, `presence/mod.rs:52-73`: the exact
-      room, a `w1:` room decoding to the world, or a `world-`, `scene-` or `world-scene-room-` name
-      naming the world). The published observation keeps the refused names, so an admission read of
-      such a world falls back to a scoped read that refuses it (`presence/mod.rs:287-294`). The count
-      is the `comms_presence_refused_rooms` gauge, with a warning naming up to five rooms
-      (`recovery.rs:348-355`). Pinned by `comms/src/presence/recovery_tests.rs`
-      `a_refused_room_is_left_out_and_keeps_only_its_own_world_undetermined` (a stray
-      `world-unknown.dcl.eth`, upstream-format, malformed, ambiguous, legacy and non-canonical
-      rooms).
+    - dcl-one: `inventory` leaves unresolved, malformed and ambiguous names out of public
+      presence. A legacy scene room with a unique catalogue match is visible to
+      `connected-world`. Scoped capacity reads refuse legacy and unresolved rooms that
+      could belong to the requested world or scene. `Scope::may_hold` matches the exact
+      room, a `w1:` room decoding to the world, or a `world-`, `scene-` or
+      `world-scene-room-` name naming the world. `comms_presence_refused_rooms` counts
+      names the public inventory cannot resolve. The recovery tests cover both kinds.
     - Intended (worlds-compatibility.md "Presence from LiveKit"): while such a room could belong to
       a world, that world's mints answer 503.
     - Severity: none (closed).
@@ -615,14 +611,12 @@ Both trees advertise
       - 60 s cache;
       - LiveKit list order;
       - counts every participant.
-    - dcl-one (`presence/mod.rs:231-248,431-454`):
-      - epoch before the first observation;
-      - the last success time with empty data after 90 s;
-      - ≤30 s poll;
+    - dcl-one (`live_data`):
+      - 503 before the first complete observation or when the last one is 90 s old;
+      - 30 s polling interval, with local webhook hints advancing a read;
       - name order;
       - `authoritative-server` excluded.
-    - Decision: keep. A client reading `lastUpdated` as "now" can tell from the epoch that no data
-      is in yet.
+    - A 503 response lets a client distinguish unavailable counts from a confirmed empty world.
     - Severity: P2.
 
 21. **WC-21 · `/wallet/:wallet/connected-world` · source and rules.** Status: MATCH, no work, for the winner; the rest intended (worlds-compatibility.md "Presence from LiveKit").
@@ -630,12 +624,12 @@ Both trees advertise
       - `.dcl.eth` lobby rooms only (the webhook's suffix filter);
       - the last join wins;
       - updated at once on the replica that got the webhook.
-    - dcl-one: the recovered LiveKit view (`presence/mod.rs:201-226` `get_peer_world`):
+    - dcl-one: the recovered LiveKit view (`get_peer_world`):
       - the world of the latest join, from LiveKit's `joinedAtMs`, else `joinedAt`
-        (`shared/src/livekit.rs:448-450,508-515`); a tie, or no join time, answers 503;
-      - scene rooms and ENS worlds included;
+        (`shared/src/livekit.rs`); equal join times settle by world name;
+      - scene rooms, including uniquely resolved legacy names, and ENS worlds included;
       - updated on the next observation (~5–35 s after the event);
-      - consistent across replicas.
+      - 503 when a complete observation is unavailable or expired.
 
       The winner is pinned by `recovery_tests.rs` `a_wallet_in_two_worlds_is_in_the_one_it_joined_last`
       and `shared/src/livekit.rs` `complete_empty_is_distinct_from_invalid_and_duplicate_inventory`.

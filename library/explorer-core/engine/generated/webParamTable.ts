@@ -66,7 +66,7 @@ export const WEB_PARAMS: WebParam[] = [
     "name": "abgenCdn",
     "kind": "string",
     "delivery": "resolved",
-    "doc": "Asset-bundle generator CDN (Bevy variants); absent = `https://abgen-cdn.<base>`"
+    "doc": "Asset-bundle generator CDN (Bevy variants, the scenes' near-LOD descriptors and far-LOD meshes); absent = `https://abgen-cdn.<base>`"
   },
   {
     "name": "storage",
@@ -153,6 +153,30 @@ export const WEB_PARAMS: WebParam[] = [
     "doc": "Chat translation, used by the HUD; absent = `https://autotranslate-server.<base>`"
   },
   {
+    "name": "dclLists",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Curated lists (points of interest), used by the HUD; absent = `https://dcl-lists.<base>`"
+  },
+  {
+    "name": "archipelagoStats",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Archipelago stats (connected players), used by the HUD; absent = `https://archipelago-ea-stats.<base>`"
+  },
+  {
+    "name": "builderApi",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Builder api (the newsletter sign-up), used by the HUD; absent = `https://builder-api.<base>`"
+  },
+  {
+    "name": "featureFlags",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Feature flags (the engine reads `/explorer.json`); absent = `https://feature-flags.<base>`"
+  },
+  {
     "name": "pulseServer",
     "kind": "string",
     "delivery": "resolved",
@@ -177,6 +201,12 @@ export const WEB_PARAMS: WebParam[] = [
     "doc": "Log the frame rate to the console"
   },
   {
+    "name": "portables",
+    "kind": "string",
+    "delivery": "launch",
+    "doc": "`;`-separated portable/startup scene sources; absent = `basiccontroller.dcl.eth` (DEFAULT_PORTABLES)"
+  },
+  {
     "name": "contentServer",
     "kind": "string",
     "delivery": "launch",
@@ -187,12 +217,6 @@ export const WEB_PARAMS: WebParam[] = [
     "kind": "string",
     "delivery": "launch",
     "doc": "Super-user ui scene source, or `none` for no ui scene. The engine trusts it completely. Absent = the default bridge scene for the react HUD; any explicit value opts out of the HUD"
-  },
-  {
-    "name": "portables",
-    "kind": "string",
-    "delivery": "launch",
-    "doc": "`;`-separated portable/startup scene sources; absent = `basiccontroller.dcl.eth` (DEFAULT_PORTABLES)"
   },
   {
     "name": "gpuBytesPerFrame",
@@ -235,5 +259,11 @@ export const WEB_PARAMS: WebParam[] = [
     "kind": "string",
     "delivery": "host",
     "doc": "The landing page's Segment anonymous id, stamped on every analytics event so the warehouse joins this session to the web visit it came from"
+  },
+  {
+    "name": "ff",
+    "kind": "string",
+    "delivery": "launch",
+    "doc": "Override the remote feature flags, a comma list: `name` forces a flag on, `name:variant` on with that variant, `-name` off; `-*` ignores the service entirely (nothing is fetched and every flag not forced on is off). Names the client does not read are dropped. A link may set it: a flag only hides or shows a feature, never a permission"
   }
 ]

@@ -3,15 +3,15 @@ import { useEffect, useState } from "react";
 import ChromeShell from "../components/ChromeShell";
 import DclTopBar from "../web/frames/DclTopBar";
 import Communities, { type SocialCommunity, type SocialDetail, type SocialMember, type SocialPost, type SocialPlace } from "../explorer/pages/Communities";
-import CommunityCreate from "../explorer/components/CommunityCreate";
+import { CommunityCreate } from "@dcl/one-ui";
 import ConfirmDialog from "../explorer/components/ConfirmDialog";
 import CommunityRequests, { type CommunityRequest, type RequestDecision } from "./CommunityRequests";
 import CommunityPosts from "./CommunityPosts";
 import CommunityMemberActions from "./CommunityMemberActions";
-import { eventXY, fetchEvents } from "../data/catalyst/events";
-import { PLAY_EVENTS_PARAMS } from "../data/screens/play";
-import { publicThumbnail } from "../data/thumbnail";
-import "../web/frames/sitelayout.css";
+import { eventXY, fetchEvents } from "@web-core/catalyst/events";
+import { PLAY_EVENTS_PARAMS } from "@web-core/screens/play";
+import { publicThumbnail, useThumbnailPublicBase } from "../data/thumbnail";
+import { siteUrl } from "../data/site";
 import "./social-page.css";
 
 type Props = {
@@ -30,6 +30,7 @@ const nextCommunityPage = (last: CommunityPage, pages: CommunityPage[]) => {
 const communityRows = (pages: CommunityPage[] = []) => [...new Map(pages.flatMap(page => page.results).map(row => [row.id, row])).values()];
 
 export default function SocialPage({ viewer, communityId, postId, request, onSelect, onSignIn }: Props) {
+  const thumbnailBase = useThumbnailPublicBase();
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState<SocialCommunity | null>(null);
   const [search, setSearch] = useState("");
@@ -74,7 +75,7 @@ export default function SocialPage({ viewer, communityId, postId, request, onSel
     queryFn: ({ signal }) => fetchEvents(PLAY_EVENTS_PARAMS, { signal }),
   });
   const liveEvents = (live.data?.data ?? []).filter(event => event.live).map(event => ({
-    id: event.id, name: event.name ?? "Untitled event", image: publicThumbnail(event.image, 320),
+    id: event.id, name: event.name ?? "Untitled event", image: publicThumbnail(event.image, 320, thumbnailBase),
     startAt: event.next_start_at ?? event.start_at, attendees: event.total_attendees, live: event.live,
   }));
   const jumpToEvent = (id: string) => {
@@ -218,6 +219,8 @@ export default function SocialPage({ viewer, communityId, postId, request, onSel
           return result;
         }}
         onDone={() => setCreating(false)}
+        contentPolicyUrl={siteUrl("/content")}
+        nameClaimUrl="/shop/names"
       />}
     </ChromeShell>
   );

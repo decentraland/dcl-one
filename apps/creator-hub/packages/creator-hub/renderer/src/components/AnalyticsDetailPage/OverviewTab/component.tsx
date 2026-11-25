@@ -1,5 +1,3 @@
-import { Box } from 'decentraland-ui2';
-
 import type { PlaceOverviewMetrics } from '/shared/types/place-analytics';
 
 import { t } from '/@/modules/store/translation/utils';
@@ -26,21 +24,34 @@ function minutes(value: number | null) {
   };
 }
 
+/** A total in whole minutes, compact like the other counts: `5 min`, `8.83K min`. */
+function wholeMinutes(value: number | null) {
+  return {
+    value: formatCount(value === null ? null : Math.round(value)),
+    unit: value === null ? undefined : t('analytics.detail.engagement.minutes'),
+  };
+}
+
 export function OverviewTab({ overview }: Props) {
   return (
-    <Box className="OverviewTab">
+    <div className="OverviewTab">
       <TabHeading
         title={t('analytics.detail.overview.title')}
         description={t('analytics.detail.overview.description')}
       />
-      <Box className="Cards">
+      <div className="Cards">
         <MetricsCard
-          headline={{
-            label: t('analytics.metrics.total_visits.label'),
-            tooltip: t('analytics.metrics.total_visits.tooltip'),
-            value: formatCount(overview.totalVisits),
-          }}
           metrics={[
+            {
+              label: t('analytics.metrics.total_visits.label'),
+              tooltip: t('analytics.metrics.total_visits.tooltip'),
+              value: formatCount(overview.totalVisits),
+            },
+            {
+              label: t('analytics.metrics.total_playtime.label'),
+              tooltip: t('analytics.metrics.total_playtime.tooltip'),
+              ...wholeMinutes(overview.totalPlaytime),
+            },
             {
               label: t('analytics.metrics.unique_visits.label'),
               tooltip: t('analytics.metrics.unique_visits.tooltip'),
@@ -99,7 +110,7 @@ export function OverviewTab({ overview }: Props) {
             },
           ]}
         />
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 }

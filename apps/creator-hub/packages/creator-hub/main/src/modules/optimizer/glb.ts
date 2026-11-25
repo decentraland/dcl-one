@@ -10,7 +10,7 @@ const JSON_CHUNK_TYPE = 0x4e4f534a; // 'JSON'
 
 // Some exporters violate the spec's 4-byte JSON-chunk alignment; gltf-transform refuses to
 // read those. Re-pad the JSON chunk to a 4-byte boundary before handing the buffer off.
-export function fixGlbAlignment(buf: Buffer): Buffer {
+export function fixGlbAlignment(buf: Buffer<ArrayBuffer>): Buffer<ArrayBuffer> {
   if (buf.length < 20) return buf;
   if (buf.readUInt32LE(0) !== GLB_MAGIC) return buf;
 

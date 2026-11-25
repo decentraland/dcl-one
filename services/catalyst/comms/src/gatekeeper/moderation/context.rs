@@ -8,7 +8,7 @@ use crate::gatekeeper::CommsState;
 use crate::gatekeeper::admission::scene::{PlaceInfo, PlaceLookup};
 use crate::gatekeeper::errors::{ApiError, service_unavailable};
 use crate::rooms::{ResolveError, RoomRequest};
-use crate::world_identity::{Parcel, RealmId, SceneId, WorldName, is_world_realm_name};
+use crate::world_identity::{Parcel, RealmId, SceneId, WorldName, signed_realm_name};
 
 fn invalid() -> ApiError {
     ApiError::bad_request("Invalid signed scene context")
@@ -32,8 +32,12 @@ fn resolution_error(error: ResolveError) -> ApiError {
     }
 }
 
-pub(super) struct Context<'a> {
+pub(in crate::gatekeeper) struct Context<'a> {
     pub place: PlaceLookup<'a>,
+    /// The current scene's room at the bound parcel.
+    pub room: String,
+    /// The bound deployment's world and parcels.
+    pub footprint: PlaceInfo,
     /// Where this scene's bans live; stable across a world scene's redeploys.
     pub ban_key: crate::access::SceneBanKey,
     pub rooms: Vec<String>,
@@ -43,7 +47,10 @@ pub(super) struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
-    pub async fn resolve(state: &'a CommsState, metadata: &Value) -> Result<Self, ApiError> {
+    /// The realm the signed metadata names ([`signed_realm_name`]): a world by
+    /// its realm name or by the realm URL or worlds host signed beside it, else
+    /// a shared realm. `node_realm` is this node's `REALM_NAME`.
+    pub fn signed_realm(metadata: &Value, node_realm: &str) -> Result<RealmId, ApiError> {
         let nested = match metadata.get("realm") {
             Some(realm) if realm.is_object() => Some(required(realm, "serverName")?),
             Some(_) => return Err(invalid()),
@@ -64,7 +71,7 @@ impl<'a> Context<'a> {
         if parsed_name.display() != realm_name || realm_name.contains(':') {
             return Err(invalid());
         }
-        let hostname_world = match metadata.pointer("/realm/hostname") {
+        let hostname = match metadata.pointer("/realm/hostname") {
             Some(Value::String(hostname)) => {
                 // Explorer metadata carries a bare hostname; existing target
                 // callers also use an absolute realm URL.
@@ -83,24 +90,25 @@ impl<'a> Context<'a> {
                 {
                     return Err(invalid());
                 }
-                url.host_str()
-                    .is_some_and(|host| host.contains("worlds-content-server"))
+                Some(hostname.as_str())
             }
             Some(_) => return Err(invalid()),
-            None => false,
+            None => None,
         };
-        let realm = if hostname_world || is_world_realm_name(realm_name) {
-            RealmId::World(parsed_name)
-        } else {
-            RealmId::Shared(realm_name.to_owned())
-        };
+        RealmId::parse(&signed_realm_name(realm_name, hostname, node_realm)).map_err(|_| invalid())
+    }
+
+    pub async fn resolve(state: &'a CommsState, metadata: &Value) -> Result<Self, ApiError> {
+        let realm = Self::signed_realm(metadata, &state.settings.realm_name)?;
         let raw_scene = required(metadata, "sceneId")?;
         let scene = SceneId::parse(raw_scene).map_err(|_| invalid())?;
         if scene.as_str() != raw_scene || (!realm.is_world() && raw_scene.contains(':')) {
             return Err(invalid());
         }
         if scene.is_world_shaped()
-            && (!realm.is_world() || !raw_scene.eq_ignore_ascii_case(realm_name))
+            && !realm
+                .world()
+                .is_some_and(|world| raw_scene.eq_ignore_ascii_case(world.display()))
         {
             return Err(invalid());
         }
@@ -178,21 +186,28 @@ impl<'a> Context<'a> {
             if let Some(world) = realm.world() {
                 rooms.push(crate::rooms::worlds_service_world_room(world));
             }
-            rooms.push(current.room);
+            rooms.push(current.room.clone());
         }
         let world_scene = realm
             .world()
             .map(|world| (world.clone(), deployment.scene_id.clone()));
         Ok(Self {
+            room: current.room,
+            footprint: info.clone(),
             world_scene,
-            place: PlaceLookup::resolved(state, deployment.scene_id.as_str(), info),
+            place: PlaceLookup::resolved(
+                state,
+                deployment.scene_id.as_str(),
+                info,
+                &current_deployment.place_key(),
+            ),
             ban_key,
             rooms,
             place_title: current_deployment
                 .title
-                .as_ref()
+                .as_deref()
+                .map(crate::shared::markup::strip_all_markup)
                 .filter(|title| !title.is_empty())
-                .cloned()
                 .unwrap_or_else(|| format!("Place at {}", current_deployment.base.canonical())),
         })
     }
@@ -259,7 +274,7 @@ impl<'a> Context<'a> {
     }
 }
 
-pub(super) struct Input {
+pub(in crate::gatekeeper) struct Input {
     body: Map<String, Value>,
     query: BTreeMap<String, String>,
 }
@@ -335,6 +350,8 @@ mod tests {
             (Some("Exact Scene B"), "Exact Scene B"),
             (None, "Place at 1,1"),
             (Some(""), "Place at 1,1"),
+            (Some("<link=\"smb://h/s\">Rules</link>"), "Rules"),
+            (Some("<size=1></size>"), "Place at 1,1"),
         ] {
             let world = WorldName::parse("title.dcl.eth").unwrap();
             let realm = RealmId::World(world.clone());
@@ -367,5 +384,64 @@ mod tests {
             assert_eq!(context.place.place_id(), "SceneB");
             assert_eq!(context.place_title, expected);
         }
+    }
+
+    /// A world published here advertises `title` (no `.dcl.eth`) or an owner's
+    /// override; the signed realm URL `<host>/world/<name>` names the world, as
+    /// does `title` beside the worlds host alone (the Unity client).
+    #[tokio::test]
+    async fn a_stripped_realm_name_resolves_in_the_world_its_signed_realm_url_names() {
+        let world = WorldName::parse("title.dcl.eth").unwrap();
+        let realm = RealmId::World(world.clone());
+        let scene = SceneId::parse("SceneB").unwrap();
+        let base = Parcel::parse("1,1").unwrap();
+        let resolved = ResolvedRoom {
+            room: crate::rooms::worlds_service_scene_room(&world, &scene),
+            realm: realm.clone(),
+            scene_id: Some(scene.clone()),
+            deployment: Some(ActiveDeployment {
+                scene_id: scene,
+                title: None,
+                parcels: [base].into_iter().collect(),
+                base,
+                namespace: SceneNamespace::new(&realm, base, None),
+                local: true,
+            }),
+        };
+        let mut state = state(StubPolicy::default(), StubBanStatus::default());
+        state.scenes = Arc::new(StubScenes {
+            room: Ok(resolved),
+            scene: Ok(None),
+        });
+        for (server_name, hostname) in [
+            ("title", "node.example/world/title.dcl.eth"),
+            (
+                "title",
+                "https://node.example/worlds-content-server/world/title.dcl.eth/",
+            ),
+            ("Custom-Realm", "node.example/world/title.dcl.eth"),
+            ("title", "worlds-content-server.node.example"),
+        ] {
+            let context = Context::resolve(
+                &state,
+                &serde_json::json!({"realm":{"serverName":server_name,"hostname":hostname},"sceneId":"SceneB","parcel":"1,1"}),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{server_name} at {hostname}: {}", e.message));
+            assert_eq!(context.place.place_id(), "SceneB");
+            assert_eq!(
+                context.footprint.world_name.as_deref(),
+                Some("title.dcl.eth")
+            );
+        }
+        // Without a world in the realm URL the stripped name is a shared realm.
+        let err = Context::resolve(
+            &state,
+            &serde_json::json!({"realm":{"serverName":"title","hostname":"node.example"},"sceneId":"SceneB","parcel":"1,1"}),
+        )
+        .await
+        .map(|_| ())
+        .unwrap_err();
+        assert_eq!(err.code, 400);
     }
 }

@@ -146,8 +146,11 @@ and the `SignedFetch` scheme from upstream `docs/openapi.yaml`
   `Slow consumer` trigger counts the writer task's queue, not uWS's buffered
   amount, so a very small `WS_MAX_BACKPRESSURE` can trip on scheduling delay
   (local `social/src/rpc/stream.rs:311-356`, `:846-850`).
-- `WS_IDLE_TIMEOUT_IN_SECONDS` is not read, and one `AUTH_WINDOW_SECS` stands
-  for `WS_AUTH_TIMEOUT_IN_MS` and `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`.
+- The socket signature window (`WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`) falls
+  back to `AUTH_WINDOW_SECS` (300 s, upstream's default) and bounds the
+  timestamp on both sides of now as upstream's, and the signed timestamp is
+  digits only, where upstream reads a JavaScript Number
+  (`docs/comms/comms-crate.md`).
 
 ### Community writes and notifications (read at `social-service-ea` @ `b6b2cef`)
 
@@ -159,15 +162,15 @@ upstream source (paths below are in `decentraland/social-service-ea` at
 
 | behaviour | upstream | local | tests |
 | --- | --- | --- | --- |
-| `PUT /v1/communities/{id}` `placeIds`: a JSON array of strings replaces the places, `[]` clears, an empty field changes nothing, anything else 400 "placeIds must be a valid JSON array"; only ids the community does not hold are ownership-checked (401 "The user {address} doesn't own all the places"); the answer carries `message: "Community updated successfully"` | `src/logic/community/communities.ts` `updateCommunity`, `fields-validator.ts`, `places.ts` `updatePlaces` | `social/src/communities/communities.rs:754`, `:822`, `write_support.rs:94` | `place_ids_replace_the_places_checking_only_the_new_ones`, `write_support.rs` `multipart_hands_the_validator_the_raw_case` |
-| private to public accepts every pending request to join of a wallet the community does not ban, in the update's transaction | `communities.ts` `updateCommunity`, `src/adapters/communities-db.ts` `acceptAllRequestsToJoin` | `communities.rs:845` | `going_public_accepts_the_pending_requests_to_join_of_unbanned_wallets` |
+| `PUT /v1/communities/{id}` `placeIds`: a JSON array of strings replaces the places, `[]` clears, an empty field changes nothing, anything else 400 "placeIds must be a valid JSON array"; only ids the community does not hold are ownership-checked (401 "The user {address} doesn't own all the places"); the answer carries `message: "Community updated successfully"` | `src/logic/community/communities.ts` `updateCommunity`, `fields-validator.ts`, `places.ts` `updatePlaces` | `social/src/communities/communities.rs:768`, `:822`, `write_support.rs:94` | `place_ids_replace_the_places_checking_only_the_new_ones`, `write_support.rs` `multipart_hands_the_validator_the_raw_case` |
+| private to public accepts every pending request to join of a wallet the community does not ban, in the update's transaction | `communities.ts` `updateCommunity`, `src/adapters/communities-db.ts` `acceptAllRequestsToJoin` | `communities.rs:859` | `going_public_accepts_the_pending_requests_to_join_of_unbanned_wallets` |
 | `PATCH /v1/communities/{id}/members/{address}` `role: "owner"` transfers ownership: owner only (401 "...doesn't have permission to transfer ownership in community {id}"), target a member (401 "The target user {address} is not a member of community {id}") holding a NAME (400 "The user {address} doesn't have any names"); the old owner becomes moderator | `src/logic/community/members.ts` `transferOwnership`, `roles.ts` `validatePermissionToTransferOwnership`, `communities-db.ts` `transferCommunityOwnership` | `social/src/communities/members.rs:709`, `:748` | `the_owner_role_transfers_ownership_to_a_named_member`, `tests.rs` `every_route_answers_its_contract` |
 | `onlyMemberOf=true` lists by role (owner, moderator, the rest), then name; every other listing by rank | `src/logic/queries.ts` `withSearchAndPagination` (`sortBy: 'role'`) | `social/src/communities/queries.rs:351` | `only_member_of_lists_by_role_then_name` |
 | `COMMUNITIES_PLACES_OWNERSHIP_CHECK` defaults to true: upstream always asks the places API (`PLACES_API_URL` is required); here the in-process catalogue and LAND authority answer | `src/logic/community/places.ts` `validateOwnership`, `src/adapters/places-api.ts` | `config/src/social.rs:31`, `social/src/communities/mod.rs:456` | `place_ids_replace_the_places_checking_only_the_new_ones` |
 | `GET /v1/community-voice-chats/active`: a non-member's room carries the positions and worlds of the community's places and is listed only when it has one; a member's carries none; a community that bans the caller is not listed | `src/logic/community-voice/community-voice.ts` `getActiveCommunityVoiceChatsForUser`, `src/utils/places.ts` | `social/src/communities/voice.rs:55`, `queries.rs:1225`, `places.rs:126` | `a_non_member_sees_a_room_only_through_its_places_and_never_when_banned`, `tests.rs` `voice_status_derives_from_the_presence_rows` |
 | bans rows: `bannedAt` with milliseconds and `Z`; v1 and v2 carry the caller's `friendshipStatus` | `communities-db.ts` `getBannedMembers`, `src/logic/community/utils.ts` `mapMembersWithProfiles` | `social/src/communities/dto.rs:266`, `members.rs:318` | `ban_rows_carry_millisecond_banned_at_and_the_friendship_status` |
-| `isHostingLiveEvent` on the signed `GET /v1/communities/{id}` and `/v2/communities/{id}` (absent from the public read), `false` on create; read from explore's events (`community_id`, live list) in process | `src/logic/community/events.ts` `isCurrentlyHostingEvents`, `communities.ts` `getCommunity` | `social/src/communities/communities.rs:369`, `:458`, `:467` | `a_signed_detail_says_whether_the_community_hosts_a_live_event` |
-| notification rows (`social.notifications`, an opted-out recipient skipped, one row per type, recipient and event key): `community_request_to_join_received` (owner and moderators), `_request_to_join_accepted`, `_invite_received`, `_post_added` (members but the author), `_member_removed` (kick), `_member_banned` (a member only, keyed per wallet), `_renamed` (every member), `_deleted` (members but the owner), `_deleted_content_violation` (the owner, when a global moderator deletes), `_ownership_transferred` (the new owner), `_voice_chat_started` (online members but the opener) | `src/logic/community/broadcaster.ts`, `requests.ts`, `posts.ts`, `members.ts`, `bans.ts`, `communities.ts`, `src/logic/community-voice/community-voice.ts`; `processor/src/logic/event-parser.ts` | `social/src/notifications/community.rs:108`, `communities/mod.rs:407`, `requests.rs:634`, `posts.rs:260`, `members.rs:660`, `:911`, `communities.rs:894`, `:1043`, `rpc/service/community_voice.rs:168` | `community_events_write_the_notification_rows_upstream_publishes`, `a_global_moderators_deletion_tells_the_owner_of_the_violation`, `the_owner_role_transfers_ownership_to_a_named_member`, `rpc/tests.rs` `community_voice_start_join_and_ban_semantics`, `a_started_room_carries_the_places_and_the_thumbnail` |
+| `isHostingLiveEvent` on the signed `GET /v1/communities/{id}` and `/v2/communities/{id}` (absent from the public read), `false` on create; read from explore's events (`community_id`, live list) in process | `src/logic/community/events.ts` `isCurrentlyHostingEvents`, `communities.ts` `getCommunity` | `social/src/communities/communities.rs:387`, `:458`, `:467` | `a_signed_detail_says_whether_the_community_hosts_a_live_event` |
+| notification rows (`social.notifications`, an opted-out recipient skipped, one row per type, recipient and event key): `community_request_to_join_received` (owner and moderators), `_request_to_join_accepted`, `_invite_received`, `_post_added` (members but the author), `_member_removed` (kick), `_member_banned` (a member only, keyed per wallet), `_renamed` (every member), `_deleted` (members but the owner), `_deleted_content_violation` (the owner, when a global moderator deletes), `_ownership_transferred` (the new owner), `_voice_chat_started` (online members but the opener) | `src/logic/community/broadcaster.ts`, `requests.ts`, `posts.ts`, `members.ts`, `bans.ts`, `communities.ts`, `src/logic/community-voice/community-voice.ts`; `processor/src/logic/event-parser.ts` | `social/src/notifications/community.rs:108`, `communities/mod.rs:407`, `requests.rs:634`, `posts.rs:260`, `members.rs:660`, `:911`, `communities.rs:908`, `:1043`, `rpc/service/community_voice.rs:168` | `community_events_write_the_notification_rows_upstream_publishes`, `a_global_moderators_deletion_tells_the_owner_of_the_violation`, `the_owner_role_transfers_ownership_to_a_named_member`, `rpc/tests.rs` `community_voice_start_join_and_ban_semantics`, `a_started_room_carries_the_places_and_the_thumbnail` |
 | `POST /v1/referral-email`: signed; 400 "You must have at least 100 accepted invites to set an email", "Email is required", "Email is too long", "Email contains invalid characters", "Invalid email format", then once per 24 hours ("Email can only be updated once per day. Last update was less than 24 hours ago for user: {address}"); 204, the lower-cased email kept in `social.referral_emails` | `src/logic/referral/referral.ts` `setReferralEmail`, `src/controllers/handlers/http/add-referral-email-handler.ts` | `social/src/communities/referral.rs:249`, `:270`, `schemas/40_social.sql:746` | `referral_email_is_checked_and_kept_once_a_day`, `referral.rs` `referral_emails_are_checked_in_upstreams_order` |
 
 Remaining differences, with their reason:
@@ -240,7 +243,7 @@ the moderator role.
 | POST | `/get-server-scene-adapter` | signed, authoritative server | error shape only | `get-server-scene-adapter-unauth` |
 | GET | `/scene-participants` | `pointer`, `realm_name` (default `main` with a pointer) | yes | `scene-participants`, `-default-realm`, `-world`, `-400-no-params` |
 | POST | `/mute` | | no: write | |
-| GET | `/scene-admin` | `admin`; signed as scene | yes (signed) | `scene-admin-unauth` (400 `{"ok":false,"message":"Invalid Auth Chain"}`), `-signed-wrong-signer` (400 "Invalid metadata content"), `-signed-scene` (200: the place's admin list for the Genesis Plaza scene) |
+| GET | `/scene-admin` | `admin`; signed as scene or as the server: the signed scene names the place, a scene that is not deployed answers 400. Here a `place_id` (upstream reads none) must name the signed scene, by its entity id or by its place, else 400 | yes (signed) | `scene-admin-unauth` (400 `{"ok":false,"message":"Invalid Auth Chain"}`), `-signed-wrong-signer` (400 "Invalid metadata content"), `-signed-scene` (200: the place's admin list for the Genesis Plaza scene) |
 | POST/DELETE | `/scene-admin` | | no: write | |
 | GET | `/scene-bans` | `limit` (default 20), `offset`; signed as scene, admin | shape only | `scene-bans-unauth`, `-signed-wrong-signer`, `-signed-scene` (401 "User does not have permission to list scene bans") |
 | GET | `/scene-bans/addresses` | signed as scene, admin | shape only | `scene-bans-addresses-unauth`, `-signed-scene` |
@@ -275,7 +278,7 @@ the moderator role.
 | --- | --- | --- | --- | --- |
 | GET | `/status` | | yes | `status` |
 | GET | `/notifications` | `from` (ms), `limit` 1-50 (default 20), `onlyUnread` (presence); signed | yes (signed) | `notifications-unauth` (400, the body `auth-error-production.json` pins), `-signed`, `-signed-filters`, `-expired-timestamp` (401), `-bad-signature` (401) |
-| POST | `/notifications` | bearer `NOTIFICATIONS_GOVERNANCE_TOKEN` (`governance_*` types) or `NOTIFICATIONS_REWARDS_TOKEN` (`reward_*` types), unset = producer disabled; `[{type, address?, eventKey, metadata, timestamp, optOutScope?}]` -> 204, body up to 16 MiB, at most 10,000 items, `metadata` up to 16 KiB serialized, `timestamp` at most 5 minutes ahead of the server clock; 400 in the upstream Joi words (another prefix's or an unknown type: `Invalid notification type: <type>`), 401 `Authorization header is missing` / `Invalid authorization header`, 413, 503 while social writes are off. Id = v5 (namespace `3f8a52d4-9c1e-4b07-a62d-71e05c9318bb`) over the JSON `["<type>","<lowercased address>","<eventKey>"]`: a repeat updates `metadata` and `timestamp`, keeps the read state and emails only on first insert. Only `governance_announcement` may omit `address` (else `"[i].address" is required`), and then without `optOutScope`: a broadcast stored once (`social.broadcast_notifications`, id over `["<type>",null,"<eventKey>"]`), listed by `GET /notifications` for every wallet with `address: null` and per-wallet read state while younger than `NOTIFICATIONS_BROADCAST_HORIZON_DAYS` (90; pruned after, unlike upstream), never emailed | no: write | |
+| POST | `/notifications` | bearer `NOTIFICATIONS_GOVERNANCE_TOKEN` (`governance_*` types) or `NOTIFICATIONS_REWARDS_TOKEN` (`reward_*` types), unset = producer disabled; `[{type, address?, eventKey, metadata, timestamp, optOutScope?}]` -> 204, body up to 16 MiB, `metadata` up to 16 KiB serialized, `timestamp` at most 5 minutes ahead of the server clock; 400 in the upstream Joi words (another prefix's or an unknown type: `Invalid notification type: <type>`), 401 `Authorization header is missing` / `Invalid authorization header`, 413, 503 while social writes are off. Id = v5 (namespace `3f8a52d4-9c1e-4b07-a62d-71e05c9318bb`) over the JSON `["<type>","<lowercased address>","<eventKey>"]`: a repeat updates `metadata` and `timestamp`, keeps the read state and emails only on first insert. Only `governance_announcement` may omit `address` (else `"[i].address" is required`), and then without `optOutScope`: a broadcast stored once (`social.broadcast_notifications`, id over `["<type>",null,"<eventKey>"]`), listed by `GET /notifications` for every wallet with `address: null` and per-wallet read state kept forever as upstream, unless `NOTIFICATIONS_BROADCAST_HORIZON_DAYS` (default 0, off) is set: then listed while younger and pruned after, never emailed | no: write | |
 | PUT | `/notifications/read` | signed; a broadcast id records this wallet's read (`social.broadcast_reads`), counted in `updated` | no: write | |
 | POST | `/notifications/email` | bearer `NOTIFICATION_SERVICE_TOKEN`; `{email, subject, content, title?, titleHighlight?}` -> 204 | no: write | |
 | GET | `/subscription` | signed | yes (signed) | `subscription-unauth`, `-signed` (the default document; `address` volatile) |
@@ -400,11 +403,77 @@ and port 5461 with the environment (bounded outfits/emote sync from
 
 | service | passed | expected failures | divergences to look at |
 | --- | --- | --- | --- |
-| gatekeeper | 10/35 | 6 signed fixtures "Expired signature"; `scene-participants` 404 (no Pulse/archipelago room state) | unauthenticated scene routes answer `{"error":"Invalid Auth Chain"}` where production answers 400 `{"ok":false,"message":"Invalid Auth Chain"}`; `get-scene-adapter-unauth` 400 vs 401; bearer routes (`voice-chat-status`, `community-voice-chat/*`, `world ban-status`, `private-messages/token`) 503 vs 401/400 (Catalyst has no social-service token configured); `/cast/*` and `/scene-stream-access` 404 (G18 gap, unimplemented at the recorded revision); `ping` body 22 B vs `pong`; `user-bans-bad-address` 400 vs 200; preflight allow-origin reflected vs `*` |
+| gatekeeper | 10/35 | 6 signed fixtures "Expired signature"; `scene-participants` 404 (no Pulse/archipelago room state) | unauthenticated scene routes answer `{"error":"Invalid Auth Chain"}` where production answers 400 `{"ok":false,"message":"Invalid Auth Chain"}`; `get-scene-adapter-unauth` 400 vs 401; bearer routes (`voice-chat-status`, `community-voice-chat/*`, `world ban-status`, `private-messages/token`) 503 vs 401/400 (Catalyst has no social-service token configured); `/cast/*` and `/scene-stream-access` 404 (G18 gap, unimplemented at the recorded revision); `ping` body 22 B vs `pong`; `user-bans-bad-address` 400 vs 200; preflight allow-origin reflected vs `*`; the current answers are recorded in "In-process replay of the gatekeeper" below |
 | notifications | 1/14 | 4 signed fixtures 401 | `/status` 404 (route unimplemented at the recorded revision); `/unsubscribe/{address}` 404 (unimplemented at the recorded revision; now served, replayed in-process by `notifications::tests::the_unsigned_unsubscribe_capture_replays`); `?limit=5&onlyUnread&from=0` 400 (valueless `onlyUnread` rejected); opt-outs unknown scope 404 vs 400; every auth error body differs ("Unauthenticated: Expired signature" / "Invalid Auth Chain" vs the ADR-44 message pair); preflight 200 with `*` vs 204 with the requested headers |
 | badges | 5/13 | user badges achieved 0 vs 3/5 (empty tables); `badge-tiers` 404 vs 200 empty | `/categories` lists 3 categories, production 5 (Explorer, Collector, Creator, Socializer, Builder); asset URLs: production `https://assets-cdn.decentraland.org/<id>/2d/normal.png`, Catalyst serves `/badges/assets/{path}` under `DEFAULT_ASSET_BASE_URL` `https://badges.decentraland.org`; preflight 200 `*` vs 204 |
 | profile-images | 1/20 | the 19 image fixtures: production is a 301 to the bucket, Catalyst renders in process and answered 404 with no profile entities synced (`SYNC_ENTITY_TYPES=outfits,emote`) | structural: an edge redirect versus a direct `image/png`; `face-bad-cid` 400 vs 301; preflight 204 with every method vs the edge's 301 |
-| camera-reel | 12/21 | `image-*` 404 (photo not in the local table) | `/api/wearables/{item}/images` 404 (camera-reel-service #62 unimplemented at the recorded revision); preflight `OPTIONS /api/users/{address}` 405 (no CORS layer under `/camera-reel-service`); `docs-openapi` 33 schema differences; `unknown-path-404` body "Not Found" vs empty; `user-images-bad-limit` message text |
+| camera-reel | 12/21 | `image-*` 404 (photo not in the local table) | the current answers are recorded in "In-process replay of camera-reel" below |
 
 Logs: `replay-<service>.log` in the run's scratchpad; the node and its
 database were stopped and dropped after the run.
+
+## In-process replay of camera-reel
+
+`camera-reel/src/tests/captures.rs`, test
+`the_camera_reel_host_answers_as_its_captures`, mounts the router under
+`/camera-reel-service` as `serve` does and replays all 21 captures through
+`social::test_fixtures::replay` (status, recorded headers and body).
+It seeds the captured photos from their recorded documents, place ids,
+public flag, original filenames and `created_at` from `dateTime`. Filler
+rows bring the corpus place to its 523 public photos and the item gallery
+to its 12. The API and bucket origins come from the captures; requests stay
+in process and never contact those origins.
+
+The replay passed with PostgreSQL on 2026-11-13: 20 of 21 captures match.
+Only `docs-openapi` differs from the 2026-09-25 capture: the `ScreenRect`
+schema and nullable `User.screenRect` property were added in upstream
+`3e8bd0b`. Both redirects match their captured status, headers and empty
+body. The shared diff skips `id` and `url` leaves, so the test separately
+checks exact photo ids, order, original URLs and thumbnail URLs for all five
+photo answers.
+
+`docs::tests::the_spec_is_the_captured_one_plus_the_later_upstream_screen_rect`
+compares the whole pinned document with the capture under those two
+additions. `GalleryImageWithPlace` remains undefined, as in the pinned
+upstream document. The companion test checks the wire fields and every
+path parameter. All three regressions passed in the 134-test Camera suite.
+
+## In-process replay of the gatekeeper
+
+`comms/src/gatekeeper/capture_replay_tests.rs`, test
+`the_gatekeeper_answers_its_stateless_captures_as_production`, sends 23 of
+the 35 captures through `comms::gatekeeper::router` with their recorded
+method, path, query and headers, and compares status, recorded headers
+(`content-type` by media type) and body with
+`catalyst_testing::conformance::compare`. The node runs with
+`COMMS_GATEKEEPER_AUTH_TOKEN` and the moderator token set, as production
+does, against an empty scratch database.
+
+Replayed, all matching the capture: `cast-stream-info-invalid-key`,
+`cast-presenters-unauth`, `bans-401-unauth`,
+`community-voice-chat-active-401-no-token`,
+`community-voice-chat-status-401-no-token`, `get-scene-adapter-unauth`,
+`get-server-scene-adapter-unauth`, `ping`, `private-messages-token-unauth`,
+`scene-admin-unauth`, `scene-bans-addresses-unauth`, `scene-bans-unauth`,
+`scene-participants-400-no-params`, `scene-participants-world`,
+`scene-stream-access-unauth`, `status-head`, `user-bans`,
+`user-bans-bad-address`, `user-bans-unknown-address`,
+`user-warnings-401-unauth`, `voice-chat-status-401-no-token`,
+`world-ban-status-no-token`. `user-bans` and `scene-participants-world`
+captured the empty state (no ban, no participant), which the scratch
+database reproduces.
+
+`preflight-get-scene-adapter` is replayed with its four recorded header
+differences. DIVERGENCE: the node's one CORS layer (`shared::cors`) reflects
+the origin (`https://decentraland.org` for `*`) and answers its own method
+order, `max-age` 86400 (production 36000) and `vary: Origin` (production
+`Access-Control-Request-Headers`).
+
+Not replayed: the eight signed captures (`get-scene-adapter-signed`,
+`-signed-no-realm-name`, `scene-admin-signed-scene`, `-signed-wrong-signer`,
+`scene-bans-signed-scene`, `-signed-wrong-signer`,
+`scene-bans-addresses-signed-scene`, `user-warnings-signed-not-moderator`),
+whose auth chains have expired; `scene-participants` and
+`scene-participants-default-realm`, which list production's live
+participants; `status`, which carries production's version and commit; and
+`unknown-path-404`, which `serve`'s fallback answers, not this router.

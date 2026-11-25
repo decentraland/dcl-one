@@ -42,7 +42,7 @@ use chrono::NaiveDateTime;
 use sqlx::{PgConnection, PgPool};
 
 use super::SharedState;
-use super::progress::{Applied, ApplyOptions, Progress, apply_progress};
+use super::progress::{Applied, ApplyOptions, Progress, apply_progress_granting};
 use crate::identity::Address;
 
 pub use client_events::SOURCE as CLIENT_EVENTS_SOURCE;
@@ -77,7 +77,7 @@ impl Default for ProcessorSettings {
             enabled: false,
             batch_size: 200,
             max_event_age: None,
-            deployment_max_lag: Some(Duration::from_secs(86_400)),
+            deployment_max_lag: None,
             gap_grace: Duration::from_secs(600),
             items_mirror_enabled: false,
         }
@@ -119,6 +119,25 @@ impl Pass {
 
 /// Batches one tick drains at most per source before yielding.
 const MAX_BATCHES_PER_TICK: usize = 50;
+
+/// Runs `batch` (one transaction: rows passed, a full batch was passed) until
+/// it reports no more rows or the tick's budget is spent; returns the rows
+/// passed. An error stops the drain; the batches before it stay committed.
+async fn drain<F, Fut>(mut batch: F) -> Result<u64, sqlx::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<(u64, bool), sqlx::Error>>,
+{
+    let mut passed = 0;
+    for _ in 0..MAX_BATCHES_PER_TICK {
+        let (n, more) = batch().await?;
+        passed += n;
+        if !more {
+            break;
+        }
+    }
+    Ok(passed)
+}
 
 /// Gap ranges an id cursor keeps at most; at the cap it passes no row that
 /// would open another until gaps resolve (it holds, never skips).
@@ -448,9 +467,9 @@ pub(crate) async fn report_id_lag(pool: &PgPool, source: &IdSource) {
     match id_lag(pool, source).await {
         Ok(Some((lag, gaps, oldest))) => {
             report_lag(source.name, lag);
-            metrics::gauge!("badges_processor_cursor_gaps", "source" => source.name)
+            dcl_metrics::gauge!("badges_processor_cursor_gaps", "source" => source.name)
                 .set(gaps as f64);
-            metrics::gauge!("badges_processor_cursor_oldest_gap_seconds", "source" => source.name)
+            dcl_metrics::gauge!("badges_processor_cursor_oldest_gap_seconds", "source" => source.name)
                 .set(oldest.unwrap_or(0.0).max(0.0));
         }
         Ok(None) => {}
@@ -479,7 +498,7 @@ pub(crate) async fn id_lag(
 
 /// `badges_processor_cursor_lag` of `source`, in its own unit (ids, blocks).
 pub(crate) fn report_lag(source: &'static str, lag: i64) {
-    metrics::gauge!("badges_processor_cursor_lag", "source" => source).set(lag.max(0) as f64);
+    dcl_metrics::gauge!("badges_processor_cursor_lag", "source" => source).set(lag.max(0) as f64);
 }
 
 /// The cursor of `source`, locked for this transaction; `None` when the
@@ -557,7 +576,8 @@ pub(crate) async fn completed(
     Ok(rows.into_iter().collect())
 }
 
-/// One evaluator write, with its notification (`notify`) unless suppressed.
+/// One evaluator write, with its notification (`notify`) unless suppressed,
+/// achieving the tiers its observer would ([`super::evaluators::tier_grant`]).
 pub(crate) async fn award<F>(
     conn: &mut PgConnection,
     address: &Address,
@@ -573,7 +593,8 @@ where
         notify,
         granted_by: None,
     };
-    let applied = apply_progress(conn, address, badge_id, &options, update).await?;
+    let grant = super::evaluators::tier_grant(badge_id);
+    let applied = apply_progress_granting(conn, address, badge_id, &options, grant, update).await?;
     if let Applied::Written(change) = &applied
         && (change.completed || !change.new_tiers.is_empty())
     {
@@ -649,10 +670,6 @@ fn spawn_one(
         move |ctx| {
             let pass = pass.clone();
             async move {
-                // A restore hold keeps every social write back, these too.
-                if crate::shared::writes::refusal(true).is_some() {
-                    return Ok(());
-                }
                 let written = run(pass).await?;
                 if written > 0 {
                     ctx.progress(format!("{written} rows passed"));

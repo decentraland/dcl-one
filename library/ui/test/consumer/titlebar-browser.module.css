@@ -1,0 +1,165 @@
+:global(body) {
+  margin: 0;
+}
+@layer dcl.components {
+  .canvas {
+    composes: text626f64792f6d64 from '../../foundations/typography/text-styles.module.css';
+    min-height: 100vh;
+    background: var(--dcl-bg-page);
+    color: var(--dcl-text-primary);
+  }
+  .canvas p {
+    margin: 0;
+    padding: 16px;
+  }
+  .search,
+  .control,
+  .date,
+  .cart {
+    box-sizing: border-box;
+    min-height: 44px;
+    border: 0;
+    border-radius: var(--dcl-radius-md);
+    font: inherit;
+  }
+  /* Figma searchbar-white (16959:905): a 20px slot, a 9.2px gap and the cloudy-sky magnifier. */
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 9.2px;
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--dcl-neutrals-white);
+    color: var(--dcl-neutrals-shadow);
+  }
+  /* The magnifier's 22x20 glyph overflows its 20px slot on the end side, as Figma draws it. */
+  .searchIcon {
+    flex: none;
+    width: 22px;
+    height: 20px;
+    margin-inline-end: -2px;
+    color: var(--dcl-neutrals-cloudy-sky);
+  }
+  .search input {
+    min-width: 0;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    /* The search box's :focus-within ring is the field's one focus indicator. */
+    outline: none;
+  }
+  /* One contour flush on the field: the explorer InputField focus ring (InputField.module.css), Figma Text
+     Input FocusedEditing's 3px white-70 stroke without its 3px transparent gap. The transparent outline is
+     what forced-colors mode paints once it drops the shadow. */
+  .search:focus-within {
+    outline: 3px solid transparent;
+    outline-offset: 0;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--dcl-neutrals-white) 70%, transparent);
+  }
+  /* ?searchfocus=offset keeps the earlier offset ring so both looks can be compared in one preview. */
+  .search[data-focus='offset']:focus-within {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+  .search input::placeholder {
+    color: var(--dcl-neutrals-cloudy-sky);
+  }
+  .control:focus-visible,
+  .date:focus-visible,
+  .cart:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+  /* Figma dropdown-trigger: 16px semibold label, 20px icon, 8px gap, 12px inline padding. */
+  .control {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--dcl-space-8);
+    padding: 0 var(--dcl-space-12);
+    background: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-shadow);
+    font-size: 16px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .date {
+    padding: 0 var(--dcl-space-16);
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-neutrals-snow);
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .value {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cart {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    padding: 5px;
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-neutrals-snow);
+  }
+  .cart span {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    box-sizing: border-box;
+    min-width: 16px;
+    padding: 0 4px;
+    border: 2px solid var(--dcl-neutrals-charcoal);
+    background: var(--dcl-primary-primary);
+    color: var(--dcl-neutrals-snow);
+    border-radius: 100px;
+    font-size: 10px;
+    line-height: 12px;
+  }
+  .filterHost {
+    position: relative;
+  }
+  .floating {
+    position: absolute;
+    top: calc(100% + var(--dcl-space-12));
+    left: 0;
+    width: 240px;
+    max-width: calc(100vw - 40px);
+    z-index: 1;
+  }
+  .end {
+    left: auto;
+    right: 0;
+  }
+  .popup {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 229px;
+    padding: 16px;
+    background: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-shadow);
+    border-radius: var(--dcl-radius-md);
+  }
+  .popup fieldset {
+    border: 0;
+    margin: 0;
+    padding: 0 0 12px;
+  }
+  .popup legend {
+    color: var(--dcl-neutrals-cloudy-sky);
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .popup label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+  }
+}

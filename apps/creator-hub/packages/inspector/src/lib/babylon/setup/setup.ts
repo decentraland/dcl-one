@@ -87,13 +87,13 @@ export function setupEngine(
 
     scene.removeEffectLayer = function (this: any, layer: BABYLON.EffectLayer) {
       if (effectLayers.includes(layer)) return;
-      // eslint-disable-next-line prefer-rest-params
+      // oxlint-disable-next-line prefer-rest-params
       scene.constructor.prototype.removeEffectLayer.apply(this, arguments);
     } as any;
 
     scene.addEffectLayer = function (this: any, layer: BABYLON.EffectLayer) {
       if (effectLayers.includes(layer)) return;
-      // eslint-disable-next-line prefer-rest-params
+      // oxlint-disable-next-line prefer-rest-params
       scene.constructor.prototype.addEffectLayer.apply(this, arguments);
     } as any;
   });

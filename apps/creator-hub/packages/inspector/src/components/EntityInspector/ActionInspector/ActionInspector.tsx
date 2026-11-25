@@ -60,6 +60,7 @@ import { SetScaleAction } from './SetScaleAction';
 import { RandomAction } from './RandomAction';
 import { BatchAction } from './BatchAction';
 import { getDefaultPayload, getPartialPayload, isStates } from './utils';
+import { trackActionTypeSelected } from './analytics';
 import { LightsModifyAction } from './LightsModifyAction';
 import { ChangeCameraAction } from './ChangeCameraAction';
 import { ChangeTextAction } from './ChangeTextAction';
@@ -650,6 +651,11 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
   const handleChangeType = useCallback(
     ({ target: { value } }: React.ChangeEvent<HTMLSelectElement>, idx: number) => {
       const scriptAction = scriptActions.find(sa => sa.actionType === value);
+      trackActionTypeSelected(
+        actions[idx].type,
+        scriptAction ? ActionType.CALL_SCRIPT_METHOD : value,
+        GltfContainer.getOrNull(entityId)?.src,
+      );
       if (scriptAction) {
         const defaultParams: Record<string, any> = {};
         for (const [name, param] of Object.entries(scriptAction.action.params)) {
@@ -673,7 +679,7 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
         jsonPayload: getDefaultPayload(value),
       });
     },
-    [actions, handleModifyAction, scriptActions],
+    [actions, handleModifyAction, scriptActions, entityId],
   );
 
   const handleChangeName = useCallback(
@@ -1311,6 +1317,13 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
         if (!scriptAction) return null;
 
         const paramTypes = scriptAction.action.params;
+        // The method's other params, for `@enabledIf` and `@actionsOf`.
+        const siblings = Object.fromEntries(
+          Object.entries(paramTypes).map(([name, param]) => [
+            name,
+            paramValues?.[name] ?? param.value,
+          ]),
+        );
 
         return (
           <div className="row params">
@@ -1319,6 +1332,7 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
                 key={name}
                 name={name}
                 param={{ ...param, value: paramValues?.[name] ?? param.value }}
+                siblings={siblings}
                 onUpdate={update => handleChangeScriptParam(idx, name, update, param.value)}
               />
             ))}
@@ -1383,6 +1397,8 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
             {renderAction(action, idx)}
             <MoreOptionsMenu className="ActionMenu">
               <Button
+                variant="secondary"
+                size="sm"
                 className="RemoveButton"
                 onClick={e => handleRemoveAction(e, idx)}
               >

@@ -1,68 +1,139 @@
-/* The HUD minimap: header pill + circular map, top-left beside the 46px nav rail.
+/* The HUD minimap: a 272px panel beside the navigation bar. A header row, the player's parcel,
+   then a square map; collapsed, the map is left out.
 
    Everything that moves is driven by the custom properties --map-scale / --map-tx / --map-ty
-   / --map-yaw / --map-arrow, written once per frame by Minimap.tsx. The values are unitless
-   so calc() can attach px/deg here. The defaults below are what the first paint uses, before
-   the first pose sample arrives. */
+   / --map-yaw / --map-arrow / --compass-x / --compass-y, written once per frame by Minimap.tsx.
+   The values are unitless so calc() can attach px/deg here. The defaults below are what the
+   first paint uses, before the first pose sample arrives. */
 
 .root {
+  /* The panel's measures. The rows over the map keep fixed heights, so the Camera style's
+     backdrop knows where the map sits (see .cutoutRoot). */
+  --minimap-pad: 16px;
+  --minimap-gap: 12px;
+  --minimap-header: 20px;
+  --minimap-stats: 17px;
+  --minimap-map: 240px;
+
   position: fixed;
-  top: 8px;
-  left: 54px;
+  /* Offsets are reference px too: the transform scales the box, not its place. */
+  top: calc(8px * var(--ui-scale));
+  left: calc(64px * var(--ui-scale));
   z-index: var(--z-hud);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--minimap-gap);
+  box-sizing: border-box;
+  width: 272px;
+  padding: var(--minimap-pad);
+  color: var(--text);
+  font-family: var(--font-family);
   transform: scale(var(--ui-scale)) translateZ(0);
   transform-origin: top left;
-  /* Layout only — `paint` would clip the settings popover, which deliberately overhangs the
-     map to the right. The translateZ above already gives the map its own compositing layer,
-     which is what keeps its repaints off the engine's frame. */
+  /* Layout only — `paint` would clip the settings popover, which stands to the right of the
+     panel. The translateZ above already gives the map its own compositing layer, which is what
+     keeps its repaints off the engine's frame. */
   contain: layout;
 }
 
-/* ---- header ---- */
+/* The panel's surface, a layer of its own so the Camera style can open a hole in it. */
+.root::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--r-md);
+  background: var(--black-70);
+}
+
+/* Camera style — the engine renders the map behind the page, in the square inside the map's
+   border, so the surface has a hole of that square. The hole's corners are sharp; the border's
+   rounded corners cover them. */
+.cutoutRoot::before {
+  --hole: calc(var(--minimap-map) - 2px);
+  --hole-left: calc(var(--minimap-pad) + 1px);
+  --hole-top: calc(var(--minimap-pad) + var(--minimap-header) + var(--minimap-stats) + 2 * var(--minimap-gap) + 1px);
+  --hole-right: calc(var(--hole-left) + var(--hole));
+  --hole-bottom: calc(var(--hole-top) + var(--hole));
+  clip-path: polygon(
+    evenodd,
+    0 0,
+    100% 0,
+    100% 100%,
+    0 100%,
+    0 0,
+    var(--hole-left) var(--hole-top),
+    var(--hole-left) var(--hole-bottom),
+    var(--hole-right) var(--hole-bottom),
+    var(--hole-right) var(--hole-top),
+    var(--hole-left) var(--hole-top)
+  );
+}
+
+/* ---- header row: collapse, place name, actions ---- */
 
 .header {
   display: flex;
   align-items: center;
   gap: 8px;
-  align-self: flex-start;
-  max-width: 220px;
-  padding: 5px 6px 5px 12px;
-  border-radius: var(--r-pill);
-  background: var(--panel);
-  box-shadow: var(--shadow-panel);
+  height: var(--minimap-header);
+}
+
+/* A bare glyph button. Its plate and its hit area stand 4px past the glyph box. */
+.iconButton {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.iconButton::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: var(--r-xs);
+}
+
+.iconButton:hover::before,
+/* The menu's button is lit while its menu is open. */
+.settings > .iconButton[aria-expanded='true']::before {
+  background: var(--fill-5);
+}
+
+.collapse {
+  width: 15px;
+  height: 19px;
+}
+
+/* The chevrons point up while the map shows and down while it is collapsed. */
+.collapse[aria-expanded='false'] > svg {
+  transform: rotate(180deg);
 }
 
 .title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
-  color: var(--text);
-  font-size: var(--fs-sm);
-  font-weight: 600;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  line-height: 19px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.coords {
+.actions {
+  display: flex;
   flex: none;
-  color: var(--text-dim);
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-}
-
-.collapse {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-pill);
-  background: transparent;
-  color: var(--ink-7);
-  cursor: pointer;
+  align-items: center;
+  gap: 12px;
 }
 
 /* The tip icon (a hand under a coin), drawn as is: two colours, so not a mask. */
@@ -72,12 +143,27 @@
   object-fit: contain;
 }
 
-.collapse:hover {
-  background: var(--fill-3);
-  color: var(--text);
+/* The menu button and, beside the panel, its menu. */
+.settings {
+  position: relative;
+  flex: none;
 }
 
-/* ---- map surface ---- */
+/* ---- stats row: the parcel the player stands on ---- */
+
+.stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--minimap-stats);
+  color: var(--silver);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- the map: a square as wide as the rows ---- */
 
 .surface {
   --map-scale: 1;
@@ -85,30 +171,39 @@
   --map-ty: 0;
   --map-yaw: 0;
   --map-arrow: 0;
+  --compass-x: 0;
+  --compass-y: -1;
 
   position: relative;
-  width: 220px;
-  height: 220px;
+  flex: none;
+  width: var(--minimap-map);
+  height: var(--minimap-map);
 }
 
-.circle {
+.map {
   position: absolute;
   inset: 0;
   overflow: hidden;
   padding: 0;
-  border: 1px solid var(--white-10);
-  border-radius: var(--r-pill);
+  border: 1px solid var(--white);
+  border-radius: var(--r-minimap);
   background: var(--panel);
-  box-shadow: var(--shadow-panel);
   cursor: pointer;
 }
 
-/* Camera style — the engine renders the map behind the page, so the circle has to let it
-   through. The engine draws its own circular mask, so the corners stay clear of the world. */
+/* Camera style — the engine renders the map behind the page, so the square has to let it
+   through. */
 .cutout {
   background: transparent;
 }
 
+/* Camera style before the engine has drawn: the colour its camera clears to, so the map does not
+   change when the hole opens. */
+.covered {
+  background: var(--black);
+}
+
+/* The rectangle the engine draws in: the square inside its border. */
 .cutoutFill {
   position: absolute;
   inset: 0;
@@ -121,7 +216,7 @@
   transform-origin: center;
 }
 
-/* A zero-size anchor pinned at the circle's centre. Children are placed in atlas px (see
+/* A zero-size anchor pinned at the map's centre. Children are placed in atlas px (see
    ../map/atlas.ts); translating by the player's atlas position puts the player at the centre,
    and the scale turns atlas px into screen px for the current zoom. */
 .layer {
@@ -156,17 +251,24 @@
   transform-origin: 0 0;
 }
 
+/* As .poiPin, but centred on the anchor: the quest pin is round. */
+.questPin {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  transform: scale(calc(1 / var(--map-scale))) rotate(calc(var(--map-yaw) * -1deg)) translate(-50%, -50%);
+  transform-origin: 0 0;
+}
+
 /* Same inverse transform as the pin, offset below the anchor instead of above it. */
 .poiLabel {
   position: absolute;
   overflow: hidden;
-  max-width: 110px;
-  padding: 1px 6px;
-  border-radius: var(--r-pill);
-  background: var(--scrim);
+  max-width: 130px;
   color: var(--text);
-  font-size: var(--fs-xs);
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
   text-overflow: ellipsis;
   white-space: nowrap;
   transform: scale(calc(1 / var(--map-scale))) rotate(calc(var(--map-yaw) * -1deg)) translate(-50%, 3px);
@@ -175,28 +277,38 @@
 
 /* ---- overlays ---- */
 
-/* Sits inside the rotor, so it tracks true north as the map turns; the glyph counter-rotates
-   to stay upright. */
-.north {
+/* The compass badges: 22px discs, 2px inside the frame at the middle of each edge while north is
+   up. (--compass-x, --compass-y) is North's place, from the centre, in units of --reach; East,
+   South and West are that turned by a quarter each, so the four slide along the frame as the
+   map turns and the letters stay upright. */
+.compass {
+  --reach: calc(var(--minimap-map) / 2 - 14px);
+
   position: absolute;
   left: 50%;
-  top: 6px;
+  top: 50%;
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
-  margin-left: -9px;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
   border-radius: var(--r-pill);
-  background: var(--scrim);
-}
-
-.northLabel {
-  display: block;
+  background: var(--black-55);
   color: var(--text);
-  font-size: var(--fs-xs);
-  font-weight: 700;
+  font-family: inherit;
+  font-size: var(--type-9);
+  font-weight: var(--fw-bold);
   line-height: 1;
-  transform: rotate(calc(var(--map-yaw) * -1deg));
+  transform: translate(calc(var(--compass-x) * var(--reach)), calc(var(--compass-y) * var(--reach)));
+}
+.compass[data-point='E'] {
+  transform: translate(calc(var(--compass-y) * -1 * var(--reach)), calc(var(--compass-x) * var(--reach)));
+}
+.compass[data-point='S'] {
+  transform: translate(calc(var(--compass-x) * -1 * var(--reach)), calc(var(--compass-y) * -1 * var(--reach)));
+}
+.compass[data-point='W'] {
+  transform: translate(calc(var(--compass-y) * var(--reach)), calc(var(--compass-x) * -1 * var(--reach)));
 }
 
 /* The player, always dead centre, pointing where the avatar faces (relative to the map). */
@@ -204,27 +316,39 @@
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 20px;
-  height: 20px;
-  margin: -10px 0 0 -10px;
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0 -12px;
   transform: rotate(calc(var(--map-arrow) * 1deg));
+  filter: drop-shadow(0 1px 1px var(--black-50));
 }
 
 /* ---- controls ---- */
 
+/* The zoom buttons stand in the map's bottom right corner, clear of the compass badges. They
+   show while the pointer is on the map or the keyboard's focus is on one of them, and always
+   where there is no pointer to hover with. Hidden, they take no presses. */
 .zoom {
   position: absolute;
-  top: -4px;
-  left: -4px;
+  right: 7px;
+  bottom: 7px;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) ease;
 }
-
-.settings {
-  position: absolute;
-  top: -4px;
-  right: -4px;
+.surface:hover .zoom,
+.zoom:has(:focus-visible) {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .zoom {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .roundButton {
@@ -247,4 +371,84 @@
 .roundButton:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* ---- in a world: the way back to Genesis City, the panel's last row ---- */
+
+.jumpBack {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  margin-inline: calc(4px - var(--minimap-pad));
+  padding: 0 12px 0 13px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: var(--fill-3);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--type-14);
+  font-weight: var(--fw-bold);
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.jumpBack > svg {
+  flex: none;
+}
+
+.jumpBack:hover {
+  background: var(--fill-5);
+}
+
+/* Another player: the full map's dot, held at its screen size as the pins are. */
+.person {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--white);
+  border-radius: var(--r-pill);
+  background: var(--map-user);
+  transform: scale(calc(1 / var(--map-scale))) translate(-50%, -50%);
+  transform-origin: 0 0;
+}
+
+/* The route: the full map's dotted line from the destination back to the player. It lies in the
+   scaled layer, so the dots are sized against the scale to keep their screen size. */
+.route {
+  --dot: calc(6px / var(--map-scale));
+
+  position: absolute;
+  left: 0;
+  top: calc(var(--dot) / -2);
+  width: calc(var(--route-length, 0) * 1px);
+  height: var(--dot);
+  background: url('../../assets/map/markers/path-dot.png') 0 0 / var(--dot) var(--dot) repeat-x;
+  mask-image: repeating-linear-gradient(90deg, var(--black) 0 var(--dot), transparent var(--dot) calc(var(--dot) * 2));
+  transform: rotate(var(--route-angle, 0rad));
+  transform-origin: 0 50%;
+  pointer-events: none;
+}
+
+/* The destination's pin on the map's edge, in its direction, while it is off the map: centred
+   on its point as the compass badges are, so it stays inside the frame on every side. */
+.edgePin {
+  --reach: calc(var(--minimap-map) / 2 - 16px);
+
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 27px;
+  margin: -13.5px 0 0 -11px;
+  transform: translate(calc(var(--edge-x, 0) * var(--reach)), calc(var(--edge-y, 0) * var(--reach)));
+  pointer-events: none;
+}
+.edgePin img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }

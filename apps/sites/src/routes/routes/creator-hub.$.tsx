@@ -5,15 +5,9 @@ import { track } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/creator-hub.$";
 
-/** `/creator-hub/*` is the retired spelling of `/create/*`: one hub, one prefix. Pages that
-    were renamed along the way map here; everything else keeps its path and query. */
+/** `/creator-hub/*` is the retired spelling of `/create/*`: one prefix. Pages that were renamed
+    along the way map here; everything else keeps its path and query. */
 const RENAMED: Record<string, string> = {
-  manage: "worlds",
-  "deploy-world": "publish",
-  "deploy-alternative": "publish",
-  "world-permissions": "admissions",
-  gate: "admissions",
-  "worlds-storage": "storage",
   "multiplayer-test": "preview",
 };
 
@@ -31,7 +25,7 @@ function moved({ request, params, context }: Route.LoaderArgs | Route.ActionArgs
   const cookies = ownedSessionCookies(request, session);
   const url = new URL(request.url);
   const to = createPathFor(url, params["*"]);
-  track("creator_builder_redirect", { from: url.pathname, to }, { sid });
+  track("creator_builder_redirect", { from: url.pathname, to }, { sid, requestUserAgent: request.headers.get("user-agent") });
   return redirect(to, {
     status: 308,
     headers: cookies,

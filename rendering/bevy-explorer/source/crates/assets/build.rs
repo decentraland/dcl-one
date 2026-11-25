@@ -1,8 +1,12 @@
 use std::env;
 use std::fs::{self, File};
 use std::hash::{BuildHasher, Hasher};
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::Path;
+
+// The directory to scan for files.
+const SOURCE_DIR: &str = "src/assets";
+const LFS_POINTER_PREFIX: &[u8] = b"version https://git-lfs";
 
 fn visit_dirs(writer: &mut BufWriter<File>, dir: &Path, base_dir: &Path) -> std::io::Result<()> {
     if dir.is_dir() {
@@ -14,6 +18,21 @@ fn visit_dirs(writer: &mut BufWriter<File>, dir: &Path, base_dir: &Path) -> std:
             } else if path.is_file() {
                 let relative_path = path.strip_prefix(base_dir).unwrap();
                 let relative_path = relative_path.to_string_lossy().replace('\\', "/");
+                if env::var_os("CARGO_FEATURE_AVATAR_PREVIEW").is_some()
+                    && !preview_asset(&relative_path)
+                {
+                    continue;
+                }
+                // An LFS pointer would compile and be silently wrong at runtime.
+                let mut head = Vec::new();
+                File::open(&path)?
+                    .take(LFS_POINTER_PREFIX.len() as u64)
+                    .read_to_end(&mut head)?;
+                if head == LFS_POINTER_PREFIX {
+                    panic!(
+                        "{SOURCE_DIR}/{relative_path} is a Git LFS pointer, not the file; the embedded assets stay in plain git"
+                    );
+                }
                 let full_path = path.canonicalize()?;
                 let full_path = full_path.to_string_lossy().replace('\\', "\\\\");
 
@@ -24,9 +43,14 @@ fn visit_dirs(writer: &mut BufWriter<File>, dir: &Path, base_dir: &Path) -> std:
     Ok(())
 }
 
+/// The embedded files an avatar-only build (feature `avatar-preview`) keeps.
+fn preview_asset(relative_path: &str) -> bool {
+    relative_path.starts_with("shaders/")
+        || relative_path.starts_with("avatars/")
+        || relative_path == "animations/idle.glb"
+}
+
 fn main() -> std::io::Result<()> {
-    // The directory to scan for files.
-    const SOURCE_DIR: &str = "src/assets";
     let source_path = Path::new(SOURCE_DIR);
 
     let out_dir = env::var_os("OUT_DIR").unwrap();
@@ -46,7 +70,7 @@ fn main() -> std::io::Result<()> {
     writeln!(&mut writer, "}}")?;
 
     // generate hash of shaders for the gpu cache
-    let mut hasher = bevy::platform::hash::FixedHasher.build_hasher();
+    let mut hasher = bevy_platform::hash::FixedHasher.build_hasher();
 
     let mut shader_paths = fs::read_dir("src/assets/shaders")?
         .map(|entry| entry.unwrap().path())

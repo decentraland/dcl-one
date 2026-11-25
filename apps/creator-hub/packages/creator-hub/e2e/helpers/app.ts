@@ -1,10 +1,10 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import type { ElectronApplication } from 'playwright';
 import { _electron as electron } from 'playwright';
-import { SCENES_DIRECTORY } from '../../shared/paths';
+import { CONFIG_FILE_NAME, SCENES_DIRECTORY, SETTINGS_DIRECTORY } from '../../shared/paths';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -36,7 +36,7 @@ export function resolvePackagedApp(): string {
   }
 
   const distRoot = join(creatorHubDir, 'dist');
-  const hint = 'run `npm run compile` in packages/creator-hub first, or set E2E_APP_PATH';
+  const hint = 'run `pnpm run compile` in packages/creator-hub first, or set E2E_APP_PATH';
 
   if (!existsSync(distRoot)) throw new Error(`e2e: no ${distRoot} — ${hint}`);
 
@@ -73,9 +73,12 @@ export type LaunchedApp = {
  *
  * Each launch gets a fresh, throwaway `--user-data-dir` **and** a fresh `HOME`:
  *   - `--user-data-dir` is what isolates real work: it keeps a persisted sign-in identity
- *     from leaking in (which would start the app already logged in), and scenes are created
- *     under `<userData>/Scenes` per `getDefaultScenesPath`, so a scene test cannot touch the
- *     developer's own projects.
+ *     from leaking in (which would start the app already logged in), and its settings point
+ *     the scenes folder at `<userData>/Scenes`, so a scene test cannot touch the developer's
+ *     own projects. The app's own default is `~/Decentraland/Scenes`, and on macOS the home
+ *     folder comes from the OS account, so without the setting a test would create scenes in
+ *     the developer's real home. The settings also mark the one-time move to that default as
+ *     done (`promoteScenesPath`), or the empty folder would be moved there.
  *   - `<userData>/Scenes` is created before launch. On macOS `app.getPath('home')` comes
  *     from the OS account, NOT `$HOME`, so the `HOME` override below does not hide the
  *     developer's real `~/.decentraland`. The legacy-paths migration (`migrations.ts`)
@@ -93,6 +96,13 @@ export async function launchApp(
   const userDataDir = mkdtempSync(join(tmpdir(), 'creator-hub-e2e-data-'));
   const homeDir = mkdtempSync(join(tmpdir(), 'creator-hub-e2e-home-'));
   mkdirSync(join(userDataDir, SCENES_DIRECTORY));
+  mkdirSync(join(userDataDir, SETTINGS_DIRECTORY));
+  writeFileSync(
+    join(userDataDir, SETTINGS_DIRECTORY, CONFIG_FILE_NAME),
+    JSON.stringify({
+      settings: { scenesPath: join(userDataDir, SCENES_DIRECTORY), scenesPathPromoted: true },
+    }),
+  );
 
   const cleanup = () => {
     for (const dir of [userDataDir, homeDir]) {

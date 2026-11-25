@@ -9,14 +9,16 @@ publish = false
 catalyst-db = { path = "../db" }
 dcl-http = { workspace = true, features = ["db"] }
 dcl-auth.workspace = true
+ipnet.workspace = true
 catalyst-jobs = { path = "../jobs" }
 catalyst-shared = { path = "../shared" }
 catalyst-config = { path = "../config" }
 catalyst-chain-index = { path = "../chain-index" }
 catalyst-content = { path = "../content" }
-catalyst-explore = { path = "../explore" }
+catalyst-storage = { path = "../storage" }
 tokio.workspace = true
 axum.workspace = true
+tower = { version = "0.5", features = ["util"] }
 tower-http.workspace = true
 sqlx.workspace = true
 serde.workspace = true
@@ -30,6 +32,8 @@ futures.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 uuid.workspace = true
+unicode-normalization.workspace = true
+icu_properties.workspace = true
 tokio-util.workspace = true
 dashmap.workspace = true
 parking_lot.workspace = true
@@ -45,11 +49,20 @@ getrandom.workspace = true
 rand.workspace = true
 rusty_enet.workspace = true
 web-transport-quinn.workspace = true
+# aws-lc-rs builds the QUIC stateless-reset and handshake-token keys (`EndpointConfig::default`,
+# `ServerConfig::with_crypto`), the same provider as the transport's TLS.
+quinn = { version = "0.11", default-features = false, features = ["aws-lc-rs"] }
+rustls = { workspace = true, features = ["aws-lc-rs"] }
+rustls-native-certs = { workspace = true, optional = true }
 rustls-pemfile.workspace = true
 rustls-pki-types.workspace = true
 async-nats.workspace = true
-metrics.workspace = true
-metrics-exporter-prometheus.workspace = true
+dcl-metrics.workspace = true
+hayro.workspace = true
+tiny-skia.workspace = true
+regex.workspace = true
+urlencoding.workspace = true
+multer.workspace = true
 ts-rs = { workspace = true, optional = true }
 
 [build-dependencies]
@@ -58,18 +71,17 @@ prost-types.workspace = true
 protox.workspace = true
 
 [features]
-ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-chain-index/ts", "catalyst-content/ts", "catalyst-explore/ts"]
-test-support = ["catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-chain-index/test-support", "catalyst-content/test-support", "catalyst-explore/test-support"]
+ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-chain-index/ts", "catalyst-content/ts"]
+test-support = ["dep:rustls-native-certs", "catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-chain-index/test-support", "catalyst-content/test-support"]
 
 [dev-dependencies]
 catalyst-shared = { path = "../shared", features = ["test-support"] }
 catalyst-config = { path = "../config", features = ["test-support"] }
 catalyst-chain-index = { path = "../chain-index", features = ["test-support"] }
 catalyst-content = { path = "../content", features = ["test-support"] }
-catalyst-explore = { path = "../explore", features = ["test-support"] }
-catalyst-db = { path = "../db", features = ["scratch"] }
+catalyst-db = { path = "../db", features = ["test-support"] }
+catalyst-testing = { path = "../testing" }
 tokio = { workspace = true, features = ["test-util"] }
-tower = { version = "0.5", features = ["util"] }
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
 tokio-tungstenite.workspace = true
 proptest = "1.11.0"

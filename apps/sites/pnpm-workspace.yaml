@@ -1,10 +1,11 @@
+# No package runs code at install time: esbuild's binary ships as an optional dependency.
+ignoreScripts: true
+# New dependencies are saved with exact versions, so regenerating the lockfile never picks up a newer release.
+saveExact: true
 allowBuilds:
   esbuild: true
   protobufjs: false
   bufferutil: false
-  es5-ext: false
-  keccak: false
-  secp256k1: false
   utf-8-validate: false
 minimumReleaseAgeExclude:
   - '@types/react-dom@19.3.0'
@@ -16,3 +17,13 @@ minimumReleaseAgeExclude:
   - zod@4.6.1
   - '@stripe/react-stripe-js@6.11.0'
   - '@stripe/stripe-js@9.17.0'
+overrides:
+  'dompurify@<3.4.17': '^3.4.17'
+  'viem>ws': '-'
+  'isows>ws': '-'
+  '@walletconnect/jsonrpc-ws-connection>ws': '-'
+  'body-parser@>=2.0.0 <2.4.0': '^2.4.0'
+  # magic-sdk 27 imports web3-core only for a type; its runtime code never loads it.
+  '@magic-sdk/provider>web3-core': '-'
+  # unstorage loads anymatch only in its fs driver; WalletConnect uses fs-lite or the browser's IndexedDB.
+  'unstorage>anymatch': '-'

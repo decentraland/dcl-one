@@ -64,12 +64,12 @@ consumers the notifier fed over SNS read it next.
   owner is the checkpoint's user identifier, the OTP event's own
   email is dropped (the onboarding state resolves the wallet to the email
   the auth server bound to it, so a client-chosen address reaches no
-  nudge, and keeps no row for a wallet without one, so throwaway wallets
-  evict no user's row), and no metadata is kept.
+  nudge, and keeps no row for a wallet without one), and no metadata is kept.
   `/forward-onboarding-checkpoint`, whose body names any user, answers as the
-  notifier did and records nothing. The onboarding state holds at most
-  `MAX_CHECKPOINTS` rows (the oldest evicted first) and `MAX_METADATA_BYTES`
-  of metadata per checkpoint.
+  notifier did and records nothing. The onboarding state is the table
+  `explore_api.onboarding_checkpoints`, kept `RETENTION_DAYS` per row, with
+  at most `MAX_METADATA_BYTES` of metadata per checkpoint (DATABASE.md,
+  "Onboarding checkpoints workload").
 - The parity gate is `services/catalyst/tests/notifier_parity.rs` over
   `services/catalyst/tests/fixtures/notifier_parity`, the notifier's own
   fixture bodies and unit-spec cases; `known_gaps.json` is its ratchet and

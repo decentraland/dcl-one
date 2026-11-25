@@ -101,7 +101,7 @@ describe('passport creations', () => {
   it('says so when the player has created nothing', async () => {
     stubCatalog({ wearable: [], emote: [] })
     await openCreations()
-    expect(await screen.findByText('There are no creations to show yet.')).toBeInTheDocument()
+    expect(await screen.findByText('There are no creations to show yet')).toBeInTheDocument()
   })
 
   it('gives an item with no shop page no button', async () => {

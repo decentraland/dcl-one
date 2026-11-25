@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { IoIosImage } from 'react-icons/io';
-import cx from 'classnames';
+import { cx } from '../../../../lib/utils/cx';
 
 import { useAssetUrl } from '../../../../hooks/useAssetUrl';
 import { InfoTooltip } from '../../../ui/InfoTooltip';

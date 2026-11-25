@@ -29,7 +29,8 @@ pub enum Service {
     AuthApi,
     /// The sign-in web page the browser is sent to
     AuthPage,
-    /// Asset-bundle generator CDN: Bevy variants
+    /// Asset-bundle generator CDN: Bevy variants, the scenes' near-LOD descriptors and far-LOD
+    /// meshes
     AbgenCdn,
     /// World storage (storage delegation signing)
     Storage,
@@ -59,6 +60,14 @@ pub enum Service {
     MarketplaceApi,
     /// Chat translation (a LibreTranslate) — HUD only
     Autotranslate,
+    /// Curated lists: the points of interest the map marks — HUD only
+    DclLists,
+    /// Archipelago stats: where the connected players are, for the map — HUD only
+    ArchipelagoStats,
+    /// Builder api: the newsletter sign-up a new account opts into — HUD only
+    BuilderApi,
+    /// Feature flags: Unleash's `explorer.json`, the rollout switches the engine reads
+    FeatureFlags,
     /// Pulse comms server — an authority, `host[:port]`; the port defaults per platform
     PulseServer,
 }
@@ -104,6 +113,10 @@ impl Service {
             Service::AssetsCdn => ("https", "assets-cdn", ""),
             Service::MarketplaceApi => ("https", "marketplace-api", ""),
             Service::Autotranslate => ("https", "autotranslate-server", ""),
+            Service::DclLists => ("https", "dcl-lists", ""),
+            Service::ArchipelagoStats => ("https", "archipelago-ea-stats", ""),
+            Service::BuilderApi => ("https", "builder-api", ""),
+            Service::FeatureFlags => ("https", "feature-flags", ""),
             Service::PulseServer => ("", "pulse-server", ""),
         }
     }
@@ -135,6 +148,10 @@ impl Service {
             Service::AssetsCdn => "assets_cdn",
             Service::MarketplaceApi => "marketplace_api",
             Service::Autotranslate => "autotranslate",
+            Service::DclLists => "dcl_lists",
+            Service::ArchipelagoStats => "archipelago_stats",
+            Service::BuilderApi => "builder_api",
+            Service::FeatureFlags => "feature_flags",
             Service::PulseServer => "pulse_server",
         }
     }
@@ -210,8 +227,8 @@ pub struct ServiceOverrides {
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub auth_page: Option<String>,
 
-    /// Asset-bundle generator CDN (Bevy variants); absent =
-    /// `https://abgen-cdn.<base>`
+    /// Asset-bundle generator CDN (Bevy variants, the scenes' near-LOD descriptors and far-LOD
+    /// meshes); absent = `https://abgen-cdn.<base>`
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub abgen_cdn: Option<String>,
 
@@ -272,6 +289,23 @@ pub struct ServiceOverrides {
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub autotranslate: Option<String>,
 
+    /// Curated lists (points of interest), used by the HUD; absent = `https://dcl-lists.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub dcl_lists: Option<String>,
+
+    /// Archipelago stats (connected players), used by the HUD; absent =
+    /// `https://archipelago-ea-stats.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub archipelago_stats: Option<String>,
+
+    /// Builder api (the newsletter sign-up), used by the HUD; absent = `https://builder-api.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub builder_api: Option<String>,
+
+    /// Feature flags (the engine reads `/explorer.json`); absent = `https://feature-flags.<base>`
+    #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
+    pub feature_flags: Option<String>,
+
     /// Pulse comms server, `host` or `host:port` (no port = the platform's: 7777 ENet on native,
     /// 7743 WebTransport on web); absent = `pulse-server.<base>`
     #[arg(long, value_name = "host[:port]", help_heading = HELP_HEADING)]
@@ -304,6 +338,10 @@ impl ServiceOverrides {
             Service::AssetsCdn => &self.assets_cdn,
             Service::MarketplaceApi => &self.marketplace_api,
             Service::Autotranslate => &self.autotranslate,
+            Service::DclLists => &self.dcl_lists,
+            Service::ArchipelagoStats => &self.archipelago_stats,
+            Service::BuilderApi => &self.builder_api,
+            Service::FeatureFlags => &self.feature_flags,
             Service::PulseServer => &self.pulse_server,
         }
         .as_deref()

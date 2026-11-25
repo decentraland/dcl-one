@@ -197,6 +197,22 @@ function failureReason(result: { stdout: string; stderr: string }): string {
   return firstLine(result.stderr) || firstLine(result.stdout) || 'no output'
 }
 
+// eslint-disable-next-line no-control-regex
+const stripAnsi = (text: string) => text.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '')
+
+// Why a vitest run failed: its first FAIL, error or timeout line, since its first line is only the run banner.
+function vitestFailure(result: { stdout: string; stderr: string }): string {
+  const output = stripAnsi(`${result.stdout}\n${result.stderr}`)
+  const line = output
+    .split('\n')
+    .map((text) => text.trim())
+    .find((text) => /\bFAIL\b|Error\b|Timeout|timed out/.test(text))
+  return (
+    line?.slice(0, 200) ||
+    failureReason({ stdout: stripAnsi(result.stdout), stderr: stripAnsi(result.stderr) })
+  )
+}
+
 function cliStage(run: Run, p: Paths, args: string[], what: string): Record<string, unknown> {
   const result = cli(run, p.figma, args)
   if (result.code !== 0) fail(`${what} failed: ${failureReason(result)}`)
@@ -272,9 +288,13 @@ function verifyStages(run: Run, p: Paths): Record<string, () => Stage> {
         [vitest(p), 'run', '--project', 'consumer', 'navbar-bounds'],
         p.ui
       )
-      const passed = /Tests\s+(\d+) passed/.exec(result.stdout)?.[1]
-      if (result.code !== 0 || !passed) fail('the NavBar bounds build check failed')
-      return { name: 'navbar-bounds', detail: `Fresh gallery build passes ${passed} bounds checks` }
+      const passed = /Tests\s+(\d+) passed/.exec(stripAnsi(result.stdout))?.[1]
+      if (result.code !== 0 || !passed)
+        fail(`the NavBar bounds build check failed: ${vitestFailure(result)}`)
+      return {
+        name: 'navbar-bounds',
+        detail: `Fresh public NavBar build passes ${passed} bounds checks`
+      }
     },
     install: () => {
       for (const target of ['foundations', 'components', 'foundations', 'components'])

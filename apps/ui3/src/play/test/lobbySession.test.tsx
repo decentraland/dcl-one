@@ -55,6 +55,28 @@ describe('lobby session regressions', () => {
     await waitFor(() => expect(h.session().phase).toBe('world'))
   })
 
+  it('opens the menu pages over the startup lobby, and a jump in from one is the lobby\'s pick', async () => {
+    const h = renderSession()
+    await waitFor(() => expect(h.session().login.status).toBe('sign-in-or-guest'))
+    act(() => h.session().login.exploreAsGuest())
+    await waitFor(() => expect(h.session().phase).toBe('lobby'))
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+    h.driver.emit({ kind: 'event', name: 'playerReady' })
+
+    act(() => h.session().places.toggle())
+    expect(h.session().places.open).toBe(true)
+    act(() => h.session().map.toggle())
+    expect(h.session().map.open).toBe(true)
+    expect(h.session().places.open).toBe(false)
+    expect(h.session().phase).toBe('lobby')
+
+    // a bare teleport would leave the held world held: the pick names the realm and leaves the lobby
+    act(() => h.session().map.teleportToPlace(10, -20))
+    expect(h.driver.last('teleport')).toMatchObject({ kind: 'teleport', realm: DEFAULT_REALM, x: 10, y: -20 })
+    expect(h.session().phase).toBe('entering')
+    expect(h.session().map.open).toBe(false)
+  })
+
   it.each(['my-home.dcl.eth', DEFAULT_REALM])('waits for the native home response and returns to its saved parcel in %s', async (realm) => {
     const h = renderSession()
     await enterAsGuest(h)
@@ -64,15 +86,15 @@ describe('lobby session regressions', () => {
     expect(h.session().lobbyPage.open).toBe(true)
     expect(h.driver.sent).toContainEqual({ kind: 'getHomeScene' })
 
-    h.driver.emit({ kind: 'homeScene', realm, parcel: { x: 12, y: -7 } })
-    expect(h.session().homeScene()).toEqual({ realm: realm === DEFAULT_REALM ? null : realm, parcel: '12,-7' })
+    h.driver.emit({ kind: 'homeScene', realm, parcel: { x: 12, y: -7 }, pinned: true, pinnable: true })
+    expect(h.session().homeScene()).toEqual({ realm: realm === DEFAULT_REALM ? null : realm, parcel: '12,-7', pinned: true })
     act(() => h.session().lobbyPage.travel(null))
     expect(h.driver.last('teleport')).toMatchObject({ realm, x: 12, y: -7 })
     expect(h.session().lobbyPage.open).toBe(false)
 
     act(() => h.session().lobbyPage.toggle())
     expect(h.session().homeScene()).toBeNull()
-    h.driver.emit({ kind: 'homeScene', realm: 'new-home.dcl.eth', parcel: { x: 3, y: 4 } })
+    h.driver.emit({ kind: 'homeScene', realm: 'new-home.dcl.eth', parcel: { x: 3, y: 4 }, pinned: true, pinnable: true })
     act(() => h.session().lobbyPage.travel(null))
     expect(h.driver.last('teleport')).toMatchObject({ realm: 'new-home.dcl.eth', x: 3, y: 4 })
   })
