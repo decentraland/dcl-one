@@ -222,16 +222,20 @@ impl Queue {
             }
             let attempts = match outcome {
                 SendOutcome::Code(1) => {
-                    if let Some(item) = self.pending.pop_front() {
-                        let _ = item.completion.send(Ok(()));
-                    }
+                    let item = self
+                        .pending
+                        .pop_front()
+                        .expect("front_mut returned an item");
+                    let _ = item.completion.send(Ok(()));
                     self.counter("ws_messages_sent", None);
                     continue;
                 }
                 SendOutcome::Code(0) => {
-                    if let Some(item) = self.pending.pop_front() {
-                        let _ = item.completion.send(Ok(()));
-                    }
+                    let item = self
+                        .pending
+                        .pop_front()
+                        .expect("front_mut returned an item");
+                    let _ = item.completion.send(Ok(()));
                     self.counter("ws_messages_sent", None);
                     self.counter("ws_backpressure_events", Some("backpressure"));
                     0
@@ -250,9 +254,11 @@ impl Queue {
                 SendOutcome::Contended => unreachable!("returned above"),
                 SendOutcome::Failure(error) => {
                     let message = format!("Failed to send message: {error}");
-                    if let Some(item) = self.pending.pop_front() {
-                        let _ = item.completion.send(Err(message.clone()));
-                    }
+                    let item = self
+                        .pending
+                        .pop_front()
+                        .expect("front_mut returned an item");
+                    let _ = item.completion.send(Err(message.clone()));
                     self.fail(&message);
                     return;
                 }
