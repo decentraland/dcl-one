@@ -203,6 +203,11 @@ CREATE TABLE shop.items (
     mirrored_at timestamp without time zone NOT NULL,
     -- The subgraph `Item.searchText`, for the lambdas catalog's `textSearch`.
     search_text text,
+    -- The item minters holding an allowance, in the order first granted, and
+    -- what each holds (the collections index's fold; empty in the mirror's
+    -- copy, which has no item minters).
+    minters text[] NOT NULL DEFAULT '{}',
+    minter_allowances numeric(78,0)[] NOT NULL DEFAULT '{}',
     PRIMARY KEY (network, contract_address, item_id),
     CONSTRAINT items_urn_key UNIQUE (urn),
     CONSTRAINT items_network_known CHECK (network IN ('ethereum', 'matic')),
@@ -416,8 +421,13 @@ CREATE TABLE shop.chain_cursor (
     -- cleared by the rewind or by a pass that proves the cursor again.
     -- Readers of the height without the publication skip it meanwhile.
     diverged_at timestamp without time zone,
+    -- An old binary omits this column when claiming its lease. It cannot
+    -- take the Sepolia trades cursor and publish a history missing V1.
+    sepolia_trade_v1 boolean NOT NULL DEFAULT false,
     PRIMARY KEY (indexer, network),
     CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee', 'rentals_sepolia', 'third_party_registry', 'collections')),
+    CONSTRAINT chain_cursor_sepolia_trade_v1 CHECK (
+        indexer <> 'trade_events' OR chain_id IS DISTINCT FROM 11155111 OR sepolia_trade_v1 OR quarantined_at IS NOT NULL),
     CONSTRAINT chain_cursor_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT chain_cursor_fold_within_indexed CHECK (fold_through IS NULL OR fold_through <= last_block),
     CONSTRAINT chain_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block),
@@ -17213,8 +17223,8 @@ CREATE TABLE shop.bid_seller_recheck (
 
 -- The venues a sale's royalties are computed for, with the cut the pinned
 -- contracts charge (`royaltiesCutPerMillion()`, read once at start and
--- compared: a difference is a warning, never a rewrite). Four rows on
--- Polygon: the legacy marketplace and the store charge no royalties.
+-- compared: a difference is a warning, never a rewrite). Polygon and Amoy
+-- use separate venue addresses. The legacy marketplace and stores charge no royalties.
 CREATE TABLE shop.sale_venue (
     network text NOT NULL,
     address varchar(42) NOT NULL,
@@ -17231,7 +17241,10 @@ INSERT INTO shop.sale_venue (network, address, kind, royalties_cut_per_million) 
     ('matic', '0x02080031b45a3c67d338dd4a2cc309d28756a160', 'marketplace_v1', 0),
     ('matic', '0x480a0f4e360e8964e68858dd231c2922f1df45ef', 'marketplace_v2', 25000),
     ('matic', '0xb96697fa4a3361ba35b774a42c58daccaad1b8e1', 'bid_v2', 25000),
-    ('matic', '0x214ffc0f0103735728dc66b61a22e4f163e275ae', 'store', 0);
+    ('matic', '0x214ffc0f0103735728dc66b61a22e4f163e275ae', 'store', 0),
+    ('matic', '0x0c8ad1f6aadf89d2eb19f01a100a6143108fe2b0', 'marketplace_v2', 25000),
+    ('matic', '0x4b66eab79cc03a96fb6275cfcdf23c0db431606d', 'bid_v2', 25000),
+    ('matic', '0xe36abc9ec616c83caaa386541380829106149d68', 'store', 0);
 
 -- Bounded sweeps retain unresolved work; ceilings freeze each cohort so new
 -- arrivals cannot indefinitely defer retry. Scope is the chain id, or zero
@@ -17316,6 +17329,11 @@ CREATE TABLE shop.collection_event (
 CREATE INDEX collection_event_created_idx ON shop.collection_event (network, contract_address)
     WHERE kind = 'proxy_created';
 
+-- A collection's history in chain order, mints aside (a few hundred thousand
+-- rows): the fold of the collections it replays from their creation.
+CREATE INDEX collection_event_replay_idx ON shop.collection_event (network, contract_address, block_number, log_index)
+    WHERE kind <> 'issue';
+
 -- The collections each factory lists (`collections(i)` at index `idx`), read
 -- by the collections index's gate before each attempt: the walk's address
 -- filter, a superset of the collections a window can create (a hint is not
@@ -17330,6 +17348,20 @@ CREATE TABLE shop.collection_hint (
     idx integer NOT NULL,
     address varchar(42) NOT NULL,
     finalized boolean NOT NULL,
+    -- The finalized block a final row was read at (by its hash), and that
+    -- hash (both NULL for a provisional row, and for a final row written
+    -- before they were recorded). Until the row is `verified`: at or below
+    -- the cursor of a walk with its full history, the walk's log decides
+    -- (the factory's idx-th walked ProxyCreated naming this address by that
+    -- height proves it; anything else undoes it); otherwise the gate asks
+    -- the hash at that height, and another one undoes it. A row with no
+    -- hash is proven by the walk's log where the walk holds its slot (its
+    -- height becomes the creation's block), else undone. A rewind below the
+    -- height undoes a row too. Undone, the row is provisional again, to be
+    -- read on the branch the chain took.
+    read_block bigint,
+    read_hash text,
+    verified boolean NOT NULL DEFAULT false,
     PRIMARY KEY (network, address),
     CONSTRAINT collection_hint_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT collection_hint_lowercase CHECK (factory = lower(factory) AND address = lower(address)),
@@ -17342,10 +17374,14 @@ CREATE UNIQUE INDEX collection_hint_final_idx ON shop.collection_hint (network, 
 
 -- What a collection's initialize set without an event (name, symbol,
 -- creator, approval, editability), read once by the collections index's
--- gate at Polygon's finalized block, kept with it in
--- `read_block`. A projection takes a value from it only when no walked event
--- sets it and `read_block` is at or below the block it folds to. Not
--- rewound: a finalized block's state. One row per collection.
+-- gate for a walked collection at the walk's own cursor block, by the hash
+-- the walk stored for it (`read_block`, `read_hash`), under the walk's owner
+-- and epoch fence: so it is of the walked branch, and written `verified`.
+-- A rewind below `read_block` deletes it. A projection takes a value from it
+-- only when it is verified, no walked event sets the value and `read_block`
+-- is at or below the block it folds to. A row written before reads were
+-- proven (no hash, not verified) is never taken; the first proven read
+-- replaces it. One row per collection.
 CREATE TABLE shop.collection_seed (
     network text NOT NULL,
     contract_address varchar(42) NOT NULL,
@@ -17355,9 +17391,49 @@ CREATE TABLE shop.collection_seed (
     is_approved boolean NOT NULL,
     is_editable boolean NOT NULL,
     read_block bigint NOT NULL,
+    read_hash text,
+    verified boolean NOT NULL DEFAULT false,
     read_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     PRIMARY KEY (network, contract_address),
     CONSTRAINT collection_seed_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT collection_seed_lowercase CHECK (contract_address = lower(contract_address) AND creator = lower(creator)),
     CONSTRAINT collection_seed_block_nonneg CHECK (read_block >= 0)
+);
+
+-- One row per network the collections walk has rewound or rebuilt: `epoch`
+-- grows in the transaction of each rewind (an operator's rebuild included).
+-- The gate's reads of the chain (factory lists, creation reads) are written
+-- only when the epoch, with the walk's owner generation, has not moved
+-- since they began, so no read of a branch the walk left is written after
+-- it left it. `checked_through` is the last height the gate checked the
+-- reads at; the next check goes on past it (NULL: from the lowest).
+CREATE TABLE shop.collection_walk (
+    network text PRIMARY KEY,
+    epoch bigint NOT NULL DEFAULT 0,
+    checked_through bigint,
+    CONSTRAINT collection_walk_network_known CHECK (network IN ('ethereum', 'matic'))
+);
+
+-- One row per network the collections index folds into shop.collections and
+-- shop.items (MARKETPLACE_COLLECTIONS_INDEX_OWNS). `owned_at` is set in the
+-- transaction of the fold's first projection: from then the fold is the
+-- network's only writer of both tables, and the collections mirror refuses
+-- to write it (both take the network's advisory lock, the mirror shared and
+-- the fold exclusive, around the check and the write); a hand-back clears
+-- it. `projected_through` is the block the projected rows stand at; NULL
+-- (after a rewind, or before the first projection) makes the next fold
+-- rebuild the network's rows from the whole log. `pending` counts the walked
+-- collections without a row at that block (waiting for their creation read):
+-- the catalogue is complete only at 0. `generation` grows with every
+-- projection and hand-back, so two reads under the same generation read the
+-- same rows.
+CREATE TABLE shop.collection_projection (
+    network text PRIMARY KEY,
+    owned_at timestamp without time zone,
+    projected_through bigint,
+    pending integer NOT NULL DEFAULT 0,
+    generation bigint NOT NULL DEFAULT 0,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT collection_projection_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT collection_projection_pending_nonneg CHECK (pending >= 0)
 );

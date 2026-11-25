@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 import { coordsToId } from '/@/lib/land';
 import { t } from '/@/modules/store/translation/utils';

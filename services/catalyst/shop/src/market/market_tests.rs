@@ -4309,6 +4309,185 @@ async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
     db.drop().await;
 }
 
+/// With Polygon taken by the collections index, the mirror skips it (no
+/// page read, no row written) and still walks Ethereum. A hand-back returns
+/// Polygon to the mirror: strict reads wait until its next complete passes,
+/// which leave only the mirror's rows.
+#[tokio::test]
+async fn the_mirror_walks_ethereum_while_the_index_owns_polygon_then_takes_polygon_back() {
+    use super::chain_walk::ChainNet;
+    use super::collections_projection;
+    let (matic, eth) = (FakeGraph::new(), FakeGraph::new());
+    let (matic_url, eth_url) = (
+        serve_graph(matic.clone()).await,
+        serve_graph(eth.clone()).await,
+    );
+    let Some(own) = super::tests::support::OwnDb::create("collections-takeover").await else {
+        return;
+    };
+    let pool = own.pool.clone();
+    let state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings(&matic_url, &eth_url, false),
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    let t = tag();
+    let (mirrored, native, ethereum) = (contract_of(&t, 1), contract_of(&t, 2), contract_of(&t, 3));
+    matic.set(
+        "collections",
+        vec![mirrors::collections::fixture(
+            &mirrored, "Mirrored", CREATOR, true,
+        )],
+    );
+    matic.set(
+        "items",
+        vec![mirrors::items::fixture(
+            &mirrored,
+            "0",
+            "wearable_v2",
+            "Hat",
+        )],
+    );
+    eth.set(
+        "collections",
+        vec![mirrors::collections::fixture(
+            &ethereum, "Ethereum", CREATOR, true,
+        )],
+    );
+    eth.set(
+        "items",
+        vec![mirrors::items::fixture(
+            &ethereum,
+            "0",
+            "wearable_v2",
+            "Mask",
+        )],
+    );
+
+    // The index has taken Polygon: a row the mirror never had stands there.
+    mirrors::collections::upsert(
+        &pool,
+        super::graph::Network::Matic,
+        137,
+        false,
+        &[mirrors::collections::fixture(
+            &native, "Native", CREATOR, true,
+        )],
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.collection_projection (network, owned_at, projected_through, generation) \
+         VALUES ('matic', timezone('UTC', now()), 100, 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let jobs = crate::jobs::Jobs::new();
+    let ctx = job_ctx(&jobs).await;
+    let tick = || async {
+        for mirror in [mirrors::Mirror::Collections, mirrors::Mirror::Items] {
+            mirrors::run_tick(&state, mirror, &ctx).await.unwrap();
+        }
+    };
+    let contracts = |network: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT contract_address FROM shop.collections WHERE network = $1 ORDER BY contract_address",
+            )
+            .bind(network)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    tick().await;
+    assert!(
+        matic.requests.lock().unwrap().is_empty(),
+        "Polygon's pages are not read"
+    );
+    assert_eq!(contracts("matic").await, vec![native.clone()]);
+    assert_eq!(contracts("ethereum").await, vec![ethereum.clone()]);
+    for mirror in [mirrors::Mirror::Collections, mirrors::Mirror::Items] {
+        let pass = mirrors::load(&pool, mirror, super::graph::Network::Ethereum)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(pass.last_complete_pass_at.is_some(), "{pass:?}");
+    }
+
+    assert!(
+        collections_projection::hand_back(&pool, ChainNet::Matic)
+            .await
+            .unwrap()
+    );
+    state.mirror_ready.clear();
+    assert_eq!(contracts("matic").await, Vec::<String>::new());
+    let err = mirrors::require_ready(&state, mirrors::Mirror::Items)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no Polygon pass yet"
+    );
+    let (owned, generation): (bool, i64) = sqlx::query_as(
+        "SELECT owned_at IS NOT NULL, generation FROM shop.collection_projection WHERE network = 'matic'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((owned, generation), (false, 2));
+
+    tick().await;
+    state.mirror_ready.clear();
+    assert!(
+        mirrors::require_ready(&state, mirrors::Mirror::Items)
+            .await
+            .is_ok()
+    );
+    assert_eq!(
+        contracts("matic").await,
+        vec![mirrored.clone()],
+        "the mirror's rows alone"
+    );
+    let (minters, allowances): (Vec<String>, Vec<String>) = sqlx::query_as(
+        "SELECT minters, minter_allowances::text[] FROM shop.items WHERE network = 'matic'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(minters.is_empty() && allowances.is_empty());
+
+    // A hand-back repeated after its commit went unconfirmed changes nothing.
+    let passes = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM shop.mirror_state WHERE network = 'matic' AND last_complete_pass_at IS NOT NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(passes().await, 2);
+    assert!(
+        !collections_projection::hand_back(&pool, ChainNet::Matic)
+            .await
+            .unwrap()
+    );
+    assert_eq!(contracts("matic").await, vec![mirrored.clone()]);
+    assert_eq!(passes().await, 2);
+    let generation: i64 = sqlx::query_scalar(
+        "SELECT generation FROM shop.collection_projection WHERE network = 'matic'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(generation, 2);
+    own.drop().await;
+}
+
 #[tokio::test]
 async fn land_pages_read_the_published_catalogue_and_enrich_the_same_snapshot() {
     use crate::land_authz::LAND_MAINNET;
