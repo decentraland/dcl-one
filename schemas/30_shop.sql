@@ -17114,6 +17114,10 @@ CREATE TABLE shop.collection_hint (
     idx integer NOT NULL,
     address varchar(42) NOT NULL,
     finalized boolean NOT NULL,
+    -- The finalized block a final row was read at (NULL for a provisional
+    -- row, and for a final row written before it was recorded): a rewind
+    -- below it makes the row provisional again, to be read on the new branch.
+    read_block bigint,
     PRIMARY KEY (network, address),
     CONSTRAINT collection_hint_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT collection_hint_lowercase CHECK (factory = lower(factory) AND address = lower(address)),
@@ -17144,6 +17148,18 @@ CREATE TABLE shop.collection_seed (
     CONSTRAINT collection_seed_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT collection_seed_lowercase CHECK (contract_address = lower(contract_address) AND creator = lower(creator)),
     CONSTRAINT collection_seed_block_nonneg CHECK (read_block >= 0)
+);
+
+-- One row per network the collections walk has rewound or rebuilt: `epoch`
+-- grows in the transaction of each rewind (an operator's rebuild included).
+-- The gate's reads of the chain (factory lists, creation reads) are written
+-- only when the epoch, with the walk's owner generation, has not moved
+-- since they began, so no read of a branch the walk left is written after
+-- it left it.
+CREATE TABLE shop.collection_walk (
+    network text PRIMARY KEY,
+    epoch bigint NOT NULL DEFAULT 0,
+    CONSTRAINT collection_walk_network_known CHECK (network IN ('ethereum', 'matic'))
 );
 
 -- One row per network the collections index folds into shop.collections and

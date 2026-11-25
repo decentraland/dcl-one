@@ -2962,14 +2962,20 @@ rows. It folds a collection again from its creation in three cases:
   rebuilds every row of the network in one transaction, replacing the rows
   it does not produce, the mirror's included.
 
-A rewind also deletes the creation reads taken past its point: a read of a
-branch the chain left is read again on the new one. It holds the
-creation-read lock (`pg_advisory_xact_lock(0x73656564, <chain id>)`)
-exclusive, and a write of creation reads holds it shared. That write also
-checks that the walk's owner generation and rewind count did not move since
-its reads began. So a read taken before a rewind is never written after it,
-and one written while it runs is deleted by it. An operator's rebuild
-deletes them all.
+A rewind also undoes the gate's reads taken past its point, so a read of a
+branch the chain left is read again on the new one:
+- it deletes the creation reads taken past it;
+- it makes the factory list rows read at a finalized block past it, or at an
+  unrecorded block, provisional again;
+- it raises the walk's epoch (`shop.collection_walk`).
+
+It holds the reads lock (`pg_advisory_xact_lock(0x72656164, <chain id>)`)
+exclusive. A write of those reads holds it shared, and checks that the walk's
+owner generation and epoch did not move since its reads began. So a read
+taken before a rewind is never written after it, and one written while it
+runs is undone by it. An operator's rebuild runs the same rewind from the
+start block, in its own transaction, so it undoes them all and raises the
+epoch too.
 
 A collection waits, with no row and without holding the publication back,
 in either case:
@@ -3036,13 +3042,21 @@ Deploys are manual, one process at a time:
    ```sql
    BEGIN;
    SELECT pg_advisory_xact_lock(1668246636, 137);
-   DELETE FROM shop.items WHERE network = 'matic';
-   DELETE FROM shop.collections WHERE network = 'matic';
-   DELETE FROM shop.mirror_state WHERE network = 'matic' AND mirror IN ('collections', 'items');
+   DELETE FROM shop.items WHERE network = 'matic' AND EXISTS (SELECT 1 FROM shop.collection_projection
+          WHERE network = 'matic' AND owned_at IS NOT NULL);
+   DELETE FROM shop.collections WHERE network = 'matic' AND EXISTS (SELECT 1 FROM shop.collection_projection
+          WHERE network = 'matic' AND owned_at IS NOT NULL);
+   DELETE FROM shop.mirror_state WHERE network = 'matic' AND mirror IN ('collections', 'items')
+      AND EXISTS (SELECT 1 FROM shop.collection_projection WHERE network = 'matic' AND owned_at IS NOT NULL);
    UPDATE shop.collection_projection SET owned_at = NULL, projected_through = NULL, pending = 0,
-          generation = generation + 1, updated_at = timezone('UTC', now()) WHERE network = 'matic';
+          generation = generation + 1, updated_at = timezone('UTC', now())
+    WHERE network = 'matic' AND owned_at IS NOT NULL;
    COMMIT;
    ```
+
+   Every statement acts only while the index still owns the network, so
+   running the transaction again (after a commit that went unconfirmed)
+   changes nothing the mirror wrote since.
 
 Every read of the network then answers the unavailable envelope until the
 mirror's next complete collections and items passes, which rewrite it with

@@ -3944,9 +3944,11 @@ async fn the_mirror_walks_ethereum_while_the_index_owns_polygon_then_takes_polyg
         assert!(pass.last_complete_pass_at.is_some(), "{pass:?}");
     }
 
-    collections_projection::hand_back(&pool, ChainNet::Matic)
-        .await
-        .unwrap();
+    assert!(
+        collections_projection::hand_back(&pool, ChainNet::Matic)
+            .await
+            .unwrap()
+    );
     state.mirror_ready.clear();
     assert_eq!(contracts("matic").await, Vec::<String>::new());
     let err = mirrors::require_ready(&state, mirrors::Mirror::Items)
@@ -3984,5 +3986,30 @@ async fn the_mirror_walks_ethereum_while_the_index_owns_polygon_then_takes_polyg
     .await
     .unwrap();
     assert!(minters.is_empty() && allowances.is_empty());
+
+    // A hand-back repeated after its commit went unconfirmed changes nothing.
+    let passes = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM shop.mirror_state WHERE network = 'matic' AND last_complete_pass_at IS NOT NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(passes().await, 2);
+    assert!(
+        !collections_projection::hand_back(&pool, ChainNet::Matic)
+            .await
+            .unwrap()
+    );
+    assert_eq!(contracts("matic").await, vec![mirrored.clone()]);
+    assert_eq!(passes().await, 2);
+    let generation: i64 = sqlx::query_scalar(
+        "SELECT generation FROM shop.collection_projection WHERE network = 'matic'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(generation, 2);
     own.drop().await;
 }

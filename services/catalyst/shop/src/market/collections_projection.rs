@@ -184,10 +184,16 @@ pub async fn project(
 /// the network then waits for the mirror's next complete passes, which
 /// rewrite it whole. Run it after the index process stops owning the network
 /// (`MARKETPLACE_COLLECTIONS_INDEX_OWNS` without it), or its next fold takes
-/// the network again.
-pub async fn hand_back(pool: &PgPool, net: ChainNet) -> anyhow::Result<()> {
+/// the network again. It does nothing, and answers false, when the index does
+/// not own the network.
+pub async fn hand_back(pool: &PgPool, net: ChainNet) -> anyhow::Result<bool> {
     let mut tx = pool.begin().await?;
     lock(&mut tx, net, true).await?;
+    // Only while the index owns it: a repeated hand-back (one whose commit
+    // went unconfirmed) must not erase what the mirror wrote since.
+    if !owned(&mut tx, net).await? {
+        return Ok(false);
+    }
     for sql in [
         "DELETE FROM shop.items WHERE network = $1",
         "DELETE FROM shop.collections WHERE network = $1",
@@ -201,7 +207,7 @@ pub async fn hand_back(pool: &PgPool, net: ChainNet) -> anyhow::Result<()> {
             .await?;
     }
     tx.commit().await?;
-    Ok(())
+    Ok(true)
 }
 
 /// Clears the block the projection stands at, in the transaction of a
@@ -710,8 +716,8 @@ mod tests {
             .collect()
     }
 
-    async fn seed_token(pool: &PgPool) -> collections_index::SeedToken {
-        collections_index::seed_token(pool, NET).await.unwrap()
+    async fn seed_token(pool: &PgPool) -> collections_index::ReadsToken {
+        collections_index::reads_token(pool, NET).await.unwrap()
     }
 
     fn seed() -> Seed {
@@ -1015,12 +1021,7 @@ mod tests {
             return;
         };
         let before = seed_token(&pool).await;
-        sqlx::query(
-            "UPDATE shop.chain_cursor SET reorg_rewinds = reorg_rewinds + 1 WHERE indexer = 'collections'",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        rewind_to(&pool, 97_800_000).await;
         assert_eq!(
             collections_index::write_seeds(&pool, NET, &[seed()], before)
                 .await
@@ -1031,7 +1032,7 @@ mod tests {
 
         let mut writing = pool.begin().await.unwrap();
         sqlx::query("SELECT pg_advisory_xact_lock_shared($1, 137)")
-            .bind(collections_index::SEED_LOCK)
+            .bind(collections_index::READS_LOCK)
             .execute(&mut *writing)
             .await
             .unwrap();

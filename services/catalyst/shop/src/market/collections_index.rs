@@ -72,10 +72,10 @@ pub struct Refreshed {
     pub provisional_unread: usize,
 }
 
-/// The first key of the creation reads' advisory lock (with the network's
-/// chain id): `seed`. A rewind holds it exclusive, a write of creation reads
-/// shared.
-pub const SEED_LOCK: i32 = 0x7365_6564;
+/// The first key of the advisory lock (with the network's chain id) over the
+/// gate's reads of the chain, the factory lists and the creation reads:
+/// `read`. A rewind holds it exclusive, a write of those reads shared.
+pub const READS_LOCK: i32 = 0x7265_6164;
 
 /// Calls per JSON-RPC batch the gate sends (one HTTP request each).
 pub const CALLS_PER_BATCH: usize = 100;
@@ -595,14 +595,16 @@ impl ChainIndex for CollectionsIndex {
         insert_events(conn, ChainNet::Matic, &rows).await
     }
 
-    /// Deletes the log past `to`, the creation reads taken past it (a branch
-    /// the chain may have left) and the projection's block. It holds the
-    /// creation-read lock exclusive first, so a read written while it runs
-    /// is deleted by it, and one written after it is refused
-    /// ([`write_seeds`]).
+    /// Deletes the log past `to` and the creation reads taken past it, makes
+    /// the factory list rows read past it provisional again (a branch the
+    /// chain may have left), raises the walk's epoch and clears the
+    /// projection's block. An operator's rebuild runs it from the start. It
+    /// holds the reads lock exclusive first, so a read written while it runs
+    /// is undone by it, and one taken before it is refused after it
+    /// ([`ReadsToken`]).
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
         sqlx::query("SELECT pg_advisory_xact_lock($1, $2)")
-            .bind(SEED_LOCK)
+            .bind(READS_LOCK)
             .bind(ChainNet::Matic.chain_id() as i32)
             .execute(&mut *conn)
             .await?;
@@ -616,6 +618,21 @@ impl ChainIndex for CollectionsIndex {
             .bind(to)
             .execute(&mut *conn)
             .await?;
+        sqlx::query(
+            "UPDATE shop.collection_hint SET finalized = false \
+             WHERE network = $1 AND finalized AND (read_block IS NULL OR read_block > $2)",
+        )
+        .bind(ChainNet::Matic.db_name())
+        .bind(to)
+        .execute(&mut *conn)
+        .await?;
+        sqlx::query(
+            "INSERT INTO shop.collection_walk (network, epoch) VALUES ($1, 1) \
+             ON CONFLICT (network) DO UPDATE SET epoch = shop.collection_walk.epoch + 1",
+        )
+        .bind(ChainNet::Matic.db_name())
+        .execute(&mut *conn)
+        .await?;
         super::collections_projection::invalidate(conn, ChainNet::Matic).await?;
         self.reset();
         Ok(())
@@ -791,6 +808,8 @@ pub async fn refresh_hints(
     finalized: u64,
 ) -> anyhow::Result<Refreshed> {
     let net = ChainNet::Matic;
+    let token = reads_token(pool, net).await?;
+    let final_block = i64::try_from(finalized).context("finalized block out of range")?;
     let at_final = format!("0x{finalized:x}");
     let size_calls: Vec<(String, Vec<u8>)> = FACTORIES
         .iter()
@@ -906,11 +925,26 @@ pub async fn refresh_hints(
                         None => unread.push(format!("{factory}[{i}]")),
                     }
                 }
+                // Under the reads lock, and only while the walk has not
+                // rewound since the reads began: a rewind makes the rows it
+                // finds read past it provisional, and a chunk read before
+                // it must not finalize them again.
+                let mut tx = pool.begin().await?;
+                sqlx::query("SELECT pg_advisory_xact_lock_shared($1, $2)")
+                    .bind(READS_LOCK)
+                    .bind(net.chain_id() as i32)
+                    .execute(&mut *tx)
+                    .await?;
+                anyhow::ensure!(
+                    reads_token(&mut *tx, net).await? == token,
+                    "the walk rewound while the factory lists were read; the next attempt reads them again"
+                );
                 out.added += sqlx::query(
-                    "INSERT INTO shop.collection_hint (network, factory, idx, address, finalized) \
-                     SELECT $1, $2, i, a, $5 FROM UNNEST($3::int[], $4::text[]) AS u(i, a) \
+                    "INSERT INTO shop.collection_hint (network, factory, idx, address, finalized, read_block) \
+                     SELECT $1, $2, i, a, $5, $6 FROM UNNEST($3::int[], $4::text[]) AS u(i, a) \
                      ON CONFLICT (network, address) DO UPDATE \
-                     SET finalized = true, factory = EXCLUDED.factory, idx = EXCLUDED.idx \
+                     SET finalized = true, factory = EXCLUDED.factory, idx = EXCLUDED.idx, \
+                         read_block = EXCLUDED.read_block \
                      WHERE EXCLUDED.finalized AND NOT shop.collection_hint.finalized",
                 )
                 .bind(net.db_name())
@@ -918,9 +952,11 @@ pub async fn refresh_hints(
                 .bind(&idxs)
                 .bind(&addrs)
                 .bind(finalized)
-                .execute(pool)
+                .bind(finalized.then_some(final_block))
+                .execute(&mut *tx)
                 .await?
                 .rows_affected() as usize;
+                tx.commit().await?;
             }
         }
     }
@@ -976,7 +1012,7 @@ pub fn seed_of(contract: &str, answers: &[Answer], read_block: u64) -> Option<Se
 /// a call was refused for, waits for the next gate. Returns the seeds added.
 pub async fn read_seeds(pool: &PgPool, rpc: &Rpc<'_>, finalized: u64) -> anyhow::Result<usize> {
     let net = ChainNet::Matic;
-    let token = seed_token(pool, net).await?;
+    let token = reads_token(pool, net).await?;
     let pending: Vec<String> = sqlx::query_scalar(
         "SELECT address FROM ( \
              SELECT e.contract_address AS address, 0 AS walked_first, e.block_number AS position \
@@ -1021,18 +1057,20 @@ pub async fn read_seeds(pool: &PgPool, rpc: &Rpc<'_>, finalized: u64) -> anyhow:
     write_seeds(pool, net, &seeds, token).await
 }
 
-/// What a write of creation reads checks has not moved since the reads
-/// began: the walk's owner generation and rewind count (`None` before the
-/// walk has a cursor).
-pub type SeedToken = Option<(i64, i32)>;
+/// What a write of the gate's reads checks has not moved since the reads
+/// began: the walk's owner generation and its epoch (`shop.collection_walk`,
+/// raised by every rewind and rebuild); `None` before the walk has a cursor.
+pub type ReadsToken = Option<(i64, i64)>;
 
-/// The walk's [`SeedToken`] now.
-pub async fn seed_token<'e>(
+/// The walk's [`ReadsToken`] now.
+pub async fn reads_token<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     net: ChainNet,
-) -> sqlx::Result<SeedToken> {
+) -> sqlx::Result<ReadsToken> {
     sqlx::query_as(
-        "SELECT owner_generation, reorg_rewinds FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
+        "SELECT c.owner_generation, COALESCE(w.epoch, 0) FROM shop.chain_cursor c \
+         LEFT JOIN shop.collection_walk w ON w.network = c.network \
+         WHERE c.indexer = $1 AND c.network = $2",
     )
     .bind(INDEXER_COLLECTIONS)
     .bind(net.db_name())
@@ -1041,25 +1079,25 @@ pub async fn seed_token<'e>(
 }
 
 /// Inserts `seeds`, read since `token` was taken; a collection's first read
-/// stands. Under the creation-read lock, shared, it writes nothing when a
-/// rewind or a new owner moved the walk since `token`: those reads may be
-/// of a branch the rewind left.
+/// stands. Under the reads lock, shared, it writes nothing when a rewind, a
+/// rebuild or a new owner moved the walk since `token`: those reads may be
+/// of a branch the walk left.
 pub async fn write_seeds(
     pool: &PgPool,
     net: ChainNet,
     seeds: &[Seed],
-    token: SeedToken,
+    token: ReadsToken,
 ) -> anyhow::Result<usize> {
     if seeds.is_empty() {
         return Ok(0);
     }
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock_shared($1, $2)")
-        .bind(SEED_LOCK)
+        .bind(READS_LOCK)
         .bind(net.chain_id() as i32)
         .execute(&mut *tx)
         .await?;
-    if seed_token(&mut *tx, net).await? != token {
+    if reads_token(&mut *tx, net).await? != token {
         tracing::info!(
             network = net.db_name(),
             "collections: the walk moved while the creation reads were taken; they are read again"
@@ -1087,8 +1125,8 @@ pub async fn write_seeds(
     Ok(written)
 }
 
-/// The gate before each attempt: the endpoint must serve Polygon (the
-/// creation reads are kept, never rewound); then the factories' lists (a
+/// The gate before each attempt: the endpoint must serve Polygon (what it
+/// reads is kept until a rewind or rebuild past it); then the factories' lists (a
 /// failure fails the attempt: a filter without the newest collections would
 /// fail the windows that walk them), then the creation reads (a failure is
 /// only logged: the walk does not need them), both against Polygon's
@@ -1901,6 +1939,203 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(created, 17);
+    }
+
+    /// An operator's rebuild undoes the gate's reads in flight: a token
+    /// taken after the job claimed the walk again, before the rebuild's
+    /// cleanup, writes nothing after it; one taken after it writes.
+    #[tokio::test]
+    async fn a_rebuild_refuses_creation_reads_taken_before_it() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        hint(&pool, 0, OLDER).await;
+        hint(&pool, 1, CREATED).await;
+        let settings = walk_settings();
+        let ix = CollectionsIndex::new();
+        let chain = Chain {
+            logs: fixture(),
+            finalized: 97_895_000,
+        };
+        let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
+        chain_walk::run_pass(&pool, &chain, &ix, &settings, &owner, None, &|_| {})
+            .await
+            .unwrap();
+        // The operator's rebuild request, as DATABASE.md gives it.
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET rebuild_requested_at = timezone('UTC', now()), \
+                    folded_block = NULL, folded_at = NULL, owner_generation = owner_generation + 1 \
+             WHERE indexer = 'collections' AND network = 'matic'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // A walk that rewound before: its epoch row exists already.
+        sqlx::query("INSERT INTO shop.collection_walk (network, epoch) VALUES ('matic', 5)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
+        let in_flight = reads_token(&pool, ChainNet::Matic).await.unwrap();
+        chain_walk::run_pass(&pool, &chain, &ix, &settings, &owner, None, &|_| {})
+            .await
+            .unwrap();
+        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.collection_event")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 0, "the rebuild ran");
+        let read = Seed {
+            contract_address: CREATED.into(),
+            name: "n".into(),
+            symbol: "s".into(),
+            creator: CREATOR.into(),
+            is_approved: true,
+            is_editable: true,
+            read_block: 97_800_000,
+        };
+        assert_eq!(
+            write_seeds(
+                &pool,
+                ChainNet::Matic,
+                std::slice::from_ref(&read),
+                in_flight
+            )
+            .await
+            .unwrap(),
+            0
+        );
+        let now = reads_token(&pool, ChainNet::Matic).await.unwrap();
+        assert_eq!(
+            write_seeds(&pool, ChainNet::Matic, &[read], now)
+                .await
+                .unwrap(),
+            1
+        );
+    }
+
+    /// A rewind makes the factory list rows read past it provisional: a
+    /// branch that puts another collection at an index read final before
+    /// gets its own read, and the window that creates that collection
+    /// commits.
+    #[tokio::test]
+    async fn a_replacement_branch_gets_its_own_factory_list_reads() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        for (idx, address, read_block) in [(0, OLDER, 97_000_000i64), (1, CREATED, 97_750_000)] {
+            sqlx::query(
+                "INSERT INTO shop.collection_hint (network, factory, idx, address, finalized, read_block) \
+                 VALUES ('matic', $1, $2, $3, true, $4)",
+            )
+            .bind(V3)
+            .bind(idx)
+            .bind(address)
+            .bind(read_block)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let settings = walk_settings();
+        let ix = CollectionsIndex::new();
+        let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
+        let chain = Chain {
+            logs: fixture(),
+            finalized: 97_895_000,
+        };
+        chain_walk::run_pass(&pool, &chain, &ix, &settings, &owner, None, &|_| {})
+            .await
+            .unwrap();
+
+        // A reorg to 97,700,000: the branch past it creates `replacement`
+        // where CREATED was, at the same list index.
+        let replacement = "0x00000000000000000000000000000000000000b7";
+        let to = 97_700_000i64;
+        let cur = chain_walk::cursor(&pool, INDEXER_COLLECTIONS, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap();
+        let at = header(to as u64);
+        let mut tx = pool.begin().await.unwrap();
+        ChainIndex::rewind(&ix, &mut tx, to).await.unwrap();
+        chain_walk::rewind(
+            &mut tx,
+            INDEXER_COLLECTIONS,
+            ChainNet::Matic,
+            (cur.last_block, cur.last_block_hash.as_deref()),
+            to,
+            Some((at.hash.as_str(), at.timestamp)),
+        )
+        .await
+        .unwrap();
+        owner.check(&mut tx).await.unwrap();
+        tx.commit().await.unwrap();
+        let finals: Vec<(String, bool)> =
+            sqlx::query_as("SELECT address, finalized FROM shop.collection_hint ORDER BY idx")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            finals,
+            vec![(OLDER.into(), true), (CREATED.into(), false)],
+            "only the row read past the rewind is read again"
+        );
+
+        let size = Factory::collectionsSizeCall {}.abi_encode();
+        let mut calls = HashMap::new();
+        for block in ["0x64", "latest"] {
+            calls.insert(
+                call_key(FACTORIES[0].0, size.clone(), block),
+                word(U256::ZERO),
+            );
+            calls.insert(call_key(V3, size.clone(), block), word(U256::from(2)));
+        }
+        calls.insert(call_key(V3, nth(1), "0x64"), addr(replacement));
+        let url = fake_rpc(
+            Arc::new(std::sync::Mutex::new(calls)),
+            Batches::Upto(100),
+            Arc::default(),
+        )
+        .await;
+        let http = crate::http::Outbound::for_tests();
+        let refreshed = refresh_hints(&pool, &Rpc::at(&http, &url), 100)
+            .await
+            .unwrap();
+        assert_eq!((refreshed.added, refreshed.remaining), (1, 0));
+
+        let created_topic = format!("0x{:0>64}", &CREATED[2..]);
+        let replacement_topic = format!("0x{:0>64}", &replacement[2..]);
+        let replaced: Vec<RpcLog> = fixture()
+            .into_iter()
+            .map(|mut l| {
+                if l.address.eq_ignore_ascii_case(CREATED) {
+                    l.address = replacement.into();
+                }
+                for t in &mut l.topics {
+                    if t.eq_ignore_ascii_case(&created_topic) {
+                        *t = replacement_topic.clone();
+                    }
+                }
+                l
+            })
+            .collect();
+        let branch = Chain {
+            logs: replaced,
+            finalized: 97_895_000,
+        };
+        chain_walk::run_pass(&pool, &branch, &ix, &settings, &owner, None, &|_| {})
+            .await
+            .unwrap();
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT contract_address, count(*) FROM shop.collection_event \
+             WHERE contract_address IN ($1, $2) GROUP BY contract_address",
+        )
+        .bind(CREATED)
+        .bind(replacement)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows, vec![(replacement.to_string(), 17)]);
     }
 
     /// How the fake endpoint takes a JSON-RPC batch.
