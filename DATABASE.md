@@ -1926,10 +1926,26 @@ schema's object pass creates `builder.terms_acceptances` and its indexes.
 
 The builder's third-party routes (`services/catalyst/builder/src/third_parties.rs`,
 `services/catalyst/builder/src/handlers/third_parties.rs`) and every
-decision about a third-party collection read the third-party registry over
-HTTP and `builder.virtual_third_parties` by SQL. The table holds the
+decision about a third-party collection read the third-party registry and
+`builder.virtual_third_parties` by SQL. The table holds the
 providers the registry doesn't have yet: tens of rows, one per provider a
 creator started before registering it, written rarely.
+
+On Polygon the registry is the shop's published index (see "Third-party
+registry"), read and never written through
+`services/catalyst/chain-index/src/third_party_index.rs`, the reader the
+shop's Lambda provider routes use. One statement returns the latest
+version of every provider at the `third_party_registry` cursor's published
+block; another returns a provider's receipts with a given cheque digest at
+that block. Both answer no publication, and the builder 503, unless the
+cursor row on `matic` is bound to chain 137, has `full_history`, is outside
+quarantine and divergence, and published (`folded_block`, `folded_at`) within
+the last 30 minutes. The builder reads `shop.chain_cursor` (`indexer`,
+`network`, `chain_id`, `full_history`, `quarantined_at`, `diverged_at`,
+`folded_block`, `folded_at`) and `shop.third_party_registry_event`
+(`block_number`, `log_index`, `provider_id`, `state`, `receipt`). On Amoy,
+which the shop doesn't index, the registry is the registry subgraph, read
+over HTTP.
 
 Tables and what they hold:
 
@@ -1954,6 +1970,8 @@ Statements:
 | item URN in use | the provider's items holding the item part | `collections_linked_contract_key`, `items_collection_created_idx` |
 | a signed read of a private file | the providers of the third-party items naming the hash, at most 20 | `item_contents_hash_idx`, `uploaded_contents` primary key |
 | `GET /v1/thirdParties/{id}/slots` | the provider's items with an item curation | `collections_linked_contract_key`, `items_collection_created_idx`, `item_curations_item_created_key` |
+| a registry read on Polygon | the cursor row, then the latest version per provider at or below its published block | `chain_cursor` primary key, `third_party_registry_provider_version_idx` |
+| `approvalData`'s receipt check on Polygon | the cursor row, then the provider's versions at or below its published block whose receipt holds the digest | `chain_cursor` primary key, `third_party_registry_provider_version_idx` (leading `provider_id`) |
 | create, update, delete of a row | an advisory transaction lock on the provider id, the row, one write | `virtual_third_parties_pkey` |
 | collection delete | the provider's lock, then the row if no collection of the provider is left | `collections_linked_contract_key` |
 
@@ -1963,11 +1981,18 @@ Invariants:
   the row, in the transaction that writes the collection, so two first
   collections of one provider create one row and the second save decides
   on it.
-- The registry read runs before any connection is taken and is never
-  retried inside a transaction; a write decides on a read that started
-  after it began and decides again inside its transaction from that same
-  read. A read-only decision also takes a read that started up to
-  `kept::READ_WINDOW` (5 seconds) before it.
+- The registry read runs before the request takes a connection and is never
+  retried inside a transaction; on Polygon it borrows one pool connection
+  for its statement, and one read runs at a time on the node. A write
+  decides on a read that started after it began and decides again inside
+  its transaction from that same read. A read-only decision also takes a
+  read that started up to `kept::READ_WINDOW` (5 seconds) before it.
+- On Polygon a read sees the index's publication, never a version above the
+  published block, so a decision rests on the chain as of that block: at
+  most 30 minutes old by the publication rule, and unavailable past it.
+- The free slots a provider has are its indexed (or subgraph) item
+  allowance less its items with an item curation; the index's consumed
+  count isn't part of the builder's accounting.
 - Measured at the reference size (51,745 collections, 34 third-party,
   116,190 items, 7 rows): every statement above under 6 ms.
 
@@ -4613,7 +4638,11 @@ Provider queries read the latest state per provider at or below the same
 statement's published block. Only then do they filter approval or manager
 membership. Rows from a partial, stale, diverged, quarantined or wrong-chain
 publication cannot be served. An empty result from a current publication
-means there are no matching providers. The index exposes on-chain slot
+means there are no matching providers. The reader
+(`services/catalyst/chain-index/src/third_party_index.rs`) also returns a
+provider's receipts with a given message hash at the published block, under
+the same publication rule; the builder reads through it (see "Builder third
+parties workload"). The index exposes on-chain slot
 availability as the maximum less consumed slots. Publish reservations and
 submission state still belong to the service that processes the submission.
 

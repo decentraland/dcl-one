@@ -200,8 +200,8 @@ both sides insert them as virtual third party rows (`tp:1:<name>:`).
 `registry` names the providers the third-party registry lists, each with its
 managers, whether it is programmatic and, with `approved: false`, an
 unapproved one (approved otherwise): the capture serves them from its fake
-third-party subgraph to upstream, and the replay from a loopback registry to
-the node. A provider can be in both.
+third-party subgraph to upstream, and the replay seeds them into the node's
+third-party registry index. A provider can be in both.
 `receipts` are the slot cheques the registry already consumed, each with its
 provider, quantity, salt and signing wallet role: the capture serves them as
 the third-party subgraph's `receipts`, and the replay records them in the

@@ -44,7 +44,8 @@ pub async fn temp_storage() -> Arc<Storage> {
 }
 
 /// The process's scratch database with a fresh complete pass of the
-/// Polygon collections copy, so derived chain state answers; `None` (skip)
+/// Polygon collections copy, so derived chain state answers, and a current
+/// publication of the third-party registry index; `None` (skip)
 /// without `CATALYST_TEST_DATABASE_URL`.
 pub async fn scratch_pool(max_connections: u32) -> Option<sqlx::PgPool> {
     let pool = crate::db::scratch::pool(max_connections).await?;
@@ -57,6 +58,7 @@ pub async fn scratch_pool(max_connections: u32) -> Option<sqlx::PgPool> {
     .execute(&pool)
     .await
     .unwrap();
+    publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
     Some(pool)
 }
 
@@ -552,26 +554,168 @@ pub async fn committee_index(fake: &FakeCommittee) -> Arc<crate::chain_index::Ch
     registry_index(fake, &FakeRegistry::up()).await
 }
 
-/// A loopback third-party registry subgraph that answers the providers it
+/// The third-party registry a test holds, served both ways the node reads
+/// it. As a loopback registry subgraph (Amoy) it answers the providers it
 /// holds as The Graph does for the node's walk (`id_gt`, `first`, ordered by
-/// id); `down` answers a GraphQL error. Counts its reads.
+/// id), `down` answers a GraphQL error, and it counts its reads. As the
+/// shop's published index (Polygon) [`FakeRegistry::published`] writes what
+/// it holds into `shop.third_party_registry_event` before each request, and
+/// `down` leaves a publication older than the index's bound.
 #[derive(Clone, Default)]
 pub struct FakeRegistry {
     providers: Arc<std::sync::Mutex<Option<BTreeMap<String, serde_json::Value>>>>,
-    receipts: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+    receipts: Arc<std::sync::Mutex<BTreeMap<String, String>>>,
     receipts_down: Arc<std::sync::atomic::AtomicBool>,
     hits: Arc<std::sync::atomic::AtomicUsize>,
+    held: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+    unpublished: Arc<std::sync::atomic::AtomicBool>,
+    publishing: Arc<tokio::sync::Mutex<()>>,
+}
+
+static INDEX_POSITION: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// A publication of the shop's third-party registry index in `pool`'s
+/// database: a current one, dated a second back, or one older than the
+/// index's bound when `stale`.
+pub async fn publish_registry_index(conn: &mut sqlx::PgConnection, stale: bool) {
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor \
+           (indexer, network, start_block, last_block, full_history, folded_block, folded_at, chain_id) \
+         VALUES ($1, 'matic', 0, 1, true, 1, \
+           timezone('UTC', now()) - CASE WHEN $2 THEN interval '31 minutes' ELSE interval '1 second' END, 137) \
+         ON CONFLICT (indexer, network) DO UPDATE SET folded_at = EXCLUDED.folded_at",
+    )
+    .bind(crate::chain_index::third_party_index::INDEXER)
+    .bind(stale)
+    .execute(conn)
+    .await
+    .unwrap();
+}
+
+/// One version of `provider` in the shop's third-party registry index at
+/// `block`: its `state` after a registry event, and the event's receipt.
+pub async fn index_version(
+    conn: &mut sqlx::PgConnection,
+    block: i64,
+    provider: &str,
+    state: &serde_json::Value,
+    receipt: Option<serde_json::Value>,
+) {
+    sqlx::query(
+        "INSERT INTO shop.third_party_registry_event \
+           (block_number, log_index, block_time, provider_id, state, receipt) \
+         VALUES ($1, $2, 0, $3, $4, $5)",
+    )
+    .bind(block)
+    .bind(INDEX_POSITION.fetch_add(1, std::sync::atomic::Ordering::SeqCst))
+    .bind(provider)
+    .bind(state)
+    .bind(receipt)
+    .execute(conn)
+    .await
+    .unwrap();
+}
+
+fn index_state(record: &serde_json::Value) -> serde_json::Value {
+    let metadata = &record["metadata"]["thirdParty"];
+    let managers: Vec<String> = record["managers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| m.as_str().map(str::to_ascii_lowercase))
+        .collect();
+    serde_json::json!({
+        "id": record["id"],
+        "approved": record["isApproved"],
+        "root": record["root"],
+        "resolver": null,
+        "raw_metadata": "",
+        "metadata": match metadata.is_null() {
+            true => serde_json::Value::Null,
+            false => serde_json::json!({
+                "name": metadata["name"],
+                "description": metadata["description"],
+                "contracts": metadata["contracts"],
+            }),
+        },
+        "managers": managers,
+        "programmatic": record["isProgrammatic"],
+        "max_items": record["maxItems"],
+        "consumed_slots": "0",
+    })
 }
 
 impl FakeRegistry {
     pub fn up() -> Self {
         let fake = Self::default();
         *fake.providers.lock().unwrap() = Some(BTreeMap::new());
+        fake.changed();
         fake
+    }
+
+    fn changed(&self) {
+        self.unpublished
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Writes what the registry holds into the index of `pool`'s database,
+    /// if it changed since the last call and the database can be reached:
+    /// each provider's state after the receipts of its consumed cheques, at
+    /// the published block.
+    pub async fn publish(&self, pool: &sqlx::PgPool) {
+        let _one = self.publishing.lock().await;
+        if !self
+            .unpublished
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        let providers = self.providers.lock().unwrap().clone();
+        let receipts = self.receipts.lock().unwrap().clone();
+        let held: Vec<String> = self.held.lock().unwrap().iter().cloned().collect();
+        let Ok(mut tx) = pool.begin().await else {
+            return;
+        };
+        publish_registry_index(&mut tx, providers.is_none()).await;
+        if let Some(providers) = providers {
+            sqlx::query("DELETE FROM shop.third_party_registry_event WHERE provider_id = ANY($1)")
+                .bind(&held)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            for (id, record) in &providers {
+                let state = index_state(record);
+                let consumed = receipts
+                    .iter()
+                    .filter(|(_, provider)| *provider == id)
+                    .map(|(hash, _)| Some(serde_json::json!({ "hash": hash, "quantity": "1", "signer": "", "curator": "" })));
+                for receipt in consumed.chain([None]) {
+                    index_version(&mut tx, 1, id, &state, receipt).await;
+                }
+            }
+        }
+        tx.commit().await.unwrap();
+    }
+
+    /// `app` with the registry published into `pool`'s index before each
+    /// request.
+    pub fn published(&self, pool: &sqlx::PgPool, app: axum::Router) -> axum::Router {
+        let (registry, pool) = (self.clone(), pool.clone());
+        app.layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let (registry, pool) = (registry.clone(), pool.clone());
+                async move {
+                    registry.publish(&pool).await;
+                    next.run(request).await
+                }
+            },
+        ))
     }
 
     /// Lists provider `id` with `managers`, approved or not.
     pub fn put(&self, id: &str, managers: &[&str], approved: bool, programmatic: bool) {
+        self.held.lock().unwrap().insert(id.to_string());
+        self.changed();
         self.providers
             .lock()
             .unwrap()
@@ -594,6 +738,7 @@ impl FakeRegistry {
 
     /// Drops provider `id`.
     pub fn remove(&self, id: &str) {
+        self.changed();
         if let Some(providers) = self.providers.lock().unwrap().as_mut() {
             providers.remove(id);
         }
@@ -601,6 +746,7 @@ impl FakeRegistry {
 
     /// Changes one field of provider `id`.
     pub fn set(&self, id: &str, field: &str, value: serde_json::Value) {
+        self.changed();
         if let Some(provider) = self
             .providers
             .lock()
@@ -614,6 +760,7 @@ impl FakeRegistry {
 
     /// Answers a GraphQL error (`true`) or the providers it holds.
     pub fn fail(&self, down: bool) {
+        self.changed();
         let mut providers = self.providers.lock().unwrap();
         match (down, providers.is_some()) {
             (true, true) => *providers = None,
@@ -626,9 +773,14 @@ impl FakeRegistry {
         self.hits.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// Holds the receipt `id`: the registry consumed that cheque.
-    pub fn consume(&self, id: &str) {
-        self.receipts.lock().unwrap().insert(id.to_string());
+    /// Holds the receipt `id` of `provider`: the registry consumed that
+    /// cheque.
+    pub fn consume(&self, provider: &str, id: &str) {
+        self.changed();
+        self.receipts
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), provider.to_string());
     }
 
     /// Answers a query of receipts with a GraphQL error (`true`) while the
@@ -660,7 +812,7 @@ impl FakeRegistry {
                 .receipts
                 .lock()
                 .unwrap()
-                .iter()
+                .keys()
                 .filter(|r| *r == id)
                 .map(|r| serde_json::json!({ "id": r }))
                 .collect();

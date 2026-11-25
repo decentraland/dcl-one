@@ -179,7 +179,7 @@ async fn world() -> Option<World> {
     .unwrap();
     state.limits = crate::limits::Limits::unbounded();
     let state = Arc::new(state);
-    let app = crate::root_router(state.clone());
+    let app = registry.published(&pool, crate::root_router(state.clone()));
     Some(World {
         pool,
         app,
@@ -986,7 +986,7 @@ async fn while_the_registry_cant_tell_every_third_party_decision_is_503_and_writ
 async fn concurrent_decisions_share_one_registry_read() {
     let Some(w) = world().await else { return };
     let f = fixture(&w, Approved).await;
-    let before = w.registry.hits();
+    let before = w.state.third_parties.reads();
     let path = format!("/v1/collections/{}", f.collection);
     let calls: Vec<_> = (0..16)
         .map(|_| {
@@ -998,7 +998,7 @@ async fn concurrent_decisions_share_one_registry_read() {
     for c in calls {
         assert_eq!(c.await.unwrap(), StatusCode::OK);
     }
-    let reads = w.registry.hits() - before;
+    let reads = w.state.third_parties.reads() - before;
     assert!(
         reads <= 2,
         "{reads} registry reads for 16 concurrent decisions"
@@ -1258,7 +1258,7 @@ async fn a_manager_reads_a_file_only_where_its_writer_holds_the_bytes() {
 async fn an_unsigned_request_never_reads_the_registry() {
     let Some(w) = world().await else { return };
     let f = fixture(&w, Approved).await;
-    let before = w.registry.hits();
+    let before = w.state.third_parties.reads();
     for op in OPS {
         let (method, path, body) = op.request(&f, Anonymous);
         let (status, _) = call(&w.app, Anonymous, method, &path, body).await;
@@ -1271,7 +1271,7 @@ async fn an_unsigned_request_never_reads_the_registry() {
         let (status, _) = call(&w.app, Anonymous, "GET", &path, None).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");
     }
-    assert_eq!(w.registry.hits(), before);
+    assert_eq!(w.state.third_parties.reads(), before);
     let (status, _) = call(
         &w.app,
         Stranger,
@@ -1282,7 +1282,7 @@ async fn an_unsigned_request_never_reads_the_registry() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(
-        w.registry.hits(),
+        w.state.third_parties.reads(),
         before,
         "an id over the bound reads nothing"
     );

@@ -174,6 +174,7 @@ pub(super) async fn own_pool() -> Option<PgPool> {
     .execute(&pool)
     .await
     .unwrap();
+    crate::tests::support::publish_registry_index(&mut pool.acquire().await.unwrap(), false).await;
     set_flag(&pool, Some(json!(true))).await;
     Some(pool)
 }
@@ -216,9 +217,12 @@ pub(super) async fn node_over(pool: PgPool, options: Options) -> Node {
     }
     (options.tune)(&mut state);
     let state = Arc::new(state);
-    let app = Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state.clone()));
+    let app = options.registry.published(
+        &pool,
+        Router::new()
+            .merge(crate::root_router(state.clone()))
+            .nest("/builder-api", crate::router(state.clone())),
+    );
     Node {
         pool,
         storage,
