@@ -12,3 +12,6 @@ bash "$(dirname "$0")/generate.sh"
 
 echo "> Checking room recovery wire compatibility"
 node --test scripts/room-recovery.test.cjs
+
+echo "> Checking video seek wire compatibility"
+node --test scripts/video-player.test.cjs
