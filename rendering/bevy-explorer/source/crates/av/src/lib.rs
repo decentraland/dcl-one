@@ -60,6 +60,9 @@ pub trait AVPlayer: Component {
     fn source(&self) -> Self::Source;
     fn config(&self) -> Self::Config;
     fn position(&self) -> Self::Position;
+    fn seek_requested(&self) -> bool {
+        false
+    }
 }
 
 /// A scene's volume as a player volume: unset is full, non-finite is silent, the rest 0..=1.
@@ -202,6 +205,10 @@ impl AVPlayer for VideoPlayer {
             playback_rate: self.playback_rate.unwrap_or(1.),
             r#loop: self.r#loop.unwrap_or(false),
         }
+    }
+
+    fn seek_requested(&self) -> bool {
+        self.position.is_some()
     }
 
     fn position(&self) -> Self::Position {

@@ -195,12 +195,11 @@ export function initAdminMessageBus(
     };
     authoritativeVideo.set(entity, updated);
 
-    const video = VideoPlayer.getMutable(entity);
-    video.src = updated.src;
-    video.playing = updated.playing;
-    video.volume = updated.volume;
-    video.loop = updated.loop;
-    if (payload.position !== undefined) video.position = payload.position;
+    VideoPlayer.createOrReplace(entity, {
+      ...current,
+      ...updated,
+      position: payload.position,
+    });
 
     adminHasActed = true;
   });
