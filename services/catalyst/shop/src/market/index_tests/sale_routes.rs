@@ -123,6 +123,16 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     sqlx::query("INSERT INTO shop.sale_payout(network,block_number,log_index,payment_ordinal,ordinal,role,recipient,amount)
         SELECT network,block_number,log_index,0,0,CASE WHEN log_index=3 THEN 'name_fee' ELSE 'burn' END,$1,gross
         FROM shop.sale_payment WHERE log_index IN (3,4)").bind(CARL).execute(&db.pool).await.unwrap();
+    // The same day already has a published NAME fee. A later execution
+    // and its payout can only contribute after its own block is published.
+    sqlx::query("WITH e AS (INSERT INTO shop.sale_execution(network,block_number,log_index,tx_hash,venue,kind,block_time,receipt_read)
+        VALUES('ethereum',$1,5,$2,$3,'name_fee',1700000010,true) RETURNING network,block_number,log_index),
+        p AS (INSERT INTO shop.sale_payment(network,block_number,log_index,ordinal,currency,gross,consideration,settled)
+        SELECT e.*,0,$4,30,true,true FROM e RETURNING network,block_number,log_index)
+        INSERT INTO shop.sale_payout(network,block_number,log_index,payment_ordinal,ordinal,role,recipient,amount)
+        SELECT p.*,0,0,'name_fee',$3,30 FROM p")
+        .bind(block as i64+1).bind(format!("0x{:064x}",81)).bind(CARL).bind(mana)
+        .execute(&db.pool).await.unwrap();
     let (code, volume) = get_json(&app, "/v1/volume/all").await;
     assert_eq!(code, StatusCode::OK, "{volume}");
     assert_eq!(

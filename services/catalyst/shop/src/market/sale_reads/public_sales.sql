@@ -11,6 +11,7 @@ WITH sales AS (
                 WHEN i.item_type='emote_v1' THEN 'emote'
                 WHEN i.item_type IS NOT NULL THEN 'wearable' END AS category
     FROM shop.sale_asset a JOIN shop.sale_execution e USING(network,block_number,log_index)
+    JOIN shop.sale_publication pub ON pub.network=a.network AND a.block_number<=pub.block_number
     LEFT JOIN shop.items i ON (i.network,i.contract_address,i.item_id)=(a.network,a.contract_address,a.item_id)
     LEFT JOIN LATERAL (
         SELECT p.beneficiary FROM shop.sale_payment p
