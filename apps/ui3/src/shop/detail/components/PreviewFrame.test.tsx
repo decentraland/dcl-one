@@ -558,6 +558,38 @@ describe("the Bevy avatar preview", () => {
     expect(posted.mock.calls.filter(([message]) => (message as { type?: string }).type === "update")).toEqual([]);
   });
 
+  test("an error answering a scene the page has left may be the renderer dying: the latest options go to a fresh iframe with its own deadline", () => {
+    vi.useFakeTimers();
+    const { onError, change } = mount({ urns: [HOODIE], bevy: true }, 45_000);
+    const first = frame().contentWindow;
+    fromBevy({ type: "ready" });
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    change({ urns: [HAT], bevy: true });
+    change({ urns: [HOODIE, HAT], bevy: true });
+    fromBevy({ type: "error", payload: { message: "the renderer panicked" } });
+    expect(frame().contentWindow).not.toBe(first);
+    expect(params().getAll("urn")).toEqual([HOODIE, HAT]);
+    expect(onError).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(45_000));
+    expect(onError).toHaveBeenCalledWith("The preview did not load in time.");
+  });
+
+  test("an option an earlier update set and the next one leaves out is cleared, since Bevy keeps every update's", () => {
+    const { change } = mount({ urns: [HOODIE], bevy: true });
+    const posted = vi.spyOn(frame().contentWindow!, "postMessage");
+    const updates = () => posted.mock.calls.filter(([message]) => (message as { type?: string }).type === "update").map(([message]) => (message as { payload: { options: Record<string, unknown> } }).payload.options);
+    fromBevy({ type: "ready" });
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    change({ urns: [HOODIE], skin: "ff0000", bevy: true });
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    change({ urns: [HOODIE], bevy: true });
+    // What Bevy runs on: the mount URL's options with every update laid over them in turn (preview.js state.overrides).
+    const merged = updates().reduce<Record<string, unknown>>((all, update) => ({ ...all, ...update }), Object.fromEntries(params()));
+    expect(updates()).toHaveLength(2);
+    expect(Object.keys(updates()[1]!)).toContain("skin");
+    expect(merged.skin).toBeUndefined();
+  });
+
   test("turning Bevy off mounts wearable-preview", () => {
     const { change } = mount({ urns: [HOODIE], bevy: true });
     fromBevy({ type: "ready" });

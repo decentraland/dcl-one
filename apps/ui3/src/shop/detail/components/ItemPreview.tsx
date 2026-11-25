@@ -246,8 +246,10 @@ function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps
     type: isEmote ? undefined : itemAlone ? "wearable" : "avatar",
     emote: isEmote || itemAlone ? undefined : "fashion",
     disableBackground: true,
-    wheelZoom: isEmote ? 1.5 : undefined,
-    wheelStart: isEmote ? 100 : undefined,
+    // An emote's closer framing. Not for Bevy, which hides its own controls (its emote playback among them) wherever the
+    // page frames the view itself, and the page's playbar is Babylon's only.
+    wheelZoom: isEmote && drawWith !== "bevy" ? 1.5 : undefined,
+    wheelStart: isEmote && drawWith !== "bevy" ? 100 : undefined,
     ...rendererOptions(drawWith ?? "babylon", "marketplace"),
   };
   const ownControls = status === "ready" && drawnBy === "babylon";

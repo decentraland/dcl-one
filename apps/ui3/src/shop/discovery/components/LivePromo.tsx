@@ -70,8 +70,15 @@ export default function LivePromo({ to, urns, title, cta, ariaLabel, fallback, f
       setOnScreen(true);
       return;
     }
-    // A little before it scrolls into view, so the scene is ready when it lands.
-    const io = new IntersectionObserver((entries) => setOnScreen(entries.some((e) => e.isIntersecting)), { rootMargin: "200px" });
+    // A little before it scrolls into view, so the scene is ready when it lands. The tile is the one element observed, so
+    // the last entry of a batch is where it is now.
+    const io = new IntersectionObserver(
+      (entries) => {
+        const last = entries[entries.length - 1];
+        if (last) setOnScreen(last.isIntersecting);
+      },
+      { rootMargin: "200px" },
+    );
     io.observe(el);
     return () => io.disconnect();
   }, []);
@@ -109,6 +116,8 @@ export default function LivePromo({ to, urns, title, cta, ariaLabel, fallback, f
             ambient
             loadTimeoutMs={bevy ? UNITY_LOAD_TIMEOUT_MS : undefined}
             onLoad={() => setReady(true)}
+            // A fresh iframe has drawn nothing yet (Bevy booting again): the picture covers it until it has.
+            onReplaced={() => setReady(false)}
             onError={() => {
               setReady(false);
               if (bevy) setBevyFailed(true);

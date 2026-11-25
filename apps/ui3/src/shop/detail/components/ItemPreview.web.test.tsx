@@ -380,6 +380,15 @@ describe("the Bevy avatar preview", () => {
     expect(screen.queryByTestId("preview-toggle")).toBeNull();
   });
 
+  test("an emote leaves Bevy its own controls, its playback among them: no framing that hides them, and no second playbar", () => {
+    bevy(false);
+    render(<ItemPreview item={item({ category: "emote" } as Partial<CatalogItem>)} renderer="full" />);
+    for (const hides of ["wheelZoom", "zoom", "hideControls", "camera", "showThumbnailBoundaries"]) expect(params().has(hides)).toBe(false);
+    fromBevy({ type: "ready" });
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    expect(screen.queryByRole("button", { name: "Play emote" })).toBeNull();
+  });
+
   test("Bevy failing gives way to Unity, then Babylon; a new item tries Bevy again", () => {
     bevy(true);
     const view = render(<ItemPreview item={item()} renderer="full" />);

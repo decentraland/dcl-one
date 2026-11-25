@@ -182,6 +182,38 @@ describe("LivePromo", () => {
     expect(fallback().hasAttribute("data-hidden")).toBe(true);
   });
 
+  it("under Bevy a frame that boots again is covered by the picture until its replacement draws", () => {
+    primeRemoteFlags({ "dapps-shop-bevy-avatar-preview": true });
+    tile();
+    intersect(true);
+    const fromBevy = (data: unknown) =>
+      act(() => {
+        window.dispatchEvent(new MessageEvent("message", { data, source: frame()!.contentWindow, origin: window.location.origin }));
+      });
+    fromBevy({ type: "ready" });
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    expect(fallback().hasAttribute("data-hidden")).toBe(true);
+    const first = frame()!.contentWindow;
+    fromBevy({ type: "ready" });
+    expect(frame()!.contentWindow).not.toBe(first);
+    expect(fallback().hasAttribute("data-hidden")).toBe(false);
+    fromBevy({ type: "ready" });
+    fromBevy({ type: "load", payload: { renderer: "bevy" } });
+    expect(fallback().hasAttribute("data-hidden")).toBe(true);
+  });
+
+  it("goes by the last entry of a batch: in and out again is off screen", () => {
+    tile();
+    act(() => {
+      for (const o of [...observers])
+        o.cb(
+          [{ isIntersecting: true, target: o.el } as IntersectionObserverEntry, { isIntersecting: false, target: o.el } as IntersectionObserverEntry],
+          o as unknown as IntersectionObserver,
+        );
+    });
+    expect(frame()).toBeNull();
+  });
+
   it("waits for the flags before mounting, so it never loads one renderer and then the other", () => {
     primeRemoteFlags(null);
     vi.stubGlobal("fetch", () => new Promise(() => {}));

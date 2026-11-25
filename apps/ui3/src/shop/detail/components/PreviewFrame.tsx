@@ -125,11 +125,12 @@ function setKeys(options: PreviewFrameOptions): Set<string> {
 /**
  * The update for these options. Babylon lays an update over the mount URL's options, so a key the URL set and these
  * options leave unset goes as an own property holding undefined (postMessage keeps it): left out, the URL's value would
- * come back. Unity skips such a key, which needsMount has already ruled out.
+ * come back. Bevy lays it over the URL's and every update's before it (preview.js: `state.overrides`), so every key it
+ * holds goes that way. Unity skips such a key, which needsMount has already ruled out.
  */
-function updateFor(mount: Mount, options: PreviewFrameOptions): Record<string, unknown> {
+function updateFor(mount: Mount, held: ReadonlySet<string>, options: PreviewFrameOptions): Record<string, unknown> {
   const update: Record<string, unknown> = {};
-  for (const key of setKeys(mount.options)) update[key] = undefined;
+  for (const key of mount.options.bevy === true ? held : setKeys(mount.options)) update[key] = undefined;
   Object.assign(update, options);
   for (const key of RENDERER_KEYS) delete update[key];
   if (mount.options.unity === true) for (const key of Object.keys(update)) if (!UNITY_UPDATE_KEYS.has(key)) delete update[key];
@@ -193,7 +194,7 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
   // only for a change an update cannot carry (needsMount).
   const [mount, setMount] = useState(() => mountWith(0, options));
   const origin = new URL(mount.base).origin;
-  // `held`: the options a Unity preview holds a value for, the mount URL's plus every one an update has set since.
+  // `held`: the options a Unity or Bevy preview holds a value for, the mount URL's plus every one an update has set since.
   const live = useRef<Live>(liveFor(0, serialized, options));
   // The options the page shows now: an answer counts only for them.
   const latest = useRef(serialized);
@@ -239,7 +240,7 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
     now.delivered = serialized;
     now.awaiting = serialized;
     now.sentAt = performance.now();
-    const update = updateFor(mount, options);
+    const update = updateFor(mount, now.held, options);
     for (const key of setKeys(update as PreviewFrameOptions)) now.held.add(key);
     post("update", { options: update });
   };
@@ -276,6 +277,13 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
         // Except a failed first scene: a renderer that could not start applies no update after it, whatever options it was
         // for.
         const failedToStart = type === "error" && first;
+        if (mount.options.bevy === true && type === "error" && !failedToStart && answeredFor !== null && answeredFor !== latest.current) {
+          // Bevy's error names no scene, and its renderer dying says so the same way: whatever it was, the options the
+          // page has now go to a fresh iframe, with a deadline of its own, rather than to one that may be dead.
+          live.current = liveFor(mount.n + 1, latest.current, latestOptions.current);
+          setMount(mountWith(mount.n + 1, latestOptions.current));
+          return;
+        }
         if (!answersEveryReload(mount.options) || answeredFor === null || answeredFor === latest.current || failedToStart) {
           if (type === "load") {
             if (callbacks.current.ambient) control("disableSound");
