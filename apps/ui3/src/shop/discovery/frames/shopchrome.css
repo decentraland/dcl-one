@@ -33,20 +33,6 @@
   flex: 1 0 240px;
   max-width: 496px;
 }
-.shop-subnav .shop-search form {
-  height: 40px;
-  gap: 8px;
-  padding: 0 12px;
-  border-radius: 50px;
-  border: 1px solid #c6bcd7;
-  background: rgba(255, 255, 255, 0.1);
-}
-.shop-subnav .shop-search form:focus-within { border-color: #fff; }
-/* Upstream's field sets no face, so it renders in the browser's default control font. */
-.shop-subnav .shop-search input { font-family: revert; font-size: 17px; letter-spacing: -0.2px; color: #fff; }
-.shop-subnav .shop-search input::placeholder { color: #cfcdd4; opacity: 1; }
-.shop-subnav .shop-search__icon { color: #fcfcfc; }
-
 .shop-subnav__credits {
   position: relative;
   display: inline-flex;
@@ -129,13 +115,6 @@ button.shop-subnav__icon {
     border: 1px solid transparent;
     border-top-color: rgba(255, 255, 255, 0.3);
   }
-  .shop-subnav .shop-search form { border-radius: 12px; padding: 0 12px; }
-  .shop-subnav .shop-search input { font-size: 14px; }
-}
-/* After the width rules, as upstream's NavBar.styles.ts: a touch device keeps 16px at any width, below which
-   iOS zooms the page on focus. */
-@media (pointer: coarse) {
-  .shop-subnav .shop-search input { font-size: 16px; }
 }
 
 @media (max-width: 900px) {

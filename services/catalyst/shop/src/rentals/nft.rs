@@ -164,8 +164,12 @@ pub(super) async fn nft_by_contract_token(
     {
         return Err(NftReadError::MetadataUnavailable);
     }
+    let at_venue = row
+        .asset
+        .owner_address
+        .eq_ignore_ascii_case(super::index::RENTALS_MAINNET);
     let rent = match custody_at {
-        Some(now) => Some(
+        Some(now) if at_venue => Some(
             super::index::published_rent(
                 &mut snapshot.tx,
                 super::index::RentalsChain::Mainnet,
@@ -176,7 +180,7 @@ pub(super) async fn nft_by_contract_token(
             )
             .await?,
         ),
-        None => None,
+        _ => None,
     };
     Ok(Some((row.asset, rent)))
 }
