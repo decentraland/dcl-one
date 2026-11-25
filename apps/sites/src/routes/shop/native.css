@@ -1,3 +1,5 @@
+@import "@dcl/one-ui/foundations/colors/colors.css";
+
 .mk-native { position: relative; min-height: 100%; height: 100%; overflow: auto; color: var(--ui-text-primary, #fff); background: var(--ui-bg-panel, #15121c); }
 .mk-native__view { min-height: 100%; }
 .mk-native .cs { position: relative; inset: auto; min-height: 100%; z-index: auto; }
