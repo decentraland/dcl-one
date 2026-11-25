@@ -3469,8 +3469,9 @@ async fn a_pass_without_its_own_marks_runs_again_and_backs_off() {
 }
 
 /// One quiet observation reads the land-authz cursor, the clock and every
-/// mark in one snapshot. A cursor advance (block 101 indexed, not folded)
-/// committed right after the observation read the cursor at block 100 is
+/// mark in one snapshot. A cursor advance (block 101 indexed with a transfer,
+/// not folded, so the fold is no longer current) committed right after the
+/// observation read the cursor at block 100 is
 /// invisible to it, and its clock predates the advance: a check records the
 /// grid of block 100 current only at a time it was. The next observation
 /// sees the advance and checks nothing.
@@ -3493,23 +3494,31 @@ async fn a_check_never_confirms_land_at_a_clock_after_it_stopped_publishing() {
     let mut w = map::Watcher::default();
     assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
 
-    // Block 101 is indexed but not folded, committed between the
-    // observation's cursor read and its clock.
+    // Block 101 is indexed with a transfer but not folded, committed between
+    // the observation's cursor read and its clock.
     let advanced_at = Arc::new(Mutex::new(None::<chrono::NaiveDateTime>));
-    let (pool, network, at) = (
-        db.pool.clone(),
-        settings.network.clone(),
-        advanced_at.clone(),
-    );
+    let (pool, settings_at, at) = (db.pool.clone(), settings.clone(), advanced_at.clone());
     *node.state.map.observation_hook.lock() = Some(Box::pin(async move {
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query(
+            "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
+             VALUES (101, 0, 1700000100, $1, 'transfer', $2::numeric, $3)",
+        )
+        .bind(&settings_at.land_registry)
+        .bind(map::meta::encode_land_token_id(10, 14))
+        .bind(format!("0x{}", "c".repeat(40)))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
         let when: chrono::NaiveDateTime = sqlx::query_scalar(
             "UPDATE land_authz.index_cursor SET last_block = 101 WHERE network = $1 \
              RETURNING timezone('UTC', clock_timestamp())",
         )
-        .bind(&network)
-        .fetch_one(&pool)
+        .bind(&settings_at.network)
+        .fetch_one(&mut *tx)
         .await
         .unwrap();
+        tx.commit().await.unwrap();
         *at.lock() = Some(when);
     }));
     assert_eq!(
