@@ -292,7 +292,16 @@ impl AvatarMovement {
         if animation.src == earlier.src {
             animation.playback_time = animation.playback_time.or(earlier.playback_time);
         }
-        animation.sounds = [earlier.sounds.as_slice(), &animation.sounds].concat();
+        // a scene may keep a sound in its list across replies without replaying it, so only the
+        // earlier sounds the later list lacks are added
+        let mut sounds: Vec<String> = earlier
+            .sounds
+            .iter()
+            .filter(|sound| !animation.sounds.contains(sound))
+            .cloned()
+            .collect();
+        sounds.extend(std::mem::take(&mut animation.sounds));
+        animation.sounds = sounds;
     }
 }
 
@@ -1690,6 +1699,19 @@ mod tests {
         let animation = movement.animation.unwrap();
         assert_eq!(animation.playback_time, Some(0.5));
         assert_eq!(animation.sounds, ["jump.mp3", "land.mp3"]);
+    }
+
+    #[test]
+    fn two_replies_in_a_frame_with_the_same_sounds_play_them_once() {
+        let (mut app, player) = rotation_app(0.0);
+        let scene = add_scene(&mut app, "movement", Some(1));
+        let reply = one_shot_movement(None, "Jump.glb", None, "jump.mp3");
+        take_movement(&mut app, player, scene, 1, reply.clone());
+        let animation = take_movement(&mut app, player, scene, 1, reply)
+            .animation
+            .unwrap();
+
+        assert_eq!(animation.sounds, ["jump.mp3"]);
     }
 
     #[test]
