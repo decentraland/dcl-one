@@ -1730,11 +1730,13 @@ def cmd_community_thumbnails(args, sources):
 
 
 EVENTS = 'events'
-# The upstream poster paths the node's events name, (kind, file) as `explore.poster` keys them.
+# The upstream posters the node's events name, (kind, file) as `explore.poster` keys them: the imported
+# `/poster[-vertical]/<file>` path, or the bucket's full URL that mirror-written rows keep.
 EVENT_POSTERS_NAMED = (
     "WITH named AS (SELECT DISTINCT m[1] AS kind, m[2] AS file FROM explore.event e,"
     " LATERAL (VALUES (e.raw->>'image'), (e.raw->>'image_vertical')) v(url),"
-    " LATERAL regexp_match(v.url, '^/(poster|poster-vertical)/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$') m"
+    " LATERAL regexp_match(v.url, '^(?:https://events-assets-099ac00\\.decentraland\\.org)?"
+    "/(poster|poster-vertical)/([A-Za-z0-9][A-Za-z0-9._-]{0,199})$') m"
     " WHERE m IS NOT NULL)\n")
 EVENT_POSTER_BATCH = 200
 
@@ -1771,24 +1773,29 @@ def cmd_event_posters(args):
             upstream = blobs.HttpArtSource(args.from_url or blobs.EVENT_POSTER_BASE)
     except (OSError, RuntimeError) as e:
         raise MigrationError(str(e)) from e
-    todo = [line.strip() for line in psql(target_url, EVENT_POSTERS_NAMED + (
-        "SELECT n.kind || '/' || n.file FROM named n WHERE NOT EXISTS (SELECT 1 FROM explore.poster p"
-        " WHERE p.kind = n.kind AND p.file = n.file) ORDER BY 1;\n")).splitlines() if line.strip()]
-    print(f'{EVENTS}: {len(todo)} posters named by events and not indexed here;'
+    # Not indexed, or indexed by a read-through or an earlier copy whose blob the store no longer holds.
+    rows = [line.split('\t') for line in psql(target_url, EVENT_POSTERS_NAMED + (
+        "SELECT n.kind || '/' || n.file, COALESCE(p.blob_cid, '') FROM named n LEFT JOIN explore.poster p"
+        " ON p.kind = n.kind AND p.file = n.file WHERE p.kind IS NULL OR p.origin = 'upstream'"
+        " ORDER BY 1;\n")).splitlines() if line]
+    todo = [key for key, cid in rows if not cid or not store.has(cid)]
+    print(f'{EVENTS}: {len(todo)} posters named by events and not served here;'
           f' reading them from {upstream.describe()} into {store.contents}', flush=True)
     counts = dict.fromkeys(('copied', 'present', 'missing', 'corrupt', 'invalid', 'failed'), 0)
     stored = []
 
     def flush():
-        # Right after the copy, so the storage GC never sees these blobs unreferenced for long. A row indexed
-        # since (an upload or a read-through) wins.
+        # Right after the copy, so the storage GC never sees these blobs unreferenced for long. A local upload
+        # indexed since wins; an upstream row is repointed, as the read-through does.
         if stored:
             values = ', '.join(
                 f"({literal(kind)}, {literal(file)}, {literal(o.cid)}, {literal(o.content_type)}, {o.size},"
                 " 'upstream', timezone('UTC', now()))"
                 for o in stored for kind, file in [o.key.split('/', 1)])
             psql(target_url, 'INSERT INTO explore.poster (kind, file, blob_cid, content_type, byte_size, origin,'
-                             f' fetched_at) VALUES {values} ON CONFLICT (kind, file) DO NOTHING;\n')
+                             f' fetched_at) VALUES {values} ON CONFLICT (kind, file) DO UPDATE SET blob_cid = EXCLUDED.blob_cid,'
+                             ' content_type = EXCLUDED.content_type, byte_size = EXCLUDED.byte_size,'
+                             " fetched_at = EXCLUDED.fetched_at WHERE explore.poster.origin = 'upstream';\n")
             stored.clear()
 
     try:
@@ -1806,7 +1813,7 @@ def cmd_event_posters(args):
         raise MigrationError(f'upstream poster bucket: {e}') from e
     print(f'{EVENTS}: posters copied {counts["copied"]}, already in the store {counts["present"]},'
           f' absent upstream {counts["missing"]}, not an image {counts["corrupt"] + counts["invalid"]},'
-          f' read failed {counts["failed"]} (a re-run retries every poster still not indexed)', flush=True)
+          f' read failed {counts["failed"]} (a re-run retries every poster still not served)', flush=True)
     # a wrong bucket answers every poster absent: absent ones fail the run until reviewed (--allow-missing)
     return int(any(counts[k] for k in ('corrupt', 'invalid', 'failed'))
                or (counts['missing'] > 0 and not args.allow_missing))

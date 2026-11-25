@@ -59,8 +59,9 @@ in-app purchases cannot be clawed back by a later Apple refund
   reads each poster the node's events name (`/poster[-vertical]/<file>`) from upstream's bucket
   (`https://events-assets-099ac00.decentraland.org/`, or `--from-url`, or `--from-dir` laid out
   by path) into the store and indexes it in `explore.poster`. The node's poster read-through
-  stops with `EVENTS_MIRROR_UPSTREAM`, so run it before the mirror goes off, then
-  `blobs events --verify` (`sources/events/MAPPING.md`).
+  stops with `EVENTS_MIRROR_UPSTREAM`, so run it before events API traffic switches to the node,
+  then `blobs events --verify` (`services/catalyst/docs/events.md`, "Cutover by import";
+  `sources/events/MAPPING.md`).
 - **Badge schema.** The badges steps need the badge catalog schema
   (publication columns, `criteria_steps`, the progress document,
   `social.presence_badges`) and stop without it.
