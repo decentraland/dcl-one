@@ -56,6 +56,13 @@
   padding-block: var(--dcl-space-48);
 }
 
+/* Tips kept in the page take room while hidden: this keeps them from widening a narrow page, with room below for a
+   paragraph. */
+.tooltipClip {
+  overflow: hidden;
+  padding-bottom: 120px;
+}
+
 .backdrop {
   position: relative;
   width: 100%;
