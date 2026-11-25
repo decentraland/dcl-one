@@ -1,20 +1,20 @@
 -- Ethereum v1 sales have token IDs in the ledger. The latest Issue at
 -- the sale position must resolve against rows from completed mirror copies.
 , v1_copy AS (
-    SELECT max(last_complete_pass_at) FILTER (WHERE mirror='collections') AS collections_at,
-           max(last_complete_pass_at) FILTER (WHERE mirror='items') AS items_at
+    SELECT mirror, tsrange(last_complete_pass_started_at,last_complete_pass_at,'[]') AS completed
     FROM shop.mirror_state
     WHERE network='ethereum' AND (chain_id=1 OR (chain_id IS NULL AND pass_block_hash IS NULL))
+      AND last_complete_pass_started_at<=last_complete_pass_at
 ), v1_collections AS (
     SELECT c.network,c.contract_address,
-           CASE WHEN c.mirrored_at<=(SELECT collections_at FROM v1_copy) THEN c.urn END AS urn
+           CASE WHEN (SELECT completed FROM v1_copy WHERE mirror='collections') @> c.mirrored_at THEN c.urn END AS urn
     FROM candidate_collections candidate JOIN shop.collections c USING(network,contract_address)
     WHERE c.network='ethereum' AND c.chain_id=1
     UNION
     SELECT i.network,i.contract_address,c.urn
     FROM requested_wallet w JOIN shop.items i ON i.creator=w.address
     LEFT JOIN shop.collections c ON (c.network,c.contract_address)=(i.network,i.contract_address) AND c.chain_id=1
-      AND c.mirrored_at<=(SELECT collections_at FROM v1_copy)
+      AND (SELECT completed FROM v1_copy WHERE mirror='collections') @> c.mirrored_at
     WHERE i.network='ethereum' AND i.network=ANY($1) AND i.item_type='wearable_v1' AND i.chain_id=1
 ), v1_resales AS MATERIALIZED (
     SELECT a.network,a.block_number,a.log_index,a.ordinal,i.creator
@@ -31,7 +31,7 @@
     ) issue ON true
     LEFT JOIN shop.items i ON i.urn=c.urn || ':' || issue.detail AND i.chain_id=1
       AND (i.network,i.contract_address)=(c.network,c.contract_address) AND i.item_type='wearable_v1'
-      AND i.mirrored_at<=(SELECT items_at FROM v1_copy)
+      AND (SELECT completed FROM v1_copy WHERE mirror='items') @> i.mirrored_at
     WHERE a.price>0 AND a.kind IN ('order','bid') AND a.item_id IS NULL AND a.token_id IS NOT NULL
       AND ($8::bigint IS NULL OR execution.block_time*1000 >= $8)
       AND ($9::bigint IS NULL OR execution.block_time*1000 <= $9)

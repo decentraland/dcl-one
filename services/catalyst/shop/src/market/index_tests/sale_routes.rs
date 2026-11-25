@@ -952,8 +952,9 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     )
     .await;
     let complete_ethereum_items =
-        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())
-        WHERE network='ethereum' AND mirror='items'";
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now()),
+         last_complete_pass_started_at=(SELECT min(mirrored_at) FROM shop.items WHERE network='ethereum')
+         WHERE network='ethereum' AND mirror='items'";
     sqlx::query(complete_ethereum_items)
         .execute(&db.pool)
         .await
@@ -1019,15 +1020,11 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     assert_eq!(code, StatusCode::OK, "{incomplete}");
     assert_eq!(incomplete["data"]["royalties"]["royaltiesWei"], Value::Null);
     assert!(incomplete["data"]["earnedUsd"].is_string());
-    sqlx::query(
-        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())
-        WHERE network='ethereum' AND mirror='collections'",
-    )
-    .execute(&db.pool)
-    .await
-    .unwrap();
-    // A completed pass can lack a collection whose first page arrives in
-    // the next pass. Neither state proves the URN until the new pass ends.
+    let complete_ethereum_collections =
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now()),
+         last_complete_pass_started_at=pass_started_at
+         WHERE network='ethereum' AND mirror='collections'";
+    // An empty completed pass cannot prove a collection arriving later.
     sqlx::query("DELETE FROM shop.collections WHERE network='ethereum' AND contract_address=$1")
         .bind(CARL)
         .execute(&db.pool)
@@ -1039,6 +1036,7 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     assert!(incomplete["data"]["earnedUsd"].is_string());
     sqlx::query(
         "UPDATE shop.mirror_state SET pass_started_at=timezone('UTC',now()),
+         last_complete_pass_started_at=timezone('UTC',now())-interval '2 minutes',
          last_complete_pass_at=timezone('UTC',now())-interval '1 minute'
          WHERE network='ethereum' AND mirror='collections'",
     )
@@ -1065,13 +1063,42 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     let (code, incomplete) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
     assert_eq!(code, StatusCode::OK, "{incomplete}");
     assert_eq!(incomplete["data"]["royalties"]["royaltiesWei"], Value::Null);
+    // The open pass is abandoned. A replacement finishes without reading
+    // this collection, so the row still cannot prove its URN.
     sqlx::query(
-        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())
-        WHERE network='ethereum' AND mirror='collections'",
+        "UPDATE shop.mirror_state SET pass_started_at=timezone('UTC',now())
+         WHERE network='ethereum' AND mirror='collections'",
     )
     .execute(&db.pool)
     .await
     .unwrap();
+    sqlx::query(complete_ethereum_collections)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, incomplete) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::OK, "{incomplete}");
+    assert_eq!(incomplete["data"]["royalties"]["royaltiesWei"], Value::Null);
+    // Refreshing the row during a pass that completes proves the amount.
+    sqlx::query(
+        "UPDATE shop.mirror_state SET pass_started_at=timezone('UTC',now())
+         WHERE network='ethereum' AND mirror='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.collections SET mirrored_at=timezone('UTC',now())
+         WHERE network='ethereum' AND contract_address=$1",
+    )
+    .bind(CARL)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(complete_ethereum_collections)
+        .execute(&db.pool)
+        .await
+        .unwrap();
     let (code, complete_copy) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
     assert_eq!(code, StatusCode::OK, "{complete_copy}");
     assert_eq!(complete_copy["data"]["royalties"]["royaltiesWei"], "5");

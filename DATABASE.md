@@ -1813,9 +1813,10 @@ historical rates, round to six decimal places, and count sales with no rate.
 `royaltiesWei` totals settled royalty legs on resales by other sellers. It
 returns null when creator attribution or a required payment split lacks
 proof. Ethereum v1 attribution requires the item and collection rows to be
-covered by their respective completed mirror passes. The resale count and
-volume describe sales attributed to the creator, including their own. The
-sales publication and all these inputs are read in the same transaction.
+written during their respective last completed mirror passes. The resale
+count and volume describe sales attributed to the creator, including their
+own. The sales publication and all these inputs are read in the same
+transaction.
 
 ## Shop open-trades reads that name a contract
 

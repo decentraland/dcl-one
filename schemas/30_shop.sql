@@ -234,6 +234,7 @@ CREATE INDEX items_approved_created_idx ON shop.items (created_at DESC) WHERE se
 -- One row per (mirror, network): the in-flight keyset (persisted per page so
 -- a kill -9 resumes at that page) and the last complete pass, which a route
 -- over the mirror requires before answering (NULL = the unavailable envelope).
+-- Start and finish bound the rows written by that completed pass.
 CREATE TABLE shop.mirror_state (
     mirror text NOT NULL,
     network text NOT NULL,
@@ -243,6 +244,7 @@ CREATE TABLE shop.mirror_state (
     cursor_id text,
     pages_fetched bigint NOT NULL DEFAULT 0,
     rows_upserted bigint NOT NULL DEFAULT 0,
+    last_complete_pass_started_at timestamp without time zone,
     last_complete_pass_at timestamp without time zone,
     last_complete_pass_rows bigint,
     last_error text,
