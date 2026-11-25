@@ -165,6 +165,19 @@ describe('skybox', () => {
     expect(h.session().skybox.hours).toBe(0)
   })
 
+  it('does not wait for a report of the hour the engine already has', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'skyTime', state: { locked: false, speed: 0, fixedHours: 10 } })
+    // the same hour again: the engine sends nothing back
+    act(() => h.session().skybox.setHours(10))
+    h.driver.emit({ kind: 'skyTime', state: { locked: false, speed: 0, fixedHours: 22 } })
+    expect(h.session().skybox.hours).toBe(22)
+    // a later ten is news, not that hour's report
+    h.driver.emit({ kind: 'skyTime', state: { locked: false, speed: 0, fixedHours: 10 } })
+    expect(h.session().skybox.hours).toBe(10)
+  })
+
   it('does not let the read on open overwrite an hour the engine pushed', async () => {
     const h = renderSession()
     await enterAsGuest(h)

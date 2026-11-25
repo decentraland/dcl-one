@@ -3494,7 +3494,12 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   }, [])
   const setClock = useCallback((hours: number, speed: number) => {
     // as the engine will report it back: what `/time` is sent, within the day
-    skyboxSent.current = speed === 0 ? [...skyboxSent.current.slice(-31), Number(hours.toFixed(2)) % 24] : []
+    const sent = Number(hours.toFixed(2)) % 24
+    // the hour the engine already reports is not reported again
+    const reported = skyTime.current
+    const noNews = reported != null && !reported.locked && reported.speed === 0 && reported.fixedHours === sent
+    if (speed !== 0) skyboxSent.current = []
+    else if (!noNews) skyboxSent.current = [...skyboxSent.current.slice(-31), sent]
     driverRef.current
       ?.command?.(`/time ${hours.toFixed(2)} ${speed}`)
       .catch((e: unknown) => console.warn('[hud] /time failed:', e))
