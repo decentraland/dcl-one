@@ -146,9 +146,14 @@ type Props = {
   loadTimeoutMs?: number;
   onLoad: (renderer: PreviewRendererName | undefined) => void;
   onError: (message: string) => void;
+  /**
+   * The frame put a fresh iframe in place of its own: for a change an update cannot carry, a Unity scene that answered too
+   * late, or Unity booting again. Nothing is drawn in it yet, whatever the options.
+   */
+  onReplaced?: () => void;
 };
 
-export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoad, onError }: Props) {
+export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoad, onError, onReplaced }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
   const serialized = JSON.stringify(options);
   // The iframe keeps the URL it mounted with: a new `src` reloads the whole preview, not only its scene. It mounts again
@@ -162,8 +167,8 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
   latest.current = serialized;
   const latestOptions = useRef(options);
   latestOptions.current = options;
-  const callbacks = useRef({ onLoad, onError });
-  callbacks.current = { onLoad, onError };
+  const callbacks = useRef({ onLoad, onError, onReplaced });
+  callbacks.current = { onLoad, onError, onReplaced };
   const retry = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(retry.current), []);
 
@@ -285,6 +290,10 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
   useEffect(() => {
     push.current();
   }, [serialized]);
+
+  useEffect(() => {
+    if (mount.n > 0) callbacks.current.onReplaced?.();
+  }, [mount.n]);
 
   const played = useRef(replay);
   useEffect(() => {

@@ -163,6 +163,21 @@ describe("coming back to options seen before", () => {
 });
 
 describe("changes", () => {
+  test("under Unity a drawn frame that boots again is covered until its replacement draws, the items unchanged", () => {
+    stage();
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(cover()).toBeNull();
+    const first = frame()!.contentWindow;
+
+    fromPreview({ type: "ready" });
+    expect(frame()!.contentWindow).not.toBe(first);
+    expect(cover()).not.toBeNull();
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(cover()).toBeNull();
+  });
+
   test("under Unity two quick changes: the first scene's answer does not uncover the second", () => {
     const { change } = stage();
     fromPreview({ type: "ready" });

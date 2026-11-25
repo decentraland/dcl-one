@@ -56,6 +56,8 @@ export default function AvatarStage({ options, unityMode = "builder", cover = nu
           options={{ ...options, unity: unity || undefined, unityMode: unity ? unityMode : undefined }}
           loadTimeoutMs={unity ? UNITY_LOAD_TIMEOUT_MS : undefined}
           onLoad={() => answer({ drawn: true })}
+          // A fresh iframe has drawn nothing yet, even for the same items (Unity booting again).
+          onReplaced={() => setVisit((v) => (v.scene === scene ? { ...v, drawn: false } : v))}
           onError={() => (unity ? setUnityFailed(true) : answer({ failed: true }))}
         />
       ) : null}

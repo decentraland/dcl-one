@@ -257,6 +257,8 @@ function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps
           replay={replay}
           loadTimeoutMs={unity ? UNITY_LOAD_TIMEOUT_MS : undefined}
           onLoad={(by) => setDrawn({ scene, by: by ?? (unity ? "unity" : "babylon") })}
+          // A fresh iframe has drawn nothing yet, even for the same scene (Unity booting again).
+          onReplaced={() => setDrawn(null)}
           onError={() => {
             // The item alone failed where the avatar had drawn: back to the avatar, in a fresh frame. Before the
             // renderer: a preview that asked for Unity and drew with Babylon got this far on Babylon.

@@ -341,6 +341,21 @@ describe("talking to the iframe", () => {
     expect(screen.getByRole("status")).toBeTruthy();
   });
 
+  test("under Unity a drawn frame that boots again shows the thumbnail until its replacement draws", () => {
+    render(<ItemPreview item={item()} renderer="full" />);
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(thumb()).toBeNull();
+    const first = frame()!.contentWindow;
+
+    fromPreview({ type: "ready" });
+    expect(frame()!.contentWindow).not.toBe(first);
+    expect(thumb()).not.toBeNull();
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(thumb()).toBeNull();
+  });
+
   test("messages from another window or origin are ignored", () => {
     render(<ItemPreview item={item()} renderer="full" />);
     fromPreview({ type: "load", payload: { renderer: "unity" } }, window);
