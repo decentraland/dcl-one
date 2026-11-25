@@ -19,8 +19,8 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use super::support::{
-    FakeCommittee, FakeOracle, FakeRegistry, OWNER_KEY, contents_of, registry_index,
-    save_collection, saved_item, signed_map, temp_storage, unique, upload, wallet,
+    FakeCommittee, FakeOracle, FakeRegistry, OWNER_KEY, address, call, contents_of, registry_index,
+    save_collection, saved_item, temp_storage, unique, upload,
 };
 use crate::shared::validator_signature::{SIGNATURE_HEADER, TIMESTAMP_HEADER, sign};
 
@@ -55,10 +55,6 @@ fn at(iso: &str) -> DateTime<Utc> {
 
 fn iso(t: DateTime<Utc>) -> String {
     crate::http::iso(&t)
-}
-
-pub(super) fn address(key: &str) -> String {
-    format!("{:#x}", wallet(key).address())
 }
 
 #[derive(Clone, Default)]
@@ -166,15 +162,7 @@ async fn set_local_flag(pool: &PgPool, on: Option<bool>) {
 }
 
 pub(super) async fn own_pool() -> Option<PgPool> {
-    let pool = crate::db::scratch::isolated_pool(4).await?;
-    sqlx::query(
-        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
-         VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now()))",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    crate::tests::support::publish_registry_index(&mut *pool.acquire().await.unwrap(), false).await;
+    let pool = super::support::own_pool(4).await?;
     set_flag(&pool, Some(json!(true))).await;
     Some(pool)
 }
@@ -249,31 +237,6 @@ pub(super) async fn send(app: &Router, request: Request<Body>) -> (u16, String) 
 
 pub(super) fn json_of(body: &str) -> Value {
     serde_json::from_str(body).unwrap_or(Value::Null)
-}
-
-/// A wallet's call, signed by `key` when given.
-pub(super) async fn call(
-    app: &Router,
-    key: Option<&str>,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
-    let mut request = Request::builder().method(method).uri(path);
-    if let Some(key) = key {
-        for (name, value) in signed_map(key, &method.to_lowercase(), path, "{}", false).await {
-            request = request.header(name, value);
-        }
-    }
-    let body = match body {
-        Some(body) => {
-            request = request.header("content-type", "application/json");
-            Body::from(body.to_string())
-        }
-        None => Body::empty(),
-    };
-    let (status, body) = send(app, request.body(body).unwrap()).await;
-    (status, json_of(&body))
 }
 
 /// How a validator call is signed.

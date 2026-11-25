@@ -15,7 +15,7 @@ use chrono::Duration;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::support::{OWNER_KEY, lazy_pool, signed_map, temp_storage};
+use super::support::{OWNER_KEY, lazy_pool, request, signed, temp_storage};
 use super::validator::{advance, clock, set_clock};
 
 const OTHER_KEY: &str = "0x5555555555555555555555555555555555555555555555555555555555555555";
@@ -79,20 +79,7 @@ impl Call<'_> {
 }
 
 pub(super) async fn send(app: &Router, call: &Call<'_>) -> (u16, String, Option<String>) {
-    let mut request = Request::builder().method(call.method).uri(&call.path);
-    if let Some(key) = call.key {
-        for (name, value) in signed_map(
-            key,
-            &call.method.to_lowercase(),
-            call.path.split('?').next().unwrap_or_default(),
-            "{}",
-            false,
-        )
-        .await
-        {
-            request = request.header(name, value);
-        }
-    }
+    let mut request = request(call.key, call.method, &call.path).await;
     if let Some(source) = call.source {
         request = request.header("x-real-ip", source);
     }
@@ -198,7 +185,7 @@ async fn a_signer_over_its_read_budget_waits_and_a_failed_signature_spends_no_si
     );
 
     let mut forged = Request::builder().uri(format!("/v1/storage/contents/{NOT_A_CID}"));
-    for (name, value) in signed_map(OTHER_KEY, "get", "/v1/somewhere-else", "{}", false).await {
+    for (name, value) in &signed(OTHER_KEY, "get", "/v1/somewhere-else").await {
         forged = forged.header(name, value);
     }
     for _ in 0..3 {
@@ -287,11 +274,7 @@ async fn a_source_over_its_budget_waits_whoever_signs_and_an_internal_source_has
 async fn the_production_budgets_hold_at_their_bounds() {
     let app = app_over(lazy_pool(), |_| ()).await;
     let signed = save(OWNER_KEY, "");
-    let mut request = Request::builder().method("PUT").uri(&signed.path);
-    for (name, value) in signed_map(OWNER_KEY, "put", &signed.path, "{}", false).await {
-        request = request.header(name, value);
-    }
-    let template = request;
+    let template = request(Some(OWNER_KEY), "PUT", &signed.path).await;
     let mut statuses = Vec::new();
     for _ in 0..=crate::limits::WALLET_WRITES {
         let mut request = Request::builder()
@@ -437,7 +420,7 @@ async fn a_review_caller_over_its_minute_waits_even_with_the_flow_off() {
 }
 
 async fn seeded(state: &crate::SharedState, n: usize) -> Uuid {
-    let owner = super::validator::address(OWNER_KEY);
+    let owner = super::support::address(OWNER_KEY);
     let collection = Uuid::new_v4();
     super::support::save_collection(
         &state.items,
@@ -481,7 +464,7 @@ async fn a_listing_charges_its_rows(
         let registry = match committee {
             true => {
                 super::support::committee_index(&super::support::FakeCommittee::with(&[
-                    &super::validator::address(OWNER_KEY),
+                    &super::support::address(OWNER_KEY),
                 ]))
                 .await
             }
@@ -547,7 +530,7 @@ async fn a_collections_items_cost_their_reader_by_the_row() {
 
 #[tokio::test]
 async fn an_addresss_items_cost_their_reader_by_the_row() {
-    let owner = super::validator::address(OWNER_KEY);
+    let owner = super::support::address(OWNER_KEY);
     a_listing_charges_its_rows(
         move |_| format!("/builder-api/v1/{owner}/items"),
         false,
@@ -568,7 +551,7 @@ async fn the_curations_cost_their_reader_by_the_row() {
 
 #[tokio::test]
 async fn an_addresss_collections_cost_their_reader_by_the_row() {
-    let owner = super::validator::address(OWNER_KEY);
+    let owner = super::support::address(OWNER_KEY);
     a_listing_charges_its_rows(move |_| format!("/v1/{owner}/collections"), false, false).await;
 }
 
@@ -697,7 +680,7 @@ async fn a_listing_past_its_bytes_or_its_readers_budget_is_refused_before_its_it
     };
     let (status, _, _) = send(&app, &from_source).await;
     assert_eq!(status, 429);
-    let wallet = super::validator::address(OWNER_KEY);
+    let wallet = super::support::address(OWNER_KEY);
     let spent = state
         .limits
         .wallet_reads
@@ -785,7 +768,7 @@ async fn every_item_answers_the_committee_member_at_most_its_cap() {
     let Some(pool) = super::validator::own_pool().await else {
         return;
     };
-    let member = super::validator::address(OWNER_KEY);
+    let member = super::support::address(OWNER_KEY);
     sqlx::query(
         "INSERT INTO builder.items (id, name, eth_address, type) \
          SELECT gen_random_uuid(), 'Item ' || g, $1, 'wearable' \
@@ -824,7 +807,7 @@ async fn a_wallets_drafts_answer_at_most_their_cap_and_cost_it_by_the_row() {
     let Some(pool) = super::validator::own_pool().await else {
         return;
     };
-    let owner = super::validator::address(OWNER_KEY);
+    let owner = super::support::address(OWNER_KEY);
     sqlx::query(
         "INSERT INTO builder.items (id, name, eth_address, type) \
          SELECT gen_random_uuid(), 'Draft ' || g, $1, 'wearable' \
@@ -901,7 +884,7 @@ async fn put_item(
         .collect();
     let body = super::support::item_body(
         &state.items,
-        &super::validator::address(key),
+        &super::support::address(key),
         &serde_json::json!({ "id": id, "name": "Big hat", "rarity": "common",
             "contents": super::support::contents_of(&[("model.glb", b"model")]),
             "data": { "requiredPermissions": permissions } }),
@@ -980,7 +963,7 @@ async fn a_wallet_keeps_at_most_its_bound_of_draft_collections() {
         return;
     };
     let (app, _) = node_over(pool.clone(), |state| state.items.documents.collections = 2).await;
-    let owner = super::validator::address(DOCUMENT_KEYS[2]);
+    let owner = super::support::address(DOCUMENT_KEYS[2]);
     let mut statuses = Vec::new();
     for n in 0..3 {
         let id = Uuid::new_v4();
@@ -1146,7 +1129,7 @@ async fn under_the_production_budgets_one_wallet_cannot_write_documents_at_will(
         }
     }
     sqlx::query("DELETE FROM builder.items WHERE eth_address = $1")
-        .bind(super::validator::address(OTHER_KEY))
+        .bind(super::support::address(OTHER_KEY))
         .execute(&pool)
         .await
         .unwrap();

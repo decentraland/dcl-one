@@ -14,8 +14,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::support::{OWNER_KEY, temp_storage, wallet};
-use crate::shared::signed_fetch::test_support::signed_headers_by;
+use super::support::{OWNER_KEY, address, temp_storage};
 
 const STRANGER_KEY: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
 const PROVIDER: &str = "urn:decentraland:matic:collections-thirdparty:items-test";
@@ -29,15 +28,7 @@ struct App {
 }
 
 async fn app() -> Option<App> {
-    let pool = crate::db::scratch::isolated_pool(8).await?;
-    sqlx::query(
-        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
-         VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now()))",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    crate::tests::support::publish_registry_index(&mut *pool.acquire().await.unwrap(), false).await;
+    let pool = super::support::own_pool(8).await?;
     sqlx::query(
         "INSERT INTO builder.virtual_third_parties (id, managers, raw_metadata) VALUES ($1, $2, 'tp:1:Items test:')",
     )
@@ -80,10 +71,6 @@ async fn over(pool: PgPool) -> App {
     }
 }
 
-fn address(key: &str) -> String {
-    format!("{:#x}", wallet(key).address())
-}
-
 async fn send(
     app: &App,
     key: &str,
@@ -92,35 +79,12 @@ async fn send(
     body: Body,
     kind: &str,
 ) -> (u16, Value) {
-    let mut request = Request::builder().method(method).uri(path);
-    let now = chrono::Utc::now().timestamp_millis().to_string();
-    let signed = path.split('?').next().unwrap();
-    for (name, value) in signed_headers_by(
-        &wallet(key),
-        &method.to_lowercase(),
-        signed,
-        "{}",
-        true,
-        &now,
-    )
-    .await
-    .iter()
-    {
-        request = request.header(name, value);
-    }
-    let request = request
+    let request = super::support::request(Some(key), method, path)
+        .await
         .header(header::CONTENT_TYPE, kind)
         .body(body)
         .unwrap();
-    let response = app.router.clone().oneshot(request).await.unwrap();
-    let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), 64 << 20)
-        .await
-        .unwrap();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
+    super::support::answer(&app.router, request).await
 }
 
 fn item(

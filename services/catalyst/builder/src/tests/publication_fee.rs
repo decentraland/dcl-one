@@ -11,8 +11,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::support::{
-    FakeCommittee, FakeOracle, OWNER_KEY, committee_index, contents_of, save_collection,
-    saved_item, scratch_pool, temp_storage, unique, upload, wallet,
+    FakeCommittee, FakeOracle, OWNER_KEY, address, committee_index, contents_of, save_collection,
+    saved_item, scratch_pool, temp_storage, unique, upload,
 };
 use crate::collections::contract::{self, InitializeItem, initializeCall};
 use crate::network::POLYGON;
@@ -23,10 +23,6 @@ use crate::shared::signed_fetch::test_support::signer;
 const STRANGER_KEY: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
 const TEN_USD: &str = "10000000000000000000";
 const HALF_CENT_OVER_TWO_USD: &str = "2005000000000000000";
-
-fn address(key: &str) -> String {
-    format!("{:#x}", wallet(key).address())
-}
 
 struct Node {
     pool: sqlx::PgPool,

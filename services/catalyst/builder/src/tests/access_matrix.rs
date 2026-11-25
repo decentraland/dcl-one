@@ -23,16 +23,17 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, StatusCode, header};
-use chrono::{TimeDelta, Utc};
+use axum::http::{StatusCode, header};
+use chrono::Utc;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::support::{FakeCommittee, FakeOracle, committee_index, temp_storage, wallet};
+use super::support::{
+    FakeCommittee, FakeOracle, address, committee_index, fresh_pass, request, temp_storage,
+};
 use super::upstream_routes::{Route, UPSTREAM};
-use crate::shared::signed_fetch::test_support::signed_headers_by;
 use crate::shared::validator_signature::{SIGNATURE_HEADER, TIMESTAMP_HEADER};
 
 const OWNER_KEY: &str = super::support::OWNER_KEY;
@@ -99,9 +100,7 @@ impl Caller {
     }
 
     fn address(self) -> String {
-        self.key()
-            .map(|key| format!("{:#x}", wallet(key).address()))
-            .unwrap_or_default()
+        self.key().map(address).unwrap_or_default()
     }
 }
 
@@ -584,32 +583,13 @@ async fn call(
     path: &str,
     payload: Payload,
 ) -> (StatusCode, Value) {
-    let mut request = Request::builder().method(method).uri(path);
-    if let Some(key) = caller.key() {
-        let now = Utc::now().timestamp_millis().to_string();
-        let signed = path.split('?').next().unwrap();
-        for (name, value) in signed_headers_by(
-            &wallet(key),
-            &method.to_lowercase(),
-            signed,
-            "{}",
-            true,
-            &now,
-        )
-        .await
-        .iter()
-        {
-            request = request.header(name, value);
-        }
-    }
+    let mut request = request(caller.key(), method, path).await;
     let body: Vec<u8> = match payload {
         Payload::None => Vec::new(),
         Payload::Json(value) => {
             let value = match (method, value.get("collection")) {
                 ("PUT", Some(collection)) if path.contains("/v1/collections/") => {
-                    let signer = caller.key().map_or(Owner.address(), |key| {
-                        format!("{:#x}", wallet(key).address())
-                    });
+                    let signer = caller.key().map_or(Owner.address(), address);
                     let mut collection = collection.clone();
                     if let (Some(id), Some(name)) =
                         (collection["id"].as_str(), collection["name"].as_str())
@@ -1698,20 +1678,6 @@ async fn reset(m: &Matrix) {
     .execute(&m.pool)
     .await
     .unwrap();
-}
-
-async fn fresh_pass(pool: &PgPool, minutes_ago: i64) {
-    sqlx::query(
-        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
-         VALUES ('collections', 'matic', 'https://subgraph.example', $1, $1) \
-         ON CONFLICT (mirror, network) DO UPDATE SET last_complete_pass_at = EXCLUDED.last_complete_pass_at, \
-           pass_started_at = EXCLUDED.pass_started_at, cursor_id = NULL",
-    )
-    .bind(Utc::now().naive_utc() - TimeDelta::minutes(minutes_ago))
-    .execute(pool)
-    .await
-    .unwrap();
-    crate::tests::support::publish_registry_index(&mut *pool.acquire().await.unwrap(), false).await;
 }
 
 async fn matrix(committee: &FakeCommittee) -> Option<Matrix> {

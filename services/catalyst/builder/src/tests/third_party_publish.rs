@@ -7,26 +7,17 @@ use std::sync::Arc;
 
 use alloy::signers::SignerSync;
 use axum::Router;
-use axum::body::Body;
-use axum::http::{Request, header};
-use chrono::Utc;
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::support::{FakeCommittee, FakeRegistry, registry_index, temp_storage, wallet};
-use crate::shared::signed_fetch::test_support::signed_headers_by;
+use super::support::{FakeCommittee, FakeRegistry, address, registry_index, temp_storage, wallet};
 
 const MANAGER_KEY: &str = "0x8101010101010101010101010101010101010101010101010101010101010101";
 const OTHER_KEY: &str = "0x8202020202020202020202020202020202020202020202020202020202020202";
 const STRANGER_KEY: &str = "0x8303030303030303030303030303030303030303030303030303030303030303";
 const COMMITTEE_KEY: &str = "0x8404040404040404040404040404040404040404040404040404040404040404";
 const HOLDER_KEY: &str = "0x8505050505050505050505050505050505050505050505050505050505050505";
-
-fn address(key: &str) -> String {
-    format!("{:#x}", wallet(key).address())
-}
 
 struct World {
     pool: PgPool,
@@ -42,13 +33,7 @@ async fn world() -> Option<World> {
 
 async fn world_with(settings: crate::Settings) -> Option<World> {
     let pool = crate::db::scratch::isolated_pool(8).await?;
-    sqlx::query(
-        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
-         VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now()))",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    super::support::copy_pass(&pool, 0).await;
     let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
     let registry = FakeRegistry::up();
     let mut state = crate::State::new(
@@ -156,36 +141,7 @@ fn cheque_on(
 }
 
 async fn call(app: &Router, key: Option<&str>, path: String, body: Option<Value>) -> (u16, Value) {
-    let mut request = Request::builder().method("POST").uri(&path);
-    if let Some(key) = key {
-        let now = Utc::now().timestamp_millis().to_string();
-        for (name, value) in signed_headers_by(&wallet(key), "post", &path, "{}", true, &now)
-            .await
-            .iter()
-        {
-            request = request.header(name, value);
-        }
-    }
-    let body = match body {
-        Some(value) => {
-            request = request.header(header::CONTENT_TYPE, "application/json");
-            Body::from(value.to_string())
-        }
-        None => Body::empty(),
-    };
-    let response = app
-        .clone()
-        .oneshot(request.body(body).unwrap())
-        .await
-        .unwrap();
-    let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), 64 << 20)
-        .await
-        .unwrap();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
+    super::support::call(app, key, "POST", &path, body).await
 }
 
 fn publish(id: Uuid) -> String {
@@ -988,29 +944,7 @@ async fn the_curators_hear_of_each_publish_on_slack_and_in_one_forum_topic() {
 }
 
 async fn get(app: &Router, key: Option<&str>, path: String) -> (u16, Value) {
-    let mut request = Request::builder().method("GET").uri(&path);
-    if let Some(key) = key {
-        let now = Utc::now().timestamp_millis().to_string();
-        for (name, value) in signed_headers_by(&wallet(key), "get", &path, "{}", true, &now)
-            .await
-            .iter()
-        {
-            request = request.header(name, value);
-        }
-    }
-    let response = app
-        .clone()
-        .oneshot(request.body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), 64 << 20)
-        .await
-        .unwrap();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
+    super::support::call(app, key, "GET", &path, None).await
 }
 
 fn approval(id: impl std::fmt::Display) -> String {
@@ -1270,31 +1204,7 @@ async fn with_the_review_flow_on_a_third_party_publication_hands_its_review_to_a
 }
 
 async fn send(app: &Router, key: &str, method: &str, path: &str, body: Value) -> (u16, Value) {
-    let mut request = Request::builder()
-        .method(method)
-        .uri(path)
-        .header(header::CONTENT_TYPE, "application/json");
-    let now = Utc::now().timestamp_millis().to_string();
-    for (name, value) in
-        signed_headers_by(&wallet(key), &method.to_lowercase(), path, "{}", true, &now)
-            .await
-            .iter()
-    {
-        request = request.header(name, value);
-    }
-    let response = app
-        .clone()
-        .oneshot(request.body(Body::from(body.to_string())).unwrap())
-        .await
-        .unwrap();
-    let status = response.status().as_u16();
-    let bytes = axum::body::to_bytes(response.into_body(), 64 << 20)
-        .await
-        .unwrap();
-    (
-        status,
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-    )
+    super::support::call(app, Some(key), method, path, Some(body)).await
 }
 
 /// The manager's save of `item` of `collection` at `urn` with a model of

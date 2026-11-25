@@ -10,13 +10,13 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode, header};
-use chrono::{TimeDelta, Utc};
 use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::support::{FakeCommittee, committee_index, temp_storage, unique, wallet};
-use crate::shared::signed_fetch::test_support::signed_headers_by;
+use super::support::{
+    FakeCommittee, address, committee_index, fresh_pass, request, signed, temp_storage, unique,
+};
 use crate::storage::Storage;
 
 const MOUNTS: [&str; 2] = ["", "/builder-api"];
@@ -56,9 +56,7 @@ impl Caller {
     }
 
     fn address(self) -> String {
-        self.key()
-            .map(|key| format!("{:#x}", wallet(key).address()))
-            .unwrap_or_default()
+        self.key().map(address).unwrap_or_default()
     }
 }
 
@@ -459,17 +457,7 @@ async fn send(
     path: &str,
     headers: &[(&str, &str)],
 ) -> Answer {
-    let mut request = Request::builder().method(method).uri(path);
-    if let Some(key) = caller.key() {
-        let now = Utc::now().timestamp_millis().to_string();
-        for (name, value) in
-            signed_headers_by(&wallet(key), &method.to_lowercase(), path, "{}", true, &now)
-                .await
-                .iter()
-        {
-            request = request.header(name, value);
-        }
-    }
+    let mut request = request(caller.key(), method, path).await;
     for (name, value) in headers {
         request = request.header(*name, *value);
     }
@@ -498,23 +486,8 @@ struct Files {
     denylist: Arc<crate::content::Denylist>,
 }
 
-async fn fresh_pass(pool: &PgPool, minutes_ago: i64) {
-    sqlx::query(
-        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) \
-         VALUES ('collections', 'matic', 'https://subgraph.example', $1, $1) \
-         ON CONFLICT (mirror, network) DO UPDATE SET last_complete_pass_at = EXCLUDED.last_complete_pass_at, \
-           pass_started_at = EXCLUDED.pass_started_at, cursor_id = NULL",
-    )
-    .bind(Utc::now().naive_utc() - TimeDelta::minutes(minutes_ago))
-    .execute(pool)
-    .await
-    .unwrap();
-    crate::tests::support::publish_registry_index(&mut *pool.acquire().await.unwrap(), false).await;
-}
-
 async fn files(committee: &FakeCommittee) -> Option<Files> {
-    let pool = crate::db::scratch::isolated_pool(8).await?;
-    fresh_pass(&pool, 0).await;
+    let pool = super::support::own_pool(8).await?;
     sqlx::query(
         "INSERT INTO builder.virtual_third_parties (id, managers, raw_metadata) VALUES ($1, $2, 'tp:1:Files:')",
     )
@@ -869,18 +842,9 @@ async fn a_signature_that_does_not_verify_is_refused_whatever_the_hash() {
     let mut answers = Vec::new();
     for hash in [public, private, absent] {
         let path = format!("/v1/storage/contents/{hash}");
-        let now = Utc::now().timestamp_millis().to_string();
         let mut request = Request::builder().method("GET").uri(&path);
-        for (name, value) in signed_headers_by(
-            &wallet(Owner.key().unwrap()),
-            "get",
-            "/v1/storage/contents/another",
-            "{}",
-            true,
-            &now,
-        )
-        .await
-        .iter()
+        for (name, value) in
+            &signed(Owner.key().unwrap(), "get", "/v1/storage/contents/another").await
         {
             request = request.header(name, value);
         }
@@ -908,24 +872,9 @@ async fn write(
     body: Body,
     content_type: &str,
 ) -> StatusCode {
-    let now = Utc::now().timestamp_millis().to_string();
-    let mut request = Request::builder()
-        .method(method)
-        .uri(path)
+    let request = request(caller.key(), method, path)
+        .await
         .header(header::CONTENT_TYPE, content_type);
-    for (name, value) in signed_headers_by(
-        &wallet(caller.key().unwrap()),
-        &method.to_lowercase(),
-        path,
-        "{}",
-        true,
-        &now,
-    )
-    .await
-    .iter()
-    {
-        request = request.header(name, value);
-    }
     app.clone()
         .oneshot(request.body(body).unwrap())
         .await
