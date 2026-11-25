@@ -438,7 +438,7 @@
       "candidate": [
         {
           "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
-          "line": 152,
+          "line": 153,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -866,7 +866,7 @@
       "candidate": [
         {
           "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
-          "line": 216,
+          "line": 219,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -902,7 +902,7 @@
       "candidate": [
         {
           "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
-          "line": 204,
+          "line": 207,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
