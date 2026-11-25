@@ -416,11 +416,11 @@ fn orbiting_into_a_corner_moves_the_shoulder_without_a_jump() {
     }
 }
 
-fn scene_with_wall_mesh(world: &mut World, layers: u32) -> Entity {
+fn scene_with_wall(world: &mut World, layers: u32) -> (Entity, Entity) {
     let mut colliders = SceneColliderData::default();
     wall(&mut colliders, layers);
     let root = world.spawn(colliders).id();
-    world
+    let mesh = world
         .spawn((
             HasCollider::<CtCollider>(collider_id(0), Default::default()),
             ContainerEntity {
@@ -432,7 +432,12 @@ fn scene_with_wall_mesh(world: &mut World, layers: u32) -> Entity {
             MeshMaterial3d::<SceneMaterial>::default(),
             MeshTag(0),
         ))
-        .id()
+        .id();
+    (root, mesh)
+}
+
+fn scene_with_wall_mesh(world: &mut World, layers: u32) -> Entity {
+    scene_with_wall(world, layers).1
 }
 
 fn obstacle_tag(world: &World, mesh: Entity) -> u32 {
@@ -463,4 +468,74 @@ fn only_a_mesh_holding_a_camera_obstacle_is_tagged_and_only_while_collisions_are
         .remove::<HasCollider<CtCollider>>();
     world.run_system_once(tag_camera_obstacle_meshes).unwrap();
     assert_eq!(obstacle_tag(&world, wall_mesh), 0);
+}
+
+#[test]
+fn a_mesh_whose_collider_is_disabled_for_the_player_is_not_tagged() {
+    let mut world = World::new();
+    world.init_resource::<CameraCollision>();
+    let (root, wall_mesh) = scene_with_wall(&mut world, PHYSICS | POINTER);
+
+    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
+    assert_ne!(obstacle_tag(&world, wall_mesh), 0);
+
+    let mut colliders = world.get_mut::<SceneColliderData>(root).unwrap();
+    colliders.disable_player_collisions(&collider_id(0));
+    assert!(!colliders.stops_camera(&collider_id(0)));
+    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
+    assert_eq!(obstacle_tag(&world, wall_mesh), 0);
+
+    world
+        .get_mut::<SceneColliderData>(root)
+        .unwrap()
+        .clear_disabled();
+    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
+    assert_ne!(obstacle_tag(&world, wall_mesh), 0);
+}
+
+#[test]
+fn a_tag_rewritten_by_another_system_is_corrected() {
+    let mut world = World::new();
+    world.init_resource::<CameraCollision>();
+    let wall_mesh = scene_with_wall_mesh(&mut world, PHYSICS | POINTER);
+    let physics_only_mesh = scene_with_wall_mesh(&mut world, PHYSICS);
+    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
+
+    // removing the material drops MeshTag, which comes back empty
+    world.entity_mut(wall_mesh).remove::<MeshTag>();
+    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
+    world.entity_mut(wall_mesh).insert(MeshTag(0));
+    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
+    assert_ne!(obstacle_tag(&world, wall_mesh), 0);
+
+    // a detached item gets back the whole tag it was attached with
+    world.get_mut::<MeshTag>(wall_mesh).unwrap().0 = 0;
+    world.get_mut::<MeshTag>(physics_only_mesh).unwrap().0 =
+        SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG;
+    world.run_system_once(tag_camera_obstacle_meshes).unwrap();
+    assert_ne!(obstacle_tag(&world, wall_mesh), 0);
+    assert_eq!(obstacle_tag(&world, physics_only_mesh), 0);
+}
+
+#[test]
+fn a_mesh_is_marked_changed_only_when_its_tag_flips() {
+    let mut world = World::new();
+    world.init_resource::<CameraCollision>();
+    let wall_mesh = scene_with_wall_mesh(&mut world, PHYSICS | POINTER);
+    let physics_only_mesh = scene_with_wall_mesh(&mut world, PHYSICS);
+    let mut schedule = Schedule::default();
+    schedule.add_systems(tag_camera_obstacle_meshes);
+    let changed =
+        |world: &World, mesh: Entity| world.entity(mesh).get_ref::<Mesh3d>().unwrap().is_changed();
+
+    schedule.run(&mut world);
+    world.clear_trackers();
+    schedule.run(&mut world);
+    assert!(!changed(&world, wall_mesh));
+    assert!(!changed(&world, physics_only_mesh));
+
+    world.resource_mut::<CameraCollision>().enabled = false;
+    schedule.run(&mut world);
+    assert!(changed(&world, wall_mesh));
+    assert!(!changed(&world, physics_only_mesh));
 }

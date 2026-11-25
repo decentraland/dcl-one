@@ -60,8 +60,12 @@ impl SceneColliderData {
     }
 
     pub fn stops_camera(&self, id: &ColliderId) -> bool {
-        self.get_collider(id).is_some_and(|collider| {
-            collider.is_enabled() && !collider.is_sensor() && is_camera_obstacle(collider)
+        self.get_collider_handle(id).is_some_and(|handle| {
+            self.collider_set.get(handle).is_some_and(|collider| {
+                collider.is_enabled()
+                    && !collider.is_sensor()
+                    && self.is_camera_candidate(handle, collider)
+            })
         })
     }
 

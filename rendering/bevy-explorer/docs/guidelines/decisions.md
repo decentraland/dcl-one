@@ -686,10 +686,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   enabled collider on both `CL_PHYSICS` and `CL_POINTER` is drawn opaque: the camera stops in
   front of it. Every other scene mesh, the grass and avatars fade in the cone between the camera
   and the player, because the camera passes through them and they would hide the player. That
-  includes a glTF wall whose collider is a separate `_collider` node: the wall drawn is another
-  mesh with no collider, so it still fades where it comes near the line of sight. With
-  `/camera_collisions false` nothing is exempt. The fade is the cone alone; scene meshes near
-  the camera no longer fade across the whole screen.
+  includes a mesh whose collider is off for the player (an item attached to an avatar, anything
+  under the scene's player or camera entity) and a glTF wall whose collider is a separate
+  `_collider` node: the wall drawn is another mesh with no collider, so it still fades where it
+  comes near the line of sight. With `/camera_collisions false` nothing is exempt. The fade is
+  the cone alone; scene meshes near the camera no longer fade across the whole screen.
 - **The photo camera stops at scene geometry instead of sliding.** unity-explorer moves a capsule
   character controller, which slides along walls; here the move is swept and refused whole when
   the camera's sphere would cross a scene collider. A collider the camera starts inside (the player

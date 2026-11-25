@@ -44,57 +44,32 @@ impl Default for CameraCollision {
     }
 }
 
-/// A mesh carrying the camera-obstacle tag.
-#[derive(Component)]
-pub struct CameraObstacleMesh;
-
-/// With collisions off no mesh is tagged, so every scene mesh fades.
+/// With collisions off no mesh is tagged, so every scene mesh fades. The tag bit is the only
+/// record: other systems rewrite or drop `MeshTag`.
 pub fn tag_camera_obstacle_meshes(
-    mut commands: Commands,
     collision: Res<CameraCollision>,
     scene_colliders: Query<&SceneColliderData>,
-    mut untagged: Query<
+    mut meshes: Query<
         (
-            Entity,
-            &HasCollider<CtCollider>,
-            &ContainerEntity,
-            &mut Mesh3d,
-            &mut MeshTag,
-        ),
-        (
-            With<MeshMaterial3d<SceneMaterial>>,
-            Without<CameraObstacleMesh>,
-        ),
-    >,
-    mut tagged: Query<
-        (
-            Entity,
             Option<(&HasCollider<CtCollider>, &ContainerEntity)>,
             &mut Mesh3d,
             &mut MeshTag,
         ),
-        With<CameraObstacleMesh>,
+        With<MeshMaterial3d<SceneMaterial>>,
     >,
 ) {
-    let stops_camera = |collider: &HasCollider<CtCollider>, container: &ContainerEntity| {
-        collision.enabled
-            && scene_colliders
-                .get(container.root)
-                .is_ok_and(|colliders| colliders.stops_camera(&collider.0))
-    };
-    for (entity, collider, container, mut mesh, mut tag) in &mut untagged {
-        if stops_camera(collider, container) {
-            tag.0 |= SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG;
+    for (collider, mut mesh, mut tag) in &mut meshes {
+        let stops_camera = collision.enabled
+            && collider.is_some_and(|(collider, container)| {
+                scene_colliders
+                    .get(container.root)
+                    .is_ok_and(|colliders| colliders.stops_camera(&collider.0))
+            });
+        let tagged = tag.0 & SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG != 0;
+        if stops_camera != tagged {
+            tag.0 ^= SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG;
             // bevy's mesh extraction doesn't watch MeshTag (0.16); Mesh3d is on its list
             mesh.set_changed();
-            commands.entity(entity).try_insert(CameraObstacleMesh);
-        }
-    }
-    for (entity, collider, mut mesh, mut tag) in &mut tagged {
-        if !collider.is_some_and(|(collider, container)| stops_camera(collider, container)) {
-            tag.0 &= !SCENE_MATERIAL_CAMERA_OBSTACLE_MESH_TAG;
-            mesh.set_changed();
-            commands.entity(entity).try_remove::<CameraObstacleMesh>();
         }
     }
 }
