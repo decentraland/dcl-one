@@ -8,19 +8,15 @@
 //! contract-wallet chain through the node's validator (`isValidSignature`
 //! over RPC), as upstream's crypto middleware did; a check that cannot run
 //! fails closed with a 503, never as the signer; a write checks it uncached
-//! ([`fresh`]). Every such check is
-//! admitted per client source first ([`admit_contract_wallet_check`], the
-//! `/forward-blockchain` pre-auth budget), so an anonymous client attaching a
-//! contract-wallet chain to public reads cannot spend the node's RPC quota
-//! and turn real contract wallets into 503s. Comparisons are exact against
+//! ([`fresh`]). Every check that reaches the RPC spends the client source's
+//! budget first (`shared::eip1654_budget`, the node's validator), and a spent
+//! budget is a 429. Comparisons are exact against
 //! canonical spellings: the legacy payload lowercased the metadata before
 //! signing, so a re-cased `Signer` carries a byte-identical signature and
 //! folding before comparing would authorize a request as something it is not.
 
 use axum::http::HeaderMap;
 use serde_json::Value;
-
-use std::sync::LazyLock;
 
 use crate::auth::eip1654::Eip1654Validator;
 use crate::shared::signed_fetch::{
@@ -46,57 +42,6 @@ pub(super) async fn mounted_path(
     next.run(request).await
 }
 
-tokio::task_local! {
-    /// The client source (`client_ip::distinct_client_ip`) of the market
-    /// request in flight, set by [`client_source`]; absent outside the market
-    /// router or when the peer does not name one client.
-    static CLIENT_SOURCE: Option<String>;
-}
-
-/// The market router's own record of who is asking: the address that names
-/// one client (a trusted proxy's `X-Real-IP`, else a public peer), for the
-/// contract-wallet admission below. A task-local, not a header, so a client
-/// cannot name someone else's bucket.
-pub(super) async fn client_source(
-    axum::extract::State(state): axum::extract::State<super::SharedState>,
-    request: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    let peer = request
-        .extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .map(|axum::extract::ConnectInfo(p)| *p);
-    let source = crate::shared::client_ip::distinct_client_ip(
-        request.headers(),
-        peer,
-        &state.settings.market.trusted_proxy_cidrs,
-    );
-    CLIENT_SOURCE.scope(source, next.run(request)).await
-}
-
-/// The contract-wallet checks one client source may start, by the
-/// `/forward-blockchain` pre-auth budgets (`tips::source_keys`).
-static CONTRACT_WALLET_CHECKS: LazyLock<super::tips::ForwardLimiter> =
-    LazyLock::new(|| super::tips::ForwardLimiter::new(super::tips::LIMITER_KEYS));
-
-/// Whether the request's auth chain carries an EIP-1654 link, the one kind
-/// whose verification is an `isValidSignature` call over RPC. Decided on the
-/// chain as the verifier parses it, so a JSON escape in a link's `type`
-/// cannot hide one; a chain that does not parse is refused before any RPC.
-fn carries_contract_wallet_link(headers: &HeaderMap) -> bool {
-    use crate::auth::AuthLinkType::{
-        EcdsaEip1654Ephemeral, EcdsaEip1654ScopedEphemeral, EcdsaEip1654SignedEntity,
-    };
-    signed_fetch::extract_auth_chain(headers).is_ok_and(|chain| {
-        chain.iter().any(|link| {
-            matches!(
-                link.link_type,
-                EcdsaEip1654Ephemeral | EcdsaEip1654SignedEntity | EcdsaEip1654ScopedEphemeral
-            )
-        })
-    })
-}
-
 /// The validator of a write: the uncached one (`fresh_validator`), so a
 /// contract wallet's delegation stops authorizing the moment its owner is
 /// removed, not after the shared cache's acceptance TTL. A validator with no
@@ -104,30 +49,6 @@ fn carries_contract_wallet_link(headers: &HeaderMap) -> bool {
 /// cached acceptance.
 pub fn fresh(eip1654: Option<&dyn Eip1654Validator>) -> Option<&dyn Eip1654Validator> {
     eip1654.and_then(|v| v.fresh_validator())
-}
-
-/// Admits a contract-wallet verification before any RPC call: a chain with an
-/// EIP-1654 link, on a node that would check it, spends one token of its
-/// client source's budget, and a spent budget is a 429. A request with no
-/// source the router could name (no peer, an internal one) is not counted,
-/// as `/forward-blockchain` does.
-pub(super) fn admit_contract_wallet_check(
-    eip1654: Option<&dyn Eip1654Validator>,
-    headers: &HeaderMap,
-) -> Result<(), ApiError> {
-    if eip1654.is_none() || !carries_contract_wallet_link(headers) {
-        return Ok(());
-    }
-    let source = CLIENT_SOURCE.try_with(Clone::clone).ok().flatten();
-    match source {
-        Some(ip) if !CONTRACT_WALLET_CHECKS.allow(&super::tips::source_keys(&ip)) => {
-            Err(ApiError::http(
-                429,
-                "Too many contract-wallet signature checks; retry later",
-            ))
-        }
-        _ => Ok(()),
-    }
 }
 
 pub const SCENE_SIGNER: &str = "decentraland-kernel-scene";
@@ -224,6 +145,7 @@ fn message(e: &SignedFetchError) -> &'static str {
         SignedFetchError::CatalystUnavailable(_) => {
             "The contract-wallet signature cannot be checked right now"
         }
+        SignedFetchError::RateLimited => "Too many contract-wallet signature checks; retry later",
         _ => "Invalid Auth Chain",
     }
 }
@@ -234,6 +156,8 @@ fn to_api(e: SignedFetchError) -> ApiError {
         // The EIP-1654 check could not run (the RPC failed): refused, as
         // unavailable rather than as a bad chain.
         SignedFetchError::CatalystUnavailable(_) => ApiError::http(503, message(&e)),
+        // The client source spent its contract-wallet checks: before any RPC call.
+        SignedFetchError::RateLimited => ApiError::http(429, message(&e)),
         other => ApiError::unauthorized(message(&other)),
     }
 }
@@ -248,7 +172,6 @@ pub async fn require_signer(
     method: &str,
     path: &str,
 ) -> Result<String, ApiError> {
-    admit_contract_wallet_check(eip1654, headers)?;
     signed_fetch::require_signer(headers, method, path, PayloadPolicy::V6ThenLegacy, eip1654)
         .await
         .map(|s| s.into_string())
@@ -390,38 +313,6 @@ mod tests {
                 .message(),
             "Invalid auth signer"
         );
-    }
-
-    /// The contract-wallet admission reads the chain as the verifier parses
-    /// it: a `\u` escape in a link's type still names an EIP-1654 link.
-    #[test]
-    fn a_contract_wallet_link_is_found_on_the_parsed_chain_whatever_its_escapes() {
-        let chain = |ephemeral_type: &str| {
-            let mut h = HeaderMap::new();
-            for (i, link) in [
-                r#"{"type":"SIGNER","payload":"0x00000000000000000000000000000000000c0de1","signature":""}"#.to_string(),
-                format!(r#"{{"type":"{ephemeral_type}","payload":"Decentraland Login\nEphemeral address: 0x00000000000000000000000000000000000e0e0e\nExpiration: 2099-01-01T00:00:00.000Z","signature":"0x11"}}"#),
-                r#"{"type":"ECDSA_SIGNED_ENTITY","payload":"x","signature":"0x22"}"#.to_string(),
-            ]
-            .iter()
-            .enumerate()
-            {
-                h.insert(
-                    axum::http::HeaderName::try_from(format!("x-identity-auth-chain-{i}")).unwrap(),
-                    HeaderValue::from_str(link).unwrap(),
-                );
-            }
-            h
-        };
-        assert!(carries_contract_wallet_link(&chain(
-            "ECDSA_EIP_1654_EPHEMERAL"
-        )));
-        assert!(
-            carries_contract_wallet_link(&chain(r"ECDSA_EIP_1654_EPHEMERAL")),
-            "an escaped type is still the link the verifier sees"
-        );
-        assert!(!carries_contract_wallet_link(&chain("ECDSA_EPHEMERAL")));
-        assert!(!carries_contract_wallet_link(&HeaderMap::new()));
     }
 
     #[tokio::test]

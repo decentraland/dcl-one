@@ -24,7 +24,7 @@ use dcl_component::proto_components::{
     social_service::v2::PrivateMessagePrivacySetting,
 };
 pub use platform::{
-    default_color_grading, scatter_bloom, BLOOM_SCATTER, GRADING_MIDTONES_RANGE,
+    default_color_grading, scatter_bloom, scatter_lerp, BLOOM_SCATTER, GRADING_MIDTONES_RANGE,
     GRADING_SHADOWS_WEIGHT,
 };
 use serde::{Deserialize, Serialize};
@@ -873,7 +873,8 @@ impl AppConfig {
 
     /// one-time migrations for configs saved with an older generation, keeping everything
     /// else. gen 1: reinitialize the preset-managed settings to the current defaults.
-    /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
+    /// gen 2: moved configs off an old bloom level; bloom is only on or off now (`BloomSetting`),
+    /// so there is nothing left to move.
     /// gen 3: native gpu uploads became capped by default; move configs still uncapped (0).
     /// gen 4: the defaults became the Medium graphics preset; reset the settings the presets set,
     /// so every saved config lands on Medium.
@@ -886,9 +887,6 @@ impl AppConfig {
         let default = Self::default();
         if self.settings_generation < 1 {
             self.reset_preset_settings(&default);
-        }
-        if self.settings_generation < 2 && self.graphics.bloom == BloomSetting::High {
-            self.graphics.bloom = default.graphics.bloom;
         }
         if self.settings_generation < 3 && self.graphics.gpu_bytes_per_frame == 0 {
             self.graphics.gpu_bytes_per_frame = default.graphics.gpu_bytes_per_frame;
@@ -1189,7 +1187,7 @@ impl Default for GraphicsSettings {
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
             fog: FogSetting::On,
-            bloom: BloomSetting::Low,
+            bloom: BloomSetting::On,
             dof: DofSetting::High,
             ssao: SsaoSetting::Off,
             sky_reflections: SkyReflectionSetting::High,
@@ -1458,11 +1456,13 @@ pub enum FogSetting {
     On,
 }
 
+/// Bloom is on or off. A saved config may name one of the two levels there used to be: both
+/// read as on. On is saved as `High`, the old level it draws, so an older client reads it.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BloomSetting {
     Off,
-    Low,
-    High,
+    #[serde(rename = "High", alias = "Low", alias = "On")]
+    On,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -2799,22 +2799,26 @@ mod tests {
 
     #[test]
     fn bloom_weighs_mips_by_scatter() {
-        let b = scatter_bloom();
-        assert_eq!(b.prefilter.threshold, 1.0);
-        // the knee is threshold * 0.5; bevy: knee = threshold * softness
-        assert_eq!(b.prefilter.threshold_softness, 0.5);
-        assert_eq!(b.high_pass_frequency, 1.0);
-        // a scatter bloom folds lerp(fine, coarse, s) over the chain and adds the result once: mip i weighs
-        // (1 - s) s^i. bevy adds mip i with weight blend(0) * blend(1) * .. * blend(i).
-        let max_mip = 7.0;
-        let mut weight = 1.0;
-        for mip in 0..=7 {
-            weight *= bevy_bloom_blend(&b, mip as f32, max_mip);
-            let scatter = (1.0 - BLOOM_SCATTER) * BLOOM_SCATTER.powi(mip);
-            assert!(
-                (weight - scatter).abs() < 0.002,
-                "mip {mip}: bevy {weight} vs scatter {scatter}"
-            );
+        // the Explorer's scatter and the avatar preview's
+        for setting in [BLOOM_SCATTER, 0.6] {
+            let b = scatter_bloom(setting);
+            assert_eq!(b.prefilter.threshold, 1.0);
+            // the knee is threshold * 0.5; bevy: knee = threshold * softness
+            assert_eq!(b.prefilter.threshold_softness, 0.5);
+            assert_eq!(b.high_pass_frequency, 1.0);
+            // a scatter bloom folds lerp(fine, coarse, s) over the chain and adds the result once:
+            // mip i weighs (1 - s) s^i. bevy adds mip i with weight blend(0) * blend(1) * .. * blend(i).
+            let s = scatter_lerp(setting);
+            let max_mip = 7.0;
+            let mut weight = 1.0;
+            for mip in 0..=7 {
+                weight *= bevy_bloom_blend(&b, mip as f32, max_mip);
+                let scatter = (1.0 - s) * s.powi(mip);
+                assert!(
+                    (weight - scatter).abs() < 0.002,
+                    "scatter {setting}, mip {mip}: bevy {weight} vs scatter {scatter}"
+                );
+            }
         }
     }
 
@@ -3011,7 +3015,7 @@ mod tests {
     fn default_graphics_are_the_medium_preset() {
         let g = GraphicsSettings::default();
         assert_eq!((g.fps_target, g.render_scale), (60, 1.0));
-        assert_eq!((g.bloom, g.avatar_outline), (BloomSetting::Low, true));
+        assert_eq!((g.bloom, g.avatar_outline), (BloomSetting::On, true));
         assert_eq!(
             (
                 g.shadow_settings,
@@ -3076,6 +3080,19 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_bloom_level_reads_as_on() {
+        let read = |saved: &str| serde_json::from_str::<BloomSetting>(saved).unwrap();
+        assert_eq!(read(r#""Low""#), BloomSetting::On);
+        assert_eq!(read(r#""High""#), BloomSetting::On);
+        assert_eq!(read(r#""On""#), BloomSetting::On);
+        assert_eq!(read(r#""Off""#), BloomSetting::Off);
+        // saved under the old name an older client reads
+        let write = |setting| serde_json::to_string(&setting).unwrap();
+        assert_eq!(write(BloomSetting::On), r#""High""#);
+        assert_eq!(write(BloomSetting::Off), r#""Off""#);
+    }
+
+    #[test]
     fn generation_4_lands_on_medium_and_keeps_the_rest() {
         let mut config = AppConfig {
             settings_generation: 3,
@@ -3085,7 +3102,7 @@ mod tests {
         };
         let g = &mut config.graphics;
         (g.vsync, g.fps_target, g.render_scale) = (false, 144, 0.5);
-        (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::High, DofSetting::Off);
+        (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::Off, DofSetting::Off);
         (g.shadow_distance, g.light_count, g.shadow_caster_count) = (200.0, 32, 8);
         g.lens_flare = false;
         (g.ambient_brightness, g.oob) = (10, 0.0);

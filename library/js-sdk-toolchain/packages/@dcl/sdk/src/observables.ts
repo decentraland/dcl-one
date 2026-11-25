@@ -1,16 +1,16 @@
 import { Observable } from './internal/Observable'
+import type { Entity, Vector3Type } from '@dcl/ecs'
 import {
   AvatarBase,
   AvatarEmoteCommand,
   AvatarEquippedData,
-  Entity,
   PlayerIdentityData,
   PointerEventsResult,
   RealmInfo,
-  Vector3Type,
   engine
 } from '@dcl/ecs'
-import { ManyEntityAction, SendBatchResponse, subscribe } from '~system/EngineApi'
+import type { ManyEntityAction, SendBatchResponse } from '~system/EngineApi'
+import { subscribe } from '~system/EngineApi'
 import players from './players'
 import { localeChangedEvents } from './internal/language-events'
 

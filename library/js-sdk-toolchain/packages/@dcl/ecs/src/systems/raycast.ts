@@ -1,7 +1,8 @@
 import * as components from '../components'
-import { ColliderLayer, RaycastQueryType, PBRaycastResult } from '../components'
-import { DeepReadonlyObject, Entity, IEngine } from '../engine'
-import { Vector3 } from '../components/generated/pb/decentraland/common/vectors.gen'
+import type { PBRaycastResult } from '../components'
+import { ColliderLayer, RaycastQueryType } from '../components'
+import type { DeepReadonlyObject, Entity, IEngine } from '../engine'
+import type { Vector3 } from '../components/generated/pb/decentraland/common/vectors.gen'
 import { EntityState } from '../engine/entity'
 
 /**

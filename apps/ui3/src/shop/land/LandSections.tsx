@@ -14,6 +14,7 @@ import { landData, landParcels } from "./api";
 import { isEstateListingAffectedByUpgrade } from "./estate";
 import { dateText, epochMs, Mana } from "./format";
 import LandMap from "./LandMap";
+import MapGridAge from "./MapGridAge";
 import { distanceText, estateProximity, parcelProximity, proximityIndex, PROXIMITY_TITLE, type ProximityKind } from "./proximity";
 import { fetchRentalListings, isRentalExecuted, rentalEndDate, type RentalListing } from "./rentals";
 import { selectionCenter, type Tiles } from "./tiles";
@@ -40,6 +41,7 @@ export function LandMapPreview({ result, tiles, label }: { result: NftResult; ti
       initialZoom={8}
       withPopup={false}
       label={label ?? `Map of ${result.nft.name}`}
+      status={<MapGridAge />}
     />
   );
 }
