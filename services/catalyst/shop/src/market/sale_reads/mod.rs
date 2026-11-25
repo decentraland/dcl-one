@@ -226,13 +226,14 @@ pub(crate) async fn snapshot(
     Ok((snap, nets))
 }
 
-async fn metadata_proofs(
+pub(crate) async fn require_metadata(
     snap: &mut sale_fold::SalesSnapshot,
     nets: &[ChainNet],
     mirror: &'static str,
-) -> Result<Vec<(bool, Option<String>, Option<NaiveDateTime>)>, Response> {
+    source: Source,
+) -> Result<Vec<String>, Response> {
     let now = Utc::now();
-    sqlx::query_as(
+    let proofs: Vec<(bool, Option<String>, Option<NaiveDateTime>)> = sqlx::query_as(
         "SELECT projection.owned_at IS NOT NULL,
            CASE WHEN projection.owned_at IS NOT NULL THEN
              CASE WHEN projection.pending=0 AND projection.projected_through>=sales.block_number
@@ -256,17 +257,8 @@ async fn metadata_proofs(
     )
     .bind(mirror).bind(nets.iter().map(|n|n.db_name()).collect::<Vec<_>>())
     .bind((now-super::chain_walk::READY_WINDOW).naive_utc()).bind(now.naive_utc())
-    .fetch_all(&mut *snap.transaction).await.map_err(db_error)
-}
-
-pub(crate) async fn require_metadata(
-    snap: &mut sale_fold::SalesSnapshot,
-    nets: &[ChainNet],
-    mirror: &'static str,
-    source: Source,
-) -> Result<Vec<String>, Response> {
-    metadata_proofs(snap, nets, mirror)
-        .await?
+    .fetch_all(&mut *snap.transaction).await.map_err(db_error)?;
+    proofs
         .into_iter()
         .map(|(native, proof, folded_at)| {
             if let Some(folded_at) = folded_at {
@@ -379,26 +371,10 @@ pub(crate) async fn seller_stats(
     use super::sales::{SalesSummary, SalesSummaryItem, SalesSummaryRoyalties};
     require_metadata(snap, nets, "items", Source::ItemsMirror).await?;
     let seller = f.seller.to_lowercase();
-    let ethereum_collections_ready = if nets.contains(&ChainNet::Ethereum) {
-        let proofs = metadata_proofs(snap, &[ChainNet::Ethereum], "collections").await?;
-        if let [(_, Some(_), folded_at)] = proofs.as_slice() {
-            if let Some(folded_at) = folded_at {
-                snap.expires_at = snap
-                    .expires_at
-                    .min(folded_at.and_utc() + super::chain_walk::READY_WINDOW);
-            }
-            true
-        } else {
-            false
-        }
-    } else {
-        false
-    };
     let row: SellerTotals = sales_query!(nets, summary; "settled_sales.sql", "summary.sql")
         .bind(seller)
         .bind(f.from)
         .bind(f.to)
-        .bind(ethereum_collections_ready)
         .fetch_one(&mut *snap.transaction)
         .await
         .map_err(db_error)?;

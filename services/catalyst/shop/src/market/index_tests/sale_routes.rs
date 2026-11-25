@@ -951,6 +951,13 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         "hat",
     )
     .await;
+    let complete_ethereum_items =
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())
+        WHERE network='ethereum' AND mirror='items'";
+    sqlx::query(complete_ethereum_items)
+        .execute(&db.pool)
+        .await
+        .unwrap();
     sqlx::query(
         "UPDATE shop.collections SET creator=$1 WHERE network='ethereum' AND contract_address=$2",
     )
@@ -1019,8 +1026,8 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     .execute(&db.pool)
     .await
     .unwrap();
-    // A completed mirror can still lag the items copy or carry a different
-    // chain's row. Neither proves the collection URN for the known creator item.
+    // A completed pass can lack a collection whose first page arrives in
+    // the next pass. Neither state proves the URN until the new pass ends.
     sqlx::query("DELETE FROM shop.collections WHERE network='ethereum' AND contract_address=$1")
         .bind(CARL)
         .execute(&db.pool)
@@ -1030,6 +1037,14 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     assert_eq!(code, StatusCode::OK, "{incomplete}");
     assert_eq!(incomplete["data"]["royalties"]["royaltiesWei"], Value::Null);
     assert!(incomplete["data"]["earnedUsd"].is_string());
+    sqlx::query(
+        "UPDATE shop.mirror_state SET pass_started_at=timezone('UTC',now()),
+         last_complete_pass_at=timezone('UTC',now())-interval '1 minute'
+         WHERE network='ethereum' AND mirror='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
     seed_collection(
         &db.pool,
         "ethereum",
@@ -1039,6 +1054,29 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         "Vintage",
     )
     .await;
+    sqlx::query(
+        "UPDATE shop.collections SET creator=$1 WHERE network='ethereum' AND contract_address=$2",
+    )
+    .bind(BOB)
+    .bind(CARL)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, incomplete) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::OK, "{incomplete}");
+    assert_eq!(incomplete["data"]["royalties"]["royaltiesWei"], Value::Null);
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())
+        WHERE network='ethereum' AND mirror='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, complete_copy) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::OK, "{complete_copy}");
+    assert_eq!(complete_copy["data"]["royalties"]["royaltiesWei"], "5");
+
+    // A completed pass does not prove a collection row on another chain.
     let catalogue_chain = "UPDATE shop.collections SET creator=$1,chain_id=$2
         WHERE network='ethereum' AND contract_address=$3";
     sqlx::query(catalogue_chain)
@@ -1114,6 +1152,10 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     .await;
     sqlx::query("UPDATE shop.items SET creator=$1 WHERE network='ethereum' AND contract_address=$2 AND item_id=10")
         .bind(DAVE).bind(CARL).execute(&db.pool).await.unwrap();
+    sqlx::query(complete_ethereum_items)
+        .execute(&db.pool)
+        .await
+        .unwrap();
     let set_issue = "UPDATE shop.nft_event SET detail=$1 WHERE
         network='ethereum' AND block_number=$2 AND kind='issue_v1' AND contract_address=$3";
     sqlx::query(set_issue)
