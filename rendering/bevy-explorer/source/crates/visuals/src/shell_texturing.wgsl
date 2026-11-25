@@ -158,6 +158,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 #ifndef PREPASS_PIPELINE
     var pbr_input = pbr_input_from_vertex_output(in, is_front, true);
     pbr_input.material.reflectance = vec3(0.125);
+    // fully rough: at the default roughness the sky reflection's grazing term lays a pale sheen
+    // over slopes seen edge on (see sky_envmap_light)
+    pbr_input.material.perceptual_roughness = 1.0;
     pbr_input.material.base_color = mix(shell.root_color, shell.tip_color, color_factor);
 
     out.color = apply_pbr_lighting(pbr_input);
