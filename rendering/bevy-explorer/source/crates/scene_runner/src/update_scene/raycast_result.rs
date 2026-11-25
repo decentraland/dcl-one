@@ -152,7 +152,7 @@ enum RaycastTargets {
     /// that target scene, returning entity ids for both — a known, unambiguous pair, so it can
     /// identify what it hit in the scene it's operating on.
     Pinned(Entity),
-    /// The scenes the cast meets, nearest first, with the distance at which it first touches each,
+    /// The scenes the cast meets, nearest first, with the distance from which each can answer,
     /// then global ground: the scenes on a ray's line, and for the avatar's shape those its
     /// capsule touches as well. Cross-scene ids are stripped.
     World(Vec<(Entity, f32)>),
@@ -391,7 +391,7 @@ impl RaycastJob {
     }
 }
 
-/// The scenes a world cast asks, with the distance at which it first meets each: those on its
+/// The scenes a world cast asks, with the distance from which each can answer: those on its
 /// ray, and for a cast of the avatar's shape those the capsule touches beside the ray as well.
 fn world_scenes(
     containing_scene: &ContainingScene,

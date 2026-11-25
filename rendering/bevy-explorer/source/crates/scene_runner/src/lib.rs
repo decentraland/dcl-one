@@ -1564,6 +1564,30 @@ mod get_ray_tests {
     }
 
     #[test]
+    fn a_descending_shape_meets_a_scene_from_where_a_stop_at_its_top_can_be_reported() {
+        // centre is parcel (0, 0), east is (1, 0): the edge between them is at x = 16
+        let (mut world, [centre, east]) = world_with_scenes([(0, 0), (1, 0)]);
+
+        // towards east, 5 cm down for each metre along
+        let path = Vec3::new(1.0, -0.05, 0.0).normalize();
+        let met = world
+            .run_system_once(move |containing: ContainingScene| {
+                containing.get_swept(Vec3::new(10.0, 25.0, -8.0), path * 10.0, RADIUS)
+            })
+            .unwrap();
+
+        // it touches east's parcel 5.65 m on along x. A stop at the top east is drawn to, whose
+        // height the lookup does not know, is reported a millimetre above that top: 2 cm
+        // earlier along this path
+        assert_eq!(met.len(), 2, "{met:?}");
+        assert_eq!(met[0], (centre, 0.0));
+        assert_eq!(met[1].0, east);
+        let touched = 5.65 / path.x;
+        let before = 0.001 / -path.y;
+        assert!((met[1].1 - (touched - before)).abs() < 2e-4, "{met:?}");
+    }
+
+    #[test]
     fn a_cast_from_far_beyond_any_parcel_meets_no_scene() {
         let (mut world, _) = world_with_scenes([(0, 0)]);
 

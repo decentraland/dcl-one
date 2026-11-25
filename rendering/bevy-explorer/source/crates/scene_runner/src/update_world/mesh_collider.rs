@@ -1259,6 +1259,12 @@ fn each_nearest(
 /// reach. One let into the scene goes this far on along its path.
 const SCENE_EDGE_MARGIN: f64 = 0.001;
 
+/// [`SCENE_EDGE_MARGIN`] from the edge of a scene with the outward normal `edge`, in units of a
+/// sweep's `direction`: how far before it touches the scene a sweep stopped at that edge stops.
+fn edge_margin(direction: DVec3, edge: DVec3) -> f64 {
+    SCENE_EDGE_MARGIN / direction.dot(edge).abs()
+}
+
 impl SceneColliderData {
     /// Whether the scene's colliders apply to an avatar that stands at `translation`: its
     /// capsule touches the space the scene is drawn in. Always, for collider data without
@@ -1441,7 +1447,7 @@ impl SceneColliderData {
                         )
                     {
                         // the margin is kept from the edge itself, however shallow the path
-                        let margin = SCENE_EDGE_MARGIN / direction.dot(edge).abs();
+                        let margin = edge_margin(direction, edge);
                         hit.toi = (stretch.start - margin).max(0.0) as f32;
                         hit.normal = edge.as_vec3();
                     } else {
