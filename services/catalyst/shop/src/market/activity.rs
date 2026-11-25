@@ -251,7 +251,7 @@ async fn activity(
         "get",
         "/v1/activity",
         PayloadPolicy::V6ThenLegacy,
-        None,
+        state.eip1654.as_deref(),
     )
     .await
     .map_err(refusal)?

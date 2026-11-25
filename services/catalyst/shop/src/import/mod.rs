@@ -482,7 +482,7 @@ async fn check_inner(
     body: ImportCheckBody,
 ) -> Result<Response, Response> {
     require_not_scene_signer(headers).map_err(IntoResponse::into_response)?;
-    let signer_text = require_signer(headers, "post", CHECK_PATH)
+    let signer_text = require_signer(state.eip1654.as_deref(), headers, "post", CHECK_PATH)
         .await
         .map_err(IntoResponse::into_response)?;
     let signer =

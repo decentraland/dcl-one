@@ -126,10 +126,11 @@ pub async fn add_coupon(
     ) {
         return e.into_response();
     }
-    let recovered = match require_signer(&headers, "post", "/v1/coupons").await {
-        Ok(r) => r,
-        Err(e) => return e.into_response(),
-    };
+    let recovered =
+        match require_signer(state.eip1654.as_deref(), &headers, "post", "/v1/coupons").await {
+            Ok(r) => r,
+            Err(e) => return e.into_response(),
+        };
     let raw: serde_json::Value = match serde_json::from_str(&body) {
         Ok(v) => v,
         Err(e) => {

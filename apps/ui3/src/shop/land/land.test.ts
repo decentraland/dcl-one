@@ -167,9 +167,12 @@ describe("the LAND browse query", () => {
     expect(landSortsFor("sale")[0]).toBe("recently_listed");
   });
 
-  it("builds upstream's /v1/nfts parameters, prices in exact wei", () => {
+  it("builds upstream's /v1/nfts parameters, prices in MANA", () => {
     const q = landNftsQuery({ ...DEFAULT_LAND_FILTERS, minPrice: "1.5", maxPrice: "2000", search: "genesis", page: 2 });
-    expect(q).toMatchObject({ first: 24, skip: 24, sortBy: "recently_listed", isLand: true, isOnSale: true, minPrice: "1500000000000000000", maxPrice: "2000000000000000000000", search: "genesis" });
+    expect(q).toMatchObject({ first: 24, skip: 24, sortBy: "recently_listed", isLand: true, isOnSale: true, minPrice: "1.5", maxPrice: "2000", search: "genesis" });
+    // At most the 18 decimals the route parses; a value that is not a plain decimal is left out.
+    expect(landNftsQuery({ ...DEFAULT_LAND_FILTERS, minPrice: "0.1234567890123456789", maxPrice: "abc" })).toMatchObject({ minPrice: "0.123456789012345678" });
+    expect(landNftsQuery({ ...DEFAULT_LAND_FILTERS, maxPrice: "abc" })).not.toHaveProperty("maxPrice");
     expect(landNftsQuery({ ...DEFAULT_LAND_FILTERS, status: "rent", category: "parcel", rentalDays: [7] })).toMatchObject({ category: "parcel", isOnRent: true, rentalDays: ["7"] });
     expect(landNftsQuery({ ...DEFAULT_LAND_FILTERS, status: "all" })).not.toHaveProperty("isOnSale");
   });

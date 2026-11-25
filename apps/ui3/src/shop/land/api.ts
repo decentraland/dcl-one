@@ -128,11 +128,13 @@ export function landFiltersToSearch(f: LandFilters): string {
   return s ? `?${s}` : "";
 }
 
-const WEI = 10n ** 18n;
-
-function manaToWeiString(mana: string): string {
-  const [whole = "0", frac = ""] = mana.split(".");
-  return (BigInt(whole) * WEI + BigInt((frac + "0".repeat(18)).slice(0, 18) || "0")).toString();
+/** A MANA amount as `/v1/nfts` reads `minPrice`/`maxPrice` (ethers `parseEther`, as the
+ * legacy API did): a plain decimal with at most 18 fraction digits, or nothing. */
+function manaParam(mana: string): string | undefined {
+  const m = /^(\d+)(?:\.(\d+))?$/.exec(mana.trim());
+  if (!m) return undefined;
+  const frac = (m[2] ?? "").slice(0, 18).replace(/0+$/, "");
+  return frac ? `${m[1]}.${frac}` : m[1];
 }
 
 /** The `/v1/nfts` query for the filters (upstream `buildNFTQueryString` for the LAND section). */
@@ -148,8 +150,10 @@ export function landNftsQuery(f: LandFilters): Record<string, string | number | 
   if (f.status === "sale") query.isOnSale = true;
   if (f.status === "rent") query.isOnRent = true;
   if (f.search.trim()) query.search = f.search.trim();
-  if (f.minPrice) query.minPrice = manaToWeiString(f.minPrice);
-  if (f.maxPrice) query.maxPrice = manaToWeiString(f.maxPrice);
+  const minPrice = manaParam(f.minPrice);
+  const maxPrice = manaParam(f.maxPrice);
+  if (minPrice) query.minPrice = minPrice;
+  if (maxPrice) query.maxPrice = maxPrice;
   if (f.minEstateSize) query.minEstateSize = f.minEstateSize;
   if (f.maxEstateSize) query.maxEstateSize = f.maxEstateSize;
   if (f.minDistanceToPlaza) query.minDistanceToPlaza = f.minDistanceToPlaza;

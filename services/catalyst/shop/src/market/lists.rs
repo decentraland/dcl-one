@@ -541,7 +541,7 @@ async fn lists_inner(
     pairs: &[(String, String)],
 ) -> Result<Response, ApiError> {
     require_not_scene_signer(headers)?;
-    let user = require_signer(headers, "get", "/v1/lists").await?;
+    let user = require_signer(state.eip1654.as_deref(), headers, "get", "/v1/lists").await?;
     let pg = get_pagination_params(pairs);
     let p = Params::new(pairs);
     let sort_by = parse_sort_by(p.get_string("sortBy", None).as_deref())?;
@@ -620,7 +620,13 @@ async fn list_picks_inner(
     headers: &HeaderMap,
     pairs: &[(String, String)],
 ) -> Result<Response, ApiError> {
-    let user = optional_signer(headers, "get", &format!("/v1/lists/{id}/picks")).await?;
+    let user = optional_signer(
+        state.eip1654.as_deref(),
+        headers,
+        "get",
+        &format!("/v1/lists/{id}/picks"),
+    )
+    .await?;
     if !is_uuid(id) {
         return Err(ApiError::bad_request("The list id must be a UUID."));
     }
@@ -687,9 +693,14 @@ fn validate_list_ids(ids: &[String]) -> Result<(), ApiError> {
     Ok(())
 }
 
-async fn authenticate(headers: &HeaderMap, method: &str, path: &str) -> Result<String, ApiError> {
+async fn authenticate(
+    state: &MarketplaceState,
+    headers: &HeaderMap,
+    method: &str,
+    path: &str,
+) -> Result<String, ApiError> {
     require_not_scene_signer(headers)?;
-    require_signer(headers, method, path).await
+    require_signer(state.eip1654.as_deref(), headers, method, path).await
 }
 
 async fn pick_inner(
@@ -698,7 +709,7 @@ async fn pick_inner(
     headers: &HeaderMap,
     body: Option<PickUnpickInBulkBody>,
 ) -> Result<Response, PicksError> {
-    let user = authenticate(headers, "post", &format!("/v1/picks/{item_id}")).await?;
+    let user = authenticate(state, headers, "post", &format!("/v1/picks/{item_id}")).await?;
     let body = body.unwrap_or_default();
     let picked_for = body.picked_for.unwrap_or_default();
     let unpicked_from = body.unpicked_from.unwrap_or_default();
@@ -773,7 +784,8 @@ pub async fn unpick_everywhere(
     Path(item_id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    let user = match authenticate(&headers, "delete", &format!("/v1/picks/{item_id}")).await {
+    let user = match authenticate(&state, &headers, "delete", &format!("/v1/picks/{item_id}")).await
+    {
         Ok(u) => u,
         Err(e) => return e.into_response(),
     };
@@ -1438,7 +1450,13 @@ async fn get_list_inner(
     id: &str,
     headers: &HeaderMap,
 ) -> Result<Response, ListsError> {
-    let user = optional_signer(headers, "get", &format!("/v1/lists/{id}")).await?;
+    let user = optional_signer(
+        state.eip1654.as_deref(),
+        headers,
+        "get",
+        &format!("/v1/lists/{id}"),
+    )
+    .await?;
     require_uuid(id)?;
     let list = get_list(
         &state.pool,
@@ -1468,7 +1486,7 @@ async fn create_list_inner(
     headers: &HeaderMap,
     body: Option<ListCreationBody>,
 ) -> Result<Response, ListsError> {
-    let user = authenticate(headers, "post", "/v1/lists").await?;
+    let user = authenticate(state, headers, "post", "/v1/lists").await?;
     let body = body.ok_or_else(|| ApiError::bad_request("name and private are required"))?;
     check_list_fields(Some(&body.name), body.description.as_deref())?;
     let list = add_list(
@@ -1507,7 +1525,7 @@ async fn update_list_inner(
     headers: &HeaderMap,
     body: Option<ListUpdate>,
 ) -> Result<Response, ListsError> {
-    let user = authenticate(headers, "put", &format!("/v1/lists/{id}")).await?;
+    let user = authenticate(state, headers, "put", &format!("/v1/lists/{id}")).await?;
     if is_default_list(id) {
         return Err(ApiError::bad_request(DEFAULT_LIST_IMMUTABLE_MESSAGE).into());
     }
@@ -1545,7 +1563,7 @@ async fn delete_list_inner(
     id: &str,
     headers: &HeaderMap,
 ) -> Result<Response, ListsError> {
-    let user = authenticate(headers, "delete", &format!("/v1/lists/{id}")).await?;
+    let user = authenticate(state, headers, "delete", &format!("/v1/lists/{id}")).await?;
     delete_list(&state.pool, id, &user).await?;
     Ok(Json(serde_json::json!({ "ok": true })).into_response())
 }
@@ -1577,7 +1595,7 @@ async fn add_pick_inner(
     headers: &HeaderMap,
     body: Option<AddPickBody>,
 ) -> Result<Response, ListsError> {
-    let user = authenticate(headers, "post", &format!("/v1/lists/{id}/picks")).await?;
+    let user = authenticate(state, headers, "post", &format!("/v1/lists/{id}/picks")).await?;
     let body = body
         .filter(|b| !b.item_id.is_empty())
         .ok_or_else(|| ApiError::bad_request("itemId is required"))?;
@@ -1614,6 +1632,7 @@ async fn delete_pick_inner(
     headers: &HeaderMap,
 ) -> Result<Response, ListsError> {
     let user = authenticate(
+        state,
         headers,
         "delete",
         &format!("/v1/lists/{id}/picks/{item_id}"),
@@ -1647,7 +1666,7 @@ async fn access_inner(
     grant: bool,
 ) -> Result<Response, ListsError> {
     let method = if grant { "post" } else { "delete" };
-    let owner = authenticate(headers, method, &format!("/v1/lists/{id}/access")).await?;
+    let owner = authenticate(state, headers, method, &format!("/v1/lists/{id}/access")).await?;
     let body = body.ok_or_else(|| ApiError::bad_request("permission and grantee are required"))?;
     let (permission, grantee) = parse_access(&body)?;
     if grant {
@@ -1709,7 +1728,13 @@ async fn picks_by_item_inner(
     headers: &HeaderMap,
     pairs: &[(String, String)],
 ) -> Result<Response, ApiError> {
-    let user = optional_signer(headers, "get", &format!("/v1/picks/{item_id}")).await?;
+    let user = optional_signer(
+        state.eip1654.as_deref(),
+        headers,
+        "get",
+        &format!("/v1/picks/{item_id}"),
+    )
+    .await?;
     get_number_parameter("power", pairs)?;
     let pg = get_pagination_params(pairs);
     let (results, count) = picks_by_item(
@@ -1758,7 +1783,13 @@ async fn item_pick_stats_inner(
     headers: &HeaderMap,
     pairs: &[(String, String)],
 ) -> Result<Response, ApiError> {
-    let user = optional_signer(headers, "get", &format!("/v1/picks/{item_id}/stats")).await?;
+    let user = optional_signer(
+        state.eip1654.as_deref(),
+        headers,
+        "get",
+        &format!("/v1/picks/{item_id}/stats"),
+    )
+    .await?;
     get_number_parameter("power", pairs)?;
     let stats = picks_stats(
         &state.pool,

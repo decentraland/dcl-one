@@ -4,7 +4,10 @@
 //! the signer/intent allow-list of `POST /v1/trades`
 //! (`validateAuthMetadata`), and the two verification modes, required (401
 //! on any refusal) and optional (a refused chain reads as a signed-out
-//! visitor, never as the visiting user). Comparisons are exact against
+//! visitor, never as the visiting user). Both modes verify an EIP-1654
+//! contract-wallet chain through the node's validator (`isValidSignature`
+//! over RPC), as upstream's crypto middleware did; a check that cannot run
+//! fails closed with a 503, never as the signer. Comparisons are exact against
 //! canonical spellings: the legacy payload lowercased the metadata before
 //! signing, so a re-cased `Signer` carries a byte-identical signature and
 //! folding before comparing would authorize a request as something it is not.
@@ -12,6 +15,7 @@
 use axum::http::HeaderMap;
 use serde_json::Value;
 
+use crate::auth::eip1654::Eip1654Validator;
 use crate::shared::signed_fetch::{
     self, AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, PayloadPolicy, SignedFetchError,
 };
@@ -126,6 +130,9 @@ fn message(e: &SignedFetchError) -> &'static str {
     match e {
         SignedFetchError::Expired { .. } => "Expired signature",
         SignedFetchError::EipNotImplemented => "EIP-1654 not supported on this route",
+        SignedFetchError::CatalystUnavailable(_) => {
+            "The contract-wallet signature cannot be checked right now"
+        }
         _ => "Invalid Auth Chain",
     }
 }
@@ -133,19 +140,24 @@ fn message(e: &SignedFetchError) -> &'static str {
 fn to_api(e: SignedFetchError) -> ApiError {
     match e {
         SignedFetchError::EipNotImplemented => ApiError::http(501, message(&e)),
+        // The EIP-1654 check could not run (the RPC failed): refused, as
+        // unavailable rather than as a bad chain.
+        SignedFetchError::CatalystUnavailable(_) => ApiError::http(503, message(&e)),
         other => ApiError::unauthorized(message(&other)),
     }
 }
 
 /// The signer of a request that must be signed: the 6.x payload first, the
 /// legacy one behind the canonical-`signer` guard, `x-original-path` honoured
-/// when it ends with the route.
+/// when it ends with the route. An EIP-1654 chain is checked with `eip1654`
+/// (`MarketplaceState::eip1654`); without a validator it is the 501.
 pub async fn require_signer(
+    eip1654: Option<&dyn Eip1654Validator>,
     headers: &HeaderMap,
     method: &str,
     path: &str,
 ) -> Result<String, ApiError> {
-    signed_fetch::require_signer(headers, method, path, PayloadPolicy::V6ThenLegacy, None)
+    signed_fetch::require_signer(headers, method, path, PayloadPolicy::V6ThenLegacy, eip1654)
         .await
         .map(|s| s.into_string())
         .map_err(to_api)
@@ -155,6 +167,7 @@ pub async fn require_signer(
 /// a scene-signed or otherwise refused-by-metadata chain is anonymous too, a
 /// chain that does not verify is a 401.
 pub async fn optional_signer(
+    eip1654: Option<&dyn Eip1654Validator>,
     headers: &HeaderMap,
     method: &str,
     path: &str,
@@ -165,7 +178,9 @@ pub async fn optional_signer(
     if require_not_scene_signer(headers).is_err() {
         return Ok(None);
     }
-    require_signer(headers, method, path).await.map(Some)
+    require_signer(eip1654, headers, method, path)
+        .await
+        .map(Some)
 }
 
 #[cfg(test)]
@@ -298,13 +313,13 @@ mod tests {
                 HeaderValue::from_static("{}"),
             );
             assert_eq!(
-                optional_signer(&h, "get", "/v1/catalog").await.ok(),
+                optional_signer(None, &h, "get", "/v1/catalog").await.ok(),
                 Some(None),
                 "{metadata}"
             );
         }
         assert_eq!(
-            optional_signer(&HeaderMap::new(), "get", "/v1/catalog")
+            optional_signer(None, &HeaderMap::new(), "get", "/v1/catalog")
                 .await
                 .unwrap(),
             None
@@ -315,17 +330,19 @@ mod tests {
         for v6 in [true, false] {
             let h = signed_headers("get", "/v1/lists", metadata, v6).await;
             assert_eq!(
-                require_signer(&h, "get", "/v1/lists").await.unwrap(),
+                require_signer(None, &h, "get", "/v1/lists").await.unwrap(),
                 address(),
                 "v6={v6}"
             );
             assert_eq!(
-                optional_signer(&h, "get", "/v1/lists").await.unwrap(),
+                optional_signer(None, &h, "get", "/v1/lists").await.unwrap(),
                 Some(address())
             );
-            let err = require_signer(&h, "get", "/v1/other").await.unwrap_err();
+            let err = require_signer(None, &h, "get", "/v1/other")
+                .await
+                .unwrap_err();
             assert_eq!(err.message(), "Invalid Auth Chain");
-            let err = optional_signer(&h, "get", "/v1/other")
+            let err = optional_signer(None, &h, "get", "/v1/other")
                 .await
                 .expect_err("a chain that does not verify is not anonymous");
             assert_eq!(err.message(), "Invalid Auth Chain");
@@ -336,7 +353,7 @@ mod tests {
             HeaderValue::from_static("/market/v1/lists?page=1"),
         );
         assert_eq!(
-            require_signer(&h, "get", "/v1/lists").await.unwrap(),
+            require_signer(None, &h, "get", "/v1/lists").await.unwrap(),
             address()
         );
     }

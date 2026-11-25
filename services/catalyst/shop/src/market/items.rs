@@ -228,7 +228,11 @@ pub fn parse_ether(value: &str) -> Option<String> {
     }
 }
 
-fn parse_price_param(p: &Params, key: &str) -> Result<Option<String>, ApiError> {
+/// A `minPrice`/`maxPrice` filter in MANA, as wei ([`parse_ether`]): absent
+/// when missing or blank, a 400 naming the parameter where ethers would
+/// throw. The legacy marketplace API read every MANA price filter this way
+/// (`parsePrice`): items, catalog, nfts and stats; sales and prices take wei.
+pub(crate) fn parse_price_param(p: &Params, key: &str) -> Result<Option<String>, ApiError> {
     match p.get_string(key, None) {
         Some(raw) if !raw.trim().is_empty() => parse_ether(&raw)
             .map(Some)
@@ -1498,6 +1502,14 @@ mod tests {
                 && parse_ether("").is_none()
         );
         assert_eq!(parse_ether("-0").unwrap(), "0");
+        // As ethers v6: leading zeros and a bare trailing point parse; whitespace,
+        // a sign, an exponent and hex do not.
+        assert_eq!(parse_ether("01").unwrap(), "1000000000000000000");
+        assert_eq!(parse_ether("5.").unwrap(), "5000000000000000000");
+        assert_eq!(parse_ether("-1").unwrap(), "-1000000000000000000");
+        for bad in [" 1", "1 ", "+1", "1e18", "0x10", ".", "-", "1.2.3"] {
+            assert!(parse_ether(bad).is_none(), "{bad:?}");
+        }
         let err = parse_filters(&pairs(&[("minPrice", "abc")])).unwrap_err();
         assert_eq!(err.message(), "Invalid minPrice value: abc");
         let f = parse_filters(&pairs(&[
