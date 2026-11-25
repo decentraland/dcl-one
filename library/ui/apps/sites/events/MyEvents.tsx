@@ -46,7 +46,7 @@ function MyEvents({ cards, status, createHref, onRetry }: MyEventsProps) {
           href={createHref}
           variant="tertiary"
           size="md"
-          leadingIcon={<GeneralAdd size={16} aria-hidden="true" />}
+          leadingIcon={<GeneralAdd aria-hidden="true" />}
         >
           {text('Create event')}
         </Button>

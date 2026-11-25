@@ -35,11 +35,7 @@ function HostBanner({ createHref, learnMoreHref }: { createHref: string; learnMo
           ))}
         </ul>
         <div className={styles.buttons}>
-          <Button
-            href={createHref}
-            size="md"
-            leadingIcon={<GeneralAdd size={16} aria-hidden="true" />}
-          >
+          <Button href={createHref} size="md" leadingIcon={<GeneralAdd aria-hidden="true" />}>
             {text('Create an Event')}
           </Button>
           <Button href={learnMoreHref} target="_blank" variant="secondary" size="md">

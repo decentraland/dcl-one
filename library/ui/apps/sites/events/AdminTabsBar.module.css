@@ -89,6 +89,7 @@
   }
 
   .create {
+    min-height: 38px;
     padding: var(--dcl-space-8) var(--dcl-space-12);
     font-size: var(--dcl-font-size-label-xs-caps);
   }

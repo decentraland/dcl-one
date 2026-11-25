@@ -11,7 +11,6 @@ import {
   GeneralPublic
 } from '../../../foundations/icons'
 import { Button } from '../../../components/Button/Button'
-import { Button as SharedButton } from '../../../components/Button/Button'
 import { EventCardHost } from '../../../components/EventCard/EventCard'
 import { hostOf } from './cards'
 import type { EventCardCreator, EventCardTime, JumpIn, RemindControl } from './types'
@@ -77,7 +76,7 @@ function CopyLink({ url, responsive = false }: { url: string; responsive?: boole
   return (
     <>
       {responsive ? (
-        <SharedButton
+        <Button
           {...reminderActionSize}
           variant="secondaryLight"
           iconOnly
@@ -110,7 +109,7 @@ function CalendarLink({ href, responsive }: { href: string; responsive: boolean 
     'aria-label': text('Add to calendar')
   }
   return responsive ? (
-    <SharedButton
+    <Button
       {...link}
       {...reminderActionSize}
       variant="secondaryLight"
@@ -159,7 +158,7 @@ function JumpInButton({ jumpIn }: { jumpIn: JumpIn }) {
       size="lg"
       href={jumpIn.href}
       onClick={jumpIn.onJumpIn}
-      trailingIcon={<GeneralJumpIn size={20} aria-hidden="true" />}
+      trailingIcon={<GeneralJumpIn aria-hidden="true" />}
     >
       {text('Jump In')}
     </Button>
@@ -245,7 +244,7 @@ function EventDetailModal(props: EventDetailModalProps) {
         <div className={styles.actions}>
           {live && jumpIn ? <JumpInButton jumpIn={jumpIn} /> : null}
           {reminder ? (
-            <SharedButton
+            <Button
               {...reminderActionSize}
               variant={reminder.active ? 'primary' : 'secondaryLight'}
               startIcon={<GeneralBell aria-hidden="true" />}
@@ -254,7 +253,7 @@ function EventDetailModal(props: EventDetailModalProps) {
               onClick={reminder.onToggle}
             >
               {text('Remind me')}
-            </SharedButton>
+            </Button>
           ) : null}
           {calendarHref ? (
             <CalendarLink href={calendarHref} responsive={Boolean(reminder)} />
