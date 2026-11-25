@@ -2745,7 +2745,8 @@ pass claims the projection again and acts.
 
   It then walks and folds again; the other network and the other
   projections are untouched. Trade events also drop their derived verdict
-  rows, so every digest is recomputed from the stored trades.
+  rows, so every digest is settled again from the stored trades (see "Shop
+  trade verdicts").
 
   A rebuild keeps the projection's chain and start block. It is refused in
   three cases: the cursor's history is from another chain; it starts at
@@ -2784,6 +2785,42 @@ writer shortens the archived prefix and records the new rewind count.
 An older writer can advance past missing creations, or rewind and replay
 to the very same height and hash. On upgrade, a checkpoint or rewind-count
 mismatch automatically reopens the historical prefix through that tip.
+
+## Shop trade verdicts
+
+Workload: each trade-events fold, every pass of the walk on each network.
+It first settles the V3 digests, then folds every touched trade into
+`shop.trade_chain_state`. Every route over `shop.trades` reads the verdicts.
+
+A V3 marketplace keys a cancellation on the trade's EIP-712 digest.
+`shop.trades.trade_digest` stores the digest the signature was verified
+over: `POST /v1/trades` writes it, and the marketplace-server import copies
+upstream's. The mirror cannot copy it, because upstream's API does not
+expose it.
+
+The digest step selects at most 2,000 V3 trades of the network per
+statement: those without a verdict row, and those whose row has no digest
+and no failure newer than 10 minutes. For each trade it takes the stored
+digest when the signature recovers the signer over it. Otherwise it rebuilds
+the digest from the row on the same condition. A trade that gains a digest
+is refolded (`folded_block = -1`). A trade that cannot get one is marked
+`digest_failed_at`.
+
+Invariants:
+
+- A digest in `trade_chain_state` recovers the trade's signer. A verified
+  digest is never overwritten (`WHERE digest IS NULL`).
+- `digest_failed_at` is set only while `digest` is NULL (a CHECK). A database
+  error during the step aborts the fold and marks nothing.
+- Each statement's trades leave the candidate set, with a digest or a failure
+  newer than the backoff, so the step's loop ends. A permanent failure costs
+  one rebuild per trade every 10 minutes.
+- The open-listing reads (`unified_trades`, `/v1/bids`) list a trade only
+  while its network's trade-events cursor is current
+  (`chain_walk::ready_sql_on`), in the same statement. A trade that is sold,
+  cancelled or marked is not listed. The routes refuse with the
+  `trade-events-index` envelope until the index is current on both
+  networks.
 
 ## Curation committee
 
@@ -3153,9 +3190,9 @@ builds it from its own indexes.
   ready); the nft index published on Ethereum and bound to chain 1
   (`shop.chain_cursor`, `chain_walk::ready_sql`); and `shop.trades`
   readable (a recent complete trades-mirror pass read in the snapshot, or
-  local authority). The trade-events verdicts (`shop.trade_chain_state`)
-  close a sold or cancelled trade while that index is published on
-  Ethereum, as in the Shop's own listings. A source that is not ready fails
+  local authority); and the trade-events index current on Ethereum, whose
+  verdicts (`shop.trade_chain_state`) close a sold or cancelled trade, as in
+  the Shop's own listings, which fail closed the same way. A source that is not ready fails
   the pass, naming it in the marker's `last_error`, and nothing is built.
   The held grid keeps serving. Until a grid exists, every map route answers
   the unavailable envelope (503, `Retry-After: 60`, `no-store`, no

@@ -490,6 +490,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let (c1, c2, c_nft) = (contract_of(&t, 1), contract_of(&t, 2), contract_of(&t, 3));
     let v3_minter = listings::offchain_marketplace_v3(137).unwrap().address;
@@ -2195,6 +2196,7 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let contract = contract_of(&t, 9);
     let marketplace = listings::offchain_marketplace_v3(137).unwrap();
@@ -2733,6 +2735,7 @@ async fn a_stored_malformed_token_id_does_not_break_the_bid_or_listing_reads() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let contract = contract_of(&t, 3);
     let marketplace = listings::offchain_marketplace_v3(137).unwrap();
@@ -2812,6 +2815,7 @@ async fn a_read_naming_a_contract_keeps_the_rows_of_the_whole_read() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let (c1, c2) = (contract_of(&t, 1), contract_of(&t, 2));
     for (c, item) in [(&c1, "0"), (&c1, "1"), (&c2, "0")] {
@@ -3420,6 +3424,7 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let t = tag();
     let c = contract_of(&t, 7);
     let unindexed = contract_of(&t, 8);
@@ -3587,6 +3592,7 @@ async fn a_sold_listing_stays_out_through_a_rewind_and_its_refill() {
         return;
     };
     let pool = state.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
     let c = contract_of(&tag(), 9);
     let token = (alloy_primitives::U256::from(3u64) << 216u32 | alloy_primitives::U256::from(1u64))
         .to_string();
@@ -3713,6 +3719,7 @@ async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
     let Some(db) = crate::test_db::OwnDatabase::create("shop_page_totals").await else {
         return;
     };
+    super::trade_events::tests::publish_cursors(&db.pool).await;
     // Prices, names, timestamps, relevance and discount each induce a different order.
     let fixture = tag();
     for (id, name, price, created) in [

@@ -227,6 +227,14 @@ under every posture; `MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true` with a Polygon
 (chain 137) starts its walk from block 15,202,000. Nothing reads it yet: the catalogue keeps serving the
 collections subgraph's copy.
 
+Trade digest upgrade: run `catalyst schema migrate` before deploying. Step `0069_shop_trade_digest` adds
+`shop.trades.trade_digest` and `shop.trade_chain_state.digest_failed_at`, and needs no backfill: the next
+trade-events fold settles every V3 trade's digest. Every route over `shop.trades` (the v3 catalog feeds and
+prices, orders, bids, `/v1/trades`) now answers the `trade-events-index` envelope until that index is current
+on both networks: a fold published within 30 minutes of the chain head. Expect that while the walk catches up
+or rebuilds. The explorer map's grid also waits for it on Ethereum. A node that does not walk the index
+(`MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED`, on under the mirror posture) answers the envelope on those routes.
+
 Escrow lease upgrade: escrow leases (`shop.usage_grants`) no longer count as item ownership on
 their own. `EXPLORER_ESCROW_GRANTS_ENABLED` now defaults to `false` under every posture and with
 no posture; island, journey and posture-less nodes listed active leases in the explorer backpack

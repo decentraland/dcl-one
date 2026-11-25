@@ -1235,6 +1235,7 @@ async fn a_stale_trades_mirror_answers_503_past_its_budget() {
     );
     mark(0).await.unwrap();
     state.trades_ready.clear();
+    super::trade_events::tests::publish_cursors(&state.pool).await;
     let (status, body) = get_json(router(state.clone()), "/v1/trades?first=1").await;
     assert_eq!(status, StatusCode::OK, "a fresh pass serves: {body}");
     // The marker is one shared row: leave none for the next holder of the lock.
@@ -1485,6 +1486,7 @@ async fn mirrored_rows_never_overwrite_a_local_trade_and_the_routes_serve_them()
             ..Settings::for_tests()
         },
     ));
+    super::trade_events::tests::publish_cursors(pool).await;
     assert_eq!(
         trades::ready(&local_only).await.unwrap(),
         trades::Readiness::LocalAuthority,
@@ -1616,7 +1618,7 @@ async fn a_development_stack_reads_a_partial_order_book_only_when_asked() {
     };
     let state = support::state_without_db_settings(settings);
     assert_eq!(
-        trades::ready(&state).await.unwrap(),
+        trades::readiness(&state).await.unwrap(),
         trades::Readiness::Mirrored
     );
     assert!(
@@ -1638,6 +1640,7 @@ async fn a_leftover_mirrored_trade_counts_under_local_authority_only_within_the_
     let Some(state) = state_with_db(settings.clone()).await else {
         return;
     };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
     assert_eq!(
         trades::ready(&state).await.unwrap(),
         trades::Readiness::LocalAuthority
@@ -2066,6 +2069,7 @@ async fn a_whole_list_upstream_is_walked_every_tick_within_the_detail_budget() {
         "a complete pass holds nothing"
     );
     visible.trades_ready.clear();
+    super::trade_events::tests::publish_cursors(pool).await;
     let (status, body) = get_json(router(visible.clone()), "/v1/trades?first=1").await;
     assert_eq!(
         (status, body["ok"].as_bool()),

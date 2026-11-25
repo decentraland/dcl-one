@@ -34,6 +34,9 @@
 //! `/v3/catalog` feeds) answers the `trades-mirror` envelope until the
 //! configured upstream has one complete pass (`trades_mirror.completed_at`,
 //! cached 10 s): a table 0.3% through its first pass is not the order book.
+//! It then answers the `trade-events-index` envelope until that index is
+//! current on every network (`trade_events::require_current`): without its
+//! verdicts a sold or cancelled trade cannot be told from an open one.
 //! Trades are money data, so a pass also has a freshness budget
 //! ([`max_age`]): past it (a dead or failing mirror) the same routes answer
 //! the envelope naming the pass's age instead of a stale order book.
@@ -404,15 +407,21 @@ pub enum NotReady {
 /// Whether `shop.trades` may be read as the truth, or the envelope to
 /// answer instead. `trades_mirror.completed_at` for the configured upstream
 /// (a completed pass stays completed while the next one runs), cached 10 s,
-/// within [`max_age`] of now.
+/// within [`max_age`] of now; then the trade-events verdicts current on
+/// every network (`trade_events::require_current`), which the open-listing
+/// reads close sold and cancelled trades by.
 pub async fn ready(state: &MarketplaceState) -> Result<Readiness, Response> {
-    readiness(state).await.map_err(|not_ready| match not_ready {
-        NotReady::Refused(why) => unavailable(Source::TradesMirror, &why),
-        NotReady::Database(e) => {
-            tracing::error!(error = %e, "trades_mirror read failed");
-            super::internal_server_error()
-        }
-    })
+    let readiness = readiness(state)
+        .await
+        .map_err(|not_ready| match not_ready {
+            NotReady::Refused(why) => unavailable(Source::TradesMirror, &why),
+            NotReady::Database(e) => {
+                tracing::error!(error = %e, "trades_mirror read failed");
+                super::internal_server_error()
+            }
+        })?;
+    super::trade_events::require_current(state).await?;
+    Ok(readiness)
 }
 
 /// The marker of a configured upstream's last complete pass.

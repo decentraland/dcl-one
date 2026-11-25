@@ -1930,6 +1930,13 @@ mod tests {
             return;
         };
         let pool = own.pool.clone();
+        let now = 1_700_000_000_000;
+        // Current at the reads' fixed clock.
+        crate::market::trade_events::tests::publish_cursors_at(
+            &pool,
+            chrono::DateTime::from_timestamp_millis(now).map(|t| t.naive_utc()),
+        )
+        .await;
         let c = "0x00000000000000000000000000000000000000c1";
         let a = "0x00000000000000000000000000000000000000aa";
         let b = "0x00000000000000000000000000000000000000bb";
@@ -1975,7 +1982,6 @@ mod tests {
         .await
         .unwrap();
         let land = Some(LAND_MAINNET);
-        let now = 1_700_000_000_000;
         let ids = |rows: &[sqlx::postgres::PgRow]| -> Vec<(String, String)> {
             rows.iter()
                 .map(|r| (r.get("contract_address"), r.get("token_text")))

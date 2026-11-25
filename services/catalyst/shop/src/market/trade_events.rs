@@ -11,16 +11,25 @@
 //! offchain-marketplace-contract 87350c6): uses are counted per (signer,
 //! keccak256(signature)); a cancellation is keyed by (caller, hash), so only
 //! the signer's cancels a trade; V3 keys cancellations on the trade's
-//! EIP-712 digest, which the fold computes from the stored trade.
+//! EIP-712 digest: the one the trade stored when it was created or imported
+//! (`shop.trades.trade_digest`), else the one the fold rebuilds from the
+//! stored trade, accepted only when the signature recovers the signer over
+//! it. A V3 trade with no such digest is marked (`digest_failed_at`) and
+//! retried after [`DIGEST_RETRY`]; its cancellation would go unseen, so the
+//! open-listing reads leave it out.
 //!
-//! Readers use the verdict only while the network's cursor is published
+//! The verdicts close a trade only while the network's cursor is published
 //! (`chain_walk::is_ready`): an index still catching up could show a stale
-//! signature index as a cancellation. Then `unified_trades` drops closed
-//! trades from every open-listing feed, `/v1/bids` reports `sold` and
-//! `cancelled`, and `GET /v1/trades/{hashed_signature}/accept` answers the
-//! notification event of an executed trade; before, the accept route answers
-//! the unavailable envelope and the feeds keep the expiry and local
-//! cancellation rule.
+//! signature index as a cancellation, and would miss the latest executions.
+//! So the open-listing reads fail closed: every route over `shop.trades`
+//! answers the unavailable envelope naming this index until it is current
+//! on every network ([`require_current`], called by `trades::ready`), and
+//! `unified_trades` lists a trade only while its network's cursor is ready
+//! and no verdict closed it ([`listable_on_chain_sql`]), in the same
+//! statement, so a cursor that falls behind after the gate drops the trade
+//! instead of listing it again. `/v1/bids` reports `sold` and `cancelled`
+//! from the same verdicts, and `GET /v1/trades/{hashed_signature}/accept`
+//! answers the notification event of an executed trade.
 
 use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::HashMap;
@@ -28,7 +37,6 @@ use std::str::FromStr;
 
 use alloy_primitives::Address;
 use alloy_sol_types::{SolType, sol};
-use anyhow::Context;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -389,14 +397,25 @@ pub async fn insert_events(
     Ok(written)
 }
 
-/// The stored trade as the signed struct, to recompute its EIP-712 digest.
-async fn trade_creation(pool: &PgPool, trade_id: uuid::Uuid) -> anyhow::Result<TradeCreation> {
-    let head = sqlx::query("SELECT signer, signature, type::text AS type, network, chain_id, checks FROM shop.trades WHERE id = $1")
+/// The stored trade as the signed struct, to rebuild its EIP-712 digest;
+/// `Ok(Err(why))` when the row cannot be read as one (its checks do not
+/// parse, or it is gone). A database error is the outer `Err`: the fold
+/// stops and retries, it never records a digest failure it did not prove.
+async fn trade_creation(
+    pool: &PgPool,
+    trade_id: uuid::Uuid,
+) -> Result<Result<TradeCreation, String>, sqlx::Error> {
+    let Some(head) = sqlx::query("SELECT signer, signature, type::text AS type, network, chain_id, checks FROM shop.trades WHERE id = $1")
         .bind(trade_id)
-        .fetch_one(pool)
-        .await?;
-    let checks: TradeChecksInput =
-        serde_json::from_value(head.get::<Value, _>("checks")).context("the stored checks")?;
+        .fetch_optional(pool)
+        .await?
+    else {
+        return Ok(Err("the trade is no longer stored".to_string()));
+    };
+    let checks: TradeChecksInput = match serde_json::from_value(head.get::<Value, _>("checks")) {
+        Ok(checks) => checks,
+        Err(e) => return Ok(Err(format!("the stored checks: {e}"))),
+    };
     let assets = sqlx::query(
         "SELECT ta.direction::text AS direction, ta.asset_type::int4 AS asset_type, ta.contract_address, ta.extra, ta.beneficiary, \
                 erc20.amount::text AS amount, erc721.token_id, item.item_id \
@@ -426,7 +445,7 @@ async fn trade_creation(pool: &PgPool, trade_id: uuid::Uuid) -> anyhow::Result<T
             received.push(input)
         }
     }
-    Ok(TradeCreation {
+    Ok(Ok(TradeCreation {
         signer: head.get("signer"),
         signature: head.get("signature"),
         trade_type: head.get("type"),
@@ -435,17 +454,82 @@ async fn trade_creation(pool: &PgPool, trade_id: uuid::Uuid) -> anyhow::Result<T
         checks,
         sent,
         received,
-    })
+    }))
 }
 
-/// Rows the digest step computes per fold, the bound of one statement's work.
+/// Rows the digest step settles per statement, the bound of one batch's work.
 const DIGEST_BATCH: i64 = 2_000;
 
-/// The V3 trades of `net` without a verdict row yet get one with their
-/// digest (the status is the fold's): the EIP-712 signing hash of the stored
-/// trade against its marketplace's domain. A trade whose row cannot be
-/// rebuilt gets a NULL digest and is logged (its V3 cancellation cannot be
-/// matched; the other legs still apply).
+/// How long a V3 trade whose digest could not be established waits before
+/// the digest step tries it again: permanent failures stay cheap, and a
+/// digest that arrives later (an import, a repaired row, a fixed rebuild) is
+/// picked up within minutes. SQL interval text.
+const DIGEST_RETRY: &str = "10 minutes";
+
+/// Whether `signature` recovers `signer` over `digest`: the digest is the
+/// one the trade was signed over. Every trade source verifies an ECDSA
+/// signature of an EOA (this node's `POST /v1/trades`, marketplace-server's
+/// `resolveTradeSignature`), so a digest that fails here keys no
+/// cancellation of that trade.
+fn signed_over(digest: &str, signature: &str, signer: &str) -> bool {
+    let Ok(bytes) = hex::decode(digest.trim_start_matches("0x")) else {
+        return false;
+    };
+    let Ok(digest) = <[u8; 32]>::try_from(bytes.as_slice()) else {
+        return false;
+    };
+    crate::auth::recover::recover_address_from_digest(&digest, signature)
+        .is_ok_and(|recovered| recovered.eq_ignore_ascii_case(signer))
+}
+
+/// A V3 trade the digest step settles.
+struct DigestCandidate {
+    id: uuid::Uuid,
+    contract: String,
+    signer: String,
+    signature: String,
+    stored: Option<String>,
+}
+
+/// The digest of `c` rebuilt from its stored row against its marketplace's
+/// domain on `chain_id`, when the signature recovers the signer over it;
+/// `Ok(Err(why))` when it cannot be established.
+async fn rebuilt_digest(
+    pool: &PgPool,
+    chain_id: i64,
+    c: &DigestCandidate,
+) -> Result<Result<String, String>, sqlx::Error> {
+    let Some(domain) = domain_of(chain_id, &c.contract) else {
+        return Ok(Err(format!("no EIP-712 domain for {}", c.contract)));
+    };
+    let trade = match trade_creation(pool, c.id).await? {
+        Ok(trade) => trade,
+        Err(why) => return Ok(Err(why)),
+    };
+    let digest = match listings::signing_hash(&trade, &domain) {
+        Ok(h) => format!("{h:#x}"),
+        Err(e) => return Ok(Err(e.to_string())),
+    };
+    if !signed_over(&digest, &c.signature, &c.signer) {
+        return Ok(Err(
+            "the signature does not recover the signer over the digest rebuilt from the row"
+                .to_string(),
+        ));
+    }
+    Ok(Ok(digest))
+}
+
+/// The digest step: every V3 trade of `net` without a verdict row, and every
+/// one whose row has no digest and whose last failure is older than
+/// [`DIGEST_RETRY`] (or that never had one: a row the fold created first, or
+/// one from before failures were marked), gets its digest: the stored one
+/// when the signature recovers the signer over it, else the one rebuilt from
+/// the row on the same condition. A row that gains a digest is refolded
+/// (`folded_block = -1`), since its cancellation may already be in the log;
+/// one that cannot get one is marked `digest_failed_at` and logged. A
+/// verified digest is never overwritten. Returns the trades settled: each
+/// leaves the candidate set (a digest, or a failure newer than the
+/// backoff), so the caller's loop ends.
 async fn fill_v3_digests(
     pool: &PgPool,
     net: ChainNet,
@@ -457,34 +541,44 @@ async fn fill_v3_digests(
         .filter(|(_, _, v3)| *v3)
         .map(|(a, _, _)| a.to_string())
         .collect();
-    let ids: Vec<(uuid::Uuid, String)> = sqlx::query_as(
-        "SELECT t.id, lower(t.contract) FROM shop.trades t \
+    let candidates: Vec<DigestCandidate> = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT t.id, lower(t.contract) AS contract, t.signer, t.signature, t.trade_digest FROM shop.trades t \
+         LEFT JOIN shop.trade_chain_state s ON s.trade_id = t.id \
          WHERE lower(t.network) = $1 AND lower(t.contract) = ANY($2) \
-           AND NOT EXISTS (SELECT 1 FROM shop.trade_chain_state s WHERE s.trade_id = t.id) \
-         LIMIT $3",
-    )
+           AND (s.trade_id IS NULL \
+                OR (s.digest IS NULL AND (s.digest_failed_at IS NULL \
+                    OR s.digest_failed_at <= timezone('UTC', now()) - interval '{DIGEST_RETRY}'))) \
+         LIMIT $3"
+    )))
     .bind(net.db_name())
     .bind(&v3)
     .bind(DIGEST_BATCH)
     .fetch_all(pool)
-    .await?;
+    .await?
+    .iter()
+    .map(|r| DigestCandidate {
+        id: r.get("id"),
+        contract: r.get("contract"),
+        signer: r.get("signer"),
+        signature: r.get("signature"),
+        stored: r.get("trade_digest"),
+    })
+    .collect();
     let mut rows: (Vec<uuid::Uuid>, Vec<Option<String>>) = (Vec::new(), Vec::new());
-    for (id, contract) in &ids {
-        let digest = match (
-            domain_of(chain_id, contract),
-            trade_creation(pool, *id).await,
-        ) {
-            (Some(domain), Ok(trade)) => listings::signing_hash(&trade, &domain)
-                .map(|h| format!("{h:#x}"))
-                .map_err(|e| anyhow::anyhow!("{e}")),
-            (None, _) => Err(anyhow::anyhow!("no EIP-712 domain for {contract}")),
-            (_, Err(e)) => Err(e),
+    for c in &candidates {
+        let digest = match c
+            .stored
+            .as_deref()
+            .filter(|d| signed_over(d, &c.signature, &c.signer))
+        {
+            Some(stored) => Ok(stored.to_string()),
+            None => rebuilt_digest(pool, chain_id, c).await?,
         };
-        rows.0.push(*id);
+        rows.0.push(c.id);
         rows.1.push(match digest {
             Ok(d) => Some(d),
-            Err(e) => {
-                tracing::warn!(trade = %id, error = %e, "trade-events: cannot rebuild the V3 digest of a stored trade");
+            Err(why) => {
+                tracing::warn!(trade = %c.id, stored = c.stored.is_some(), error = %why, "trade-events: no verified V3 digest for a stored trade; it is not listed until one is established");
                 None
             }
         });
@@ -493,9 +587,14 @@ async fn fill_v3_digests(
         // Each batch commits on its own, after the owner check.
         let mut tx = pool.begin().await?;
         sqlx::query(
-            "INSERT INTO shop.trade_chain_state (trade_id, network, digest, status, folded_block) \
-             SELECT id, $1, d, 'open', -1 FROM UNNEST($2::uuid[], $3::text[]) AS u(id, d) \
-             ON CONFLICT (trade_id) DO NOTHING",
+            "INSERT INTO shop.trade_chain_state (trade_id, network, digest, digest_failed_at, status, folded_block) \
+             SELECT id, $1, d, CASE WHEN d IS NULL THEN timezone('UTC', now()) END, 'open', -1 \
+             FROM UNNEST($2::uuid[], $3::text[]) AS u(id, d) \
+             ON CONFLICT (trade_id) DO UPDATE SET \
+                 digest = EXCLUDED.digest, \
+                 digest_failed_at = EXCLUDED.digest_failed_at, \
+                 folded_block = CASE WHEN EXCLUDED.digest IS NULL THEN shop.trade_chain_state.folded_block ELSE -1 END \
+             WHERE shop.trade_chain_state.digest IS NULL",
         )
         .bind(net.db_name())
         .bind(&rows.0)
@@ -505,7 +604,7 @@ async fn fill_v3_digests(
         owner.check(&mut tx).await?;
         tx.commit().await?;
     }
-    Ok(ids.len())
+    Ok(candidates.len())
 }
 
 /// The verdict of every touched trade of `net`: trades without a folded row
@@ -584,8 +683,8 @@ ON CONFLICT (trade_id) DO UPDATE SET
     executed_at = EXCLUDED.executed_at,
     folded_block = EXCLUDED.folded_block";
 
-/// The digest step until no V3 trade lacks a row, then the verdict fold, in
-/// one transaction for the fold. Returns the verdicts written.
+/// The digest step until no V3 trade is left to settle, then the verdict
+/// fold, in one transaction for the fold. Returns the verdicts written.
 pub async fn fold(
     pool: &PgPool,
     net: ChainNet,
@@ -738,10 +837,12 @@ pub async fn ready_networks(
     out
 }
 
-/// The SQL predicate "the chain closed trade `t`" for the open-listing
-/// feeds, with the readiness rule inline (a bound `now_p`): a verdict of a
-/// network whose index is not published, or is bound to another chain than
-/// this process serves, is ignored ([`verdicts_ready_sql`]).
+/// The SQL predicate "the chain closed trade `t`", with the readiness rule
+/// inline (a bound `now_p`): a verdict of a network whose index is not
+/// published, or is bound to another chain than this process serves, is
+/// ignored ([`verdicts_ready_sql`]). For the duplicate-listing refusal,
+/// where an unpublished verdict must keep counting the trade as open; the
+/// open-listing feeds read [`listable_on_chain_sql`].
 pub fn closed_on_chain_sql(t: &str, now_p: &str) -> String {
     format!(
         "EXISTS (SELECT 1 FROM shop.trade_chain_state tcs \
@@ -749,6 +850,96 @@ pub fn closed_on_chain_sql(t: &str, now_p: &str) -> String {
                  WHERE tcs.trade_id = {t}.id AND tcs.status <> 'open' AND {ready})",
         ready = verdicts_ready_sql("tcc", now_p)
     )
+}
+
+/// The SQL predicate "the trade-events verdicts of trade `t`'s network are
+/// current" (a bound `now_p`): its cursor is published, recent and bound to
+/// the chain this process serves ([`verdicts_ready_sql`]).
+pub fn verdicts_current_sql(t: &str, now_p: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM shop.chain_cursor tcr \
+                 WHERE tcr.indexer = 'trade_events' AND tcr.network = lower({t}.network) AND {ready})",
+        ready = verdicts_ready_sql("tcr", now_p)
+    )
+}
+
+/// The SQL predicate "trade `t` is a V3 trade whose cancellation digest
+/// could not be established" (`trade_chain_state.digest_failed_at`): its
+/// cancellation would go unseen.
+pub fn unverifiable_sql(t: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM shop.trade_chain_state tcu \
+                 WHERE tcu.trade_id = {t}.id AND tcu.digest_failed_at IS NOT NULL)"
+    )
+}
+
+/// The SQL predicate "trade `t` may be served as an open listing" for the
+/// open-listing feeds (a bound `now_p`): its network's verdicts are current
+/// ([`verdicts_current_sql`]) and no verdict closed it (sold, cancelled) or
+/// left it unverifiable ([`unverifiable_sql`]). Fails closed: a trade of a
+/// network whose index is behind is not listed, whatever its row says.
+pub fn listable_on_chain_sql(t: &str, now_p: &str) -> String {
+    format!(
+        "({current} AND NOT EXISTS (SELECT 1 FROM shop.trade_chain_state tcs \
+                 WHERE tcs.trade_id = {t}.id AND (tcs.status <> 'open' OR tcs.digest_failed_at IS NOT NULL)))",
+        current = verdicts_current_sql(t, now_p)
+    )
+}
+
+/// The networks of `nets` whose trade-events verdicts are not current at
+/// `now` on `conn` ([`verdicts_ready_sql`]), in the order asked.
+pub async fn stale_networks_on(
+    conn: &mut PgConnection,
+    nets: &[ChainNet],
+    now: chrono::DateTime<Utc>,
+) -> Result<Vec<ChainNet>, sqlx::Error> {
+    let names: Vec<&str> = nets.iter().map(|n| n.db_name()).collect();
+    let stale: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT n.network FROM unnest($2::text[]) WITH ORDINALITY AS n(network, i) \
+         WHERE NOT EXISTS (SELECT 1 FROM shop.chain_cursor c \
+                           WHERE c.indexer = 'trade_events' AND c.network = n.network AND {ready}) \
+         ORDER BY n.i",
+        ready = verdicts_ready_sql("c", "$1")
+    )))
+    .bind(now.naive_utc())
+    .bind(&names)
+    .fetch_all(conn)
+    .await?;
+    Ok(stale.iter().filter_map(|n| ChainNet::parse(n)).collect())
+}
+
+/// What the envelope says of the networks whose verdicts are not current.
+pub fn stale_message(stale: &[ChainNet]) -> String {
+    let names: Vec<&str> = stale.iter().map(|n| n.db_name()).collect();
+    format!(
+        "the trade-events index has not published a recent fold on {} (it must be within 30 minutes of the chain head): sold and cancelled off-chain listings cannot be told from open ones until it does",
+        names.join(" and ")
+    )
+}
+
+/// `Err(envelope)` unless the trade-events verdicts are current on every
+/// network ([`stale_networks_on`]): the gate of every route over
+/// `shop.trades` (`trades::ready`). A database error reads as not current:
+/// the envelope, never a guess.
+pub async fn require_current(state: &MarketplaceState) -> Result<(), Response> {
+    let read = async {
+        let mut conn = state.pool.acquire().await?;
+        stale_networks_on(&mut conn, &ChainNet::ALL, Utc::now()).await
+    };
+    match read.await {
+        Ok(stale) if stale.is_empty() => Ok(()),
+        Ok(stale) => Err(unavailable(
+            Source::TradeEventsIndex,
+            &stale_message(&stale),
+        )),
+        Err(e) => {
+            tracing::warn!(error = %e, "cannot read shop.chain_cursor; treating the trade-events index as not current");
+            Err(unavailable(
+                Source::TradeEventsIndex,
+                "the trade-events index state cannot be read",
+            ))
+        }
+    }
 }
 
 /// The readiness rule of the trade-events cursor as the verdict SQL reads
@@ -1375,6 +1566,33 @@ pub(crate) mod tests {
             assert!(!deployments(137).iter().any(|(m, _, _)| m == a), "{a}");
         }
         assert!(deployments(10).is_empty());
+    }
+
+    /// Publishes the trade-events index on both networks, each on its
+    /// mainnet chain, current now: the state every route over `shop.trades`
+    /// requires ([`require_current`]), for the tests that read trades
+    /// without walking the index. A cursor already there is made current.
+    pub(crate) async fn publish_cursors(pool: &PgPool) {
+        publish_cursors_at(pool, None).await
+    }
+
+    /// [`publish_cursors`] folded at `at` (a read's fixed clock), else now.
+    pub(crate) async fn publish_cursors_at(pool: &PgPool, at: Option<chrono::NaiveDateTime>) {
+        for net in ChainNet::ALL {
+            sqlx::query(
+                "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+                 VALUES ('trade_events', $1, 0, 10, 10, 10, COALESCE($3, timezone('UTC', now())), true, $2) \
+                 ON CONFLICT (indexer, network) DO UPDATE SET folded_block = shop.chain_cursor.last_block, \
+                     fold_through = shop.chain_cursor.last_block, folded_at = EXCLUDED.folded_at, \
+                     full_history = true, chain_id = EXCLUDED.chain_id, quarantined_at = NULL, quarantine_reason = NULL",
+            )
+            .bind(net.db_name())
+            .bind(net.chain_id())
+            .bind(at)
+            .execute(pool)
+            .await
+            .expect("the trade-events cursors are published");
+        }
     }
 
     pub(crate) fn topic_of(addr: &str) -> String {
