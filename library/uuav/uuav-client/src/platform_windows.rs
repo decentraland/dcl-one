@@ -3,7 +3,8 @@
 use anyhow::{Context as _, Result, ensure};
 use std::os::raw::c_void;
 use windows::Win32::Graphics::Direct3D11::{
-    ID3D11Device, ID3D11Device1, ID3D11DeviceContext, ID3D11Texture2D,
+    D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_TEXTURE2D_DESC, ID3D11Device, ID3D11Device1,
+    ID3D11DeviceContext, ID3D11Texture2D,
 };
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 use windows::core::{IUnknown, Interface as _};
@@ -20,6 +21,11 @@ pub struct UnityDevice {
     /// Packed LUID of the adapter, sent to the helper so it decodes on the
     /// same GPU (shared textures cannot cross adapters).
     pub adapter_luid: u64,
+    /// Whether the probe texture was created with
+    /// `D3D11_RESOURCE_MISC_SHARED_NTHANDLE`: the presentation textures are
+    /// then created NT-handle shareable too (`present_windows.rs`), for a
+    /// host whose renderer is not this D3D11 device.
+    pub share_presentation: bool,
 }
 
 // D3D11 devices are free-threaded; the context stays on the render thread
@@ -42,6 +48,10 @@ pub unsafe fn capture_probe(texture: *const c_void) -> Result<UnityDevice> {
         .cast()
         .context("probe texture is not an ID3D11Texture2D")?;
 
+    let mut desc = D3D11_TEXTURE2D_DESC::default();
+    unsafe { texture.GetDesc(&mut desc) };
+    let share_presentation = desc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 as u32 != 0;
+
     let device: ID3D11Device =
         unsafe { texture.GetDevice() }.context("probe texture has no device")?;
     let device1: ID3D11Device1 = device
@@ -60,5 +70,6 @@ pub unsafe fn capture_probe(texture: *const c_void) -> Result<UnityDevice> {
         device: device1,
         context,
         adapter_luid,
+        share_presentation,
     })
 }

@@ -4,7 +4,7 @@ use common::structs::PrimaryUser;
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use scene_runner::{renderer_context::RendererSceneContext, ContainingScene, SceneEntity};
 use serde_json::json;
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 use serde_json::Value;
 
 pub(super) struct MediaDebugPanelPlugin;
@@ -56,6 +56,14 @@ fn media_retry_delay(mut cmd: ConsoleCommand<MediaRetryDelay>) {
     );
 }
 
+const PLAYBACK_BACKEND: &str = if cfg!(feature = "html") {
+    "HTML media"
+} else if cfg!(feature = "uuav") {
+    "UUAV"
+} else {
+    "No playback backend"
+};
+
 /// Inspect scene media players and their requested and scheduled playback states.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/media_state")]
@@ -80,9 +88,9 @@ fn media_state(
     scenes: Query<&RendererSceneContext>,
     player: Query<Entity, With<PrimaryUser>>,
     containing: ContainingScene,
-    #[cfg(any(feature = "ffmpeg", feature = "html"))] images: Res<Assets<Image>>,
-    #[cfg(any(feature = "ffmpeg", feature = "html"))] video_sinks: Query<&AVSinks<VideoPlayer>>,
-    #[cfg(any(feature = "ffmpeg", feature = "html"))] audio_sinks: Query<&AVSinks<AudioStream>>,
+    #[cfg(any(feature = "uuav", feature = "html"))] images: Res<Assets<Image>>,
+    #[cfg(any(feature = "uuav", feature = "html"))] video_sinks: Query<&AVSinks<VideoPlayer>>,
+    #[cfg(any(feature = "uuav", feature = "html"))] audio_sinks: Query<&AVSinks<AudioStream>>,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
     let mut rows = Vec::new();
@@ -108,7 +116,7 @@ fn media_state(
         }
         let mut item = row("video", entity, here, scheduled, &player.config());
         item["source"] = json!(source_label(player.url()));
-        #[cfg(any(feature = "ffmpeg", feature = "html"))]
+        #[cfg(any(feature = "uuav", feature = "html"))]
         add_sink(&mut item, video_sinks.get(_ent).ok(), &images);
         rows.push(item);
     }
@@ -119,18 +127,11 @@ fn media_state(
         }
         let mut item = row("audio", entity, here, scheduled, &player.config());
         item["source"] = json!(source_label(player.url()));
-        #[cfg(any(feature = "ffmpeg", feature = "html"))]
+        #[cfg(any(feature = "uuav", feature = "html"))]
         add_sink(&mut item, audio_sinks.get(_ent).ok(), &images);
         rows.push(item);
     }
-    let backend = if cfg!(feature = "html") {
-        "HTML media"
-    } else if cfg!(feature = "ffmpeg") {
-        "FFmpeg"
-    } else {
-        "No playback backend"
-    };
-    cmd.reply_ok(json!({"backend":backend, "scene":scene, "video":video.iter().len(), "audio":audio.iter().len(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "players":rows,
+    cmd.reply_ok(json!({"backend":PLAYBACK_BACKEND, "scene":scene, "video":video.iter().len(), "audio":audio.iter().len(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "players":rows,
         "unavailable":{"scene":"No loaded scene at the player's parcel."}}).to_string());
 }
 
@@ -154,7 +155,7 @@ fn source_label(source: &str) -> String {
     }
 }
 
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 fn add_sink<T: AVPlayer>(row: &mut Value, sinks: Option<&AVSinks<T>>, images: &Assets<Image>) {
     let sink = sinks.and_then(|s| s.video.as_ref());
     row["hasSink"] = json!(sinks.is_some());
@@ -184,7 +185,7 @@ fn add_sink<T: AVPlayer>(row: &mut Value, sinks: Option<&AVSinks<T>>, images: &A
     }
 }
 
-#[cfg(all(test, feature = "ffmpeg"))]
+#[cfg(all(test, feature = "uuav"))]
 mod tests {
     use super::*;
 
@@ -205,7 +206,7 @@ mod tests {
     fn a_video_without_a_reported_frame_rate_can_still_have_a_texture() {
         let mut images = Assets::<Image>::default();
         let image = images.add(Image::default());
-        let mut sinks = crate::video_stream::noop_sinks::<VideoPlayer>(String::new(), Some(image));
+        let mut sinks = crate::AVSinks::<VideoPlayer>::for_empty_source(Some(image));
         sinks.rate = Some(0.0); // HTML media provides dimensions but no frame rate.
         let mut row = json!({});
         add_sink(&mut row, Some(&sinks), &images);

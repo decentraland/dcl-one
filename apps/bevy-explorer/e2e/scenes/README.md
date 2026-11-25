@@ -113,3 +113,14 @@ texture, and `KHR_materials_emissive_strength` 4).
 
 To compare clients, build it (`pnpm run build-scenes material-fidelity`) and deploy the folder
 to a world, adding the world's name to a copy of `scene.json`.
+
+## The video playback scene
+
+`video-playback`, parcel `0,30`: after unity-explorer's UUAV PlayMode suite
+(`Explorer/Assets/Plugins/UUAV/Packages/UUAV/Tests`), it plays a committed fixture through the
+engine's player, UUAV on the standalone and the browser's video element on the web.
+`assets/video/red_tone.mp4` is 6 s of solid red at 320x240 with a 440 Hz tone, written by
+`video-playback/generate-fixture.sh` (ffmpeg, as the Unity fixtures are), so a presented frame is
+red whenever it is sampled and the audio path runs too. `specs/visual/video.test.ts` asserts the
+player's events and the frame's centre pixel instead of comparing a reference; the scene's label
+shows the last event for whoever reads the report's frame.

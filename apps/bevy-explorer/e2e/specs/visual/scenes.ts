@@ -43,3 +43,6 @@ export const POINTER_SCENE = { id: 'pointer-targets', base: [0, 20] as const }
 
 /** The raycast budget scene (`scenes/raycast-storm`), parcel `0,22`: not in `SCENES`. */
 export const RAYCAST_STORM_SCENE = { id: 'raycast-storm', base: [0, 22] as const }
+
+/** The video scene (`scenes/video-playback`): in the workspace, not in `SCENES`, so without a reference. */
+export const VIDEO_SCENE = { id: 'video-playback', base: [0, 30] as const }

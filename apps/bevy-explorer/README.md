@@ -8,7 +8,8 @@ workspace and `target/`); artifacts go to this app's ignored `dist/`.
 Prerequisites: the [Explorer README](../../rendering/bevy-explorer/source/readme.md)'s platform
 libraries, Rust, protoc, Node 24, pnpm (`corepack enable`). Web also needs `nightly-2026-04-15` with `rust-src` and
 `wasm32-unknown-unknown`, and wasm-pack (CI takes 0.15.1 from the flake's `bevy-tools` package);
-desktop needs FFmpeg and the pinned CEF.
+desktop needs the pinned CEF and the UUAV video runtime set (`nix build .#uuav-dist`), which
+`tooling/uuav/stage-dist.py` copies next to the binary that spawns it.
 
 CI uses `build-web.py --shared-build`: Cargo compiles the engine and scene runtime together,
 then the lockfile-matched wasm-bindgen emits two separate modules. `install-web-tools.py`

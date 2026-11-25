@@ -33,7 +33,7 @@ required-features = ["avatar_render"]
 # - wasm-pack build --target web --out-dir ./deploy/web/engine/pkg --no-default-features --features="livekit,social" (then serve via react-web; see react-web/README.md)
 
 [features]
-default = ["livekit", "ffmpeg", "inspect", "social", "react-hud-cef", "remote"]
+default = ["livekit", "uuav", "inspect", "social", "react-hud-cef", "remote"]
 # default = ["wasm"]
 console = []
 dcl-assert = ["common/dcl-assert"]
@@ -49,7 +49,9 @@ tracy = ["performance-profiler", "bevy/trace_tracy"]
 inspect = ["dcl_deno/inspect", "system_ui/inspect"]
 hot_reload = ["bevy/file_watcher", "bevy/embedded_watcher", "ipfs/hot_reload"]
 livekit = ["comms/livekit", "system_ui/livekit", "ban_block/livekit"]
-ffmpeg = ["av/ffmpeg"]
+# Scene video and audio streams through the UUAV player (library/uuav): the out-of-process
+# playback runtime set ships next to the executable (tooling/uuav/stage-dist.py).
+uuav = ["av/uuav"]
 social = ["social/social"]
 # The loopback console server (`--automation-token`, src/automation.rs `remote`): native only, in
 # every native build (`default` and `headless`), never in the wasm build.
@@ -62,7 +64,7 @@ bevy_mesh_picking_backend = ["bevy/bevy_mesh_picking_backend"]
 headless = ["bevy/configurable_error_handler", "remote"]
 # The avatar renderer's bin and what it needs: media decoding, the scene inspector and the social
 # service client, no HUD.
-avatar_render = ["ffmpeg", "inspect", "social"]
+avatar_render = ["uuav", "inspect", "social"]
 # POC: render the react-web HUD via CEF offscreen rendering into an in-engine texture (desktop).
 # The CEF framework loads bundle-relative (Contents/Frameworks) with a dev fallback at
 # ~/.local/share/cef; the render-process helper builds as the sibling binary `decentra-bevy-cef`
@@ -117,7 +119,11 @@ members = [
   "local-harness/benchmark",
   "local-harness/presence/harness-util",
 ]
-exclude = ["../../../library/vendor/rusty_enet", "vendor/basisu"]
+exclude = [
+  "../../../library/vendor/rusty_enet",
+  "../../../library/uuav",
+  "vendor/basisu",
+]
 
 [workspace.dependencies]
 analytics = { path = "crates/analytics" }
@@ -228,6 +234,11 @@ rusty_enet = { path = "../../../library/vendor/rusty_enet", version = "0.4.0" }
 basisu = { path = "vendor/basisu", version = "=0.1.0" }
 # Zstandard decoding of KTX2 levels; the same version and features the vendored basisu uses.
 ruzstd = { version = "0.9.1", default-features = false }
+# The UUAV player's client: spawns and drives the uuav-helper process that decodes scene video
+# (library/uuav). Native only; the helper and its FFmpeg are the `uuav-dist` flake output.
+uuav = { path = "../../../library/uuav/uuav-client", package = "uuav-client", version = "0.4.0" }
+# wgpu-hal's Metal binding; the video planes UUAV presents are wrapped through it.
+metal = "0.31"
 # enables naga_oil function overrides on non-`virtual` bevy_pbr functions (e.g.
 # our shadow-darkness override in bound_material.wgsl). feature-unifies into the
 # naga_oil that bevy builds its shader composer with. version must match bevy's.
@@ -571,7 +582,6 @@ bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "f31e04be7
 bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "f31e04be7408ecf312599d056feb7f9d18b2ab03" }
 bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "f31e04be7408ecf312599d056feb7f9d18b2ab03" }
 
-ffmpeg-next = { git = "https://github.com/decentraland/dcl-one", rev = "0a8f3cf998262fc4749fb7c86eea93b48f0b8254" }
 parry3d-f64 = { git = "https://github.com/decentraland/dcl-one", rev = "2943100ea8674045ee96e67e3805578aea31fed4" }
 deno_core = { git = "https://github.com/decentraland/dcl-one", rev = "95d9df86a00e079ea15b567857d2ba97fb9f2a6a" }
 

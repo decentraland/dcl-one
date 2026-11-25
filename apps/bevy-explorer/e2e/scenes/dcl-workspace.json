@@ -68,6 +68,9 @@
     },
     {
       "path": "material-fidelity"
+    },
+    {
+      "path": "video-playback"
     }
   ]
 }

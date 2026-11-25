@@ -16,4 +16,4 @@ export const DEFAULT_WEB_APP = path.join(REPO_ROOT, 'apps', 'bevy-explorer', 'di
 
 export const SCENES_DIR = path.join(PACKAGE_ROOT, 'scenes')
 export const REFERENCES_DIR = path.join(PACKAGE_ROOT, 'references')
-export const REPORT_DIR = path.join(PACKAGE_ROOT, 'report')
+export const REPORT_DIR = process.env.DCL_E2E_REPORT_DIR ? path.resolve(process.env.DCL_E2E_REPORT_DIR) : path.join(PACKAGE_ROOT, 'report')

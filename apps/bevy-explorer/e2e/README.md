@@ -73,7 +73,8 @@ second one on its own realm.
 | `DCL_E2E_WINDOW` | The window size, `<width>x<height>` | `1600x900` (the Visual suite uses 960x540) |
 | `DCL_E2E_RECORD` | `1` records a missing visual reference instead of failing | unset |
 | `DCL_E2E_TRANSPORT` | `native` drives the standalone through `dcl/console` instead of a browser | `web` |
-| `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
+| `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added); the UUAV runtime set must be staged next to it (`tooling/uuav/stage-dist.py`) for scene video to play | unset |
+| `DCL_E2E_REPORT_DIR` | Where the run writes its report (the JUnit file, each scenario's commands, logs and frames) | `report/` |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
 | `DCL_E2E_SMART_WEARABLE_URN` | A smart wearable on the configured backend for `specs/smart-wearables.test.ts` to run with no prompt | unset: that scenario is skipped |
 
@@ -324,6 +325,7 @@ test is in the spec file's header. Port 48, Partial 35, Gap 4, Drop 2.
 | SelfPreview (2) | `self-preview` | | | 2 | | No `--self-preview-wearables` launch option |
 | ViewSignalSmoke (2) | `view-signal` | | | | 2 | A Unity harness self-test |
 | Visual (17) | `visual/visual` | 17 | | | | The scenes at their own parcels; references recorded anew |
+| UUAV PlayMode (unity-explorer's player tests) | `visual/video` | 2 | 1 | 4 | | One scenario on the `video-playback` scene: the state reaches Playing, the clock runs, the frame is red; seek, audio capture and helper recovery stay in the UUAV workspace's tests |
 
 Beyond explorer-automation, `specs/community-chat.test.ts` covers community text chat: a
 member's community card opens its chat (`Open chat`), the rail shows a
@@ -388,6 +390,14 @@ pixels differ (1.5% for `avatar-shape`), as explorer-automation compared. A last
 the nametags back on at `avatar-shape` and reads `/nametag_state` until the scene's five avatars
 show their names (`sceneAvatar` true, no `player`, the suffix `#pc-1` to `#pc-5` from their ids).
 
+`specs/visual/video.test.ts` plays the `video-playback` scene ([scenes/README.md](scenes/README.md), after
+unity-explorer's UUAV PlayMode suite) on the same realm (`specs/visual/realm.ts` serves every
+workspace scene once per process) and asserts through the engine instead of a reference: the
+player's `VideoEvent`s (`/inspect_component`) reach Playing without an error and report a running
+clock, and the frame's pixel at the screen (`/entity_screen_position`) is the fixture's red. On
+the web the player is the browser's video element; on the standalone it is UUAV, which the
+scenes workflow runs (below).
+
 Build the scenes first with `apps/dcl-scene-cli`:
 
 ```sh
@@ -438,10 +448,32 @@ A reference counts as approved once a reviewer has checked it against the scene'
   *InWorld* and *Automation* sections of the PR's CI status comment from the uploaded report
   (`tooling/bevy-e2e-report.py`).
 
-`tooling/bevy-ci.py` selects no engine lane for a change under this folder.
+`tooling/bevy-ci.py` selects the scenes lane of `bevy-explorer-ci.yml` for a change to an
+input of the video run below (the scenes, the driver, the runner scripts, the visual specs and
+the package files) and no engine lane for the rest of this folder.
 
-Not in this workflow yet: the standalone (`DCL_E2E_TRANSPORT=native` drives a native build
-through its loopback console; no CI job runs one), a macOS leg, and sharding across accounts.
+The standalone runs in two places. `.github/workflows/bevy-explorer-scenes.yml`'s graphical job
+plays the video spec (`npm run e2e -- --visual --filter 'video plays'`) on the Linux release
+build it made, through the loopback console under xvfb (`DCL_E2E_TRANSPORT=native`,
+`UUAV_FORCE_SW_DECODE=1`: hosted runners have no VA driver), and uploads `report/` as
+`bevy-explorer-video-e2e-<sha>`. That build has no HUD bundle: the standalone holds the world for
+its welcome page until the first realm change, and with no `Jump In` to press the driver asks for
+the realm through the console (`driver/session.ts`, `enterWorld`), which is what the button does. `tooling/bevy-ci.py` selects that job for the scenes, the
+driver, the runner scripts, the video spec and its realm.
+
+This workflow's *Standalone (Windows)* job builds the Windows standalone on a hosted runner the
+way the desktop packaging does (the HUD bundle, CEF and the UUAV runtime set beside the
+executable) and hands the folder to the GPU runner, where the *Scenarios* job plays the video
+spec on it after the web scenarios (`DCL_E2E_TRANSPORT=native`, `DCL_E2E_REPORT_DIR=report/standalone`,
+so the web run's report keeps its files): the one run of the Windows frame path, hardware decode
+on the NVIDIA GPU, the renderer on the backend wgpu picks there. A second, informative run forces
+`WGPU_BACKEND=dx12` (with `WGPU_DX12_COMPILER=fxc`, the compiler the packaged folder can start
+on) into `report/standalone-dx12`; its result goes to the job summary and fails nothing, because
+the DX12 renderer has known gaps of its own on the full world
+(`rendering/bevy-explorer/docs/guidelines/platforms.md`, "GPU timestamps").
+
+Not in this workflow yet: the standalone for the other specs, a macOS leg, and sharding across
+accounts.
 
 ## Practices
 
@@ -501,6 +533,7 @@ change on the left updates what is on the right in the same change, then runs th
 | The smart-wearable fixture (`scenes/smart-wearable`: its title, name, log line or label), `/preview-wearables` or `buildScene` in `driver/realm.ts`, the `/smart_wearable*`, `/portables` or `/stop_portable` commands, or the HUD's `Portable experiences` button, popover or its `Stop`/`Restart` rows | `specs/smart-wearables.test.ts`, `test/realm.test.ts`, `scenes/README.md` | `pnpm test`; the scenario in CI |
 | The web media backend's reopen schedule, the states it reports or `/media_state`'s retry fields (`crates/media/src/retry.rs`, `crates/media/src/source_state.rs`, `crates/media/src/html`), `/media_retry_delay`, the `video` scene or `contentFailures` in `driver/realm.ts` | `specs/media-retry.test.ts`, `driver/explorer.ts` and `test/explorer.test.ts`, `test/realm.test.ts`, `scenes/README.md`, `decisions.md` "Media reopens on the web" | `cargo test -p media`; `pnpm test`; the scenarios in CI |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
+| The `video-playback` scene, its fixture (`scenes/video-playback/generate-fixture.sh`), the engine's `VideoEvent` reporting, the video player's source resolution or a platform's frame path (`crates/media/src/uuav`, `crates/av`) | `specs/visual/video.test.ts` (the states, the clock mark, the colour probe); `scenes/README.md` | `pnpm run typecheck`; the video scenario on the web and on the standalone |
 | `scripts/drive.ts`: its flags, its stdin lines or its JSON lines | "Drive a scene by hand or by agent" above, the Explorer readme's "Agents and tests", `test/drive.test.ts` | `pnpm test` |
 | A path moved under `apps/bevy-explorer/e2e`, `local-harness/web-driver`, `tooling/bevy-e2e-*.py` or the workflow, or a new read outside this folder | The workflow's `paths` filters and the scenarios job's `sparse-checkout`, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
 | The CI workflow's file, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests | the tooling tests |

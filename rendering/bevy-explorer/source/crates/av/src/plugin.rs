@@ -17,7 +17,7 @@ use scene_runner::{
     ContainerEntity, ContainingScene,
 };
 
-#[cfg(all(not(test), feature = "ffmpeg"))]
+#[cfg(all(not(test), feature = "uuav"))]
 use crate::audio_sink::AudioSinkPlugin;
 #[cfg(not(feature = "html"))]
 use crate::audio_source_native::AudioSourcePluginImpl;
@@ -27,13 +27,13 @@ use crate::{
     audio_source::AudioSourcePlugin, AVPlayer, AVPlayerConfig, AudioStream, InScene,
     ShouldBePlaying, Stream, VideoPlayer, LIVEKIT_VIDEO_STREAM,
 };
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
-use crate::{video_player::VideoPlayerPlugin, video_stream::VideoSink, AVPlayerSinks, AVSinks};
+#[cfg(any(feature = "uuav", feature = "html"))]
+use crate::{sinks::VideoSink, video_player::VideoPlayerPlugin, AVPlayerSinks, AVSinks};
 
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 type AVPlayerQuery<'w, 's, T> =
     Query<'w, 's, (&'static ContainerEntity, Option<&'static mut AVSinks<T>>), With<T>>;
-#[cfg(not(any(feature = "ffmpeg", feature = "html")))]
+#[cfg(not(any(feature = "uuav", feature = "html")))]
 type AVPlayerQuery<'w, 's, T> = Query<'w, 's, &'static ContainerEntity, With<T>>;
 
 #[derive(Default)]
@@ -41,9 +41,9 @@ pub struct AVPlayerPlugin;
 
 impl Plugin for AVPlayerPlugin {
     fn build(&self, app: &mut App) {
-        #[cfg(any(feature = "ffmpeg", feature = "html"))]
+        #[cfg(any(feature = "uuav", feature = "html"))]
         app.add_plugins(VideoPlayerPlugin);
-        #[cfg(all(not(test), feature = "ffmpeg"))]
+        #[cfg(all(not(test), feature = "uuav"))]
         app.add_plugins(AudioSinkPlugin);
         app.add_plugins(crate::debug_panel::MediaDebugPanelPlugin);
         app.add_plugins(AudioSourcePlugin);
@@ -158,7 +158,7 @@ fn av_player_on_remove<T: AVPlayer>(
     mut renderer_scene_contexts: Query<&mut RendererSceneContext>,
     audio_timestamp: Res<MonotonicTimestamp<PbAudioEvent>>,
     video_timestamp: Res<MonotonicTimestamp<PbVideoEvent>>,
-    #[cfg(any(feature = "ffmpeg", feature = "html"))] time: Res<Time>,
+    #[cfg(any(feature = "uuav", feature = "html"))] time: Res<Time>,
 ) {
     let entity = trigger.target();
     commands.entity(entity).try_remove::<(
@@ -169,10 +169,10 @@ fn av_player_on_remove<T: AVPlayer>(
         ShouldBePlaying<T>,
         Stream,
     )>();
-    #[cfg(feature = "ffmpeg")]
+    #[cfg(feature = "uuav")]
     commands.entity(entity).try_remove::<AVSinks<T>>();
 
-    #[cfg(any(feature = "ffmpeg", feature = "html"))]
+    #[cfg(any(feature = "uuav", feature = "html"))]
     let Ok((container_entity, mut av_sinks)) = av_players.get_mut(entity) else {
         error!(
             "Entity which had {} removed did not have ContainerEntity.",
@@ -180,7 +180,7 @@ fn av_player_on_remove<T: AVPlayer>(
         );
         return;
     };
-    #[cfg(not(any(feature = "ffmpeg", feature = "html")))]
+    #[cfg(not(any(feature = "uuav", feature = "html")))]
     let Ok(container_entity) = av_players.get_mut(entity) else {
         error!(
             "Entity which had {} removed did not have ContainerEntity.",
@@ -193,7 +193,7 @@ fn av_player_on_remove<T: AVPlayer>(
         debug!("Invalid RendererSceneContext {}.", container_entity.root);
         return;
     };
-    #[cfg(any(feature = "ffmpeg", feature = "html"))]
+    #[cfg(any(feature = "uuav", feature = "html"))]
     if let Some(sinks) = av_sinks.as_mut() {
         sinks.sent_event = time.elapsed_secs_f64();
         sinks.sent_state = VideoState::VsNone;
@@ -204,7 +204,7 @@ fn av_player_on_remove<T: AVPlayer>(
         &audio_timestamp,
         &video_timestamp,
         VideoState::VsNone,
-        #[cfg(any(feature = "ffmpeg", feature = "html"))]
+        #[cfg(any(feature = "uuav", feature = "html"))]
         av_sinks
             .as_mut()
             .and_then(|av_sinks| av_sinks.video_sink_mut()),
@@ -308,7 +308,7 @@ fn should_be_playing_on_remove<T: AVPlayer>(
         &audio_timestamp,
         &video_timestamp,
         VideoState::VsPaused,
-        #[cfg(any(feature = "ffmpeg", feature = "html"))]
+        #[cfg(any(feature = "uuav", feature = "html"))]
         None,
     );
 }
@@ -502,17 +502,17 @@ pub(crate) fn push_state_to_crdt<T: AVPlayer>(
     audio_timestamp: &MonotonicTimestamp<PbAudioEvent>,
     video_timestamp: &MonotonicTimestamp<PbVideoEvent>,
     new_state: VideoState,
-    #[cfg(any(feature = "ffmpeg", feature = "html"))] video: Option<&mut VideoSink>,
+    #[cfg(any(feature = "uuav", feature = "html"))] video: Option<&mut VideoSink>,
 ) {
     if T::HAS_VIDEO {
-        #[cfg(any(feature = "ffmpeg", feature = "html"))]
+        #[cfg(any(feature = "uuav", feature = "html"))]
         if let Some(video) = video {
             push_video_event(context, container, video_timestamp, new_state, video);
         } else {
             push_timeless_video_event(context, container, video_timestamp, new_state);
         }
 
-        #[cfg(not(any(feature = "ffmpeg", feature = "html")))]
+        #[cfg(not(any(feature = "uuav", feature = "html")))]
         push_timeless_video_event(context, container, video_timestamp, new_state);
     } else {
         push_audio_event(context, container, audio_timestamp, new_state);
@@ -538,13 +538,13 @@ fn push_audio_event(
     );
 }
 
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 fn push_video_event(
     context: &mut RendererSceneContext,
     container: &ContainerEntity,
     timestamp: &MonotonicTimestamp<PbVideoEvent>,
     new_state: VideoState,
-    #[cfg(any(feature = "ffmpeg", feature = "html"))] video: &mut VideoSink,
+    #[cfg(any(feature = "uuav", feature = "html"))] video: &mut VideoSink,
 ) {
     trace!("send current time = {}", video.current_time);
     let event = PbVideoEvent {
