@@ -51,7 +51,6 @@ impl Plugin for CommsAutomationPlugin {
                 ("Microphone available", "mic.available"),
                 ("Microphone enabled", "mic.enabled"),
                 ("Turned off by the scene", "mic.sceneBlocked"),
-                ("Scene's voice-off refused", "mic.sceneRefused"),
                 ("LiveKit available", "livekit"),
             ],
             actions: &[],
@@ -284,7 +283,7 @@ const CALL_UNSET: [(&str, &str); 4] = [
 impl VoiceState {
     fn to_json(&self) -> Value {
         let mut report = json!({
-            "mic": { "available": self.mic.available, "enabled": self.mic.enabled, "sceneBlocked": self.mic.scene_blocked(), "sceneRefused": self.mic.scene_disable_refused() },
+            "mic": { "available": self.mic.available, "enabled": self.mic.enabled, "sceneBlocked": self.mic.scene_blocked() },
             "call": self.call,
             "livekit": false,
             "connected": null,
@@ -329,10 +328,9 @@ type VoiceRooms<'w, 's> =
 #[cfg(feature = "livekit")]
 type ActiveSpeakers<'w, 's> = Query<'w, 's, &'static LivekitParticipant, With<ActiveSpeaker>>;
 
-/// Report, as JSON, the microphone as `mic` (`available`, `enabled`, `sceneBlocked` while the
-/// scene the player stands in turns nearby voice off or its room refused the player as banned,
-/// and `sceneRefused` while the scene asks to turn it off and the `DisableVoice` permission
-/// refuses) and, in a build with the
+/// Report, as JSON, the microphone as `mic` (`available`, `enabled`, and `sceneBlocked` while the
+/// scene the player stands in turns nearby voice off or its room refused the player as banned)
+/// and, in a build with the
 /// `livekit` feature, `connected` (a realm or scene voice room is connected), `rooms` (each
 /// `scene` and the shared room `state`, including paused and admission failures),
 /// `speakers` (addresses speaking now, the local player's included) and `call` (the private
@@ -585,7 +583,7 @@ mod tests {
         assert_eq!(
             state.to_json(),
             json!({
-                "mic": { "available": true, "enabled": false, "sceneBlocked": false, "sceneRefused": false },
+                "mic": { "available": true, "enabled": false, "sceneBlocked": false },
                 "call": null,
                 "livekit": false,
                 "connected": null,
@@ -618,7 +616,7 @@ mod tests {
         assert_eq!(
             state.to_json(),
             json!({
-                "mic": { "available": true, "enabled": true, "sceneBlocked": false, "sceneRefused": false },
+                "mic": { "available": true, "enabled": true, "sceneBlocked": false },
                 "call": { "status": "disconnected" },
                 "livekit": true,
                 "connected": true,

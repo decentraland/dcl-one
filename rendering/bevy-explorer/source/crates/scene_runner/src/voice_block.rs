@@ -6,27 +6,29 @@
 //! applied elsewhere (`MicState::set_scene_banned`).
 
 use bevy::prelude::*;
-use common::structs::{MicState, NearbyVoiceDisabled, PermissionType, PrimaryUser};
+use common::structs::{MicState, NearbyVoiceDisabled, PermissionType, PrimaryUser, VoiceOffAnswer};
 
 use crate::{permissions::Permission, ContainingScene};
 
 /// Only the parcel scene under the player counts: a portable experience never blocks. The
 /// permission is asked once per visit, so leaving and returning asks again; a teleport that
-/// lands in the same scene is the same visit. `request` is the scene asked for and the answer,
-/// once there is one.
+/// lands in the same scene is the same visit. The scene being visited carries
+/// [`VoiceOffAnswer`].
 pub(crate) fn update_scene_voice_block(
+    mut commands: Commands,
     mic_state: Option<ResMut<MicState>>,
     containing_scene: ContainingScene,
     player: Query<Entity, With<PrimaryUser>>,
     disabling_scenes: Query<(), With<NearbyVoiceDisabled>>,
+    visits: Query<(Entity, &VoiceOffAnswer)>,
     mut perms: Permission<Entity>,
-    mut request: Local<Option<(Entity, Option<bool>)>>,
 ) {
     let Some(mut mic_state) = mic_state else {
         return;
     };
     let player = player.single().ok();
-    let visited = request.map(|(scene, _)| scene);
+    let visit = visits.iter().next();
+    let visited = visit.map(|(scene, _)| scene);
     let asking = player
         .and_then(|player| containing_scene.get_parcel(player))
         .filter(|scene| disabling_scenes.contains(*scene))
@@ -36,35 +38,40 @@ pub(crate) fn update_scene_voice_block(
             visited.filter(|scene| over == Some(*scene))
         });
 
-    if asking != visited {
-        // a question about a scene the player has left is withdrawn, so that no use is recorded
-        // for a visit where nothing was turned off
+    if asking.is_none() || asking != visited {
+        // a question about a scene the player has left, or one that was unloaded, is withdrawn,
+        // so that no use is recorded for a visit where nothing was turned off
         perms.withdraw_all(PermissionType::DisableVoice);
-        *request = asking.map(|scene| (scene, None));
+    }
+    let mut answer = visit.and_then(|(_, answer)| answer.0);
+    if asking != visited {
+        answer = None;
+        if let Some(scene) = visited {
+            commands.entity(scene).try_remove::<VoiceOffAnswer>();
+        }
         if let Some(scene) = asking {
-            perms.check_unique(PermissionType::DisableVoice, scene, scene, None, false);
+            perms.check(PermissionType::DisableVoice, scene, scene, None, false);
         }
     }
     // asked before draining, so that an answer the stored rules give at once applies this frame:
     // nearby voice stays off across two adjacent scenes that both turn it off
     let allowed: Vec<_> = perms.drain_success(PermissionType::DisableVoice).collect();
     let refused: Vec<_> = perms.drain_fail(PermissionType::DisableVoice).collect();
-    if let Some((scene, answer)) = request.as_mut() {
-        if allowed.contains(scene) {
-            *answer = Some(true);
-        } else if refused.contains(scene) {
-            *answer = Some(false);
+    if let Some(scene) = asking {
+        let before = answer;
+        if allowed.contains(&scene) {
+            answer = Some(true);
+        } else if refused.contains(&scene) {
+            answer = Some(false);
+        }
+        if asking != visited || answer != before {
+            commands.entity(scene).try_insert(VoiceOffAnswer(answer));
         }
     }
 
-    let answer = request.and_then(|(_, answer)| answer);
     let disabled = answer == Some(true);
     if mic_state.scene_disabled() != disabled {
         mic_state.set_scene_disabled(disabled);
-    }
-    let refused = answer == Some(false);
-    if mic_state.scene_disable_refused() != refused {
-        mic_state.set_scene_disable_refused(refused);
     }
 }
 
@@ -185,6 +192,13 @@ mod tests {
         app.world().resource::<MicState>()
     }
 
+    /// The answer on the scene being visited; the outer `None` is no visit.
+    fn answer(app: &mut App) -> Option<Option<bool>> {
+        let world = app.world_mut();
+        let mut visits = world.query::<&VoiceOffAnswer>();
+        visits.iter(world).next().map(|answer| answer.0)
+    }
+
     fn uses(app: &mut App) -> Vec<bool> {
         app.world_mut()
             .resource_mut::<Events<PermissionUsed>>()
@@ -202,12 +216,13 @@ mod tests {
         app.update();
         assert!(mic(&app).scene_blocked(), "on the frame the player enters");
         assert!(!mic(&app).enabled);
-        assert!(!mic(&app).scene_disable_refused());
+        assert_eq!(answer(&mut app), Some(Some(true)));
         assert_eq!(uses(&mut app), [true]);
 
         stand(&mut app, player, false);
         app.update();
         assert!(!mic(&app).scene_blocked());
+        assert_eq!(answer(&mut app), None);
 
         // asked again on return
         stand(&mut app, player, true);
@@ -225,12 +240,12 @@ mod tests {
         app.update();
         assert!(!mic(&app).scene_blocked());
         assert!(mic(&app).enabled);
-        assert!(mic(&app).scene_disable_refused());
+        assert_eq!(answer(&mut app), Some(Some(false)));
         assert_eq!(uses(&mut app), [false]);
 
         stand(&mut app, player, false);
         app.update();
-        assert!(!mic(&app).scene_disable_refused());
+        assert_eq!(answer(&mut app), None);
     }
 
     #[test]
@@ -240,7 +255,7 @@ mod tests {
         app.update();
         app.update();
         assert!(!mic(&app).scene_blocked());
-        assert!(!mic(&app).scene_disable_refused());
+        assert_eq!(answer(&mut app), Some(None));
 
         let request = app
             .world_mut()
@@ -268,7 +283,7 @@ mod tests {
         assert!(!mic(&app).scene_disabled());
         assert!(mic(&app).scene_blocked());
 
-        // refused and banned: the unban leaves nothing blocked, and the refusal stays read
+        // refused and banned: the unban leaves nothing blocked, and the refusal stands
         let (mut app, _) = self::app();
         rule(&mut app, PermissionValue::Deny);
         app.world_mut()
@@ -276,13 +291,13 @@ mod tests {
             .set_scene_banned(true);
         app.update();
         assert!(mic(&app).scene_blocked());
-        assert!(mic(&app).scene_disable_refused());
+        assert_eq!(answer(&mut app), Some(Some(false)));
         app.world_mut()
             .resource_mut::<MicState>()
             .set_scene_banned(false);
         app.update();
         assert!(!mic(&app).scene_blocked());
-        assert!(mic(&app).scene_disable_refused());
+        assert_eq!(answer(&mut app), Some(Some(false)));
     }
 
     #[test]
@@ -331,8 +346,23 @@ mod tests {
         assert_eq!(prompts(&mut app), 0, "the prompt is closed");
         app.update();
         assert!(!mic(&app).scene_blocked());
-        assert!(!mic(&app).scene_disable_refused());
+        assert_eq!(answer(&mut app), None);
         assert!(uses(&mut app).is_empty(), "nothing was used on that visit");
+    }
+
+    #[test]
+    fn a_scene_unloaded_before_the_answer_withdraws_the_question() {
+        let (mut app, _) = app();
+        rule(&mut app, PermissionValue::Ask);
+        app.update();
+        assert_eq!(prompts(&mut app), 1);
+
+        let scene = app.world_mut().resource_mut::<LiveScenes>().scenes[HASH];
+        app.world_mut().despawn(scene);
+        app.update();
+        assert_eq!(prompts(&mut app), 0, "the prompt is closed");
+        assert!(!mic(&app).scene_blocked());
+        assert!(uses(&mut app).is_empty());
     }
 
     #[test]
