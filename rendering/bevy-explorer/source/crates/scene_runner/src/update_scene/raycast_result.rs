@@ -152,8 +152,9 @@ enum RaycastTargets {
     /// that target scene, returning entity ids for both — a known, unambiguous pair, so it can
     /// identify what it hit in the scene it's operating on.
     Pinned(Entity),
-    /// The scenes the ray crosses, with the distance at which it enters them, then global ground.
-    /// Cross-scene ids are stripped.
+    /// The scenes the cast meets, nearest first, with the distance at which it first touches each,
+    /// then global ground: the scenes on a ray's line, and for the avatar's shape those its
+    /// capsule touches as well. Cross-scene ids are stripped.
     World(Vec<(Entity, f32)>),
 }
 

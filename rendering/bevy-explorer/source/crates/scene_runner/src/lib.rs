@@ -975,8 +975,9 @@ impl ContainingScene<'_, '_> {
             return results;
         }
         let mut parcel = vec3_to_parcel(position);
-        // a shape with a radius also touches the parcels around the one its ray is in: it reaches
-        // far less than a parcel's size, so no parcel further out
+        // a shape with a radius also touches the parcels around the one its ray is in: one ring of
+        // them, as long as it reaches far less than a parcel's size
+        dcl_assert!(radius < PARCEL_SIZE / 2.0);
         let ring = if radius > 0.0 { 1 } else { 0 };
 
         loop {
