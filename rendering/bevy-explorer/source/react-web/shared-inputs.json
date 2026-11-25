@@ -6319,7 +6319,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarPreviewShop.test.ts",
-      "sha256": "3255b4424a92f46869409fb51c19d0c0620341f1af3e6966ad39095e95f5d2e0"
+      "sha256": "02dcfe540c8660c5df3ad5ea189a2e2b8723dc4957ea6a066f2b6da89e01e251"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",

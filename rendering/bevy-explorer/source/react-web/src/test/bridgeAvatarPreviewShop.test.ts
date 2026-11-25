@@ -108,10 +108,11 @@ describe("the Shop's avatar preview", () => {
     const quarter = shop.camera()
     expect(quarter).toBeGreaterThan(SHOP_FRAMING.range)
     expect(quarter).toBeLessThan(SHOP_NAMES_FRAMING.range)
-    // the window resized: the same page's stage again, elsewhere, and the ease runs on from where it is
+    // the window resized: the same page's stage again, elsewhere, and the ease runs on from where it is, ending
+    // when it would have without the resize (a restarted ease would still be under way)
     shop.emit({ kind: 'previewStage', rect: { ...STAGE, x: 10 }, framing: 'names' } as PageToScene)
     expect(shop.camera()).toBe(quarter)
-    shop.frame(0.6)
+    shop.frame(0.45)
     expect(shop.camera()).toBeCloseTo(SHOP_NAMES_FRAMING.range, 9)
 
     // back to the catalogue, and to Names again from midway: each ease starts where the camera is
