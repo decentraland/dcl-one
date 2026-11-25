@@ -149,6 +149,7 @@ struct FakeChain {
     finalized_available: std::sync::atomic::AtomicBool,
     reorg_on_logs: std::sync::atomic::AtomicBool,
     logs: Mutex<Vec<Value>>,
+    fail_receipt_batch: std::sync::atomic::AtomicBool,
     receipts: Mutex<HashMap<String, Value>>,
     creators_at_hash: Mutex<HashMap<(String, String), String>>,
     max_span: u64,
@@ -243,6 +244,7 @@ impl FakeChain {
         max_addresses: usize,
     ) -> Arc<Self> {
         Arc::new(Self {
+            fail_receipt_batch: Default::default(),
             receipts: Mutex::default(),
             creators_at_hash: Mutex::default(),
             head: Mutex::new(head),
@@ -401,6 +403,22 @@ async fn rpc(
         {
             return axum::Json(json!({ "jsonrpc": "2.0", "id": body["id"], "error": { "code": -32000, "message": "header unavailable" } })).into_response();
         }
+    }
+    if chain.fail_receipt_batch.load(Ordering::SeqCst)
+        && body.as_array().is_some_and(|req| {
+            req.iter()
+                .any(|r| r["method"] == "eth_getTransactionReceipt")
+        })
+    {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
+    if chain.fail_receipt_batch.load(Ordering::SeqCst)
+        && body["method"] == "eth_getTransactionReceipt"
+        && body["params"][0]
+            .as_str()
+            .is_some_and(|h| !chain.receipts.lock().contains_key(h))
+    {
+        return StatusCode::BAD_GATEWAY.into_response();
     }
     match body {
         Value::Array(calls) => {

@@ -503,8 +503,10 @@ CREATE TABLE shop.nft_event (
 
 -- The fold's per-token legs (DISTINCT ON (contract_address, token_id) ORDER
 -- BY block_number, log_index) and a refold's "events of these tokens".
-CREATE INDEX nft_event_successful_order ON shop.nft_event(network,block_number) WHERE kind='order_successful';
 CREATE INDEX nft_event_token_idx ON shop.nft_event (network, contract_address, token_id, block_number, log_index);
+
+-- Successful marketplace fills by network and block range.
+CREATE INDEX nft_event_successful_order ON shop.nft_event(network,block_number) WHERE kind='order_successful';
 
 -- The ownership fold of the collections' and names' transfers: owner is the
 -- latest Transfer's `to` (NULL once burned), the mint the first; item_id and
@@ -17012,6 +17014,7 @@ CREATE TABLE shop.sale_first_purchase (
     contract_address text NOT NULL, item_id numeric(78,0), first_day bigint NOT NULL,
     UNIQUE NULLS NOT DISTINCT (network,currency,buyer,seller,contract_address,item_id)
 );
+CREATE INDEX sale_first_purchase_by_day ON shop.sale_first_purchase(network,first_day);
 CREATE INDEX sale_first_day ON shop.sale_first_purchase(network,first_day);
 
 -- One common source prefix per network. Capture each dependency's revision
@@ -17129,6 +17132,7 @@ CREATE TABLE shop.sale_event (
     CONSTRAINT sale_event_bid_accepted_fields CHECK (kind <> 'bid_accepted' OR (price IS NOT NULL AND seller IS NOT NULL)),
     CONSTRAINT sale_event_tx_hash_shape CHECK (tx_hash ~ '^0x[0-9a-f]{64}$')
 );
+CREATE INDEX sale_event_bid_accepted ON shop.sale_event(network,block_number) WHERE kind='bid_accepted';
 
 -- The fold's legs: a bidder's events over a token (DISTINCT ON
 -- (contract_address, token_id, buyer) ORDER BY block_number, log_index).

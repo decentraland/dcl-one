@@ -369,10 +369,16 @@ pub async fn insert_events(
              SELECT $1, b, i, t, m, k, c, h, n::numeric, s, a, x \
              FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::jsonb[], $12::text[]) \
                   AS u(b, i, t, m, k, c, h, n, s, a, x) \
-             ON CONFLICT (network, block_number, log_index) DO UPDATE SET assets = EXCLUDED.assets \
+             ON CONFLICT (network, block_number, log_index) DO UPDATE SET assets = EXCLUDED.assets, tx_hash=EXCLUDED.tx_hash, \
+                 block_time=EXCLUDED.block_time, caller=EXCLUDED.caller \
              WHERE trade_event.kind = 'traded' AND EXCLUDED.kind = 'traded' \
-               AND trade_event.tx_hash = EXCLUDED.tx_hash AND trade_event.hashed_signature = EXCLUDED.hashed_signature \
-               AND trade_event.assets IS DISTINCT FROM EXCLUDED.assets",
+               AND (trade_event.tx_hash='' OR trade_event.tx_hash=EXCLUDED.tx_hash) \
+               AND trade_event.marketplace_address=EXCLUDED.marketplace_address AND trade_event.signer=EXCLUDED.signer \
+               AND trade_event.hashed_signature = EXCLUDED.hashed_signature \
+               AND (trade_event.caller='' OR trade_event.caller=EXCLUDED.caller) \
+               AND (trade_event.block_time=0 OR trade_event.block_time=EXCLUDED.block_time) \
+               AND (trade_event.assets,trade_event.tx_hash,trade_event.block_time,trade_event.caller) IS DISTINCT FROM \
+                   (EXCLUDED.assets,EXCLUDED.tx_hash,EXCLUDED.block_time,EXCLUDED.caller)",
         )
         .bind(net.db_name())
         .bind(chunk.iter().map(|r| r.block_number).collect::<Vec<_>>())

@@ -1932,12 +1932,9 @@ pub(crate) async fn commit_window(
         tracing::warn!(indexer=ix.indexer(), network=ix.net().db_name(), from=expected.0+1,
             through=header.number, %error, "sales coverage withheld for this window");
         verified_sales = false;
-        // Polygon sales and NFT already tolerate incomplete events. Keep their
-        // normal indexing and store fill boundaries intact. Other projections
-        // pass only usable logs to their strict writers on an incomplete window.
-        if !(ix.indexer() == INDEXER_NFT
-            || (ix.indexer() == INDEXER_SALES && ix.net() == ChainNet::Matic))
-        {
+        // Only the Ethereum sales writer requires this filter. The other
+        // projections consume the original stream under their own rules.
+        if ix.indexer() == INDEXER_SALES && ix.net() == ChainNet::Ethereum {
             usable = std::borrow::Cow::Owned(
                 logs.iter()
                     .filter(|log| super::sale_history::validate_log(ix, log, times).is_ok())
@@ -2182,7 +2179,13 @@ async fn walk(
                 }
                 Err(e) if e.downcast_ref::<Fenced>().is_some() => return Err(e),
                 Err(e) => {
-                    tracing::warn!(indexer=name, network=net.db_name(), error=%e, "sales history repair will retry");
+                    if let Some(attempt) = e.downcast_ref::<super::sale_history::RepairAttempt>() {
+                        out.requests += attempt.requests;
+                    }
+                    super::sale_history::REPAIR_FAILURES
+                        .handle([name, net.db_name()])
+                        .increment(1);
+                    tracing::error!(indexer=name, network=net.db_name(), error=%format!("{e:#}"), "sales history repair will retry");
                     // Leave the independent estate repair its reserved budget.
                     remaining = reserved;
                 }

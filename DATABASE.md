@@ -2232,11 +2232,13 @@ The Ethereum sales cursor watches accepted bids at the ERC721Bid contract, purch
 
 On Ethereum and Polygon, `shop.sale_event.bid_fee` records the integer emitted by `BidAccepted`. Older rows can have a null fee. Replaying the original event fills it, including an emitted zero. The off-chain marketplace walk keeps each executed asset's `extra` bytes in `shop.trade_event.assets`. On Polygon the MANA leg can carry the royalty recipients chosen during execution. A replay of the same transaction and signature fills these bytes on older rows.
 
-On a populated deployment, the schema object pass creates the successful-order index on the existing NFT event table. To keep writes available during the build, run this statement outside a transaction before `catalyst schema migrate`.
+On a populated deployment, the schema object pass creates the successful-order and accepted-bid indexes on the event tables. To keep writes available during the build, run these statements outside a transaction before `catalyst schema migrate`.
 
 ```sql
 CREATE INDEX CONCURRENTLY IF NOT EXISTS nft_event_successful_order
 ON shop.nft_event (network, block_number) WHERE kind = 'order_successful';
+CREATE INDEX CONCURRENTLY IF NOT EXISTS sale_event_bid_accepted
+ON shop.sale_event (network, block_number) WHERE kind = 'bid_accepted';
 ```
 
 A Polygon store purchase ends at its `Bought` log. Each explicitly priced line matches one preceding `Issue` with the same transaction, collection, item and beneficiary, after the previous purchase in that transaction. Repeated copies keep their line order. After a complete replay of the purchase and its issuers, an unmatched line retains the explicit payment and has no indexed NFT sale. The sales cursor records historical changes to venue rates and recipients in `shop.sale_fee_change`. Rates take effect at their log position.

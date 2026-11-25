@@ -882,6 +882,19 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     .await
     .unwrap();
     assert_eq!(canonical, (3, 2, "105".into()));
+    let excluded: (bool, bool, bool, bool, String) = sqlx::query_as(
+        "SELECT EXISTS(SELECT FROM shop.sale_execution WHERE log_index=7),
+            EXISTS(SELECT FROM shop.sale_item_day WHERE contract_address=$1),
+            EXISTS(SELECT FROM shop.sale_first_purchase WHERE contract_address=$1),
+            EXISTS(SELECT FROM shop.sale_account_day WHERE address=$1),
+            (SELECT sum(volume)::text FROM shop.sale_analytics_day)",
+    )
+    .bind(DAVE)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(excluded, (false, false, false, false, "105".into()));
+
     let sellers: Vec<String> =
         sqlx::query_scalar("SELECT seller FROM shop.sale_asset ORDER BY log_index")
             .fetch_all(&db.pool)
@@ -1475,4 +1488,186 @@ async fn archive_repair_carries_a_narrowed_range_across_passes() {
         previous = hint;
     }
     panic!("a one-block window must make progress on this budget");
+}
+
+#[tokio::test]
+async fn trade_verdict_survives_an_incomplete_sales_window_and_its_repair() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Matic;
+    let ix = TradeEventsIndex::mainnet(net);
+    let (venue, start, _) = trade_events::marketplaces(net)[0];
+    let block = start + 100;
+    let (id, signature) = seed_trade(
+        &db.pool,
+        "public_item_order",
+        ALICE,
+        venue,
+        1,
+        0,
+        (4, CARL, "1"),
+        (1, listings::mana_token(137).unwrap(), "100"),
+    )
+    .await;
+    let log = traded(block, 1, venue, BOB, ALICE, &signature);
+    let chain = FakeChain::new(block + 64, vec![log], 1000, 100);
+    let tx_hash = format!("0x{:064x}", 79);
+    chain.logs.lock()[0]["transactionHash"] = Value::Null;
+    let url = serve(chain.clone()).await;
+    let mut settings = index_settings(100, 1000);
+    settings.sales_enabled = true;
+    let st = state_over(db.pool.clone(), &url, settings, false);
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
+        full_history,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
+        VALUES('trade_events','matic',137,$1,$2,$3,true,$2,timezone('UTC',now()),1,$2,0)")
+        .bind(ix.start_block() as i64).bind(block as i64-1).bind(chain.hash_of(block-1)).execute(&db.pool).await.unwrap();
+    for repaired in [false, true] {
+        if repaired {
+            chain.logs.lock()[0]["transactionHash"] = json!(tx_hash);
+        }
+        try_pass(&st, &url, &ix).await.unwrap();
+        let (status,executions,hash,through):(String,i64,String,i64)=sqlx::query_as(
+            "SELECT t.status,t.executions::bigint,e.tx_hash,c.sale_verified_through FROM shop.trade_chain_state t
+             CROSS JOIN shop.trade_event e CROSS JOIN shop.chain_cursor c WHERE t.trade_id::text=$1 AND c.indexer='trade_events'")
+            .bind(&id).fetch_one(&db.pool).await.unwrap();
+        assert_eq!((status.as_str(), executions), ("sold", 1));
+        assert_eq!(hash, if repaired { tx_hash.as_str() } else { "" });
+        assert_eq!(through >= block as i64, repaired);
+    }
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_store_purchase_and_order_in_one_receipt_settle_after_a_failed_batch() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Matic;
+    let (order_venue, deployed) = nft_index::legacy_marketplaces(net)[0];
+    let block = deployed.max(SalesIndex.start_block()) + 100;
+    let chain = FakeChain::new(block + 5, vec![], 1000, 100);
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
+    let rpc = Rpc::at(&st.http, &url);
+    let hash = format!("0x{:064x}", 82);
+    let mana = listings::mana_token(137).unwrap();
+    let store = sales_index::STORE_MATIC;
+    seed_collection(
+        &db.pool,
+        "matic",
+        CARL,
+        block - 10,
+        "store-collection",
+        "Store collection",
+    )
+    .await;
+    chain
+        .creators_at_hash
+        .lock()
+        .insert((CARL.into(), chain.hash_of(block)), ALICE.into());
+    for ix in ["nft", "sales", "trade_events"] {
+        sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
+            full_history,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
+            VALUES($1,'matic',137,1,$2,$3,true,$2,timezone('UTC',now()),1,$2,0)")
+            .bind(ix).bind(block as i64).bind(chain.hash_of(block)).execute(&db.pool).await.unwrap();
+    }
+    sqlx::query("INSERT INTO shop.sale_event(network,block_number,log_index,block_time,kind,emitter,contract_address,token_id,item_id,buyer,tx_hash)
+         VALUES('matic',$1,1,$2,'mint',$3,$3,1,0,$4,$5)").bind(block as i64).bind(time_of(block)).bind(CARL).bind(BOB).bind(&hash).execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.store_sale_line(block_number,bought_log,ordinal,block_time,tx_hash,contract_address,item_id,beneficiary,price,issue_log)
+         VALUES($1,2,0,$2,$3,$4,0,$5,250,1)").bind(block as i64).bind(time_of(block)).bind(&hash).bind(CARL).bind(BOB).execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.nft_event(network,block_number,log_index,block_time,kind,emitter,contract_address,token_id,from_address,to_address,amount,tx_hash)
+        VALUES('matic',$1,4,$2,'order_successful',$3,$4,9,$5,$6,75,$7)").bind(block as i64).bind(time_of(block)).bind(order_venue).bind(CARL).bind(DAVE).bind(BOB).bind(&hash).execute(&db.pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO shop.sale_fee_change(network,venue,field,block_number,log_index,value)
+        VALUES('matic',$1,'fee_ppm',1,0,'0')",
+    )
+    .bind(store)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let movement = |to, amount: u64, index| {
+        log_at(
+            mana,
+            vec![
+                nft_index::TOPIC_TRANSFER.into(),
+                topic_addr(BOB),
+                topic_addr(to),
+            ],
+            U256::from(amount).abi_encode(),
+            block,
+            index,
+        )
+    };
+    let logs = [
+        movement(ALICE, 250, 0),
+        sales_index::tests::issue_log(CARL, BOB, U256::from(1), 0, store, block, 1),
+        sales_index::tests::bought_log(&[(CARL, 0, 250, BOB)], &hash, block, 2),
+        movement(DAVE, 75, 3),
+        log_at(
+            order_venue,
+            vec![
+                nft_index::TOPIC_ORDER_SUCCESSFUL.into(),
+                topic_word(U256::from(9)),
+                topic_addr(DAVE),
+                topic_addr(BOB),
+            ],
+            (
+                FixedBytes::<32>::repeat_byte(1),
+                Address::from_str(CARL).unwrap(),
+                U256::from(75),
+            )
+                .abi_encode_params(),
+            block,
+            4,
+        ),
+    ]
+    .iter()
+    .map(|l| {
+        let mut v = log_json(l);
+        v["transactionHash"] = json!(hash);
+        v["blockHash"] = json!(chain.hash_of(block));
+        v
+    })
+    .collect::<Vec<_>>();
+    chain.fail_receipt_batch.store(true, Ordering::SeqCst);
+    for status in [None, Some("0x0"), Some("0x1")] {
+        if let Some(status) = status {
+            chain.receipts.lock().insert(
+                hash.clone(),
+                json!({"status":status,"transactionHash":hash,
+                "blockNumber":format!("0x{block:x}"),"blockHash":chain.hash_of(block),"logs":logs}),
+            );
+            sqlx::query("UPDATE shop.sale_execution SET receipt_attempted_at=NULL")
+                .execute(&db.pool)
+                .await
+                .unwrap();
+        }
+        crate::market::sale_fold::pass(&db.pool, &rpc, net)
+            .await
+            .unwrap();
+        let states: Vec<(bool, bool, bool)> = sqlx::query_as(
+            "SELECT receipt_attempted_at IS NOT NULL,receipt_read,settled FROM shop.sale_execution
+            JOIN shop.sale_payment USING(network,block_number,log_index) ORDER BY log_index",
+        )
+        .fetch_all(&db.pool)
+        .await
+        .unwrap();
+        let ok = status == Some("0x1");
+        assert_eq!(states, [(true, ok, ok); 2]);
+    }
+    let legs: Vec<(i32, String, String)> = sqlx::query_as(
+        "SELECT log_index,recipient,amount::text FROM shop.sale_payout ORDER BY log_index",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        legs,
+        [
+            (2, ALICE.into(), "250".into()),
+            (4, DAVE.into(), "75".into())
+        ]
+    );
+    db.drop().await;
 }

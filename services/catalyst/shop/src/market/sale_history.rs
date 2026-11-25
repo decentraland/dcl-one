@@ -14,6 +14,21 @@ use super::chain_walk::{
 };
 use super::{ethereum_sales, nft_index, sales_index, trade_events};
 
+pub const REPAIR_FAILURES: dcl_metrics::CounterFamily<2> = dcl_metrics::CounterFamily::new(
+    "catalyst_index_sales_repair_failures_total",
+    "Failed historical sale repair attempts by projection and network.",
+    Some(dcl_metrics::Unit::Count),
+    &["indexer", "network"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[REPAIR_FAILURES.descriptor];
+
+#[derive(Debug, thiserror::Error)]
+#[error("sales history repair starting at block {from} after {requests} requests")]
+pub struct RepairAttempt {
+    from: u64,
+    pub requests: usize,
+}
+
 pub const VERSION: i32 = 1;
 
 pub fn required(indexer: &str) -> bool {
@@ -239,6 +254,42 @@ pub async fn repair(
         return Ok(used);
     };
     let from = u64::try_from(next)?;
+    if let Err(error) = repair_window(
+        pool,
+        source,
+        ix,
+        owner,
+        (from, anchor, hash),
+        (budget, chunk),
+        &mut used,
+    )
+    .await
+    {
+        let failed_requests = match error.downcast_ref::<RpcError>() {
+            Some(RpcError::Counted { requests, .. } | RpcError::Budget { requests, .. }) => {
+                *requests
+            }
+            Some(_) => 1, // A single header request.
+            None => 0,
+        };
+        return Err(error.context(RepairAttempt {
+            from,
+            requests: used.requests + failed_requests,
+        }));
+    }
+    Ok(used)
+}
+
+async fn repair_window(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    owner: &Owner,
+    (from, anchor, hash): (u64, u64, &str),
+    (budget, chunk): (usize, &mut usize),
+    used: &mut Spent,
+) -> anyhow::Result<()> {
+    let next = from as i64;
     let groups = groups(owner);
     let store = owner.indexer == INDEXER_SALES && owner.net == ChainNet::Matic;
     let log_cost = chain_walk::requests_for(&groups, *chunk);
@@ -249,7 +300,7 @@ pub async fn repair(
         .saturating_mul(crate::chain_index::rpc::HEADER_BATCH)
         .min(10_000);
     if width == 0 {
-        return Ok(used);
+        return Ok(());
     }
     let upper: Option<i64> = sqlx::query_scalar(
         "SELECT sale_repair_upper FROM shop.chain_cursor WHERE indexer=$1 AND network=$2",
@@ -272,7 +323,7 @@ pub async fn repair(
         Err(RpcError::Budget { upper, requests }) => {
             remember_upper(pool, owner, from, to, upper).await?;
             used.read(requests);
-            return Ok(used);
+            return Ok(());
         }
         Err(error) => return Err(error.into()),
     };
@@ -296,7 +347,7 @@ pub async fn repair(
         let mut block_times = std::collections::HashMap::new();
         if !listed.is_empty() {
             if !trim_for_times(&mut window, from, budget.saturating_sub(used.charge + 2)) {
-                return Ok(used);
+                return Ok(());
             }
             let times = source.block_times(&window.logs).await?;
             used.read(times.requests);
@@ -319,7 +370,7 @@ pub async fn repair(
             let extra = names.iter().filter(|a| !addresses.contains(*a)).count();
             if addresses.len() + extra > max_addresses {
                 if block as u64 == from {
-                    return Ok(used);
+                    return Ok(());
                 }
                 window.reached = block as u64 - 1;
                 window
@@ -349,7 +400,7 @@ pub async fn repair(
                 Err(RpcError::Budget { upper, requests }) => {
                     remember_upper(pool, owner, from, window.reached, upper).await?;
                     used.read(requests);
-                    return Ok(used);
+                    return Ok(());
                 }
                 Err(error) => return Err(error.into()),
             };
@@ -368,7 +419,7 @@ pub async fn repair(
         }
     }
     if used.charge >= budget || !trim_for_times(&mut window, from, budget - used.charge - 1) {
-        return Ok(used);
+        return Ok(());
     }
     let times = source.block_times(&window.logs).await?;
     used.read(times.requests);
@@ -445,5 +496,5 @@ pub async fn repair(
     ensure!(count == 1, "sales repair coverage changed");
     owner.check(&mut tx).await?;
     tx.commit().await?;
-    Ok(used)
+    Ok(())
 }

@@ -14,4 +14,4 @@ The trade, NFT and sales projections keep independent ownership of their logs. A
 
 ## Consequences
 
-Independent forward progress preserves a recent, proven prefix. A rewind, changed historical coverage or expired publication makes affected reads unavailable. Rollups retain their currency, UTC day and underlying execution identities so a rebuild can remove groups emptied by a reorganization.
+Independent forward progress preserves a recent, proven prefix. A rewind, changed historical coverage or expired publication makes affected reads unavailable. Rollups group sales by network, currency and UTC day. A refold records the days of the executions it removes, rebuilds those days and updates the affected wallets’ totals.

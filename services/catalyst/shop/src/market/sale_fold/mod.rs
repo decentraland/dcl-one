@@ -411,11 +411,6 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
             DELETE FROM shop.sale_execution WHERE network=$1 AND block_number>$2 RETURNING block_time)
             SELECT DISTINCT block_time/86400*86400 FROM removed")
             .bind(net.db_name()).bind(from).fetch_all(&mut *tx).await?;
-        sqlx::query("DELETE FROM shop.sale_first_purchase WHERE network=$1 AND first_day=ANY($2)")
-            .bind(net.db_name())
-            .bind(&days)
-            .execute(&mut *tx)
-            .await?;
     }
     write_rows(&mut tx, net, from, to).await?;
     days.extend(creators::write(&mut tx, rpc, net, from, to).await?);
@@ -424,19 +419,19 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     days.dedup();
     // These checkout providers take custody before delivery. Preserve the
     // immediate beneficiary and the payment sender alongside the public buyer.
-    let former_buyers: Vec<String> = sqlx::query_scalar("WITH delivered AS (
-        SELECT a.block_number,a.log_index,a.ordinal,a.buyer AS previous_buyer,
+    sqlx::query("WITH delivered AS (
+        SELECT a.block_number,a.log_index,a.ordinal,
           (SELECT n.to_address FROM shop.nft_event n WHERE n.network=a.network AND n.contract_address=a.contract_address
             AND n.token_id=a.token_id AND n.block_number=a.block_number AND n.kind='transfer'
             AND n.from_address=a.beneficiary AND n.log_index>a.log_index ORDER BY n.log_index LIMIT 1) AS recipient
         FROM shop.sale_asset a JOIN shop.sale_execution e USING(network,block_number,log_index)
         WHERE a.network=$1 AND e.block_time/86400*86400=ANY($2) AND a.beneficiary=ANY($3))
-        , changed AS (UPDATE shop.sale_asset a SET buyer=d.recipient FROM delivered d WHERE a.network=$1
+        UPDATE shop.sale_asset a SET buyer=d.recipient FROM delivered d WHERE a.network=$1
           AND (a.block_number,a.log_index,a.ordinal)=(d.block_number,d.log_index,d.ordinal)
-          AND d.recipient IS NOT NULL AND a.buyer IS DISTINCT FROM d.recipient RETURNING d.previous_buyer) SELECT DISTINCT previous_buyer FROM changed")
+          AND d.recipient IS NOT NULL AND a.buyer IS DISTINCT FROM d.recipient")
         .bind(net.db_name()).bind(&days).bind(&["0xed038688ecf1193f8d9717eb3930f0bf0d745cb4","0xea749fd6ba492dbc14c24fe8a3d08769229b896c"][..])
-        .fetch_all(&mut *tx).await?;
-    if !former_buyers.is_empty() {
+        .execute(&mut *tx).await?;
+    if !days.is_empty() {
         // A later receipt can replace the checkout provider with the recipient.
         // The old buyer may still have a later purchase of the same item.
         sqlx::query("MERGE INTO shop.sale_first_purchase f USING (
@@ -447,11 +442,11 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
                       (k.network,k.buyer,k.seller,k.contract_address,k.currency)
                   AND a.item_id IS NOT DISTINCT FROM k.item_id AND a.price>0
             ) AS first_day
-            FROM shop.sale_first_purchase k WHERE network=$1 AND buyer=ANY($2) AND first_day=ANY($3)
+            FROM shop.sale_first_purchase k WHERE network=$1 AND first_day=ANY($2)
         ) remaining ON f.ctid=remaining.id
         WHEN MATCHED AND remaining.first_day IS NULL THEN DELETE
         WHEN MATCHED AND remaining.first_day<>f.first_day THEN UPDATE SET first_day=remaining.first_day")
-            .bind(net.db_name()).bind(&former_buyers).bind(&days).execute(&mut *tx).await?;
+            .bind(net.db_name()).bind(&days).execute(&mut *tx).await?;
     }
     rollups(&mut tx, net, &days).await?;
     let point = rpc.block_header(to as u64).await?;

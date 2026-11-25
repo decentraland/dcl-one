@@ -221,22 +221,27 @@ impl LogSource for RpcSource<'_> {
         chunk: &mut usize,
         budget: usize,
     ) -> Result<Window, RpcError> {
-        fetch_window(
-            &self.rpc,
-            from,
-            to,
-            groups,
-            chunk,
-            &AtomicUsize::new(0),
-            budget,
-        )
-        .await
+        let sent = AtomicUsize::new(0);
+        fetch_window(&self.rpc, from, to, groups, chunk, &sent, budget)
+            .await
+            .map_err(|error| match error {
+                RpcError::Budget { .. } => error,
+                source => RpcError::Counted {
+                    requests: sent.load(Ordering::SeqCst),
+                    source: Box::new(source),
+                },
+            })
     }
 
     async fn block_times(&self, logs: &[RpcLog]) -> Result<Read<HashMap<i64, i64>>, RpcError> {
-        block_times(&self.rpc, logs)
+        let sent = AtomicUsize::new(0);
+        block_times(&self.rpc.also_counting(&sent), logs)
             .await
             .map(|(value, requests)| Read { value, requests })
+            .map_err(|source| RpcError::Counted {
+                requests: sent.load(Ordering::SeqCst),
+                source: Box::new(source),
+            })
     }
 }
 

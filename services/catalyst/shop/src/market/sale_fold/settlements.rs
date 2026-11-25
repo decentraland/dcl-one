@@ -551,119 +551,148 @@ pub(super) async fn write(
     .fetch_all(&mut *conn)
     .await?;
     let txs: BTreeMap<_, _> = executions
-        .iter()
-        .map(|e| (e.tx_hash.as_str(), e.block))
+        .chunk_by(|a, b| a.tx_hash == b.tx_hash)
+        .map(|tx| (tx[0].tx_hash.as_str(), tx))
         .collect();
     let hashes: Vec<_> = txs.keys().copied().collect();
     sqlx::query("UPDATE shop.sale_execution SET receipt_attempted_at=timezone('UTC',now()) WHERE network=$1 AND tx_hash=ANY($2) AND NOT receipt_read")
         .bind(net.db_name()).bind(&hashes).execute(&mut *conn).await?;
-    let mut receipts = BTreeMap::new();
-    for batch in hashes.chunks(24) {
-        let req:Vec<_>=batch.iter().enumerate().map(|(i,h)|json!({"jsonrpc":"2.0","id":i,"method":"eth_getTransactionReceipt","params":[h]})).collect();
-        for answer in rpc.batch(&req).await? {
-            let Some(receipt) = answer.get("result").filter(|r| !r.is_null()) else {
-                continue;
-            };
-            let hash = receipt["transactionHash"]
-                .as_str()
-                .context("receipt transaction")?
-                .to_ascii_lowercase();
-            ensure!(
-                batch.get(answer["id"].as_u64().context("receipt request id")? as usize)
-                    == Some(&hash.as_str()),
-                "receipt transaction mismatch"
-            );
-            ensure!(
-                receipt["status"] == "0x1"
-                    && receipt["blockNumber"].as_str().and_then(hex_to_i64)
-                        == txs.get(hash.as_str()).copied(),
-                "receipt position mismatch"
-            );
-            receipts.insert(hash, receipt.clone());
-        }
-    }
-    let heights: BTreeSet<_> = receipts.keys().map(|h| txs[h.as_str()] as u64).collect();
-    let (headers, _) = rpc
-        .block_headers(&heights.into_iter().collect::<Vec<_>>())
-        .await?;
-    for tx in executions.chunk_by(|a, b| a.tx_hash == b.tx_hash) {
-        let first = &tx[0];
-        let Some(receipt) = receipts.get(&first.tx_hash) else {
-            continue;
-        };
-        let hash = &headers[&(first.block as u64)].hash;
-        ensure!(
-            receipt["blockHash"]
-                .as_str()
-                .is_some_and(|h| h.eq_ignore_ascii_case(hash)),
-            "sale receipt on another branch"
-        );
-        let logs: Vec<RpcLog> = serde_json::from_value(receipt["logs"].clone())?;
-        let mut seen = BTreeSet::new();
-        let mut previous = -1;
-        let mut moves = Vec::new();
-        let mut issue_logs = Vec::new();
-        for log in &logs {
-            let index = i32::try_from(hex_to_i64(&log.log_index).context("receipt log index")?)?;
-            ensure!(
-                index > previous
-                    && hex_to_i64(&log.block_number) == Some(first.block)
-                    && log
-                        .transaction_hash
-                        .as_deref()
-                        .is_some_and(|h| h.eq_ignore_ascii_case(&first.tx_hash))
-                    && log
-                        .block_hash
-                        .as_deref()
-                        .is_some_and(|h| h.eq_ignore_ascii_case(hash)),
-                "inconsistent sale receipt log"
-            );
-            previous = index;
-            if let Some(kind) = venue_event(net, log) {
-                if let Ok(i) = tx.binary_search_by_key(&index, |e| e.index) {
-                    let execution = &tx[i];
-                    ensure!(
-                        execution.kind == kind
-                            && log.address.eq_ignore_ascii_case(&execution.venue),
-                        "receipt venue mismatch"
-                    );
-                    seen.insert(index);
-                    if kind == "trade" {
-                        issued_tokens(conn, net, execution, &issue_logs).await?;
-                    }
-                    if let Some(slice) = payments.get(&(execution.block, index))
-                        && let Some(splits) = classify(net, slice, &moves)
-                    {
-                        for (p, split) in slice.iter().zip(splits) {
-                            save(conn, net, p, split).await?;
-                        }
-                    }
+    let mut updated = Vec::new();
+    // Only one response body is retained. Split an unreadable batch into
+    // individual envelopes, each subject to the same transport limit.
+    let mut pending: std::collections::VecDeque<_> =
+        hashes.chunks(24).map(|batch| (batch, false)).collect();
+    while let Some((batch, individual)) = pending.pop_front() {
+        let mut receipts = Vec::new();
+        if individual {
+            let hash = batch[0];
+            if let Ok(mut response) = rpc.call("eth_getTransactionReceipt", json!([hash])).await {
+                receipts.push((hash, response["result"].take()));
+            }
+        } else {
+            let requests: Vec<_> = batch.iter().enumerate().map(|(i, hash)| {
+                json!({"jsonrpc":"2.0","id":i,"method":"eth_getTransactionReceipt","params":[hash]})
+            }).collect();
+            let mut returned = vec![false; batch.len()];
+            for mut answer in rpc.batch(&requests).await.unwrap_or_default() {
+                let Some(i) = answer["id"]
+                    .as_u64()
+                    .and_then(|id| usize::try_from(id).ok())
+                else {
+                    continue;
+                };
+                let Some(done) = returned.get_mut(i) else {
+                    continue;
+                };
+                if !*done && let Some(result) = answer.get_mut("result") {
+                    *done = true;
+                    receipts.push((batch[i], result.take()));
                 }
-                moves.clear();
-                issue_logs.clear();
-            } else if log
-                .topics
-                .first()
-                .is_some_and(|t| t.eq_ignore_ascii_case(sales_index::TOPIC_ISSUE))
-            {
-                issue_logs.push(log);
-            } else if let Some(m) = transfer(log) {
-                moves.push(m);
+            }
+            // A provider can reject the whole batch, return per-call errors,
+            // or omit IDs. Retry only the calls without a result envelope.
+            for (one, done) in batch.chunks(1).zip(returned) {
+                if !done {
+                    pending.push_back((one, true));
+                }
             }
         }
-        ensure!(
-            tx.iter().all(|p| seen.contains(&p.index)),
-            "receipt missing expected venue execution"
-        );
-        sqlx::query(
-            "UPDATE shop.sale_execution SET receipt_read=true WHERE network=$1 AND tx_hash=$2",
-        )
-        .bind(net.db_name())
-        .bind(&first.tx_hash)
-        .execute(&mut *conn)
-        .await?;
+        let heights: BTreeSet<_> = receipts
+            .iter()
+            .filter(|(_, r)| r["status"] == "0x1")
+            .map(|(h, _)| txs[h][0].block as u64)
+            .collect();
+        let (headers, _) = rpc
+            .block_headers(&heights.into_iter().collect::<Vec<_>>())
+            .await?;
+        for (expected, mut receipt) in receipts {
+            if receipt["status"] != "0x1" {
+                continue;
+            }
+            let tx = txs[expected];
+            let first = &tx[0];
+            ensure!(
+                receipt["transactionHash"]
+                    .as_str()
+                    .is_some_and(|h| h.eq_ignore_ascii_case(expected))
+                    && receipt["blockNumber"].as_str().and_then(hex_to_i64) == Some(first.block),
+                "receipt position mismatch"
+            );
+            let hash = &headers[&(first.block as u64)].hash;
+            ensure!(
+                receipt["blockHash"]
+                    .as_str()
+                    .is_some_and(|h| h.eq_ignore_ascii_case(hash)),
+                "sale receipt on another branch"
+            );
+            let logs: Vec<RpcLog> = serde_json::from_value(receipt["logs"].take())?;
+            let mut seen = BTreeSet::new();
+            let mut previous = -1;
+            let mut moves = Vec::new();
+            let mut issue_logs = Vec::new();
+            for log in &logs {
+                let index =
+                    i32::try_from(hex_to_i64(&log.log_index).context("receipt log index")?)?;
+                ensure!(
+                    index > previous
+                        && hex_to_i64(&log.block_number) == Some(first.block)
+                        && log
+                            .transaction_hash
+                            .as_deref()
+                            .is_some_and(|h| h.eq_ignore_ascii_case(&first.tx_hash))
+                        && log
+                            .block_hash
+                            .as_deref()
+                            .is_some_and(|h| h.eq_ignore_ascii_case(hash)),
+                    "inconsistent sale receipt log"
+                );
+                previous = index;
+                if let Some(kind) = venue_event(net, log) {
+                    if let Ok(i) = tx.binary_search_by_key(&index, |e| e.index) {
+                        let execution = &tx[i];
+                        ensure!(
+                            execution.kind == kind
+                                && log.address.eq_ignore_ascii_case(&execution.venue),
+                            "receipt venue mismatch"
+                        );
+                        seen.insert(index);
+                        if kind == "trade" {
+                            issued_tokens(conn, net, execution, &issue_logs).await?;
+                        }
+                        if let Some(slice) = payments.get(&(execution.block, index))
+                            && let Some(splits) = classify(net, slice, &moves)
+                        {
+                            for (p, split) in slice.iter().zip(splits) {
+                                save(conn, net, p, split).await?;
+                            }
+                        }
+                    }
+                    moves.clear();
+                    issue_logs.clear();
+                } else if log
+                    .topics
+                    .first()
+                    .is_some_and(|t| t.eq_ignore_ascii_case(sales_index::TOPIC_ISSUE))
+                {
+                    issue_logs.push(log);
+                } else if let Some(m) = transfer(log) {
+                    moves.push(m);
+                }
+            }
+            ensure!(
+                tx.iter().all(|p| seen.contains(&p.index)),
+                "receipt missing expected venue execution"
+            );
+            sqlx::query(
+                "UPDATE shop.sale_execution SET receipt_read=true WHERE network=$1 AND tx_hash=$2",
+            )
+            .bind(net.db_name())
+            .bind(&first.tx_hash)
+            .execute(&mut *conn)
+            .await?;
+            updated.push(expected);
+        }
     }
-    let updated: Vec<_> = receipts.keys().map(String::as_str).collect();
     let days=sqlx::query_scalar(
         "SELECT DISTINCT block_time/86400*86400 FROM shop.sale_execution WHERE network=$1 AND (tx_hash=ANY($2) OR (block_number>$3 AND block_number<=$4))")
         .bind(net.db_name()).bind(updated).bind(from).bind(to).fetch_all(&mut *conn).await?;

@@ -1,5 +1,13 @@
 # Measured query workloads
 
+## Marketplace sales indexing
+
+A PostgreSQL 17.6 fixture held 200,000 Polygon event rows, with one accepted bid per 1,000 blocks and a mint in each other block. After `ANALYZE`, the fold's ordered lookup for 96 accepted bids between blocks 20,001 and 150,000 scanned 200,000 rows and read 2,273 local buffers in 9.763 ms. The 16 KiB partial index on accepted bids returned those 96 rows in 0.204 ms with 97 local buffer reads.
+
+A local Polygon refold fixture replayed 288 legacy sales in 288 distinct blocks using PostgreSQL and a loopback RPC with successful receipts. Replacing the NFT cursor epoch forced a complete rebuild. Each rebuild settled all 288 payments and published in three consecutive passes with 36 RPC requests. Three warmed runs took 90, 88 and 85 ms, excluding scheduling delays. Production history size, provider latency, retries and pass scheduling determine deployment recovery time.
+
+The index process increments `catalyst_index_sales_repair_failures_total` by indexer and network when a historical sales repair fails. The error log includes the starting block and requests spent. The cursor keeps its last verified boundary.
+
 ## Marketplace sales day rollups
 
 On PostgreSQL 17.6, a temporary table held 200,000 executions on one network,
