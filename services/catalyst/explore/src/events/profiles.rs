@@ -170,17 +170,21 @@ fn envelope(body: Value) -> Result<Value, ApiError> {
 
 /// The profile entity this node holds for `address` (`id`, deployed
 /// metadata), as `/lambdas/profiles` reads it; `None` for a non-address or
-/// a wallet without a profile here.
+/// a wallet without a profile here or one `denylist` hides.
 pub(super) async fn local_profile(
     pool: &PgPool,
+    denylist: Option<&crate::content::Denylist>,
     address: &str,
 ) -> Result<Option<(String, Value)>, ApiError> {
     let Ok(address) = Address::parse(address) else {
         return Ok(None);
     };
-    let docs =
+    let mut docs =
         crate::content::queries::active_entity_docs_by_pointers(pool, &[address.into_string()])
             .await?;
+    if let Some(denylist) = denylist {
+        crate::content::queries::retain_non_denylisted(&mut docs, denylist);
+    }
     Ok(profile_of(docs))
 }
 
@@ -190,7 +194,8 @@ pub(super) async fn profile(
     address: &str,
 ) -> Result<Option<(String, Value)>, ApiError> {
     let Some(read_through) = &state.read_through else {
-        return local_profile(&state.pool, address).await;
+        let denylist = state.storage.as_ref().map(|s| s.denylist().as_ref());
+        return local_profile(&state.pool, denylist, address).await;
     };
     let Ok(address) = Address::parse(address) else {
         return Ok(None);
@@ -2497,21 +2502,32 @@ mod tests {
         (format!("http://{addr}/content"), calls)
     }
 
-    async fn read_through_app(pool: &PgPool, source: String) -> (axum::Router, std::path::PathBuf) {
+    async fn temp_storage() -> (Arc<crate::storage::Storage>, std::path::PathBuf) {
         let tmp = std::env::temp_dir().join(format!(
             "explore-profile-read-through-{}",
             uuid::Uuid::new_v4().simple()
         ));
         let storage = Arc::new(crate::storage::Storage::from_config(&tmp).await.unwrap());
-        let read_through = crate::content::read_through::ReadThrough::new(
-            pool.clone(),
-            storage,
-            crate::content::sync::test_sync_client(reqwest::Client::new()),
-            vec![source],
-            None,
-            crate::content::read_through::Fills::new(1, std::time::Duration::from_secs(30)),
-            crate::content::sync_deployer::SyncValidation::AuthChainOnly,
-        );
+        (storage, tmp)
+    }
+
+    /// Explore over `storage`, reading profiles through `source` when given.
+    fn storage_app(
+        pool: &PgPool,
+        storage: &Arc<crate::storage::Storage>,
+        source: Option<String>,
+    ) -> axum::Router {
+        let read_through = source.map(|source| {
+            Arc::new(crate::content::read_through::ReadThrough::new(
+                pool.clone(),
+                storage.clone(),
+                crate::content::sync::test_sync_client(reqwest::Client::new()),
+                vec![source],
+                None,
+                crate::content::read_through::Fills::new(1, std::time::Duration::from_secs(30)),
+                crate::content::sync_deployer::SyncValidation::AuthChainOnly,
+            ))
+        });
         let state = crate::ExploreState::new(
             pool.clone(),
             crate::Settings {
@@ -2520,8 +2536,14 @@ mod tests {
             },
             None,
         )
-        .with_read_through(Some(Arc::new(read_through)));
-        (crate::router(Arc::new(state)), tmp)
+        .with_storage(storage.clone())
+        .with_read_through(read_through);
+        crate::router(Arc::new(state))
+    }
+
+    async fn read_through_app(pool: &PgPool, source: String) -> (axum::Router, std::path::PathBuf) {
+        let (storage, tmp) = temp_storage().await;
+        (storage_app(pool, &storage, Some(source)), tmp)
     }
 
     async fn redirect(app: &axum::Router, uri: &str) -> String {
@@ -2545,48 +2567,139 @@ mod tests {
         id
     }
 
-    /// A wallet this node lacks RSVPs and gets its avatar once its profile is read through.
+    fn remote_profile(user: &str, face: &str) -> Value {
+        json!({
+            "version": "v3",
+            "type": "profile",
+            "pointers": [user],
+            "timestamp": Utc::now().timestamp_millis(),
+            "content": [],
+            "metadata": {"avatars": [{"name": "Remote", "userId": user, "ethAddress": user, "avatar": {"snapshots": {"face256": face, "body": "https://peer.decentraland.org/content/contents/bafyremotebody"}}}]}
+        })
+    }
+
+    /// A poster upload signed by `wallet`.
+    async fn upload_poster(app: &axum::Router, wallet: &Wallet) -> (StatusCode, Value) {
+        let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
+            wallet,
+            "post",
+            "/api/poster",
+            "{}",
+            true,
+            &Utc::now().timestamp_millis().to_string(),
+        )
+        .await;
+        let png = tiny_skia::Pixmap::new(2, 2).unwrap().encode_png().unwrap();
+        let mut multipart = b"--b\r\nContent-Disposition: form-data; name=\"poster\"; filename=\"p.png\"\r\nContent-Type: image/png\r\n\r\n".to_vec();
+        multipart.extend_from_slice(&png);
+        multipart.extend_from_slice(b"\r\n--b--\r\n");
+        let mut request =
+            Request::post("/api/poster").header("content-type", "multipart/form-data; boundary=b");
+        for (key, value) in headers.iter() {
+            request = request.header(key, value);
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::from(multipart)).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// An unheld wallet RSVPs, creates, uploads and gets its avatar once read through.
     #[tokio::test]
     async fn a_profile_this_node_lacks_is_read_through() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
         };
-        let wallet = Wallet::random();
-        let user = address(&wallet);
         let face = "https://peer.decentraland.org/content/contents/bafyremoteface";
+        let wallets = [Wallet::random(), Wallet::random(), Wallet::random()];
+        let users = wallets.each_ref().map(address);
         let (source, calls) = profile_peer(
-            vec![json!({
-                "version": "v3",
-                "type": "profile",
-                "pointers": [user],
-                "timestamp": Utc::now().timestamp_millis(),
-                "content": [],
-                "metadata": {"avatars": [{"name": "Remote", "userId": user, "ethAddress": user, "avatar": {"snapshots": {"face256": face, "body": "https://peer.decentraland.org/content/contents/bafyremotebody"}}}]}
-            })],
+            users
+                .iter()
+                .map(|user| remote_profile(user, face))
+                .collect(),
             false,
         )
         .await;
         let (app, tmp) = read_through_app(&pool, source).await;
-        assert!(local_profile(&pool, &user).await.unwrap().is_none());
+        let [rsvp, creator, uploader] = &wallets;
+        let user = &users[0];
+        for user in &users {
+            assert!(local_profile(&pool, None, user).await.unwrap().is_none());
+        }
         let event = visible_event(&pool).await;
         let (status, body) = call(
             &app,
-            &wallet,
+            rsvp,
             "post",
             &format!("/api/events/{event}/attendees"),
             None,
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
-        assert_eq!(body["data"][0]["user"], user);
+        assert_eq!(body["data"][0]["user"], *user);
         assert_eq!(body["data"][0]["user_name"], "Remote");
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert!(local_profile(&pool, &user).await.unwrap().is_some());
+        assert!(local_profile(&pool, None, user).await.unwrap().is_some());
         assert_eq!(
             redirect(&app, &format!("/api/profile/{user}/face.png")).await,
             face
         );
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        let new_event = json!({ "name": "Launch party", "start_at": "2099-06-01T18:00:00Z", "duration": 3_600_000, "x": 10, "y": -20, "description": "come" });
+        let (status, body) = call(&app, creator, "post", "/api/events", Some(&new_event)).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(body["data"]["user"], users[1]);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        let (status, body) = upload_poster(&app, uploader).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// A denylisted profile is a miss whether or not the node reads through.
+    #[tokio::test]
+    async fn a_denylisted_profile_is_a_miss_with_or_without_the_read_through() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let (source, calls) = profile_peer(Vec::new(), false).await;
+        let (storage, tmp) = temp_storage().await;
+        let event = visible_event(&pool).await;
+        for source in [None, Some(source)] {
+            let app = storage_app(&pool, &storage, source);
+            let wallet = Wallet::random();
+            let user = address(&wallet);
+            let entity_id = test_support::deploy_profile(
+                &pool,
+                &user,
+                json!({"snapshots": {"face256": "https://peer.decentraland.org/content/contents/bafydenied"}}),
+            )
+            .await;
+            let path = format!("/api/events/{event}/attendees");
+            let (status, body) = call(&app, &wallet, "post", &path, None).await;
+            assert_eq!(status, StatusCode::CREATED, "{body}");
+            storage.denylist().add(&entity_id);
+            let (status, body) = call(&app, &wallet, "post", &path, None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+            assert_eq!(body["error"], format!("Not found profile for \"{user}\""));
+            assert_eq!(
+                redirect(&app, &format!("/api/profile/{user}/face.png")).await,
+                DEFAULT_AVATAR
+            );
+        }
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         let _ = std::fs::remove_dir_all(tmp);
     }
 
