@@ -55,9 +55,11 @@ is established (so a fold published while the request waited is not read as
 published in the future), and its total counts each network up to the
 reader's cap and sums them, as the subgraph reader did.
 
-A node that does not walk the index (the switch off, or a network other
-than mainnet) keeps the collections subgraph reader for its legacy orders
-and serves the v3 listings unguarded, as before.
+A node that walks the index on its catalogue, mainnet or the Sepolia/Amoy
+pair (`Settings::walks_catalogue`), reads the book. One that does not (the
+switch off, or chain settings that do not match the catalogue `ETH_NETWORK`
+names) keeps the collections subgraph reader for its legacy orders and
+serves the v3 listings unguarded, as before.
 
 The book keeps its own marker per network (`shop.legacy_order_cursor`): the
 nft walk's last block when the order fold last ran, and that block's hash.

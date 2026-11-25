@@ -18,7 +18,8 @@
 //! whose signer no longer holds that exact token drops out, while a token
 //! the index does not hold (LAND, an estate) passes.
 //!
-//! A node that does not walk the index (switch off, or not mainnet) serves
+//! A node that does not walk the index (switch off, or chain settings off
+//! its catalogue, `Settings::walks_catalogue`) serves
 //! the legacy `orders` of the collections subgraph reader (first ≤ 100,
 //! 30 s; past the graph's 5,000 skip by keyset up to `readers::DEEP_WINDOW`)
 //! and the v3 listings without the guard; the `x-listings-owner-check`
@@ -421,8 +422,8 @@ fn reads_land(state: &MarketplaceState, f: &OrderFilters) -> bool {
 /// The read-only snapshot a walking node's order book reads on: the
 /// land-authz index ready on it when `land` (its own snapshot, which the
 /// LAND/estate reads share), the nft index published and recent on `nets`
-/// at `now` ([`Rule::Fresh`]) on the chain the node serves on each
-/// (`IndexSettings::chain_id`) and, with `book`, the legacy order book caught
+/// at `now` ([`Rule::Fresh`]) on the chain the node serves on each (its
+/// catalogue, `Settings::catalogue`) and, with `book`, the legacy order book caught
 /// up with that publication on each (`legacy_orders::caught_up`) and the
 /// trades mirror and its verdicts ready (`trades::ready_on`), each statement
 /// bounded by `nft_reads::READ_STATEMENT_TIMEOUT`, and the request's instant:
@@ -606,8 +607,8 @@ pub async fn trades_leg(
     }
 }
 
-/// What the book serves, on the chains the node serves
-/// (`IndexSettings::chain_id`, the chains its readiness checks): the
+/// What the book serves, on the chains the node serves (its catalogue,
+/// `Settings::catalogue`, the chains its readiness checks): the
 /// collections the nft index walks there ([`Served::catalogue_sql`]) and,
 /// on Ethereum, that chain's LAND, Estate and names registrar, lowercase;
 /// empty where the chain has none, so no order of theirs is served.
@@ -667,8 +668,8 @@ fn wire_chain(chain: i64, network: Network) -> ChainId {
 }
 
 fn served(state: &MarketplaceState) -> Served {
-    let indexes = &state.settings.market.indexes;
-    let ethereum = indexes.chain_id(ChainNet::Ethereum);
+    let catalogue = state.settings.catalogue();
+    let ethereum = catalogue.chain_id(ChainNet::Ethereum);
     let deployments =
         super::nft_index::deployments::Deployments::for_chain(ChainNet::Ethereum, ethereum);
     let (land, estate) = deployments
@@ -683,7 +684,7 @@ fn served(state: &MarketplaceState) -> Served {
         .unwrap_or_default();
     Served {
         ethereum,
-        matic: indexes.chain_id(ChainNet::Matic),
+        matic: catalogue.chain_id(ChainNet::Matic),
         land,
         estate,
         names: deployments
@@ -1102,22 +1103,11 @@ pub async fn list_orders_checked(
     state: &MarketplaceState,
     f: &OrderFilters,
 ) -> Result<(Vec<Order>, i64, OwnerCheck), Response> {
-    list_orders_from(state, f, owned_items::walks_here(state)).await
-}
-
-/// [`list_orders_checked`] from the node's indexes (`book`: the legacy
-/// order book and the guarded listings on one [`book_snapshot`]) or from
-/// the subgraph reader and the listings.
-pub(super) async fn list_orders_from(
-    state: &MarketplaceState,
-    f: &OrderFilters,
-    book: bool,
-) -> Result<(Vec<Order>, i64, OwnerCheck), Response> {
     let limit = clamp_first(f.first, 1000).min(readers::READER_MAX_FIRST);
     let offset = clamp_skip(f.skip);
     readers::check_window(limit, offset)?;
     let window = offset + limit;
-    let (mut merged, legacy_total, trades, check) = if book {
+    let (mut merged, legacy_total, trades, check) = if owned_items::walks_here(state) {
         let land = reads_land(state, f);
         let (mut tx, now) = book_snapshot(state, nets_of(f.network), land, true).await?;
         let now_ms = now.timestamp_millis();

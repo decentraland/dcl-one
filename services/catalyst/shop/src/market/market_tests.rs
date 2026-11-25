@@ -4993,32 +4993,86 @@ async fn a_partial_activity_names_the_unavailable_sources() {
     own.drop().await;
 }
 
-/// The order book reads the chains the node serves, never 1/137 by
-/// default: on the Sepolia/Amoy pair its snapshot takes nft publications
-/// bound to that pair (with the book caught up on them) and refuses ones
-/// bound to the mainnets; it serves only the collections the nft index
-/// walks there (of that chain and verified on it), in its page and its
-/// total; and its rows, and the v3 listings', carry the served chain. The
-/// routes reach this reader once the shared walk predicate counts a testnet
-/// walker; until then such a node keeps the subgraph reader.
+/// On the Sepolia/Amoy pair a walking node reads its orders from the book,
+/// never 1/137 by default and never from the subgraph: before publication
+/// `/v1/orders`, open-by-items and the activity orders leg name the nft
+/// index; after it they serve only the collections the nft index walks there
+/// (of that chain and verified on it), in the page and the total, with the
+/// served chains as `chainId`; and no request reaches the order graph. A
+/// publication bound to the mainnets does not serve it.
 #[tokio::test]
-async fn the_order_book_readiness_reads_the_served_testnet_pair() {
+async fn the_order_book_reads_the_served_testnet_pair() {
     use super::chain_walk::ChainNet;
-    let Some(own) = super::tests::support::OwnDb::create("testnet_readiness").await else {
+    let Some(own) = super::tests::support::OwnDb::create("testnet_orders").await else {
         return;
     };
-    let url = serve_empty_graph().await;
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
     let mut settings = super::owned_items::test_support::walking(market_settings(&url, &url, true));
     settings.eth_network = "sepolia".into();
     settings.market.indexes.chain_id_ethereum = ChainNet::Ethereum.testnet_chain_id();
     settings.market.indexes.chain_id_matic = ChainNet::Matic.testnet_chain_id();
-    let state = super::MarketplaceState::new(
+    let state = Arc::new(super::MarketplaceState::new(
         own.pool.clone(),
         crate::http::Outbound::for_tests(),
         settings,
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    assert!(
+        super::owned_items::walks_here(&state),
+        "a Sepolia/Amoy walker reads the book"
     );
     let pool = own.pool.clone();
     super::trade_events::tests::publish_cursors(&pool).await;
+    let app = || market_router(state.clone());
+    let t = tag();
+    let (verified, unverified, retained) =
+        (contract_of(&t, 1), contract_of(&t, 2), contract_of(&t, 3));
+    // Not published: each route names the nft index.
+    for uri in [
+        "/v1/orders?status=sold".to_string(),
+        format!("/v1/orders/open-by-items?item={verified}-3"),
+    ] {
+        let (status, body) = get(app(), &uri).await;
+        assert_eq!(
+            (status, body["source"].as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+            "{uri}: {body}"
+        );
+    }
+    // The signed activity read: its status and the sources it names.
+    let me = crate::shared::signed_fetch::test_support::address();
+    let activity = || {
+        let (state, me) = (state.clone(), me.clone());
+        async move {
+            let headers = signed_headers(
+                "get",
+                "/v1/activity",
+                r#"{"signer":"dcl:marketplace"}"#,
+                true,
+            )
+            .await;
+            let mut req = Request::builder().uri(format!("/v1/activity?address={me}"));
+            for (k, v) in headers.iter() {
+                req = req.header(k, v);
+            }
+            let resp = market_router(state)
+                .oneshot(req.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let named = resp
+                .headers()
+                .get(super::activity::UNAVAILABLE_SOURCES_HEADER)
+                .map(|v| v.to_str().unwrap().to_string());
+            (resp.status(), named)
+        }
+    };
+    let (status, named) = activity().await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        named.as_deref().is_some_and(|v| v.contains("nft-index")),
+        "{named:?}"
+    );
     let publish = |testnet: bool| {
         let pool = pool.clone();
         async move {
@@ -5056,19 +5110,6 @@ async fn the_order_book_readiness_reads_the_served_testnet_pair() {
         }
     };
     publish(true).await;
-    let snapshot = super::orders::book_snapshot(&state, &ChainNet::ALL, false, true).await;
-    let held = match snapshot {
-        Ok((tx, _)) => tx,
-        Err(r) => panic!(
-            "the testnet publications are the served chains' ones: {}",
-            r.status()
-        ),
-    };
-    // The snapshot holds a connection of the test pool until released.
-    held.rollback().await.unwrap();
-    let t = tag();
-    let (verified, unverified, retained) =
-        (contract_of(&t, 1), contract_of(&t, 2), contract_of(&t, 3));
     // A retained mainnet row stays out even when marked verified.
     for (contract, chain, checked) in [
         (&verified, 80_002, true),
@@ -5118,46 +5159,62 @@ async fn the_order_book_readiness_reads_the_served_testnet_pair() {
         .await
         .unwrap();
     }
-    let read = |query: Vec<(&str, String)>| {
-        let state = &state;
-        let pairs: Vec<(String, String)> =
-            query.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+    let read = |uri: String| {
+        let router = app();
         async move {
-            let f = super::orders::parse_filters(&pairs).unwrap();
-            match super::orders::list_orders_from(state, &f, true).await {
-                Ok((page, total, _)) => {
-                    let mut page: Vec<(String, super::wire::ChainId)> =
-                        page.into_iter().map(|o| (o.id, o.chain_id)).collect();
-                    page.sort_by(|a, b| a.0.cmp(&b.0));
-                    (page, total)
-                }
-                Err(r) => panic!("the testnet book is ready: {}", r.status()),
-            }
+            let (status, body) = get(router, &uri).await;
+            assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+            let mut page: Vec<(String, i64)> = body["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|o| {
+                    (
+                        o["id"].as_str().unwrap().to_string(),
+                        o["chainId"].as_i64().unwrap(),
+                    )
+                })
+                .collect();
+            page.sort();
+            (page, body["total"].as_str().map(str::to_string))
         }
     };
     assert_eq!(
-        read(vec![("status", "sold".into())]).await,
+        read("/v1/orders?status=sold".into()).await,
         (
             vec![
-                ("parcel".to_string(), super::wire::ChainId::EthereumSepolia),
-                ("verified".to_string(), super::wire::ChainId::MaticAmoy),
+                ("parcel".to_string(), 11_155_111),
+                ("verified".to_string(), 80_002),
             ],
-            2
+            Some("2".to_string())
         ),
         "the walked catalogue and the served registries, on the served chains"
     );
     for (contract, expected) in [(&verified, 1), (&unverified, 0), (&retained, 0)] {
-        let (page, total) = read(vec![
-            ("status", "sold".into()),
-            ("itemId", format!("{contract}-3")),
-        ])
-        .await;
+        let (page, total) = read(format!("/v1/orders?status=sold&itemId={contract}-3")).await;
         assert_eq!(
             (page.len(), total),
-            (expected, expected as i64),
+            (expected, Some(expected.to_string())),
             "{contract}"
         );
     }
+    let (status, body) = get(
+        app(),
+        &format!("/v1/orders/open-by-items?item={verified}-3"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, named) = activity().await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        named.as_deref().is_none_or(|v| !v.contains("nft-index")),
+        "the activity orders leg answers from the book: {named:?}"
+    );
+    assert!(
+        !up.requests.lock().unwrap().iter().any(|e| e == "orders"),
+        "no order read asks the subgraph: {:?}",
+        up.requests.lock().unwrap()
+    );
     // A v3 listing carries its trade's chain, which the leg keeps to the
     // served one, never the network's default.
     let listing = sqlx::query(
@@ -5172,12 +5229,13 @@ async fn the_order_book_readiness_reads_the_served_testnet_pair() {
         super::orders::trade_row_order(&listing).chain_id,
         super::wire::ChainId::MaticAmoy
     );
+    // Publications bound to the mainnets do not serve this node.
     publish(false).await;
-    let snapshot = super::orders::book_snapshot(&state, &ChainNet::ALL, false, true).await;
+    let (status, body) = get(app(), "/v1/orders?status=sold").await;
     assert_eq!(
-        snapshot.err().map(|r| r.status()),
-        Some(StatusCode::SERVICE_UNAVAILABLE),
-        "a mainnet-bound publication does not serve a testnet node"
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
     );
     own.drop().await;
 }
