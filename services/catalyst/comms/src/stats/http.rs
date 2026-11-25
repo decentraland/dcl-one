@@ -122,7 +122,10 @@ pub fn mount_services(shared: Router, state: State, stats: Router, connector: Ro
                         // Dispatch without an outer route match: wildcard captures would leak
                         // into the inner Path extractor and alter its metrics route label.
                         use tower::ServiceExt;
-                        camera_reel.oneshot(request).await.unwrap()
+                        camera_reel
+                            .oneshot(request)
+                            .await
+                            .unwrap_or_else(|e| match e {})
                     } else {
                         next.run(request).await
                     }

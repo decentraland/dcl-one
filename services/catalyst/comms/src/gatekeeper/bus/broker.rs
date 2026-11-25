@@ -627,6 +627,7 @@ fn options(shared: &Shared, link: &Arc<Link>) -> async_nats::ConnectOptions {
 async fn supervise(shared: Arc<Shared>, mut rx: mpsc::Receiver<Outbound>) {
     // connect() spawns this only for an enabled bus.
     let Some(url) = shared.url.clone() else {
+        tracing::error!("NATS link supervisor started without a URL");
         return;
     };
     let mut delay = RECONNECT_DELAY;
@@ -784,6 +785,7 @@ async fn run(
     retained: &mut Option<Retained>,
 ) {
     let Some(client) = link.client.get() else {
+        tracing::error!("NATS link ran without a connected client");
         return;
     };
     let Ok(Ok(mut fence)) = timeout(BROKER_DEADLINE, Fence::new(client)).await else {

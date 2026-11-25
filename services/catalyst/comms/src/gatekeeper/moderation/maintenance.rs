@@ -228,24 +228,25 @@ async fn metadata_scene_context(
             // background exclusion even if its CID also exists in Genesis.
             None
         }
-        Some(ParsedRoom::Local(identity)) if identity.scene_id.is_some() => {
+        Some(ParsedRoom::Local(crate::rooms::ResolvedRoom {
+            realm,
+            scene_id: Some(scene),
+            ..
+        })) => {
             // Adapter lookup also serves historical deployments. Metadata needs
             // the scene currently standing at its base, including after local
             // unpublish tombstones/repoints without setting a deleter.
             let resolved = state
                 .scenes
                 .resolve(crate::rooms::RoomRequest::Adapter {
-                    realm: &identity.realm,
-                    scene: identity
-                        .scene_id
-                        .as_ref()
-                        .expect("guarded by scene_id.is_some()"),
+                    realm: &realm,
+                    scene: &scene,
                 })
                 .await
                 .map_err(|_| ApiError::http(503, "Room identity is temporarily unavailable"))?;
             if resolved.room != room
-                || resolved.realm != identity.realm
-                || resolved.scene_id != identity.scene_id
+                || resolved.realm != realm
+                || resolved.scene_id.as_ref() != Some(&scene)
             {
                 return Ok(None);
             }
@@ -255,7 +256,7 @@ async fn metadata_scene_context(
             let current = match state
                 .scenes
                 .resolve(crate::rooms::RoomRequest::Parcel {
-                    realm: &identity.realm,
+                    realm: &realm,
                     parcel: deployment.base,
                 })
                 .await
@@ -270,11 +271,10 @@ async fn metadata_scene_context(
                 }
             };
             (current.room == room
-                && current.realm == identity.realm
-                && current.scene_id == identity.scene_id
+                && current.realm == realm
+                && current.scene_id.as_ref() == Some(&scene)
                 && current.deployment.as_ref().is_some_and(|current| {
-                    Some(&current.scene_id) == identity.scene_id.as_ref()
-                        && current.parcels.contains(&deployment.base)
+                    current.scene_id == scene && current.parcels.contains(&deployment.base)
                 }))
             .then_some(current)
         }
