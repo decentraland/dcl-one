@@ -1,4 +1,5 @@
 export * from './foundations'
+export * from './apps/shop'
 
 export { NavBar } from './components/NavBar/NavBar'
 export type {
@@ -134,5 +135,4 @@ export type {
   ConnectionStatusValue
 } from './components/ProfilePic/ConnectionStatus'
 
-export * from './apps/shop'
 export * from './apps/sites'

@@ -1,13 +1,14 @@
 -- Heads keep upstream ids and become local authority. A trade whose
 -- signature is already held under another id is skipped (the node's copy
--- stays); an id held with another signature is left alone.
+-- stays); an id held with another signature is left alone. Upstream's V3
+-- digest replaces the node's only when upstream has one.
 INSERT INTO shop.trades
     (id, network, chain_id, signature, hashed_signature, checks, signer, type,
-     expires_at, effective_since, contract, created_at, mirrored_from, mirrored_at)
+     expires_at, effective_since, contract, created_at, mirrored_from, mirrored_at, trade_digest)
 SELECT s.id, s.network, s.chain_id, s.signature, s.hashed_signature, s.checks, s.signer,
        s.type::shop.trade_type,
        s.expires_at AT TIME ZONE 'UTC', s.effective_since AT TIME ZONE 'UTC',
-       s.contract, s.created_at AT TIME ZONE 'UTC', NULL, NULL
+       s.contract, s.created_at AT TIME ZONE 'UTC', NULL, NULL, s.trade_digest
 FROM stage s
 WHERE NOT EXISTS (
     SELECT 1 FROM shop.trades t
@@ -16,7 +17,8 @@ ON CONFLICT (id) DO UPDATE
    SET network = EXCLUDED.network, chain_id = EXCLUDED.chain_id, checks = EXCLUDED.checks,
        signer = EXCLUDED.signer, type = EXCLUDED.type, expires_at = EXCLUDED.expires_at,
        effective_since = EXCLUDED.effective_since, contract = EXCLUDED.contract,
-       created_at = EXCLUDED.created_at, mirrored_from = NULL, mirrored_at = NULL
+       created_at = EXCLUDED.created_at, mirrored_from = NULL, mirrored_at = NULL,
+       trade_digest = COALESCE(EXCLUDED.trade_digest, shop.trades.trade_digest)
  WHERE shop.trades.hashed_signature = EXCLUDED.hashed_signature;
 
 -- The trades that landed: same id and signature as upstream.

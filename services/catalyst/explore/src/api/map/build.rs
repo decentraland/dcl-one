@@ -18,8 +18,8 @@
 //!   handed in by `serve` (Shop sits above Explore): the legacy order of
 //!   each LAND and Estate token (`shop.nft_order`), the open off-chain
 //!   `public_nft_order` trades that sell one (`shop.trades` under Shop's
-//!   open-trade rule, closed by the `shop.trade_chain_state` verdicts while
-//!   the trade-events index is published), the LAND data names
+//!   open-trade rule, closed by the `shop.trade_chain_state` verdicts; not
+//!   ready while the trade-events index is not current), the LAND data names
 //!   (`shop.land_data`) and this node's open rental listings
 //!   (`signatures.*`). Shop decides whether its sources are ready.
 //!

@@ -10,10 +10,7 @@ use serde_json::{Value, json};
 use crate::evm::SharedState;
 
 pub async fn health(State(state): State<SharedState>) -> (StatusCode, Json<Value>) {
-    let db_ok = sqlx::query_scalar::<_, i32>("SELECT 1")
-        .fetch_one(&state.pool)
-        .await
-        .is_ok();
+    let db_ok = crate::shared::health::database_ready(&state.pool).await;
     let status = if db_ok {
         StatusCode::OK
     } else {

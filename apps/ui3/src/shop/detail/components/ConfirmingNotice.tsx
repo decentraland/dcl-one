@@ -2,7 +2,7 @@
 // for the LAND trade and the legacy order dialogs, with the transaction to watch and only Close (a second Buy
 // could send a second approval).
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import type { ChainId } from "@shop/model/chain";
 import { explorerTxUrl } from "../../checkout/chain/config";
 import { APPROVAL_STILL_PENDING, SALE_STILL_PENDING, type PurchaseFailure } from "../../market/lib/tx";
@@ -21,7 +21,7 @@ export default function ConfirmingNotice({ outcome, chainId, onClose }: { outcom
           </a>
         </p>
       ) : null}
-      <Button onClick={onClose}>Close</Button>
+      <Button size="md" onClick={onClose}>Close</Button>
     </>
   );
 }

@@ -10,6 +10,7 @@ are external. Explorer images: pipeline.
 | `image-sites-polygon-credits` (`foundation-sites-polygon-credits:nix`) | `sites-server`, its Shop settling credits on Polygon through dcl-one's own CreditsManager | `/data` |
 | `image-gateway` (`foundation-gateway:nix`) | `gateway` (8080) | `/tmp` |
 
+- Probe each API replica at `GET /health` for readiness. HTTP 503 means a required replica check failed. The JSON body also reports shared dependencies for alerting. See [Catalyst API readiness](../../docs/adr/2026-11-24-serve-readiness.md).
 - Run API, indexer, Pulse and migrations from one `apis` digest; domain crates are not separate services.
 - The APIs image carries the community chat message router at `/bin/catalyst-message-router`
   (`.#message-router`, `infra/packages/message-router.nix`: the catalyst workspace member built
@@ -221,6 +222,21 @@ Testnet mirrors default to the Polygon registry subgraph. Once `catalyst index` 
 registry history, API replicas prefer the native index and can serve manager and slot details.
 The NFT worker supplies wallet holdings for open mappings.
 
+Collections index upgrade: run `catalyst schema migrate` before deploying the updated index worker.
+Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The index is off
+under every posture; `MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true` with a Polygon RPC in `TRADE_RPC_URLS`
+(chain 137) starts its walk from block 15,202,000. Nothing reads it yet: the catalogue keeps serving the
+collections subgraph's copy.
+
+Trade digest upgrade: run `catalyst schema migrate` before deploying. Step `0069_shop_trade_digest` adds
+`shop.trades.trade_digest` and `shop.trade_chain_state.digest_failed_at`, and needs no backfill: the next
+trade-events fold settles every V3 trade's digest. Every route that lists, prices or reports the status of
+trades (the v3 catalog feeds and prices, orders, bids, the order legs of `/v1/nfts` and `/v1/items`) now answers
+the `trade-events-index` envelope until that index is current on both networks: a fold published within the
+last 30 minutes (a pass in progress keeps the previous publish). `/v1/trades` keeps serving the stored records once the trades mirror is ready. Expect that while the walk catches up
+or rebuilds. The explorer map's grid also waits for it on Ethereum. A node that does not walk the index
+(`MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED`, on under the mirror posture) answers the envelope on those routes.
+
 Escrow lease upgrade: escrow leases (`shop.usage_grants`) no longer count as item ownership on
 their own. `EXPLORER_ESCROW_GRANTS_ENABLED` now defaults to `false` under every posture and with
 no posture; island, journey and posture-less nodes listed active leases in the explorer backpack
@@ -241,6 +257,41 @@ of active deployments from the scene entity to its place. An old replica reads a
 grants by entity id: after the release it refuses every admin, and a grant it writes is lost.
 `catalyst serve` refuses startup while a grant of an active deployment has the entity key.
 Keep the pre-migration database backup: rollback must restore the matching backup.
+
+This script and `schemas/releases/genesis-scene-ban-keys.sql` (`DATABASE.md` "Scene bans") move
+only entity-keyed rows, so no run of them changes the key of a grant or ban that is already on a
+parcel. A database that holds Genesis grants or bans on parcel keys
+when it takes this upgrade can hold them on a scene's least parcel while the scene's place is
+its declared base (`entity_metadata #>> '{v,scene,base}'`); no request of that scene reads such
+a row. Such a grant no longer admits its admin, and such a ban no longer refuses its wallet: the
+ban stops applying from the first request a new binary serves. After both scripts, before
+starting the new binaries, list them, and re-key every `scene_bans` row that was made for the
+listed scene before admitting players:
+
+```sql
+SELECT 'scene_admins' AS grants_table, d.entity_id, s.least AS keyed_on, s.place, a.admin_address AS wallet
+  FROM content.deployments d
+ CROSS JOIN LATERAL (SELECT social.scene_base_parcel(d.entity_pointers, NULL) AS least,
+                            social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{v,scene,base}') AS place) s
+  JOIN social.scene_admins a ON a.place_id = s.least AND a.active
+ WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL AND s.place <> s.least
+UNION ALL
+SELECT 'scene_bans', d.entity_id, s.least, s.place, b.banned_address
+  FROM content.deployments d
+ CROSS JOIN LATERAL (SELECT social.scene_base_parcel(d.entity_pointers, NULL) AS least,
+                            social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{v,scene,base}') AS place) s
+  JOIN social.scene_bans b ON b.place_id = s.least
+ WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL AND s.place <> s.least
+ ORDER BY 1, 3, 5;
+```
+
+A listed row can also be a grant or ban made for an earlier scene whose base was that parcel
+and that the place removal cleanup has not ended; the listed scene does not inherit it, so no
+script moves these rows. For each row that was made for the listed scene, set its key to the
+place:
+`UPDATE social.scene_admins SET place_id = '<place>' WHERE place_id = '<keyed_on>' AND admin_address = '<wallet>'`
+(`social.scene_bans` and `banned_address` for a ban). The update fails on the primary key when
+the wallet already has a row on the place: keep the row with the newer change and delete the other.
 
 Stream key upgrade: `catalyst schema migrate` creates five notification triggers on `worlds.world_scenes`, `worlds.worlds`, `worlds.world_permissions` and `worlds.world_permission_parcels`. Each `CREATE TRIGGER` takes a `SHARE ROW EXCLUSIVE` lock: writes to these four tables wait until the migrate transaction ends; reads continue.
 
