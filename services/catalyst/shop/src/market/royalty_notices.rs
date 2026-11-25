@@ -210,10 +210,9 @@ async fn drain(
     venue: Venue,
     items_mirror_enabled: bool,
 ) -> anyhow::Result<Pass> {
-    let now = chrono::Utc::now().timestamp();
-    let Some(published) = chain_walk::ready_cursor(pool, venue.indexer(), NET, chrono::Utc::now())
-        .await
-        .and_then(|c| c.folded_block)
+    let now = chrono::Utc::now();
+    let Some(published) =
+        chain_walk::published_block(pool, venue.indexer(), NET, NET.chain_id(), now).await?
     else {
         return Ok(Pass::NotReady);
     };
@@ -223,6 +222,18 @@ async fn drain(
     loop {
         let mut txn = pool.begin().await?;
         let (_, since_block, since_log) = notice_cursor::lock(&mut txn, producer).await?;
+        let Some(current) =
+            chain_walk::published_block(&mut *txn, venue.indexer(), NET, NET.chain_id(), now)
+                .await?
+        else {
+            txn.rollback().await?;
+            return Ok(if emitted == 0 {
+                Pass::NotReady
+            } else {
+                Pass::Emitted(emitted)
+            });
+        };
+        let published = published.min(current);
         let rows: Vec<SaleRow> = sqlx::query_as(sqlx::AssertSqlSafe(venue.sql()))
             .bind(NET.db_name())
             .bind(since_block)
@@ -247,7 +258,12 @@ async fn drain(
         let held = rows.iter().position(|row| {
             venue == Venue::Bids
                 && !row.mirrored
-                && item_awaited(items_mirror_enabled, items_pass, row.block_time, now)
+                && item_awaited(
+                    items_mirror_enabled,
+                    items_pass,
+                    row.block_time,
+                    now.timestamp(),
+                )
         });
         let ready = &rows[..held.unwrap_or(rows.len())];
         let batch: Vec<NewNotification> = ready
@@ -472,6 +488,12 @@ mod tests {
         sale(&pool, 102, 1, MARKETPLACE_V2, "9", "5000000000000000000").await;
         sale(&pool, 105, 0, MARKETPLACE_V2, "2", "1000000000000000000").await;
         publish(&pool, 103).await;
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block=105 WHERE indexer='nft' AND network='matic'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         assert_eq!(run_once(&pool, BASE).await.unwrap(), Pass::Emitted(3));
         assert_eq!(
             run_once(&pool, BASE).await.unwrap(),

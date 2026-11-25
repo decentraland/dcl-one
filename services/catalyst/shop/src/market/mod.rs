@@ -510,7 +510,7 @@ impl Settings {
         if self.writes_catalogue() {
             self.market
                 .indexes
-                .check_chains()
+                .check_catalogue_pair()
                 .map_err(anyhow::Error::msg)?;
             for net in chain_walk::ChainNet::ALL {
                 let expected = self
@@ -918,7 +918,7 @@ impl MarketplaceState {
     /// Sepolia rentals use an explicit chain endpoint, or the node's Ethereum
     /// RPC only when it is configured for Sepolia.
     pub(crate) fn sepolia_rentals_rpc_url(&self) -> Option<String> {
-        if self.settings.eth_network.eq_ignore_ascii_case("sepolia") {
+        if self.land_network() == Some(crate::land_authz::LAND_SEPOLIA) {
             return self.rpc_url_for(chain_walk::ChainNet::Ethereum, 11_155_111);
         }
         self.settings
@@ -935,7 +935,7 @@ impl MarketplaceState {
         if let Some(url) = self.settings.market.trade_rpc_urls.for_chain(id) {
             return Some(url.to_string());
         }
-        if id == net.chain_id() {
+        if self.settings.market.indexes.serves_mainnet(net) {
             return self.chain_rpc_url(net);
         }
         if self.settings.catalogue_chain(net)? != id {
@@ -958,7 +958,7 @@ impl MarketplaceState {
     /// fallback when `ETH_NETWORK` is mainnet. Callers verify the chain ID.
     pub fn polygon_mainnet_rpc_url(&self) -> Option<String> {
         self.chain_rpc_url(chain_walk::ChainNet::Matic).or_else(|| {
-            (self.settings.eth_network.trim() == "mainnet")
+            (self.land_network() == Some(crate::land_authz::LAND_MAINNET))
                 .then(|| self.settings.polygon_rpc_url.clone())
                 .flatten()
         })

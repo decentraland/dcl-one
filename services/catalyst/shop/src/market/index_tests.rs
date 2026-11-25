@@ -2073,6 +2073,71 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
 }
 
 #[tokio::test]
+async fn a_mainnet_mirror_with_an_rpc_rejects_a_different_graph_chain() {
+    use super::{
+        graph::Network,
+        mirrors::{self, Mirror},
+    };
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Matic;
+    let chain = FakeChain::new(200, vec![], 100, 100);
+    let rpc = serve(chain.clone()).await;
+    let published_hash = Arc::new(Mutex::new("wrong chain".to_owned()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let graph = format!("http://{}/", listener.local_addr().unwrap());
+    let app =
+        Router::new()
+            .route(
+                "/",
+                post(
+                    |State(hash): State<Arc<Mutex<String>>>,
+                     axum::Json(body): axum::Json<Value>| async move {
+                        let hash = hash.lock().clone();
+                        let vars = &body["variables"];
+                        let block = if vars["number"] == 100 || vars["block"]["hash"] == hash {
+                            json!({"number":100,"hash":hash})
+                        } else {
+                            json!({"number":100+ChainNet::Matic.confirmations()})
+                        };
+                        axum::Json(json!({"data":{"collections":[],"_meta":{"block":block}}}))
+                    },
+                ),
+            )
+            .with_state(published_hash.clone());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let state = MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings {
+            matic_collections_subgraph_url: Some(graph),
+            polygon_rpc_url: Some(rpc),
+            ..Settings::for_tests()
+        },
+    );
+    state.index.allow_loopback_for_tests();
+    let jobs = crate::jobs::Jobs::new();
+    let ctx = super::market_tests::job_ctx(&jobs).await;
+    let err = mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap_err();
+    assert!(format!("{err:#}").contains("differs from the configured chain"));
+    assert!(!nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+    *published_hash.lock() = chain.hash_of(100);
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let copy = mirrors::load(&db.pool, Mirror::Collections, Network::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(copy.pass_block_hash, Some(chain.hash_of(100)));
+    assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read() {
     use super::{
         graph::Network,
@@ -2171,11 +2236,15 @@ async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read(
             .is_err()
     );
     assert!(nft_index::mirror_complete(&db.pool, net, net.testnet_chain_id()).await);
-    // Missing proof restarts immediately. An opaque graph error keeps its
-    // keyset for a young pass and restarts once the failed pin is old.
+    // A missing hash restarts immediately. Even an old pin survives the
+    // first opaque error after a successful page, but two failures restart it.
+    sqlx::query("UPDATE shop.mirror_state SET last_error=NULL")
+        .execute(&db.pool)
+        .await
+        .unwrap();
     for (pin, age_hours, reset) in [
         ("orphan", 0, true),
-        ("opaque", 0, false),
+        ("opaque", 2, false),
         ("opaque", 2, true),
     ] {
         sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())-interval '3 days',
@@ -2193,6 +2262,12 @@ async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read(
         assert_eq!(row.pass_block_hash.as_deref(), (!reset).then_some(pin));
         assert_eq!(row.cursor_id.as_deref(), (!reset).then_some("old"));
         assert!(row.last_complete_pass_at.is_some());
+        if pin == "orphan" {
+            sqlx::query("UPDATE shop.mirror_state SET last_error=NULL")
+                .execute(&db.pool)
+                .await
+                .unwrap();
+        }
     }
     chain.fail_chain_id.store(false, Ordering::SeqCst);
     mirrors::run_tick(&state(), Mirror::Collections, &ctx)
@@ -2298,8 +2373,16 @@ async fn an_unbound_mirror_keyset_is_adopted_only_for_the_same_mainnet_source() 
     };
     sqlx::query("INSERT INTO shop.mirror_state (mirror,network,source_url,pass_started_at,cursor_id) VALUES ('items','matic','source',timezone('UTC',now()),'next')")
         .execute(&db.pool).await.unwrap();
-    let read =
-        |url, chain| mirrors::cursor_for(&db.pool, Mirror::Items, Network::Matic, url, chain);
+    let read = |url, chain| {
+        mirrors::cursor_for(
+            &db.pool,
+            Mirror::Items,
+            Network::Matic,
+            url,
+            chain,
+            chain == Some(80002),
+        )
+    };
     assert_eq!(
         read("source", Some(137))
             .await
@@ -2341,6 +2424,39 @@ async fn an_unbound_mirror_keyset_is_adopted_only_for_the_same_mainnet_source() 
         .unwrap();
     assert!(read("source", Some(137)).await.is_err());
     assert!(read("source", None).await.is_err());
+    // Once RPC proof is configured, a legacy mainnet keyset cannot be
+    // spliced onto a pinned pass.
+    sqlx::query("UPDATE shop.mirror_state SET chain_id=137,pass_block_hash=NULL")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let pinned = mirrors::cursor_for(
+        &db.pool,
+        Mirror::Items,
+        Network::Matic,
+        "source",
+        Some(137),
+        true,
+    )
+    .await
+    .unwrap();
+    assert!(pinned.cursor_id.is_none());
+    sqlx::query("UPDATE shop.mirror_state SET pass_block_hash='mainnet-pin'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(read("source", Some(137)).await.is_err());
+    let pinned = mirrors::cursor_for(
+        &db.pool,
+        Mirror::Items,
+        Network::Matic,
+        "source",
+        Some(137),
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(pinned.cursor_id.as_deref(), Some("next"));
     db.drop().await;
 }
 
@@ -2572,6 +2688,22 @@ async fn a_legacy_unbound_collection_copy_can_supply_mainnet_but_not_testnet() {
         .unwrap();
     assert!(!nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
     db.drop().await;
+}
+
+#[tokio::test]
+async fn the_sepolia_rentals_rpc_fallback_matches_the_catalogue_network() {
+    let mut state = super::tests::support::state_without_db();
+    let settings = &mut Arc::get_mut(&mut state).unwrap().settings;
+    settings.eth_rpc_url = Some("https://ethereum.example".into());
+    settings.market.trade_rpc_urls = RpcEndpoints::from_env(None);
+    for (network, expected) in [
+        ("sepolia", Some("https://ethereum.example")),
+        (" Ethereum-Sepolia ", Some("https://ethereum.example")),
+        ("mainnet", None),
+    ] {
+        Arc::get_mut(&mut state).unwrap().settings.eth_network = network.into();
+        assert_eq!(state.sepolia_rentals_rpc_url().as_deref(), expected);
+    }
 }
 
 #[tokio::test]
@@ -5893,6 +6025,86 @@ async fn revalidating_quarantined_sepolia_trades_replays_v1() {
             .await
             .unwrap();
     assert_eq!(events, [(v1.to_owned(), start as i64 + 1)]);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn an_operator_can_rebuild_quarantined_legacy_sepolia_trades_with_an_unprovable_hash() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let eth = ChainNet::Ethereum;
+    let ix = TradeEventsIndex {
+        net: eth,
+        chain_id: eth.testnet_chain_id(),
+    };
+    let start = ix.start_block();
+    let v1 = trade_events::deployments(ix.chain_id)[0].0;
+    let chain = FakeChain::new(
+        start + 50,
+        vec![trade_events::tests::traded_log(
+            start + 1,
+            0,
+            v1,
+            ALICE,
+            BOB,
+            "0xabcd",
+            1,
+            false,
+        )],
+        1000,
+        100,
+    );
+    chain.chain_id.store(ix.chain_id as u64, Ordering::SeqCst);
+    let url = serve(chain).await;
+    let state = state_over(db.pool.clone(), &url, index_settings(100, 1000), false);
+    // Revalidate left the old chain unknown and the old checkpoint unproven.
+    sqlx::query("INSERT INTO shop.chain_cursor (indexer,network,start_block,last_block,full_history,
+           last_block_hash,quarantined_at,quarantine_reason)
+        VALUES ('trade_events','ethereum',9455328,9455330,true,$1,timezone('UTC',now()),'unproven history')")
+        .bind(format!("0x{:064x}",42)).execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.chain_cursor (indexer,network,start_block,last_block,full_history,chain_id)
+        VALUES ('trade_events','matic',10,20,true,137)").execute(&db.pool).await.unwrap();
+    const REBUILD: &str = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/tooling/migration/rebuild-quarantined-legacy-sepolia-trades.sql"
+    ));
+    let mut conn = db.pool.acquire().await.unwrap();
+    assert!(sqlx::raw_sql(REBUILD).execute(&mut *conn).await.is_err());
+    sqlx::query("SET rebuild.confirm_sepolia='yes'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET chain_id=1 WHERE indexer='trade_events' AND network='ethereum'")
+        .execute(&mut *conn).await.unwrap();
+    assert!(sqlx::raw_sql(REBUILD).execute(&mut *conn).await.is_err());
+    sqlx::query("UPDATE shop.chain_cursor SET chain_id=NULL WHERE indexer='trade_events' AND network='ethereum'")
+        .execute(&mut *conn).await.unwrap();
+    sqlx::raw_sql(REBUILD).execute(&mut *conn).await.unwrap();
+    drop(conn);
+    let scheduled = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(scheduled.start_block, start as i64);
+    assert_eq!(scheduled.owner_generation, 1);
+    assert!(scheduled.rebuild_requested_at.is_some() && scheduled.quarantined_at.is_some());
+    assert!(pass(&state, &url, &ix).await.rebuilt);
+    assert!(pass(&state, &url, &ix).await.published);
+    let events: Vec<(String, i64)> =
+        sqlx::query_as("SELECT marketplace_address,block_number FROM shop.trade_event")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(events, [(v1.to_owned(), start as i64 + 1)]);
+    let matic = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, ChainNet::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (matic.start_block, matic.last_block, matic.owner_generation),
+        (10, 20, 0)
+    );
     db.drop().await;
 }
 

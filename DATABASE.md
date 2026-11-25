@@ -2589,16 +2589,18 @@ to the index writer, even when they share settings. Each database can have indep
 Ethereum and Sepolia Rentals histories.
 The `nft_catalogue_pair` row in `shop.worker_progress` identifies the pair.
 `shop.mirror_state.chain_id` identifies each mirror's completed chain-bound
-copy. A new source starts from page one. For testnets the mirror
+copy. A new source starts from page one. When a catalogue chain RPC is
+configured the mirror
 checks the graph head on the configured chain by comparing a confirmed block
 hash against the chain-checked RPC. Both mirrors persist that hash with their
 keyset and read every page at that block. Collections supply contract addresses
 and items supply their metadata. A mirror writer can provide this proof even
-when the NFT walker runs on another node. A writer without a catalogue RPC
-leaves a bound pass untouched. A missing or mismatched page hash restarts
-the pass. A transport or GraphQL error retries the same block for up to an
-hour from the start of the pass. A progressing pass can keep its pin for
-one day. Descriptive readers can use the last completed copy during retries.
+when the NFT walker runs on another node. A writer needs the catalogue RPC
+to resume a pinned pass. An unpinned mainnet graph-only mirror can keep
+serving its configured source. A missing or mismatched page hash restarts
+the pass. An opaque transport or GraphQL error retries the same block. Two
+consecutive failures can restart a pin once the pass is an hour old. A pass
+can keep a progressing pin for one day. Descriptive readers can use the last completed copy during retries.
 The NFT walk requires a complete collections pass for its chain. Mainnet
 accepts a completed legacy copy with neither a chain binding nor a pending
 testnet pin. The testnet walk selects addresses from rows the verified pass
@@ -2633,6 +2635,18 @@ On testnet a catalogue item used to describe an owned NFT must carry its
 own verified-row flag. Migration 0072 keeps the descriptive mirror copy
 while restarting any testnet item pass. A complete pass from a writer
 that sets the flag establishes reader readiness, including an empty pass.
+
+Stop pre-0072 testnet mirror writers, apply 0072, and deploy the upgraded
+mirror and index writers before enabling the walking readers. An old items
+writer can store a page before it attempts to save its cursor. Newly
+inserted items from that page lack row provenance. Its attempt to save a
+pinned or chain-bound testnet cursor fails with
+`mirror_state_verified_item_rows`. A complete pass by an upgraded writer
+supplies the marked rows and completion marker. Until the required local
+folds and verified item copy publish, walking Sepolia/Amoy NFT, NAME and
+owner routes answer their source's unavailable envelope. A legacy database
+bound to mainnet needs a separate testnet database or, for the eligible
+legacy default mirrors, the rebind described above.
 
 On Sepolia the NFT and LAND authorization walks start at LAND proxy
 deployment block 3,831,219. On Amoy the NFT walk starts at marketplace V2
@@ -2913,6 +2927,19 @@ pass claims the projection again and acts.
          folded_block = NULL, folded_at = NULL, owner_generation = owner_generation + 1
    WHERE indexer = '<indexer>' AND network = '<network>';
   ```
+
+- *Rebuild a quarantined legacy Sepolia trade cursor*. Use this when the
+  legacy V2-start cursor was quarantined and Revalidate cannot prove its
+  checkpoint. Confirm from the deployment configuration that this database
+  holds the Sepolia trade history, especially if Revalidate cleared its
+  chain binding. Stop its trade writer and use the Sepolia RPC and default
+  V1 start for the replacement. Run
+  `PGOPTIONS="-c rebuild.confirm_sepolia=yes" psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tooling/migration/rebuild-quarantined-legacy-sepolia-trades.sql`
+  on that database, then restart the writer. The statement only schedules
+  the replay and fences the prior owner. The new writer checks its RPC
+  chain, clears the old trade log and verdicts in its rebuild transaction,
+  and restarts at block 6,770,056. The publication stays withdrawn until
+  the replacement fold completes.
 
 **Deploys.** A binary from before step `0054_shop_chain_cursor_ownership`
 does not check `owner_generation`, and one from before the per-network

@@ -813,10 +813,11 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
 
 fn walks_catalogue(config: &Config) -> bool {
     let market = &config.marketplace;
+    let network = config.node.eth_network.trim().to_ascii_lowercase();
     market.marketplace_nft_index_enabled
         && matches!(
             (
-                config.node.eth_network.trim(),
+                network.as_str(),
                 market.marketplace_index_chain_id_ethereum,
                 market.marketplace_index_chain_id_matic
             ),

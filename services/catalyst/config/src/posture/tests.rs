@@ -305,6 +305,7 @@ fn a_testnet_catalogue_mirror_accepts_amoy_endpoints() {
         ("MARKETPLACE_SUBGRAPH_URL", ""),
     ];
     let mut c = parsed(&vars);
+    c.node.eth_network = " Ethereum-Sepolia ".into();
     let values = env(&vars);
     refuse_unfiltered_profiles(&c, &lookup(&values)).unwrap();
     refuse_unwalkable_polygon(&c).unwrap();

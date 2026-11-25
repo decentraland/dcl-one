@@ -214,12 +214,19 @@ pub async fn save(pool: &PgPool, c: &Cursor) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Testnet NFT workers need the chain behind the collections graph, including
-/// when it returns no collections. Prove the block in the page against the
-/// same chain-checked RPC the NFT walk uses.
-fn verify_testnet(state: &MarketplaceState, net: super::chain_walk::ChainNet) -> bool {
-    state.settings.market.indexes.chain_id(net) != net.chain_id()
-        && state.catalogue_rpc_url(net).is_some()
+fn catalogue_proof_rpc(
+    state: &MarketplaceState,
+    net: super::chain_walk::ChainNet,
+) -> Option<String> {
+    state.catalogue_rpc_url(net).or_else(|| {
+        if net == super::chain_walk::ChainNet::Matic
+            && state.settings.market.indexes.serves_mainnet(net)
+        {
+            state.polygon_mainnet_rpc_url()
+        } else {
+            None
+        }
+    })
 }
 
 /// Pin the pass below the graph head on the configured chain. Persisting the
@@ -247,9 +254,8 @@ pub(super) async fn catalogue_pass_hash(
     let hash = block["hash"]
         .as_str()
         .ok_or("collections graph has no block hash")?;
-    let endpoint = state
-        .catalogue_rpc_url(net)
-        .ok_or("no RPC for the configured catalogue chain")?;
+    let endpoint =
+        catalogue_proof_rpc(state, net).ok_or("no RPC for the configured catalogue chain")?;
     let source =
         super::chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(&state.http, &endpoint));
     super::ensure_chain(&source, state.settings.market.indexes.chain_id(net))
@@ -296,65 +302,55 @@ pub(super) async fn read_catalogue_page(
     Ok(data)
 }
 
-/// The cursor a pass starts from: the persisted row for this source, a fresh
-/// one when the source changed (the old keyset means nothing against a
-/// different subgraph) or there is none.
+/// A keyset resumes only for its source and binding. A legacy unbound
+/// mainnet copy keeps its publication. A testnet pin without a chain ID
+/// belongs to the first verified pass, which binds the row on completion.
 pub(super) async fn cursor_for(
     pool: &PgPool,
     mirror: Mirror,
     network: Network,
     url: &str,
     chain_id: Option<i64>,
+    pin: bool,
 ) -> anyhow::Result<Cursor> {
-    Ok(match load(pool, mirror, network).await? {
-        Some(c) if chain_id.is_none() && (c.chain_id.is_some() || c.pass_block_hash.is_some()) => {
-            anyhow::bail!("a verified catalogue mirror requires its chain RPC to continue");
-        }
-        Some(c)
-            if c.chain_id.is_none()
-                && c.pass_block_hash.is_some()
-                && chain_id
-                    != Some(super::chain_walk::ChainNet::from(network).testnet_chain_id()) =>
-        {
-            anyhow::bail!("an unbound pinned catalogue pass requires its testnet chain");
-        }
-        Some(c)
-            if c.source_url == url
-                && (c.chain_id == chain_id
-                    || (c.chain_id.is_none() && c.pass_block_hash.is_some())) =>
-        {
-            c
-        }
-        Some(c)
-            if c.source_url == url
-                && c.chain_id.is_none()
-                && chain_id == Some(super::chain_walk::ChainNet::from(network).chain_id()) =>
-        {
-            // The old writer stamped every row with this network's mainnet ID.
-            Cursor { chain_id, ..c }
-        }
-        Some(c)
-            if c.chain_id
-                .zip(chain_id)
-                .is_some_and(|(old, new)| old != new) =>
-        {
-            anyhow::bail!("catalogue mirror is already bound to a different chain");
-        }
-        Some(c) if c.source_url == url && c.chain_id.is_none() => {
-            // Descriptive readers can continue serving the old copy. The
-            // NFT gate needs a completed pass with a proven chain ID.
-            Cursor {
-                last_complete_pass_at: c.last_complete_pass_at,
-                last_complete_pass_rows: c.last_complete_pass_rows,
-                ..Cursor::fresh(mirror, network, url)
-            }
-        }
-        Some(c) => {
-            tracing::warn!(mirror = mirror.name(), network = network.db_name(), old = %c.source_url, "mirror source or chain changed; the cursor restarts");
-            Cursor::fresh(mirror, network, url)
-        }
-        None => Cursor::fresh(mirror, network, url),
-    })
+    let net = super::chain_walk::ChainNet::from(network);
+    let mainnet = chain_id == Some(net.chain_id());
+    let fresh = || Cursor {
+        chain_id: chain_id.filter(|_| mainnet),
+        ..Cursor::fresh(mirror, network, url)
+    };
+    let Some(mut c) = load(pool, mirror, network).await? else {
+        return Ok(fresh());
+    };
+    if (chain_id.is_none() && c.chain_id.is_some()) || (!pin && c.pass_block_hash.is_some()) {
+        anyhow::bail!("a verified catalogue mirror requires its chain RPC to continue");
+    }
+    if c.chain_id
+        .zip(chain_id)
+        .is_some_and(|(old, new)| old != new)
+    {
+        anyhow::bail!("catalogue mirror is already bound to a different chain");
+    }
+    if c.chain_id.is_none()
+        && c.pass_block_hash.is_some()
+        && chain_id != Some(net.testnet_chain_id())
+    {
+        anyhow::bail!("an unbound pinned catalogue pass requires its testnet chain");
+    }
+    if c.source_url != url {
+        tracing::warn!(mirror = mirror.name(), network = network.db_name(), old = %c.source_url, "mirror source changed; the cursor restarts");
+        return Ok(fresh());
+    }
+    if mainnet {
+        c.chain_id = chain_id;
+    }
+    if (pin && c.pass_block_hash.is_none()) || c.chain_id != chain_id && c.pass_block_hash.is_none()
+    {
+        // A new proof must start at page one. Descriptive readers can still
+        // serve the previous complete copy until the replacement publishes.
+        c.restart_pagination();
+    }
+    Ok(c)
 }
 
 /// What one page of a walk yields: the rows and the keyset after them.
@@ -390,13 +386,12 @@ where
 {
     let pool = &state.pool;
     let net = super::chain_walk::ChainNet::from(network);
-    let configured = state.settings.market.indexes.chain_id(net);
-    let verified = verify_testnet(state, net);
-    let binding = (configured == net.chain_id() || verified).then_some(configured);
-    let mut c = cursor_for(pool, mirror, network, url, binding).await?;
-    if configured == net.chain_id() {
-        c.chain_id = binding;
-    }
+    let indexes = &state.settings.market.indexes;
+    let configured = indexes.chain_id(net);
+    let pin = catalogue_proof_rpc(state, net).is_some();
+    let mainnet = indexes.serves_mainnet(net);
+    let binding = (mainnet || pin).then_some(configured);
+    let mut c = cursor_for(pool, mirror, network, url, binding, pin).await?;
     if c.in_progress()
         && c.pass_block_hash.is_some()
         && c.pass_started_at
@@ -428,7 +423,7 @@ where
     } else {
         tracing::info!(mirror = mirror.name(), network = network.db_name(), cursor = ?c.cursor_id, "mirror pass resumes at the persisted cursor");
     }
-    if verified && c.pass_block_hash.is_none() {
+    if pin && c.pass_block_hash.is_none() {
         match catalogue_pass_hash(state, net, url).await {
             Ok(hash) => c.pass_block_hash = Some(hash),
             Err(error) => {
@@ -458,11 +453,12 @@ where
         {
             Ok(p) => p,
             Err(e) => {
-                c.last_error = Some(e.to_string());
+                let repeated_failure = c.last_error.replace(e.to_string()).is_some();
                 if c.pass_block_hash.is_some()
                     && (matches!(e, PageReadError::MissingHash | PageReadError::HashMismatch)
-                        || c.pass_started_at
-                            .is_some_and(|start| now_utc() - start >= MAX_FAILED_PIN_AGE))
+                        || (repeated_failure
+                            && c.pass_started_at
+                                .is_some_and(|start| now_utc() - start >= MAX_FAILED_PIN_AGE)))
                 {
                     tracing::warn!(
                         mirror = mirror.name(),
@@ -482,7 +478,7 @@ where
         };
         let fetched = page.rows.len() as i64;
         let short = fetched < PAGE_SIZE;
-        let upserted = match upsert(page.rows, configured as i32, verified).await {
+        let upserted = match upsert(page.rows, configured as i32, pin && !mainnet).await {
             Ok(n) => n,
             Err(e) => {
                 c.last_error = Some(format!("upsert failed: {e}"));
