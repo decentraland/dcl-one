@@ -72,15 +72,15 @@ the GPU.
 - **Visuals: by view, one cap.** At most "Max Near LODs" stand-ins draw at once (a Performance
   setting, 0 to 40, default 12), in view and behind the camera together. Scenes in view whose
   models are known start nearest first, by the download key (ring, then distance), while a place
-  is free. With none free, a drawn stand-in behind the camera makes way first, then one in view in
-  a farther ring than the newcomer, the farthest first; one in view never makes way for one in
-  its own or a farther ring. So with every place taken, turning the camera stops drawn stand-ins
-  left behind as new ones come into view, and never swaps those in view; they reload from the
-  cache when the player turns back. After a move or teleport the nearest take the places.
-  Lowering the setting stops the farthest over it, those behind the camera first. The cost of a
-  stand-in
-  is not known before its files arrive, and a guess from the download misleads (a scene of flat
-  PNGs takes ten times its download in memory), so the cap counts scenes.
+  is free. With none free, a drawn stand-in behind the camera makes way first, then one in view
+  at least two rings farther than the newcomer, the farthest first. So with every place taken,
+  turning the camera stops drawn stand-ins left behind as new ones come into view, and a newly
+  seen stand-in two or more rings nearer replaces a farther one still in view; they reload from
+  the cache when the player turns back. After a move or teleport the nearest take the places.
+  The two-ring margin is the hysteresis: a step across a parcel edge moves each scene's ring by
+  at most one, so it never reverses a swap between stand-ins in view. Lowering the setting stops
+  the farthest over it, those behind the camera first. The cost of a stand-in is not known
+  before its files arrive, and a guess from the download misleads (a scene of flat PNGs takes ten times its download in memory), so the cap counts scenes.
 - **Definition.** A stand-in starts by loading the scene's entity definition as the live scene
   does, by hash or by the realm's urn, so the live scene gets the same handle and the entity
   file is fetched once. Nothing about a scene is kept before its stand-in starts: until then
@@ -225,9 +225,9 @@ the same kind.
   It has visuals only: no colliders part.
 - **A count.** At most "Max Far LODs" far LODs (a Performance setting, 0 to 600, default 200)
   load or show at once, in view and behind the camera together, by the near LODs' visuals rule:
-  nearest in view first while a place is free, then one behind the camera, then one in view in a
-  farther ring, making way for each in view; the rest show their imposter tiles. Lowering it
-  stops the farthest over it, those behind the camera first.
+  nearest in view first while a place is free, then one behind the camera, then one in view at
+  least two rings farther, making way for each in view; the rest show their imposter tiles.
+  Lowering it stops the farthest over it, those behind the camera first.
 - **Edge on imposter tiles.** Imposters are tiles of 2^level parcels a side, and any tile with a
   stand-in's parcel in it is split down to single parcels. A far LOD is therefore shown only if
   every parcel of its scene within the scan ring lies where the imposters would draw a tile of level

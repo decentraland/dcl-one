@@ -819,12 +819,18 @@ fn in_draw_band(level: LodLevel, partition: &Partition, near_waiting: bool, ring
         }
 }
 
+/// How many rings farther than a newcomer a started stand-in in view must be to make way for it
+/// when every place is taken. More than one, so a step across a parcel edge, which moves each
+/// scene's ring by at most one, never reverses a swap: the stand-in that made way is still no
+/// nearer than the one that took its place.
+const IN_VIEW_MAKE_WAY_RINGS: u16 = 2;
+
 /// The visuals of `level` to start and to stop this frame, keeping at most `max` started. Those
 /// whose models are known and that are in the level's band (`in_draw_band`) start, nearest first
 /// (by the download key: ring, then distance), while there is a free place. With none free, one
-/// started behind the camera makes way for each in view, then one in view in a farther ring than
-/// the newcomer, the farthest first; one in view never makes way for one in its own or a farther
-/// ring. Once the setting is lowered, the farthest over it stop, those behind the camera first.
+/// started behind the camera makes way for each in view, then one in view at least two rings
+/// farther than the newcomer ([`IN_VIEW_MAKE_WAY_RINGS`]), the farthest first. Once the setting is
+/// lowered, the farthest over it stop, those behind the camera first.
 /// Visuals with no partition yet are kept. At most `max_starts` start, and those of the scenes in
 /// `blocked` never do.
 fn visual_changes(
@@ -893,10 +899,14 @@ fn visual_changes(
             count += 1;
             continue;
         }
-        // full: one behind the camera makes way, then one in view in a strictly farther ring
+        // full: one behind the camera makes way, then one in view far enough beyond the newcomer
         match evictable.next_if(|(key, _)| {
             key.is_some_and(|key| {
-                key.is_behind || key.parcel_distance > candidate_key.parcel_distance
+                key.is_behind
+                    || key.parcel_distance
+                        >= candidate_key
+                            .parcel_distance
+                            .saturating_add(IN_VIEW_MAKE_WAY_RINGS)
             })
         }) {
             Some((_, behind)) => {
@@ -1831,7 +1841,7 @@ mod tests {
     }
 
     /// With every place taken, one started behind the camera makes way for one in view, the
-    /// farthest first; one in view makes way only for a nearer ring.
+    /// farthest first; one in view makes way only for one at least two rings nearer.
     #[test]
     fn one_behind_makes_way_for_one_in_view() {
         let mut world = World::new();
@@ -1894,8 +1904,7 @@ mod tests {
         );
     }
 
-    /// In view, one in the same ring as a started one, or a farther one, never takes its place,
-    /// so turning the camera swaps nothing.
+    /// In view, one in the same ring as a started one, or a farther one, never takes its place.
     #[test]
     fn in_view_stand_ins_in_the_same_ring_never_swap() {
         let mut world = World::new();
@@ -1910,6 +1919,21 @@ mod tests {
             ],
         );
         assert_eq!(far_changes(&mut rows, 2), (vec![], vec![]));
+    }
+
+    /// One ring nearer is not enough: a step across a parcel edge moves rings by one, and must not
+    /// swap two stand-ins in view back and forth.
+    #[test]
+    fn one_ring_nearer_does_not_take_a_place_in_view() {
+        let mut world = World::new();
+        let mut one_apart = rows(&mut world, &[(9, false, true), (8, false, false)]);
+        assert_eq!(far_changes(&mut one_apart, 1), (vec![], vec![]));
+        // two rings nearer takes the place
+        let mut two_apart = rows(&mut world, &[(10, false, true), (8, false, false)]);
+        assert_eq!(
+            far_changes(&mut two_apart, 1),
+            (vec![two_apart[1].0], vec![two_apart[0].0])
+        );
     }
 
     /// Lowering "Max Near LODs" stops the farthest over it, those behind the camera first.
