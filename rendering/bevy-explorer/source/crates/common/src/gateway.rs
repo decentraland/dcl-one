@@ -12,8 +12,8 @@ pub struct Gateway {
 
 impl Gateway {
     pub fn parse(raw: &str) -> Result<Self, String> {
-        let url =
-            Url::parse(raw.trim()).map_err(|_| "--gateway expects an absolute HTTP(S) URL")?;
+        let url = Url::parse(raw.trim())
+            .map_err(|_| "the gateway must be an absolute HTTP(S) URL".to_owned())?;
         if !matches!(url.scheme(), "https" | "http")
             || url.host().is_none()
             || !url.username().is_empty()
@@ -22,7 +22,7 @@ impl Gateway {
             || url.fragment().is_some()
         {
             return Err(
-                "--gateway expects an HTTP(S) base URL without credentials, query or fragment"
+                "the gateway must be an HTTP(S) base URL without credentials, query or fragment"
                     .into(),
             );
         }
@@ -40,7 +40,7 @@ impl Gateway {
     /// (`/_scene/<host>`). A link reaches the native client with no prompt, so any other gateway
     /// takes `--gateway`.
     pub fn parse_link(raw: &str, base_domain: &str) -> Result<Self, String> {
-        let gateway = Self::parse(raw)?;
+        let gateway = Self::parse(raw).map_err(|e| format!("the link's gateway `{raw}`: {e}"))?;
         let url = Url::parse(&gateway.prefix).map_err(|e| e.to_string())?;
         let host = url.host_str().unwrap_or_default();
         let trusted = url.scheme() == "https"
@@ -404,6 +404,13 @@ mod gateway_tests {
                 "{raw}"
             );
         }
+        // a malformed link names the link, not a flag the user never passed
+        let malformed =
+            Gateway::parse_link("ftp://gateway.decentraland.org", "decentraland.org").unwrap_err();
+        assert!(
+            malformed.starts_with("the link's gateway") && !malformed.contains("--gateway"),
+            "{malformed}"
+        );
         // a session on another deployment takes its gateway by --gateway only
         for raw in ["https://gateway.example.test", "https://evil.example"] {
             assert!(Gateway::parse_link(raw, "example.test").is_err(), "{raw}");

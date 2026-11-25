@@ -89,7 +89,8 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
 // - The feature-flags service: Unleash picks a player's A/B group and rollout from the id each
 //   request carries, so every player's engine asks it directly. The node's `/feature-flags` copy
 //   is one document for everyone. The service has to allow this page's origin (CORS); where it
-//   does not, every flag reads off.
+//   does not, every flag reads off. An explicit ?gateway= routes it like `--gateway` does, so
+//   that session reads the node's single document.
 const NOT_THROUGH_GATEWAY: ReadonlySet<string> = new Set(['abgen-cdn', 'feature-flags'])
 // The imposter store (distant-scene tiles) is a launch option, not a service table row; the
 // node serves it under this prefix (services/catalyst/src/serve_routes.rs, explore::imposters).

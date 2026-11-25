@@ -80,6 +80,10 @@ session on `decentraland.org` or `decentraland.zone`, stops on the untrusted-lau
 since a node proxies other hosts under `/_scene/<host>`. A `decentraland://` link selects one with
 `gateway=<url>`. The native client accepts from a link only such a gateway of its base domain,
 since a link reaches it without a prompt, and refuses to start with any other. An explicit `--gateway` takes precedence over the link's.
+A gateway also carries feature flags, as `--gateway` does: its `/feature-flags` is one document
+for everyone, so a session with a gateway has no per-player A/B or rollout group. `/play` without
+`?gateway=` reads the flags service directly, keeping them; pass `--feature-flags` (or
+`?featureFlags=`) to keep them with a gateway.
 
 With Python 3 and Node.js 24 installed, run
 `cargo test --locked -p common gateway_routes_match_deployment -- --ignored` from the

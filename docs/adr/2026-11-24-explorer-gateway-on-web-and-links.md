@@ -21,7 +21,10 @@ profile images exactly as `--gateway` does. Explicit service URLs take precedenc
 The engine's service table carries each service's gateway segments (`Service::gateway_segment`).
 Both HUD hosts join them with the gateway for their own requests
 (`library/explorer-core/lib/gateway.ts`) and pass the gateway to the engine. Requests the HUD
-signs itself sign the path a `gateway.` virtual host forwards, as the engine does. The cross-language
+signs itself sign the path a `gateway.` virtual host forwards, as the engine does. Feature flags go
+through the gateway too, as with `--gateway`: the gateway's copy is one document for everyone, so
+such a session loses per-player rollout groups unless the flags service is passed explicitly.
+`/play` without a gateway keeps reading that service directly. The cross-language
 route test compares the HUD resolvers with the engine's for the virtual-host and apex layouts.
 
 Trust follows the base domain:
