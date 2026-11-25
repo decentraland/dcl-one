@@ -137,7 +137,11 @@ impl LeftDragCamera<'_, '_> {
         }
         let pointer = Action::Scene(CommonInputAction::IaPointer);
         let press = input.just_down(pointer, InputPriority::Scene);
-        let panning = self.is_panning();
+        // read every frame, so a grant during the pan is recorded
+        let lock_lost = self
+            .pan
+            .as_mut()
+            .is_some_and(|pan| pan.lock_lost(platform_pointer_is_locked()));
 
         let blocked = if camera_blocked.is_some() {
             camera_blocked
@@ -149,7 +153,7 @@ impl LeftDragCamera<'_, '_> {
             Some(Reason::SceneDrag)
         } else if self.focus.as_deref() == Some(&ClientWindowFocus::NoFocus) {
             Some(Reason::NoFocus)
-        } else if panning && platform_pointer_is_locked() == Some(false) {
+        } else if lock_lost {
             Some(Reason::LockLost)
         } else {
             None
@@ -567,6 +571,21 @@ mod tests {
         rig.drag();
         assert!(rig.camera_locked() && rig.crdt_lock());
         rig.release(MouseButton::Left);
+        rig.frame();
+        assert!(!rig.camera_locked() && !rig.crdt_lock());
+        assert_eq!(rig.phase(), Phase::Idle);
+    }
+
+    #[test]
+    fn a_release_without_an_up_edge_drops_the_lock() {
+        let mut rig = Rig::new(true);
+        rig.drag();
+        assert!(rig.camera_locked());
+        // the button let go outside the window: it reads as up, with no `just_released` edge
+        rig.app
+            .world_mut()
+            .resource_mut::<ButtonInput<MouseButton>>()
+            .reset(MouseButton::Left);
         rig.frame();
         assert!(!rig.camera_locked() && !rig.crdt_lock());
         assert_eq!(rig.phase(), Phase::Idle);

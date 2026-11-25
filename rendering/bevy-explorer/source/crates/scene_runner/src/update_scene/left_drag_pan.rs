@@ -155,6 +155,8 @@ pub(crate) struct Frame {
 pub(crate) struct LeftDragPan {
     phase: Phase,
     last_reason: Option<Reason>,
+    /// The browser granted the pointer lock during this pan.
+    lock_granted: bool,
 }
 
 impl LeftDragPan {
@@ -169,6 +171,25 @@ impl LeftDragPan {
     /// The reason for the last refusal or interruption.
     pub(crate) fn last_reason(&self) -> Option<Reason> {
         self.last_reason
+    }
+
+    /// Reads the browser pointer lock (`None` natively) and returns whether a running pan lost
+    /// it: the lock was granted during this pan and is now gone. A refusal before any grant is not
+    /// a loss, so the pan turns the camera without the lock: a gamepad press gives the page no
+    /// user activation, so the browser refuses the lock for a pan pressed on a gamepad.
+    pub(crate) fn lock_lost(&mut self, locked: Option<bool>) -> bool {
+        if !self.is_panning() {
+            self.lock_granted = false;
+            return false;
+        }
+        match locked {
+            Some(true) => {
+                self.lock_granted = true;
+                false
+            }
+            Some(false) => self.lock_granted,
+            None => false,
+        }
     }
 
     /// Ends an armed or running pan for good: it does not resume for this press.
@@ -394,14 +415,47 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_release_edge_still_ends_the_pan() {
-        // no `just_up` reaches us: the button simply reads as not held
+    fn a_held_frame_without_a_press_edge_does_not_pan() {
         let mut pan = panning();
         assert!(!pan.tick(&up()));
-        assert_eq!(pan.phase(), Phase::Idle);
-        // and the next held frame without a press edge does not pan
         assert!(!pan.tick(&held(Vec2::new(9.0, 0.0))));
         assert_eq!(pan.phase(), Phase::Idle);
+    }
+
+    #[test]
+    fn a_lock_refused_before_any_grant_is_not_lost() {
+        let mut pan = panning();
+        // the request is pending, then refused: the pan keeps the camera without the lock
+        assert!(!pan.lock_lost(Some(false)));
+        assert!(!pan.lock_lost(Some(false)));
+        assert!(pan.tick(&held(Vec2::ZERO)));
+    }
+
+    #[test]
+    fn a_granted_lock_that_drops_is_lost() {
+        let mut pan = panning();
+        assert!(!pan.lock_lost(Some(true)));
+        assert!(pan.lock_lost(Some(false)));
+    }
+
+    #[test]
+    fn a_grant_does_not_carry_over_to_the_next_pan() {
+        let mut pan = panning();
+        assert!(!pan.lock_lost(Some(true)));
+        assert!(!pan.tick(&up()));
+        assert!(!pan.lock_lost(Some(false)));
+        assert!(!pan.tick(&press()));
+        assert!(pan.tick(&held(Vec2::new(9.0, 0.0))));
+        assert!(
+            !pan.lock_lost(Some(false)),
+            "this pan was never granted the lock"
+        );
+    }
+
+    #[test]
+    fn natively_the_lock_is_never_lost() {
+        let mut pan = panning();
+        assert!(!pan.lock_lost(None));
     }
 
     #[test]
