@@ -873,20 +873,21 @@ async fn set_event_moderator(
     } else {
         event_moderators::remove(&explore.pool, one).await
     };
-    let answer = match changed {
+    let (answer, detail) = match changed {
         Ok(rows) => {
             let key = if present { "added" } else { "removed" };
             let mut answer = json!({ "ok": true, "address": address });
             answer[key] = json!(!rows.is_empty());
-            Json(answer).into_response()
+            let detail = json!({ "address": address, "changed": !rows.is_empty() });
+            (Json(answer).into_response(), detail)
         }
-        Err(e) => internal(e),
+        Err(e) => (internal(e), json!({ "address": address })),
     };
     finish(
         state,
         Call::new(session, DOMAIN, action)
             .target(address.clone())
-            .detail(json!({ "address": address })),
+            .detail(detail),
         answer,
     )
     .await

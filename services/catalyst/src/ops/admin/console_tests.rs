@@ -2122,6 +2122,14 @@ async fn events_moderators_are_added_and_removed_by_the_operator() {
     )
     .await;
     assert_refused(status, &body, "OPS_WRITES_ENABLED");
+    let (status, body) = post(
+        &app,
+        &cookie,
+        "/admin/api/events/moderator-remove",
+        json!({ "address": target }),
+    )
+    .await;
+    assert_refused(status, &body, "OPS_WRITES_ENABLED");
     let (status, _) = post(
         &app,
         &cookie,
@@ -2204,5 +2212,12 @@ async fn events_moderators_are_added_and_removed_by_the_operator() {
             ("events.moderator.add", Some(target.as_str()), "ok"),
         ]
     );
+    let changed: Vec<Value> = super::tests::audit_rows(&pool, &actor)
+        .await
+        .into_iter()
+        .filter(|r| r.action != "events.moderators.list")
+        .map(|r| r.detail["changed"].clone())
+        .collect();
+    assert_eq!(changed, vec![json!(true), json!(false), json!(true)]);
     cleanup(&pool, &actor).await;
 }
