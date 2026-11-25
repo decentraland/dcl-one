@@ -76,9 +76,16 @@ pub(super) const PROFILE_LOOKUP_CHUNK: usize = 1000;
 /// failed, by `route` and `layer` (`entities`, `ownership`). The Registry
 /// and Lambdas can use their normal response statuses for these failures.
 pub(super) const PROFILE_LOOKUP_FAILURES: &str = "profiles_lookup_failures_total";
+const LOOKUP_FAILURE_COUNTER: dcl_metrics::CounterFamily<2> = dcl_metrics::CounterFamily::new(
+    PROFILE_LOOKUP_FAILURES,
+    "Profile lookups that failed, by route and failed lookup layer.",
+    Some(dcl_metrics::Unit::Count),
+    &["route", "layer"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[LOOKUP_FAILURE_COUNTER.descriptor];
 
 pub(super) fn count_lookup_failure(route: &'static str, layer: &'static str) {
-    metrics::counter!(PROFILE_LOOKUP_FAILURES, "route" => route, "layer" => layer).increment(1);
+    LOOKUP_FAILURE_COUNTER.handle([route, layer]).increment(1);
 }
 
 /// A pointer that can name a profile: an address (`0x` and 40 hex digits,
@@ -534,6 +541,7 @@ async fn process_profiles_observed(
                         // snapshot.
                         owned_items::owned_tokens_and_names(
                             &state.pool,
+                            state.settings.catalogue(),
                             &requested,
                             &addresses,
                             Rule::Complete,
@@ -542,10 +550,15 @@ async fn process_profiles_observed(
                         .map(|(owned, names, seen)| (owned, Some(names), Some(seen)))
                         .map_err(|e| e.to_string())
                     } else if collections && !requested.is_empty() {
-                        owned_items::owned_tokens_observed(&state.pool, &requested, Rule::Complete)
-                            .await
-                            .map(|(owned, seen)| (owned, None, seen))
-                            .map_err(|e| e.to_string())
+                        owned_items::owned_tokens_observed(
+                            &state.pool,
+                            state.settings.catalogue(),
+                            &requested,
+                            Rule::Complete,
+                        )
+                        .await
+                        .map(|(owned, seen)| (owned, None, seen))
+                        .map_err(|e| e.to_string())
                     } else {
                         Ok((HashMap::new(), None, None))
                     }

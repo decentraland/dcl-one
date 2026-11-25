@@ -112,7 +112,9 @@ fn accept_delta_and_advance_mark(
         return None;
     };
     if let Err(reason) = check_delta_limits(&deployment) {
-        metrics::counter!("content_sync_oversized_pointer_changes_total").increment(1);
+        crate::metrics::OVERSIZED_POINTER_CHANGES
+            .handle([])
+            .increment(1);
         report_rejected("oversized deployment", reason);
         return None;
     }
@@ -238,6 +240,16 @@ struct PaginationInfo {
 
 /// One page, and whether the peer holds more rows after it.
 async fn fetch_page(
+    client: &Client,
+    url: &str,
+) -> Result<(Vec<serde_json::Value>, bool), SyncError> {
+    let started = std::time::Instant::now();
+    let page = fetch_page_body(client, url).await;
+    crate::sync::metrics::pointer_changes_page(url, started.elapsed());
+    page
+}
+
+async fn fetch_page_body(
     client: &Client,
     url: &str,
 ) -> Result<(Vec<serde_json::Value>, bool), SyncError> {
@@ -445,6 +457,7 @@ where
             }
 
             delivered.record_delivered(&deployment);
+            report.record_streamed(&deployment.entity_type);
             deployer
                 .schedule_entity_deployment(deployment, &advertisers, Some(report))
                 .await?;
@@ -701,6 +714,8 @@ mod tests {
 
     #[test]
     fn oversized_deltas_are_skipped_before_advancing_the_mark() {
+        let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let mut mark = FROM_TS;
         let mut logged = 0;
         for pointers in [
@@ -727,6 +742,13 @@ mod tests {
         );
         assert_eq!(mark, FROM_TS);
         assert_eq!(logged, 4);
+        assert!(
+            recorder
+                .handle()
+                .render()
+                .lines()
+                .any(|line| line == "content_sync_oversized_pointer_changes_total 4")
+        );
     }
 
     fn deployment_at(entity_id: &str, local_ts: Timestamp) -> SyncDeployment {

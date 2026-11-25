@@ -7,6 +7,7 @@ import { estateRegistryAbi } from "./estate";
 import { estateResult, nameResult, NET, OWNER, parcelResult, rentalListing, sampleTiles, saleOrder, TENANT } from "./fixtures";
 import LandsPage from "./LandsPage";
 import ManageAsset from "./ManageAsset";
+import RentalTxModal from "./RentalTxModal";
 import RentPage from "./RentPage";
 import { rentalsAbi } from "./rentals";
 import { fakeWallet, stubClient, type Answer } from "./testkit";
@@ -232,6 +233,24 @@ describe("/shop/token/:contract/:tokenId/manage", () => {
     const highlights = await screen.findByRole("region", { name: "Highlights" });
     expect(within(highlights).getByText("Plaza")).toBeInTheDocument();
     noCredits();
+  });
+
+  it("keeps the Creator Hub action unavailable while LAND is rented", async () => {
+    const rental = rentalListing({ status: "executed", tenant: TENANT });
+    renderManage("web3", parcelResult({ rental }), {}, fakeWallet({ account: OWNER, chainId: 1 }));
+    const link = await screen.findByRole("link", { name: "Open in Creator Hub" });
+    expect(link).toHaveAttribute("aria-disabled", "true");
+    expect(link).not.toHaveAttribute("href");
+    expect(fireEvent.click(link)).toBe(false);
+  });
+
+  it("marks removal as destructive in the rental confirmation", () => {
+    const rental = rentalListing();
+    const asset = { chainId: 1, contractAddress: NET.land, tokenId: rental.tokenId, openRentalId: rental.id, category: "parcel" as const };
+    render(<RentalTxModal kind="remove" account={OWNER} provider={fakeWallet({ account: OWNER, chainId: 1 })}
+      asset={asset} rental={rental} onDone={vi.fn()} onClose={vi.fn()} portal={false} />);
+    expect(screen.getByRole("button", { name: "Remove listing" })).toHaveAttribute("data-tone", "danger");
+    expect(screen.getByRole("button", { name: "Cancel" })).not.toHaveAttribute("data-tone");
   });
 
   it("refuses a visitor who does not own the LAND", async () => {

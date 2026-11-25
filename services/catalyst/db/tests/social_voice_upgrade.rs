@@ -242,6 +242,15 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
         .chain([
             "0060_shop_third_party_registry_index",
             "0061_content_processed_snapshot_types",
+            "0062_shop_estate_repair_reset",
+            "0063_shop_collections_index",
+            "0064_shop_sale_accounting",
+            "0065_shop_collections_projection",
+            "0067_rental_asset_membership_block",
+            "0069_shop_trade_digest",
+            "0070_shop_mirror_chain",
+            "0071_shop_testnet_sale_and_trade_venues",
+            "0072_shop_verified_item_rows",
         ])
         .collect();
     let done = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)

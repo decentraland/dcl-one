@@ -52,8 +52,8 @@
 //! the market federation's signed-action log and its feeds
 //! (`federation.rs`: `/v1/federation/*`, `/federation/market/*`).
 
+pub use crate::chain_index::graph;
 pub use crate::chain_index::source::{Source, unavailable};
-pub use crate::chain_index::{graph, land_graph};
 
 pub mod accounts;
 pub mod activity;
@@ -66,10 +66,14 @@ pub mod chain_group;
 pub mod chain_jobs;
 pub mod chain_walk;
 pub mod collections;
+pub mod collections_fold;
+pub mod collections_index;
+pub mod collections_projection;
 pub mod committee_index;
 pub mod compare_sources;
 pub mod contracts;
 pub mod definitions;
+pub mod ethereum_sales;
 pub mod features;
 pub mod federation;
 pub mod items;
@@ -78,6 +82,8 @@ pub mod lambdas_crypto;
 pub mod lambdas_explorer;
 pub mod lambdas_http;
 pub mod lambdas_land;
+pub mod lambdas_metrics;
+pub mod land_map;
 pub mod listings;
 pub mod lists;
 pub mod mana_transfers;
@@ -97,12 +103,17 @@ pub mod rankings;
 pub mod readers;
 pub mod rentals;
 pub mod royalty_notices;
+pub mod sale_fold;
+pub(crate) mod sale_history;
+pub use sale_history::FAMILIES as SALES_REPAIR_METRICS;
 pub mod sale_notices;
+mod sale_terms;
 pub mod sales;
 pub mod sales_index;
 pub mod search;
 pub mod shop;
 pub mod signed;
+mod store_sales;
 pub mod third_party;
 pub mod third_party_registry;
 pub mod tips;
@@ -154,9 +165,6 @@ pub struct Upstreams {
     pub matic_collections_subgraph_url: Option<String>,
     /// `MARKETPLACE_SUBGRAPH_URL`: the L1 marketplace subgraph (ENS names).
     pub marketplace_subgraph_url: Option<String>,
-    /// `LAND_SUBGRAPH_URL`: the land-manager subgraph (parcel operators and
-    /// update-operator lookups before the land-authz index is published).
-    pub land_subgraph_url: Option<String>,
     /// `TRADES_SYNC_UPSTREAM_URL`: the marketplace API `/v1/trades` list to mirror.
     pub trades_sync_upstream_url: Option<String>,
     /// `TRADES_SYNC_INTERVAL_SECS` (900): pause between two mirror passes.
@@ -191,7 +199,6 @@ pub struct Settings {
     pub eth_collections_subgraph_url: Option<String>,
     pub matic_collections_subgraph_url: Option<String>,
     pub marketplace_subgraph_url: Option<String>,
-    pub land_subgraph_url: Option<String>,
     /// `Config::eth_rpc_url()`: the contracts registry is read over the same
     /// TLS JSON-RPC endpoint the EIP-1654 validator uses.
     pub eth_rpc_url: Option<String>,
@@ -423,7 +430,6 @@ impl Settings {
                 "MARKETPLACE_SUBGRAPH_URL",
                 &upstreams.marketplace_subgraph_url,
             )?,
-            land_subgraph_url: checked("LAND_SUBGRAPH_URL", &upstreams.land_subgraph_url)?,
             eth_rpc_url: config.content.eth_rpc_url().context("ETH_RPC_URL")?,
             polygon_rpc_url: non_empty(&config.economy.rpc_endpoint_polygon),
             third_party_registry_subgraph_url: checked(
@@ -469,9 +475,57 @@ impl Settings {
             eth_collections_subgraph_url: self.eth_collections_subgraph_url.clone(),
             matic_collections_subgraph_url: self.matic_collections_subgraph_url.clone(),
             marketplace_subgraph_url: self.marketplace_subgraph_url.clone(),
-            land_subgraph_url: self.land_subgraph_url.clone(),
             eth_network: self.eth_network.clone(),
         }
+    }
+
+    /// The catalogue pair selected by the validated chain settings.
+    pub fn catalogue(&self) -> nft_index::Catalogue {
+        if self.market.indexes.chain_id_ethereum == crate::types::ChainId::SEPOLIA.0 as i64 {
+            nft_index::Catalogue::Testnet
+        } else {
+            nft_index::Catalogue::Mainnet
+        }
+    }
+
+    fn walks_catalogue(&self) -> bool {
+        self.market.indexes.nft_enabled
+            && chain_walk::ChainNet::ALL
+                .into_iter()
+                .all(|net| self.catalogue_chain(net) == Some(self.market.indexes.chain_id(net)))
+    }
+
+    pub fn catalogue_chain(&self, net: chain_walk::ChainNet) -> Option<i64> {
+        crate::land_authz::land_network(&self.eth_network)
+            .map(|land| nft_index::Catalogue::from_land(land).chain_id(net))
+    }
+
+    pub fn writes_catalogue(&self) -> bool {
+        self.market.indexes.nft_enabled
+            || self.market.indexes.sales_enabled
+            || self.market.mirrors_enabled
+    }
+
+    pub fn check_writer_pair(&self) -> anyhow::Result<()> {
+        if self.writes_catalogue() {
+            self.market
+                .indexes
+                .check_chains()
+                .map_err(anyhow::Error::msg)?;
+            for net in chain_walk::ChainNet::ALL {
+                let expected = self
+                    .catalogue_chain(net)
+                    .ok_or_else(|| anyhow::anyhow!("ETH_NETWORK names no supported catalogue"))?;
+                let configured = self.market.indexes.chain_id(net);
+                anyhow::ensure!(
+                    configured == expected,
+                    "ETH_NETWORK={} requires the {} catalogue chain {expected}, configured {configured}",
+                    self.eth_network,
+                    net.db_name()
+                );
+            }
+        }
+        Ok(())
     }
 
     /// The collections subgraphs configured, in the order the mirrors walk them.
@@ -497,7 +551,6 @@ impl Settings {
             eth_collections_subgraph_url: None,
             matic_collections_subgraph_url: None,
             marketplace_subgraph_url: None,
-            land_subgraph_url: None,
             eth_rpc_url: None,
             polygon_rpc_url: None,
             third_party_registry_subgraph_url: None,
@@ -552,8 +605,11 @@ pub fn select_name_authority(
     index: &Arc<ChainIndex>,
 ) -> Option<Arc<dyn crate::chain_index::names::NameAuthority>> {
     let mainnet = settings.eth_network.trim() == "mainnet";
-    if mainnet && settings.market.indexes.nft_enabled {
-        return Some(Arc::new(names::IndexNames::new(pool.clone())));
+    if settings.walks_catalogue() {
+        return Some(Arc::new(names::IndexNames::for_catalogue(
+            pool.clone(),
+            settings.catalogue(),
+        )));
     }
     if settings.marketplace_subgraph_url.is_some() {
         return Some(Arc::new(crate::chain_index::names::SubgraphNames(
@@ -665,7 +721,7 @@ impl MarketplaceState {
     pub fn new(pool: PgPool, http: crate::http::Outbound, settings: Settings) -> Self {
         let index = Arc::new(ChainIndex::new(http.clone(), settings.index_settings()));
         let name_authority = select_name_authority(&settings, &pool, &index);
-        let walks = settings.market.indexes.nft_enabled && settings.eth_network.trim() == "mainnet";
+        let walks = settings.walks_catalogue();
         let authorizing_names = name_authority
             .clone()
             .filter(|_| walks || settings.marketplace_subgraph_url.is_some());
@@ -872,6 +928,25 @@ impl MarketplaceState {
             .map(str::to_string)
     }
 
+    /// The catalogue's explicitly bound endpoint, or its network's node RPC
+    /// when ETH_NETWORK selects the same pair. The walker verifies eth_chainId.
+    pub fn catalogue_rpc_url(&self, net: chain_walk::ChainNet) -> Option<String> {
+        let id = self.settings.market.indexes.chain_id(net);
+        if let Some(url) = self.settings.market.trade_rpc_urls.for_chain(id) {
+            return Some(url.to_string());
+        }
+        if id == net.chain_id() {
+            return self.chain_rpc_url(net);
+        }
+        if self.settings.catalogue_chain(net)? != id {
+            return None;
+        }
+        match net {
+            chain_walk::ChainNet::Ethereum => self.settings.eth_rpc_url.clone(),
+            chain_walk::ChainNet::Matic => self.settings.polygon_rpc_url.clone(),
+        }
+    }
+
     /// The endpoint the trade-events walk of `net` reads: the
     /// `TRADE_RPC_URLS` entry of the chain it indexes
     /// (`MARKETPLACE_INDEX_CHAIN_ID_*`), and for Ethereum `ETH_RPC_URL`.
@@ -1000,10 +1075,10 @@ async fn get_index_status(
     axum::extract::State(state): axum::extract::State<SharedState>,
 ) -> Json<Value> {
     Json(json!({
-        "nft": nft_index::status(&state.pool).await,
+        "nft": nft_index::status(&state.pool, &state.settings.market.indexes).await,
         "tradeEvents": trade_events::status(&state.pool, &state.settings.market.indexes).await,
         "manaTransfers": mana_transfers::status(&state.pool).await,
-        "sales": sales_index::status(&state.pool).await,
+        "sales": sales_index::status(&state.pool, &state.settings.market.indexes).await,
         "neighbours": neighbours::status(&state.pool).await,
     }))
 }
@@ -1311,6 +1386,10 @@ pub fn market_router(state: SharedState) -> Router {
         .merge(super::market_extensions())
         .layer(axum::middleware::from_fn(mirrors::stamp_copies))
         .layer(axum::middleware::from_fn(signed::mounted_path))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            signed::client_source,
+        ))
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
         .layer(axum::middleware::from_fn(cors::cors_middleware));
     let app = if let Some(timeout) = request_timeout {
