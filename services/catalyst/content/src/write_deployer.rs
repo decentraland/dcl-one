@@ -648,7 +648,7 @@ enum LocalValidation {
 pub struct WriteDeployer {
     pool: PgPool,
     storage: Arc<Storage>,
-    /// The shared EIP-1654 validator (`crate::auth::cached_rpc_validator`);
+    /// The shared EIP-1654 validator (`shared::eip1654_budget::cached_budgeted_validator`);
     /// `None` without `ETH_RPC_URL`: a contract-wallet link is undecidable.
     eip1654: Option<Arc<dyn Eip1654Validator>>,
     /// The LAND rights index (`land_authz::can_deploy_batch`): the partial
@@ -1168,13 +1168,18 @@ fn held_of(held: &HashSet<String>, pointers: &[String]) -> Vec<String> {
 }
 
 /// A chain check's deploy verdict: `Unverifiable` for a contract wallet this node cannot
-/// ask about, `Rejected` with upstream's text otherwise.
+/// ask about (or whose check the client source's EIP-1654 budget refused: the 503 with
+/// `Retry-After`), `Rejected` with upstream's text otherwise.
 fn signature_verdict(result: Result<(), AuthError>) -> Result<(), DeployFailure> {
     match result {
         Ok(()) => Ok(()),
-        Err(e @ (AuthError::Eip1654ValidationFailed(_) | AuthError::Eip1654NotImplemented)) => Err(
-            DeployFailure::Unverifiable(vec![format!("The signature is invalid. {e}")]),
-        ),
+        Err(
+            e @ (AuthError::Eip1654ValidationFailed(_)
+            | AuthError::Eip1654NotImplemented
+            | AuthError::Eip1654RateLimited),
+        ) => Err(DeployFailure::Unverifiable(vec![format!(
+            "The signature is invalid. {e}"
+        )])),
         Err(e) => Err(DeployFailure::Rejected(
             RejectionKind::Validation,
             vec![format!("The signature is invalid. {e}")],

@@ -291,7 +291,7 @@ export function AiSharingSection() {
                   return (
                     <div key={digest.conversationId}>
                       <p className={`${styles.line} ${styles.gray}`}>
-                        {day(digest.createdAt)} · {digest.goal} ·{' '}
+                        {day(digest.createdAt)} · {digest.goal ? `${digest.goal} · ` : ''}
                         {translated(
                           `modal.app_settings.fields.ai_sharing.digest_outcome.${digest.outcome}`,
                           digest.outcome,

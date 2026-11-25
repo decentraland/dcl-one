@@ -4,7 +4,8 @@
 
 import { isShopApiError } from "@shop/api/client";
 import { chainLabel } from "@shop/model/chain";
-import { isUserRejection, isWrongNetworkError, WrongNetworkError } from "../wallet/chain";
+import type { WrongNetworkError } from "../wallet/chain";
+import { isUserRejection, isWrongNetworkError } from "../wallet/chain";
 import { AccountChangedError, TxPendingError, TxRevertedError } from "./evm";
 import { RentalIndexLagError, RentalInputError } from "./rentals";
 

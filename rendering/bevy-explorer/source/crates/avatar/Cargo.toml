@@ -75,3 +75,5 @@ pipeline_test = { workspace = true }
 naga_oil = { workspace = true }
 # the request-slot gate's channel, for the download-priority test
 tokio = { workspace = true }
+# decodes the half-float readback of the GPU shader tests
+half = { workspace = true }

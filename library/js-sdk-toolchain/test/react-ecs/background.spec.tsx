@@ -1,7 +1,9 @@
-import { Entity, TextureWrapMode, TextureFilterMode } from '../../packages/@dcl/ecs/src'
+import type { Entity } from '../../packages/@dcl/ecs/src'
+import { TextureWrapMode, TextureFilterMode } from '../../packages/@dcl/ecs/src'
 import { components } from '../../packages/@dcl/ecs/src'
-import { Color4 } from '../../packages/@dcl/sdk/math'
-import { ReactEcs, UiEntity, UiBackgroundProps } from '../../packages/@dcl/react-ecs/src'
+import type { Color4 } from '../../packages/@dcl/sdk/math'
+import type { UiBackgroundProps } from '../../packages/@dcl/react-ecs/src'
+import { ReactEcs, UiEntity } from '../../packages/@dcl/react-ecs/src'
 import { CANVAS_ROOT_ENTITY } from '../../packages/@dcl/react-ecs/src/components/uiTransform'
 import { setupEngine, WHOLE_SCREEN } from './utils'
 

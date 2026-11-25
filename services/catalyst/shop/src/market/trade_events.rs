@@ -964,7 +964,7 @@ fn unreadable(e: sqlx::Error) -> Response {
 /// ([`super::catalog::served_chains`], the trade-events walk's
 /// `MARKETPLACE_INDEX_CHAIN_ID_*`), so a cursor bound to another chain never
 /// lends its verdicts.
-fn verdicts_ready_sql(alias: &str, now_p: &str) -> String {
+pub(crate) fn verdicts_ready_sql(alias: &str, now_p: &str) -> String {
     let (ethereum, matic) = super::catalog::served_chains();
     chain_walk::published_sql_on(alias, now_p, ethereum, matic)
 }

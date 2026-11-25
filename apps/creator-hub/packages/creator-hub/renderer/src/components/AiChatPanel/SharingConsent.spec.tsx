@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -8,6 +11,7 @@ import { flatten } from '/@/modules/store/translation/flatten';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
 import { SharingConsentCard, SharingStatusChip, TurnRating } from './SharingConsent';
+import styles from './SharingConsent.module.css';
 
 const copy = en.editor.ai.sharing;
 
@@ -123,7 +127,18 @@ describe('when sharing is on', () => {
     ).toBe('true');
   });
 
-  it('should stop sharing this chat with its switch', () => {
+  // The bare Popover clears its own surface with a rule that outranks a class passed to it, so
+  // a menu styled through the Popover's className rendered with no background over the chat.
+  it('should draw the menu surface inside the bare popover, not on it', () => {
+    renderBoth({ status: 'on', conversationExcluded: false });
+    openMenu();
+
+    const group = screen.getByRole('group', { name: copy.chip_menu });
+    expect(group.classList.contains(styles.menu)).toBe(true);
+    expect(group.closest('[data-bare]')?.classList.contains(styles.menu)).toBe(false);
+  });
+
+  it('should ask before stopping a chat that already shared, and erase only once confirmed', () => {
     const { onSetConversationShared } = renderBoth({
       status: 'on',
       conversationExcluded: false,
@@ -132,7 +147,100 @@ describe('when sharing is on', () => {
     openMenu();
     fireEvent.click(screen.getByRole('switch', { name: copy.menu_share_chat }));
 
-    expect(onSetConversationShared).toHaveBeenCalledWith(false);
+    expect(onSetConversationShared).not.toHaveBeenCalled();
+    expect(screen.getByRole('alertdialog').textContent).toContain(copy.menu_chat_confirm);
+
+    fireEvent.click(screen.getByRole('button', { name: copy.menu_chat_confirm_yes }));
+
+    expect(onSetConversationShared).toHaveBeenCalledExactlyOnceWith(false);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  // jsdom does no layout, so this reads the rule itself: the two uppercase buttons are wider
+  // than the 240 px menu, and on one row "Keep sharing" was drawn outside the menu.
+  it('should let the confirmation buttons wrap inside the menu', () => {
+    const sharingCss = readFileSync(join(__dirname, 'SharingConsent.module.css'), 'utf8');
+    const rule = (selector: string) =>
+      sharingCss.match(new RegExp(`${selector.replace(/[.*>]/g, '\\$&')}\\s*\\{([^}]*)\\}`))?.[1];
+
+    expect(rule('.menuConfirmActions')).toMatch(/flex-wrap:\s*wrap/);
+    expect(rule('.menuConfirmActions > *')).toMatch(/flex:\s*1 1 auto/);
+  });
+
+  it('should treat turning the switch back on during the confirmation as a cancel', () => {
+    const { onSetConversationShared } = renderBoth({
+      status: 'on',
+      conversationExcluded: false,
+      conversationHasShared: true,
+    });
+    openMenu();
+    const thisChat = screen.getByRole('switch', { name: copy.menu_share_chat });
+    fireEvent.click(thisChat);
+    expect(thisChat.getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(thisChat);
+
+    expect(onSetConversationShared).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(thisChat.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('should re-include a chat excluded elsewhere while the confirmation was open', () => {
+    const onSetConversationShared = vi.fn();
+    const view = (conversationExcluded: boolean): AiSharingView => ({
+      status: 'on',
+      conversationExcluded,
+      conversationHasShared: true,
+    });
+    const { rerender } = render(
+      <SharingStatusChip
+        sharing={view(false)}
+        onSetConversationShared={onSetConversationShared}
+      />,
+    );
+    openMenu();
+    const thisChat = screen.getByRole('switch', { name: copy.menu_share_chat });
+    fireEvent.click(thisChat);
+    rerender(
+      <SharingStatusChip
+        sharing={view(true)}
+        onSetConversationShared={onSetConversationShared}
+      />,
+    );
+
+    fireEvent.click(thisChat);
+
+    expect(onSetConversationShared).toHaveBeenCalledExactlyOnceWith(true);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('should keep sharing a chat when the creator cancels', () => {
+    const { onSetConversationShared } = renderBoth({
+      status: 'on',
+      conversationExcluded: false,
+      conversationHasShared: true,
+    });
+    openMenu();
+    const thisChat = screen.getByRole('switch', { name: copy.menu_share_chat });
+    fireEvent.click(thisChat);
+    fireEvent.click(screen.getByRole('button', { name: copy.menu_chat_confirm_no }));
+
+    expect(onSetConversationShared).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(thisChat.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('should stop sharing a chat that shared nothing without asking', () => {
+    const { onSetConversationShared } = renderBoth({
+      status: 'on',
+      conversationExcluded: false,
+      conversationHasShared: false,
+    });
+    openMenu();
+    fireEvent.click(screen.getByRole('switch', { name: copy.menu_share_chat }));
+
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(onSetConversationShared).toHaveBeenCalledExactlyOnceWith(false);
   });
 
   it('should say that what an unshared chat had shared was deleted', () => {

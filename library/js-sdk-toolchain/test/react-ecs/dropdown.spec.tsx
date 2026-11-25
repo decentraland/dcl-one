@@ -1,4 +1,4 @@
-import { Entity } from '../../packages/@dcl/ecs/dist'
+import type { Entity } from '../../packages/@dcl/ecs/dist'
 import { components } from '../../packages/@dcl/ecs/src'
 import { Dropdown, ReactEcs, UiEntity } from '../../packages/@dcl/react-ecs/src'
 import { Color4 } from '../../packages/@dcl/sdk/math'

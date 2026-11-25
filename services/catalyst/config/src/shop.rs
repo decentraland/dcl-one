@@ -162,7 +162,7 @@ pub struct MarketplaceConfig {
     pub marketplace_third_party_registry_index_enabled: bool,
 
     /// Walk the Polygon collection factories and their collections' events into
-    /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry. Nothing reads it yet.
+    /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry for collection counts and sales analytics.
     #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_collections_index_enabled: bool,
 
