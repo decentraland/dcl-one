@@ -166,6 +166,11 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_collections_index_enabled: bool,
 
+    /// The networks whose `shop.collections` and `shop.items` rows the collections index's fold
+    /// takes from the collections mirror and writes (`matic`); empty, it keeps its log alone.
+    #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_OWNS", default_value = "")]
+    pub marketplace_collections_index_owns: String,
+
     /// Pause between the end of one pass and the start of the next, for the nft, trade-events,
     /// MANA transfers, sales, committee, third-party registry, collections and rentals walks
     /// (30 under mirror).
