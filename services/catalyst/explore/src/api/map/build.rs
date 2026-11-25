@@ -142,7 +142,10 @@ pub trait LandMarket: Send + Sync {
     /// The marks of what [`Self::snapshot`] would read, on `conn` at `now`:
     /// cheap enough to read every few seconds, moving whenever a row it
     /// reads changes (an expiry at `now` included) or a source's readiness
-    /// does. The build job rebuilds when they move ([`super::Watcher`]).
+    /// does, and equal for equal rows at equal clocks. The build job reads
+    /// them on a pooled connection every few seconds and once in each
+    /// build's snapshot, and rebuilds when the former differ from the
+    /// latter ([`super::Watcher`]).
     fn marks<'a>(
         &'a self,
         conn: &'a mut PgConnection,

@@ -1112,6 +1112,16 @@ mod tests {
             "an expiry at the clock moves them"
         );
 
+        // The map's build job reads them both on a pooled connection and in
+        // its snapshot, and compares the two: equal rows at an equal clock
+        // read the same.
+        let mut pooled = db.pool.acquire().await.unwrap();
+        let outside = land_market_marks(&state, &mut pooled, 1, LAND, ESTATE, later)
+            .await
+            .unwrap();
+        drop(pooled);
+        assert_eq!(outside, marks_at(&state, later).await);
+
         // Readiness withdrawn.
         sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) WHERE indexer IN ('nft', 'trade_events')")
             .execute(&db.pool)

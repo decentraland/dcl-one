@@ -3112,16 +3112,22 @@ builds it from its own indexes.
   leased, started once the land-authz index and Shop's reader are attached,
   whatever `EXPLORER_MIRRORS_ENABLED` says. It builds when its inputs
   change, not on a timer: every 5 s it reads their marks (`Watcher`), and a
-  pass (`run_pass`) runs when they moved since the ones read before the
-  last pass, when a change held back by the publication floor may publish,
+  pass (`run_pass`) runs when they moved since the ones the last pass read
+  in its own snapshot, at its clock, when a change held back by the
+  publication floor may publish,
   when a failed pass's retry is due (1 minute, doubling to 5), when another
   publisher stored a revision during the last pass, or after 10 minutes
   without one (a safety net). Moved marks wait while a change is held back
   (the pass at the floor's end reads every input) and while a failed pass
   waits for its retry, unless every source turned ready meanwhile; marks
   that cannot be read move nothing. So a failing read or pass backs off
-  instead of building every 5 s. The marks are read before the pass, so a
-  change during it moves them for the next one.
+  instead of building every 5 s. Because later marks are compared with the
+  pass's own, a change that lands after its snapshot moves them even when
+  a later change reverts it (a rental listed, then closed). A pass that
+  could not read its marks vouches for nothing: the next readable marks
+  run a pass before any check, and a second such pass in a row backs off
+  as a failed one does. Only marks equal to the pass's record its revision
+  checked again.
   Each mark is a durable counter raised in the transaction that rewrites
   rows in place, a position in an append-only log, or a digest of the very
   rows the build reads, so equal marks mean equal inputs:

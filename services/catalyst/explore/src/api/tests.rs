@@ -1940,13 +1940,21 @@ impl map::LandMarket for RewindingLandMarket {
 /// A Shop side whose next call, once armed, signals `pinned` on the build's
 /// snapshot and holds the build there until `release`.
 /// Shop's side for the build job's scheduling: its marks can fail to read
-/// (`marks_fail`) or move on every read (`churning`).
+/// (`marks_fail`, or `snapshot_marks_fail` only in the build's snapshot) or
+/// move on every read (`churning`). A `rental` listing shows in the build and
+/// in the marks; `rental_after_next_marks` is listed right after the next
+/// marks read, between the read before a pass and the pass's snapshot.
 #[derive(Default)]
 struct ScriptedLandMarket {
     answer: Mutex<Option<crate::chain_index::source::Source>>,
     marks_fail: std::sync::atomic::AtomicBool,
+    snapshot_marks_fail: std::sync::atomic::AtomicBool,
     churning: std::sync::atomic::AtomicBool,
     reads: std::sync::atomic::AtomicUsize,
+    rental: Mutex<Option<map::build::LandRental>>,
+    rental_after_next_marks: Mutex<Option<map::build::LandRental>>,
+    /// The next marks read is the build's, in its snapshot.
+    in_build: std::sync::atomic::AtomicBool,
 }
 
 impl map::LandMarket for ScriptedLandMarket {
@@ -1959,7 +1967,14 @@ impl map::LandMarket for ScriptedLandMarket {
         _now: chrono::DateTime<chrono::Utc>,
     ) -> futures::future::BoxFuture<'a, Result<map::LandMarketSnapshot, map::LandMarketError>> {
         let answer = match *self.answer.lock() {
-            None => Ok(map::LandMarketSnapshot::default()),
+            None => {
+                self.in_build
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(map::LandMarketSnapshot {
+                    rentals: self.rental.lock().clone().into_iter().collect(),
+                    ..Default::default()
+                })
+            }
             Some(source) => Err(map::LandMarketError::Unready(
                 source,
                 "fixture not published".into(),
@@ -1979,17 +1994,24 @@ impl map::LandMarket for ScriptedLandMarket {
         use std::sync::atomic::Ordering::SeqCst;
         let unready = *self.answer.lock();
         let read = self.reads.fetch_add(1, SeqCst);
-        let result = if self.marks_fail.load(SeqCst) {
+        let in_build = self.in_build.swap(false, SeqCst);
+        let result = if self.marks_fail.load(SeqCst)
+            || (in_build && self.snapshot_marks_fail.load(SeqCst))
+        {
             Err(map::LandMarketError::Failed(anyhow::anyhow!(
                 "canceling statement due to statement timeout"
             )))
         } else {
             let turn = if self.churning.load(SeqCst) { read } else { 0 };
+            let listed = self.rental.lock().is_some();
             Ok(map::build::Marks {
                 ready: unready.is_none(),
-                marks: format!("{unready:?}|{turn}"),
+                marks: format!("{unready:?}|{turn}|{listed}"),
             })
         };
+        if let Some(rental) = self.rental_after_next_marks.lock().take() {
+            *self.rental.lock() = Some(rental);
+        }
         Box::pin(async move { result })
     }
 }
@@ -3280,6 +3302,167 @@ async fn a_failing_marks_read_or_pass_waits_for_its_retry() {
     assert_eq!(
         w.tick(&node.state, &ctx, t0 + secs(155)).await,
         map::Tick::Built
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// The stored revision's etag.
+async fn grid_etag(pool: &PgPool) -> Option<String> {
+    sqlx::query_scalar("SELECT etag FROM explore_api.map_grid WHERE id = 1")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// An open rental listing of the seeded parcel 10,14.
+fn rental_of_10_14(settings: &crate::land_authz::Settings) -> map::build::LandRental {
+    map::build::LandRental {
+        contract_address: settings.land_registry.to_ascii_lowercase(),
+        token_id: map::meta::encode_land_token_id(10, 14),
+        expiration_ms: 4_000_000_000_000,
+        updated_at_ms: 1_750_000_000_000,
+        periods: vec![(1, 7, "500".into())],
+    }
+}
+
+/// The marks a pass compares later ones with are those of the snapshot it
+/// built from. A rental listed in a pass's snapshot and closed before the
+/// next readable marks reads as no move against marks read before that
+/// pass; against the pass's own it moves them, so the grid is rebuilt
+/// without the rental, and never recorded checked current with it.
+#[tokio::test]
+async fn a_change_reverted_after_a_pass_rebuilds_the_grid_it_listed() {
+    use std::sync::atomic::Ordering::SeqCst;
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(ScriptedLandMarket::default());
+    node.state.attach_land_market(market.clone());
+    let secs = Duration::from_secs;
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+    let unlisted = grid_etag(&db.pool).await;
+
+    // The safety pass cannot read the marks, before or in its snapshot, and
+    // lists the rental.
+    market.marks_fail.store(true, SeqCst);
+    *market.rental.lock() = Some(rental_of_10_14(&settings));
+    let t1 = t0 + map::SAFETY_INTERVAL;
+    assert_eq!(w.tick(&node.state, &ctx, t1).await, map::Tick::Built);
+    let listed = grid_etag(&db.pool).await;
+    assert_ne!(listed, unlisted, "the grid lists the rental");
+    // The rental closes before the marks read again: they read as they did
+    // before that pass, and the grid is rebuilt without it.
+    market.marks_fail.store(false, SeqCst);
+    *market.rental.lock() = None;
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(5)).await,
+        map::Tick::Built,
+        "a pass without marks of its own vouches for nothing"
+    );
+    assert_eq!(grid_etag(&db.pool).await, unlisted);
+
+    // A rental listed between the marks read before the safety pass and its
+    // snapshot, then closed.
+    *market.rental_after_next_marks.lock() = Some(rental_of_10_14(&settings));
+    let t2 = t1 + secs(5) + map::SAFETY_INTERVAL;
+    assert_eq!(w.tick(&node.state, &ctx, t2).await, map::Tick::Built);
+    assert_eq!(grid_etag(&db.pool).await, listed, "the snapshot saw it");
+    *market.rental.lock() = None;
+    assert_eq!(
+        w.tick(&node.state, &ctx, t2 + secs(5)).await,
+        map::Tick::Built,
+        "the marks moved against the snapshot's"
+    );
+    assert_eq!(grid_etag(&db.pool).await, unlisted);
+
+    // Nothing moves: the revision is recorded checked current again.
+    assert_eq!(
+        w.tick(&node.state, &ctx, t2 + secs(10)).await,
+        map::Tick::Idle
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t2 + secs(65)).await,
+        map::Tick::Checked
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A pass that cannot read its marks in its snapshot vouches for nothing:
+/// readable marks then run a pass at once, before any check. When its own
+/// marks keep failing, the passes back off as failed ones do, instead of
+/// building on every tick.
+#[tokio::test]
+async fn a_pass_without_its_own_marks_runs_again_and_backs_off() {
+    use std::sync::atomic::Ordering::SeqCst;
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(ScriptedLandMarket::default());
+    market.snapshot_marks_fail.store(true, SeqCst);
+    node.state.attach_land_market(market.clone());
+    let secs = Duration::from_secs;
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(5)).await,
+        map::Tick::Built,
+        "readable marks run a pass before any check"
+    );
+    // Two passes in a row without their marks: the retry wait, then twice it.
+    for s in [10, 15, 30, 60] {
+        assert_eq!(
+            w.tick(&node.state, &ctx, t0 + secs(s)).await,
+            map::Tick::Idle
+        );
+    }
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(65)).await,
+        map::Tick::Built
+    );
+    for s in [70, 125, 180] {
+        assert_eq!(
+            w.tick(&node.state, &ctx, t0 + secs(s)).await,
+            map::Tick::Idle,
+            "never checked current without its own marks"
+        );
+    }
+
+    // The snapshot reads its marks again: the next pass vouches for its
+    // revision, and the checks resume.
+    market.snapshot_marks_fail.store(false, SeqCst);
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(185)).await,
+        map::Tick::Built
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(190)).await,
+        map::Tick::Idle
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(245)).await,
+        map::Tick::Checked
     );
 
     jobs.shutdown(Duration::from_secs(1)).await;

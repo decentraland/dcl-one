@@ -301,6 +301,10 @@ pub struct MapState {
     /// to its build), for the [`Watcher`]'s checks; `None` after a pass that
     /// held a change back or was overtaken.
     confirmed: parking_lot::Mutex<Option<Current>>,
+    /// The marks of the inputs the last pass built from, read in its own
+    /// snapshot at its clock; `None` when it could not read them. What the
+    /// [`Watcher`] compares later marks with.
+    pass_marks: parking_lot::Mutex<Option<String>>,
     png_cache: ResponseCache,
     tiles_cache: ResponseCache,
     tiles_flights: parking_lot::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -322,6 +326,7 @@ impl MapState {
             checked_at: Default::default(),
             held_until: parking_lot::Mutex::new(None),
             confirmed: parking_lot::Mutex::new(None),
+            pass_marks: parking_lot::Mutex::new(None),
             png_cache: ResponseCache::new(RESPONSE_CACHE_TTL, PNG_CACHE_ENTRIES, PNG_CACHE_BYTES),
             tiles_cache: ResponseCache::new(
                 RESPONSE_CACHE_TTL,
@@ -753,7 +758,9 @@ fn next_stamp(stored: Option<i64>, now_ms: i64) -> i64 {
 /// discarded: a pass never overwrites a revision published since its
 /// snapshot.
 /// A source that is not published fails the pass naming it (`/mirrors`'
-/// `lastError`) and keeps the held grid; no partial grid is built.
+/// `lastError`) and keeps the held grid; no partial grid is built. The pass
+/// also reads its inputs' marks ([`read_marks`]) in the snapshot, for the
+/// [`Watcher`].
 pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
     mirror::run(&state.pool, MIRROR, ctx, || async {
         let (land, market) = match (state.land_authz.get(), state.land_market.get()) {
@@ -814,6 +821,18 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
                 return Err(e.context("reading Shop's LAND listings"));
             }
         };
+        // The marks of these very inputs, in this snapshot at its clock: the
+        // build job compares later marks with them, so a change that lands
+        // after the snapshot moves them even when a later one reverts it. A
+        // pass that cannot read them leaves none and builds anyway.
+        *state.map.pass_marks.lock() =
+            match read_marks(&mut snapshot.tx, &land, market.as_ref(), true, now).await {
+                Ok(read) => Some(read.marks),
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), "reading the map grid's marks in its snapshot failed");
+                    None
+                }
+            };
         // A read-only snapshot: nothing to commit.
         drop(snapshot);
         anyhow::ensure!(!ctx.is_cancelled(), "cancelled before the grid build");
@@ -977,23 +996,13 @@ pub struct Watched {
     pub at: chrono::DateTime<chrono::Utc>,
 }
 
-/// The marks of every input of a build: the land-authz index's readiness,
-/// rewrite count and newest folded LAND/Estate events
-/// ([`build::LAND_MARKS_SQL`]), and Shop's side ([`LandMarket::marks`]),
-/// read on one connection at its clock. `None` while the land-authz index or
-/// Shop's reader is not attached.
+/// The marks of every input of a build, read on a pooled connection at its
+/// clock ([`read_marks`]) after the land-authz index's readiness. `None`
+/// while the land-authz index or Shop's reader is not attached.
 pub async fn watch_marks(state: &Shared) -> anyhow::Result<Option<Watched>> {
     let (Some(land), Some(market)) = (state.land_authz.get(), state.land_market.get()) else {
         return Ok(None);
     };
-    let chain_id = build::land_chain_id(&land.settings.network).with_context(|| {
-        format!(
-            "no chain is known for LAND network {}",
-            land.settings.network
-        )
-    })?;
-    let land_registry = land.settings.land_registry.to_ascii_lowercase();
-    let estate_registry = land.settings.estate_registry.to_ascii_lowercase();
     let land_ready = crate::land_authz::indexer::ready_cursor(
         &land.pool,
         &land.settings.network,
@@ -1011,13 +1020,39 @@ pub async fn watch_marks(state: &Shared) -> anyhow::Result<Option<Watched>> {
         .fetch_one(&mut *conn)
         .await
         .context("reading the database clock")?;
+    read_marks(&mut conn, land, market.as_ref(), land_ready, now)
+        .await
+        .map(Some)
+}
+
+/// The marks of every input of a build, read on `conn` at `now`: whether the
+/// land-authz index is published (`land_ready`), its rewrite count and newest
+/// folded LAND/Estate events ([`build::LAND_MARKS_SQL`]), and Shop's side
+/// ([`LandMarket::marks`]). [`watch_marks`] reads them on a pooled
+/// connection; [`run_pass`] reads them in its snapshot, at its clock, so
+/// both compare equal for equal inputs.
+async fn read_marks(
+    conn: &mut sqlx::PgConnection,
+    land: &crate::land_authz::LandAuthzState,
+    market: &dyn LandMarket,
+    land_ready: bool,
+    now: chrono::DateTime<chrono::Utc>,
+) -> anyhow::Result<Watched> {
+    let chain_id = build::land_chain_id(&land.settings.network).with_context(|| {
+        format!(
+            "no chain is known for LAND network {}",
+            land.settings.network
+        )
+    })?;
+    let land_registry = land.settings.land_registry.to_ascii_lowercase();
+    let estate_registry = land.settings.estate_registry.to_ascii_lowercase();
     let land_marks: Option<String> = sqlx::query_scalar(build::LAND_MARKS_SQL)
         .bind(&land.settings.network)
         .fetch_optional(&mut *conn)
         .await
         .context("reading the land-authz marks")?;
     let shop = market
-        .marks(&mut conn, chain_id, &land_registry, &estate_registry, now)
+        .marks(conn, chain_id, &land_registry, &estate_registry, now)
         .await
         .map_err(|e| match e {
             LandMarketError::Unready(source, why) => {
@@ -1025,7 +1060,7 @@ pub async fn watch_marks(state: &Shared) -> anyhow::Result<Option<Watched>> {
             }
             LandMarketError::Failed(e) => e.context("reading Shop's marks"),
         })?;
-    Ok(Some(Watched {
+    Ok(Watched {
         ready: land_ready && shop.ready,
         marks: format!(
             "{land_ready}|{}|{}",
@@ -1033,7 +1068,7 @@ pub async fn watch_marks(state: &Shared) -> anyhow::Result<Option<Watched>> {
             shop.marks
         ),
         at: now,
-    }))
+    })
 }
 
 /// What a [`Watcher::tick`] did.
@@ -1053,28 +1088,35 @@ pub enum Tick {
 /// The build job's decisions, one [`Self::tick`] every [`WATCH_INTERVAL`]:
 /// a pass ([`run_pass`]) when it is due (a held-back publication, a retry,
 /// a pass that another publisher overtook, or [`SAFETY_INTERVAL`] without
-/// one), or when the marks moved since the ones read before the last pass.
-/// Moved marks wait while a change is held back by the floor (the pass at
-/// its end reads every input) and while a failed pass waits for its retry,
-/// unless every source turned ready meanwhile; marks that cannot be read
-/// move nothing. So a failing read or pass backs off from [`RETRY`] to
-/// [`RETRY_MAX`] instead of building every tick. Otherwise, while every
-/// source is ready and the last pass left a revision current, it records
-/// that the revision still is (`checked_at`, at most every
-/// [`CHECK_RECORD_INTERVAL`]), guarded on that revision. The marks are read
-/// before the pass, so a change that lands during it moves them for the
-/// next tick.
+/// one), or when the marks moved since the ones the last pass read in its
+/// own snapshot, at its clock ([`run_pass`]). So a change that lands after
+/// that snapshot moves them even when a later change reverts it (a rental
+/// listed, then closed). A pass that could not read them leaves none, so the
+/// next readable marks run a pass before any check; a second such pass in a
+/// row backs off as a failed one does. Moved marks wait while a change is
+/// held back by the floor (the pass at its end reads every input) and while
+/// a failed pass waits for its retry, unless every source turned ready
+/// meanwhile; marks that cannot be read move nothing. So a failing read or
+/// pass backs off from [`RETRY`] to [`RETRY_MAX`] instead of building every
+/// tick. Otherwise, while every source is ready, the marks equal the last
+/// pass's and that pass left a revision current, it records that the
+/// revision still is (`checked_at`, at most every
+/// [`CHECK_RECORD_INTERVAL`]), guarded on that revision.
 #[derive(Debug)]
 pub struct Watcher {
-    /// The marks read before the last pass.
+    /// The marks the last completed pass read in its snapshot; `None` when
+    /// it could not read them.
     seen: Option<String>,
-    /// Every source was ready when those marks were read.
+    /// Every source was ready when the marks before the last pass were read.
     ready_seen: bool,
     /// When a pass is due whatever the marks say; `None`: right away.
     due: Option<Instant>,
     retry: Duration,
-    /// The last pass failed: moved marks wait for its retry.
+    /// The last pass failed, or the last two could not read their marks:
+    /// moved marks wait for its retry.
     failing: bool,
+    /// The last completed pass could not read its marks.
+    unmarked: bool,
     /// When the change the last pass held back may publish.
     held_until: Option<Instant>,
     /// The revision the last pass left current, built from inputs whose
@@ -1091,6 +1133,7 @@ impl Default for Watcher {
             due: None,
             retry: RETRY,
             failing: false,
+            unmarked: false,
             held_until: None,
             current: None,
             last_checked: None,
@@ -1116,16 +1159,12 @@ impl Watcher {
         let holding = self.held_until.is_some_and(|h| now < h);
         let recovered = self.failing && ready && !self.ready_seen;
         if due || recovered || (moved && !holding && !self.failing) {
-            if marks.is_some() {
-                self.seen = marks;
-            }
             self.ready_seen = ready;
             *state.map.held_until.lock() = None;
             *state.map.confirmed.lock() = None;
+            *state.map.pass_marks.lock() = None;
             return match run_pass(state, ctx).await {
                 Ok(()) => {
-                    self.retry = RETRY;
-                    self.failing = false;
                     self.held_until = state.map.held_until.lock().take();
                     self.current = state.map.confirmed.lock().take();
                     self.due = match (self.held_until, &self.current) {
@@ -1138,9 +1177,29 @@ impl Watcher {
                     if self.current.is_some() {
                         self.last_checked = Some(now);
                     }
+                    // Compared from now on with the marks of the snapshot this
+                    // pass built from, not the ones read before it.
+                    self.seen = state.map.pass_marks.lock().take();
+                    if self.unmarked && self.seen.is_none() {
+                        // A second pass in a row that could not read its
+                        // marks backs off as a failed one does.
+                        self.failing = true;
+                        self.due = self.due.map(|d| d.min(now + self.retry));
+                        self.retry = (self.retry * 2).min(RETRY_MAX);
+                    } else {
+                        // Without marks nothing vouches for this revision:
+                        // the next readable marks differ from none and run
+                        // a pass before any check.
+                        self.unmarked = self.seen.is_none();
+                        self.failing = false;
+                        self.retry = RETRY;
+                    }
                     Tick::Built
                 }
                 Err(e) => {
+                    // A failed pass leaves nothing current, and moved marks
+                    // wait for its retry: `seen` stays the last completed
+                    // pass's.
                     tracing::warn!(error = %format!("{e:#}"), "map grid pass failed");
                     self.failing = true;
                     self.held_until = None;
@@ -1154,8 +1213,11 @@ impl Watcher {
         let record = self
             .last_checked
             .is_none_or(|t| now.duration_since(t) >= CHECK_RECORD_INTERVAL);
+        // Only the marks of the snapshot the revision was built from vouch
+        // for it.
         if let (Some(w), Some(current)) = (&watched, &self.current)
             && w.ready
+            && self.seen.as_deref() == Some(w.marks.as_str())
             && record
         {
             match confirm_current(state, ctx, current, w.at.naive_utc()).await {
