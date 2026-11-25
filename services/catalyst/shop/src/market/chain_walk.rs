@@ -994,7 +994,7 @@ pub fn is_ready_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
 
 /// The published height for a reader that bounds every event query by that
 /// height. A forward walk may already have committed the next window.
-pub(super) fn fresh_fold_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> Option<i64> {
+pub(crate) fn fresh_fold_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> Option<i64> {
     let age = now.naive_utc().signed_duration_since(c.folded_at?);
     c.folded_block.filter(|folded| {
         c.full_history

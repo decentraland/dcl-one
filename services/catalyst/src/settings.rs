@@ -267,7 +267,7 @@ mod tests {
                 })
                 .collect();
             let expected: &[&str] = match net {
-                ChainNet::Ethereum => &["nft", "trade_events"],
+                ChainNet::Ethereum => &["nft", "sales", "trade_events"],
                 ChainNet::Matic => &["nft", "sales", "trade_events"],
             };
             assert_eq!(names, expected);

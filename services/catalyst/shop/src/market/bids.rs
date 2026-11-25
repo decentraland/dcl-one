@@ -558,10 +558,10 @@ pub(super) async fn bids_snapshot(
             "the matic sales index is not published (catching up, rewound after a reorg, stopped, or MARKETPLACE_SALES_INDEX_ENABLED off)",
         ));
     }
-    owned_items::check_on(
+    owned_items::check(
         &mut tx,
+        state.settings.catalogue(),
         &[ChainNet::Matic],
-        |net| indexes.chain_id(net),
         Rule::Fresh,
         false,
         now,

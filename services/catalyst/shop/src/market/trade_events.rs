@@ -1060,10 +1060,10 @@ pub(super) async fn bid_asset(
     let contract = asset.contract_address.to_ascii_lowercase();
     Ok(match (asset.asset_type, &asset.token_id, &asset.item_id) {
         (crate::types::ASSET_TYPE_ERC721, Some(token), _) => {
-            nft_meta(pool, land_image_base, &net, &contract, token).await?
+            nft_meta(pool, land_image_base, &net, bid.chain_id, &contract, token).await?
         }
         (crate::types::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
-            item_meta(pool, &net, &contract, item).await?
+            item_meta(pool, &net, bid.chain_id, &contract, item).await?
         }
         _ => None,
     })
@@ -1229,13 +1229,15 @@ fn category_of_item_type(item_type: &str) -> &'static str {
 pub(crate) async fn item_meta<'e>(
     conn: impl sqlx::PgExecutor<'e>,
     network: &str,
+    chain_id: i64,
     contract: &str,
     item_id: &str,
 ) -> Result<Option<AssetMeta>, sqlx::Error> {
-    let row = sqlx::query("SELECT image, creator, rarity, name, item_type FROM shop.items WHERE network = $1 AND contract_address = $2 AND item_id = $3::numeric")
+    let row = sqlx::query("SELECT image, creator, rarity, name, item_type FROM shop.items WHERE network = $1 AND contract_address = $2 AND item_id = $3::numeric AND chain_id=$4 AND ($4 IN (1,137) OR testnet_verified)")
         .bind(network)
         .bind(contract)
         .bind(item_id)
+        .bind(chain_id as i32)
         .fetch_optional(conn)
         .await?;
     Ok(row.map(|r| AssetMeta {
@@ -1254,6 +1256,7 @@ pub(crate) async fn item_meta<'e>(
 pub(crate) async fn item_metas(
     pool: &PgPool,
     network: &str,
+    chain_id: i64,
     keys: &[(String, String)],
 ) -> Result<HashMap<(String, String), AssetMeta>, sqlx::Error> {
     let (contracts, items): (Vec<String>, Vec<String>) = keys
@@ -1264,11 +1267,12 @@ pub(crate) async fn item_metas(
     let rows = sqlx::query(
         "SELECT u.contract, u.item, i.image, i.creator, i.rarity, i.name, i.item_type \
          FROM UNNEST($2::text[], $3::text[]) AS u(contract, item) \
-         JOIN shop.items i ON i.network = $1 AND i.contract_address = u.contract AND i.item_id = u.item::numeric",
+         JOIN shop.items i ON i.network = $1 AND i.contract_address = u.contract AND i.item_id = u.item::numeric AND i.chain_id=$4 AND ($4 IN (1,137) OR i.testnet_verified)",
     )
     .bind(network)
     .bind(&contracts)
     .bind(&items)
+    .bind(chain_id as i32)
     .fetch_all(pool)
     .await?;
     Ok(rows
@@ -1295,9 +1299,11 @@ pub(crate) async fn nft_metas(
     pool: &PgPool,
     land_image_base: &str,
     network: &str,
+    chain_id: i64,
     keys: &[(String, String)],
 ) -> Result<HashMap<(String, String), AssetMeta>, sqlx::Error> {
-    let found = super::nft_reads::asset_metas(pool, land_image_base, network, keys).await?;
+    let found =
+        super::nft_reads::asset_metas(pool, land_image_base, network, chain_id, keys).await?;
     Ok(found
         .into_iter()
         .map(|((contract, token), n)| {
@@ -1322,11 +1328,13 @@ pub(crate) async fn nft_meta<'e>(
     conn: impl sqlx::PgExecutor<'e>,
     land_image_base: &str,
     network: &str,
+    chain_id: i64,
     contract: &str,
     token_id: &str,
 ) -> Result<Option<AssetMeta>, sqlx::Error> {
     if let Some(n) =
-        super::nft_reads::asset_meta(conn, land_image_base, network, contract, token_id).await?
+        super::nft_reads::asset_meta(conn, land_image_base, network, chain_id, contract, token_id)
+            .await?
     {
         return Ok(Some(AssetMeta {
             image: n.image,
@@ -1368,6 +1376,10 @@ async fn accepted_event(
     if executed.is_none() {
         return Ok(None);
     }
+    let Some(net) = ChainNet::parse(&network) else {
+        return Ok(None);
+    };
+    let chain_id = state.settings.market.indexes.chain_id(net);
     let mut metas = Vec::new();
     for (asset_type, contract, token_id, item_id) in &trade.assets {
         let meta = match (*asset_type, token_id, item_id) {
@@ -1376,13 +1388,14 @@ async fn accepted_event(
                     &mut *conn,
                     &state.settings.land_image_base_url,
                     &network,
+                    chain_id,
                     contract,
                     token,
                 )
                 .await
             }
             (crate::types::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
-                item_meta(&mut *conn, &network, contract, item).await
+                item_meta(&mut *conn, &network, chain_id, contract, item).await
             }
             _ => Ok(None),
         }

@@ -13,7 +13,7 @@ OLD = 1_600_000_000 * 10**9
 
 
 def git(root, *args):
-    subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', *args], cwd=root, check=True,
+    subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', *args], cwd=root, check=True,
                    capture_output=True)
 
 
