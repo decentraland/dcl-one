@@ -15,7 +15,9 @@ import { CAMERA_CENTER_SECONDS, CAMERA_MOVE_SECONDS } from '@explorer-core/featu
 import { isRouteTo, navigation } from '@explorer-core/features/map/navigation'
 import { Navmap } from '@explorer-core/features/map/navmap'
 import { showToast } from '../../design'
-import { PhotoDetail } from '../gallery/PhotoDetail'
+import { usePhotoViewer } from '../gallery/usePhotoViewer'
+import { travelToPhoto } from '../gallery/reelActions'
+import { openPassport } from '../profile/Passport'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { useOptionalSession } from '../session/SessionContext'
 import type { GalleryState, MapState, MinimapState, ProfileState, TravelOutcome } from '../session/useEngineSession'
@@ -148,6 +150,31 @@ export function MapPage({
     void nav.selectParcelAsHome(parcel)
   }, [home, nav])
 
+  const openPhoto = open && photo != null ? photo.photos[photo.index] : undefined
+  usePhotoViewer(
+    photo != null && openPhoto != null
+      ? {
+          photos: photo.photos.map((ph) => ({ id: ph.id, url: ph.url, thumbnailUrl: ph.thumbnailUrl, dateTime: ph.dateTime ?? '' })),
+          index: photo.index,
+          meta: gallery.metas[openPhoto.id],
+          canEdit: false,
+          onIndex: (index) => setPhoto({ photos: photo.photos, index }),
+          onLoadMeta: gallery.loadPhoto,
+          loadWearables: gallery.loadWearables,
+          onClose: () => setPhoto(null),
+          onViewPerson: (u) => openPassport(u.address),
+          onJumpIn: (place) =>
+            go(
+              () => travelToPhoto(place, map),
+              () => {
+                setPhoto(null)
+                nav.clearInput()
+              }
+            )
+        }
+      : null
+  )
+
   if (!open) return null
 
   const jumpInPlace = (): void => {
@@ -177,16 +204,14 @@ export function MapPage({
     if (view == null) return
     go(() => map.teleportToPlace(view.event.x, view.event.y), () => nav.clearInput())
   }
-  // Home can be set, not cleared: the engine keeps one home, the default until one is set.
-  const setHome = (place: DiscoverPlace, origin: Vec2 | null): void => {
+  const placeIsHome = (place: DiscoverPlace, origin: Vec2 | null): boolean => isPlacePanelHome(home, place, origin)
+  const toggleHome = (place: DiscoverPlace, origin: Vec2 | null): void => {
+    if (placeIsHome(place, origin)) return map.clearHome()
     const target = placeHomeTarget(place, origin)
     if (target != null) map.setHome(target.realm ?? DEFAULT_REALM, target.parcel)
   }
 
-  const placeIsHome = (place: DiscoverPlace, origin: Vec2 | null): boolean => isPlacePanelHome(home, place, origin)
-
   const p = profile.data
-  const openPhoto = photo != null ? photo.photos[photo.index] : undefined
   const body = (
     <>
       <div className={compact != null ? `${styles.wrap} ${styles.compact}` : styles.wrap}>
@@ -218,7 +243,7 @@ export function MapPage({
           <RouteLayer destination={destination} pose={pose} active={open} />
         </MapCanvas>
 
-        <CategoryStrip selected={snap.chip} onSelect={(key) => nav.selectCategory(key)} />
+        <CategoryStrip selected={snap.chip} wrap={compact != null} onSelect={(key) => nav.selectCategory(key)} />
         {warning && (
           <WorldWarning
             onClose={() => {
@@ -272,7 +297,7 @@ export function MapPage({
               isHome={placeIsHome(snap.place.place, snap.place.origin)}
               navigating={isRouteTo(destination, snap.place.place)}
               onPlaceChange={(place) => nav.updatePlace(place)}
-              onHome={() => snap.place != null && setHome(snap.place.place, snap.place.origin)}
+              onHome={map.canPinHome ? () => snap.place != null && toggleHome(snap.place.place, snap.place.origin) : undefined}
               onStartNavigation={() => navigation.start(snap.place?.place ?? null)}
               onStopNavigation={navigation.stop}
               onJumpIn={jumpInPlace}
@@ -286,26 +311,6 @@ export function MapPage({
         </RightPanel>
       </div>
 
-      {photo != null && openPhoto != null && (
-        <PhotoDetail
-          photos={photo.photos.map((ph) => ({ id: ph.id, url: ph.url, thumbnailUrl: ph.thumbnailUrl, dateTime: ph.dateTime ?? '' }))}
-          index={photo.index}
-          meta={gallery.metas[openPhoto.id]}
-          isSelf={false}
-          onIndex={(index) => setPhoto({ photos: photo.photos, index })}
-          onLoadMeta={gallery.loadPhoto}
-          onClose={() => setPhoto(null)}
-          onTeleport={(x, y) =>
-            go(
-              () => map.teleportToPlace(x, y),
-              () => {
-                setPhoto(null)
-                nav.clearInput()
-              }
-            )
-          }
-        />
-      )}
     </>
   )
   if (compact != null) return body

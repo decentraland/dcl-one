@@ -1,3 +1,4 @@
+use common::sync::MutexExt;
 use std::time::Duration;
 
 use crate::{batch_sizes::BatchSizes, IpfsIo};
@@ -65,15 +66,14 @@ impl DownloadStats {
 
 impl IpfsIo {
     pub(super) fn download_stats(&self) -> DownloadStats {
-        *self.request_metrics.downloads.lock().unwrap()
+        *self.request_metrics.downloads.lock_ignore_poison()
     }
 
     /// Definitions returned in one completed scene lookup (pointers or a World's entity URNs).
     pub fn record_scene_batch(&self, size: usize) {
         self.request_metrics
             .downloads
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .scene_batches
             .record(size);
     }
@@ -82,8 +82,7 @@ impl IpfsIo {
     pub fn record_attachment_batch(&self, size: usize) {
         self.request_metrics
             .downloads
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .attachment_batches
             .record(size);
     }

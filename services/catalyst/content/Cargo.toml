@@ -46,8 +46,8 @@ reqwest.workspace = true
 flate2.workspace = true
 url.workspace = true
 regex.workspace = true
-image.workspace = true
-metrics.workspace = true
+image = { workspace = true, features = ["gif"] }
+dcl-metrics.workspace = true
 
 [features]
 ts = ["catalyst-shared/ts", "catalyst-config/ts", "catalyst-storage/ts", "catalyst-chain-index/ts", "catalyst-land-authz/ts"]
@@ -65,5 +65,4 @@ catalyst-testing = { path = "../testing" }
 catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
-metrics-exporter-prometheus.workspace = true
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }

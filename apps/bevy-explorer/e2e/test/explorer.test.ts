@@ -88,7 +88,7 @@ describe('Explorer', () => {
           address: '0x' + '1'.repeat(40),
           blocks: { state: 'live', reason: null, blocked: [other], blockedBy: [] },
           platformBan: { state: 'checked', isBanned: false, source: null, reason: null, matchedOn: null, customMessage: null, expiresAt: null, checkedAgoSecs: 3, error: null },
-          sceneAdmission: { state: 'allowed', scope: null, message: null, sceneId: 'scene-1' },
+          sceneAdmission: { state: 'allowed', scope: null, message: null, sceneId: 'scene-1', retainedRefusals: [{ sceneId: 'refused-scene', scope: 'scene', retryDue: 45 }] },
           sceneRoom: { state: 'connected', sceneId: 'scene-1', bannedAddresses: [], sceneAdmins: [] },
           lookup: line.endsWith(other) ? { address: other, isBlockedEitherWay: true, direction: 'local_user_blocked_them', bannedInScene: false, adminPermissions: 'not_admin' } : null,
           unavailable: line.endsWith(other) ? {} : { lookup: 'no address given' }
@@ -101,6 +101,7 @@ describe('Explorer', () => {
     assert.equal(state.blocks.state, 'live')
     assert.deepEqual(state.blocks.blocked, [other])
     assert.equal(state.platformBan.isBanned, false)
+    assert.deepEqual(state.sceneAdmission.retainedRefusals, [{ sceneId: 'refused-scene', scope: 'scene', retryDue: 45 }])
     assert.equal(state.lookup, null)
     assert.equal(state.unavailable.lookup, 'no address given')
     const lookup = await explorer.banBlockState(other)
@@ -160,9 +161,9 @@ describe('Explorer', () => {
   })
 
   test('nametags reads the tags, and nametagBubble asks for a bubble', async () => {
-    const tag = { player: 'local', sceneAvatar: false, name: 'Ada', suffix: '#12ab', verified: false, official: false, voice: 'off', distance: 4, opacity: 1, scale: 0.0035, position: [0, 2, 0], headOffset: 0.3, bubble: null }
+    const tag = { player: 'local', sceneAvatar: false, nameShown: true, plate: { label: 'VIP', labelColor: '#FCFCFC', backgroundColor: '#161518', borderColor: '#161518' }, name: 'Ada', suffix: '#12ab', verified: false, official: false, voice: 'off', distance: 4, opacity: 1, scale: 0.0035, position: [0, 2, 0], headOffset: 0.3, bubble: null }
     const fake = new FakeConsole({
-      nametag_state: JSON.stringify({ visible: true, shown: 1, sceneAvatars: 0, hidden: 0, atlas: [512, 0], bubbles: 'All', tags: [tag] }),
+      nametag_state: JSON.stringify({ visible: true, shown: 1, sceneAvatars: 0, plates: 1, hidden: 0, atlas: [512, 0], bubbles: 'All', tags: [tag] }),
       nametag_bubble: JSON.stringify({ bubbles: 1 })
     })
     const explorer = new Explorer(fake)
@@ -170,6 +171,9 @@ describe('Explorer', () => {
     assert.equal(state.shown, 1)
     assert.equal(state.tags[0]?.suffix, '#12ab')
     assert.equal(state.tags[0]?.sceneAvatar, false)
+    assert.equal(state.plates, 1)
+    assert.equal(state.tags[0]?.nameShown, true)
+    assert.equal(state.tags[0]?.plate?.label, 'VIP')
     assert.equal(await explorer.nametagBubble('local', 'nearby', 'hello there'), 1)
     assert.equal(fake.lines.at(-1), '/nametag_bubble local nearby hello there')
   })

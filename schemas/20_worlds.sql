@@ -135,6 +135,14 @@ CREATE TABLE worlds.worlds (
 -- stage-4 readers' lower(name) expression index went with their predicate,
 -- 2026-09-25).
 
+CREATE TABLE worlds.thumbnail_aliases (
+    legacy_sha256 text PRIMARY KEY CHECK (legacy_sha256 ~ '^[0-9a-f]{64}$'),
+    blob_cid text NOT NULL,
+    mirror_expires_at timestamp with time zone
+);
+
+CREATE INDEX thumbnail_aliases_blob_cid_idx ON worlds.thumbnail_aliases (blob_cid);
+
 CREATE TABLE worlds.world_scenes (
     world_name text NOT NULL,
     entity_id text NOT NULL,
@@ -181,9 +189,10 @@ CREATE INDEX world_scenes_logs_permissions_decoded_idx ON worlds.world_scenes
     WHERE mirror_source IS NULL;
 
 -- `GET /collaborator`: the live Genesis scenes listing the signer (partial on
--- the predicate the query repeats; overwritten rows leave the index).
-CREATE INDEX deployments_scene_logs_permissions_decoded_idx ON content.deployments
-    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
+-- the predicate the query repeats; overwritten rows leave the index). Content
+-- stores the metadata as `{"v": metadata}`, so the array is at `v`.
+CREATE INDEX deployments_scene_v_logs_permissions_decoded_idx ON content.deployments
+    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'v' -> 'logsPermissions')::text))
     WHERE entity_type = 'scene' AND deleter_deployment IS NULL;
 
 -- ── the permission core ────────────────────────────────────────────────────

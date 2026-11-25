@@ -15,7 +15,7 @@ SPEC.loader.exec_module(mtimes)
 
 SECOND = 10**9
 VENDOR = 'rendering/bevy-explorer/vendor'
-BOIMP, DUI = VENDOR + '/boimp/src/lib.rs', VENDOR + '/bevy_dui/src/lib.rs'
+RPC, DUI = VENDOR + '/rpc-rust/rpc/src/lib.rs', VENDOR + '/bevy_dui/src/lib.rs'
 
 
 class BevyMtimesTest(unittest.TestCase):
@@ -27,7 +27,7 @@ class BevyMtimesTest(unittest.TestCase):
         self.git('config', 'maintenance.auto', 'false')
         self.git('config', 'gc.auto', '0')
         self.write('.gitignore', 'target/\n/rendering/bevy-explorer/bevy/\n')
-        self.write(BOIMP, 'pub fn import() {}\n')
+        self.write(RPC, 'pub fn import() {}\n')
         self.write(DUI, 'pub fn layout() {}\n')
         self.write('rendering/bevy-explorer/source/src/lib.rs', 'fn main() {}\n')
         self.write('library/vendor/rusty_enet/src/lib.rs', 'pub fn host() {}\n')
@@ -66,21 +66,21 @@ class BevyMtimesTest(unittest.TestCase):
         return now
 
     def test_unchanged_files_get_their_recorded_time_back(self):
-        self.set_mtime(BOIMP, 1_700_000_000 * SECOND + 750_000_000)
+        self.set_mtime(RPC, 1_700_000_000 * SECOND + 750_000_000)
         mtimes.record(self.root, self.target)
         self.checkout_now()
         self.assertEqual(mtimes.restore(self.root, self.target), (4, 0))
-        self.assertEqual(self.mtime(BOIMP), 1_700_000_000 * SECOND + 750_000_000)
+        self.assertEqual(self.mtime(RPC), 1_700_000_000 * SECOND + 750_000_000)
 
     def test_changed_files_keep_their_checkout_time(self):
         # Path dependencies tracked as exact bytes: Cargo judges them by file times.
         self.set_mtime(DUI, 1_700_000_000 * SECOND)
         mtimes.record(self.root, self.target)
-        self.write(BOIMP, 'pub fn import_changed() {}\n')
+        self.write(RPC, 'pub fn import_changed() {}\n')
         self.commit()
         now = self.checkout_now()
         self.assertEqual(mtimes.restore(self.root, self.target), (3, 1))
-        self.assertEqual(self.mtime(BOIMP), now)
+        self.assertEqual(self.mtime(RPC), now)
         self.assertEqual(self.mtime(DUI), 1_700_000_000 * SECOND)
 
     def test_recorded_times_keep_their_nanoseconds(self):
@@ -224,32 +224,32 @@ class BevyMtimesTest(unittest.TestCase):
     def test_a_tracked_link_is_no_input(self):
         # The id of a link is its text, and its time would be the one of the file it names: a changed
         # file behind an unchanged link must not get an old time back through the link.
-        link = self.root / VENDOR / 'boimp/src/alias.rs'
+        link = self.root / VENDOR / 'rpc-rust/rpc/src/alias.rs'
         link.symlink_to('lib.rs')
         self.commit()
-        self.assertNotIn(VENDOR + '/boimp/src/alias.rs', mtimes.blobs(self.root))
-        self.set_mtime(BOIMP, 1_700_000_000 * SECOND)
+        self.assertNotIn(VENDOR + '/rpc-rust/rpc/src/alias.rs', mtimes.blobs(self.root))
+        self.set_mtime(RPC, 1_700_000_000 * SECOND)
         mtimes.record(self.root, self.target)
         manifest = json.loads((self.profiles[0] / '.fingerprint' / mtimes.MANIFEST).read_text())
-        self.assertNotIn(VENDOR + '/boimp/src/alias.rs', manifest['files'])
+        self.assertNotIn(VENDOR + '/rpc-rust/rpc/src/alias.rs', manifest['files'])
         now = self.checkout_now()
-        self.write(BOIMP, 'pub fn import() { /* changed */ }\n')
-        self.set_mtime(BOIMP, now)
+        self.write(RPC, 'pub fn import() { /* changed */ }\n')
+        self.set_mtime(RPC, now)
         self.git('add', '.')
         mtimes.restore(self.root, self.target)
-        self.assertEqual(self.mtime(BOIMP), now)
+        self.assertEqual(self.mtime(RPC), now)
 
     def test_a_path_of_the_index_that_is_not_on_disk_is_left_out(self):
         self.set_mtime(DUI, 1_700_000_000 * SECOND)
-        (self.root / BOIMP).unlink()
+        (self.root / RPC).unlink()
         mtimes.record(self.root, self.target)
         manifest = json.loads((self.profiles[0] / '.fingerprint' / mtimes.MANIFEST).read_text())
-        self.assertNotIn(BOIMP, manifest['files'])
+        self.assertNotIn(RPC, manifest['files'])
         self.assertIn(DUI, manifest['files'])
-        self.git('checkout', '-q', '--', BOIMP)
+        self.git('checkout', '-q', '--', RPC)
         mtimes.record(self.root, self.target)
         self.checkout_now()
-        shutil.rmtree(self.root / VENDOR / 'boimp')
+        shutil.rmtree(self.root / VENDOR / 'rpc-rust')
         restored, _ = mtimes.restore(self.root, self.target)
         self.assertEqual(restored, 3)
         self.assertEqual(self.mtime(DUI), 1_700_000_000 * SECOND)
@@ -270,7 +270,7 @@ class BevyMtimesTest(unittest.TestCase):
         self.assertEqual(self.mtime(folder), after)
 
     def test_the_manifest_survives_the_native_cache_pruning(self):
-        # tooling/bevy-target-cache.py keeps every .fingerprint directory of a profile.
+        # tooling/bevy-target-cache.py removes only units' hashed entries from a profile's .fingerprint directory.
         spec = importlib.util.spec_from_file_location('bevy_target_cache', Path(__file__).parents[1] / 'bevy-target-cache.py')
         cache = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cache)
@@ -280,6 +280,7 @@ class BevyMtimesTest(unittest.TestCase):
         (self.target / 'release/deps').mkdir(parents=True, exist_ok=True)
         (self.target / 'release/decentra-bevy').write_text('binary')
         cache.prune_target(self.target, [])
+        cache.prune_generations(self.target, set(), [])
         self.assertTrue(manifest.is_file())
         self.assertFalse((self.target / 'release/decentra-bevy').exists())
 

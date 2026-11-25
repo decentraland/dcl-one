@@ -7,6 +7,17 @@ vi.stubGlobal('__GENERATED_COMPONENTS__', [
   { name: 'ShopModals', variants: 1 }
 ])
 vi.stubGlobal('__GENERATED_REVIEW_URL__', '../dcl-ui-review/')
+// jsdom lays nothing out and has no ResizeObserver: the observer runs its callback once, on observe.
+vi.stubGlobal(
+  'ResizeObserver',
+  class {
+    constructor(private readonly callback: () => void) {}
+    observe() {
+      this.callback()
+    }
+    disconnect() {}
+  }
+)
 const { Shell } = await import('../src/shell/Shell')
 
 const heading = () => screen.getByRole('heading', { level: 1 }).textContent
@@ -131,5 +142,52 @@ describe('when a reviewer opens the HUD Showcase', () => {
       'No HUD section named “Nope”; showing Showcase.'
     )
     expect(screen.getByTitle('Showcase canvas').getAttribute('src')).toBe('hud.html?hud=Showcase')
+  })
+})
+
+describe('when the chosen canvas width does not fit beside the sidebar', () => {
+  // The space jsdom does not lay out: the viewport's width and the canvas's own.
+  const lay = (room: number) => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      return this.dataset.width ? room : 0
+    })
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      return this.tagName === 'IFRAME' ? Number.parseFloat(this.style.width) + 2 : 0
+    })
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(600)
+  }
+  afterEach(() => vi.restoreAllMocks())
+
+  it('should draw it scaled down to the space, keeping its width, with no horizontal scroll', () => {
+    lay(1000)
+    render(<Shell search="?component=BlogCard&width=1280" />)
+    const canvas = screen.getByTitle('BlogCard canvas')
+    const scale = Number(/^scale\((.+)\)$/.exec(canvas.style.transform)?.[1])
+    // 1000px less the viewport's padding, for a 1282px canvas (1280px and its border).
+    expect(scale).toBeGreaterThan(960 / 1282)
+    expect(scale).toBeLessThanOrEqual(1000 / 1282)
+    expect(canvas.style.width).toBe('1280px')
+    expect(parseFloat(canvas.parentElement!.style.width)).toBeCloseTo(1282 * scale)
+    expect(parseFloat(canvas.parentElement!.style.height)).toBeCloseTo(600 * scale)
+    expect(screen.getByText(/to fit this window; the canvas is 1280px wide/)).toBeTruthy()
+  })
+
+  it('should draw a canvas that fits at its own size', () => {
+    lay(1400)
+    render(<Shell search="?component=BlogCard&width=1280" />)
+    const canvas = screen.getByTitle('BlogCard canvas')
+    expect(canvas.style.transform).toBe('')
+    expect(canvas.parentElement!.getAttribute('style')).toBeNull()
+    expect(screen.queryByText(/to fit this window/)).toBeNull()
+  })
+
+  it('should never scale a canvas that fills the space', () => {
+    lay(300)
+    render(<Shell search="?component=BlogCard" />)
+    expect(screen.getByTitle('BlogCard canvas').style.transform).toBe('')
   })
 })

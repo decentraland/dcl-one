@@ -1,3 +1,5 @@
+-- Identity changes also retain exact displaced bindings through the schema
+-- trigger; replay preserves that recovery evidence without duplicating facts.
 -- Binds each imported scene the places source left unbound (its exact
 -- places.deployment_id binding wins and is never touched here), as the deploy
 -- transaction would (explore::places::scene_identity): a retired identity of

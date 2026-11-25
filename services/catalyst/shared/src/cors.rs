@@ -281,6 +281,21 @@ pub async fn registry_cors(req: Request, next: Next) -> Response {
     REGISTRY.run(req, next).await
 }
 
+/// lamb2's CORS under `/lambdas/`: `*` for any origin, no credentials and
+/// no exposed headers; a preflight is 204 with no `Allow-Methods`, origin
+/// `*` for a request with `Origin`, and the requested headers reflected
+/// with their `Vary` when the request names them.
+const LAMBDAS: HttpServerCors = HttpServerCors {
+    methods: None,
+    max_age: "36000",
+    nosniff: true,
+    preflight_echoes_request: true,
+};
+
+pub async fn lambdas_cors(req: Request, next: Next) -> Response {
+    LAMBDAS.run(req, next).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

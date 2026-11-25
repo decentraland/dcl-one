@@ -6,6 +6,7 @@ use analytics::segment_system::SegmentConfig;
 use bevy::{
     asset::{io::Reader, AssetLoader, LoadContext},
     diagnostic::FrameCount,
+    ecs::{schedule::ScheduleConfigs, system::ScheduleSystem},
     math::{FloatOrd, Vec3Swizzles},
     platform::collections::{HashMap, HashSet},
     prelude::*,
@@ -15,23 +16,27 @@ use bevy::{
 
 use common::{
     partition::{scene_partition, Tier},
-    sets::RealmLifecycle,
+    sets::{PostUpdateSets, RealmLifecycle},
     structs::{
         server_mode, AppConfig, AppError, CurrentRealm, EditorMode, GlobalCrdtStateUpdate,
-        IVec2Arg, NearbyVoiceDisabled, PreviewMode, PrimaryCamera, ReadsMapPins, SceneJsFile,
-        SceneLoadDistance, SceneMeta, SceneTime, StartupScenes, WorldHold,
+        IVec2Arg, NearbyVoiceDisabled, PlayerParcelChanged, PreviewMode, PrimaryCamera,
+        ReadsMapPins, SceneJsFile, SceneLoadDistance, SceneMeta, SceneTime, StartupScenes,
+        WorldHold,
     },
     terrain::{Occupancy, TerrainChange, TerrainTargets, BORDER_PADDING},
     util::{TaskExt, TryPushChildrenEx},
 };
-use comms::global_crdt::{CrdtContexts, GlobalCrdtState};
+use comms::{
+    global_crdt::{CrdtContexts, GlobalCrdtState},
+    SceneBanGate,
+};
 use dcl_component::{
     proto_components::sdk::components::{PbMainCamera, PbRealmInfo, PbVisibilityComponent},
     DclReader, DclWriter, SceneComponentId, SceneEntityId,
 };
 use dcl_types::{
     interface::{crdt_context::CrdtContext, CrdtComponentInterfaces, CrdtStore, CrdtType},
-    SceneElapsedTime, SceneId, SceneResponse, SceneResponseSender,
+    SceneElapsedTime, SceneId, SceneResponse, SceneResponseSender, SceneWake,
 };
 use ipfs::{
     ipfs_path::IpfsPath, ActiveEntityTask, EntityDefinition, IpfsAssetServer, RealmInitialLocation,
@@ -111,17 +116,30 @@ impl Plugin for SceneLifecyclePlugin {
                 .in_set(SceneSets::Init),
         );
 
-        app.add_systems(
-            PostUpdate,
-            (
-                process_realm_change,
-                load_active_entities.run_if(not(resource_exists::<WorldHold>)),
-                process_scene_lifecycle,
-            )
-                .chain()
-                .in_set(RealmLifecycle),
-        );
+        app.add_event::<PlayerParcelChanged>();
+        app.add_systems(PostUpdate, player_parcel_report());
+
+        app.add_systems(PostUpdate, realm_lifecycle_systems().in_set(RealmLifecycle));
     }
+}
+
+/// The player parcel report, where the plugin runs it. A teleport in `Update` moves the player at
+/// once and defers its `OutOfWorld`: here both are in place, with the frame's movement.
+fn player_parcel_report() -> ScheduleConfigs<ScheduleSystem> {
+    report_player_parcel
+        .after(PostUpdateSets::PlayerUpdate)
+        .into_configs()
+}
+
+/// The realm lifecycle, in the order the plugin runs it.
+fn realm_lifecycle_systems() -> ScheduleConfigs<ScheduleSystem> {
+    (
+        process_realm_change,
+        load_active_entities.run_if(not(resource_exists::<WorldHold>)),
+        process_scene_lifecycle,
+    )
+        .chain()
+        .into_configs()
 }
 
 #[derive(Component, Debug)]
@@ -768,6 +786,7 @@ pub(crate) fn initialize_scene(
             scene_context.platform = Some("mobile".to_owned());
         }
 
+        let wake = SceneWake::default();
         let (main_sx, kill_guard) = spawn_scene(
             context.crdt_store.clone(),
             scene_context,
@@ -780,6 +799,7 @@ pub(crate) fn initialize_scene(
             inspected,
             super_user.map(|_| su_bridge.sender.clone()),
             scene_origin,
+            wake.clone(),
         );
 
         context.inspected = inspected;
@@ -791,6 +811,7 @@ pub(crate) fn initialize_scene(
             handle: SceneThreadHandle {
                 sender: main_sx,
                 kill_guard,
+                wake,
             },
             in_flight: true,
         };
@@ -1277,6 +1298,7 @@ pub fn process_realm_change(
     current_realm: Res<CurrentRealm>,
     mut segment_config: Option<ResMut<SegmentConfig>>,
     player: Query<Entity, With<PrimaryUser>>,
+    teleport_target: Res<RealmInitialLocation>,
 ) {
     if current_realm.is_changed() {
         // move to oow on realm change
@@ -1285,7 +1307,13 @@ pub fn process_realm_change(
             .ok()
             .and_then(|p| commands.get_entity(p).ok())
         {
-            commands.try_insert(OutOfWorld);
+            // A realm change that says where to land starts a landing of its own. Without one,
+            // a landing already under way goes on in the new realm, on the spawn point it names.
+            if *teleport_target == RealmInitialLocation::None {
+                commands.try_insert_if_new(OutOfWorld::default());
+            } else {
+                commands.try_insert(OutOfWorld::default());
+            }
         }
 
         info!(
@@ -1305,6 +1333,42 @@ pub fn process_realm_change(
     }
 }
 
+/// The player's parcel, the scene the realm lists there and whether the player is in world, as
+/// analytics reports them.
+fn report_player_parcel(
+    // `GlobalTransform` lags this frame's placement until `TransformPropagate`; `in_world` must
+    // match the parcel
+    player: Query<(&Transform, Has<OutOfWorld>), With<PrimaryUser>>,
+    pointers: Res<ScenePointers>,
+    mut last: Local<Option<PlayerParcelChanged>>,
+    mut changes: EventWriter<PlayerParcelChanged>,
+) {
+    let Ok((player, out_of_world)) = player.single() else {
+        return;
+    };
+    let parcel = vec3_to_parcel(player.translation);
+    let in_world = !out_of_world;
+    let scene = pointers.get(parcel).map(|pointer| match pointer {
+        PointerResult::Nothing => None,
+        PointerResult::Exists { hash, .. } => Some(hash.as_str()),
+    });
+    if last.as_ref().is_some_and(|last| {
+        last.parcel == parcel
+            && last.scene.as_ref().map(Option::as_deref) == scene
+            && last.in_world == in_world
+    }) {
+        return;
+    }
+    let change = PlayerParcelChanged {
+        old: last.as_ref().map(|last| last.parcel),
+        parcel,
+        scene: scene.map(|scene| scene.map(str::to_owned)),
+        in_world,
+    };
+    changes.write(change.clone());
+    *last = Some(change);
+}
+
 fn load_active_entities(
     current_realm: Res<CurrentRealm>,
     player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
@@ -1320,16 +1384,17 @@ fn load_active_entities(
     mut teleport_target: ResMut<RealmInitialLocation>,
     mut pending_teleport: Local<bool>,
 ) {
-    let teleport_components = |parcel: IVec2| -> (Transform, OutOfWorld) {
-        (
-            Transform::from_translation(Vec3::new(
-                (parcel.x as f32 + 0.5) * 16.0,
-                0.0,
-                (parcel.y as f32 + 0.5) * -16.0,
-            )),
-            OutOfWorld,
-        )
-    };
+    let teleport_components =
+        |parcel: IVec2, spawn_point: Option<String>| -> (Transform, OutOfWorld) {
+            (
+                Transform::from_translation(Vec3::new(
+                    (parcel.x as f32 + 0.5) * 16.0,
+                    0.0,
+                    (parcel.y as f32 + 0.5) * -16.0,
+                )),
+                OutOfWorld { spawn_point },
+            )
+        };
 
     if current_realm.is_changed() {
         *fetch_count = 100;
@@ -1371,11 +1436,16 @@ fn load_active_entities(
 
         // A teleport that named this realm: land on its parcel now that the realm is live. The
         // out-of-world sweep holds the player until the parcel resolves against the new realm.
-        if let RealmInitialLocation::Parcel(parcel) = *teleport_target {
+        if let RealmInitialLocation::Parcel {
+            parcel,
+            spawn_point,
+        } = &*teleport_target
+        {
+            let (parcel, spawn_point) = (*parcel, spawn_point.clone());
             if !current_realm.about_url.is_empty() {
                 if let Ok((player_entity, _)) = player.single() {
                     if let Ok(mut commands) = commands.get_entity(player_entity) {
-                        commands.try_insert(teleport_components(parcel));
+                        commands.try_insert(teleport_components(parcel, spawn_point));
                         debug!("change to realm with target parcel -> none ({parcel})");
                         *teleport_target = RealmInitialLocation::None;
                     }
@@ -1383,7 +1453,10 @@ fn load_active_entities(
             }
         }
 
-        if !current_realm.about_url.is_empty() && *teleport_target == RealmInitialLocation::Base {
+        if let (false, RealmInitialLocation::Base { spawn_point }) =
+            (current_realm.about_url.is_empty(), &*teleport_target)
+        {
+            let spawn_point = spawn_point.clone();
             let has_scene_urns = current_realm.config.lists_scenes();
 
             if !has_scene_urns {
@@ -1397,7 +1470,7 @@ fn load_active_entities(
                         } else {
                             Default::default()
                         };
-                        commands.try_insert(teleport_components(parcel));
+                        commands.try_insert(teleport_components(parcel, spawn_point));
                         debug!(
                             "change to no scene realm -> none ({} in {}/{} = {})",
                             vec3_to_parcel(player_transform.translation()),
@@ -1412,7 +1485,7 @@ fn load_active_entities(
                 // the world's manifest says where to land, as it does for unity-explorer
                 if let Ok((player_entity, _)) = player.single() {
                     if let Ok(mut commands) = commands.get_entity(player_entity) {
-                        commands.try_insert(teleport_components(parcel));
+                        commands.try_insert(teleport_components(parcel, spawn_point));
                         debug!("change to world with spawn parcel -> none ({parcel})");
                         *teleport_target = RealmInitialLocation::None;
                     }
@@ -1429,12 +1502,12 @@ fn load_active_entities(
         return;
     };
 
-    let teleport_on_resolve = match *teleport_target {
-        RealmInitialLocation::None | RealmInitialLocation::Parcel(_) => {
+    let teleport_on_resolve = match &*teleport_target {
+        RealmInitialLocation::None | RealmInitialLocation::Parcel { .. } => {
             *pending_teleport = false;
             None
         }
-        RealmInitialLocation::Base => {
+        RealmInitialLocation::Base { .. } => {
             if *pending_teleport {
                 error!("pending ...");
                 Some(
@@ -1651,7 +1724,11 @@ fn load_active_entities(
             {
                 if let Ok(mut commands) = commands.get_entity(player_entity) {
                     let parcel = parcels.first().copied().unwrap_or_default();
-                    commands.try_insert(teleport_components(parcel));
+                    let spawn_point = match &*teleport_target {
+                        RealmInitialLocation::Base { spawn_point } => spawn_point.clone(),
+                        _ => None,
+                    };
+                    commands.try_insert(teleport_components(parcel, spawn_point));
                     debug!("resolved the target -> none (@ {parcel})");
                 }
                 *teleport_target = RealmInitialLocation::None;
@@ -1742,6 +1819,7 @@ pub fn process_scene_lifecycle(
     preview_mode: Res<PreviewMode>,
     mut current_scene_loading_res: ResMut<CurrentSceneLoading>,
     startup_scenes: Option<Res<StartupScenes>>,
+    bans: SceneBanGate,
     time: Res<Time>,
     config: Res<AppConfig>,
 ) {
@@ -1845,6 +1923,12 @@ pub fn process_scene_lifecycle(
         }
     }));
     keep_scene_ids.extend(ring_scenes(rings.live_keep.into()));
+
+    let allowed = |scene: &(String, Option<String>)| {
+        portable_ids.contains(scene) || !bans.is_banned(&scene.0)
+    };
+    required_scene_ids.retain(|scene, _| allowed(scene));
+    keep_scene_ids.retain(allowed);
 
     // record which scene entities we should keep
     let keep_entities: HashMap<_, _> = keep_scene_ids

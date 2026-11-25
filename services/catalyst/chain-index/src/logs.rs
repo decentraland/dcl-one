@@ -15,14 +15,17 @@
 //! cancellation, reorg handling and publication. [`RpcSource`] reads over
 //! Ethereum JSON-RPC.
 //!
-//! The requests a read reports are what the walk charges to its budget,
-//! not a provider's bill. For [`RpcSource`] they are HTTP requests:
+//! The requests a read reports are the JSON-RPC requests it sent, not a
+//! provider's bill; a window also reports what the walk charges its log
+//! budget for it ([`Window::charge`]), which over [`RpcSource`] is its
+//! requests. For [`RpcSource`] they are HTTP requests:
 //! - a JSON-RPC batch counts one;
 //! - a refused request counts one;
-//! - a log request that first narrows its range and then fails on the
-//!   address count counts only the refusal.
+//! - every request a window sends counts, as it goes out: those that narrow
+//!   its range and an address-count refusal after them included.
 
 use std::collections::{BTreeSet, HashMap};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::{Value, json};
 
@@ -42,7 +45,17 @@ pub struct Window {
     pub logs: Vec<RpcLog>,
     /// Every log of `[from, reached]` of every group is in `logs`.
     pub reached: u64,
+    /// The JSON-RPC requests the window sent, counted as the module
+    /// documentation says.
     pub requests: usize,
+    /// What the walk charges its log budget for the window: `requests` for
+    /// an RPC read; for a read from a portal
+    /// ([`crate::portal::admit::AdmittedPortal`]), what the window's filters
+    /// cost as RPC log requests, never less than the RPC log requests it
+    /// sent.
+    pub charge: usize,
+    /// The portal requests the window sent, discarded attempts included.
+    pub portal_sends: usize,
 }
 
 /// A value and the requests reading it took, as the module documentation
@@ -98,6 +111,38 @@ pub trait LogSource: Send + Sync {
         groups: &[LogGroup],
         chunk: &mut usize,
     ) -> Result<Window, RpcError>;
+    /// [`LogSource::window`], adding to `sent` every request it sends as it
+    /// goes out, whatever the read's outcome: a read that fails, or is
+    /// dropped, has still spent them. `sent` is the caller's own counter for
+    /// this read: the window's requests are what it grew by. The default
+    /// adds the window's requests once it is read.
+    async fn window_counted(
+        &self,
+        from: u64,
+        to: u64,
+        groups: &[LogGroup],
+        chunk: &mut usize,
+        sent: &AtomicUsize,
+    ) -> Result<Window, RpcError> {
+        let w = self.window(from, to, groups, chunk).await?;
+        sent.fetch_add(w.requests, Ordering::SeqCst);
+        Ok(w)
+    }
+    /// A historical RPC window with a hard send ceiling. Sources without a
+    /// bounded transport can leave the optional replay pending.
+    async fn archive_window(
+        &self,
+        from: u64,
+        _to: u64,
+        _groups: &[LogGroup],
+        _chunk: &mut usize,
+        _budget: usize,
+    ) -> Result<Window, RpcError> {
+        Err(RpcError::Budget {
+            upper: from,
+            requests: 0,
+        })
+    }
     /// The block time of every log's block.
     async fn block_times(&self, logs: &[RpcLog]) -> Result<Read<HashMap<i64, i64>>, RpcError>;
     /// A window the walk accepted: its bracket and predecessor check
@@ -153,31 +198,73 @@ impl LogSource for RpcSource<'_> {
         groups: &[LogGroup],
         chunk: &mut usize,
     ) -> Result<Window, RpcError> {
-        fetch_window(&self.rpc, from, to, groups, chunk).await
+        self.window_counted(from, to, groups, chunk, &AtomicUsize::new(0))
+            .await
+    }
+
+    async fn window_counted(
+        &self,
+        from: u64,
+        to: u64,
+        groups: &[LogGroup],
+        chunk: &mut usize,
+        sent: &AtomicUsize,
+    ) -> Result<Window, RpcError> {
+        fetch_window(&self.rpc, from, to, groups, chunk, sent, usize::MAX).await
+    }
+
+    async fn archive_window(
+        &self,
+        from: u64,
+        to: u64,
+        groups: &[LogGroup],
+        chunk: &mut usize,
+        budget: usize,
+    ) -> Result<Window, RpcError> {
+        let sent = AtomicUsize::new(0);
+        fetch_window(&self.rpc, from, to, groups, chunk, &sent, budget)
+            .await
+            .map_err(|error| match error {
+                RpcError::Budget { .. } => error,
+                source => RpcError::Counted {
+                    requests: sent.load(Ordering::SeqCst),
+                    source: Box::new(source),
+                },
+            })
     }
 
     async fn block_times(&self, logs: &[RpcLog]) -> Result<Read<HashMap<i64, i64>>, RpcError> {
-        block_times(&self.rpc, logs)
+        let sent = AtomicUsize::new(0);
+        block_times(&self.rpc.also_counting(&sent), logs)
             .await
             .map(|(value, requests)| Read { value, requests })
+            .map_err(|source| RpcError::Counted {
+                requests: sent.load(Ordering::SeqCst),
+                source: Box::new(source),
+            })
     }
 }
 
 /// Every log of `[from, reached]` (some `reached <= to` every request
 /// accepted) of every group: a request that narrows the range narrows the
 /// window for all of them (the logs past it are dropped and re-read next
-/// window), and an address-count refusal halves `chunk` and repeats.
+/// window), and an address-count refusal halves `chunk` and repeats. Its
+/// requests are counted by the client it is given ([`Rpc::also_counting`]).
 pub(crate) async fn fetch_window(
     rpc: &Rpc<'_>,
     from: u64,
     to: u64,
     groups: &[LogGroup],
     chunk: &mut usize,
+    sent: &AtomicUsize,
+    budget: usize,
 ) -> Result<Window, RpcError> {
+    let before = sent.load(Ordering::SeqCst);
+    let rpc = rpc.also_counting(sent);
     let mut out = Window {
         logs: Vec::new(),
         reached: to,
-        requests: 0,
+        ..Window::default()
     };
     for group in groups {
         let mut i = 0usize;
@@ -189,11 +276,18 @@ pub(crate) async fn fetch_window(
             } else {
                 json!(slice)
             };
+            let spent = sent.load(Ordering::SeqCst) - before;
+            if spent >= budget {
+                return Err(RpcError::Budget {
+                    upper: out.reached,
+                    requests: spent,
+                });
+            }
             match rpc
-                .get_logs_matching(from, out.reached, &address, &group.topics)
+                .get_logs_bounded(from, out.reached, &address, &group.topics, budget - spent)
                 .await
             {
-                Ok((logs, upper, used)) => {
+                Ok((logs, upper, _)) => {
                     if upper < from
                         || upper > out.reached
                         || logs.iter().any(|l| {
@@ -208,7 +302,6 @@ pub(crate) async fn fetch_window(
                             "invalid log window bounds or position".into(),
                         ));
                     }
-                    out.requests += used;
                     if upper < out.reached {
                         out.reached = upper;
                         let cut = upper as i64;
@@ -219,8 +312,13 @@ pub(crate) async fn fetch_window(
                         .extend(logs.into_iter().filter(|l| log_position(l).0 <= cut));
                     i = end;
                 }
+                Err(RpcError::Budget { upper, .. }) => {
+                    return Err(RpcError::Budget {
+                        upper,
+                        requests: sent.load(Ordering::SeqCst) - before,
+                    });
+                }
                 Err(RpcError::Rpc(message)) if is_address_limit(&message) && *chunk > 1 => {
-                    out.requests += 1;
                     *chunk = (*chunk / 2).max(1);
                     tracing::info!(
                         chunk = *chunk,
@@ -231,6 +329,8 @@ pub(crate) async fn fetch_window(
             }
         }
     }
+    out.requests = sent.load(Ordering::SeqCst) - before;
+    out.charge = out.requests;
     out.logs.sort_by_key(log_position);
     out.logs.dedup_by(|a, b| log_position(a) == log_position(b));
     Ok(out)

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import Chip from '@ui/atoms/Chip';
 import { SelectOption } from '@ui/atoms/Select';
 import Text from '@ui/atoms/Text';
@@ -11,7 +11,7 @@ import { TEMPLATES, Difficulty, type Template } from '/@/modules/templates';
 
 import NewScenePng from '/assets/images/new-scene.png';
 
-import { misc } from '#preload';
+import { analytics, misc } from '#preload';
 import { Container } from '../Container';
 import { FiltersBar } from '../FiltersBar';
 import { Navbar, NavbarItem } from '../Navbar';
@@ -48,6 +48,7 @@ export function TemplatesPage() {
 
   const handleClickTemplate = useCallback(
     (repo?: string) => async () => {
+      void analytics.track('Template Clicked', { template: repo ?? 'empty' });
       const [error, data] = await getAvailableProject();
       if (!error) {
         const { name, path } = data;
@@ -73,12 +74,14 @@ export function TemplatesPage() {
   const handleViewCode = useCallback(
     ({ repo }: Template) =>
       () => {
+        void analytics.track('Template Code Viewed', { template: repo });
         misc.openExternal(repo);
       },
     [],
   );
 
   const handleClickDifficulty = useCallback((value?: Difficulty) => {
+    void analytics.track('Templates Filtered', { difficulty: value ?? 'all' });
     setDifficulty(value);
     setTemplates(value ? TEMPLATES.filter($ => $.difficulty === value) : TEMPLATES);
   }, []);

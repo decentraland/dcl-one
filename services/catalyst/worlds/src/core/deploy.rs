@@ -847,7 +847,11 @@ pub(super) async fn validate(
     let name_owner = match &replacement {
         None => None,
         Some(Deploy::Owner) => Some(signer.clone()),
-        Some(Deploy::Scoped(_)) => match state.policy.live_name_owner(&world).await {
+        Some(Deploy::Scoped(_)) => match state
+            .policy
+            .live_name_owner_using(conn.as_deref_mut(), &world)
+            .await
+        {
             Ok(Some(owner)) => Some(owner),
             Ok(None) => {
                 return Err(Refusal(

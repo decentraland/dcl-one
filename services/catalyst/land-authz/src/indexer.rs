@@ -14,8 +14,11 @@
 //! the cursor when the chain still has that block, or to the start block
 //! otherwise, deletes the log past the rewind and the rights it decided,
 //! and the next passes re-index and refold. Readers
-//! trust the fold through [`index_ready`]: `folded_block = last_block` and
-//! `folded_at` at most [`READY_WINDOW`] old, the old server's rule.
+//! trust the fold ([`observation_ready`]) while `folded_at` is at most
+//! [`READY_WINDOW`] old and the fold is current: `folded_block = last_block`
+//! (the old server's rule, [`index_ready`]), or no authorization event walked
+//! past `folded_block`, so a pass between its walk and its publish does not
+//! take every LAND check down.
 //!
 //! The fold is deterministic over the log (DATABASE.md rule 5): every leg is
 //! decided by the single latest event that touches its key, so a rebuild is
@@ -43,6 +46,7 @@ use crate::chain_index::rpc::{Rpc, RpcError};
 impl From<RpcError> for IndexError {
     fn from(error: RpcError) -> Self {
         match error {
+            RpcError::Counted { source, .. } => Self::from(*source),
             RpcError::Budget { upper, requests } => Self::Budget { upper, requests },
             RpcError::Transport(message) => Self::Transport(message),
             RpcError::Rpc(message) | RpcError::Malformed(message) => Self::Rpc(message),
@@ -62,7 +66,7 @@ pub const HEAD_LAG_BLOCKS: u64 = 25;
 /// since. A reorg that also replaced the checkpoint block rewinds to the
 /// start block: a full replay.
 pub const CHECKPOINT_DEPTH_BLOCKS: u64 = 128;
-/// How old a published fold may be before readers fall back (a stopped indexer).
+/// How old a published fold may be before LAND rights become unavailable (a stopped indexer).
 pub const READY_WINDOW: ChronoDuration = ChronoDuration::minutes(30);
 /// Rows per `INSERT ... UNNEST` statement.
 const INSERT_CHUNK: usize = 1_000;
@@ -518,6 +522,11 @@ pub struct CursorObservation {
     #[sqlx(flatten)]
     pub cursor: Cursor,
     pub observed_at: NaiveDateTime,
+    /// Whether any authorization event past the published fold is in the
+    /// log, read in the same statement: a pass commits its walk before it
+    /// folds and publishes, so the fold names every token's current rights
+    /// only while there is none.
+    pub events_past_fold: bool,
 }
 
 pub async fn cursor_observed<'e, E>(
@@ -528,7 +537,10 @@ where
     E: sqlx::PgExecutor<'e>,
 {
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {CURSOR_COLUMNS}, timezone('UTC', now()) AS observed_at FROM land_authz.index_cursor WHERE network = $1"
+        "SELECT {CURSOR_COLUMNS}, timezone('UTC', now()) AS observed_at, \
+                EXISTS (SELECT 1 FROM land_authz.authz_event e \
+                        WHERE e.block_number > COALESCE(index_cursor.folded_block, -1)) AS events_past_fold \
+         FROM land_authz.index_cursor WHERE network = $1"
     ))).bind(network).fetch_optional(executor).await
 }
 
@@ -555,12 +567,24 @@ pub async fn ready_snapshot(
     land_registry: &str,
     estate_registry: &str,
 ) -> Result<Option<ReadySnapshot>, sqlx::Error> {
+    ready_snapshot_within(pool, network, land_registry, estate_registry, READY_WINDOW).await
+}
+
+pub(crate) async fn ready_snapshot_within(
+    pool: &PgPool,
+    network: &str,
+    land_registry: &str,
+    estate_registry: &str,
+    max_age: ChronoDuration,
+) -> Result<Option<ReadySnapshot>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
     Ok(match cursor_observed(&mut *tx, network).await? {
-        Some(observation) if observation_ready(&observation, land_registry, estate_registry) => {
+        Some(observation)
+            if observation_ready_within(&observation, land_registry, estate_registry, max_age) =>
+        {
             Some(ReadySnapshot {
                 cursor: observation.cursor,
                 tx,
@@ -646,8 +670,8 @@ pub async fn set_cursor(
 }
 
 /// Rewinds durably before a repair scan, and clears the publish marker at
-/// once (readers fall back to the subgraph until the repaired history is
-/// folded at chain head). On the same registries `last_block` never moves
+/// once (LAND rights are unavailable until the repaired history is folded
+/// at chain head). On the same registries `last_block` never moves
 /// forward, so a later rewind cannot skip an earlier gap. A rewind to the
 /// start block records the full replay [`mark_folded`] requires and may
 /// switch registries: the new registries' log then starts exactly at `from`,
@@ -891,13 +915,17 @@ pub async fn mark_folded(
 /// is recent. Production passes the database observation time; unit tests
 /// can inject a clock without affecting production readiness authority.
 pub fn index_ready(cursor: &Cursor, now: DateTime<Utc>) -> bool {
+    index_ready_within(cursor, now, READY_WINDOW)
+}
+
+fn index_ready_within(cursor: &Cursor, now: DateTime<Utc>, max_age: ChronoDuration) -> bool {
     let Some(folded_at) = cursor.folded_at else {
         return false;
     };
     let age = now.naive_utc().signed_duration_since(folded_at);
     cursor.folded_block == Some(cursor.last_block)
         && age >= ChronoDuration::zero()
-        && age <= READY_WINDOW
+        && age <= max_age
 }
 
 /// Whether a reader of `land_registry` and `estate_registry` may answer from
@@ -913,14 +941,39 @@ pub fn observation_ready(
     land_registry: &str,
     estate_registry: &str,
 ) -> bool {
+    observation_ready_within(observation, land_registry, estate_registry, READY_WINDOW)
+}
+
+pub(crate) fn observation_ready_within(
+    observation: &CursorObservation,
+    land_registry: &str,
+    estate_registry: &str,
+    max_age: ChronoDuration,
+) -> bool {
+    let now = observation.observed_at.and_utc();
     observation.cursor.land_registry == land_registry
         && observation.cursor.estate_registry == estate_registry
-        && index_ready(&observation.cursor, observation.observed_at.and_utc())
+        && (index_ready_within(&observation.cursor, now, max_age)
+            || (!observation.events_past_fold
+                && fold_published_within(&observation.cursor, now, max_age)))
+}
+
+/// A published fold no older than `max_age`. With no authorization event
+/// walked past it, it is every token's current state even while the cursor
+/// has walked on (a pass between its walk and its publish, a paused pass, a
+/// head that moved on after the fold): readers answer from it rather than
+/// refusing every LAND check for that window.
+fn fold_published_within(cursor: &Cursor, now: DateTime<Utc>, max_age: ChronoDuration) -> bool {
+    let Some(folded_at) = cursor.folded_at else {
+        return false;
+    };
+    let age = now.naive_utc().signed_duration_since(folded_at);
+    cursor.folded_block.is_some() && age >= ChronoDuration::zero() && age <= max_age
 }
 
 /// `Some(cursor)` when the local index of these registries may answer on the
 /// database clock ([`observation_ready`]). A database error reads as not
-/// ready (the fallback, never a grant).
+/// ready (unavailable, never a grant).
 pub async fn ready_cursor(
     pool: &PgPool,
     network: &str,
@@ -935,7 +988,7 @@ pub async fn ready_cursor(
         }
         Ok(_) => None,
         Err(e) => {
-            tracing::warn!(error = %e, "land-authz: cannot read index_cursor; using the fallback reader");
+            tracing::warn!(error = %e, "land-authz: cannot read index_cursor; LAND rights are unavailable");
             None
         }
     }
@@ -1452,8 +1505,8 @@ async fn check_cursor_block(
 
 /// Undoes the log past `to` after a reorg, in one transaction: the cursor
 /// moves back to `to` with `to_hash` (the verified checkpoint's hash, or
-/// `None` at the start block), no checkpoint and no publish marker (readers
-/// fall back until the refold publishes), the configured registries'
+/// `None` at the start block), no checkpoint and no publish marker (LAND
+/// rights are unavailable until the refold publishes), the configured registries'
 /// events past `to` are deleted, and so are the rights rows those events
 /// decided. The next fold is the rebuild (`folded_block` is NULL), which
 /// writes back every key a remaining event touches; a key whose events
@@ -1620,7 +1673,7 @@ pub async fn run_pass(state: &LandAuthzState, ctx: &JobContext) -> anyhow::Resul
         row = cursor(pool, &settings.network)
             .await?
             .context("cursor row after the replay rewind")?;
-        tracing::warn!(network = %settings.network, from, "land-authz: replay started; readers use the subgraph until it is folded at head. Unset LAND_AUTHZ_REPLAY_FROM_BLOCK once it has published: while it is set, every restart replays again");
+        tracing::warn!(network = %settings.network, from, "land-authz: replay started; LAND rights are unavailable until it is folded at head. Unset LAND_AUTHZ_REPLAY_FROM_BLOCK once it has published: while it is set, every restart replays again");
     }
     let rpc = Rpc::at(&state.http, rpc_url);
     if let Some(to) = check_cursor_block(state, &rpc, row.last_block)

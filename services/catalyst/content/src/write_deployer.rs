@@ -333,11 +333,19 @@ impl TtlBucket {
     }
 
     fn is_limited(&mut self, pointers: &[String]) -> bool {
+        self.limit(pointers).is_some()
+    }
+
+    /// What limits `pointers`: `ttl` (a pointer inside its window) before `max_size` (the
+    /// window holds more keys than its cap); `None` when nothing does.
+    fn limit(&mut self, pointers: &[String]) -> Option<&'static str> {
         let now = tokio::time::Instant::now();
         self.prune(now);
-        let ttl_hit = pointers.iter().any(|p| self.entries.contains_key(p));
-        let size_hit = self.entries.len() > self.max_size;
-        ttl_hit || size_hit
+        if pointers.iter().any(|p| self.entries.contains_key(p)) {
+            Some("ttl")
+        } else {
+            (self.entries.len() > self.max_size).then_some("max_size")
+        }
     }
 
     /// Until the pointers clear: the latest of their windows, or a whole
@@ -363,10 +371,10 @@ impl TtlBucket {
         }
     }
 
-    /// The check and the record in one step: `None` when limited.
-    fn try_reserve(&mut self, pointers: &[String]) -> Option<Held> {
-        if self.is_limited(pointers) {
-            return None;
+    /// The check and the record in one step: what limits the pointers when they are.
+    fn try_reserve(&mut self, pointers: &[String]) -> Result<Held, &'static str> {
+        if let Some(limit) = self.limit(pointers) {
+            return Err(limit);
         }
         let at = tokio::time::Instant::now();
         let mut prev = HashMap::with_capacity(pointers.len());
@@ -374,7 +382,7 @@ impl TtlBucket {
             let old = self.entries.insert(p.clone(), at);
             prev.entry(p.clone()).or_insert(old);
         }
-        Some(Held { at, prev })
+        Ok(Held { at, prev })
     }
 
     /// Restores each pointer's earlier entry, unless something re-recorded it since.
@@ -411,9 +419,12 @@ impl Reservation<'_> {
             && let Some(bk) = self.limiter.buckets.lock().get_mut(self.etype.as_str())
         {
             bk.release(held);
+            crate::series::rate_limiter_keys(&self.etype, "deployment", bk.entries.len());
         }
         if let Some(held) = self.unchanged {
-            self.limiter.unchanged_profile.lock().release(held);
+            let mut bucket = self.limiter.unchanged_profile.lock();
+            bucket.release(held);
+            crate::series::rate_limiter_keys("profile", "unchanged", bucket.entries.len());
         }
     }
 }
@@ -511,7 +522,10 @@ impl DeployRateLimiter {
     fn buckets(limits: &[(&'static str, Duration, usize)]) -> HashMap<&'static str, TtlBucket> {
         limits
             .iter()
-            .map(|&(etype, ttl, max)| (etype, TtlBucket::new(ttl, max)))
+            .map(|&(etype, ttl, max)| {
+                crate::series::rate_limiter_max_size(etype, max);
+                (etype, TtlBucket::new(ttl, max))
+            })
             .collect()
     }
 
@@ -520,11 +534,14 @@ impl DeployRateLimiter {
         *self.buckets.lock() = Self::buckets(limits);
     }
 
+    /// What limits `pointers` of `etype` (`ttl` or `max_size`), if anything does.
+    fn limit(&self, etype: &str, pointers: &[String]) -> Option<&'static str> {
+        self.buckets.lock().get_mut(etype)?.limit(pointers)
+    }
+
+    #[cfg(test)]
     fn is_rate_limited(&self, etype: &str, pointers: &[String]) -> bool {
-        let mut b = self.buckets.lock();
-        b.get_mut(etype)
-            .map(|bk| bk.is_limited(pointers))
-            .unwrap_or(false)
+        self.limit(etype, pointers).is_some()
     }
 
     #[cfg(test)]
@@ -535,15 +552,20 @@ impl DeployRateLimiter {
     }
 
     /// Checks and records the pointers atomically (and in the unchanged-profile bucket when
-    /// `unchanged`); `None` when either bucket is limited.
+    /// `unchanged`); when either bucket is limited, the reason (`ttl`, `max_size`,
+    /// `unchanged_ttl`).
     fn reserve(
         &self,
         etype: &str,
         pointers: &[String],
         unchanged: bool,
-    ) -> Option<Reservation<'_>> {
+    ) -> Result<Reservation<'_>, &'static str> {
         let held = match self.buckets.lock().get_mut(etype) {
-            Some(bk) => Some(bk.try_reserve(pointers)?),
+            Some(bk) => {
+                let held = bk.try_reserve(pointers)?;
+                crate::series::rate_limiter_keys(etype, "deployment", bk.entries.len());
+                Some(held)
+            }
             None => None,
         };
         let mut reservation = Reservation {
@@ -553,16 +575,22 @@ impl DeployRateLimiter {
             unchanged: None,
         };
         if unchanged {
-            let held = self.unchanged_profile.lock().try_reserve(pointers);
+            let mut bucket = self.unchanged_profile.lock();
+            let held = bucket.try_reserve(pointers);
+            let keys = bucket.entries.len();
+            drop(bucket);
             match held {
-                Some(held) => reservation.unchanged = Some(held),
-                None => {
+                Ok(held) => {
+                    reservation.unchanged = Some(held);
+                    crate::series::rate_limiter_keys("profile", "unchanged", keys);
+                }
+                Err(_) => {
                     reservation.release();
-                    return None;
+                    return Err("unchanged_ttl");
                 }
             }
         }
-        Some(reservation)
+        Ok(reservation)
     }
 
     fn retry_after(&self, etype: &str, pointers: &[String]) -> Option<Duration> {
@@ -837,6 +865,12 @@ impl WriteDeployer {
         .await
     }
 
+    /// What the per-pointer deploy limit holds `pointers` of `etype` back
+    /// with (`ttl` or `max_size`); `None` when it lets them through.
+    pub(crate) fn rate_limit(&self, etype: &str, pointers: &[String]) -> Option<&'static str> {
+        self.rate_limiter.limit(etype, pointers)
+    }
+
     /// Seconds until the per-pointer deploy limit lets `pointers` through
     /// (at least 1); `None` when it does now.
     pub(crate) fn rate_limit_retry_after(&self, etype: &str, pointers: &[String]) -> Option<u64> {
@@ -846,26 +880,31 @@ impl WriteDeployer {
     }
 
     /// The chain checked against `entity_id` at `at_ms`, as the deploy
-    /// validator checks it: `Unverifiable` for a contract wallet this node
-    /// cannot ask about, `Rejected` with upstream's text otherwise.
+    /// validator checks it (a contract wallet refused at latest is asked at
+    /// the block before `at_ms`): `Unverifiable` for a contract wallet this
+    /// node cannot ask about, `Rejected` with upstream's text otherwise.
     pub(crate) async fn check_signature(
         &self,
         entity_id: &str,
         auth_chain: &AuthChain,
         at_ms: i64,
     ) -> Result<(), DeployFailure> {
-        match self.validate_signature(entity_id, auth_chain, at_ms).await {
-            Ok(()) => Ok(()),
-            Err(e @ (AuthError::Eip1654ValidationFailed(_) | AuthError::Eip1654NotImplemented)) => {
-                Err(DeployFailure::Unverifiable(vec![format!(
-                    "The signature is invalid. {e}"
-                )]))
-            }
-            Err(e) => Err(DeployFailure::Rejected(
-                RejectionKind::Validation,
-                vec![format!("The signature is invalid. {e}")],
-            )),
-        }
+        signature_verdict(self.validate_signature(entity_id, auth_chain, at_ms).await)
+    }
+
+    /// [`Self::check_signature`] with contract-wallet links asked at the latest block only:
+    /// for a check at now, and for a partial upload published past `REQUEST_TTL_BACKWARDS`,
+    /// so a key removed from the wallet does not keep deploying.
+    pub(crate) async fn check_signature_at_latest(
+        &self,
+        entity_id: &str,
+        auth_chain: &AuthChain,
+        at_ms: i64,
+    ) -> Result<(), DeployFailure> {
+        signature_verdict(
+            verify_auth_chain_async(auth_chain, entity_id, Some(at_ms), self.eip1654.as_deref())
+                .await,
+        )
     }
 
     /// The validation of one partial-upload batch: the content validator's
@@ -989,11 +1028,17 @@ impl WriteDeployer {
         auth_chain: &AuthChain,
         timestamp: i64,
     ) -> Result<(), AuthError> {
-        verify_auth_chain_async(
+        let access = match &self.validator {
+            LocalValidation::Content(sources) => Some(sources.access()),
+            #[cfg(any(test, feature = "test-support"))]
+            LocalValidation::PartialChecks => None,
+        };
+        super::validator::verify_local_entity_chain(
             auth_chain,
             entity_id,
-            Some(timestamp),
+            timestamp,
             self.eip1654.as_deref(),
+            access.as_deref(),
         )
         .await
     }
@@ -1120,6 +1165,21 @@ fn held_of(held: &HashSet<String>, pointers: &[String]) -> Vec<String> {
         .filter(|p| held.contains(*p))
         .cloned()
         .collect()
+}
+
+/// A chain check's deploy verdict: `Unverifiable` for a contract wallet this node cannot
+/// ask about, `Rejected` with upstream's text otherwise.
+fn signature_verdict(result: Result<(), AuthError>) -> Result<(), DeployFailure> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(e @ (AuthError::Eip1654ValidationFailed(_) | AuthError::Eip1654NotImplemented)) => Err(
+            DeployFailure::Unverifiable(vec![format!("The signature is invalid. {e}")]),
+        ),
+        Err(e) => Err(DeployFailure::Rejected(
+            RejectionKind::Validation,
+            vec![format!("The signature is invalid. {e}")],
+        )),
+    }
 }
 
 /// `REQUEST_TTL_BACKWARDS`'s default.
@@ -1297,11 +1357,22 @@ impl WriteDeployer {
         self.refuse_denylisted(&entity)?;
 
         let auth_chain = auth_chain_of(auth_chain)?;
+        // A partial upload's scene published past `REQUEST_TTL_BACKWARDS`: its
+        // contract wallet and access are asked of the current chain.
+        let past_request_ttl = context == "LOCAL"
+            && ttl_anchor_ms.is_some()
+            && chrono::Utc::now().timestamp_millis() - entity.timestamp
+                > self.request_ttl_backwards_ms();
         // The signature at the entity's timestamp, the pointers and the
         // server checks (newer entity, rate limit, request TTLs), then the
         // validator; the in-flight claim follows validation.
-        self.check_signature(entity_id, &auth_chain, entity.timestamp)
-            .await?;
+        if past_request_ttl {
+            self.check_signature_at_latest(entity_id, &auth_chain, entity.timestamp)
+                .await?;
+        } else {
+            self.check_signature(entity_id, &auth_chain, entity.timestamp)
+                .await?;
+        }
         if entity.pointers.is_empty() {
             return Err(vec!["The entity does not have any pointer.".to_string()].into());
         }
@@ -1353,10 +1424,11 @@ impl WriteDeployer {
             )]
         };
         // An early refusal; the reservation after validation is the binding check.
-        if self
+        if let Some(reason) = self
             .rate_limiter
-            .is_rate_limited(entity.entity_type.as_str(), pointers_lc)
+            .limit(entity.entity_type.as_str(), pointers_lc)
         {
+            crate::series::rate_limited(entity.entity_type.as_str(), reason);
             return Err(DeployFailure::Rejected(
                 RejectionKind::RateLimited,
                 rate_limited_msg(),
@@ -1365,6 +1437,7 @@ impl WriteDeployer {
         let content_unchanged =
             entity.entity_type == EntityType::Profile && self.is_content_unchanged(&entity).await;
         if content_unchanged && self.rate_limiter.is_unchanged_limited(pointers_lc) {
+            crate::series::rate_limited(entity.entity_type.as_str(), "unchanged_ttl");
             return Err(DeployFailure::Rejected(
                 RejectionKind::RateLimited,
                 rate_limited_msg(),
@@ -1448,10 +1521,8 @@ impl WriteDeployer {
             }
         }
 
-        if context == "LOCAL"
-            && ttl_anchor_ms.is_some()
+        if past_request_ttl
             && entity.entity_type == EntityType::Scene
-            && now_ms - entity.timestamp > self.request_ttl_backwards_ms()
             && let Err(failure) = self.validate_current_access(&entity, &auth_chain).await
         {
             warn!(entity_id, errors = ?failure, "deployment refused: no current access");
@@ -1466,14 +1537,18 @@ impl WriteDeployer {
             .map_err(in_flight)?;
         let persist_started = Instant::now();
         // Released on a failed or no-op write, so only an accepted deploy holds its pointers.
-        let Some(reservation) =
+        let reservation =
             self.rate_limiter
-                .reserve(entity.entity_type.as_str(), pointers_lc, content_unchanged)
-        else {
-            return Err(DeployFailure::Rejected(
-                RejectionKind::RateLimited,
-                rate_limited_msg(),
-            ));
+                .reserve(entity.entity_type.as_str(), pointers_lc, content_unchanged);
+        let reservation = match reservation {
+            Ok(reservation) => reservation,
+            Err(reason) => {
+                crate::series::rate_limited(entity.entity_type.as_str(), reason);
+                return Err(DeployFailure::Rejected(
+                    RejectionKind::RateLimited,
+                    rate_limited_msg(),
+                ));
+            }
         };
         let persisted = match self
             .persist(&entity, &entity_bytes, &uploads, &auth_chain, context)
@@ -1485,7 +1560,9 @@ impl WriteDeployer {
                 return Err(e);
             }
         };
-        if !persisted.inserted {
+        if persisted.inserted {
+            crate::series::deployment_stored(entity.entity_type.as_str(), "LOCAL");
+        } else {
             reservation.release();
         }
 

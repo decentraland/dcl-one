@@ -394,6 +394,7 @@
       "more": "More"
     },
     "earn_not_joined": "EARN, not joined yet",
+    "earn_payout_pending": "EARN, payout setup not finished",
     "feedback": "Submit feedback",
     "user_menu": {
       "sign_in": "Sign In",
@@ -1866,7 +1867,8 @@
         "my_places": "My Places",
         "leaderboard": "Leaderboard",
         "payouts": "Payouts",
-        "home": "Home"
+        "home": "Home",
+        "payouts_pending": "PAYOUTS, setup not finished"
       },
       "title_prefix": "Earn",
       "title": "Creator Fund",
@@ -1879,6 +1881,12 @@
       "contact_support": "Contact Support",
       "banner": {
         "region": "Announcement"
+      },
+      "setup_banner": {
+        "wallet": {
+          "title": "Set up your payout wallet",
+          "description": "Add a wallet to receive your Creator Fund payouts in USDC."
+        }
       },
       "filter": {
         "cycle": "Cycle",
@@ -1973,17 +1981,22 @@
           "title": "Payout Wallet",
           "info_label": "About payout wallets",
           "info": "A digital wallet is where you store and manage your digital assets. You can use it to send, receive, and keep track of your funds securely, including your Creator Fund USDC rewards.",
+          "payout_info": "Your payout wallet is where the Creator Fund sends your rewards, in USDC on Ethereum (ERC-20), within 14 days after each cycle ends. It can be any wallet or exchange account you control.",
           "learn_more": "Learn More",
           "copy": "Copy wallet address",
           "edit": "Edit",
-          "add": "Add wallet"
+          "add": "Add wallet",
+          "unavailable": "Verify your email to set up your wallet.",
+          "no_active_place": "You need to have a published scene to set up your wallet.",
+          "notify_failed": "We couldn't email you about this change, so your wallet wasn't saved. Please try again."
         },
         "contact": {
           "title": "Contact Information",
           "full_name": "Full Name",
           "email": "Email",
           "unverified": "Unverified",
-          "verify": "Verify email"
+          "verify": "Verify email",
+          "unavailable": "You need to have a published scene to verify your email"
         },
         "table": {
           "label": "Payouts",
@@ -2020,13 +2033,20 @@
         },
         "erc20": "Make sure this wallet can receive USDC on Ethereum (ERC-20). Funds sent to a wallet that doesn't support it can't be recovered.",
         "verify": {
-          "title": "Verify your email",
+          "confirm_title": "1. Confirm your email",
+          "confirm_body": "Make sure your email is correct. We’ll send a verification code to this address.",
+          "edit_email": "Edit email",
+          "daily_limit": "You've requested too many codes today. Try again tomorrow.",
+          "send_soon": "You can send a code to this address in a moment.",
+          "continue": "Continue",
+          "title": "2. Enter the verification code",
           "body_sent": "6-digit code sent to <b>{email}</b>.",
           "body_instruction": "Please enter the code below to complete verification.",
           "digit": "Digit {n} of 6",
-          "resend": "Resend Code",
-          "incorrect": "Incorrect Code. Check the email and try again.",
+          "resend": "Resend code",
+          "incorrect": "Incorrect code. Check the email and try again.",
           "expired": "This code has expired. Resend a new one.",
+          "back": "Back",
           "submit": "Verify"
         },
         "snackbar": {

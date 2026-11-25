@@ -20,6 +20,20 @@
   gap: var(--dcl-space-24);
 }
 
+/* A stack whose items keep their own width up to the stage's, padding included: a bar too wide for the stage
+   scrolls inside it instead of widening the page. */
+.rows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
+  gap: var(--dcl-space-16);
+}
+
+.rows > * {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
 .narrow {
   width: 100%;
   max-width: 360px;
@@ -28,4 +42,79 @@
 .field {
   width: 100%;
   max-width: 420px;
+}
+
+/* The surface tokens a Tooltip host supplies, from the foundations. A portal tip takes them as its own class. */
+.tooltipHost {
+  --panel: var(--dcl-neutrals-shadow);
+  --text: var(--dcl-neutrals-white);
+  --shadow-panel: 0 8px 24px var(--dcl-transparencies-black-60);
+  --z-overlay: 1;
+}
+
+.tooltipRoom {
+  padding-block: var(--dcl-space-48);
+}
+
+.backdrop {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--dcl-radius-lg);
+}
+
+/* The grids Sites puts BlogCards in (apps/sites/blog): the Blog index, whose content is 1312px at most (1440px less
+   its 64px margins), and an article's related posts, 1180px at most. Three columns, two below 1024px, one below
+   768px. */
+.blogIndex,
+.blogRelated {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--dcl-space-24);
+  max-width: 1312px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.blogRelated {
+  max-width: 1180px;
+}
+
+/* The category badge Sites gives a blog card on a desktop (apps/sites/blog/BlogBadge), 24px high. */
+.blogBadge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  height: 24px;
+  padding: 0 var(--dcl-space-8);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-brand-violet);
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-label-xs-caps);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.blogGrids {
+  display: grid;
+  gap: var(--dcl-space-32);
+}
+
+@media (max-width: 1023px) {
+  .blogIndex,
+  .blogRelated {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .blogIndex,
+  .blogRelated {
+    grid-template-columns: 1fr;
+    gap: var(--dcl-space-16);
+  }
 }

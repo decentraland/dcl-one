@@ -38,8 +38,9 @@ import { openCommunityModal } from '../communities/CommunityModal'
 import { openEventDetail } from '../events/EventDetail'
 import { eventCalendarUrl, eventCopyLink, eventShareUrl } from '../events/eventFormat'
 import { lobbyEvents } from '../events/eventsStore'
-import { PhotoDetail } from '../gallery/PhotoDetail'
+import { usePhotoViewer } from '../gallery/usePhotoViewer'
 import { useOwnReelActions } from '../gallery/useOwnReelActions'
+import { photoDestination } from '../gallery/reelActions'
 import { useReelList } from '../gallery/useReelList'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { openPlaceDetail } from '../places/PlaceDetail'
@@ -60,6 +61,7 @@ import type { EngineViewportRegion } from '@explorer-core/engine/protocol'
 
 const cx = (...names: Array<string | false | null | undefined>): string => names.filter(Boolean).join(' ')
 
+const RAIL_MAX_CARDS = 10
 /** Pixels a press on the avatar travels before it turns the avatar instead of opening the Backpack. */
 const DRAG_THRESHOLD = 8
 /** Pixels from the pointer. */
@@ -78,10 +80,10 @@ function clipToModal(rect: Rect | null): ReturnType<typeof modalHole> {
 }
 
 /** Until the engine has drawn the stage, so the lobby never shows an empty or half-loaded centre. */
-export function StandInStage({ hidden, instant, body, preset }: { hidden: boolean; instant?: boolean; body?: string; preset?: string }): React.JSX.Element {
+export function StandInStage({ hidden, body, preset }: { hidden: boolean; body?: string; preset?: string }): React.JSX.Element {
   const backdrop = STAGE_BACKDROPS[lobbyStagePreset(preset).id]
   return (
-    <div className={cx(styles.standIn, hidden && styles.standInHidden, instant && styles.standInInstant)} aria-hidden="true">
+    <div className={cx(styles.standIn, hidden && styles.standInHidden)} aria-hidden="true">
       <img className={styles.standInBackdrop} src={backdrop} alt="" />
       <div className={styles.standInFloor} />
       {body && <img className={styles.standInAvatar} src={body} alt="" draggable={false} />}
@@ -340,8 +342,8 @@ export function LobbyHome({
     friendsLoading: session.friends.loading,
     totalFriends: session.friends.list.length,
     locations,
-    communities: session.lobbyData.communitiesLoaded ? session.communities.list : null,
-    photos: reel.loaded ? reel.photos.slice(0, 10) : null,
+    communities: session.lobbyData.communitiesLoaded ? session.communities.list.slice(0, RAIL_MAX_CARDS) : null,
+    photos: reel.loaded ? reel.photos.slice(0, RAIL_MAX_CARDS) : null,
     busy,
     friendsAt,
     onFriendHover: (friend, e) => {
@@ -448,22 +450,8 @@ export function LobbyHome({
     }
   }
 
-  // The stand-in covers the stage under the Backpack, which the engine keeps as it is: the Backpack
-  // opening or closing shows or hides it at once; only the stage coming up fades it out.
-  const [standInFade, setStandInFade] = useState(true)
-  const [readyBefore, setReadyBefore] = useState(session.lobbyStageReady)
-  const [backpackBefore, setBackpackBefore] = useState(session.backpack.open)
-  if (session.backpack.open !== backpackBefore) {
-    setBackpackBefore(session.backpack.open)
-    setStandInFade(false)
-  }
-  if (session.lobbyStageReady !== readyBefore) {
-    setReadyBefore(session.lobbyStageReady)
-    setStandInFade(true)
-  }
-
-  // Under the Backpack modal the lobby shows, with a hole where the engine draws the Backpack's avatar.
-  const hole = session.backpack.open ? clipToModal(session.avatarPreviewRect) : null
+  // Under the Backpack modal the lobby shows, with a hole where the engine draws the Backpack's avatar, once drawn.
+  const hole = session.backpack.open && session.avatarPreviewReady ? clipToModal(session.avatarPreviewRect) : null
   const canvasScale = (): number => {
     const el = rootRef.current
     return el != null ? el.getBoundingClientRect().width / (el.offsetWidth || 1) || 1 : 1
@@ -536,13 +524,38 @@ export function LobbyHome({
   const unread = session.notifications.unread
   const nameColor = profile ? userColor(profile.address, profile.name, profile.hasClaimedName, profile.nameColor) : 'var(--lobby-snow)'
 
+  const openPhoto = photoIndex != null ? reel.photos[photoIndex] : undefined
+  usePhotoViewer(
+    photoIndex != null && openPhoto != null
+      ? {
+          photos: reel.photos,
+          index: photoIndex,
+          meta: session.gallery.metas[openPhoto.id],
+          canEdit: true,
+          onIndex: setPhotoIndex,
+          onLoadMeta: session.gallery.loadPhoto,
+          loadWearables: session.gallery.loadWearables,
+          onClose: () => setPhotoIndex(null),
+          onSetPublic: reelActions.setPublic,
+          onJumpIn: (place) => {
+            if (pick(photoDestination(place))) setPhotoIndex(null)
+          },
+          onDelete: (photo) =>
+            void reelActions.remove(photo).then((removed) => {
+              if (removed) setPhotoIndex(null)
+            })
+        }
+      : null
+  )
+
   return (
     <div ref={rootRef} className={cx(styles.root, editing && styles.editing)} style={backpackHole}>
       {/* the Backpack opens over the lobby: the engine sets the lobby's stage aside, as it is, until it closes */}
       <div className={styles.stage}>
         <EngineViewport region="lobby" report={setEngineViewport} />
       </div>
-      <StandInStage hidden={session.lobbyStageReady && !session.backpack.open} instant={!standInFade} body={stored.body} preset={session.lobbyStage.preset} />
+      {/* under the Backpack the engine keeps the stage's last frame */}
+      <StandInStage hidden={session.lobbyStageReady} body={stored.body} preset={session.lobbyStage.preset} />
       <div className={styles.gradient} />
       <div className={styles.overlay} />
 
@@ -703,28 +716,6 @@ export function LobbyHome({
             />
           </div>
         </>
-      )}
-
-      {photoIndex != null && reel.photos[photoIndex] != null && (
-        <div className={styles.photo}>
-          <PhotoDetail
-            photos={reel.photos}
-            index={photoIndex}
-            meta={session.gallery.metas[reel.photos[photoIndex].id]}
-            isSelf
-            onIndex={setPhotoIndex}
-            onLoadMeta={session.gallery.loadPhoto}
-            onClose={() => setPhotoIndex(null)}
-            onTeleport={(x, y) => {
-              if (pick({ kind: 'parcel', x, y })) setPhotoIndex(null)
-            }}
-            onDelete={(photo) =>
-              void reelActions.remove(photo).then((removed) => {
-                if (removed) setPhotoIndex(null)
-              })
-            }
-          />
-        </div>
       )}
 
       {avatarTip && !editing && (

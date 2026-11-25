@@ -27,10 +27,27 @@ const hudHost = fileURLToPath(new URL("../ui3/src/play/host.ts", import.meta.url
 // What /play supplies to the in-world Shop UI (library/ui/apps/shop).
 const shopHost = fileURLToPath(new URL("../ui3/src/play/shopHost.ts", import.meta.url));
 // library/ui/apps/hud has no node_modules of its own: the @noble modules it imports resolve to this app's
-// copies. Only these specifiers: a dependency of this app keeps an older @noble of its own. Keep this list
-// to the @noble modules library/explorer-core imports; tsconfig.json maps all of @noble/* for the type check.
-const noble = (path: string) => fileURLToPath(new URL(`./node_modules/@noble/${path}`, import.meta.url));
+// copies. Only these specifiers, and only for code outside node_modules: a dependency of this app keeps the
+// @noble release it asks for. Keep this list to the @noble modules library/explorer-core imports;
+// tsconfig.json maps all of @noble/* for the type check.
+const libraryNobleModules: Record<string, string> = Object.fromEntries(
+  ["curves/secp256k1.js", "hashes/sha2.js", "hashes/sha3.js", "hashes/webcrypto.js", "hashes/utils.js"].map((path) => [
+    `@noble/${path}`,
+    fileURLToPath(new URL(`./node_modules/@noble/${path}`, import.meta.url)),
+  ]),
+);
 const oneUi = fileURLToPath(new URL("../../library/ui", import.meta.url));
+
+function libraryNoble(): Plugin {
+  return {
+    name: "library-noble",
+    enforce: "pre",
+    resolveId(source, importer) {
+      const target = libraryNobleModules[source];
+      return target && importer && !importer.includes("/node_modules/") ? target : null;
+    },
+  };
+}
 
 function watchUi3(ui3Src: string): Plugin {
   return {
@@ -274,8 +291,8 @@ function playBuild(): string {
 export default defineConfig({
   define: { __PLAY_BUILD__: JSON.stringify(playBuild()), __VALIDATOR_VERSION__: JSON.stringify(validatorVersion) },
   // ES workers can code-split, so the item validation worker loads its rule book as its own chunk.
-  worker: { format: "es" },
-  plugins: [icoTypeLikeServe(), separateDevCaches(), servePlayWeb(), reactRouter(), watchUi3(ui), warmServerBuild()],
+  worker: { format: "es", plugins: () => [libraryNoble()] },
+  plugins: [libraryNoble(), icoTypeLikeServe(), separateDevCaches(), servePlayWeb(), reactRouter(), watchUi3(ui), warmServerBuild()],
   server: {
     // A save is often truncate-then-write, and over the NFS home the two reach the
     // server's inotify as two events. Transforming on the first one served an EMPTY
@@ -309,11 +326,6 @@ export default defineConfig({
         "@dcl/hashing": hashing,
         "@hud-host": hudHost,
         "@shop-host": shopHost,
-        "@noble/curves/secp256k1.js": noble("curves/secp256k1.js"),
-        "@noble/hashes/sha2.js": noble("hashes/sha2.js"),
-        "@noble/hashes/sha3.js": noble("hashes/sha3.js"),
-        "@noble/hashes/webcrypto.js": noble("hashes/webcrypto.js"),
-        "@noble/hashes/utils.js": noble("hashes/utils.js"),
         "@hud": hud,
         "@explorer-core": explorerCore,
         "@": src,

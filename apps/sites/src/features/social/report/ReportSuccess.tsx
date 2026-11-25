@@ -4,10 +4,9 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
-import { AnimatedBackground } from "@dcl/one-ui/apps/sites/shared/AnimatedBackground/AnimatedBackground";
+import { AnimatedBackground, GeneralDecentralandColor } from "@dcl/one-ui";
 import SitesLayout from "../../components/chrome/SitesLayout";
 
-import { GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";
 import styles from "./ReportSuccess.module.css";
 
 export default function ReportSuccess() {

@@ -44,6 +44,14 @@ pub const STORE_LOCK_KEY: i64 = 0x5354_4f52_455f_4743;
 /// Advisory lock key held for the length of one collector run.
 pub const GC_RUN_LOCK_KEY: i64 = 0x5354_4f52_455f_5255;
 
+/// Exclusive store-lock waits that gave up because publishes kept the shared side busy.
+pub const LOCK_WRITER_TIMEOUTS: dcl_metrics::CounterFamily<0> = dcl_metrics::CounterFamily::new(
+    "dcl_content_lock_writer_timeouts_total",
+    "Garbage collection or cleanup runs deferred because deployments kept the content lock busy",
+    None,
+    &[],
+);
+
 /// How long an unlink batch waits for in-flight publishes before deferring.
 pub const STORE_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -137,6 +145,7 @@ pub async fn lock_store_exclusive_within(
     {
         Ok(_) => Ok(tx),
         Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("55P03") => {
+            LOCK_WRITER_TIMEOUTS.handle([]).increment(1);
             Err(GcError::LockTimeout)
         }
         Err(e) => Err(e.into()),
@@ -167,8 +176,6 @@ pub const REFERENCE_SOURCES: &[&str] = &[
     "content.active_pointers.entity_id",
     "content.local_entities.entity_id",
     "content.snapshots.hash",
-    "content.processed_snapshots.hash",
-    "content.failed_deployments.snapshot_hash",
     "content.failed_deployments.entity_id",
     "content.pending_deployments.entity_id",
     "content.pending_deployment_files.hash",
@@ -176,6 +183,7 @@ pub const REFERENCE_SOURCES: &[&str] = &[
     "explore.world_manifest.blob_cid",
     "explore.poster.blob_cid",
     "worlds.worlds.thumbnail_hash",
+    "worlds.thumbnail_aliases.blob_cid",
     "worlds.federation_worlds.thumbnail_hash",
     "worlds.world_scenes.entity_id",
     "worlds.retired_world_scenes.entity_id",
@@ -207,6 +215,14 @@ pub const REFERENCE_SOURCES: &[&str] = &[
 /// Columns whose names look like store keys but are not, with the reason.
 pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     (
+        "content.processed_snapshots.hash",
+        "a peer snapshot processing receipt; the peer snapshot file is temporary",
+    ),
+    (
+        "content.failed_deployments.snapshot_hash",
+        "the provenance of a failed deployment; retries fetch the entity by its own id",
+    ),
+    (
         "content.snapshots.replaced_hashes",
         "the snapshot files a newer snapshot replaced: garbage for this collector",
     ),
@@ -229,6 +245,11 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "explore.world_scene_place.entity_id",
         "a non-owning deployment link: worlds.world_scenes holds the blob reference; \
          retiring a place clears the link, while its UUID and storage remain",
+    ),
+    (
+        "explore.world_scene_binding.entity_id",
+        "retained evidence of which scene UUID a deployment held, for stream notice \
+         recovery; worlds.world_scenes and retired_world_scenes hold the blob references",
     ),
     (
         "explore.place_indexed.image_url",
@@ -286,13 +307,29 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     ("shop.disputes.trade_hash", "an order digest"),
     ("shop.admin_audit.target_hash", "an order digest"),
     ("shop.chain_cursor.last_block_hash", "a block hash"),
+    (
+        "shop.mirror_state.pass_block_hash",
+        "a graph block hash pinned for a catalogue pass",
+    ),
     ("shop.chain_checkpoint.block_hash", "a block hash"),
     ("land_authz.index_cursor.last_block_hash", "a block hash"),
     ("land_authz.index_cursor.checkpoint_hash", "a block hash"),
     ("shop.trade_event.hashed_signature", "an order digest"),
     ("shop.trade_event.tx_hash", "a transaction hash"),
     ("shop.sale_event.tx_hash", "a transaction hash"),
+    ("shop.sale_execution.tx_hash", "a transaction hash"),
+    ("shop.sale_publication.block_hash", "a block hash"),
+    ("shop.store_sale_line.tx_hash", "a transaction hash"),
+    (
+        "shop.verified_store_sale_line.tx_hash",
+        "a transaction hash",
+    ),
+    ("shop.name_purchase.tx_hash", "a transaction hash"),
     ("shop.nft_event.tx_hash", "a transaction hash"),
+    (
+        "shop.collection_event.content_hash",
+        "the content hash a collection's item records on chain; the item's deployment references its blobs",
+    ),
     ("shop.mana_transfer.transaction_hash", "a transaction hash"),
     ("shop.tip_claim.transaction_hash", "a transaction hash"),
     ("shop.coupons.hashed_signature", "an order digest"),
@@ -652,12 +689,23 @@ pub async fn catalogue_references(
     Ok(keys)
 }
 
+/// Plain references are durable except for mirror-observed thumbnail aliases.
+fn reference_predicate(source: &str) -> &'static str {
+    match source {
+        "worlds.thumbnail_aliases.blob_cid" => {
+            " AND (mirror_expires_at IS NULL OR mirror_expires_at > now())"
+        }
+        _ => "",
+    }
+}
+
 /// Whether any domain names any key at all (the empty-set refusal).
 async fn any_reference(pool: &PgPool) -> Result<bool, GcError> {
     for source in REFERENCE_SOURCES {
         let (table, column) = split_source(source);
+        let live = reference_predicate(source);
         let present: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT EXISTS (SELECT 1 FROM {table} WHERE {column} IS NOT NULL AND {column} <> '')"
+            "SELECT EXISTS (SELECT 1 FROM {table} WHERE {column} IS NOT NULL AND {column} <> ''{live})"
         )))
         .fetch_one(pool)
         .await?;
@@ -779,8 +827,9 @@ async fn rows_among(
             continue;
         }
         let (table, column) = split_source(source);
+        let live = reference_predicate(source);
         let rows: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT DISTINCT {column} FROM {table} WHERE {column} = ANY($1)"
+            "SELECT DISTINCT {column} FROM {table} WHERE {column} = ANY($1){live}"
         )))
         .bind(keys)
         .fetch_all(&mut *conn)
@@ -1083,6 +1132,40 @@ mod tests {
         referenced_among(&pool, Pins::new(&storage, &[]), &["none".to_string()])
             .await
             .expect("every source statement runs against the schema");
+    }
+
+    #[tokio::test]
+    async fn only_imported_and_unexpired_thumbnail_aliases_pin_blobs() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        sqlx::query(
+            "INSERT INTO worlds.thumbnail_aliases (legacy_sha256, blob_cid, mirror_expires_at)
+             VALUES (repeat('a', 64), 'imported', NULL),
+                    (repeat('b', 64), 'current', now() + interval '1 day'),
+                    (repeat('c', 64), 'expired', now() - interval '1 day'),
+                    (repeat('d', 64), 'world-thumbnail', now() - interval '1 day')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO worlds.worlds (name, thumbnail_hash)
+             VALUES ('thumbnail.dcl.eth', 'world-thumbnail')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let keys = ["imported", "current", "expired", "world-thumbnail"].map(String::from);
+        assert_eq!(
+            referenced_rows_among_on(&mut *pool.acquire().await.unwrap(), &keys)
+                .await
+                .unwrap(),
+            ["imported", "current", "world-thumbnail"]
+                .map(String::from)
+                .into_iter()
+                .collect()
+        );
     }
 
     /// An unlink batch waits for a publish holding the shared lock, and only one run holds the run lock.

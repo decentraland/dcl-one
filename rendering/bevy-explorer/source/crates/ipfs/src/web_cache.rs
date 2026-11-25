@@ -12,12 +12,13 @@
 //! for quota.
 
 use bevy::diagnostic::DiagnosticPath;
+use common::sync::MutexExt;
 use serde::Deserialize;
 use std::{
     collections::HashSet,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Mutex, PoisonError,
+        Mutex,
     },
 };
 
@@ -352,7 +353,7 @@ impl UsedKeys {
     /// Notes `key`, unless the worker would drop it; true when the set is full and should be
     /// flushed.
     fn note(&self, key: &str) -> bool {
-        let mut keys = self.keys.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut keys = self.keys.lock_ignore_poison();
         if key.len() <= USED_KEY_MAX && !keys.contains(key) {
             keys.insert(key.to_owned());
             self.pending.store(keys.len(), Ordering::Relaxed);
@@ -361,7 +362,7 @@ impl UsedKeys {
     }
 
     fn take(&self) -> Vec<String> {
-        let mut keys = self.keys.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut keys = self.keys.lock_ignore_poison();
         let taken = keys.drain().collect();
         self.pending.store(0, Ordering::Relaxed);
         taken
@@ -369,12 +370,7 @@ impl UsedKeys {
 
     /// The keys waiting, which stay waiting.
     fn waiting(&self) -> Vec<String> {
-        self.keys
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .cloned()
-            .collect()
+        self.keys.lock_ignore_poison().iter().cloned().collect()
     }
 
     fn len(&self) -> usize {
@@ -392,10 +388,11 @@ mod io {
         page_content_cache_trim, sends_uses_before_trim, trim_interval_for, TrimReply, TrimReport,
         UsedKeys, WebCacheState, WorkerTrimReply, WEB_CACHE_CAP_BYTES,
     };
+    use common::sync::MutexExt;
     use js_sys::Uint8Array;
     use std::sync::{
         atomic::{AtomicU64, Ordering},
-        Mutex, PoisonError,
+        Mutex,
     };
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
@@ -617,7 +614,7 @@ mod io {
         WORKER_CAP_BYTES.store(report.cap_bytes as u64, Ordering::Relaxed);
         EVICTED_ENTRIES.fetch_add(report.evicted_entries as u64, Ordering::Relaxed);
         EVICTED_BYTES.fetch_add(report.evicted_bytes as u64, Ordering::Relaxed);
-        *LAST_REPORT.lock().unwrap_or_else(PoisonError::into_inner) = Some(report);
+        *LAST_REPORT.lock_ignore_poison() = Some(report);
         Some(report)
     }
 
@@ -632,7 +629,7 @@ mod io {
             unanswered: UNANSWERED.load(Ordering::Relaxed),
             evicted_entries_total: EVICTED_ENTRIES.load(Ordering::Relaxed),
             evicted_bytes_total: EVICTED_BYTES.load(Ordering::Relaxed),
-            last: *LAST_REPORT.lock().unwrap_or_else(PoisonError::into_inner),
+            last: *LAST_REPORT.lock_ignore_poison(),
             pending_uses: USED.len(),
         }
     }

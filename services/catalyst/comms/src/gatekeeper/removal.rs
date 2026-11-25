@@ -1,4 +1,6 @@
 //! Comms-owned durable ban removals; no network call runs in a SQL transaction.
+use crate::metrics::declarations;
+
 use crate::gatekeeper::admission::cluster::safety::{DispatchPhase, DispatchState};
 use std::sync::Arc;
 use std::time::Duration;
@@ -226,7 +228,9 @@ async fn failed(pool: &PgPool, row: &Intent, error: &anyhow::Error) -> Result<()
         .bind(&row.root_key).bind(&row.target_key).bind(row.generation).bind(row.claim_id).bind(attempt)
         .bind(now_utc() + chrono::Duration::milliseconds(delay as i64)).bind(now_utc()).execute(pool).await?.rows_affected();
     if updated != 0 {
-        metrics::counter!("comms_livekit_removal_failures_total").increment(1);
+        declarations::LIVEKIT_REMOVAL_FAILURES
+            .handle([])
+            .increment(1);
         if attempt >= 10 {
             tracing::error!(attempt, age_seconds=(now_utc()-row.created_at).num_seconds(), cause=%row.cause_kind, error=%error, "LiveKit enforcement still pending; continuing retries");
         } else {
@@ -613,9 +617,9 @@ pub(super) fn spawn_jobs(state: &Arc<CommsState>, jobs: &Jobs) {
                 passes=passes.wrapping_add(1);
                 if passes%60==1 {
                     let (count,oldest,attempts):(i64,Option<NaiveDateTime>,Option<i32>)=sqlx::query_as("SELECT count(*),min(created_at),max(attempts) FROM social.livekit_removal_intents").fetch_one(&state.pool).await?;
-                    metrics::gauge!("comms_livekit_removal_pending").set(count as f64);
-                    metrics::gauge!("comms_livekit_removal_oldest_seconds").set(oldest.map(|at|(now_utc()-at).num_seconds().max(0)).unwrap_or(0) as f64);
-                    metrics::gauge!("comms_livekit_removal_max_attempts").set(attempts.unwrap_or(0) as f64);
+                    declarations::LIVEKIT_REMOVAL_PENDING.handle([]).set(count as f64);
+                    declarations::LIVEKIT_REMOVAL_OLDEST_SECONDS.handle([]).set(oldest.map(|at|(now_utc()-at).num_seconds().max(0)).unwrap_or(0) as f64);
+                    declarations::LIVEKIT_REMOVAL_MAX_ATTEMPTS.handle([]).set(attempts.unwrap_or(0) as f64);
                     ctx.progress(format!("{count} pending removal intents"));
                 }
                 ctx.pass_done();
@@ -2346,9 +2350,13 @@ async fn resume_island_quarantines(state: &CommsState) -> Result<()> {
         }
         .await;
         if let Err(error) = result {
-            metrics::counter!("comms_island_cleanup_maintenance_failed_total").increment(1);
+            declarations::ISLAND_CLEANUP_MAINTENANCE_FAILED
+                .handle([])
+                .increment(1);
             if error.is::<IslandDispatchUncertain>() {
-                metrics::counter!("comms_island_cleanup_uncertain_total").increment(1);
+                declarations::ISLAND_CLEANUP_UNCERTAIN
+                    .handle([])
+                    .increment(1);
             }
             tracing::warn!(dispatch_id=%id,%error,"island cleanup maintenance failed; admission remains closed");
         }
