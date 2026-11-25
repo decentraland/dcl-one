@@ -20,6 +20,7 @@ pub mod build;
 pub mod http_cache;
 pub mod meta;
 pub mod png;
+pub use png::FAMILIES;
 pub mod render;
 pub mod tiles;
 
