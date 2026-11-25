@@ -78,11 +78,14 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: python3 tooling/dev-ci.py
+      # These suites read files outside push.paths, so every pull request runs them.
+      - name: Run the workflow tests
+        run: python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local tooling.tests.test_ui_gallery_receipt.WorkflowTest tooling.tests.test_image_cache.CompileWorkflowTest
   rust:
     name: Rust tests
     needs: changes
     # Runs whatever the plan's outcome unless it found nothing to test or no input of the Rust tests; without a
-    # plan (other events, a failed plan job) it runs. PRs run on Linux; main and the ci:macos label add macOS.
+    # plan (other events, a failed plan step) it runs. PRs run on Linux; main and the ci:macos label add macOS.
     if: ${{ !cancelled() && needs.changes.outputs.run != 'false' && needs.changes.outputs.rust != 'false' }}
     strategy:
       fail-fast: false
@@ -467,17 +470,16 @@ jobs:
         with:
           path: ${{ env.PNPM_STORE }}
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
-  # The one check to mark required on main. It always reports: green when the Rust, smoke, tooling and web jobs
-  # passed or were skipped because nothing they test changed, red when one failed, was cancelled or is missing.
+  # The one check to mark required on main. It always reports: green when the Changes, Rust, smoke, tooling and web
+  # jobs passed or were skipped, red when one failed, was cancelled or is missing.
   gate:
     name: CI gate
-    # The tooling tests include the workflow tests: they check that the Rust shards cover every test.
     needs: [changes, rust, smoke, tooling, web]
     if: ${{ always() }}
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 5
     steps:
-      - name: Require the Rust, smoke, tooling and web jobs to pass or be skipped
+      - name: Require the Changes, Rust, smoke, tooling and web jobs to pass or be skipped
         env:
           CHANGES: ${{ needs.changes.result }}
           RUST: ${{ needs.rust.result }}

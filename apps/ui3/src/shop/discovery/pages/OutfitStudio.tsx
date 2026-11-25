@@ -2,11 +2,12 @@
 //       app/src/components/OutfitItemPicker/OutfitItemPicker.tsx, app/src/components/EmptyState/EmptyState.tsx
 //       (assets/empty/signin-empty.svg vendored as outfit-assets/signin-empty.svg)
 
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
 import { isShopApiError } from "@shop/api/client";
 import { BASE_FEMALE, BASE_MALE } from "@shop/detail/lib/bodyShape";
+import AvatarStage from "../../detail/components/AvatarStage";
 import { itemUrn } from "@shop/detail/lib/urn";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
@@ -45,7 +46,6 @@ import signInIllustration from "./outfit-assets/signin-empty.svg";
 import "./outfitstudio.css";
 import { shopReads } from "../reads";
 
-const WearablePreview = lazy(() => import("../../../wearable-preview/WearablePreview"));
 
 const COPY = {
   title: "Outfit Studio",
@@ -475,7 +475,6 @@ function StudioEditor({ outfitId }: { outfitId: string | null }) {
   const playing = playingEmote(resolved);
   const playingKey = playing?.itemId ? outfitItemKey({ contractAddress: playing.contractAddress, itemId: playing.itemId }) : null;
   const body = draft?.bodyShape === "female" ? BASE_FEMALE : BASE_MALE;
-  const webgl = typeof window !== "undefined" && typeof (window as { WebGLRenderingContext?: unknown }).WebGLRenderingContext !== "undefined";
 
   if (!draft) {
     if (recordQ.error) {
@@ -529,10 +528,23 @@ function StudioEditor({ outfitId }: { outfitId: string | null }) {
       <div className="shop-studio__grid">
         <div className="shop-studio__side">
           <div className="shop-studio__preview" data-testid="outfit-studio-preview" style={{ background: outfitRadialGradient(draft) }}>
-            {webgl && urns.length > 0 ? (
-              <Suspense fallback={null}>
-                <WearablePreview urns={urns} body={body} spin={false} zoom={1} />
-              </Suspense>
+            {urns.length > 0 ? (
+              // A default mannequin of the outfit's body in its wearables, in the colors of an imported avatar if any.
+              <AvatarStage
+                options={{
+                  urns,
+                  profile: "default",
+                  bodyShape: body,
+                  skin: importColors?.skin,
+                  hair: importColors?.hair,
+                  eyes: importColors?.eyes,
+                  type: "avatar",
+                  emote: "fashion",
+                  disableBackground: true,
+                  disableFadeEffect: true,
+                }}
+                unavailable={false}
+              />
             ) : null}
             {urns.length === 0 && !resolving ? <p className="shop-studio__preview-empty">{COPY.previewEmpty}</p> : null}
             {importColors ? <span className="shop-studio__sr">Imported colors apply to this session's preview only.</span> : null}
