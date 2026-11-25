@@ -12,7 +12,7 @@ use super::nft_index::deployments::Deployments;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use alloy_primitives::{Address, FixedBytes, U256, keccak256};
 use alloy_sol_types::SolValue;
@@ -2359,13 +2359,22 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
     let chain = FakeChain::new(200, vec![], 100, 100);
     let hash = chain.hash_of(100);
     let price = Arc::new(AtomicUsize::new(100));
+    let meta_ready = Arc::new(AtomicBool::new(true));
+    #[derive(Clone)]
+    struct GraphFixture {
+        hash: String,
+        price: Arc<AtomicUsize>,
+        meta_ready: Arc<AtomicBool>,
+    }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let graph = format!("http://{}/", listener.local_addr().unwrap());
     let app = Router::new().route("/", post(
-        |State((hash, price)): State<(String, Arc<AtomicUsize>)>, axum::Json(body): axum::Json<Value>| async move {
+        |State(graph): State<GraphFixture>, axum::Json(body): axum::Json<Value>| async move {
             let vars = &body["variables"];
-            let block = if vars["number"] == 100 || vars["block"].is_object() {
-                json!({"number":100,"hash":hash})
+            let block = if !graph.meta_ready.load(Ordering::SeqCst) {
+                Value::Null
+            } else if vars["number"] == 100 || vars["block"].is_object() {
+                json!({"number":100,"hash":graph.hash})
             } else {
                 json!({"number":100+ChainNet::Matic.confirmations()})
             };
@@ -2373,14 +2382,14 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
                 (1..=mirrors::PAGE_SIZE).map(|id| json!({
                     "id":format!("item-{id:04}"), "blockchainId":id.to_string(), "itemType":"wearable_v2",
                     "collection":{"id":format!("0x{:040x}", 1)},
-                    "price":price.load(Ordering::SeqCst).to_string(),
+                    "price":graph.price.load(Ordering::SeqCst).to_string(),
                 })).collect::<Vec<_>>()
             } else {
                 Vec::new()
             };
             axum::Json(json!({"data":{"items":items,"_meta":{"block":block}}}))
         }
-    )).with_state((hash, price.clone()));
+    )).with_state(GraphFixture { hash, price: price.clone(), meta_ready: meta_ready.clone() });
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let mut config = Settings::for_tests();
     config.matic_collections_subgraph_url = Some(graph);
@@ -2399,28 +2408,6 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
         .fetch_one(&db.pool)
     };
 
-    tick().await.unwrap();
-    tick().await.unwrap();
-    assert_eq!(stored_price().await.unwrap(), "100");
-    let completed = read().await.unwrap().unwrap();
-    price.store(200, Ordering::SeqCst);
-    chain.fail_chain_id.store(true, Ordering::SeqCst);
-    assert!(
-        tick()
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("upstream refused")
-    );
-    assert_eq!(
-        read().await.unwrap().unwrap().last_complete_pass_at,
-        completed.last_complete_pass_at
-    );
-    assert_eq!(stored_price().await.unwrap(), "100");
-    assert!(mirrors::require_priced(&state).await.is_ok());
-
-    // Advance the persisted outage clock and restart the pass using the
-    // same stored decision, without waiting out PostgreSQL wall time.
     let age_proof = || {
         sqlx::query(
             "UPDATE shop.mirror_state SET
@@ -2430,6 +2417,47 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
         )
         .execute(&db.pool)
     };
+    tick().await.unwrap();
+    tick().await.unwrap();
+    assert_eq!(stored_price().await.unwrap(), "100");
+
+    // An older graph failure does not count toward the RPC-only window.
+    price.store(200, Ordering::SeqCst);
+    meta_ready.store(false, Ordering::SeqCst);
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no block number")
+    );
+    age_proof().await.unwrap();
+    let earlier = read().await.unwrap().unwrap();
+    meta_ready.store(true, Ordering::SeqCst);
+    chain.fail_chain_id.store(true, Ordering::SeqCst);
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("upstream refused")
+    );
+    let pending = read().await.unwrap().unwrap();
+    assert!(pending.pass_started_at > earlier.pass_started_at);
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("upstream refused")
+    );
+    let retried = read().await.unwrap().unwrap();
+    assert_eq!(retried.pass_started_at, pending.pass_started_at);
+    assert_eq!(retried.last_complete_pass_at, earlier.last_complete_pass_at);
+    assert_eq!(stored_price().await.unwrap(), "100");
+    assert!(mirrors::require_priced(&state).await.is_ok());
+
+    // Advance the persisted RPC outage clock without a wall-clock wait.
     age_proof().await.unwrap();
     tick().await.unwrap();
     let partial = read().await.unwrap().unwrap();

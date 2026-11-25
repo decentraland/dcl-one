@@ -456,9 +456,11 @@ async fn pin_new_pass(
     if state.settings.market.indexes.serves_mainnet(net) {
         match &error {
             CatalogueProofError::RpcUnavailable(_) if !previous.starts_with(PROOF_REJECTED) => {
-                if previous.starts_with(PROOF_UNAVAILABLE)
+                let now = now_utc();
+                let retrying = previous.starts_with(PROOF_UNAVAILABLE);
+                if retrying
                     && c.pass_started_at
-                        .is_some_and(|start| now_utc() - start >= MAINNET_PROOF_RETRY_WINDOW)
+                        .is_some_and(|start| now - start >= MAINNET_PROOF_RETRY_WINDOW)
                 {
                     tracing::warn!(mirror = c.mirror.name(), network = net.db_name(), %error,
                         "catalogue proof skipped: rpc unavailable");
@@ -470,6 +472,9 @@ async fn pin_new_pass(
                         ])
                         .increment(1);
                     return Ok(());
+                }
+                if !retrying {
+                    c.pass_started_at = Some(now);
                 }
                 c.last_error = Some(format!("{PROOF_UNAVAILABLE}{error}"));
                 save(&state.pool, c).await?;
