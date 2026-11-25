@@ -228,7 +228,6 @@
   --splash: #ffffff; /* photo mode: the shutter flash */
   --scrim-20: rgba(0, 0, 0, 0.1);
   --divider-pink: rgba(247, 85, 255, 0.25);
-  --tab-idle: rgba(120, 90, 160, 0.14); /* a faint lift on the header */
   --tab-hover: rgba(255, 255, 255, 0.26);
   --cover-dark: rgba(22, 21, 24, 0.6); /* incompatible-item cover */
   --outline-faint: rgba(255, 255, 255, 0.45); /* clear boxes on chips */

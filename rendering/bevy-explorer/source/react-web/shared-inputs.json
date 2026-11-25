@@ -3341,10 +3341,6 @@
           "kind": "regular"
         },
         {
-          "name": "Tabs.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "Tabs.tsx",
           "kind": "regular"
         },
@@ -12416,12 +12412,8 @@
       "sha256": "cf21eb699850a4052ce74494487f08bd31c2e5dba8edf1fce394d13fe9ffe37f"
     },
     {
-      "path": "library/ui/apps/hud/design/Tabs.module.css",
-      "sha256": "dff011f86ef9335175bfb48ab2e4392239a18a8484c297a4198a7f5ecfd9931b"
-    },
-    {
       "path": "library/ui/apps/hud/design/Tabs.tsx",
-      "sha256": "6f814e88014983e73212f3301253f7587d694f74eafa7e3b14c7346f1c90729f"
+      "sha256": "d5f48082d9ae858edf36da3e6c84cd5bdbf301161c21a7f034650770c5b701cf"
     },
     {
       "path": "library/ui/apps/hud/design/TextArea.module.css",
@@ -13765,7 +13757,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "245c03f49726f1be5d20bef3f21bc7494f34605059ed3bdd65ddb3d61e4c16b0"
+      "sha256": "1896ec1afdb19757c37f92dc9cd800331c451f90cc845d51db3716fd2aa6e104"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -16405,7 +16397,7 @@
     },
     {
       "path": "library/ui/components/Tabs/Tabs.module.css",
-      "sha256": "53e23c74ad34c8e2e9be3600e1ff53a100b8c3b6d050ea3f84a8fa1d959d8d92"
+      "sha256": "6fb9be7197c39bfd0c62b33a9c84e476cff00de68f5ad794e2f47e5acbc468a2"
     },
     {
       "path": "library/ui/components/Tabs/Tabs.module.css.d.ts",
@@ -16413,11 +16405,11 @@
     },
     {
       "path": "library/ui/components/Tabs/Tabs.tsx",
-      "sha256": "7e1e8cccda2b329c1c0fe14a3639ac07aee1e4aa102b441ffcafb5e887f39d67"
+      "sha256": "54ce6b482a120dd299af396bb79f0b9ae257b10ff4b7972a1dd106231e45e6c6"
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css",
-      "sha256": "6b4daafb0062b222762dfa1ad9541bd72f4ebc13614368eb7c1bfcfba331bb9d"
+      "sha256": "961fbb5bf26a42e60fc27b6684d6f910d0faa1204c92b4a20049f97d73cec3d6"
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css.d.ts",
@@ -16425,7 +16417,7 @@
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.tsx",
-      "sha256": "165411af3537dd120dc4f7a7727e33749c722cb827c6f0fc79c9b0c19a0b35fc"
+      "sha256": "854e3091ddb1ca0851cef5f071cca4f729c1f3ed5be3cef19938df181adfb879"
     },
     {
       "path": "library/ui/components/Tag/Tag.module.css",
@@ -21843,17 +21835,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/Tabs.tsx",
-      "to": "library/ui/apps/hud/design/Tabs.module.css",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Tabs.tsx",
-      "to": "library/ui/apps/hud/design/Tabs.module.css",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Tabs.tsx",
-      "to": "library/ui/apps/hud/design/Tabs.module.css",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {

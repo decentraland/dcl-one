@@ -749,11 +749,11 @@
   },
   "library/ui/components/Tabs/Tabs.module.css": {
     "primitives": 0,
-    "tokens": 38
+    "tokens": 40
   },
   "library/ui/components/TabsBar/TabsBar.module.css": {
     "primitives": 0,
-    "tokens": 33
+    "tokens": 48
   },
   "library/ui/components/Tag/Tag.module.css": {
     "primitives": 0,

@@ -392,6 +392,21 @@ export const navigationEntries: GalleryEntry[] = [
     components: ['TabsBar'],
     examples: [
       {
+        id: 'hud',
+        title: 'Explorer HUD strips: pill, underline, section and subtab',
+        render: () => (
+          <div className={layout.stack}>
+            {(['pill', 'underline', 'section', 'subtab'] as const).map((variant) => (
+              <TabsBar key={variant} appearance="hud" variant={variant} label={`${variant} strip`}>
+                <Tabs appearance="hud" label="Wearables" selected />
+                <Tabs appearance="hud" label="Emotes" />
+                <Tabs appearance="hud" label="Unavailable" disabled />
+              </TabsBar>
+            ))}
+          </div>
+        )
+      },
+      {
         id: 'underline',
         title: 'Panel, underline',
         render: () => <PanelTabsDemo variant="underline" />
