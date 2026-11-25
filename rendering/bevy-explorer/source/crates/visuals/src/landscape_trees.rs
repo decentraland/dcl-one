@@ -3,7 +3,7 @@
 //! Only empty parcels carry them, as the realm's resolved pointers or, before those, Genesis City's
 //! published occupancy say: a parcel that is unknown, occupied or outside the terrain counts as
 //! occupied, and an instance whose footprint reaches such a parcel is hidden.
-//! They stand within the Landscape Distance of the player, on the terrain.
+//! They stand within `TREE_DISTANCE` of the player, on the terrain.
 
 use bevy::{
     asset::{embedded_asset, embedded_path, RenderAssetUsages},
@@ -17,10 +17,7 @@ use bevy::{
 };
 use bevy_console::ConsoleCommand;
 use common::{
-    partition::PARCEL_SIZE,
-    sets::RealmLifecycle,
-    structs::{LandscapeDistance, PrimaryUser},
-    terrain::Occupancy,
+    partition::PARCEL_SIZE, sets::RealmLifecycle, structs::PrimaryUser, terrain::Occupancy,
 };
 use console::DoAddConsoleCommand;
 use scene_runner::{initialize_scene::ScenePointers, vec3_to_parcel};
@@ -336,14 +333,18 @@ fn apply_tree_wind(
 struct Landscape<'w> {
     surface: Res<'w, TerrainSurface>,
     pointers: Res<'w, ScenePointers>,
-    distance: Res<'w, LandscapeDistance>,
     assets: Res<'w, LandscapeTreeAssets>,
     layouts: Res<'w, Assets<TreeLayout>>,
 }
 
-/// The most instances spawned in one frame. Filling the Landscape Distance at start, after a
-/// teleport or a larger distance spreads over frames, nearest first, instead of stalling one; a
-/// parcel resolving empty once that is done spawns its few instances in the frame it resolves.
+/// How far from the player instances stand, in metres. Unity draws a prototype's full mesh only
+/// while it covers enough of the screen, which ends between about 15 m (bushes) and 140 m (the
+/// largest tree) at scale 1, and an impostor or nothing beyond; this covers the farthest full mesh.
+pub(crate) const TREE_DISTANCE: f32 = 150.0;
+
+/// The most instances spawned in one frame. Filling the distance at start or after a teleport
+/// spreads over frames, nearest first, instead of stalling one; a parcel resolving empty once that
+/// is done spawns its few instances in the frame it resolves.
 pub(crate) const SPAWN_BUDGET: usize = 200;
 
 #[derive(Default)]
@@ -420,7 +421,6 @@ fn update_trees(
     let Landscape {
         surface,
         pointers,
-        distance,
         assets,
         layouts,
     } = landscape;
@@ -431,7 +431,6 @@ fn update_trees(
     state.pending |= state.centre != Some(centre)
         || state.world != Some(world)
         || state.generation != Some(pointers.generation())
-        || distance.is_changed()
         || changes.relayout
         || changes.targets.is_some();
     state.generation = Some(pointers.generation());
@@ -455,7 +454,7 @@ fn update_trees(
         state.pending = false;
         // unknown parcels stay clear until the realm or Genesis City's published occupancy says
         // they are empty
-        let mut desired = desired_trees(layout, position, distance.0, |parcel| {
+        let mut desired = desired_trees(layout, position, TREE_DISTANCE, |parcel| {
             surface.contains(parcel) && pointers.occupancy(parcel) == Occupancy::Empty
         });
         // after a switch the old trees are already going

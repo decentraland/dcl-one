@@ -9,8 +9,9 @@ use bevy::{
     scene::ScenePlugin,
 };
 use common::{
+    partition::PARCEL_SIZE,
     sets::RealmLifecycle,
-    structs::{LandscapeDistance, PrimaryUser},
+    structs::PrimaryUser,
     terrain::{Occupancy, TerrainTargets},
 };
 use scene_runner::initialize_scene::{PointerResult, ScenePointers};
@@ -20,7 +21,7 @@ use super::{
     layout::{TreeLayout, TreeLayoutLoader, TreeLayouts, GENESIS_LABEL, WORLDS_LABEL},
     material::{Surface, SURFACES, TERRAIN_TEXTURE},
     prototypes::PROTOTYPES,
-    tree_radius_parcels, LandscapeTreeAssets, Tree, ASSET_DIR, LAYOUT, SPAWN_BUDGET,
+    tree_radius_parcels, LandscapeTreeAssets, Tree, ASSET_DIR, LAYOUT, SPAWN_BUDGET, TREE_DISTANCE,
 };
 use crate::{
     solids::{prototype_solids, Solid},
@@ -68,8 +69,7 @@ fn app(extent: i32, realm: (IVec2, IVec2), player: Vec3) -> App {
         scenes: default(),
     })
     .insert_resource(TerrainSurface::settled(&targets))
-    .insert_resource(pointers)
-    .insert_resource(LandscapeDistance::default());
+    .insert_resource(pointers);
     add_spawn_systems(&mut app);
     app.world_mut().spawn((
         PrimaryUser::default(),
@@ -449,31 +449,19 @@ fn colliders_match_unity_prefabs() {
     assert!((trunk.base.y - trunk.top.y).abs() > 1.0);
 }
 
+/// Instances stand out to the tree distance and no farther, whatever the open land around.
 #[test]
-fn lowering_distance_despawns_far_trees() {
+fn trees_stop_at_the_tree_distance() {
     let player = Vec3::ZERO;
     let mut app = open_land(40, player);
-    app.world_mut().resource_mut::<LandscapeDistance>().0 = 7000.0;
     settle(&mut app);
-    let far = |trees: &[Spawned]| {
-        trees
-            .iter()
-            .filter(|tree| tree.transform.translation.xz().distance(player.xz()) > 500.0)
-            .count()
-    };
-    let all = spawned(&mut app);
-    assert!(far(&all) > 0, "the open land reaches past 500 m");
-
-    app.world_mut().resource_mut::<LandscapeDistance>().0 = 500.0;
-    app.update();
-    let near = spawned(&mut app);
-    assert_eq!(far(&near), 0);
-    assert!(!near.is_empty());
-
-    app.update();
-    let mut added = app.world_mut().query_filtered::<(), Added<Tree>>();
-    assert_eq!(added.iter(app.world()).count(), 0, "nothing respawns");
-    assert_eq!(spawned(&mut app).len(), near.len());
+    let distances: Vec<_> = spawned(&mut app)
+        .iter()
+        .map(|tree| tree.transform.translation.xz().distance(player.xz()))
+        .collect();
+    let farthest = distances.iter().copied().fold(0.0, f32::max);
+    assert!(farthest <= TREE_DISTANCE, "{farthest}");
+    assert!(farthest > TREE_DISTANCE - PARCEL_SIZE, "{farthest}");
 }
 
 /// Taking the pointers mutably without changing them, as the imposters' `crc` does every frame,
