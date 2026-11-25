@@ -3113,14 +3113,6 @@
           "kind": "regular"
         },
         {
-          "name": "DiscoverCard.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "DiscoverCard.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "Dropdown.tsx",
           "kind": "regular"
         },
@@ -3222,14 +3214,6 @@
         },
         {
           "name": "OptionMenu.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "PageHeader.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "PageHeader.tsx",
           "kind": "regular"
         },
         {
@@ -9723,7 +9707,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/showcaseChunk.test.ts",
-      "sha256": "6b42afd746ba47678235229eca3e18e371f66f94dc17ce220cba7debdc9a175f"
+      "sha256": "72a8b58a1e846968ef09d7a4be7b8e55da02e62ce3d4f792da13474d884b356a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
@@ -12205,14 +12189,6 @@
       "sha256": "097ccef8a148d1e70e84e2493ef8797a05786fdc4487b27c4bd1f1f31c8c3356"
     },
     {
-      "path": "library/ui/apps/hud/design/DiscoverCard.module.css",
-      "sha256": "63f79542083602fbac7f2c9cb9971b4f57cff88ecc41b4110450499eed433a70"
-    },
-    {
-      "path": "library/ui/apps/hud/design/DiscoverCard.tsx",
-      "sha256": "2f8cde2c75181d71d79c39b125f161c08455194964bb8524c2433185085d4fd4"
-    },
-    {
       "path": "library/ui/apps/hud/design/Dropdown.tsx",
       "sha256": "29068b4d1444369e159b99c8510ce4714ff04df342d8c40db9b8491c48ef7390"
     },
@@ -12317,14 +12293,6 @@
       "sha256": "15ebfba2b6346e67dc123a7d2115404ec285cc23626b7fd7400903c35c55480d"
     },
     {
-      "path": "library/ui/apps/hud/design/PageHeader.module.css",
-      "sha256": "38eedd88e99b5c9df21cae800ada5c4175ff20bf85dfd61ce3d5c150357fe5d0"
-    },
-    {
-      "path": "library/ui/apps/hud/design/PageHeader.tsx",
-      "sha256": "afaba59d1cf4826a225950b914ded367a6cbe8612c4697cd85430085991e37fc"
-    },
-    {
       "path": "library/ui/apps/hud/design/Pager.module.css",
       "sha256": "bb0e27e492745bf52eeb289021e62b591243a1644e0a5999894650a6a76d119d"
     },
@@ -12366,11 +12334,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "be159fe6ce9c618f2397e45191721e69e4ca576a24f2e3825e167a4fc196f7b1"
+      "sha256": "9a6cea65ab216f46f27c7c11d61aeccbd314be03c260bfea9c7b21db73c9b0ac"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "6ff1510026f993d7758545559fd768efe7619f44ed725fb5767dc70dfd978e90"
+      "sha256": "8f48ffaeefcbe9c83625b54369ace679b4d8f41c09f831d28a1aa24db5908f0b"
     },
     {
       "path": "library/ui/apps/hud/design/Slider.module.css",
@@ -12450,7 +12418,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "893ea022a1e0c4ed72f81b261c66f063dca1145ee22ceefbc0ec969faf17f12c"
+      "sha256": "0f26d8635d434fc1002a5154ebbd4ad84de4d5b099f010726f9d2632fb8a8873"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -13778,7 +13746,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/design.ported.test.tsx",
-      "sha256": "90a5d22b5a6963235a92fdec700966c3e14aa7ebd0c8841e96cdcc003d34166e"
+      "sha256": "460bca1be18ceaefc054638d44cce1a268de4cd25178baf50db78cff2e8a0bb2"
     },
     {
       "path": "library/ui/apps/hud/test/donate.test.tsx",
@@ -20827,36 +20795,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/design/DiscoverCard.tsx",
-      "to": "library/ui/apps/hud/design/DiscoverCard.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DiscoverCard.tsx",
-      "to": "library/ui/apps/hud/design/DiscoverCard.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DiscoverCard.tsx",
-      "to": "library/ui/apps/hud/design/DiscoverCard.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DiscoverCard.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DiscoverCard.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DiscoverCard.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/design/Dropdown.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
@@ -21319,21 +21257,6 @@
     {
       "from": "library/ui/apps/hud/design/OptionMenu.tsx",
       "to": "library/ui/apps/hud/design/OptionMenu.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/PageHeader.tsx",
-      "to": "library/ui/apps/hud/design/PageHeader.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/PageHeader.tsx",
-      "to": "library/ui/apps/hud/design/PageHeader.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/PageHeader.tsx",
-      "to": "library/ui/apps/hud/design/PageHeader.module.css",
       "kind": "test:runtime"
     },
     {
@@ -22568,21 +22491,6 @@
     },
     {
       "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/DiscoverCard.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/DiscoverCard.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/DiscoverCard.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Dropdown.tsx",
       "kind": "native:runtime"
     },
@@ -22789,21 +22697,6 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/OptionMenu.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/PageHeader.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/PageHeader.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/PageHeader.tsx",
       "kind": "test:runtime"
     },
     {
@@ -66058,11 +65951,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/DiscoverCard.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Dropdown.tsx",
       "kind": "type"
     },
@@ -66129,11 +66017,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/OptionMenu.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/PageHeader.tsx",
       "kind": "type"
     },
     {

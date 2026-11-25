@@ -29,8 +29,6 @@ import {
   CountBadge,
   DateField,
   DclLogo,
-  DiscoverCard,
-  DiscoverGrid,
   Dropdown,
   EmptyState,
   EquippedItemCard,
@@ -52,7 +50,6 @@ import {
   ModalShell,
   ModalTitle,
   OptionMenu,
-  PageHeader,
   Pager,
   Panel,
   People,
@@ -535,15 +532,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
 
   BrowsePage: () => <BrowsePageShowcase />,
 
-  DiscoverCard: () => (
-    // No cover image: each card falls back to the gradient its id seeds.
-    <DiscoverGrid columns={3}>
-      <DiscoverCard id="genesis-plaza" title="Genesis Plaza" live count={128} featured creator={{ name: 'Decentraland Foundation', initial: 'D', hueSeed: 'foundation' }} location={{ text: '0,0', world: false }} onClick={() => undefined} />
-      <DiscoverCard id="music-festival" title="Music Festival" count={42} byline="Today, 21:00" location={{ text: 'festival.dcl.eth', world: true }} onClick={() => undefined} />
-      <DiscoverCard id="art-week" title="Art Week Gallery" creator={{ name: 'Ada', initial: 'A', hueSeed: 'ada' }} location={{ text: '-12,40', world: false }} onClick={() => undefined} />
-    </DiscoverGrid>
-  ),
-
   EmptyState: () => (
     <div style={{ ...column, maxWidth: 560 }}>
       <EmptyState variant="inline" icon={<Search size={32} />} title="Nothing matched your search" subtitle="Try another name or clear the filters." />
@@ -559,14 +547,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
           { label: 'Later', variant: 'ghost', onClick: () => undefined }
         ]}
       />
-    </div>
-  ),
-
-  PageHeader: () => (
-    <div style={{ ...column, gap: 20, maxWidth: 720 }}>
-      <PageHeader as="h3" title="Places" subtitle="Where people are right now" actions={<Button appearance="hud" size="sm" variant="secondary">Filters</Button>} />
-      <PageHeader as="h3" size="hero" title="Explore Decentraland" subtitle="Events, games and places built by the community." />
-      <PageHeader as="h3" size="section" title="Live now" leading={<Pin size={16} />} />
     </div>
   ),
 

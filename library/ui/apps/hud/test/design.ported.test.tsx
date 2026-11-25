@@ -16,7 +16,6 @@ import {
   ContextMenu,
   Dropdown,
   EmptyState,
-  PageHeader,
   Coin,
   ManaIcon,
   Search,
@@ -44,7 +43,6 @@ describe('ported design primitives', () => {
         <ContextMenu items={[{ label: 'Item', onClick: () => {} }, { kind: 'separator' }]} />
         <Dropdown options={['a', 'b']} value="a" onChange={() => {}} />
         <EmptyState title="Nothing here" />
-        <PageHeader title="Places" />
         <Coin />
         <ManaIcon />
         <Search />

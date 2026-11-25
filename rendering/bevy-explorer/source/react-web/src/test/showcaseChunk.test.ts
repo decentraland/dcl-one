@@ -11,14 +11,14 @@ const SHOP = `${DESIGN.slice(0, -'design'.length)}features/shop/ShopPage.tsx`
 
 type Module = { importers: string[]; exports: string[]; code: string | null }
 
-// A design entry re-exporting DiscoverCard, which only the Showcase names, and Button, which the Shop names too.
+// A design entry re-exporting LogoPattern, which only the Showcase names, and Button, which the Shop names too.
 function graph(changes: Record<string, Partial<Module>> = {}) {
   const modules: Record<string, Partial<Module>> = {
     [ENTRY]: { importers: [SHOWCASE, SHOP] },
-    [SHOWCASE]: { code: 'import { Button, DiscoverCard } from "."' },
+    [SHOWCASE]: { code: 'import { Button, LogoPattern } from "."' },
     [SHOP]: { code: 'import { Button } from "../../design"; jsx(Button, {})' },
-    [`${DESIGN}/DiscoverCard.tsx`]: { importers: [ENTRY], exports: ['DiscoverCard', 'DiscoverGrid'] },
-    [`${DESIGN}/DiscoverCard.module.css`]: { importers: [`${DESIGN}/DiscoverCard.tsx`], exports: ['default'] },
+    [`${DESIGN}/LogoPattern.tsx`]: { importers: [ENTRY], exports: ['LogoPattern'] },
+    [`${DESIGN}/LogoPattern.module.css`]: { importers: [`${DESIGN}/LogoPattern.tsx`], exports: ['default'] },
     [`${DESIGN}/Button.tsx`]: { importers: [ENTRY], exports: ['Button'] },
     [`${DESIGN}/Button.module.css`]: { importers: [`${DESIGN}/Button.tsx`], exports: ['default'] },
     ...changes
@@ -32,8 +32,8 @@ function graph(changes: Record<string, Partial<Module>> = {}) {
 describe('when the build places the design modules', () => {
   it('should keep a primitive only the Showcase names, and its styles, with the Showcase', () => {
     const only = showcaseOnly(graph())
-    expect(only(`${DESIGN}/DiscoverCard.tsx`)).toBe(true)
-    expect(only(`${DESIGN}/DiscoverCard.module.css`)).toBe(true)
+    expect(only(`${DESIGN}/LogoPattern.tsx`)).toBe(true)
+    expect(only(`${DESIGN}/LogoPattern.module.css`)).toBe(true)
   })
 
   it('should leave a primitive another importer of the design entry names in place, with its styles', () => {
@@ -49,12 +49,12 @@ describe('when the build places the design modules', () => {
 
   it('should leave a primitive in place when an importer of the design entry has no code to read', () => {
     const only = showcaseOnly(graph({ [SHOP]: { code: null } }))
-    expect(only(`${DESIGN}/DiscoverCard.tsx`)).toBe(false)
+    expect(only(`${DESIGN}/LogoPattern.tsx`)).toBe(false)
   })
 
   it('should leave a primitive a module outside design/ imports directly in place', () => {
-    const only = showcaseOnly(graph({ [`${DESIGN}/DiscoverCard.tsx`]: { importers: [ENTRY, SHOP], exports: ['DiscoverCard'] } }))
-    expect(only(`${DESIGN}/DiscoverCard.tsx`)).toBe(false)
+    const only = showcaseOnly(graph({ [`${DESIGN}/LogoPattern.tsx`]: { importers: [ENTRY, SHOP], exports: ['LogoPattern'] } }))
+    expect(only(`${DESIGN}/LogoPattern.tsx`)).toBe(false)
   })
 
   it('should leave design modules that import each other in a cycle in place', () => {
@@ -75,9 +75,9 @@ describe('when the build places the design modules', () => {
 
 describe('when the build tree-shakes the design modules', () => {
   it('should mark the design modules free of import effects, and leave the Showcase, styles and features to the default', () => {
-    expect(designSideEffects(`${DESIGN}/DiscoverCard.tsx`)).toBe(false)
+    expect(designSideEffects(`${DESIGN}/LogoPattern.tsx`)).toBe(false)
     expect(designSideEffects(`${DESIGN}/rarityArt.ts`)).toBe(false)
-    for (const id of [SHOWCASE, `${DESIGN}/ShowcaseIndex.ts`, `${DESIGN}/DiscoverCard.module.css`, SHOP])
+    for (const id of [SHOWCASE, `${DESIGN}/ShowcaseIndex.ts`, `${DESIGN}/LogoPattern.module.css`, SHOP])
       expect(designSideEffects(id)).toBeUndefined()
   })
 
@@ -142,7 +142,7 @@ function bundle(changes: { entryImports?: string[]; html?: string | Uint8Array; 
       ...changes.entry
     }),
     chunk('assets/design-1.js', { moduleIds: [ENTRY, `${DESIGN}/Button.tsx`] }),
-    chunk('assets/Showcase-1.js', { moduleIds: [SHOWCASE, `${DESIGN}/DiscoverCard.tsx`] }),
+    chunk('assets/Showcase-1.js', { moduleIds: [SHOWCASE, `${DESIGN}/LogoPattern.tsx`] }),
     { type: 'asset' as const, fileName: 'app.html', source: changes.html ?? '<script src="./assets/app-1.js"></script>' }
   ]
   return Object.fromEntries(files.map((file) => [file.fileName, file]))
