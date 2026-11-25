@@ -615,6 +615,40 @@ mod tests {
     }
 
     #[test]
+    fn selected_tracks_keep_the_video_limit_and_current_scene_requirement() {
+        let mut world = base_world();
+        let mut screens = Vec::new();
+        for distance in [1., 2., 0.] {
+            let mut screen = world.spawn((
+                VideoPlayerSource("livekit-video://speaker/TR_camera".to_owned()),
+                VideoPlayerConfig {
+                    playing: true,
+                    volume: 1.,
+                    playback_rate: 1.,
+                    r#loop: false,
+                },
+                Transform::from_translation(Vec3::new(distance, 0., 0.)),
+            ));
+            if distance > 0. {
+                screen.insert(InScene);
+            }
+            screens.push(screen.id());
+        }
+        world
+            .run_system_cached(video_player_should_be_playing)
+            .unwrap();
+        assert!(world
+            .entity(screens[0])
+            .contains::<ShouldBePlaying<VideoPlayer>>());
+        assert!(!world
+            .entity(screens[1])
+            .contains::<ShouldBePlaying<VideoPlayer>>());
+        assert!(!world
+            .entity(screens[2])
+            .contains::<ShouldBePlaying<VideoPlayer>>());
+    }
+
+    #[test]
     fn none_initialy_with_should_be_playing() {
         let mut world = base_world();
 
@@ -960,37 +994,5 @@ mod tests {
         assert_eq!(set.get(&entity_2).unwrap(), &entity_2);
         assert_eq!(set.get(&entity_3).unwrap(), &entity_3);
     }
-    #[test]
-    fn selected_tracks_keep_the_video_limit_and_current_scene_requirement() {
-        let mut world = base_world();
-        let mut screens = Vec::new();
-        for distance in [1., 2., 0.] {
-            let mut screen = world.spawn((
-                VideoPlayerSource("livekit-video://speaker/TR_camera".to_owned()),
-                VideoPlayerConfig {
-                    playing: true,
-                    volume: 1.,
-                    playback_rate: 1.,
-                    r#loop: false,
-                },
-                Transform::from_translation(Vec3::new(distance, 0., 0.)),
-            ));
-            if distance > 0. {
-                screen.insert(InScene);
-            }
-            screens.push(screen.id());
-        }
-        world
-            .run_system_cached(video_player_should_be_playing)
-            .unwrap();
-        assert!(world
-            .entity(screens[0])
-            .contains::<ShouldBePlaying<VideoPlayer>>());
-        assert!(!world
-            .entity(screens[1])
-            .contains::<ShouldBePlaying<VideoPlayer>>());
-        assert!(!world
-            .entity(screens[2])
-            .contains::<ShouldBePlaying<VideoPlayer>>());
-    }
+
 }
