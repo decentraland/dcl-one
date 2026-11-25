@@ -7,6 +7,7 @@
 //! never applied by the old query builder; they still are not. A listing
 //! without periods is not a listing (the old inner join on the aggregate).
 
+#[cfg(test)]
 use sqlx::PgPool;
 
 use crate::rentals::db::{STATUS_VALUES, row_to_listing};
@@ -40,8 +41,8 @@ pub fn statuses(requested: &[String]) -> Vec<String> {
 
 /// The listings of these nft ids (a page's parcels and estates) in these
 /// statuses, oldest first so a later listing of the same asset wins.
-pub async fn listings_of_nfts(
-    pool: &PgPool,
+pub async fn listings_of_nfts<'e>(
+    conn: impl sqlx::PgExecutor<'e>,
     nft_ids: &[String],
     statuses: &[String],
 ) -> Result<Vec<RentalListing>, sqlx::Error> {
@@ -54,14 +55,14 @@ pub async fn listings_of_nfts(
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(nft_ids)
         .bind(statuses)
-        .fetch_all(pool)
+        .fetch_all(conn)
         .await?;
     Ok(rows.iter().map(row_to_listing).collect())
 }
 
 /// The newest [`NEWEST_LISTINGS`] listings in these statuses.
-pub async fn newest_listings(
-    pool: &PgPool,
+pub async fn newest_listings<'e>(
+    conn: impl sqlx::PgExecutor<'e>,
     statuses: &[String],
 ) -> Result<Vec<RentalListing>, sqlx::Error> {
     if statuses.is_empty() {
@@ -73,7 +74,7 @@ pub async fn newest_listings(
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(statuses)
         .bind(NEWEST_LISTINGS)
-        .fetch_all(pool)
+        .fetch_all(conn)
         .await?;
     Ok(rows.iter().map(row_to_listing).collect())
 }
