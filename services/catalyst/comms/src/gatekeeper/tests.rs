@@ -1624,6 +1624,12 @@ impl crate::interfaces::SceneIdentity for DeployedGenesis {
     ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
         self.inner.world_active_scene(world).await
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        self.inner.world_scene_count(world).await
+    }
 }
 
 fn genesis_state(pool: PgPool) -> SharedState {
@@ -1689,6 +1695,12 @@ impl crate::interfaces::SceneIdentity for ParcelScenes {
         _: &crate::world_identity::WorldName,
     ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
         panic!("must not resolve the newest world scene")
+    }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
     }
 }
 
@@ -2335,9 +2347,9 @@ async fn the_moderator_routes_need_the_token_or_a_listed_wallet() {
 /// loosening the room refuses is stored. Each room failure is counted.
 #[tokio::test(flavor = "current_thread")]
 async fn the_private_messages_privacy_patch_reaches_the_room_or_is_refused() {
-    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
     let series = recorder.handle();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let failures = || {
         series
             .render()
@@ -5061,6 +5073,12 @@ async fn an_event_in_a_room_reads_refuse_is_neither_applied_nor_published() {
             _: &crate::world_identity::WorldName,
         ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
             Ok(None)
+        }
+        async fn world_scene_count(
+            &self,
+            world: &crate::world_identity::WorldName,
+        ) -> Result<usize, crate::rooms::ResolveError> {
+            Ok(usize::from(self.world_active_scene(world).await?.is_some()))
         }
     }
     let bus = Arc::new(super::bus::InProcessBus::new());

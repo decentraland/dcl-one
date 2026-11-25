@@ -3,7 +3,7 @@
 // lagging index says how far behind it is. A fresh, complete answer renders nothing, or with `stamp`
 // a quiet "Updated N ago".
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import { coarseDuration } from "@web-core/freshness/coarseDuration";
 import { needsNotice, type Freshness } from "@shop/discovery/freshness";
 import { t } from "@shop/discovery/intl";

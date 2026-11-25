@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import UiTooltip from '@ui/atoms/Tooltip'
+import { Tooltip as UiTooltip } from '@dcl/one-ui'
 import styles from './Tooltip.module.css'
 
 const MAX_WIDTH = 320

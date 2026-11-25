@@ -95,6 +95,83 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   terms split inside the lighting functions.
 - **Sky preset curves are linear.** The fog colour, light colour, light intensity and Trilight
   ambient keys are interpolated linearly; Unity's curve tangents are not carried.
+- **The sky below the horizon is the horizon colour.** The sky is Unity's lookup by day
+  phase and elevation (`stylized_sky.wgsl`), and as in Unity the elevation clamps at the
+  horizon, so the sky holds the horizon colour from a few degrees below the horizon down; the
+  horizon noise can lift directions just under it (direction y above about -0.1), as in Unity.
+  The sky does not fade to black there. A scene's authored sky colours blend over that colour,
+  not over black. The reflection map is unaffected: it reads directions under the horizon from
+  their mirror image above it unless a scene authors a nadir. One difference from Unity: the
+  horizon noise is sampled at its full resolution: the image has no mip chain, and the cube's
+  compute shader has no screen derivatives to choose a mip from.
+- **The screen draws the sky per pixel; the cube serves the rest.** As Unity's skybox, the
+  sky material (`StylizedSkyMaterial`) evaluates the sky for every pixel, so the cloud strips
+  and the disc keep their detail; it replaces bevy_atmosphere's skybox material, which shows the
+  cube, on every skybox. The compute model draws the same sky into the 1024 cube, one texel in
+  64 a frame, for the reflections, the ambient and the stars' cloud cover: its refresh smears
+  scrolling cloud and its texels soften the disc's edge, which those uses do not show. The
+  strips ship at 1024 by 128, a quarter of their authored 4096 by 512 (about 2.8
+  texels a degree around the sky, against 11): the wasm build resizes any image over 1024 to fit
+  (`reduce_image_sizes`), so larger files would only add to the download and to startup, and
+  the clouds look right at that size on web. Native uses the same files; it is not released, so
+  its sharper strips are not worth a second set.
+- **The stylized sky is the sky for every scene, `PBSkybox` ones included.** Unity switches a
+  sky that a scene controls (any `PBSun`, `PBSkybox` or fog) to its Legacy look; here the
+  scene's values override the StylizedV1 lookup instead, and a scene with none sees the preset.
+  Each `PBSkybox` field maps as follows:
+  - `zenith`, `horizon`, `nadir`, `rim` replace the lookup's colour in their band, with
+    pole, horizon and rim weights; the rim follows the horizon when unset, and an authored nadir
+    colours the lower sky.
+  - `clouds.color` is the lit colour of the three cloud strips. The shadowed colour is that
+    colour times one number: the luminance (Rec. 709) of the preset's shadow over that of its
+    lit colour at that phase, at most 1. The strips keep the preset's contrast and the authored
+    hue, and a shadow is never brighter than the lit colour; the preset's own shadow tint
+    (blue at sunrise) is not carried over.
+  - `clouds.opacity` scales every strip.
+  - `clouds.speed`, in radians per second around the sky, replaces the three preset speeds:
+    one speed turns every strip together, backwards when negative, and the strips carry on from
+    where they were.
+  - `stars.brightness` scales the stars (see "Stars are added over the sky").
+  - `PBSun.visible = false` hides the sun and the moon; the stars stay.
+  - `skybox_texture` shows the panorama instead, with no clouds or stars.
+
+  Unity's environment profile at `0a8bafca9e62ced7f34ac182158b11edd0c842a4` writes the cloud
+  values to the old cloud cubemap's material, which the strips do not read. The strips are
+  fixed art sampled at their full resolution: they have no mip chain. That loses nothing at
+  1024 wide: the screen magnifies the strips, even about 70 degrees up, as far as the overhead
+  strip is seen (about 8 texels a degree of arc there). The horizon noise is still minified,
+  about 8 times in V, with no mips; Unity samples it with gradients and mips, so it aliases a
+  little more here. The growth flow the preset switches off is not
+  ported. `/cloud <cover> [speed]` is the user's own setting on top: cover multiplies every
+  strip's opacity (the scene's opacity times it), speed scales the strips' scroll and the horizon
+  noise's drift, so `/cloud 0 0` clears the strips and holds them and the horizon noise in a
+  fixed pose (the shader time is 0 and every scroll 0). A non-finite value is refused, and cover
+  is held to 0 to 1. The shader time wraps at 500 s, one repeat of the horizon noise at the
+  preset's speed. A scene's values still apply while it is active; the star twinkle ignores the
+  speed.
+- **A scene's sun direction draws the sun's whole disc.** Unity switches a sky that a scene
+  controls (any `PBSun`, `PBSkybox` or fog) to its Legacy look, which computes no celestial
+  path. Here a scene-controlled sky stays on StylizedV1. A scene that fixes the sun's direction
+  gets the sun's disc, the sun's colour and the halo at that direction at every hour: no moon
+  crescent, where Unity's Legacy look draws a sun-coloured crescent there at midnight, and no
+  Legacy sun opacity curve. The disc still dips out through the two windows in which the light
+  swings between the sun's arc and the moon's.
+  A scene's `PBSun.color` tints the disc: the authored hue at the brightness the disc has
+  without it (the sun's ramp at the phase, or the moon's along its rise to set), times the
+  authored colour's brightest channel when that is above 1. Unity feeds the colour raw, but the
+  preset's disc is HDR (about 10 at noon), so a raw white would dim the sun about tenfold; a
+  black colour gives a black disc.
+- **Stars are added over the sky, not drawn under it.** The stars are Unity's Stars v2 and
+  shooting stars (`SkyLut_Stars`), with the preset's values. Unity draws them inside its sky
+  shader, so the clouds and the disc cover them. Here they stay a pass of their own at screen
+  resolution, added over the frame wherever nothing was drawn and faded by the sky cube's
+  alpha, its cloud cover: the disc and its halo do not hide a star behind them. The dim patches
+  read the horizon noise with Unity's seam-safe derivatives, but the image has no mip chain
+  here, so every sample is its top level. A scene's `PBSkybox` star brightness scales the
+  preset's stars from the protocol's default of 4.62; below that default it thins the shooting
+  stars by the same factor, down to none at 0, and above it their rate stays the preset's. A
+  scene that shows a panorama gets neither. Unity gives a scene-controlled sky its Legacy look,
+  which has no Stars v2.
 - **Render scale compositor.** At scale 1 the world camera draws to the window and carries the
   UI, at no extra cost. Below it, the world renders to an image that a 2D camera composites onto
   the window with FSR EASU; bevy's CAS at 0.92 stands in for RCAS; the UI rides the compositor
@@ -510,9 +587,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
-  When a peer's Pulse membership ends, its avatar and nametag disappear. LiveKit can keep the peer
-  in the room for voice and room messages. The next Pulse join places the avatar at its new pose
-  immediately.
+  When a peer's Pulse membership ends, its avatar and nametag disappear, its avatar collider is
+  removed, and it leaves Nearby and the map's People layer. Overlapping SDK player triggers see
+  an exit when the collider is removed and an enter if it overlaps again on rejoin. Peers can
+  stay in the LiveKit room for voice and Nearby chat. Nearby resolves @mention links
+  through its roster, so an @mention of a room-only peer
+  cannot open that peer's profile. Chat lines look up sender names by wallet in the profile store
+  and fall back to a shortened address when no name is available. The next Pulse join places the
+  avatar at its new pose immediately.
 - **Pulse refusals set a floor under the next wait.** Server full (disconnect code 6) waits at least
   60 s, the pre-auth limits (7, 8) and the per-IP connection cap (17) at least 10 s, the per-IP
   scene-listener cap (18) 10 s doubling to 5 minutes, and all five are retried, as the Pulse
@@ -590,6 +672,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   cover in the saved image, as unity-explorer computes it; the catalyst's camera-reel service parses
   the metadata into a struct without that field, so it is not stored. Kept for parity with the
   upstream service's clients.
+- **The photo viewer (#2073).** Its layout and numbers follow unity-explorer's, with four
+  differences. The info panel shows a loading view while a photo's details load; unity-explorer
+  never shows one. The owner's name opens their passport; unity-explorer's owner button cannot be
+  reached. A person's row is disabled for guests, because the
+  profile store cannot tell a profile that is missing from one still loading, which is the case
+  unity-explorer disables. Jump In treats a photo as taken in a World when the HUD's `worldOfRealm`
+  accepts its realm, so hyphenated ENS names and Worlds-server realm URLs count, where
+  unity-explorer's test is `^[a-zA-Z0-9.]+\.eth$` and sends those photos to a Genesis City parcel.
 - **The photo camera stops at scene geometry instead of sliding.** unity-explorer moves a capsule
   character controller, which slides along walls; here the move is swept and refused whole when
   the camera's sphere would cross a scene collider. A collider the camera starts inside (the player
@@ -927,6 +1017,18 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   lookup and the photo camera are not cut. Neither is collider data without bounds: portables,
   the terrain, and scenes in a run that draws out-of-bounds geometry. The whole-collider test
   (below) still turns off a collider that leaves the scene's rectangle.
+- **A scene's `AvatarNametag` plate is bounded before it is laid out.** unity-explorer draws
+  the label and the colours as the scene wrote them. Here the label is cut to its first 128
+  characters, a control character in it reads as a space, and a colour channel is kept between
+  0 and 1 (one that is not a number reads 0), so no scene sets the cost of shaping its label or
+  draws outside the tag. Do not pass them through to match.
+- **One scene entity plates an avatar.** In unity-explorer two entities can ask for a plate on
+  the same avatar: the last write shows, and the plate goes when either entity does. Here a
+  scene has one entity for each player id and only the scene the local player stands in plates
+  anyone, so the case does not arise.
+- **A plate stands clear of the mention ring.** The plate floats 2 units over the name's box,
+  as in unity-explorer, and the ring of a mention reaches 3 units out of that box. While the
+  ring shows, the plate rises by the ring's width, so it never covers the ring's top edge.
 
 ## Deliberate choices that look like mistakes
 

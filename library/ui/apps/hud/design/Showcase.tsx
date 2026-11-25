@@ -734,6 +734,7 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
     <>
       <ShowcaseScroller />
       <ShowcaseRowScroller />
+      <ShowcaseScroller tone="solid" />
     </>
   ),
 
@@ -1072,7 +1073,7 @@ const liveScale = (): string =>
   `Live viewport: ${window.innerWidth}×${window.innerHeight}px → ×${getHudScale().toFixed(3)}`
 
 // A short scroller with a fixed-length thumb beside it.
-function ShowcaseScroller(): React.JSX.Element {
+function ShowcaseScroller({ tone }: { tone?: 'solid' }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   return (
     <div style={{ position: 'relative', width: 440, height: 320 }}>
@@ -1081,7 +1082,7 @@ function ShowcaseScroller(): React.JSX.Element {
           <div key={i} style={{ height: 200, borderRadius: 16, background: 'var(--white-10)' }} />
         ))}
       </div>
-      <ScrollThumb target={ref} length={80} className={undefined} />
+      <ScrollThumb target={ref} length={80} tone={tone} className={undefined} />
     </div>
   )
 }

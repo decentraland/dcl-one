@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import Icon from "../discovery/components/Icon";
 import Rail from "../discovery/components/Rail";
 import SuggestedForYouRow, { RAIL_SIZE as CART_RAIL_SIZE, useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
@@ -302,7 +302,7 @@ function CartScreen() {
                       {broadcasting ? "Check again" : "Resume"}
                     </Button>
                     {!broadcasting ? (
-                      <Button size="sm" variant="ghost" onClick={() => void co.discardCheckout()}>
+                      <Button size="sm" variant="outline" onClick={() => void co.discardCheckout()}>
                         Start over
                       </Button>
                     ) : null}

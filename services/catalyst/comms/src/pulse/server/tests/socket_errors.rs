@@ -287,7 +287,7 @@ async fn an_error_about_one_datagram_costs_that_datagram_and_both_clients_stay_s
             .unwrap()
             .build_recorder();
         let metrics = recorder.handle();
-        let _recording = ::metrics::set_default_local_recorder(&recorder);
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
         let faults = SocketFaults::default();
         let host = Host::bind_with_faults(host_config(), faults.clone())
             .await
@@ -324,7 +324,7 @@ async fn an_interrupted_receive_is_read_again_and_not_counted() {
         .unwrap()
         .build_recorder();
     let metrics = recorder.handle();
-    let _recording = ::metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let faults = SocketFaults::default();
     let host = Host::bind_with_faults(host_config(), faults.clone())
         .await
@@ -375,7 +375,7 @@ async fn a_client_whose_socket_closed_does_not_stop_the_server() {
         .unwrap()
         .build_recorder();
     let metrics = recorder.handle();
-    let _recording = ::metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let mut rig = Rig::start(Host::bind(host_config()).await.unwrap()).await;
 
     // The server's answer to this goes to a port that is closed by the time it is sent.

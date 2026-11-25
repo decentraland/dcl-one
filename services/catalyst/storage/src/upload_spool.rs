@@ -107,8 +107,7 @@ impl Drop for UploadSpool {
             if let Err(e) = std::fs::remove_dir_all(&dir)
                 && e.kind() != std::io::ErrorKind::NotFound
             {
-                metrics::counter!("multipart_upload_cleanup_failures", "route" => route)
-                    .increment(1);
+                crate::SPOOL_CLEANUP_FAILURES.handle([route]).increment(1);
                 tracing::warn!(dir = %dir.display(), error = %e, "could not remove an upload spool directory");
             }
         };

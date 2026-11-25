@@ -4,7 +4,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, Navigate, useParams, useSearchParams } from "react-router";
 
-import Spinner from "../../atoms/Spinner";
+import { Spinner } from "@dcl/one-ui";
 import { CHAIN } from "@shop/model/chain";
 import { useShopWallet } from "../wallet/context";
 import { explorerTxUrl, settlementChainId } from "../checkout/chain/config";
@@ -101,8 +101,8 @@ function BuyStatusScreen() {
           {loading ? "Checking your purchase…" : copy.title}
         </h1>
         {status === "pending" || loading ? (
-          <div className="shop-buystatus__status">
-            <Spinner size={20} />
+          <div className="shop-buystatus__status" role="status">
+            <Spinner variant="light" size={20} aria-hidden />
             <p>Processing Transaction</p>
           </div>
         ) : null}

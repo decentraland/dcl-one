@@ -239,8 +239,10 @@ State, in every build:
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
-- `/avatar_demo [spawn <n>|clear|cap [n|all]|layout <grid|around>|seed [n]|emote <name>|...]` (scene preview
-  only): local demo avatars with random base wearables, up to 1024. `layout grid` (the default)
+- `/avatar_demo [spawn <n>|clear|cap [n|all]|layout <grid|around>|seed [n]|catalog [urns]|emote <name>|...]` (scene preview
+  only): local demo avatars with random base wearables, up to 1024. `catalog <urn,urn,...>`
+  adds wearable URNs to a catalog the random looks (`spawn`, `randomize`) draw from instead;
+  `catalog` alone empties it. `layout grid` (the default)
   stands new ones in a 32-wide grid in front of the player, each row filled from straight ahead
   outwards; `layout around` fills a disc centred
   on the player, nearest first, so part of the crowd is behind the camera.
@@ -252,7 +254,7 @@ State, in every build:
   to the setting. The reply is JSON: `count`, `built` (demo avatars whose build finished), `shown` (not
   hidden) and `drawn` (a mesh in some view this frame), `cap` (the one in force, `"all"` for none), `sessionCap`
   (what `cap` set, else `null`),
-  `layout`, `seed`, `maleOnly`, `wearables`, `emote`; the avatars a `clear` or `remove-random`
+  `layout`, `seed`, `maleOnly`, `wearables`, `catalog` (its size), `emote`; the avatars a `clear` or `remove-random`
   removes are not counted in its own reply. The Avatar debug section of the debug panel shows
   the counts and sets the cap, layout and seed. The E2E package's `avatar-sweep` drives it.
 - `/spring_bones [true|false]`: spring bones, the swing of a wearable's own bones (hair, tails,
@@ -269,11 +271,15 @@ State, in every build:
   stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
 - `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
-  `sceneAvatars` (of those shown, the tags over a scene's avatars) and `hidden` (the tags that
+  `sceneAvatars` (of those shown, the tags over a scene's avatars), `plates` (of those shown, the
+  tags with a scene's `AvatarNametag` plate) and `hidden` (the tags that
   don't show), `atlas` (the glyph atlas' distance-field and colour page sizes, in
   pixels), `bubbles` (the chat bubble setting) and `tags`, one per shown tag: `player` (an
   address, `local`, or null for an avatar with no wallet), `sceneAvatar` (the tag is over an
-  avatar a scene made with `AvatarShape`), `name`, `suffix`, `verified`,
+  avatar a scene made with `AvatarShape`), `nameShown` (false for a tag that is its plate alone:
+  the avatar has no name, or a scene's area hides it), `plate` (null, or the plate's `label` and
+  its `labelColor`, `backgroundColor` and `borderColor` as `#RRGGBB`), `name` and `suffix` (empty
+  for an avatar with no name), `verified`,
   `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` from the camera in metres,
   `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone for
   an avatar at a scale of one; null until the avatar is built) and `bubble` (null, or its `kind`,

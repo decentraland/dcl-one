@@ -302,6 +302,7 @@ export type PageToScene =
   | SetPhotoModeRequest
   | TakePhotoRequest
   | GetGalleryPhotoRequest
+  | GetGalleryWearablesRequest
   | DeleteGalleryPhotoRequest
   | SetGalleryPhotoPublicRequest
 
@@ -396,7 +397,7 @@ export interface FocusChatMessage {
   kind: 'focusChat'
 }
 
-/** A nearby player (from the scene's PlayerIdentityData set). */
+/** A player from the scene's PlayerIdentityData set. The roster filters remote players by last known Pulse membership. */
 export interface NearbyMember {
   address: string
   name: string
@@ -1957,10 +1958,16 @@ export interface GalleryPerson {
   address: string
   name: string
   isGuest?: boolean
+  /** Urns of the wearables they had on when the photo was taken. */
+  wearables?: string[]
+  /** An official wallet, as the nametags mark it. */
+  official?: boolean
 }
 
 /** Full metadata for one photo (fetched lazily when its detail view opens). */
 export interface GalleryPhotoMeta {
+  /** When it was taken, epoch seconds as a string. */
+  dateTime?: string
   /** Who took the photo. */
   userName?: string
   userAddress?: string
@@ -2053,6 +2060,20 @@ export interface GalleryPhotoMessage {
   meta: GalleryPhotoMeta | null
 }
 
+/** Resolve a photo person's wearable urns, with shop links. Answered by a GalleryWearablesMessage. */
+export interface GetGalleryWearablesRequest {
+  kind: 'getGalleryWearables'
+  requestId: number
+  urns: string[]
+}
+
+export interface GalleryWearablesMessage {
+  kind: 'galleryWearables'
+  requestId: number
+  ok: boolean
+  wearables: Wearable[]
+}
+
 /** Delete one of the local player's photos (signed DELETE). Answered by a GalleryWriteMessage. */
 export interface DeleteGalleryPhotoRequest {
   kind: 'deleteGalleryPhoto'
@@ -2073,7 +2094,7 @@ export interface WatchMapPlayersRequest {
   on: boolean
 }
 
-/** The players near enough for the engine to hold (scene → page), while the page watches. */
+/** Nearby scene players filtered by last known Pulse membership, while the page watches. */
 export interface MapPlayersMessage {
   kind: 'mapPlayers'
   players: MapPlayer[]
@@ -2671,6 +2692,7 @@ export type SceneToPage =
   | GalleryMessage
   | MapPlayersMessage
   | GalleryPhotoMessage
+  | GalleryWearablesMessage
   | GalleryWriteMessage
   | PermissionRequestMessage
   | PermissionWithdrawnMessage

@@ -15,6 +15,8 @@ mod explore_parity;
 mod gatekeeper_policy;
 #[path = "index_process.rs"]
 mod index_process;
+#[path = "node_readiness.rs"]
+mod node_readiness;
 #[path = "notifier_parity.rs"]
 mod notifier_parity;
 #[path = "social_live.rs"]

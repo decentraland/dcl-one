@@ -15,9 +15,10 @@
 //! order for one NFT or item, or a second open bid by one bidder on one
 //! asset, is a 409; every amount, token id and item id is canonical decimal
 //! before it is stored. The RPC calls go through the ONE outbound client
-//! and its SSRF guard. v2's `trades` row has no `trade_digest` column: a v3
-//! cancellation digest is the signing hash, which the `trade_events` fold
-//! recomputes from the stored trade (`trade_chain_state.digest`); `GET
+//! and its SSRF guard. A V3 trade stores its cancellation digest, the
+//! EIP-712 signing hash the signature was verified over (`trade_digest`, as
+//! marketplace-server stores it); the `trade_events` fold verifies it and
+//! keys the trade's V3 cancellation on it (`trade_chain_state.digest`); `GET
 //! /v1/trades/{hash}/accept` is served there. `GET /v1/activity` (a
 //! wallet's sales, bids and orders across the squid tables) answers the
 //! envelope.
@@ -101,9 +102,9 @@ pub struct OffChainMarketplace {
 }
 
 pub const ETHEREUM_MAINNET: i64 = 1;
-pub const ETHEREUM_SEPOLIA: i64 = 11155111;
+pub const ETHEREUM_SEPOLIA: i64 = crate::types::ChainId::SEPOLIA.0 as i64;
 pub const MATIC_MAINNET: i64 = 137;
-pub const MATIC_AMOY: i64 = 80002;
+pub const MATIC_AMOY: i64 = crate::types::ChainId::AMOY.0 as i64;
 
 pub fn offchain_marketplace_v2(chain_id: i64) -> Option<OffChainMarketplace> {
     match chain_id {
@@ -1215,8 +1216,8 @@ pub async fn create_trade(
 }
 
 const CREATE_TRADE_SQL: &str = "WITH t AS (
-        INSERT INTO shop.trades (network, chain_id, signature, hashed_signature, checks, signer, type, expires_at, effective_since, contract)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::shop.trade_type, $8, $9, $10)
+        INSERT INTO shop.trades (network, chain_id, signature, hashed_signature, checks, signer, type, expires_at, effective_since, contract, trade_digest)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::shop.trade_type, $8, $9, $10, $12)
         ON CONFLICT (hashed_signature) DO NOTHING
         RETURNING id
      ), input AS MATERIALIZED (
@@ -1235,9 +1236,21 @@ const CREATE_TRADE_SQL: &str = "WITH t AS (
      )
      SELECT id::text FROM t";
 
+/// The V3 cancellation key of `trade` signed on `contract`: its EIP-712
+/// signing hash against that marketplace's domain, `None` on a marketplace
+/// that cancels by signature (V1, V2) or one this node does not know.
+pub(crate) fn cancellation_digest(trade: &TradeCreation, contract: &str) -> Option<String> {
+    offchain_marketplaces(trade.chain_id)
+        .into_iter()
+        .find(|m| m.cancels_by_digest && m.address.eq_ignore_ascii_case(contract))
+        .and_then(|m| signing_hash(trade, &m).ok())
+        .map(|h| format!("{h:#x}"))
+}
+
 /// Head, assets and the typed sub-rows in one statement; a duplicate
 /// signature inserts nothing. The signature is stored lowercase, as the
-/// mirror stores upstream's, so one listing cannot land twice re-cased.
+/// mirror stores upstream's, so one listing cannot land twice re-cased. A
+/// trade on a V3 marketplace stores its [`cancellation_digest`].
 pub(crate) async fn insert_trade<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     trade: &TradeCreation,
@@ -1287,6 +1300,7 @@ pub(crate) async fn insert_trade<'e>(
         .bind(effective_since.naive_utc())
         .bind(contract)
         .bind(serde_json::Value::Array(rows))
+        .bind(cancellation_digest(trade, contract))
         .fetch_optional(executor)
         .await?;
     let Some((trade_id,)) = inserted else {
@@ -1344,7 +1358,13 @@ async fn post_trade_inner(
         return Err(ApiError::http(429, "rate limit exceeded".to_string()));
     }
     require_auth_metadata(headers, MARKETPLACE_AUTH_SIGNERS, Some(CREATE_TRADE_INTENT))?;
-    let recovered = require_signer(headers, "post", "/v1/trades").await?;
+    let recovered = require_signer(
+        super::signed::fresh(state.eip1654.as_deref()),
+        headers,
+        "post",
+        "/v1/trades",
+    )
+    .await?;
     if TRADE_LIMITER.check(&recovered.to_ascii_lowercase()) == RateLimitDecision::Deny {
         return Err(ApiError::http(429, "rate limit exceeded".to_string()));
     }

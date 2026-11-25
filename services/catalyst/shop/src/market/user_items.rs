@@ -1,14 +1,16 @@
 //! `/lambdas/users/{address}/{wearables,emotes,names}` and the grouped
-//! `/lambdas/collections/*-by-owner/{owner}` lists over the subgraph readers.
-//! The old queries grouped in SQL over the squid; here the owner's copies
-//! come back from the subgraph newest first and are grouped, filtered,
-//! sorted (UCA order, only when `orderBy` is given) and paged in Rust.
-//! Definitions come from the content entities peer sync ingested. A reader
-//! that fails answers lamb2's 502 `FetcherError`.
-//! Without a reader the routes answer the unavailable envelope, as their
+//! `/lambdas/collections/*-by-owner/{owner}` lists. The owner's wearable and
+//! emote copies come from the `nft` index (`owned_items::owned_copies`)
+//! newest first and are grouped, filtered, sorted (UCA order, only when
+//! `orderBy` is given) and paged in Rust; the names from the marketplace
+//! subgraph. Definitions come from the content entities peer sync ingested.
+//! A read that fails answers lamb2's 502 `FetcherError`.
+//! Until the index is published and recent (`owned_items::Rule::Fresh`)
+//! and the items mirror has completed a pass, the wearable and emote
+//! routes answer the unavailable envelope (`nft-index`), as their
 //! `/marketplace-api/v1/users` twins do: the explorer reads these lambdas,
-//! and an empty page from an unconfigured node showed every avatar owning
-//! nothing (the old `squid_pool: None` behaviour the stage-5 rule replaced).
+//! and an empty page from a node without the index would show every avatar
+//! owning nothing.
 
 use std::collections::HashMap;
 
@@ -26,8 +28,7 @@ use crate::shared::query_params::{
 use super::definitions::{
     extract_emote_definition, extract_wearable_definition, locale_cmp, rarity_rank,
 };
-use super::graph::{self, OwnedCopy};
-use super::readers;
+use super::owned_items::{self, OwnedCopy};
 use super::third_party::collection_provider;
 use super::{MarketplaceState, SharedState, bad_request};
 
@@ -260,14 +261,17 @@ async fn owned_items_response(
         .into_response();
     }
 
-    if let Err(envelope) = readers::require_both_collections(state) {
-        return envelope;
-    }
-
-    let copies = match graph::owned_copies(&state.index, address, item_category).await {
+    let gate =
+        match owned_items::require_inventory(state, item_category, super::lambdas_internal_error)
+            .await
+        {
+            Ok(gate) => gate,
+            Err(envelope) => return envelope,
+        };
+    let copies = match owned_items::owned_copies(state, gate, address, item_category).await {
         Ok(c) => c,
         Err(e) => {
-            return super::third_party::fetch_error(path_address, &e);
+            return e.into_response(|m| super::third_party::fetch_error(path_address, m));
         }
     };
     let mut items = group_copies(&copies);
@@ -351,12 +355,14 @@ pub async fn user_emotes(
 }
 
 /// Names page: a `pageSize` over 1000 answers lamb2's 400 (`max allowed
-/// pageSize is 1000`), a non-positive page or size clamps to 1. A failed
-/// reader answers the owner's last good list fetched within lamb2's 120 s
-/// (`graph::owned_names_or_stale`), else lamb2's 502 `FetcherError`. A
-/// string that is not an
-/// address owns nothing: an empty page, as lamb2's fallback answers it,
-/// without a reader call.
+/// pageSize is 1000`), a non-positive page or size clamps to 1. The NAMEs
+/// come from the node's NAME source (a display read): the nft index answers
+/// its unavailable envelope while not published; the subgraph is read as
+/// lamb2 read it, walked to the end, with the owner's last good list served
+/// for lamb2's 120 s on an outage (this route's alone). A failed read is
+/// lamb2's 502 `FetcherError`; no source at all, the unavailable envelope. A
+/// string that is not an address owns nothing: an empty page, as lamb2's
+/// fallback answers it, without a source read.
 pub async fn user_names(
     State(state): State<SharedState>,
     Path(address): Path<String>,
@@ -374,17 +380,39 @@ pub async fn user_names(
         Ok(p) => p,
         Err(msg) => return bad_request(&msg),
     };
-    if let Err(envelope) = readers::require_marketplace(&state) {
-        return envelope;
-    }
     let names = if !super::is_valid_eth_address(&address) {
         Default::default()
     } else {
-        match graph::owned_names_or_stale(&state.index, &address).await {
-            Ok(n) => n,
+        use crate::chain_index::names::{NamesError, Purpose};
+        let authority = match state.names() {
+            Ok(authority) => authority,
             Err(e) => {
-                tracing::warn!(error = %e, address, "names reader failed");
-                return fetcher_error(&requested);
+                return super::unavailable(state.name_source(), &e.to_string());
+            }
+        };
+        if authority.observes() {
+            match authority.owned_names(&address, Purpose::Display).await {
+                Ok(answer) => answer.value,
+                Err(NamesError::NotEstablished(message)) => {
+                    return super::unavailable(super::Source::NftIndex, &message);
+                }
+                Err(NamesError::Failed(e)) => {
+                    tracing::warn!(error = %e, address, "names source failed");
+                    return fetcher_error(&requested);
+                }
+            }
+        } else {
+            // The subgraph, as lamb2 read it: the whole walk, and on an
+            // outage the last good list for its 120 s.
+            super::lambdas_metrics::record_owner_memo_read(
+                crate::chain_index::graph::all_owned_names_memoized(&state.index, &address),
+            );
+            match crate::chain_index::graph::owned_names_or_stale(&state.index, &address).await {
+                Ok(names) => names,
+                Err(e) => {
+                    tracing::warn!(error = %e, address, "names reader failed");
+                    return fetcher_error(&requested);
+                }
             }
         }
     };
@@ -450,18 +478,29 @@ async fn items_by_owner(
             .collect();
         return Json(json!(body)).into_response();
     }
-    if let Err(envelope) = readers::require_both_collections(state) {
-        return envelope;
-    }
+    let gate = match owned_items::require_inventory(state, category, super::lambdas_internal_error)
+        .await
+    {
+        Ok(gate) => gate,
+        Err(envelope) => return envelope,
+    };
+    // The gate's own snapshot reads the copies (memoized), so the body
+    // below reads the index no second time.
+    let publications = gate.publications();
+    let copies = match owned_items::owned_copies(state, gate, owner, category).await {
+        Ok(copies) => copies,
+        Err(e) => return super::third_party::fetch_error(owner, &e.to_string()),
+    };
     let key = (
         owner.to_lowercase(),
         category.to_string(),
         include_definitions,
+        publications,
     );
     let body = state
         .by_owner_cache
         .get_or_fetch(key, || async {
-            owned_items_body(state, owner, category, include_definitions, extract).await
+            owned_items_body(state, &copies, include_definitions, extract).await
         })
         .await;
     match body {
@@ -472,15 +511,11 @@ async fn items_by_owner(
 
 async fn owned_items_body(
     state: &MarketplaceState,
-    owner: &str,
-    category: &str,
+    copies: &[owned_items::OwnedCopy],
     include_definitions: bool,
     extract: fn(&Value, &str) -> Option<Value>,
 ) -> Result<Value, Response> {
-    let copies = graph::owned_copies(&state.index, owner, category)
-        .await
-        .map_err(|e| super::third_party::fetch_error(owner, &e))?;
-    let mut rows: Vec<(String, i64, String)> = group_copies(&copies)
+    let mut rows: Vec<(String, i64, String)> = group_copies(copies)
         .into_iter()
         .map(|g| {
             let rarity = g

@@ -228,6 +228,16 @@ pub struct Island<'a> {
     pub radius: f64,
     pub peers: Vec<PublicPeer<'a>>,
 }
+/// Count the same published islands without constructing peer projections.
+pub(crate) fn public_island_count(snapshot: &Snapshot) -> usize {
+    IslandStatusMessage::decode(snapshot.islands.as_slice())
+        .unwrap_or_default()
+        .data
+        .iter()
+        .filter(|island| island.center.is_some())
+        .count()
+}
+
 pub fn public_islands(snapshot: &Snapshot) -> Vec<Island<'_>> {
     let peers: HashMap<_, _> = snapshot
         .peers

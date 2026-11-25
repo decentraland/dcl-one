@@ -7,7 +7,11 @@ const http = vi.hoisted(() => ({
   signed: vi.fn(async (): Promise<unknown> => undefined)
 }))
 const player = vi.hoisted(() => ({ current: { userId: '0xme' } as { userId: string } | null }))
+const api = vi.hoisted(() => ({ BevyApi: { getOfficialWallets: vi.fn(async (): Promise<string[]> => []) as (() => Promise<string[]>) | undefined } }))
+const wearables = vi.hoisted(() => ({ resolveWearables: vi.fn(async (): Promise<unknown[]> => []) }))
 vi.mock('../../bridge-scene/src/http', () => http)
+vi.mock('../../bridge-scene/src/bevy-api', () => api)
+vi.mock('../../bridge-scene/src/domains/wearables', () => wearables)
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player.current }))
 
 const { registerGallery } = await import('../../bridge-scene/src/domains/gallery')
@@ -26,6 +30,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   player.current = { userId: '0xme' }
   http.serviceBase.mockImplementation(async () => 'https://camera-reel.test')
+  api.BevyApi.getOfficialWallets = vi.fn(async () => [])
 })
 
 describe('bridge gallery', () => {
@@ -67,6 +72,68 @@ describe('bridge gallery', () => {
     await ask({ kind: 'getGallery', requestId: 4, offset: 0, limit: 100 })
     expect(http.signed).not.toHaveBeenCalled()
     expect(sent).toEqual([{ kind: 'gallery', requestId: 4, ok: false, photos: [], received: 0, current: 0, max: 0 }])
+  })
+
+  it("reads a photo's metadata: its date, place and people with the wearables they had on and their official mark", async () => {
+    http.signed.mockResolvedValueOnce({
+      metadata: {
+        userName: 'Mojito',
+        userAddress: '0xme',
+        dateTime: '1709856000',
+        realm: 'boedo.dcl.eth',
+        scene: { name: 'Plaza', location: { x: '3', y: '-4' } },
+        visiblePeople: [
+          { userName: 'Alice', userAddress: '0xAA', isGuest: false, wearables: ['urn:a', 7] },
+          { userName: 'Bob', userAddress: '0xbb', isGuest: true },
+          { userName: 'nobody' }
+        ]
+      }
+    })
+    api.BevyApi.getOfficialWallets = vi.fn(async () => ['0xaa'])
+    const { sent, ask } = start()
+    await ask({ kind: 'getGalleryPhoto', id: 'p/1' })
+    expect(http.signed).toHaveBeenCalledWith('https://camera-reel.test/api/images/p%2F1/metadata')
+    expect(sent).toEqual([
+      {
+        kind: 'galleryPhoto',
+        id: 'p/1',
+        meta: {
+          dateTime: '1709856000',
+          userName: 'Mojito',
+          userAddress: '0xme',
+          sceneName: 'Plaza',
+          x: 3,
+          y: -4,
+          realm: 'boedo.dcl.eth',
+          people: [
+            { address: '0xAA', name: 'Alice', isGuest: false, wearables: ['urn:a'], official: true },
+            { address: '0xbb', name: 'Bob', isGuest: true, wearables: [], official: false }
+          ]
+        }
+      }
+    ])
+  })
+
+  it('marks no one official on an engine that cannot say', async () => {
+    http.signed.mockResolvedValueOnce({ metadata: { visiblePeople: [{ userName: 'Alice', userAddress: '0xaa' }] } })
+    api.BevyApi.getOfficialWallets = undefined
+    const { sent, ask } = start()
+    await ask({ kind: 'getGalleryPhoto', id: 'p' })
+    expect(sent[0]).toMatchObject({ meta: { people: [{ address: '0xaa', official: false }] } })
+  })
+
+  it("resolves a person's wearables with their shop links, and answers a failure with ok false", async () => {
+    const tiara = { urn: 'urn:a', name: 'Tiara', rarity: 'epic', category: 'tiara', equipped: true, shopUrl: 'https://shop/a' }
+    wearables.resolveWearables.mockResolvedValueOnce([tiara])
+    const { sent, ask } = start()
+    await ask({ kind: 'getGalleryWearables', requestId: 9, urns: ['urn:a'] })
+    expect(wearables.resolveWearables).toHaveBeenCalledWith(['urn:a'], { shopUrls: true, dropFailed: true })
+    expect(sent).toEqual([{ kind: 'galleryWearables', requestId: 9, ok: true, wearables: [tiara] }])
+
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    wearables.resolveWearables.mockRejectedValueOnce(new Error('catalyst down'))
+    await ask({ kind: 'getGalleryWearables', requestId: 10, urns: ['urn:a'] })
+    expect(sent[1]).toEqual({ kind: 'galleryWearables', requestId: 10, ok: false, wearables: [] })
   })
 
   it('deletes with a signed DELETE and reports the storage that follows', async () => {

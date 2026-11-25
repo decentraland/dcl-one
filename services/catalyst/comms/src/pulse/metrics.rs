@@ -4,11 +4,14 @@
 //! Series carry the `pulse_` prefix, not upstream's `dcl_`; keep every new one on it so a single
 //! exposition never needs two prefixes on one dashboard.
 
+mod declarations;
+pub use declarations::FAMILIES;
+
 use std::{net::SocketAddr, time::Duration};
 
 #[cfg(test)]
 use crate::metrics::prometheus_builder;
-use metrics::{counter, gauge, histogram};
+use dcl_metrics::{counter, gauge, histogram};
 
 pub const DEFAULT_METRICS_BIND: &str = "127.0.0.1:5005";
 
@@ -20,7 +23,7 @@ pub(crate) fn render_recorded<T>(f: impl FnOnce() -> T) -> String {
         .expect("prometheus builder")
         .build_recorder();
     let handle = recorder.handle();
-    metrics::with_local_recorder(&recorder, f);
+    dcl_metrics::with_local_recorder(&recorder, f);
     handle.render()
 }
 

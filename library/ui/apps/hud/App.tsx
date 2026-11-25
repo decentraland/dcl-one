@@ -28,6 +28,7 @@ import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
 import { VoiceChatToasts } from './features/voiceChat/voiceChatToasts'
 import { NearbyVoiceRefusals } from './features/voice/NearbyVoiceRefusals'
 import { GalleryPage } from './features/gallery/GalleryPage'
+import { travelToPhoto } from './features/gallery/reelActions'
 import { Sidebar } from './features/sidebar/Sidebar'
 import { Pointer } from './features/pointer/Pointer'
 import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
@@ -441,7 +442,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
         <EventsPage events={session.events} profile={session.profile} friends={session.friends} onNavigate={goToMenuPage} />
       </SurfaceBoundary>
       <SurfaceBoundary name="Gallery" open={session.gallery.open} onCrash={session.closeAllPanels}>
-        <GalleryPage gallery={session.gallery} profile={session.profile} onNavigate={goToMenuPage} onTeleport={(x, y) => session.map.teleport(x, y)} onViewProfile={(u) => openPassport(u.address)} />
+        <GalleryPage gallery={session.gallery} profile={session.profile} onNavigate={goToMenuPage} onJumpIn={(place) => travelToPhoto(place, session.map)} onViewProfile={(u) => openPassport(u.address)} />
       </SurfaceBoundary>
     </>
   )
@@ -453,8 +454,9 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   // The scene editor owns the screen: no chrome in 'edit', only the reticle and prompts in 'play',
   // and no loading overlay in either (a scene reloads on every edit).
   const editorMode = session.editor.mode
-  // photo mode shows only its own overlay (and the reticle) over the world
-  const chrome = !pageOpen && editorMode === 'off' && !session.photoMode.active
+  // photo mode shows only its own overlay (and the reticle) over the world; the HideUi key hides
+  // the chrome and the reticle and keeps the scene's own UI
+  const chrome = !pageOpen && editorMode === 'off' && !session.photoMode.active && !session.hudHidden
 
   // Tell the engine how much of the screen the persistent HUD occupies. A full-screen page is
   // transient, so the last in-world value stands while one is open.
@@ -514,7 +516,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           {chrome && <VoiceChatPanel />}
           {chrome && <SceneVoiceChatBanner />}
           {/* Reticle (when pointer-locked) + world-hover prompt — hidden under a full-screen page. */}
-          {!pageOpen && editorMode !== 'edit' && (
+          {!pageOpen && editorMode !== 'edit' && !session.hudHidden && (
             <Pointer
               hover={session.hover}
               locked={session.cursorLocked}

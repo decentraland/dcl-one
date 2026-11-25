@@ -1,13 +1,12 @@
 import { redirect } from "react-router";
 import { dehydrate, HydrationBoundary, QueryClient } from "@tanstack/react-query";
 
-import SitesChrome from "@ui/web/frames/SitesChrome";
-
 import { latestPostsQuery } from "@/data/lib/create-landing/blog-posts";
 import { latestPosts } from "@/data/lib/create-landing/blog-posts.server";
 import { liveScenesQuery } from "@/data/lib/create-landing/live-scenes";
 import { heroDownloads, loadLatestRelease } from "@/data/lib/download/creator-hub.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 import CreateLanding from "@/features/create-landing/CreateLanding";
 import { CREATOR_HUB_DOWNLOAD } from "@/features/create-landing/HeroDownload";
 import { SubNav } from "@/features/creators/components/SubNav";
@@ -75,10 +74,10 @@ export default function CreateRoute({ loaderData }: Route.ComponentProps) {
   const rootSid = useAnalyticsSid();
   return (
     <HydrationBoundary state={loaderData?.dehydratedState}>
-      <SitesChrome active="create" overlayNav>
+      <SitesLayout active="create" overlayNav>
         <SubNav landing />
         <CreateLanding downloads={loaderData?.downloads} sid={loaderData?.sid || rootSid} userId={userId} />
-      </SitesChrome>
+      </SitesLayout>
     </HydrationBoundary>
   );
 }
