@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use bevy::{
     asset::LoadState,
     gltf::{Gltf, GltfPlugin},
-    platform::collections::HashMap,
+    platform::collections::{HashMap, HashSet},
     prelude::*,
     render::mesh::skinning::SkinnedMeshInverseBindposes,
     scene::ScenePlugin,
@@ -20,7 +20,7 @@ use super::{
     layout::{TreeLayout, TreeLayoutLoader, TreeLayouts, GENESIS_LABEL, WORLDS_LABEL},
     material::{Surface, SURFACES, TERRAIN_TEXTURE},
     prototypes::PROTOTYPES,
-    tree_radius_parcels, LandscapeTreeAssets, Tree, ASSET_DIR, LAYOUT,
+    tree_radius_parcels, LandscapeTreeAssets, Tree, ASSET_DIR, LAYOUT, SPAWN_BUDGET,
 };
 use crate::{
     solids::{prototype_solids, Solid},
@@ -131,6 +131,20 @@ fn spawned(app: &mut App) -> Vec<Spawned> {
             solid: solid.is_some(),
         })
         .collect()
+}
+
+/// Runs frames until the spawn queue has drained: a frame that spawns nothing.
+fn settle(app: &mut App) {
+    let mut count = usize::MAX;
+    for _ in 0..10_000 {
+        app.update();
+        let now = spawned(app).len();
+        if now == count {
+            return;
+        }
+        count = now;
+    }
+    panic!("the trees never settled");
 }
 
 /// Genesis City's layout, or the Worlds' when `worlds`.
@@ -335,7 +349,7 @@ fn unknown_parcel_has_no_trees() {
 #[test]
 fn realm_switch_swaps_layout() {
     let mut app = open_land(6, Vec3::ZERO);
-    app.update();
+    settle(&mut app);
     let genesis = layout(false);
     let worlds = layout(true);
     let check = |trees: &[Spawned], layout: &TreeLayout| {
@@ -361,7 +375,7 @@ fn realm_switch_swaps_layout() {
     app.world_mut()
         .resource_mut::<ScenePointers>()
         .reset_terrain(true);
-    app.update();
+    settle(&mut app);
     let after = spawned(&mut app);
     check(&after, &worlds);
     // the two layouts place the same instances, each at its own scales
@@ -385,7 +399,7 @@ fn bush01_has_no_solid() {
     }
 
     let mut app = open_land(6, Vec3::ZERO);
-    app.update();
+    settle(&mut app);
     let genesis = layout(false);
     let trees = spawned(&mut app);
     let prototype = |tree: &Spawned| genesis.instances(tree.parcel)[tree.index as usize].prototype;
@@ -440,7 +454,7 @@ fn lowering_distance_despawns_far_trees() {
     let player = Vec3::ZERO;
     let mut app = open_land(40, player);
     app.world_mut().resource_mut::<LandscapeDistance>().0 = 7000.0;
-    app.update();
+    settle(&mut app);
     let far = |trees: &[Spawned]| {
         trees
             .iter()
@@ -460,6 +474,35 @@ fn lowering_distance_despawns_far_trees() {
     let mut added = app.world_mut().query_filtered::<(), Added<Tree>>();
     assert_eq!(added.iter(app.world()).count(), 0, "nothing respawns");
     assert_eq!(spawned(&mut app).len(), near.len());
+}
+
+/// Filling the distance spreads over frames, nearest first, at most the budget in each.
+#[test]
+fn spawning_spreads_over_frames_nearest_first() {
+    let player = Vec3::ZERO;
+    let mut app = open_land(40, player);
+    app.update();
+    let first = spawned(&mut app);
+    assert_eq!(first.len(), SPAWN_BUDGET);
+
+    app.update();
+    assert_eq!(spawned(&mut app).len(), 2 * SPAWN_BUDGET);
+    settle(&mut app);
+    let all = spawned(&mut app);
+    assert!(all.len() > 2 * SPAWN_BUDGET, "{}", all.len());
+
+    let distance = |tree: &Spawned| tree.transform.translation.xz().distance(player.xz());
+    let early: HashSet<_> = first.iter().map(|tree| (tree.parcel, tree.index)).collect();
+    let farthest_early = first.iter().map(distance).fold(0.0, f32::max);
+    let nearest_later = all
+        .iter()
+        .filter(|tree| !early.contains(&(tree.parcel, tree.index)))
+        .map(distance)
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        farthest_early <= nearest_later,
+        "{farthest_early} > {nearest_later}"
+    );
 }
 
 #[test]

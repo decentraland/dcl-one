@@ -331,12 +331,20 @@ struct Landscape<'w> {
     layouts: Res<'w, Assets<TreeLayout>>,
 }
 
+/// The most instances spawned in one frame. Filling the Landscape Distance at start, after a
+/// teleport or a larger distance spreads over frames, nearest first, instead of stalling one; a
+/// parcel resolving empty once that is done spawns its few instances in the frame it resolves.
+pub(crate) const SPAWN_BUDGET: usize = 500;
+
 #[derive(Default)]
 struct TreeState {
     centre: Option<IVec2>,
     world: Option<bool>,
     /// Something changed that the trees have not followed yet.
     pending: bool,
+    /// Instances still to spawn, with their prototype and their transform at height 0, farthest
+    /// first so the nearest pop first.
+    queue: Vec<(Key, usize, Transform)>,
 }
 
 /// An instance: its parcel and its index among the parcel's instances.
@@ -426,6 +434,7 @@ fn update_trees(
             commands.entity(entity).despawn();
         }
         state.world = Some(world);
+        state.queue.clear();
     }
     if let (true, Some(layout)) = (state.pending, layout) {
         state.centre = Some(centre);
@@ -443,19 +452,29 @@ fn update_trees(
                 }
             }
         }
-        for ((parcel, index), (prototype, mut transform)) in desired {
-            let translation = transform.translation;
-            transform.translation.y = surface.height(translation.x, -translation.z);
-            let mut tree = commands.spawn((
-                Name::new(PROTOTYPES[prototype].name),
-                Tree { parcel, index },
-                SceneRoot(assets.scenes[prototype].clone()),
-                transform,
-            ));
-            let solids = prototype_solids(prototype);
-            if !solids.is_empty() {
-                tree.insert(Solid(solids));
-            }
+        let distance_to =
+            |transform: &Transform| transform.translation.xz().distance(position.xz());
+        state.queue = desired
+            .into_iter()
+            .map(|(key, (prototype, transform))| (key, prototype, transform))
+            .collect();
+        state
+            .queue
+            .sort_by(|a, b| distance_to(&b.2).total_cmp(&distance_to(&a.2)));
+    }
+    let start = state.queue.len().saturating_sub(SPAWN_BUDGET);
+    for ((parcel, index), prototype, mut transform) in state.queue.drain(start..) {
+        let translation = transform.translation;
+        transform.translation.y = surface.height(translation.x, -translation.z);
+        let mut tree = commands.spawn((
+            Name::new(PROTOTYPES[prototype].name),
+            Tree { parcel, index },
+            SceneRoot(assets.scenes[prototype].clone()),
+            transform,
+        ));
+        let solids = prototype_solids(prototype);
+        if !solids.is_empty() {
+            tree.insert(Solid(solids));
         }
     }
 
