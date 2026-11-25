@@ -1794,20 +1794,27 @@ key format, the frozen statuses or either statement updates this section.
 ## Daily MANA/USD closes
 
 Shop stores one row per UTC day from July 8, 2021 in `shop.mana_usd_daily`.
-The writer selects the last round at or before the end of the day from the
-Polygon MANA/USD oracle using one finalized block hash per pass. Each row keeps
-the phase-aware round ID and the exact decimal rate. A day without a positive
-close stores a null rate. The mainnet sales index process runs a leased job
-that reads at most fourteen consecutive days per pass and commits each
-completed day. A failed read resumes at the first unrecorded day. Once caught
-up, the job adds one row a day.
+The writer uses each UTC day's last Polygon MANA/USD observation, with one
+finalized block hash per pass. Phase selection follows marketplace-server at
+`9c3683cb`, using the latest phase with a first round by that day's close. A phase can
+start producing rounds before the proxy switches to it. Each recorded observation keeps its
+phase-aware round ID and exact decimal rate. The day stores a null rate when
+its last observation is non-positive or the oracle made no observation
+during that UTC day.
+
+The mainnet sales index process runs one leased writer. Each pass reads at most
+fourteen consecutive days and commits each completed day. A failed read
+resumes at the first unrecorded day. Once caught up, the job adds one row a day.
 
 The rate endpoint scans the date key over at most fifteen years (approximately
-5,500 rows). Seller summaries join the days of the requested sales by that
-same key. They sum gross MANA at the historical closes, round to six decimal
-places and count sales with no rate. Royalty totals use the settlement legs
-recorded for resales of the creator's items. The sales publication and all
-inputs to these calculations are read in the same transaction.
+5,500 rows) and returns only priced days, matching the legacy response. Seller
+summaries join the days of their sales by the same key. They sum gross MANA at
+historical rates, round to six decimal places, and count sales with no rate.
+`royaltiesWei` totals settled royalty legs on resales by other sellers. It
+returns null when creator attribution or a required payment split lacks
+proof. The resale count and volume describe sales attributed to the creator,
+including their own. The sales publication and all these inputs are read in
+the same transaction.
 
 ## Shop open-trades reads that name a contract
 

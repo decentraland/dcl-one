@@ -19,6 +19,7 @@ use crate::jobs::{Jobs, PeriodicCfg};
 use crate::market::MarketplaceState;
 
 const BATCH_DAYS: usize = 14;
+const DAY_SECONDS: i64 = 86_400;
 const FIRST_DAY: NaiveDate = NaiveDate::from_ymd_opt(2021, 7, 8).unwrap();
 
 sol! {
@@ -244,12 +245,17 @@ async fn fill(pool: &PgPool, rpc: &Rpc, today: NaiveDate) -> anyhow::Result<usiz
                 .map_or(phase.first, |(_, round)| round);
             let round = oracle.close(phase, at, from).await?;
             previous = Some((phase.id, round));
-            let id = (u128::from(phase.id) << 64) | u128::from(round.index);
-            round_id = Some(id.to_string());
-            if round.answer.is_positive() {
-                let rate = crate::types::ManaUsdRate::new(round.answer.into_raw(), phase.decimals)
-                    .context("invalid MANA/USD close")?;
-                usd = Some(rate.decimal_text());
+            // A UTC day needs its own observation. Record empty days so a
+            // stalled feed does not carry an earlier close into later days.
+            if round.time > at - DAY_SECONDS {
+                let id = (u128::from(phase.id) << 64) | u128::from(round.index);
+                round_id = Some(id.to_string());
+                if round.answer.is_positive() {
+                    let rate =
+                        crate::types::ManaUsdRate::new(round.answer.into_raw(), phase.decimals)
+                            .context("invalid MANA/USD close")?;
+                    usd = Some(rate.decimal_text());
+                }
             }
         }
         // An RPC error or the job deadline can interrupt a later day's

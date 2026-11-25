@@ -1009,8 +1009,9 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=NULL WHERE network='ethereum' AND mirror='collections'")
         .execute(&db.pool).await.unwrap();
     let (code, incomplete) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
-    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{incomplete}");
-    assert_eq!(incomplete["source"], "collections-mirror");
+    assert_eq!(code, StatusCode::OK, "{incomplete}");
+    assert_eq!(incomplete["data"]["royalties"]["royaltiesWei"], Value::Null);
+    assert!(incomplete["data"]["earnedUsd"].is_string());
     sqlx::query(
         "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())
         WHERE network='ethereum' AND mirror='collections'",
@@ -1026,8 +1027,9 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         .await
         .unwrap();
     let (code, incomplete) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
-    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{incomplete}");
-    assert_eq!(incomplete["source"], "sales-index");
+    assert_eq!(code, StatusCode::OK, "{incomplete}");
+    assert_eq!(incomplete["data"]["royalties"]["royaltiesWei"], Value::Null);
+    assert!(incomplete["data"]["earnedUsd"].is_string());
     seed_collection(
         &db.pool,
         "ethereum",
@@ -1047,8 +1049,9 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         .await
         .unwrap();
     let (code, incomplete) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
-    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{incomplete}");
-    assert_eq!(incomplete["source"], "sales-index");
+    assert_eq!(code, StatusCode::OK, "{incomplete}");
+    assert_eq!(incomplete["data"]["royalties"]["royaltiesWei"], Value::Null);
+    assert!(incomplete["data"]["earnedUsd"].is_string());
     sqlx::query(catalogue_chain)
         .bind(BOB)
         .bind(1)
@@ -1067,8 +1070,9 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         .await
         .unwrap();
     let (code, incomplete) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
-    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{incomplete}");
-    assert_eq!(incomplete["source"], "sales-index");
+    assert_eq!(code, StatusCode::OK, "{incomplete}");
+    assert_eq!(incomplete["data"]["royalties"]["royaltiesWei"], Value::Null);
+    assert!(incomplete["data"]["earnedUsd"].is_string());
     sqlx::query(move_issue)
         .bind(v1_block)
         .bind(CARL)
@@ -1079,6 +1083,24 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     assert_eq!(code, StatusCode::OK, "{creator_summary}");
     assert_eq!(creator_summary["data"]["royalties"]["royaltiesWei"], "5");
     assert_eq!(creator_summary["data"]["royalties"]["resales"], 1);
+    let set_seller = "UPDATE shop.sale_asset SET seller=$2 WHERE
+        network='ethereum' AND block_number=$1 AND log_index=1";
+    sqlx::query(set_seller)
+        .bind(v1_block)
+        .bind(CARL)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, self_sale) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(code, StatusCode::OK, "{self_sale}");
+    assert_eq!(self_sale["data"]["royalties"]["resales"], 1);
+    assert_eq!(self_sale["data"]["royalties"]["royaltiesWei"], "0");
+    sqlx::query(set_seller)
+        .bind(v1_block)
+        .bind(ALICE)
+        .execute(&db.pool)
+        .await
+        .unwrap();
     seed_item(
         &db.pool,
         "ethereum",
@@ -1150,14 +1172,17 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     .execute(&db.pool)
     .await
     .unwrap();
-    for path in [
-        format!("/v1/sales/summary?seller={CARL}"),
-        format!("/v1/stores/{CARL}/stats"),
-    ] {
-        let (status, body) = get_json(&app, &path).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-        assert_eq!(body["source"], "sales-index");
-    }
+    let (status, pending) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+    assert_eq!(status, StatusCode::OK, "{pending}");
+    assert_eq!(pending["data"]["royalties"]["royaltiesWei"], Value::Null);
+    assert_eq!(pending["data"]["royalties"]["resales"], 1);
+    let (status, store) = get_json(&app, &format!("/v1/stores/{CARL}/stats")).await;
+    assert_eq!(status, StatusCode::OK, "{store}");
+    assert_eq!(
+        store["data"]["summary"]["royalties"]["royaltiesWei"],
+        Value::Null
+    );
+    assert!(store["data"]["summary"]["earnedUsd"].is_string());
     sqlx::query(
         "DELETE FROM shop.sale_payout WHERE network='ethereum' AND block_number=$1 AND log_index=1 AND role='royalty'",
     )

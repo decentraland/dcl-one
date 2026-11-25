@@ -22,7 +22,7 @@
         count(*) FILTER (WHERE in_window) AS sold,coalesce(sum(price) FILTER (WHERE in_window),0)::text AS earned
     FROM mine WHERE kind='mint' AND item_id IS NOT NULL GROUP BY contract_address,item_id
 ), royalty_candidates AS (
-    SELECT s.price,s.royalties,s.settled,coalesce(s.creator,v1.creator) AS creator
+    SELECT s.price,s.royalties,s.settled,s.seller,coalesce(s.creator,v1.creator) AS creator
     FROM sold s
     LEFT JOIN v1_resales v1 USING(network,block_number,log_index,ordinal)
     WHERE s.kind IN ('order','bid') AND ($8::bigint IS NULL OR s.block_time*1000 >= $8)
@@ -34,13 +34,13 @@
 ), royalties AS (
     SELECT count(*) FILTER (WHERE creator=$7) AS resales,
         coalesce(sum(price) FILTER (WHERE creator=$7),0)::text AS volume,
-        coalesce(sum(royalties) FILTER (WHERE creator=$7 AND settled),0)::text AS paid,
-        coalesce(bool_or(creator IS NULL OR NOT settled),false) AS incomplete
+        CASE WHEN bool_or(seller IS NULL OR creator IS NULL OR NOT settled)
+                  FILTER (WHERE seller IS DISTINCT FROM $7) THEN NULL
+             ELSE coalesce(sum(royalties) FILTER (WHERE creator=$7 AND seller<>$7),0)::text END AS paid
     FROM royalty_candidates
 )
 SELECT total,mints,totals.resales,earned,earned_usd,unpriced_sales,
        royalties.resales AS royalty_resales,volume,paid AS royalty_paid,
-       royalties.incomplete AS incomplete_royalties,
        coalesce((SELECT jsonb_agg(jsonb_build_object('contractAddress',contract_address,'sold',sold,'earnedWei',earned,
           'earnedUsd',earned_usd,'unpricedSales',unpriced_sales)
           ORDER BY contract_address) FROM collections),'[]'::jsonb) AS by_collection,

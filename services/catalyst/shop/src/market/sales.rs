@@ -200,7 +200,7 @@ pub struct SalesSummaryRoyalties {
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub resales: i64,
     pub volume_wei: String,
-    pub royalties_wei: String,
+    pub royalties_wei: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]

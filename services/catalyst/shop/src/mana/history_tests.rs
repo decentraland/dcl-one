@@ -16,9 +16,9 @@ fn data(words: &[u64]) -> Value {
     json!({ "result": format!("0x{body}") })
 }
 
-fn round(id: u64, start: i64) -> Value {
+fn round(id: u64, start: i64, answer: u64) -> Value {
     let time = u64::try_from(start).unwrap() + 90 * id;
-    data(&[id, 125_000_000, time, time, id])
+    data(&[id, answer, time, time, id])
 }
 
 async fn call(State(feed): State<Arc<Feed>>, Json(request): Json<Value>) -> Json<Value> {
@@ -43,9 +43,9 @@ async fn call(State(feed): State<Arc<Feed>>, Json(request): Json<Value>) -> Json
                 s if s == decimalsCall::SELECTOR => data(&[8]),
                 s if s == latestRoundDataCall::SELECTOR => {
                     if to[19] == 1 {
-                        round(65_536, feed.start)
+                        round(65_536, feed.start, 125_000_000)
                     } else {
-                        round(2, feed.start + 86_400 * 30)
+                        round(2, feed.start + DAY_SECONDS * 31, 125_000_000)
                     }
                 }
                 s if s == getRoundDataCall::SELECTOR => {
@@ -63,12 +63,12 @@ async fn call(State(feed): State<Arc<Feed>>, Json(request): Json<Value>) -> Json
                         if id > 1 {
                             tokio::time::sleep(Duration::from_millis(12)).await;
                         }
-                        let start = if to[19] == 1 {
-                            feed.start
+                        if to[19] == 1 {
+                            round(id, feed.start, 125_000_000)
                         } else {
-                            feed.start + 86_400 * 30
-                        };
-                        round(id, start)
+                            assert_eq!(id, 1);
+                            round(id, feed.start + DAY_SECONDS * 30, 0)
+                        }
                     }
                 }
                 _ => panic!("unexpected oracle selector"),
@@ -94,7 +94,8 @@ async fn history_keeps_completed_days_across_latency_and_rpc_failure() {
             .and_hms_opt(0, 0, 0)
             .unwrap()
             .and_utc()
-            .timestamp(),
+            .timestamp()
+            + DAY_SECONDS,
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -142,12 +143,42 @@ async fn history_keeps_completed_days_across_latency_and_rpc_failure() {
         count().fetch_one(&db.pool).await.unwrap(),
         BATCH_DAYS as i64
     );
-    let first: (NaiveDate, String) =
+    let first: (NaiveDate, Option<String>) =
         sqlx::query_as("SELECT day,usd::text FROM shop.mana_usd_daily ORDER BY day LIMIT 1")
             .fetch_one(&db.pool)
             .await
             .unwrap();
-    assert_eq!(first, (FIRST_DAY, "1.25".to_owned()));
+    assert_eq!(first, (FIRST_DAY, None));
+    let day = |offset| {
+        FIRST_DAY
+            .checked_add_days(chrono::Days::new(offset))
+            .unwrap()
+    };
+    sqlx::query("INSERT INTO shop.mana_usd_daily (day) SELECT $1::date + day_offset FROM generate_series(14,29) day_offset")
+        .bind(FIRST_DAY)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(fill(&db.pool, &rpc, day(34)).await.unwrap(), 4);
+    let closes: Vec<(NaiveDate, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT day,usd::text,round_id::text FROM shop.mana_usd_daily WHERE day>=$1 ORDER BY day",
+    )
+    .bind(day(31))
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        closes,
+        [
+            (day(31), None, Some(((3u128 << 64) | 1).to_string())),
+            (
+                day(32),
+                Some("1.25".to_owned()),
+                Some(((3u128 << 64) | 2).to_string())
+            ),
+            (day(33), None, None),
+        ]
+    );
     server.abort();
     db.drop().await;
 }

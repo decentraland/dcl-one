@@ -226,14 +226,13 @@ pub(crate) async fn snapshot(
     Ok((snap, nets))
 }
 
-pub(crate) async fn require_metadata(
+async fn metadata_proofs(
     snap: &mut sale_fold::SalesSnapshot,
     nets: &[ChainNet],
     mirror: &'static str,
-    source: Source,
-) -> Result<Vec<String>, Response> {
+) -> Result<Vec<(bool, Option<String>, Option<NaiveDateTime>)>, Response> {
     let now = Utc::now();
-    let proofs: Vec<(bool, Option<String>, Option<NaiveDateTime>)> = sqlx::query_as(
+    sqlx::query_as(
         "SELECT projection.owned_at IS NOT NULL,
            CASE WHEN projection.owned_at IS NOT NULL THEN
              CASE WHEN projection.pending=0 AND projection.projected_through>=sales.block_number
@@ -257,8 +256,17 @@ pub(crate) async fn require_metadata(
     )
     .bind(mirror).bind(nets.iter().map(|n|n.db_name()).collect::<Vec<_>>())
     .bind((now-super::chain_walk::READY_WINDOW).naive_utc()).bind(now.naive_utc())
-    .fetch_all(&mut *snap.transaction).await.map_err(db_error)?;
-    proofs
+    .fetch_all(&mut *snap.transaction).await.map_err(db_error)
+}
+
+pub(crate) async fn require_metadata(
+    snap: &mut sale_fold::SalesSnapshot,
+    nets: &[ChainNet],
+    mirror: &'static str,
+    source: Source,
+) -> Result<Vec<String>, Response> {
+    metadata_proofs(snap, nets, mirror)
+        .await?
         .into_iter()
         .map(|(native, proof, folded_at)| {
             if let Some(folded_at) = folded_at {
@@ -357,8 +365,7 @@ struct SellerTotals {
     unpriced_sales: i64,
     royalty_resales: i64,
     volume: String,
-    royalty_paid: String,
-    incomplete_royalties: bool,
+    royalty_paid: Option<String>,
     by_collection: Json<Vec<super::sales::SalesSummaryCollection>>,
     items: Json<Vec<MintTotals>>,
     incomplete: bool,
@@ -372,31 +379,26 @@ pub(crate) async fn seller_stats(
     use super::sales::{SalesSummary, SalesSummaryItem, SalesSummaryRoyalties};
     require_metadata(snap, nets, "items", Source::ItemsMirror).await?;
     let seller = f.seller.to_lowercase();
-    if nets.contains(&ChainNet::Ethereum) {
-        let needs_v1_catalogue: bool = sqlx::query_scalar(
-            "SELECT EXISTS (
-                SELECT 1 FROM shop.items
-                WHERE network='ethereum' AND chain_id=1 AND item_type='wearable_v1' AND creator=$1
-            )",
-        )
-        .bind(&seller)
-        .fetch_one(&mut *snap.transaction)
-        .await
-        .map_err(db_error)?;
-        if needs_v1_catalogue {
-            require_metadata(
-                snap,
-                &[ChainNet::Ethereum],
-                "collections",
-                Source::CollectionsMirror,
-            )
-            .await?;
+    let ethereum_collections_ready = if nets.contains(&ChainNet::Ethereum) {
+        let proofs = metadata_proofs(snap, &[ChainNet::Ethereum], "collections").await?;
+        if let [(_, Some(_), folded_at)] = proofs.as_slice() {
+            if let Some(folded_at) = folded_at {
+                snap.expires_at = snap
+                    .expires_at
+                    .min(folded_at.and_utc() + super::chain_walk::READY_WINDOW);
+            }
+            true
+        } else {
+            false
         }
-    }
+    } else {
+        false
+    };
     let row: SellerTotals = sales_query!(nets, summary; "settled_sales.sql", "summary.sql")
         .bind(seller)
         .bind(f.from)
         .bind(f.to)
+        .bind(ethereum_collections_ready)
         .fetch_one(&mut *snap.transaction)
         .await
         .map_err(db_error)?;
@@ -404,12 +406,6 @@ pub(crate) async fn seller_stats(
         return Err(unavailable(
             Source::SalesIndex,
             "the published sales history contains an unresolved seller",
-        ));
-    }
-    if row.incomplete_royalties {
-        return Err(unavailable(
-            Source::SalesIndex,
-            "the published creator resales lack a proven creator or royalty split",
         ));
     }
     let mut by_item = Vec::with_capacity(row.items.len());
