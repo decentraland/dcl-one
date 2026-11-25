@@ -98,11 +98,10 @@ jobs:
               left = budget['left']
               return left is not None and left <= RESERVE
 
-          def pull_request_states(repository, numbers):
+          def pull_request_states(repository, numbers, states):
               # One GraphQL call per 100 PRs instead of one REST call each. GraphQL reports
               # MERGED separately, where REST folds it into 'closed'; both mean deletable.
               owner, name = repository.split('/', 1)
-              states = {}
               ordered = sorted(numbers, key=int)
               for start in range(0, len(ordered), 100):
                   chunk = ordered[start:start + 100]
@@ -118,7 +117,6 @@ jobs:
                       node = repo.get(f'p{number}')
                       # An unresolvable PR stays unknown and its caches are left alone.
                       states[number] = node.get('state') if node else None
-              return states
 
           number = os.environ.get('PR_NUMBER', '')
           event = os.environ.get('GITHUB_EVENT_NAME', 'pull_request')
@@ -166,18 +164,17 @@ jobs:
               match = re.fullmatch(r'refs/pull/([1-9][0-9]*)/merge', cache.get('ref', ''))
               if match and not targeted:
                   pull_refs[match[1]] = True
-          closed, state_failure = {}, None
+          closed, states, state_failure = {}, {}, None
           if pull_refs:
               try:
-                  states = pull_request_states(repository, pull_refs)
+                  pull_request_states(repository, pull_refs, states)
               except RateLimited as error:
                   # Snapshot and image pruning below needs no PR state, so keep going.
-                  print(f'::warning::rate limited resolving PR states, closed-PR cleanup '
-                        f'deferred to the next sweep: {error}')
-                  states = {}
+                  print(f'::warning::rate limited resolving PR states, closed-PR cleanup deferred to the next sweep '
+                        f'for {len(pull_refs) - len(states)} of {len(pull_refs)} PRs: {error}')
               except RuntimeError as error:
-                  # Prune without PR states, then fail the run: unlike a rate limit, this may not clear by itself.
-                  states, state_failure = {}, error
+                  # Prune with the states resolved so far, then fail: this may not clear by itself.
+                  state_failure = error
               for pr, state in states.items():
                   closed[pr] = state in ('CLOSED', 'MERGED')
           for cache in caches:
@@ -253,6 +250,7 @@ jobs:
                     f'rate budget {budget["left"]} remaining, '
                     f'{time.monotonic() - STARTED:.0f}s elapsed, resuming next sweep')
           if state_failure is not None:
-              print(f'::error::PR states unresolved, closed-PR cleanup skipped: {str(state_failure).split(" -> ", 1)[-1]}')
+              print(f'::error::PR states unresolved for {len(pull_refs) - len(states)} of {len(pull_refs)} PRs, '
+                    f'their closed-PR cleanup skipped: {str(state_failure).split(" -> ", 1)[-1]}')
               raise SystemExit(1)
           PY
