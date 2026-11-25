@@ -1,6 +1,6 @@
 import * as components from '../components'
-import { DeepReadonlyObject, Entity, IEngine } from '../engine'
-import { PBAudioEvent } from '../components'
+import type { DeepReadonlyObject, Entity, IEngine } from '../engine'
+import type { PBAudioEvent } from '../components'
 import { EntityState } from '../engine/entity'
 
 /**

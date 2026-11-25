@@ -1395,10 +1395,6 @@ pub fn market_router(state: SharedState) -> Router {
         .merge(super::market_extensions())
         .layer(axum::middleware::from_fn(mirrors::stamp_copies))
         .layer(axum::middleware::from_fn(signed::mounted_path))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            signed::client_source,
-        ))
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
         .layer(axum::middleware::from_fn(cors::cors_middleware));
     let app = if let Some(timeout) = request_timeout {

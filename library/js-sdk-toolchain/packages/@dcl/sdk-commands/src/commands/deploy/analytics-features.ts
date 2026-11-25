@@ -1,4 +1,4 @@
-import { CliComponents } from '../../components'
+import type { CliComponents } from '../../components'
 
 export async function analyticsFeatures(
   components: CliComponents,

@@ -1,12 +1,9 @@
-import {
-  dumpEngineToComposite,
-  dumpEngineToCrdtCommands,
-  generateEntityNamesType,
-  FileSystemInterface
-} from '@dcl/inspector'
-import { CliComponents } from '../../components'
+import type { FileSystemInterface } from '@dcl/inspector'
+import { dumpEngineToComposite, dumpEngineToCrdtCommands, generateEntityNamesType } from '@dcl/inspector'
+import type { CliComponents } from '../../components'
 import { createFileSystemInterfaceFromFsComponent } from '../start/data-layer/fs'
-import { IEngine, Composite } from '@dcl/ecs/dist-cjs'
+import type { IEngine } from '@dcl/ecs/dist-cjs'
+import { Composite } from '@dcl/ecs/dist-cjs'
 import * as path from 'path'
 
 type IEngineInspector = Parameters<typeof dumpEngineToComposite>[0]

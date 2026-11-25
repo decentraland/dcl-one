@@ -1,7 +1,8 @@
 import * as components from '../components'
-import { DeepReadonlyObject, Entity, IEngine } from '../engine'
+import type { DeepReadonlyObject, Entity, IEngine } from '../engine'
 import { EntityState } from '../engine/entity'
-import { PBTriggerAreaResult, TriggerAreaEventType } from '../components'
+import type { PBTriggerAreaResult } from '../components'
+import { TriggerAreaEventType } from '../components'
 
 /**
  * @public

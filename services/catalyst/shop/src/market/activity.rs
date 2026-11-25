@@ -205,8 +205,8 @@ pub async fn get_activity(
 /// signature a 401 (a contract wallet's chain is checked with the node's
 /// EIP-1654 validator; one its contract refuses is a failing signature), an
 /// EIP-1654 chain on a node without a validator a 501, a contract-wallet
-/// check that cannot run (the RPC failed) a 503, never accepted, anything
-/// else malformed a 400.
+/// check that cannot run (the RPC failed) a 503, never accepted, one the
+/// client source's budget refused a 429, anything else malformed a 400.
 fn refusal(e: SignedFetchError) -> ApiError {
     match e {
         SignedFetchError::Expired { .. } => ApiError::unauthorized("Expired signature"),
@@ -217,6 +217,10 @@ fn refusal(e: SignedFetchError) -> ApiError {
         SignedFetchError::CatalystUnavailable(_) => ApiError::http(
             503,
             "The contract-wallet signature cannot be checked right now",
+        ),
+        SignedFetchError::RateLimited => ApiError::http(
+            429,
+            "Too many contract-wallet signature checks; retry later",
         ),
         _ => ApiError::bad_request("Invalid Auth Chain"),
     }
@@ -233,7 +237,6 @@ async fn activity(
         return Err(ApiError::bad_request("Invalid Auth Chain"));
     }
     require_auth_metadata(headers, MARKETPLACE_AUTH_SIGNERS, None)?;
-    super::signed::admit_contract_wallet_check(state.eip1654.as_deref(), headers)?;
     let recovered = signed_fetch::require_signer(
         headers,
         "get",

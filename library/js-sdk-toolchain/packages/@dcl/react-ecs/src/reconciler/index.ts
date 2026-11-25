@@ -1,18 +1,13 @@
-import {
-  Entity,
-  IEngine,
-  InputAction,
-  PointerEventsSystem,
-  PointerEventType,
-  PBUiInputResult,
-  PBUiDropdownResult
-} from '@dcl/ecs'
+import type { Entity, IEngine, PointerEventsSystem, PBUiInputResult, PBUiDropdownResult } from '@dcl/ecs'
+import { InputAction, PointerEventType } from '@dcl/ecs'
 import * as components from '@dcl/ecs/dist/components'
-import Reconciler, { HostConfig } from 'react-reconciler'
-import { Callback, isListener, Listeners } from '../components'
+import type { HostConfig } from 'react-reconciler'
+import Reconciler from 'react-reconciler'
+import type { Callback, Listeners } from '../components'
+import { isListener } from '../components'
 import { CANVAS_ROOT_ENTITY } from '../components/uiTransform'
-import { ReactEcs } from '../react-ecs'
-import {
+import type { ReactEcs } from '../react-ecs'
+import type {
   Changes,
   Container,
   EngineComponents,

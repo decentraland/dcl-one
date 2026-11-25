@@ -16,6 +16,7 @@ pub mod client_ip;
 pub mod collections;
 pub mod cors;
 pub mod drain;
+pub mod eip1654_budget;
 pub mod errors;
 pub mod feature_flags;
 pub mod health;

@@ -1,13 +1,8 @@
-import {
-  components,
-  CrdtMessageType,
-  DeleteComponent,
-  IEngine,
-  LastWriteWinElementSetComponentDefinition,
-  Schemas
-} from '../../packages/@dcl/ecs/src'
+import type { IEngine, LastWriteWinElementSetComponentDefinition } from '../../packages/@dcl/ecs/src'
+import { components, CrdtMessageType, DeleteComponent, Schemas } from '../../packages/@dcl/ecs/src'
 import { PutComponentOperation } from '../../packages/@dcl/ecs/src/serialization/crdt'
-import { Entity, EntityState, EntityUtils, RESERVED_STATIC_ENTITIES } from '../../packages/@dcl/ecs/src/engine/entity'
+import type { Entity } from '../../packages/@dcl/ecs/src/engine/entity'
+import { EntityState, EntityUtils, RESERVED_STATIC_ENTITIES } from '../../packages/@dcl/ecs/src/engine/entity'
 import { ReadWriteByteBuffer } from '../../packages/@dcl/ecs/src/serialization/ByteBuffer'
 import { Vector3 } from '../../packages/@dcl/sdk/src/math'
 import { SandBox, wait } from './utils'
