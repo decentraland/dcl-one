@@ -2916,14 +2916,39 @@ collection into `shop.collection_seed`:
   exist);
 - at most 500 collections per attempt, ten JSON-RPC batches of 100 calls
   for each 200 collections;
-- at Polygon's finalized block, recorded in `read_block`.
+- at Polygon's finalized block, recorded in `read_block` with its hash in
+  `read_hash`.
 
 A collection with no code at that block waits for a later attempt. A read
-that fails is logged and does not stop the walk. Rows are never rewound:
-they are a finalized block's state. Whatever folds the log takes a value
-from the last walked event that sets it. It takes the read only when no
-event does and `read_block` is at or below the block it folds to; then the
-value has not changed since creation.
+that fails is logged and does not stop the walk. A read stands until the
+chain leaves the branch it was taken on (below). Whatever folds the log
+takes a value from the last walked event that sets it. It takes the read
+only when no event does and `read_block` is at or below the block it folds
+to; then the value has not changed since creation.
+
+**Reads ahead of the walk.** The gate reads the lists and the creation state
+at the finalized block, usually past the walk's cursor. A reorg there is
+invisible to the walk, which checks only the blocks it has walked, so a
+final list row or a creation read keeps the height and hash of the block it
+was read at. Before each attempt the gate asks the endpoint for the hash at
+every height whose rows are not yet `verified`:
+- another hash, or none recorded (rows from before the hashes were kept):
+  the list row becomes provisional again and the creation read is deleted,
+  so the attempt reads them on the branch the chain took. This runs under
+  the reads lock (see Projection), exclusive, and raises the walk's epoch,
+  so a read in flight from the left branch is not written. When a creation
+  read goes, it also clears the projection's block, so the next fold
+  rebuilds without it;
+- the same hash, at a height the walk has passed: the rows are `verified`.
+  From then the walk's own reorg check covers them, and a rewind below them
+  undoes them;
+- a header the endpoint does not serve fails the attempt.
+
+So a collection replaced at a list index, or one whose creation state
+changed, above a lagging cursor is read again by the next attempt, and the
+window that walks it commits without a rebuild. The heights still to check
+are those of the attempts that read something past the walk's cursor: a
+handful once the walk is at the head.
 
 **Decoding.** Every factory collection shares one ABI for these topics. A
 log of a walked topic that does not decode fails its window instead of

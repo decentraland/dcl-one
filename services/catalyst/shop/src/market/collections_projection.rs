@@ -743,7 +743,7 @@ mod tests {
             .unwrap();
         drop(conn);
         if seeded {
-            collections_index::write_seeds(&pool, NET, &[seed()], seed_token(&pool).await)
+            collections_index::write_seeds(&pool, NET, &[seed()], None, seed_token(&pool).await)
                 .await
                 .unwrap();
         }
@@ -928,7 +928,7 @@ mod tests {
             (1, 1),
             "one collection pending: not complete"
         );
-        collections_index::write_seeds(&pool, NET, &[seed()], seed_token(&pool).await)
+        collections_index::write_seeds(&pool, NET, &[seed()], None, seed_token(&pool).await)
             .await
             .unwrap();
         let out = project(&pool, &owner, NET, 97_895_000).await.unwrap();
@@ -989,9 +989,15 @@ mod tests {
             read_block: 97_740_000,
             ..seed()
         };
-        collections_index::write_seeds(&pool, NET, &[read_after_approval], seed_token(&pool).await)
-            .await
-            .unwrap();
+        collections_index::write_seeds(
+            &pool,
+            NET,
+            &[read_after_approval],
+            None,
+            seed_token(&pool).await,
+        )
+        .await
+        .unwrap();
         project(&pool, &owner, NET, 97_895_000).await.unwrap();
         assert!(approved(&pool).await);
         // The branch past 97,720,000, the approval at 97,732,808 with it, is gone.
@@ -1002,7 +1008,7 @@ mod tests {
             read_block: 97_721_000,
             ..seed()
         };
-        collections_index::write_seeds(&pool, NET, &[new_branch], seed_token(&pool).await)
+        collections_index::write_seeds(&pool, NET, &[new_branch], None, seed_token(&pool).await)
             .await
             .unwrap();
         let out = project(&pool, &owner, NET, 97_721_000).await.unwrap();
@@ -1023,7 +1029,7 @@ mod tests {
         let before = seed_token(&pool).await;
         rewind_to(&pool, 97_800_000).await;
         assert_eq!(
-            collections_index::write_seeds(&pool, NET, &[seed()], before)
+            collections_index::write_seeds(&pool, NET, &[seed()], None, before)
                 .await
                 .unwrap(),
             0,

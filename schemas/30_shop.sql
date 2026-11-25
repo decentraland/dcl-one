@@ -17114,10 +17114,15 @@ CREATE TABLE shop.collection_hint (
     idx integer NOT NULL,
     address varchar(42) NOT NULL,
     finalized boolean NOT NULL,
-    -- The finalized block a final row was read at (NULL for a provisional
-    -- row, and for a final row written before it was recorded): a rewind
-    -- below it makes the row provisional again, to be read on the new branch.
+    -- The finalized block a final row was read at, and its hash (both NULL
+    -- for a provisional row, and for a final row written before they were
+    -- recorded). The gate checks the hash at that height before each attempt
+    -- until the walk has passed it (`verified`); a different hash, a missing
+    -- one, or a rewind below the height makes the row provisional again, to
+    -- be read on the branch the chain took.
     read_block bigint,
+    read_hash text,
+    verified boolean NOT NULL DEFAULT false,
     PRIMARY KEY (network, address),
     CONSTRAINT collection_hint_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT collection_hint_lowercase CHECK (factory = lower(factory) AND address = lower(address)),
@@ -17130,10 +17135,13 @@ CREATE UNIQUE INDEX collection_hint_final_idx ON shop.collection_hint (network, 
 
 -- What a collection's initialize set without an event (name, symbol,
 -- creator, approval, editability), read once by the collections index's
--- gate at Polygon's finalized block, kept with it in
--- `read_block`. A projection takes a value from it only when no walked event
--- sets it and `read_block` is at or below the block it folds to. Not
--- rewound: a finalized block's state. One row per collection.
+-- gate at Polygon's finalized block, kept with its height and hash
+-- (`read_block`, `read_hash`). A projection takes a value from it only when
+-- no walked event sets it and `read_block` is at or below the block it folds
+-- to. The gate checks the hash at that height before each attempt until the
+-- walk has passed it (`verified`); a different hash, a missing one, or a
+-- rewind below the height deletes the row, to be read again on the branch
+-- the chain took. One row per collection.
 CREATE TABLE shop.collection_seed (
     network text NOT NULL,
     contract_address varchar(42) NOT NULL,
@@ -17143,6 +17151,8 @@ CREATE TABLE shop.collection_seed (
     is_approved boolean NOT NULL,
     is_editable boolean NOT NULL,
     read_block bigint NOT NULL,
+    read_hash text,
+    verified boolean NOT NULL DEFAULT false,
     read_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     PRIMARY KEY (network, contract_address),
     CONSTRAINT collection_seed_network_known CHECK (network IN ('ethereum', 'matic')),
