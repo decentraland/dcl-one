@@ -33,7 +33,7 @@ use super::chain_walk::{
 };
 use super::listings::{self, RpcEndpoints};
 use super::nft_index::{self, NftIndex};
-use super::sales_index::{self, SalesIndex};
+use super::sales_index::{self, POLYGON as POLYGON_SALES};
 use super::trade_events::{self, TradeEventsIndex};
 use super::{MarketSettings, MarketplaceState, Settings, SharedState};
 use crate::chain_index::rpc::Rpc;
@@ -1084,6 +1084,21 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
 
     // The routes over the published index.
     let app = super::market_router(st.clone());
+    // The walk can be ahead of the published verdict. Its last execution is
+    // visible only through the published height in the route's snapshot.
+    let sold_block: i64 = sqlx::query_scalar(
+        "SELECT min(block_number) FROM shop.trade_event WHERE hashed_signature = $1",
+    )
+    .bind(&sold.1)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=$1 WHERE indexer='trade_events' AND network='matic'")
+        .bind(sold_block - 1).execute(&db.pool).await.unwrap();
+    let (code, body) = get_json(&app, &format!("/v1/trades/{}/accept", sold.1)).await;
+    assert_eq!(code, StatusCode::NOT_FOUND, "{body}");
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=last_block-1 WHERE indexer='trade_events' AND network='matic'")
+        .execute(&db.pool).await.unwrap();
     let (code, body) = get_json(
         &app,
         &format!("/v1/trades/{}/accept?timestamp=1234&caller={BOB}", sold.1),
@@ -4947,6 +4962,207 @@ fn bid_id(byte: u8) -> String {
 }
 
 #[tokio::test]
+async fn amoy_sales_use_the_local_store_bid_and_collection_chain() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let index = sales_index::AMOY;
+    let block = index.start_block() + 100;
+    let store = "0xe36abc9ec616c83caaa386541380829106149d68";
+    let bid = "0x4b66eab79cc03a96fb6275cfcdf23c0db431606d";
+    let token = v2_token(0, 1);
+    seed_collection(
+        &db.pool,
+        "matic",
+        ALICE,
+        block - 10,
+        "urn:test:amoy",
+        "Amoy",
+    )
+    .await;
+    seed_collection(
+        &db.pool,
+        "matic",
+        CARL,
+        block - 10,
+        "urn:test:polygon",
+        "Polygon",
+    )
+    .await;
+    sqlx::query("UPDATE shop.collections SET chain_id = 80002, testnet_verified=true WHERE contract_address = $1")
+        .bind(ALICE)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let mut purchase = sales_index::tests::bought_log(
+        &[(ALICE, 0, 125, BOB)],
+        &format!("0x{:064x}", block * 100),
+        block,
+        1,
+    );
+    purchase.address = store.into();
+    let mut offer =
+        sales_index::tests::bid_created_log(ALICE, token, BOB, 17, 19, 1_700_000_000, block + 1, 0);
+    offer.address = bid.into();
+    let chain = FakeChain::new(
+        block + 1000,
+        vec![
+            sales_index::tests::issue_log(ALICE, BOB, token, 0, store, block, 0),
+            purchase,
+            offer,
+            sales_index::tests::issue_log(CARL, BOB, token, 0, store, block, 2),
+            sales_index::tests::issue_log(ALICE, BOB, token, 0, sales_index::STORE_MATIC, block, 3),
+            sales_index::tests::bid_created_log(
+                ALICE,
+                token,
+                BOB,
+                18,
+                20,
+                1_700_000_000,
+                block + 2,
+                0,
+            ),
+        ],
+        10_000,
+        100,
+    );
+    chain.chain_id.store(80_002, Ordering::SeqCst);
+    let url = serve(chain).await;
+    let settings = index_settings(100, 10_000);
+    let state = state_over(db.pool.clone(), &url, settings, false);
+    let outcome = pass(&state, &url, &index).await;
+    assert!(outcome.published, "{outcome:?}");
+    // The schema's object pass seeded only the four Polygon venues on an
+    // upgraded node. The Amoy gate installs the missing pins on its first pass.
+    sqlx::query("DELETE FROM shop.sale_venue WHERE address=$1")
+        .bind(bid)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let pins = sales_index::check_venues(&Rpc::at(&state.http, &url), &db.pool, index)
+        .await
+        .unwrap();
+    assert_eq!(pins.len(), 2);
+    assert!(pins.iter().any(|v| v.address == bid && v.pinned == 25_000));
+    let events: Vec<(String, String)> = sqlx::query_as(
+        "SELECT kind, price::text FROM shop.sale_event ORDER BY block_number, log_index",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        events,
+        [
+            ("mint".into(), "125".into()),
+            ("bid_created".into(), "19".into())
+        ]
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn sepolia_v1_upgrade_rebuilds_once_and_fences_the_old_trade_writer() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    const MIGRATION: &str = include_str!(
+        "../../../../../schemas/migrations/0071_shop_testnet_sale_and_trade_venues.sql"
+    );
+    let legacy_sql = "INSERT INTO shop.chain_cursor (indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+                      VALUES ('trade_events','ethereum',9455328,9455350,9455350,timezone('UTC',now()),true,$1)
+                      ON CONFLICT (indexer,network) DO UPDATE SET owner_generation = shop.chain_cursor.owner_generation + 1";
+    sqlx::query(legacy_sql)
+        .bind(1_i64)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+                 VALUES ('trade_events','matic',12490079,12491000,12491000,timezone('UTC',now()),true,80002)")
+        .execute(&db.pool).await.unwrap();
+    let before: Value = sqlx::query_scalar(
+        "SELECT jsonb_agg(to_jsonb(c) ORDER BY network) FROM shop.chain_cursor c",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    sqlx::raw_sql(MIGRATION).execute(&db.pool).await.unwrap();
+    let after: Value = sqlx::query_scalar(
+        "SELECT jsonb_agg(to_jsonb(c) ORDER BY network) FROM shop.chain_cursor c",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(after, before);
+    sqlx::raw_sql(
+        "ALTER TABLE shop.chain_cursor DROP CONSTRAINT chain_cursor_sepolia_trade_v1;
+                   UPDATE shop.chain_cursor SET chain_id=11155111 WHERE network='ethereum'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::raw_sql(MIGRATION).execute(&db.pool).await.unwrap();
+    let eth = ChainNet::Ethereum;
+    let cur = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (cur.start_block, cur.folded_block, cur.owner_generation),
+        (6_770_056, None, 1)
+    );
+    assert!(cur.rebuild_requested_at.is_some());
+    let rejected = sqlx::query(legacy_sql)
+        .bind(11_155_111_i64)
+        .execute(&db.pool)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        rejected.as_database_error().unwrap().constraint(),
+        Some("chain_cursor_sepolia_trade_v1")
+    );
+
+    let ix = TradeEventsIndex {
+        net: eth,
+        chain_id: 11_155_111,
+    };
+    let start = ix.start_block();
+    let v1 = trade_events::deployments(ix.chain_id)[0].0;
+    let chain = FakeChain::new(
+        start + 50,
+        vec![trade_events::tests::traded_log(
+            start + 1,
+            0,
+            v1,
+            ALICE,
+            BOB,
+            "0xabcd",
+            1,
+            false,
+        )],
+        1000,
+        100,
+    );
+    chain.chain_id.store(11_155_111, Ordering::SeqCst);
+    let url = serve(chain).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(100, 1000), false);
+    assert!(pass(&st, &url, &ix).await.rebuilt);
+    assert!(pass(&st, &url, &ix).await.published);
+    let markets: Vec<String> =
+        sqlx::query_scalar("SELECT marketplace_address FROM shop.trade_event")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(markets, [v1]);
+    sqlx::raw_sql(MIGRATION).execute(&db.pool).await.unwrap();
+    let cur = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(cur.folded_block.is_some() && cur.rebuild_requested_at.is_none());
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues() {
     let Some(db) = ScratchDb::create().await else {
         return;
@@ -5002,7 +5218,7 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
     // The sales walk runs ahead of the nft walk: the bids fold without the
     // owners; the next fold after the nft walk fills exactly the sellers
     // it reached, and the one it never reaches is not revisited.
-    assert!(publish(&st, &url, &SalesIndex).await.published);
+    assert!(publish(&st, &url, &POLYGON_SALES).await.published);
     assert_eq!(
         bids_of(&db.pool)
             .await
@@ -5027,14 +5243,14 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
         sales_index::fold(
             &db.pool,
             Some(folded),
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
         3,
         "the sellers the nft walk reached are filled"
     );
-    assert!(publish(&st, &url, &SalesIndex).await.published);
+    assert!(publish(&st, &url, &POLYGON_SALES).await.published);
     assert!(sales_index::ready(&db.pool, chrono::Utc::now()).await);
     let status = sales_index::status(&db.pool).await;
     assert_eq!(status["matic"]["ready"], true, "{status}");
@@ -5127,7 +5343,7 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
         sales_index::fold(
             &db.pool,
             Some(folded),
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
@@ -5155,7 +5371,7 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
         sales_index::fold(
             &db.pool,
             Some(folded),
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
@@ -5187,7 +5403,9 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
     // The venue check: both charging venues answer the pinned cut; a changed
     // seed row is reported as a difference (and left as it is).
     let rpc = Rpc::at(&st.http, &url);
-    let checks = sales_index::check_venues(&rpc, &db.pool).await.unwrap();
+    let checks = sales_index::check_venues(&rpc, &db.pool, POLYGON_SALES)
+        .await
+        .unwrap();
     assert_eq!(checks.len(), 2, "{checks:?}");
     assert!(
         checks.iter().all(|c| c.pinned == 25_000 && c.matches()),
@@ -5199,7 +5417,9 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
     .execute(&db.pool)
     .await
     .unwrap();
-    let checks = sales_index::check_venues(&rpc, &db.pool).await.unwrap();
+    let checks = sales_index::check_venues(&rpc, &db.pool, POLYGON_SALES)
+        .await
+        .unwrap();
     let bid_v2 = checks.iter().find(|c| c.kind == "bid_v2").unwrap();
     assert!(
         !bid_v2.matches() && bid_v2.live == Some(U256::from(25_000)),
@@ -5266,7 +5486,7 @@ async fn a_bid_past_the_nft_walk_takes_no_seller_until_the_walk_passes_it() {
         sales_index::fold(
             &db.pool,
             None,
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
@@ -5281,7 +5501,7 @@ async fn a_bid_past_the_nft_walk_takes_no_seller_until_the_walk_passes_it() {
         sales_index::fold(
             &db.pool,
             Some(120),
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
@@ -5307,7 +5527,7 @@ async fn a_bid_past_the_nft_walk_takes_no_seller_until_the_walk_passes_it() {
         sales_index::fold(
             &db.pool,
             Some(120),
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
@@ -5335,7 +5555,7 @@ async fn a_bid_past_the_nft_walk_takes_no_seller_until_the_walk_passes_it() {
         sales_index::fold(
             &db.pool,
             Some(120),
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
@@ -5354,7 +5574,7 @@ async fn a_bid_past_the_nft_walk_takes_no_seller_until_the_walk_passes_it() {
         sales_index::fold(
             &db.pool,
             Some(120),
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
@@ -5399,7 +5619,7 @@ async fn a_sales_reorg_rewinds_and_the_refold_follows_the_new_chain() {
             .await
             .published
     );
-    assert!(publish(&st, &url, &SalesIndex).await.published);
+    assert!(publish(&st, &url, &POLYGON_SALES).await.published);
     assert_eq!(
         bids_of(&db.pool).await,
         vec![(
@@ -5441,13 +5661,13 @@ async fn a_sales_reorg_rewinds_and_the_refold_follows_the_new_chain() {
             0,
         )],
     );
-    let rewound = pass(&st, &url, &SalesIndex).await;
+    let rewound = pass(&st, &url, &POLYGON_SALES).await;
     assert_eq!(rewound.reorg_rewound_to, Some(kept), "{rewound:?}");
     assert!(
         !sales_index::ready(&db.pool, chrono::Utc::now()).await,
         "a rewind unpublishes"
     );
-    assert!(publish(&st, &url, &SalesIndex).await.published);
+    assert!(publish(&st, &url, &POLYGON_SALES).await.published);
     assert_eq!(
         bids_of(&db.pool).await,
         vec![(
@@ -7496,7 +7716,7 @@ mod supervisor {
             Arc::new(move || {
                 made.fetch_add(1, Ordering::SeqCst);
                 Arc::new(Hooked {
-                    inner: Some(Arc::new(super::super::sales_index::SalesIndex)),
+                    inner: Some(Arc::new(super::super::sales_index::POLYGON)),
                     panics: Some(panics.clone()),
                     abandon_panics: true,
                     ..Hooked::default()
@@ -7895,7 +8115,7 @@ mod supervisor {
                     .await
                     .published
             );
-            assert!(publish(st, &url, &SalesIndex).await.published);
+            assert!(publish(st, &url, &POLYGON_SALES).await.published);
         }
         // The next segment: CARL mints t2 and sells it to BOB.
         {
@@ -7912,7 +8132,7 @@ mod supervisor {
         let mark = chain.calls.lock().len();
         let nft = NftIndex::new(ChainNet::Matic);
         pass(&st_alone, &url, &nft).await;
-        pass(&st_alone, &url, &SalesIndex).await;
+        pass(&st_alone, &url, &POLYGON_SALES).await;
         let alone_calls = chain.calls.lock()[mark..].to_vec();
 
         let at = chain_group::Checkpoint::of(
@@ -7926,7 +8146,7 @@ mod supervisor {
             // Each address once, as a coverage answer lists it.
             let mut every = std::collections::BTreeMap::new();
             let nft = NftIndex::new(ChainNet::Matic);
-            for ix in [&nft as &dyn ChainIndex, &SalesIndex] {
+            for ix in [&nft as &dyn ChainIndex, &POLYGON_SALES] {
                 let anchor = (s + 498, time_of(s + 498));
                 for g in ix
                     .groups(&together.pool, s + 499, s + 1_498, anchor)
@@ -7958,7 +8178,7 @@ mod supervisor {
         let mark = chain.calls.lock().len();
         let members: Vec<chain_group::Member> = vec![
             Arc::new(NftIndex::new(ChainNet::Matic)) as Arc<dyn ChainIndex>,
-            Arc::new(SalesIndex),
+            Arc::new(POLYGON_SALES),
         ]
         .into_iter()
         .enumerate()
@@ -8204,7 +8424,7 @@ mod supervisor {
                 "sales-index",
                 ChainNet::Matic,
                 url,
-                Arc::new(|| Arc::new(SalesIndex)),
+                Arc::new(|| Arc::new(POLYGON_SALES)),
             ),
         ]
     }
@@ -8381,7 +8601,7 @@ mod supervisor {
         );
         Arc::new(move || {
             Arc::new(Hooked {
-                inner: Some(Arc::new(SalesIndex)),
+                inner: Some(Arc::new(POLYGON_SALES)),
                 armed: armed.clone(),
                 write_gate: gate.clone(),
                 write_entered: entered.clone(),
@@ -8633,7 +8853,7 @@ mod supervisor {
             );
             Arc::new(move || {
                 Arc::new(Hooked {
-                    inner: Some(Arc::new(SalesIndex)),
+                    inner: Some(Arc::new(POLYGON_SALES)),
                     armed: armed.clone(),
                     commit_armed: commit_armed.clone(),
                     write_gate: write_gate.clone(),
@@ -8856,12 +9076,12 @@ mod supervisor {
         );
         let shared: Vec<(Arc<dyn ChainIndex>, Arc<chain_walk::Holdings>)> = vec![
             (Arc::new(NftIndex::new(ChainNet::Matic)), Arc::default()),
-            (Arc::new(SalesIndex), Arc::default()),
+            (Arc::new(POLYGON_SALES), Arc::default()),
         ];
         let solo_nft = NftIndex::new(ChainNet::Matic);
         for st in [&st_alone, &st_together] {
             assert!(publish(st, &url, &solo_nft).await.published);
-            assert!(publish(st, &url, &SalesIndex).await.published);
+            assert!(publish(st, &url, &POLYGON_SALES).await.published);
         }
         let walk_together = |head: u64| {
             let (pool, http, settings, url, shared) = (
@@ -8939,7 +9159,7 @@ mod supervisor {
         *chain.head.lock() = s + 1_500;
         walk_together(s + 1_500).await;
         pass(&st_alone, &url, &solo_nft).await;
-        pass(&st_alone, &url, &SalesIndex).await;
+        pass(&st_alone, &url, &POLYGON_SALES).await;
         for db in [&alone, &together] {
             seed_collection(
                 &db.pool,
@@ -8955,7 +9175,7 @@ mod supervisor {
         *chain.head.lock() = s + 2_500;
         walk_together(s + 2_500).await;
         pass(&st_alone, &url, &solo_nft).await;
-        pass(&st_alone, &url, &SalesIndex).await;
+        pass(&st_alone, &url, &POLYGON_SALES).await;
         for table in PROJECTION_TABLES {
             assert_eq!(
                 table_rows(&together.pool, table).await,
@@ -9089,7 +9309,7 @@ mod supervisor {
             );
             Arc::new(move || {
                 Arc::new(Hooked {
-                    inner: Some(Arc::new(SalesIndex)),
+                    inner: Some(Arc::new(POLYGON_SALES)),
                     armed: armed.clone(),
                     armed_fold_gate: gate.clone(),
                     entered: entered.clone(),
@@ -9487,7 +9707,7 @@ mod supervisor {
                         "sales-index",
                         ChainNet::Matic,
                         &url,
-                        Arc::new(|| Arc::new(SalesIndex)),
+                        Arc::new(|| Arc::new(POLYGON_SALES)),
                     ),
                     &panicking,
                 ),
@@ -11629,7 +11849,7 @@ mod recovery {
         let by_1_5m = state_over(db.pool.clone(), &url, index_settings(100, 1_500_000), false);
         let nft = NftIndex::new(ChainNet::Matic);
         assert!(publish_nft(&by_million, &url, &nft).await.published);
-        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert!(publish(&by_1_5m, &url, &POLYGON_SALES).await.published);
         let seller = async || bids_of(&db.pool).await[0].3.clone();
         assert_eq!(seller().await, Some(ALICE.to_string()));
         // The chain reorganizes from b+200: BOB sold to CARL, not ALICE; the
@@ -11661,13 +11881,13 @@ mod recovery {
             .unwrap();
         assert!(c.diverged_at.is_some(), "the nft cursor is marked diverged");
         // Sales recovers on its own and refolds the bid meanwhile.
-        let recovered = pass(&by_1_5m, &url, &SalesIndex).await;
+        let recovered = pass(&by_1_5m, &url, &POLYGON_SALES).await;
         assert_eq!(
             recovered.reorg_rewound_to,
             Some((s + 5_999_999) as i64),
             "{recovered:?}"
         );
-        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert!(publish(&by_1_5m, &url, &POLYGON_SALES).await.published);
         assert_eq!(seller().await, None, "no seller from an orphaned transfer");
         // The nft walk recovers with the transfer to CARL; the next sales
         // fold sets the seller, with no further sale event.
@@ -11680,7 +11900,7 @@ mod recovery {
             .unwrap();
         assert!(c.diverged_at.is_none(), "the rewind clears the mark");
         assert!(publish_nft(&by_million, &url, &nft).await.published);
-        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert!(publish(&by_1_5m, &url, &POLYGON_SALES).await.published);
         assert_eq!(seller().await, Some(CARL.to_string()));
         db.drop().await;
     }
@@ -11800,7 +12020,7 @@ mod recovery {
         let by_1_5m = state_over(db.pool.clone(), &url, index_settings(100, 1_500_000), false);
         let nft = NftIndex::new(ChainNet::Matic);
         assert!(publish_nft(&by_million, &url, &nft).await.published);
-        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert!(publish(&by_1_5m, &url, &POLYGON_SALES).await.published);
         let sellers = async || {
             bids_of(&db.pool)
                 .await
@@ -11824,13 +12044,13 @@ mod recovery {
         );
         // Sales recovers and folds first, while the nft walk has not looked:
         // its cursor still stands, unmarked, past the bid.
-        let recovered = pass(&by_1_5m, &url, &SalesIndex).await;
+        let recovered = pass(&by_1_5m, &url, &POLYGON_SALES).await;
         assert_eq!(
             recovered.reorg_rewound_to,
             Some((s + 5_999_999) as i64),
             "{recovered:?}"
         );
-        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert!(publish(&by_1_5m, &url, &POLYGON_SALES).await.published);
         assert_eq!(
             sellers().await,
             both(ALICE, ALICE),
@@ -11851,7 +12071,7 @@ mod recovery {
             .fetch_one(&db.pool)
             .await
             .unwrap();
-        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert!(publish(&by_1_5m, &url, &POLYGON_SALES).await.published);
         assert_eq!(sellers().await, both(CARL, ALICE));
         let after: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.sale_event")
             .fetch_one(&db.pool)

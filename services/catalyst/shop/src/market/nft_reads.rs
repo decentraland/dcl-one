@@ -1600,8 +1600,8 @@ pub async fn asset_metas(
 
 /// One nft's description from the indexes (collections, names, LAND);
 /// `None` when no index row names it.
-pub async fn asset_meta(
-    pool: &PgPool,
+pub async fn asset_meta<'e>(
+    conn: impl sqlx::PgExecutor<'e>,
     land_image_base: &str,
     network: &str,
     contract: &str,
@@ -1615,7 +1615,7 @@ pub async fn asset_meta(
     )))
     .bind(&contract)
     .bind(token_id)
-    .fetch_optional(pool)
+    .fetch_optional(conn)
     .await?;
     Ok(row.map(|r| describe(&r, land_image_base)))
 }

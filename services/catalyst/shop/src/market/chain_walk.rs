@@ -258,7 +258,7 @@ impl IndexSettings {
                 ));
             }
         }
-        if self.nft_enabled
+        if (self.nft_enabled || self.sales_enabled)
             && ((self.chain_id_ethereum == ChainNet::Ethereum.chain_id())
                 != (self.chain_id_matic == ChainNet::Matic.chain_id()))
         {
@@ -632,8 +632,8 @@ pub async fn claim(
         .execute(&mut *tx)
         .await?;
     let generation: i64 = sqlx::query_scalar(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, full_history, chain_id, owner_generation) \
-         VALUES ($1, $2, $3, $3 - 1, $4, $5, 1) \
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, full_history, chain_id, owner_generation, sepolia_trade_v1) \
+         VALUES ($1, $2, $3, $3 - 1, $4, $5, 1, $1 = 'trade_events' AND $5 = 11155111) \
          ON CONFLICT (indexer, network) DO UPDATE SET owner_generation = shop.chain_cursor.owner_generation + 1 \
          RETURNING owner_generation",
     )
@@ -1372,6 +1372,28 @@ async fn bind(
     };
     match proof {
         Ok(()) => {
+            if owner.indexer == INDEXER_TRADE_EVENTS && owner.chain_id == 11_155_111 {
+                sqlx::query(
+                    "UPDATE shop.chain_cursor SET chain_id = $6, sepolia_trade_v1 = true, \
+                         start_block = CASE WHEN start_block = 9455328 THEN 6770056 ELSE start_block END, \
+                         last_block = CASE WHEN last_block < start_block AND start_block = 9455328 THEN 6770055 ELSE last_block END, \
+                         rebuild_requested_at = timezone('UTC', now()), folded_at = NULL, folded_block = NULL, \
+                         owner_generation = owner_generation + 1 \
+                     WHERE indexer = $1 AND network = $2 AND owner_generation = $3 AND chain_id IS NULL \
+                       AND quarantine_reason IS NULL AND last_block = $4 AND last_block_hash IS NOT DISTINCT FROM $5",
+                )
+                .bind(owner.indexer)
+                .bind(owner.net.db_name())
+                .bind(owner.generation)
+                .bind(cur.last_block)
+                .bind(checkpoint)
+                .bind(owner.chain_id)
+                .execute(pool)
+                .await?;
+                return Err(owner
+                    .fenced("recheck the adopted Sepolia cursor before its V1 rebuild".into())
+                    .into());
+            }
             let adopted = sqlx::query(
                 "UPDATE shop.chain_cursor SET chain_id = $6 \
                  WHERE indexer = $1 AND network = $2 AND owner_generation = $3 AND chain_id IS NULL \

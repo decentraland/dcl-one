@@ -410,8 +410,13 @@ CREATE TABLE shop.chain_cursor (
     -- cleared by the rewind or by a pass that proves the cursor again.
     -- Readers of the height without the publication skip it meanwhile.
     diverged_at timestamp without time zone,
+    -- An old binary omits this column when claiming its lease. It cannot
+    -- take the Sepolia trades cursor and publish a history missing V1.
+    sepolia_trade_v1 boolean NOT NULL DEFAULT false,
     PRIMARY KEY (indexer, network),
     CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee', 'rentals_sepolia', 'third_party_registry', 'collections')),
+    CONSTRAINT chain_cursor_sepolia_trade_v1 CHECK (
+        indexer <> 'trade_events' OR chain_id IS DISTINCT FROM 11155111 OR sepolia_trade_v1),
     CONSTRAINT chain_cursor_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT chain_cursor_fold_within_indexed CHECK (fold_through IS NULL OR fold_through <= last_block),
     CONSTRAINT chain_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block),
@@ -17024,7 +17029,10 @@ INSERT INTO shop.sale_venue (network, address, kind, royalties_cut_per_million) 
     ('matic', '0x02080031b45a3c67d338dd4a2cc309d28756a160', 'marketplace_v1', 0),
     ('matic', '0x480a0f4e360e8964e68858dd231c2922f1df45ef', 'marketplace_v2', 25000),
     ('matic', '0xb96697fa4a3361ba35b774a42c58daccaad1b8e1', 'bid_v2', 25000),
-    ('matic', '0x214ffc0f0103735728dc66b61a22e4f163e275ae', 'store', 0);
+    ('matic', '0x214ffc0f0103735728dc66b61a22e4f163e275ae', 'store', 0),
+    ('matic', '0x0c8ad1f6aadf89d2eb19f01a100a6143108fe2b0', 'marketplace_v2', 25000),
+    ('matic', '0x4b66eab79cc03a96fb6275cfcdf23c0db431606d', 'bid_v2', 25000),
+    ('matic', '0xe36abc9ec616c83caaa386541380829106149d68', 'store', 0);
 
 -- Bounded sweeps retain unresolved work; ceilings freeze each cohort so new
 -- arrivals cannot indefinitely defer retry. Scope is the chain id, or zero

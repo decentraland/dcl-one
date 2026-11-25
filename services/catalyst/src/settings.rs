@@ -248,7 +248,11 @@ mod tests {
                     index.indexer()
                 })
                 .collect();
-            assert_eq!(names, ["nft", "trade_events"]);
+            let expected: &[&str] = match net {
+                ChainNet::Ethereum => &["nft", "trade_events"],
+                ChainNet::Matic => &["nft", "sales", "trade_events"],
+            };
+            assert_eq!(names, expected);
         }
     }
 
