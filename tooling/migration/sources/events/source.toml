@@ -10,7 +10,9 @@ jobs and notification_cursors
 (upstream scheduler state), the textsearch column (computed at read time).
 No signed envelopes exist upstream, so explore.events_local and
 explore.signed_actions get no rows. Moderators come from upstream
-ADMIN_ADDRESSES, not a table: seed explore.moderators by hand.
+ADMIN_ADDRESSES, not a table: seed explore.moderators with
+`catalyst explore moderators-add` (services/catalyst/docs/events.md,
+"Events moderators").
 """
 
 [[step]]

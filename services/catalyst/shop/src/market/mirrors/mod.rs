@@ -45,6 +45,8 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::Value;
 use sqlx::{PgPool, Row};
 
+use crate::chain_index::rpc::{Rpc, RpcError};
+use crate::http::jsonrpc::RpcError as HttpRpcError;
 use crate::jobs::{JobContext, Jobs, PeriodicCfg};
 use crate::shared::as_of;
 
@@ -61,6 +63,19 @@ pub const PAGE_SIZE: i64 = 1000;
 /// been pruned or orphaned, so the next tick starts a new verified pass.
 const MAX_PIN_AGE: chrono::Duration = chrono::Duration::days(1);
 const MAX_FAILED_PIN_AGE: chrono::Duration = chrono::Duration::hours(1);
+const PAGE_FETCH_FAILURE: &str = "page fetch failed: ";
+const PROOF_UNAVAILABLE: &str = "catalogue proof unavailable: ";
+const PROOF_REJECTED: &str = "catalogue proof rejected: ";
+const MAINNET_PROOF_RETRY_WINDOW: chrono::Duration = chrono::Duration::minutes(10);
+const MAINNET_MIRROR_BACKOFF: Duration = Duration::from_secs(5 * 60);
+
+const PROOF_OUTCOMES: dcl_metrics::CounterFamily<3> = dcl_metrics::CounterFamily::new(
+    "catalyst_catalogue_mirror_proof_outcomes_total",
+    "Mainnet catalogue mirror proof failures and skips.",
+    Some(dcl_metrics::Unit::Count),
+    &["mirror", "network", "outcome"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[PROOF_OUTCOMES.descriptor];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Mirror {
@@ -214,54 +229,106 @@ pub async fn save(pool: &PgPool, c: &Cursor) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Testnet NFT workers need the chain behind the collections graph, including
-/// when it returns no collections. Prove the block in the page against the
-/// same chain-checked RPC the NFT walk uses.
-fn verify_testnet(state: &MarketplaceState, net: super::chain_walk::ChainNet) -> bool {
-    state.settings.market.indexes.chain_id(net) != net.chain_id()
-        && state.catalogue_rpc_url(net).is_some()
+fn catalogue_proof_rpc(
+    state: &MarketplaceState,
+    net: super::chain_walk::ChainNet,
+) -> Option<String> {
+    state.catalogue_rpc_url(net).or_else(|| {
+        if net == super::chain_walk::ChainNet::Matic
+            && state.settings.market.indexes.serves_mainnet(net)
+        {
+            state.polygon_mainnet_rpc_url()
+        } else {
+            None
+        }
+    })
 }
 
-/// Pin the pass below the graph head on the configured chain. Persisting the
-/// hash with the keyset lets later ticks and replacement workers resume it.
+#[derive(Debug, thiserror::Error)]
+pub(super) enum CatalogueProofError {
+    #[error("catalogue proof RPC unavailable")]
+    RpcUnavailable,
+    #[error("catalogue proof RPC returned status {0}")]
+    RpcStatus(u16),
+    #[error("{0}")]
+    Disagreement(String),
+    #[error("{0}")]
+    GraphUnavailable(String),
+}
+
+impl From<RpcError> for CatalogueProofError {
+    fn from(error: RpcError) -> Self {
+        match error {
+            RpcError::Provider(HttpRpcError::Status(status)) => Self::RpcStatus(status),
+            _ => Self::RpcUnavailable,
+        }
+    }
+}
+
+fn block_hash(value: &Value) -> Option<&str> {
+    value.as_str().filter(|hash| {
+        hash.len() == 66
+            && hash.starts_with("0x")
+            && hash[2..].bytes().all(|b| b.is_ascii_hexdigit())
+    })
+}
+
+/// Pin the pass below the graph head on the configured chain. Mainnet also
+/// bounds the pin by the RPC head because the two providers can lag independently.
+/// Persisting the hash with the keyset lets later ticks resume without RPC.
 pub(super) async fn catalogue_pass_hash(
     state: &MarketplaceState,
     net: super::chain_walk::ChainNet,
     url: &str,
-) -> Result<String, String> {
-    use super::chain_walk::LogSource;
+) -> Result<String, CatalogueProofError> {
+    use super::chain_walk::{LogSource, RpcSource, WrongChain};
+    use CatalogueProofError::{Disagreement, GraphUnavailable, RpcUnavailable};
     use serde_json::json;
-    let head =
-        super::readers::query(state, url, "{ _meta { block { number } } }", json!({})).await?;
-    let number = head["_meta"]["block"]["number"]
+    let head = super::readers::query(state, url, "{ _meta { block { number } } }", json!({}))
+        .await
+        .map_err(GraphUnavailable)?;
+    let graph_head = head["_meta"]["block"]["number"]
         .as_u64()
-        .ok_or("collections graph has no block number")?
-        .saturating_sub(net.confirmations());
+        .ok_or_else(|| GraphUnavailable("collections graph has no block number".into()))?;
+    let endpoint = catalogue_proof_rpc(state, net).ok_or(RpcUnavailable)?;
+    let source = RpcSource::new(Rpc::at(&state.http, &endpoint).with_strict_status());
+    let indexes = &state.settings.market.indexes;
+    super::ensure_chain(&source, indexes.chain_id(net))
+        .await
+        .map_err(|error| {
+            if error.is::<WrongChain>() {
+                Disagreement(error.to_string())
+            } else {
+                error
+                    .downcast::<RpcError>()
+                    .map_or(RpcUnavailable, CatalogueProofError::from)
+            }
+        })?;
+    let head = if indexes.serves_mainnet(net) {
+        graph_head.min(source.head().await?.value)
+    } else {
+        graph_head
+    };
+    let number = head.saturating_sub(net.confirmations());
     let data = super::readers::query(state, url,
         "query CatalogueBlock($number: Int!) { _meta(block: {number: $number}) { block { number hash } } }",
-        json!({"number":number})).await?;
+        json!({"number":number})).await.map_err(GraphUnavailable)?;
     let block = &data["_meta"]["block"];
     if block["number"].as_u64() != Some(number) {
-        return Err(format!("collections graph did not return block {number}"));
+        return Err(GraphUnavailable(format!(
+            "collections graph did not return block {number}"
+        )));
     }
-    let hash = block["hash"]
-        .as_str()
-        .ok_or("collections graph has no block hash")?;
-    let endpoint = state
-        .catalogue_rpc_url(net)
-        .ok_or("no RPC for the configured catalogue chain")?;
-    let source =
-        super::chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(&state.http, &endpoint));
-    super::ensure_chain(&source, state.settings.market.indexes.chain_id(net))
-        .await
-        .map_err(|e| e.to_string())?;
-    let header = source.header(number).await.map_err(|e| e.to_string())?;
-    if header.value.number != number || !header.value.hash.eq_ignore_ascii_case(hash) {
-        return Err(format!(
+    let hash = block_hash(&block["hash"]).ok_or_else(|| {
+        GraphUnavailable("collections graph has no block hash or returned an invalid hash".into())
+    })?;
+    let header = source.header(number).await?.value;
+    if !header.hash.eq_ignore_ascii_case(hash) {
+        return Err(Disagreement(format!(
             "collections graph block {number} differs from the configured chain"
-        ));
+        )));
     }
-    Ok(header.value.hash)
+    Ok(header.hash)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -296,65 +363,149 @@ pub(super) async fn read_catalogue_page(
     Ok(data)
 }
 
-/// The cursor a pass starts from: the persisted row for this source, a fresh
-/// one when the source changed (the old keyset means nothing against a
-/// different subgraph) or there is none.
+/// A keyset resumes only for its source and binding. A legacy unbound
+/// mainnet copy keeps its publication. A testnet pin without a chain ID
+/// belongs to the first verified pass, which binds the row on completion.
 pub(super) async fn cursor_for(
     pool: &PgPool,
     mirror: Mirror,
     network: Network,
     url: &str,
     chain_id: Option<i64>,
+    pin: bool,
 ) -> anyhow::Result<Cursor> {
-    Ok(match load(pool, mirror, network).await? {
-        Some(c) if chain_id.is_none() && (c.chain_id.is_some() || c.pass_block_hash.is_some()) => {
-            anyhow::bail!("a verified catalogue mirror requires its chain RPC to continue");
+    let net = super::chain_walk::ChainNet::from(network);
+    let mainnet = chain_id == Some(net.chain_id());
+    let fresh = || Cursor {
+        chain_id: chain_id.filter(|_| mainnet),
+        ..Cursor::fresh(mirror, network, url)
+    };
+    let Some(mut c) = load(pool, mirror, network).await? else {
+        return Ok(fresh());
+    };
+    if (chain_id.is_none() && c.chain_id.is_some())
+        || (!mainnet && !pin && c.in_progress() && c.pass_block_hash.is_some())
+    {
+        anyhow::bail!("a verified catalogue mirror requires its chain RPC to continue");
+    }
+    if c.chain_id
+        .zip(chain_id)
+        .is_some_and(|(old, new)| old != new)
+    {
+        anyhow::bail!("catalogue mirror is already bound to a different chain");
+    }
+    if c.chain_id.is_none()
+        && c.pass_block_hash.is_some()
+        && chain_id != Some(net.testnet_chain_id())
+    {
+        anyhow::bail!("an unbound pinned catalogue pass requires its testnet chain");
+    }
+    if c.source_url != url {
+        tracing::warn!(mirror = mirror.name(), network = network.db_name(), old = %c.source_url, "mirror source changed; the cursor restarts");
+        return Ok(fresh());
+    }
+    let resume_mainnet = mainnet
+        && c.chain_id == chain_id
+        && c.in_progress()
+        && (c.pages_fetched > 0
+            || c.last_error.as_deref().is_some_and(|error| {
+                error.starts_with(PROOF_UNAVAILABLE) || error.starts_with(PROOF_REJECTED)
+            }));
+    if mainnet {
+        c.chain_id = chain_id;
+    }
+    if pin && c.pass_block_hash.is_none() && !resume_mainnet {
+        // A new proof must start at page one. Descriptive readers can still
+        // serve the previous complete copy until the replacement publishes.
+        c.restart_pagination();
+    }
+    Ok(c)
+}
+
+async fn pin_new_pass(
+    state: &MarketplaceState,
+    c: &mut Cursor,
+    net: super::chain_walk::ChainNet,
+) -> anyhow::Result<()> {
+    let error = match catalogue_pass_hash(state, net, &c.source_url).await {
+        Ok(hash) => {
+            c.pass_block_hash = Some(hash);
+            c.last_error = None;
+            save(&state.pool, c).await?;
+            return Ok(());
         }
-        Some(c)
-            if c.chain_id.is_none()
-                && c.pass_block_hash.is_some()
-                && chain_id
-                    != Some(super::chain_walk::ChainNet::from(network).testnet_chain_id()) =>
-        {
-            anyhow::bail!("an unbound pinned catalogue pass requires its testnet chain");
+        Err(error) => error,
+    };
+    let previous = c.last_error.as_deref().unwrap_or_default();
+    if state.settings.market.indexes.serves_mainnet(net) {
+        if let CatalogueProofError::RpcStatus(status @ (401 | 403)) = &error {
+            tracing::error!(
+                mirror = c.mirror.name(),
+                network = net.db_name(),
+                status,
+                "catalogue proof RPC authentication failed"
+            );
+            PROOF_OUTCOMES
+                .handle([c.mirror.name(), net.db_name(), "rpc_auth_failed"])
+                .increment(1);
         }
-        Some(c)
-            if c.source_url == url
-                && (c.chain_id == chain_id
-                    || (c.chain_id.is_none() && c.pass_block_hash.is_some())) =>
-        {
-            c
-        }
-        Some(c)
-            if c.source_url == url
-                && c.chain_id.is_none()
-                && chain_id == Some(super::chain_walk::ChainNet::from(network).chain_id()) =>
-        {
-            // The old writer stamped every row with this network's mainnet ID.
-            Cursor { chain_id, ..c }
-        }
-        Some(c)
-            if c.chain_id
-                .zip(chain_id)
-                .is_some_and(|(old, new)| old != new) =>
-        {
-            anyhow::bail!("catalogue mirror is already bound to a different chain");
-        }
-        Some(c) if c.source_url == url && c.chain_id.is_none() => {
-            // Descriptive readers can continue serving the old copy. The
-            // NFT gate needs a completed pass with a proven chain ID.
-            Cursor {
-                last_complete_pass_at: c.last_complete_pass_at,
-                last_complete_pass_rows: c.last_complete_pass_rows,
-                ..Cursor::fresh(mirror, network, url)
+        match &error {
+            CatalogueProofError::RpcUnavailable | CatalogueProofError::RpcStatus(_)
+                if !previous.starts_with(PROOF_REJECTED) =>
+            {
+                let now = now_utc();
+                let retrying = previous.starts_with(PROOF_UNAVAILABLE);
+                if retrying
+                    && c.pass_started_at
+                        .is_some_and(|start| now - start >= MAINNET_PROOF_RETRY_WINDOW)
+                {
+                    tracing::warn!(mirror = c.mirror.name(), network = net.db_name(), %error,
+                        "catalogue proof skipped: rpc unavailable");
+                    PROOF_OUTCOMES
+                        .handle([
+                            c.mirror.name(),
+                            net.db_name(),
+                            "proof_skipped_rpc_unavailable",
+                        ])
+                        .increment(1);
+                    return Ok(());
+                }
+                if !retrying {
+                    c.pass_started_at = Some(now);
+                }
+                c.last_error = Some(format!("{PROOF_UNAVAILABLE}{error}"));
+                save(&state.pool, c).await?;
+            }
+            CatalogueProofError::RpcUnavailable | CatalogueProofError::RpcStatus(_) => {
+                // A transport failure cannot supersede prior conflicting evidence.
+            }
+            CatalogueProofError::Disagreement(_) => {
+                tracing::error!(mirror = c.mirror.name(), network = net.db_name(), %error,
+                    "catalogue proof rejected");
+                PROOF_OUTCOMES
+                    .handle([c.mirror.name(), net.db_name(), "proof_rejected"])
+                    .increment(1);
+                c.last_error = Some(format!("{PROOF_REJECTED}{error}"));
+                save(&state.pool, c).await?;
+            }
+            CatalogueProofError::GraphUnavailable(_) => {
+                tracing::warn!(mirror = c.mirror.name(), network = net.db_name(), %error,
+                    "catalogue proof graph unavailable");
+                PROOF_OUTCOMES
+                    .handle([c.mirror.name(), net.db_name(), "graph_unavailable"])
+                    .increment(1);
+                if !previous.starts_with(PROOF_REJECTED) && !previous.starts_with(PROOF_UNAVAILABLE)
+                {
+                    c.last_error = Some(error.to_string());
+                    save(&state.pool, c).await?;
+                }
             }
         }
-        Some(c) => {
-            tracing::warn!(mirror = mirror.name(), network = network.db_name(), old = %c.source_url, "mirror source or chain changed; the cursor restarts");
-            Cursor::fresh(mirror, network, url)
-        }
-        None => Cursor::fresh(mirror, network, url),
-    })
+    } else {
+        c.last_error = Some(error.to_string());
+        save(&state.pool, c).await?;
+    }
+    Err(error.into())
 }
 
 /// What one page of a walk yields: the rows and the keyset after them.
@@ -390,13 +541,12 @@ where
 {
     let pool = &state.pool;
     let net = super::chain_walk::ChainNet::from(network);
-    let configured = state.settings.market.indexes.chain_id(net);
-    let verified = verify_testnet(state, net);
-    let binding = (configured == net.chain_id() || verified).then_some(configured);
-    let mut c = cursor_for(pool, mirror, network, url, binding).await?;
-    if configured == net.chain_id() {
-        c.chain_id = binding;
-    }
+    let indexes = &state.settings.market.indexes;
+    let configured = indexes.chain_id(net);
+    let pin = catalogue_proof_rpc(state, net).is_some();
+    let mainnet = indexes.serves_mainnet(net);
+    let binding = (mainnet || pin).then_some(configured);
+    let mut c = cursor_for(pool, mirror, network, url, binding, pin).await?;
     if c.in_progress()
         && c.pass_block_hash.is_some()
         && c.pass_started_at
@@ -428,17 +578,15 @@ where
     } else {
         tracing::info!(mirror = mirror.name(), network = network.db_name(), cursor = ?c.cursor_id, "mirror pass resumes at the persisted cursor");
     }
-    if verified && c.pass_block_hash.is_none() {
-        match catalogue_pass_hash(state, net, url).await {
-            Ok(hash) => c.pass_block_hash = Some(hash),
-            Err(error) => {
-                c.last_error = Some(error.clone());
-                save(pool, &c).await?;
-                anyhow::bail!("{error}");
-            }
-        }
-        save(pool, &c).await?;
+    if pin && c.pass_block_hash.is_none() && c.pages_fetched == 0 {
+        pin_new_pass(state, &mut c, net).await?;
     }
+    // Keep the elapsed outage window if the first unpinned page also fails.
+    let unpinned_retry = if pin && c.pass_block_hash.is_none() && c.pages_fetched == 0 {
+        PROOF_UNAVAILABLE
+    } else {
+        ""
+    };
     let budget = state.settings.market.mirror_pages_per_tick.max(1);
     for _ in 0..budget {
         if ctx.is_cancelled() {
@@ -458,11 +606,21 @@ where
         {
             Ok(p) => p,
             Err(e) => {
-                c.last_error = Some(e.to_string());
+                let repeated_failure = c
+                    .last_error
+                    .as_deref()
+                    .is_some_and(|previous| previous.starts_with(PAGE_FETCH_FAILURE));
+                c.last_error = Some(match &e {
+                    PageReadError::Fetch(error) => {
+                        format!("{unpinned_retry}{PAGE_FETCH_FAILURE}{error}")
+                    }
+                    _ => e.to_string(),
+                });
                 if c.pass_block_hash.is_some()
                     && (matches!(e, PageReadError::MissingHash | PageReadError::HashMismatch)
-                        || c.pass_started_at
-                            .is_some_and(|start| now_utc() - start >= MAX_FAILED_PIN_AGE))
+                        || (repeated_failure
+                            && c.pass_started_at
+                                .is_some_and(|start| now_utc() - start >= MAX_FAILED_PIN_AGE)))
                 {
                     tracing::warn!(
                         mirror = mirror.name(),
@@ -482,10 +640,10 @@ where
         };
         let fetched = page.rows.len() as i64;
         let short = fetched < PAGE_SIZE;
-        let upserted = match upsert(page.rows, configured as i32, verified).await {
+        let upserted = match upsert(page.rows, configured as i32, pin && !mainnet).await {
             Ok(n) => n,
             Err(e) => {
-                c.last_error = Some(format!("upsert failed: {e}"));
+                c.last_error = Some(format!("{unpinned_retry}upsert failed: {e}"));
                 save(pool, &c).await?;
                 return Err(anyhow::Error::new(e).context(format!(
                     "{} mirror ({}): upsert",
@@ -586,6 +744,26 @@ pub async fn run_tick(
     }
 }
 
+fn periodic_config(state: &MarketplaceState, mirror: Mirror) -> PeriodicCfg {
+    let proven_mainnet = state
+        .settings
+        .collection_networks()
+        .into_iter()
+        .any(|network| {
+            let net = super::chain_walk::ChainNet::from(network);
+            state.settings.market.indexes.serves_mainnet(net)
+                && catalogue_proof_rpc(state, net).is_some()
+        });
+    let backoff = if proven_mainnet {
+        MAINNET_MIRROR_BACKOFF
+    } else {
+        Duration::from_secs(3600)
+    };
+    PeriodicCfg::every(state.settings.market.mirror_interval * mirror.interval_multiplier())
+        .with_jitter(Duration::from_secs(30))
+        .with_error_backoff(backoff)
+}
+
 pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
     if !state.settings.market.mirrors_enabled {
         tracing::info!(
@@ -603,11 +781,7 @@ pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
         let st = state.clone();
         jobs.spawn_periodic_leased(
             format!("{}-mirror", mirror.name()),
-            PeriodicCfg::every(
-                state.settings.market.mirror_interval * mirror.interval_multiplier(),
-            )
-            .with_jitter(Duration::from_secs(30))
-            .with_error_backoff(Duration::from_secs(3600)),
+            periodic_config(state, mirror),
             move |ctx| {
                 let st = st.clone();
                 async move { run_tick(&st, mirror, &ctx).await }
@@ -824,6 +998,26 @@ mod tests {
         assert!(c.in_progress());
         assert_eq!(Mirror::Collections.source(), Source::CollectionsMirror);
         assert_eq!(Mirror::Items.name(), "items");
+    }
+
+    #[tokio::test]
+    async fn mainnet_proof_retries_fit_within_the_default_price_budget() {
+        let mut state = crate::market::tests::support::state_without_db();
+        let settings = &mut Arc::get_mut(&mut state).unwrap().settings;
+        settings.polygon_rpc_url = Some("https://fixture.invalid".into());
+        settings.matic_collections_subgraph_url = Some("https://fixture.invalid".into());
+        let schedule = periodic_config(&state, Mirror::Items);
+        let cap = schedule.wait_after_failure(u32::MAX);
+        assert_eq!(cap, Duration::from_secs(300));
+        assert!(
+            schedule.interval + MAINNET_PROOF_RETRY_WINDOW.to_std().unwrap() + cap
+                < price_max_age(&state.settings)
+        );
+        Arc::get_mut(&mut state).unwrap().settings.polygon_rpc_url = None;
+        assert_eq!(
+            periodic_config(&state, Mirror::Items).wait_after_failure(u32::MAX),
+            Duration::from_secs(3600)
+        );
     }
 
     /// The money rule over the prices the items copy carries, on a fixed
