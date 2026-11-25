@@ -363,8 +363,7 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   and `/click_at`, which need a DevTools client for real input. `docs/guidelines/interaction.md`
   has the options, replies and diagnoses.
 - Movement: `/movement_state` reads the locomotion settings, the last movement step and the
-  height over the ground. `/movement_redispatch_state` reads the movement scene's late replies
-  and re-dispatches.
+  height over the ground.
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 **The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC

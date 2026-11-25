@@ -85,7 +85,6 @@ pub use common::bounds_calc;
 pub mod gltf_resolver;
 pub mod initialize_scene;
 pub mod load_timing;
-mod movement_redispatch;
 pub mod permissions;
 pub mod portables;
 pub mod primary_entities;
@@ -122,19 +121,10 @@ pub struct SceneUpdates {
     /// Scene-frames lost because the scene had already been dispatched this frame.
     pub skipped_already_sent: u64,
     /// Named scene entities that must be scheduled every frame (e.g. the
-    /// movement controller, [`MOVEMENT_CONTROLLER`]). These scenes bypass the `scene_threads`
-    /// limit but still occupy slots, preventing non-priority scenes from running.
+    /// movement controller). These scenes bypass the `scene_threads` limit
+    /// but still occupy slots, preventing non-priority scenes from running.
     pub priority_scenes: HashMap<&'static str, Entity>,
-    /// For the movement controller's re-dispatch on a late reply.
-    pub(crate) movement_ticks: movement_redispatch::MovementTickTimes,
-    /// When the previous frame's scene loop ended.
-    pub(crate) previous_loop_end: Instant,
-    /// Replies have been polled in this frame's scene loop.
-    loop_polled: bool,
 }
-
-/// The [`SceneUpdates::priority_scenes`] name of the scene that drives the player's movement.
-pub const MOVEMENT_CONTROLLER: &str = "movement_controller";
 
 impl SceneUpdates {
     pub fn receiver(&mut self) -> &mut SceneResponseReceiver {
@@ -293,17 +283,6 @@ pub struct SceneLoopSchedule {
     schedule: Schedule,
 }
 
-impl SceneLoopSchedule {
-    /// Adds systems to each pass of the scene loop.
-    pub fn add_systems<M>(
-        &mut self,
-        systems: impl IntoScheduleConfigs<bevy::ecs::system::ScheduleSystem, M>,
-    ) -> &mut Self {
-        self.schedule.add_systems(systems);
-        self
-    }
-}
-
 /// The time from the start of one scene loop pass to the start of the next while the loop
 /// can only wait for replies.
 const SCENE_REPLY_POLL: Duration = Duration::from_micros(250);
@@ -426,9 +405,6 @@ impl Plugin for SceneRunnerPlugin {
             loop_end_time: Instant::now(),
             frame_target: None,
             priority_scenes: Default::default(),
-            movement_ticks: Default::default(),
-            previous_loop_end: Instant::now(),
-            loop_polled: false,
             frames: 0,
             skipped_in_flight: 0,
             skipped_already_sent: 0,
@@ -558,7 +534,6 @@ fn run_scene_loop(world: &mut World) {
     let mut updates = world.resource_mut::<SceneUpdates>();
     updates.loop_end_time = target_end_time;
     updates.frame_target = frame_target;
-    updates.loop_polled = false;
 
     // run at least once to collect updates even if no scenes are eligible
     let mut run_once = false;
@@ -589,7 +564,6 @@ fn run_scene_loop(world: &mut World) {
     }
     let loop_end_time = Instant::now();
     let eligible_scene_jobs_left_count = world.resource::<SceneUpdates>().eligible_jobs as u32;
-    world.resource_mut::<SceneUpdates>().previous_loop_end = loop_end_time;
 
     world.resource_mut::<SceneLoopSchedule>().schedule = schedule;
 
@@ -1233,9 +1207,6 @@ mod player_scenes_tests {
             loop_end_time: Instant::now(),
             frame_target: None,
             priority_scenes: Default::default(),
-            movement_ticks: Default::default(),
-            previous_loop_end: Instant::now(),
-            loop_polled: false,
             frames: 0,
             skipped_in_flight: 0,
             skipped_already_sent: 0,
@@ -1565,7 +1536,6 @@ fn send_scene_updates(
     mut scenes: Query<(
         Entity,
         &mut RendererSceneContext,
-        &mut renderer_context::SceneTickTiming,
         &GlobalTransform,
         Has<SuperUserScene>,
         Option<&mut scene_traffic::SceneTraffic>,
@@ -1659,23 +1629,22 @@ fn send_scene_updates(
 
     updates.scene_queue.pop_front();
 
-    let (_, mut context, mut tick_timing, scene_transform, is_super, traffic) =
-        scenes.get_mut(ent).unwrap();
+    let (_, mut context, scene_transform, is_super, traffic) = scenes.get_mut(ent).unwrap();
 
-    // only live scenes are queued, so this only fails if the scene broke this frame. The queue
-    // entry is spent, so it no longer counts as a job left to send
+    // only live scenes are queued, so this only fails if the scene broke this frame
     let Some(sender) = context.sender().cloned() else {
-        updates.eligible_jobs -= 1;
         return;
     };
 
     // collect components
 
     // generate updates for camera and player
-    let player_transform = player.single().copied().unwrap_or_default();
     for (mut affine, id, is_player) in [
         (
-            player_transform.compute_affine(),
+            player
+                .single()
+                .map(Transform::compute_affine)
+                .unwrap_or_default(),
             SceneEntityId::PLAYER,
             true,
         ),
@@ -1843,17 +1812,6 @@ fn send_scene_updates(
     } else {
         context.set_in_flight(true);
         context.last_sent = now;
-        if tick_timing.late_reply_in(engine_info.frame.0)
-            && updates.priority_scenes.get(MOVEMENT_CONTROLLER) == Some(&ent)
-        {
-            updates
-                .movement_ticks
-                .record_redispatch(player_transform.rotation);
-        }
-        tick_timing.sent = Some(renderer_context::SentTiming {
-            at: Instant::now(),
-            frame: engine_info.frame.0,
-        });
         dcl_assert!(!updates.jobs_in_flight.contains(&ent));
         updates.jobs_in_flight.insert(ent);
     }
@@ -1866,7 +1824,6 @@ fn receive_scene_updates(
     mut commands: Commands,
     mut updates: ResMut<SceneUpdates>,
     mut scenes: Query<&mut RendererSceneContext>,
-    mut tick_timings: Query<&mut renderer_context::SceneTickTiming>,
     crdt_interfaces: Res<CrdtExtractors>,
     frame: Res<FrameCount>,
     mut rpc_call_events: EventWriter<RpcCallEvent>,
@@ -1874,12 +1831,8 @@ fn receive_scene_updates(
     mut snapshot_events: EventWriter<CrdtSnapshotEvent>,
     mut entity_allocated_events: EventWriter<EntityAllocatedEvent>,
     mut traffic: Query<&mut scene_traffic::SceneTraffic>,
-    time: Res<Time>,
 ) {
-    let first_poll = !std::mem::replace(&mut updates.loop_polled, true);
-    let movement_scene = updates.priority_scenes.get(MOVEMENT_CONTROLLER).copied();
     loop {
-        let mut redispatch = None;
         let maybe_completed_job = match updates.receiver().try_recv() {
             Ok((scene_id, response)) => match response {
                 SceneResponse::CrdtSnapshot(crdt) => {
@@ -1977,29 +1930,6 @@ fn receive_scene_updates(
                             }
                             context.total_runtime = runtime.0;
                             context.last_update_frame = frame.0;
-                            // with at most one tick in flight, this reply's tick is the last sent
-                            context.reply_sent = context.last_sent;
-                            // `RendererSceneContext` requires `SceneTickTiming`
-                            let tick_timing = tick_timings.get_mut(root);
-                            dcl_assert!(tick_timing.is_ok());
-                            if let Ok(mut tick_timing) = tick_timing {
-                                tick_timing.reply =
-                                    tick_timing.sent.map(|sent| renderer_context::ReplyTiming {
-                                        sent,
-                                        at: Instant::now(),
-                                        frame: frame.0,
-                                    });
-                                if Some(root) == movement_scene {
-                                    redispatch = updates
-                                        .movement_redispatch_due(
-                                            &context,
-                                            &tick_timing,
-                                            first_poll,
-                                            time.elapsed_secs_f64(),
-                                        )
-                                        .then_some(root);
-                                }
-                            }
                             // extend (not assign) so renderer-side births (the inspector's /new_entity
                             // adds the freshly-allocated ids straight to `nascent`) aren't clobbered by
                             // the scene's reported births. `nascent` is drained every lifecycle pass, so
@@ -2070,11 +2000,6 @@ fn receive_scene_updates(
 
         if let Some(completed_job) = maybe_completed_job {
             updates.jobs_in_flight.remove(&completed_job);
-        }
-        if let Some(scene) = redispatch {
-            // ahead of the queue, with a slot of its own, so that the loop's next pass sends it
-            updates.scene_queue.push_front((scene, FloatOrd(0.0)));
-            updates.eligible_jobs += 1;
         }
 
         if Instant::now() > updates.loop_end_time {
