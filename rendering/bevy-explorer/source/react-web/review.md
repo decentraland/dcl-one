@@ -551,7 +551,18 @@ Expectations:
   favourites and a place's photos in `domains/places.ts`; events at parcels and reminders through the
   events domain's own `getEvents` and `setEventAttending`. Each request kind has its own answer kind
   that echoes `request` (a reminder's names its event), and every request is answered, a failed one
-  with `failed`. The points-of-interest list and the connected players are plain fetches.
+  with `failed`. The points-of-interest list, the connected players and the parcel grid's age
+  (`/v2/tiles/info` on `mapApi`) are plain fetches; `?mock=1` answers all three from fixed data
+  (`fixMapPublicReads`) and reads none of them.
+- **Age label:** the Parcels view shows "Updated N min ago" beside the zoom controls when the map
+  API's `checkedAt` is over five minutes old, measured on the server's clock (the answer's `serverNow`,
+  else its `Date`, which a cross-origin read may not expose); only the map API's own 503 envelope
+  clears it, while any other failed read keeps the last answer;
+  nothing without `checkedAt`, on the Satellite view or while the page is hidden. It is read when
+  shown and every minute (`features/map/useMapGridAge.ts`; the Shop's LAND map reads the same
+  explorer-core `gridAge` through TanStack Query), and drawn in HUD styles matching the Shop LAND
+  map's label, since the HUD keeps its own styles until its move to the shared library (its build
+  admits only the foundations).
 - **Ids:** the map and the Events page both send `getEvents`; their ids come from one sequence
   (`engine/requestIds.ts`), so each takes only the answers to its own requests.
 - **Nothing draws per frame:** the camera writes custom properties on the viewport; the sea is one
@@ -569,7 +580,8 @@ Expectations:
   The Quest Mini-Games layer, on by default, draws them on the map and on the Genesis City minimap; a
   pin outside the city is dropped. Every pin draws the default quest pin: the scene's own icon is
   not read. Clicking one selects its parcel, it never teleports. `?mock=1&mockpins=1` shows two pins.
-- Tests: `library/explorer-core/test/{navmap,mapCore}.test.ts`, `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
+- Tests: `library/explorer-core/test/{navmap,mapCore,gridAge}.test.ts`, `library/ui/apps/hud/test/mapGridAge.test.tsx`,
+  `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
   `hosted/home.session.test.tsx`, `hosted/placeDetail.test.tsx`, `mapEventInfo.test.tsx`, `mapPins.test.tsx`; here,
   `src/test/bridgePlaces.test.ts` and `bridgeEvents.test.ts`. Visual baseline: `panel-map`.
 

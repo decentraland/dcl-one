@@ -138,7 +138,47 @@ pub trait LandMarket: Send + Sync {
         estate: &'a str,
         now: chrono::DateTime<chrono::Utc>,
     ) -> BoxFuture<'a, Result<LandMarketSnapshot, LandMarketError>>;
+
+    /// The marks of what [`Self::snapshot`] would read, on `conn` at `now`:
+    /// cheap enough to read every few seconds, moving whenever a row it
+    /// reads changes (an expiry at `now` included) or a source's readiness
+    /// does, and equal for equal rows at equal clocks. The build job reads
+    /// them in a read-only snapshot of their own every few seconds and in
+    /// each build's snapshot, and rebuilds when the former differ from the
+    /// latter ([`super::Watcher`]).
+    fn marks<'a>(
+        &'a self,
+        conn: &'a mut PgConnection,
+        chain_id: i64,
+        land: &'a str,
+        estate: &'a str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> BoxFuture<'a, Result<Marks, LandMarketError>>;
 }
+
+/// The marks of a side of the build's inputs: whether every source it
+/// needs is ready, and an opaque text that moves when an input changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Marks {
+    pub ready: bool,
+    pub marks: String,
+}
+
+/// The land-authz side of the marks: the cursor's count of the log's
+/// rewrites (`rewrites`, raised in the statement of every rewind and of the
+/// block-time repair), and the newest folded LAND/Estate rights event and
+/// estate data document, each found by a backward scan of its primary key
+/// from the published block (O(1)). Between two rewrites both logs only grow
+/// past the published block, and the rights and estate data are their fold,
+/// so a change the build can read moves one of the three. `$1` the cursor's
+/// network.
+pub(super) const LAND_MARKS_SQL: &str = "\
+SELECT concat_ws('|', c.rewrites,
+  coalesce((SELECT e.block_number || '.' || e.log_index FROM land_authz.authz_event e
+            WHERE e.block_number <= c.folded_block ORDER BY e.block_number DESC, e.log_index DESC LIMIT 1), '-'),
+  coalesce((SELECT d.block_number || '.' || d.log_index FROM land_authz.estate_data_event d
+            WHERE d.block_number <= c.folded_block ORDER BY d.block_number DESC, d.log_index DESC LIMIT 1), '-'))
+FROM land_authz.index_cursor c WHERE c.network = $1";
 
 /// The chain of a land-authz network (`index_cursor.network`).
 pub fn land_chain_id(network: &str) -> Option<i64> {
@@ -550,7 +590,7 @@ FROM land_authz.token_right e
 LEFT JOIN land_authz.authz_event ee ON ee.block_number = e.updated_block AND ee.log_index = e.updated_log
 LEFT JOIN LATERAL (
     SELECT dd.name FROM land_authz.estate_data_event dd
-    WHERE dd.token_address = e.token_address AND dd.estate_id = e.token_id
+    WHERE dd.token_address = e.token_address AND dd.estate_id = e.token_id AND dd.block_number <= $2
     ORDER BY dd.block_number DESC, dd.log_index DESC LIMIT 1
 ) d ON true
 WHERE e.token_address = $1
@@ -558,11 +598,15 @@ WHERE e.token_address = $1
 
 /// Every LAND token of `land_registry` and every estate of
 /// `estate_registry` holding one, on `conn`: the published snapshot of the
-/// land-authz index (`indexer::ready_snapshot`).
+/// land-authz index (`indexer::ready_snapshot`). Estate names come from the
+/// newest document at or before `folded_block`, the snapshot cursor's
+/// published block, as the marks read them ([`LAND_MARKS_SQL`]): a
+/// document the walk committed past the fold shows once it is folded.
 pub async fn read_land(
     conn: &mut PgConnection,
     land_registry: &str,
     estate_registry: &str,
+    folded_block: i64,
 ) -> anyhow::Result<LandSnapshot> {
     use anyhow::Context as _;
     let lands: Vec<LandRow> = sqlx::query_as(LANDS_SQL)
@@ -572,6 +616,7 @@ pub async fn read_land(
         .context("reading the LAND tokens")?;
     let estates: Vec<EstateRead> = sqlx::query_as(ESTATES_SQL)
         .bind(estate_registry)
+        .bind(folded_block)
         .fetch_all(&mut *conn)
         .await
         .context("reading the estates")?;
@@ -833,6 +878,20 @@ mod tests {
             "a never-expiring order is live"
         );
         assert_eq!(tiles["10,14"].expires_at, Some(i64::MAX / 1000 + 1));
+    }
+
+    /// The order is live until its expiry second, rounded half up, is no
+    /// longer after the clock rounded half up: half a second before the raw
+    /// expiry. Shop's marks count live orders on the same boundary.
+    #[test]
+    fn an_order_expires_on_the_rounded_half_second() {
+        let market = LandMarketSnapshot {
+            orders: vec![order(LAND, "103", "0xaaa", 7, 101_000)],
+            ..Default::default()
+        };
+        let price = |now_ms| compose(LAND, ESTATE, &land(), &market, now_ms)["10,14"].price;
+        assert_eq!(price(100_499), Some(7.0));
+        assert_eq!(price(100_500), None);
     }
 
     #[test]

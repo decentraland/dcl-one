@@ -233,7 +233,8 @@ impl Plugin for DebugAvatarsPlugin {
                     command: "/avatar_look {value}",
                     kind: DebugInputKind::Text,
                 }],
-            });
+            })
+            .add_plugins(crate::debug_wear::DebugWearPlugin);
     }
 }
 
