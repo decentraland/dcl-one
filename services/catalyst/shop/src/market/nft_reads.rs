@@ -572,7 +572,11 @@ fn body_shapes(genders: &[String]) -> Option<Vec<String>> {
 fn push_filters(b: &mut Builder, f: &NftFilters, wheres: &mut Vec<String>) {
     if let Some(o) = &f.owner {
         let p = b.bind_string(o.to_ascii_lowercase());
-        wheres.push(format!("c.owner = {p}"));
+        if f.unclaimed_land.is_empty() {
+            wheres.push(format!("c.owner = {p}"));
+        } else {
+            wheres.push(format!("(c.owner = {p} OR c.held_for_lessor)"));
+        }
     }
     match f.category {
         // The item's type, a plain column the planner has statistics for:
@@ -853,22 +857,36 @@ fn candidate_legs(
             Candidates::ListedWhenFiltered => on_sale_only(f),
             Candidates::Listed => true,
         };
-    // Each source, and whether it already keeps only the listed tokens.
-    let mut parts: Vec<(String, bool)> = Vec::new();
+    // On a lessor page only the LAND leg evaluates the extra custody match.
+    // FALSE simplifies the other legs to their indexed owner equality.
+    let (other_custody, land_custody) = if f.unclaimed_land.is_empty() {
+        ("", String::new())
+    } else {
+        let ids = b.bind_strings(&f.unclaimed_land);
+        let venue = crate::rentals::index::RENTALS_MAINNET;
+        (
+            ", FALSE AS held_for_lessor",
+            format!(
+                ", (b.owner = '{venue}' AND (b.contract_address || '-' || b.token_id::text) = ANY({ids})) AS held_for_lessor"
+            ),
+        )
+    };
+    let mut parts = Vec::new();
     if sources.collections {
         parts.extend(
             collection_networks(f)
                 .into_iter()
-                .map(|net| (collection_source(net), false)),
+                .map(|net| (collection_source(net), false, other_custody)),
         );
     }
     if sources.names {
-        parts.push((names_source(), false));
+        parts.push((names_source(), false, other_custody));
     }
     if sources.land {
         parts.push((
             land_source(land, reads_geography(f), restricted),
             restricted,
+            land_custody.as_str(),
         ));
     }
     let now_ms_p = b.bind_i64(now_ms);
@@ -923,10 +941,10 @@ fn candidate_legs(
     };
     let legs = parts
         .into_iter()
-        .map(|(source, listed_only)| {
+        .map(|(source, listed_only, custody)| {
             let restrict = if listed_only { "" } else { restrict };
             format!(
-                "SELECT b.*, lo.order_id, lo.marketplace_address AS order_marketplace, lo.price AS legacy_price, lo.expires_at AS legacy_expires_at, \
+                "SELECT b.*{custody}, lo.order_id, lo.marketplace_address AS order_marketplace, lo.price AS legacy_price, lo.expires_at AS legacy_expires_at, \
                         lo.created_at AS legacy_created_at, lo.updated_at AS legacy_updated_at, {columns} \
                  FROM ({source}) b {legacy}{v3}{restrict}"
             )
@@ -2020,13 +2038,14 @@ mod tests {
              INSERT INTO shop.trade_assets_erc20 (asset_id, amount) \
              SELECT md5('received' || v.n)::uuid, v.price FROM (VALUES (1, 7), (2, 9), (3, 3), (4, 5)) v(n, price); \
              INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) \
-             SELECT '{LAND_REGISTRY_MAINNET}', g, g, 0, '{a}', g, 0 FROM generate_series(1, 5) g; \
+             SELECT '{LAND_REGISTRY_MAINNET}', g, g, 0, CASE WHEN g=5 THEN '{venue}' ELSE '{a}' END, g, 0 FROM generate_series(1, 5) g; \
              INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) \
              SELECT '{ESTATE_REGISTRY_MAINNET}', g, '{b}', g, 1 FROM generate_series(3, 4) g; \
              INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) VALUES (4, 3, 9, 0), (5, 4, 9, 1); \
              INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
              SELECT g, 0, 102 + g / 2, '{LAND_REGISTRY_MAINNET}', 'transfer', g, '{a}' FROM generate_series(1, 4) g; \
-             UPDATE shop.items SET emote_outcome_type = 'so' WHERE contract_address = '{c}' AND item_id = 1"
+             UPDATE shop.items SET emote_outcome_type = 'so' WHERE contract_address = '{c}' AND item_id = 1",
+            venue = crate::rentals::index::RENTALS_MAINNET
         )))
         .execute(&pool)
         .await
@@ -2058,7 +2077,10 @@ mod tests {
             ] {
                 let mut q = filters.clone();
                 q.push(("sortBy", sort));
-                let f = parse_filters(&pairs(&q)).unwrap();
+                let mut f = parse_filters(&pairs(&q)).unwrap();
+                if f.owner.is_some() {
+                    f.unclaimed_land = vec![format!("{LAND_REGISTRY_MAINNET}-5")];
+                }
                 let mut s = sources_for(&f);
                 if crate::market::nfts::merges_land(&f) {
                     s.names = true;

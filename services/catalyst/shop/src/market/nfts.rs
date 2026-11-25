@@ -61,6 +61,8 @@ pub struct NftFilters {
     pub emote_outcome_type: Option<String>,
     pub rental_days: Vec<i64>,
     pub ids: Vec<String>,
+    /// LAND held by the venue for this owner, resolved on the catalogue snapshot.
+    pub(crate) unclaimed_land: Vec<String>,
     pub include_social_emotes: Option<bool>,
 }
 
@@ -350,6 +352,7 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<NftFilters, ApiError>
         emote_outcome_type: p.get_string("emoteOutcomeType", None),
         rental_days,
         ids: p.get_list("id", &[]),
+        unclaimed_land: Vec::new(),
         include_social_emotes: Some(
             p.get_string("includeSocialEmotes", None).as_deref() != Some("false"),
         ),
@@ -727,6 +730,20 @@ pub async fn list_nfts(
         let conn = super::nft_reads::land_page_snapshot(state, f, sources).await?;
         snapshot = Some((conn, sources));
     }
+    let owner_filters;
+    let mut f = f;
+    if let Some((conn, _)) = snapshot.as_mut()
+        && let Some(owner) = &f.owner
+    {
+        let super::nft_reads::ReadConn::Land(land) = conn else {
+            return Err(super::nft_reads::land_unavailable());
+        };
+        owner_filters = NftFilters {
+            unclaimed_land: super::rentals::unclaimed_land(land, owner).await?,
+            ..f.clone()
+        };
+        f = &owner_filters;
+    }
     let statuses = super::rentals::statuses(&f.rental_status);
     let wants_rentals = f.is_on_rent
         && (matches!(
@@ -735,7 +752,6 @@ pub async fn list_nfts(
         ) || f.is_land);
     let mut prefetched = None;
     let narrowed;
-    let mut f = f;
     if wants_rentals {
         let listings = match snapshot.as_mut() {
             Some((conn, _)) => super::rentals::newest_listings(&mut **conn, &statuses)
