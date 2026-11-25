@@ -25,10 +25,10 @@
       packages = nixpkgs.lib.genAttrs [ "aarch64-linux" "x86_64-linux" ] (system:
         import ./infra/packages (rustPackages system // {
           revision = self.rev or self.dirtyRev or "unversioned";
-        })) // {
+        }) // import ./infra/packages/uuav.nix (rustPackages system)) // {
           # The tool environments: the macOS CI legs take ffmpeg from here. `cast-bot` too, for a
           # local node's CAST_BOT_BIN, and the message router for a local node's community chat
-          # (not built in CI).
+          # (not built in CI). The UUAV runtime set builds on macOS as well.
           aarch64-darwin = let
             darwin = rustPackages "aarch64-darwin";
             catalyst = import ./infra/packages/catalyst.nix darwin;
@@ -36,7 +36,7 @@
           in import ./infra/packages/tools.nix { pkgs = import nixpkgs { system = "aarch64-darwin"; }; } // {
             inherit cast-bot;
             message-router = import ./infra/packages/message-router.nix (darwin // { inherit catalyst cast-bot; });
-          };
+          } // import ./infra/packages/uuav.nix darwin;
         };
 
       # `nix build .#bevy-explorer` and `.#bevy-explorer.tests`. An evaluation of the Explorer
