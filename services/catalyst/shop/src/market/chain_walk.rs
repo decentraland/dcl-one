@@ -163,6 +163,9 @@ pub struct IndexSettings {
     pub third_party_registry_enabled: bool,
     /// `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`: the Polygon collection factories and collections.
     pub collections_enabled: bool,
+    /// `MARKETPLACE_COLLECTIONS_INDEX_OWNS`: the networks whose catalogue rows that walk's fold
+    /// takes from the collections mirror and writes.
+    pub collections_owned: Vec<ChainNet>,
     /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5; 30 under the mirror posture): pause between passes.
     pub interval: Duration,
     /// `MARKETPLACE_INDEX_REQUESTS_PER_PASS` (100): `eth_getLogs` calls one
@@ -202,6 +205,7 @@ impl Default for IndexSettings {
             committee_enabled: false,
             third_party_registry_enabled: false,
             collections_enabled: false,
+            collections_owned: Vec::new(),
             interval: Duration::from_secs(5),
             requests_per_pass: 100,
             window_blocks: 10_000,
@@ -263,7 +267,7 @@ impl IndexSettings {
 
     pub fn check_chains(&self) -> Result<(), String> {
         self.check_supported_chain_ids()?;
-        if self.nft_enabled
+        if (self.nft_enabled || self.sales_enabled)
             && ((self.chain_id_ethereum == ChainNet::Ethereum.chain_id())
                 != (self.chain_id_matic == ChainNet::Matic.chain_id()))
         {
@@ -308,7 +312,7 @@ impl IndexSettings {
         let wrong: Option<(String, String, i64)> = sqlx::query_as(
             "SELECT source, network, chain_id FROM (
                  SELECT indexer AS source, network, chain_id FROM shop.chain_cursor
-                   WHERE indexer='nft'
+                   WHERE indexer IN ('nft','sales')
                  UNION ALL SELECT mirror, network, chain_id FROM shop.mirror_state
              ) AS bindings WHERE chain_id <> CASE network WHEN 'ethereum' THEN $1::bigint ELSE $2::bigint END LIMIT 1")
              .bind(self.chain_id_ethereum).bind(self.chain_id_matic).fetch_optional(&mut *tx).await?;
@@ -649,8 +653,8 @@ pub async fn claim(
         .execute(&mut *tx)
         .await?;
     let generation: i64 = sqlx::query_scalar(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, full_history, chain_id, owner_generation) \
-         VALUES ($1, $2, $3, $3 - 1, $4, $5, 1) \
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, full_history, chain_id, owner_generation, sepolia_trade_v1) \
+         VALUES ($1, $2, $3, $3 - 1, $4, $5, 1, $1 = 'trade_events' AND $5 = 11155111) \
          ON CONFLICT (indexer, network) DO UPDATE SET owner_generation = shop.chain_cursor.owner_generation + 1 \
          RETURNING owner_generation",
     )
@@ -1394,6 +1398,30 @@ async fn bind(
     };
     match proof {
         Ok(()) => {
+            if owner.indexer == INDEXER_TRADE_EVENTS && owner.chain_id == 11_155_111 {
+                let requested = sqlx::query(
+                    "UPDATE shop.chain_cursor SET chain_id = $6, sepolia_trade_v1 = true, \
+                         start_block = CASE WHEN start_block = 9455328 THEN 6770056 ELSE start_block END, \
+                         last_block = CASE WHEN last_block < start_block AND start_block = 9455328 THEN 6770055 ELSE last_block END, \
+                         rebuild_requested_at = timezone('UTC', now()), fold_through = NULL, folded_at = NULL, folded_block = NULL, \
+                         owner_generation = owner_generation + 1 \
+                     WHERE indexer = $1 AND network = $2 AND owner_generation = $3 AND chain_id IS NULL AND NOT sepolia_trade_v1 \
+                       AND quarantine_reason IS NULL AND last_block = $4 AND last_block_hash IS NOT DISTINCT FROM $5",
+                )
+                .bind(owner.indexer)
+                .bind(owner.net.db_name())
+                .bind(owner.generation)
+                .bind(cur.last_block)
+                .bind(checkpoint)
+                .bind(owner.chain_id)
+                .execute(pool)
+                .await?.rows_affected();
+                if requested == 1 {
+                    return Err(owner
+                        .fenced("recheck the adopted Sepolia cursor before its V1 rebuild".into())
+                        .into());
+                }
+            }
             let adopted = sqlx::query(
                 "UPDATE shop.chain_cursor SET chain_id = $6 \
                  WHERE indexer = $1 AND network = $2 AND owner_generation = $3 AND chain_id IS NULL \
@@ -1608,6 +1636,7 @@ async fn rebuild(
         "UPDATE shop.chain_cursor SET last_block = $3, last_block_hash = NULL, last_block_time = NULL, \
              sale_input_epoch = gen_random_uuid(), sale_repair_upper = NULL, sale_dirty_from = NULL, sale_input_version = NULL, sale_verified_through = NULL, sale_history_revision = sale_history_revision + 1, \
              fold_through = NULL, folded_block = NULL, folded_at = NULL, full_history = $4, chain_id = $5, \
+             sepolia_trade_v1 = sepolia_trade_v1 OR ($1 = 'trade_events' AND $5 = 11155111), \
              quarantined_at = NULL, quarantine_reason = NULL, rebuild_requested_at = NULL, diverged_at = NULL, \
              rebuilds = rebuilds + 1, updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2",
