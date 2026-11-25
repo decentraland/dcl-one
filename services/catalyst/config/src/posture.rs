@@ -285,6 +285,11 @@ const ROWS: &[Row] = &[
     ),
     upstream(
         "mirrors",
+        "EVENTS_FEATURE_FLAGS_URL",
+        "https://feature-flags.decentraland.org",
+    ),
+    upstream(
+        "mirrors",
         "SHOP_FEATURE_FLAGS_URL",
         "https://feature-flags.decentraland.org",
     ),
