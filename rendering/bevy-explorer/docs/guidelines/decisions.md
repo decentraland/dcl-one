@@ -930,8 +930,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   limits and its wind and fade values, and differ in these ways.
   - The meshes are lookalikes built in code, and the wind and colour shader is written from the
     meaning of the material's values: Unity's grass and flower meshes, textures and shader come
-    from commercial packages that cannot be redistributed. A grass instance is a tuft of three
-    single-triangle blades, a flower a stem under a five-petal daisy or a four-petal bell, a reed
+    from commercial packages that cannot be redistributed. A grass instance is a tuft of
+    fourteen single-triangle blades in two crossed rows, the size of Unity's grass card (0.64 m
+    wide, 0.27 m tall at scale 1), a flower a stem under a five-petal daisy or a four-petal bell, a reed
     a stem, a leaf and a seed head.
   - The scatter runs on the CPU once per parcel, and each parcel draws one mesh of its blades and
     one of its flowers and reeds, where Unity scatters every frame on the GPU and draws

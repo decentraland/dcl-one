@@ -46,24 +46,40 @@ fn around(turns: f32) -> Vec3 {
     Vec3::new(cos, 0.0, sin)
 }
 
-/// A tuft of three blades sharing a small triangular base, each leaning out over one edge.
-/// Six vertices and three triangles.
+/// A tuft the size of unity-explorer's grass card (two crossed quads 0.64 m wide and 0.27 m
+/// tall, each showing a strip of blades): two crossed rows of seven single-triangle blades, 5 cm
+/// wide at the root, fanning out along their row. 42 vertices and 14 triangles.
 pub(crate) fn blade_mesh() -> Shape {
-    const HEIGHT: f32 = 0.35;
-    const BASE_RADIUS: f32 = 0.05;
-    const LEAN: f32 = 0.12;
-    // the blades' heights as shares of the tuft's
-    const HEIGHTS: [f32; 3] = [1.0, 0.8, 0.9];
+    const HEIGHT: f32 = 0.27;
+    // from the centre to the outermost roots along a row
+    const ROW_REACH: f32 = 0.29;
+    const HALF_WIDTH: f32 = 0.025;
+    // the second row's turn from the first, as the card's second quad (55.5 degrees)
+    const ROW_TURN: f32 = 0.154;
+    // per blade along a row: its height as a share of the tuft's, and its tip's lean along the
+    // row in metres
+    const BLADES: [(f32, f32); 7] = [
+        (0.6, -0.08),
+        (0.85, -0.03),
+        (0.7, 0.04),
+        (1.0, -0.02),
+        (0.75, 0.05),
+        (0.9, 0.02),
+        (0.55, 0.08),
+    ];
     let mut shape = Shape::default();
-    let base: Vec<u16> = (0..3)
-        .map(|i| shape.vertex(around(i as f32 / 3.0) * BASE_RADIUS, HEIGHT, PART_BLADE))
-        .collect();
-    for i in 0..3 {
-        // out over the edge from base corner i to the next
-        let out = around((i as f32 + 0.5) / 3.0);
-        let tip = out * LEAN + Vec3::Y * HEIGHT * HEIGHTS[i];
-        let tip = shape.vertex(tip, HEIGHT, PART_BLADE);
-        shape.triangle(base[i], base[(i + 1) % 3], tip);
+    for (row, turns) in [0.0, ROW_TURN].into_iter().enumerate() {
+        let along = around(turns);
+        for i in 0..BLADES.len() {
+            // the second row takes the blades in reverse, so the rows differ
+            let (share, lean) = BLADES[if row == 0 { i } else { BLADES.len() - 1 - i }];
+            let root = along * ROW_REACH * (2.0 * i as f32 / (BLADES.len() - 1) as f32 - 1.0);
+            let left = shape.vertex(root - along * HALF_WIDTH, HEIGHT, PART_BLADE);
+            let right = shape.vertex(root + along * HALF_WIDTH, HEIGHT, PART_BLADE);
+            let tip = root + along * lean + Vec3::Y * HEIGHT * share;
+            let tip = shape.vertex(tip, HEIGHT, PART_BLADE);
+            shape.triangle(left, right, tip);
+        }
     }
     shape
 }
