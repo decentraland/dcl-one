@@ -2767,7 +2767,9 @@ async fn an_unbound_mirror_keyset_is_adopted_only_for_the_same_mainnet_source() 
         .execute(&db.pool)
         .await
         .unwrap();
-    assert!(read("source", Some(137)).await.is_err());
+    let without_rpc = read("source", Some(137)).await.unwrap();
+    assert_eq!(without_rpc.pass_block_hash.as_deref(), Some("mainnet-pin"));
+    assert_eq!(without_rpc.cursor_id.as_deref(), Some("next"));
     let pinned = mirrors::cursor_for(
         &db.pool,
         Mirror::Items,
