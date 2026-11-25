@@ -473,7 +473,10 @@ mod tests {
         config.graphics.fog = FogSetting::On;
         app.insert_resource(time)
             .insert_resource(config)
-            .insert_resource(TimeOfDay { time: 43200.0 })
+            .insert_resource(TimeOfDay {
+                time: 43200.0,
+                ..Default::default()
+            })
             .init_resource::<FogDensity>()
             .init_resource::<CloudCover>()
             .init_resource::<SkyAmbient>()

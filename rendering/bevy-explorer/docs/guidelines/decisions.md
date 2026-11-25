@@ -42,15 +42,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   time still takes the sky when it arrives, a time the player stops the clock at after that
   wins, and the scene's time is back when it arrives again (on return, in another scene, or
   when the scene changes it) or when the clock runs again, the menu's Auto included. No
-  override is kept for a scene. The menu takes the lock, the clock's speed and a fixed hour
-  from `SystemApi::GetSkyTimeStream`, pushed on change; it reads `/time` only for the hour of
-  the running clock. Two exceptions. `/time --force` beats a
+  override is kept for a scene. `~system/Runtime.getWorldTime` tells every scene, next to the
+  time, whether a scene holds it, the clock's speed and whether the clock sets the sky, so
+  that the menu and a scene that shows the time of day read one source. Two exceptions.
+  `/time --force` beats a
   scene's time whatever the setting, until the next `/time` that sets a time or a speed: the
   scene editor lights a stopped scene with it. A portable's time comes after the scene's, wins
   only over a running clock and never locks the menu: a portable follows the player
-  everywhere, so the player's own stopped time beats it. One system moves the sky whenever
-  what holds it changes, a source going away included; what it last saw, with what the
-  menu is told, is kept on the time keeper entity.
+  everywhere, so the player's own stopped time beats it.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
   direction; SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
 - **Scene environment components.** Skybox cloud speed accepts finite negative values for

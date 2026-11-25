@@ -1,70 +1,93 @@
-// The bridge scene's sky time relay: what the engine's stream reports reaches the page, and a
-// page that starts late is sent the last report again.
+// The bridge scene's sky time domain: while the page watches, the time of day the engine reports
+// with `getWorldTime` reaches it at once and then once a second.
 import { beforeEach, describe, it, expect, vi } from 'vitest'
-import type { SkyTimeState } from '@explorer-core/engine/generated'
 
-const { relay } = vi.hoisted(() => ({ relay: vi.fn() }))
-vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay }))
-const api = vi.hoisted(() => ({ getSkyTimeStream: vi.fn() as ReturnType<typeof vi.fn> | undefined }))
-vi.mock('../../bridge-scene/src/bevy-api', () => ({ BevyApi: api }))
+const runtime = vi.hoisted(() => ({ getWorldTime: vi.fn() }))
+vi.mock('~system/Runtime', () => runtime)
+vi.mock('@dcl/sdk/ecs', () => ({ engine: { addSystem: vi.fn() } }))
+vi.mock('../../bridge-scene/src/relay', () => ({ relayStream: vi.fn() }))
 
 const { registerSkyTime } = await import('../../bridge-scene/src/domains/skyTime')
 
-const RUNNING: SkyTimeState = { locked: false, speed: 12, fixedHours: null }
-const LOCKED: SkyTimeState = { locked: true, speed: 12, fixedHours: 22 }
+type Bridge = { sent: unknown[]; watch: (on: boolean) => void; hello: () => void; frame: (dt: number) => Promise<void> }
 
-function bridge(): { sent: unknown[]; on: Map<string, () => void> } {
+function bridge(): Bridge {
   const sent: unknown[] = []
-  const on = new Map<string, () => void>()
+  const on = new Map<string, (msg: unknown) => void>()
+  let system: (dt: number) => void = () => undefined
   registerSkyTime({
     send: (msg) => sent.push(msg),
-    on: (kind, handler) => on.set(kind, handler as () => void),
-    push: () => undefined
+    on: (kind, handler) => on.set(kind, handler as (msg: unknown) => void),
+    push: (s) => {
+      system = s
+    }
   })
-  return { sent, on }
+  return {
+    sent,
+    watch: (open) => on.get('watchSkyTime')?.({ kind: 'watchSkyTime', on: open }),
+    hello: () => on.get('hello')?.({ kind: 'hello' }),
+    frame: async (dt) => {
+      system(dt)
+      await Promise.resolve()
+      await Promise.resolve()
+    }
+  }
 }
+
+const LOCKED = { seconds: 79200, locked: true, speed: 12, followsClock: false }
+const LOCKED_STATE = { kind: 'skyTime', state: { hours: 22, locked: true, speed: 12, followsClock: false } }
 
 describe('bridge sky time', () => {
   beforeEach(() => {
-    relay.mockClear()
-    api.getSkyTimeStream = vi.fn()
+    runtime.getWorldTime.mockReset()
+    runtime.getWorldTime.mockResolvedValue(LOCKED)
   })
 
-  it('relays each report of the engine stream', async () => {
+  it('reads nothing until the page watches', async () => {
     const b = bridge()
-    const [name, open, onItem] = relay.mock.calls[0] as [string, () => Promise<unknown>, (state: SkyTimeState) => void]
-    expect(name).toBe('skyTime')
-    await open()
-    expect(api.getSkyTimeStream).toHaveBeenCalledTimes(1)
-    onItem(RUNNING)
-    onItem(LOCKED)
-    expect(b.sent).toEqual([
-      { kind: 'skyTime', state: RUNNING },
-      { kind: 'skyTime', state: LOCKED }
-    ])
-  })
-
-  it('sends the last report again to a page that starts late', () => {
-    const b = bridge()
-    const onItem = relay.mock.calls[0][2] as (state: SkyTimeState) => void
-    onItem(LOCKED)
-    b.on.get('hello')?.()
-    expect(b.sent).toEqual([
-      { kind: 'skyTime', state: LOCKED },
-      { kind: 'skyTime', state: LOCKED }
-    ])
-  })
-
-  it('sends nothing to a page that starts before the first report', () => {
-    const b = bridge()
-    b.on.get('hello')?.()
+    await b.frame(5)
+    expect(runtime.getWorldTime).not.toHaveBeenCalled()
     expect(b.sent).toEqual([])
   })
 
-  it('registers nothing on an engine without the stream', () => {
-    api.getSkyTimeStream = undefined
+  it('reports at once when the menu opens, then once a second', async () => {
     const b = bridge()
-    expect(relay).not.toHaveBeenCalled()
-    expect(b.on.size).toBe(0)
+    b.watch(true)
+    await b.frame(0.016)
+    expect(b.sent).toEqual([LOCKED_STATE])
+    await b.frame(0.5)
+    expect(b.sent).toHaveLength(1)
+    runtime.getWorldTime.mockResolvedValue({ seconds: 36000, locked: false, speed: 0, followsClock: true })
+    await b.frame(0.5)
+    expect(b.sent).toEqual([LOCKED_STATE, { kind: 'skyTime', state: { hours: 10, locked: false, speed: 0, followsClock: true } }])
+  })
+
+  it('stops when the menu closes and when the page starts again', async () => {
+    const b = bridge()
+    b.watch(true)
+    await b.frame(0.016)
+    b.watch(false)
+    await b.frame(2)
+    b.watch(true)
+    await b.frame(0.016)
+    b.hello()
+    await b.frame(2)
+    expect(b.sent).toEqual([LOCKED_STATE, LOCKED_STATE])
+  })
+
+  it('drops a read that answers after the menu closed', async () => {
+    const b = bridge()
+    b.watch(true)
+    b.watch(false)
+    await b.frame(0.016)
+    expect(b.sent).toEqual([])
+  })
+
+  it('reports nothing from an engine that tells the hour alone', async () => {
+    runtime.getWorldTime.mockResolvedValue({ seconds: 36000 })
+    const b = bridge()
+    b.watch(true)
+    await b.frame(0.016)
+    expect(b.sent).toEqual([])
   })
 })

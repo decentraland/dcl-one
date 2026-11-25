@@ -2183,7 +2183,7 @@ fn set_ui_constraints(
 
 fn push_time_to_crdt(time_of_day: Res<TimeOfDay>, mut contexts: Query<&mut GlobalCrdtState>) {
     for mut global_crdt_state in contexts.iter_mut() {
-        global_crdt_state.update_time(time_of_day.time);
+        global_crdt_state.update_time(*time_of_day);
     }
 }
 

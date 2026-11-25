@@ -9,7 +9,7 @@ import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { fetchCrowd, recordVisit } from '@explorer-core/features/lobby/lobbyApi'
 import { type GotoTarget, randomParcel, worldOfRealm } from '@explorer-core/features/lobby/goto'
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
-import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, SkyTimeState, WorldAccessVerdict } from '@explorer-core/engine/generated'
+import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
@@ -193,18 +193,14 @@ function memberProfiles(members: CommunityMember[]): Parameters<typeof seedProfi
 }
 
 // The engine's clock starts at 10:00 and runs at 12× (crates/visuals/src/day_night.rs start_clock).
-// Fallbacks only: the menu reads the live clock with `/time` when it opens.
+// Fallbacks only: the engine reports the time of day while the menu is open.
 const SKYBOX_START_HOURS = 10
 const SKYBOX_DAY_SPEED = 12
 
 const NEARBY_VOICE_RESTRICTION = 'Nearby voice disabled'
 
-// The engine's `/time` reply (day_night.rs timeofday_console_command) ends with
-// "speed <S> (elapsed: <seconds since midnight>)".
-function parseTimeReply(reply: string): { hours: number; speed: number } | null {
-  const m = /speed (-?[\d.]+) \(elapsed: ([\d.]+)\)/.exec(reply)
-  return m ? { hours: Number(m[2]) / 3600, speed: Number(m[1]) } : null
-}
+// How long after this menu sent a `/time` a report of the time of day may still predate it.
+const SKYBOX_SETTLE_MS = 300
 
 // Unity's wording (BackpackEquipStatusController's in-world warning) when a profile deploy fails.
 export const SAVE_FAILED_MESSAGE = 'There was an error updating your avatar profile. Please try again.'
@@ -1813,10 +1809,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const chatAccountRef = useRef<string | null>(null)
   // The speed to restore when Time progression is turned back on (the last running speed seen).
   const skyboxDaySpeed = useRef(SKYBOX_DAY_SPEED)
-  // the engine's last report of the time of day, and the hours this menu stopped the clock at
-  // that it has not reported back yet
-  const skyTime = useRef<SkyTimeState | null>(null)
-  const skyboxSent = useRef<number[]>([])
+  // The player dragged the slider of a stopped clock: the menu keeps that hour over the reports.
+  const skyboxDragged = useRef(false)
+  // When this menu last sent a `/time`.
+  const skyboxSentAt = useRef(0)
   // Catalog fetches done once per session (cache; relays re-emit on change).
   const fetchedRef = useRef<Set<string>>(new Set())
 
@@ -2287,23 +2283,17 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           setEmotes(msg.emotes)
           break
         case 'skyTime': {
-          skyTime.current = msg.state
-          setSkyboxSceneLocked(msg.state.locked)
-          setSkyboxProgressingState(msg.state.speed !== 0)
-          if (msg.state.speed !== 0) skyboxDaySpeed.current = msg.state.speed
-          const hours = msg.state.fixedHours
-          if (hours == null) break
-          // An hour this menu sent comes back as the slider's echo: skipped, with the ones sent
-          // before it, so that an older value cannot pull a slider being dragged back. Any other
-          // hour is news: a scene's time, or a `/time` typed in the console.
-          // A scene holding the sky or a running clock answers no hour sent before it.
-          if (msg.state.locked || msg.state.speed !== 0) skyboxSent.current = []
-          const echo = skyboxSent.current.findIndex((sent) => {
-            const apart = Math.abs(sent - (hours % 24))
-            return Math.min(apart, 24 - apart) < 0.01
-          })
-          if (echo >= 0) skyboxSent.current.splice(0, echo + 1)
-          else setSkyboxHoursState(hours)
+          // read before the engine applied what this menu just sent
+          if (Date.now() - skyboxSentAt.current < SKYBOX_SETTLE_MS) break
+          const { hours, locked, speed, followsClock } = msg.state
+          setSkyboxSceneLocked(locked)
+          setSkyboxProgressingState(speed !== 0)
+          if (speed !== 0) skyboxDaySpeed.current = speed
+          // The menu shows the time the sky shows, except an hour the player dragged a stopped
+          // clock to: the sky is still on its way there.
+          const playersClock = followsClock && speed === 0 && !locked
+          if (!playersClock) skyboxDragged.current = false
+          if (!skyboxDragged.current) setSkyboxHoursState(hours)
           break
         }
         case 'mic':
@@ -3485,79 +3475,37 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const runDebugCommand = useCallback((line: string) =>
     driverRef.current?.command?.(line) ?? Promise.reject(new Error('Engine console unavailable')), [])
 
-  // The engine clock as `/time` (no args) reports it; null when there is no engine console.
-  const readClock = useCallback(async (): Promise<{ hours: number; speed: number } | null> => {
-    const reply = await driverRef.current?.command?.('/time').catch(() => undefined)
-    const clock = reply != null ? parseTimeReply(reply) : null
-    if (clock != null && clock.speed !== 0) skyboxDaySpeed.current = clock.speed
-    return clock
-  }, [])
   const setClock = useCallback((hours: number, speed: number) => {
-    // as the engine will report it back: what `/time` is sent, within the day
-    const sent = Number(hours.toFixed(2)) % 24
-    // the hour the engine already reports is not reported again
-    const reported = skyTime.current
-    const noNews = reported != null && !reported.locked && reported.speed === 0 && reported.fixedHours === sent
-    if (speed !== 0) skyboxSent.current = []
-    else if (!noNews) skyboxSent.current = [...skyboxSent.current.slice(-31), sent]
+    skyboxSentAt.current = Date.now()
     driverRef.current
       ?.command?.(`/time ${hours.toFixed(2)} ${speed}`)
       .catch((e: unknown) => console.warn('[hud] /time failed:', e))
   }, [])
-  const skyboxRead = useRef(0)
-  const toggleSkybox = useCallback(
-    () =>
-      exclusive(setSkyboxOpen, () => {
-        // the running clock's hour is not pushed: read it, and drop the answer of an earlier open
-        const read = ++skyboxRead.current
-        void readClock().then((clock) => {
-          // a fixed hour is pushed, and the push may be newer than this answer
-          if (clock == null || read !== skyboxRead.current || skyTime.current?.fixedHours != null) return
-          setSkyboxHoursState(clock.hours)
-          setSkyboxProgressingState(clock.speed !== 0)
-        })
-      }),
-    [exclusive, readClock]
-  )
+  const toggleSkybox = useCallback(() => exclusive(setSkyboxOpen), [exclusive])
   const setSkyboxHours = useCallback(
     (hours: number) => {
       setSkyboxHoursState(hours)
-      if (!skyboxProgressing) setClock(hours, 0)
+      if (skyboxProgressing) return
+      skyboxDragged.current = true
+      setClock(hours, 0)
     },
     [skyboxProgressing, setClock]
   )
   const setSkyboxProgressing = useCallback(
     (on: boolean) => {
       setSkyboxProgressingState(on)
-      if (on) {
-        setClock(skyboxHours, skyboxDaySpeed.current)
-        return
-      }
-      // Freeze where the running clock is now, not where the slider last was.
-      void readClock().then((clock) => {
-        const hours = clock?.hours ?? skyboxHours
-        setSkyboxHoursState(hours)
-        setClock(hours, 0)
-      })
+      // Off freezes the clock at the hour shown, which follows the engine while the menu is open.
+      setClock(skyboxHours, on ? skyboxDaySpeed.current : 0)
     },
-    [skyboxHours, readClock, setClock]
+    [skyboxHours, setClock]
   )
-  // While the day cycle runs and sets the sky, the open menu follows the engine clock, whose hour
-  // changes every frame. Everything else (the lock, a stopped clock, a scene's hour) is pushed on
-  // the `skyTime` message.
+  // While the menu is open the engine reports the time of day: at once, then once a second.
   useEffect(() => {
-    if (!skyboxOpen || !skyboxProgressing || skyboxSceneLocked) return
-    let live = true
-    const id = setInterval(() => {
-      void readClock().then((clock) => {
-        if (live && clock != null && clock.speed !== 0) setSkyboxHoursState(clock.hours)
-      })
-    }, 1000)
-    return () => {
-      live = false
-      clearInterval(id)
-    }
-  }, [skyboxOpen, skyboxProgressing, skyboxSceneLocked, readClock])
+    if (!skyboxOpen) return
+    skyboxDragged.current = false
+    driverRef.current?.send({ kind: 'watchSkyTime', on: true })
+    return () => driverRef.current?.send({ kind: 'watchSkyTime', on: false })
+  }, [skyboxOpen])
   const toggleGallery = useCallback(() => exclusive(setGalleryOpen), [exclusive])
   const setPhotoModeEnabled = useCallback((enable: boolean, source: PhotoModeSource) => {
     driverRef.current?.send({ kind: 'setPhotoMode', enable, source })

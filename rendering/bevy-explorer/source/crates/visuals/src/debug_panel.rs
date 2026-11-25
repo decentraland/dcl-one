@@ -443,7 +443,7 @@ fn sky_state(
     if let Some(Ok(_)) = cmd.take() {
         let mut state = sky_state_json(time.time, &clouds);
         state["timeSource"] = hold.source.name().into();
-        state["sceneLocked"] = hold.state.locked.into();
+        state["sceneLocked"] = time.locked.into();
         state["overrideAllowed"] = config.allow_scene_control_override.into();
         cmd.reply_ok(state.to_string());
     }
