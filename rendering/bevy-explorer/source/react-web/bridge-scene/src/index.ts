@@ -47,6 +47,7 @@ import { registerProximity } from './domains/proximity'
 import { registerSystemAction } from './domains/systemAction'
 import { registerBindings } from './domains/bindings'
 import { registerAvatarPointer } from './domains/avatarPointer'
+import { registerAvatarModifiers } from './domains/avatarModifiers'
 import { registerPermissions } from './domains/permissions'
 import { registerMapPins } from './domains/mapPins'
 import { registerPortables } from './domains/portables'
@@ -60,6 +61,7 @@ export function main(): void {
   console.log = (...args) => { _log('[System Scene]', ...args); }
 
   startBridge((ctx) => {
+    const avatarModifiers = registerAvatarModifiers(ctx)
     registerSession(ctx)
     registerConnectivity(ctx)
     registerSkyTime(ctx)
@@ -67,7 +69,7 @@ export function main(): void {
     registerTextureOptimization(ctx)
     registerProfile(ctx)
     registerFriends(ctx)
-    registerChat(ctx)
+    registerChat(ctx, avatarModifiers)
     registerDm(ctx)
     registerUiSound(ctx)
     registerVoice(ctx)
@@ -90,14 +92,14 @@ export function main(): void {
     registerGallery(ctx)
     registerPlaces(ctx)
     registerLobby(ctx)
-    registerMapPlayers(ctx)
+    registerMapPlayers(ctx, avatarModifiers)
     registerWorld(ctx)
     registerPointer(ctx)
     registerProximity(ctx)
     registerPhotoMode(ctx)
     registerSystemAction(ctx)
     registerBindings(ctx)
-    registerAvatarPointer(ctx)
+    registerAvatarPointer(ctx, avatarModifiers)
     registerPermissions(ctx)
     registerPortables(ctx)
     registerMapPins(ctx)
