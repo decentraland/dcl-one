@@ -224,7 +224,7 @@ function NavigationTabsBar({
               <li
                 key={item.id}
                 className={styles.routeItem}
-                data-mobile-only={item.mobileOnly || undefined}
+                data-mobile-only={(item.mobileOnly && item.id !== activeId) || undefined}
                 data-accent={item.accent}
                 data-mobile-hidden={(item.hiddenOnMobile && item.id !== activeId) || undefined}
               >

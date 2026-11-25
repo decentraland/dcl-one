@@ -13,6 +13,7 @@
     animation: turn 1s linear infinite;
   }
 
+  /* Fixed ring diameters and proportional stroke widths match Shop. Foundations cover the 16 and 24 px diameters. */
   .root[data-size='16'] {
     --spinner-size: var(--dcl-space-16);
     border-width: 2px;

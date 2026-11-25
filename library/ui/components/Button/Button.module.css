@@ -117,7 +117,7 @@
     --button-pressed: var(--dcl-system-red-dark-2);
   }
   .root[data-tone='danger'][data-variant='outline'] {
-    --button-color: var(--dcl-system-red-light-2);
+    --button-color: var(--dcl-feedback-error-subtle);
     --button-border: currentColor;
     --button-hover: var(--dcl-transparencies-white-10);
     box-shadow: none;

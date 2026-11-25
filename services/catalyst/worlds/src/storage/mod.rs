@@ -713,7 +713,7 @@ async fn has_logs_access(
         .await?,
         RealmId::Shared(_) => sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM content.deployments WHERE entity_id = $1 AND deleter_deployment IS NULL \
-             AND CASE WHEN $2 = ANY(worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text)) \
+             AND CASE WHEN $2 = ANY(worlds.logs_permissions_decoded((entity_metadata -> 'v' -> 'logsPermissions')::text)) \
                  THEN land_authz.scene_collaborators_current($3, $4, $5, entity_pointers, entity_timestamp) \
                  ELSE false END)",
         )
@@ -819,6 +819,8 @@ async fn authorize(
         match has_scene_permission(state, target, deployment, signer).await {
             Ok(true) => return Ok(()),
             Ok(false) => {}
+            // The land-authz index not being published is no failed lookup.
+            Err(e @ ApiError::Unavailable(_)) => return Err(e),
             Err(e) => {
                 tracing::warn!(world = target.realm.storage_realm(), error = %e, "world storage: unable to verify world permissions");
                 return Err(ApiError::not_authorized(FAILED_TO_VERIFY_MSG));

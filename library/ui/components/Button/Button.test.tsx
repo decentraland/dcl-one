@@ -168,7 +168,7 @@ describe('when using the native Button contract', () => {
   describe.each(['primary', 'outline'] as const)(
     'when a destructive %s button is disabled',
     (variant) => {
-      it('should keep its destructive appearance and block activation', async () => {
+      it('should preserve the destructive tone and block activation', async () => {
         const click = vi.fn()
         render(
           <Button variant={variant} tone="danger" disabled onClick={click}>

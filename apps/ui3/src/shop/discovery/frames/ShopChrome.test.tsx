@@ -1,6 +1,6 @@
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useLocation } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { NavBar } from "@dcl/one-ui";
@@ -27,7 +27,12 @@ afterEach(() => {
 
 function Where() {
   const { pathname } = useLocation();
-  return <output data-testid="where">{pathname}</output>;
+  const navigate = useNavigate();
+  return <>
+    <output data-testid="where">{pathname}</output>
+    <button onClick={() => navigate(-1)}>Browser Back</button>
+    <button onClick={() => navigate(1)}>Browser Forward</button>
+  </>;
 }
 
 async function chrome(entry: string, session: SessionKind = "signedOut", client?: ShopClient, withHeader = false) {
@@ -85,6 +90,17 @@ describe("the Shop frame", () => {
     await chrome("/shop/overview");
     fireEvent.click(screen.getAllByRole("link", { name: "Collectibles" })[0]!);
     await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/shop/items"));
+  });
+
+  it("marks the active route when browser history moves back and forward", async () => {
+    await chrome("/shop/overview");
+    const tabs = within(screen.getByRole("navigation", { name: "Shop sections" }));
+    fireEvent.click(tabs.getByRole("link", { name: "Collectibles" }));
+    await tabs.findByRole("link", { name: "Collectibles", current: "page" });
+    fireEvent.click(screen.getByRole("button", { name: "Browser Back" }));
+    await tabs.findByRole("link", { name: "Overview", current: "page" });
+    fireEvent.click(screen.getByRole("button", { name: "Browser Forward" }));
+    await tabs.findByRole("link", { name: "Collectibles", current: "page" });
   });
 
   it("marks the cart page only through the cart button", async () => {

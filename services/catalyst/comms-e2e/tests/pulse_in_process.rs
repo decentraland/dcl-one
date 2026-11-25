@@ -368,7 +368,15 @@ async fn a_bot_through_a_stalled_link_survives_a_short_stall(transport: Transpor
     .unwrap();
 
     link.set(Direction::Both, Fault::Stall);
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // An idle WebTransport connection can be quiet for the entire stall.
+    // Send positions during the stall to exercise the link on both transports.
+    for step in 1..=20 {
+        walker
+            .move_to([HERE[0] - step as f32 * 0.05, HERE[1], HERE[2]])
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(link.counters().dropped > 0, "the stall dropped nothing");
     link.restore();
 
     walker.expect_alive().unwrap();
@@ -396,7 +404,6 @@ async fn a_bot_through_a_stalled_link_survives_a_short_stall(transport: Transpor
     )
     .await
     .unwrap();
-    assert!(link.counters().dropped > 0, "the stall dropped nothing");
 }
 
 on_both_transports!(a_bot_through_a_stalled_link_survives_a_short_stall);

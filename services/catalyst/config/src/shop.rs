@@ -26,12 +26,6 @@ pub struct MarketUpstreamsConfig {
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
 
-    /// Land-manager subgraph: parcel operators, permissions and
-    /// update-operator lookups before the land-authz index is published;
-    /// unset answers the envelope (lamb2's 500 on the permissions route).
-    #[arg(long, env = "LAND_SUBGRAPH_URL")]
-    pub land_subgraph_url: Option<String>,
-
     /// The marketplace API `/v1/trades` list to mirror; unset attaches no job.
     #[arg(long, env = "TRADES_SYNC_UPSTREAM_URL")]
     pub trades_sync_upstream_url: Option<String>,
@@ -167,8 +161,14 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_third_party_registry_index_enabled: bool,
 
+    /// Walk the Polygon collection factories and their collections' events into
+    /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry. Nothing reads it yet.
+    #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub marketplace_collections_index_enabled: bool,
+
     /// Pause between the end of one pass and the start of the next, for the nft, trade-events,
-    /// MANA transfers, sales, committee, third-party registry and rentals walks (30 under mirror).
+    /// MANA transfers, sales, committee, third-party registry, collections and rentals walks
+    /// (30 under mirror).
     #[arg(long, env = "MARKETPLACE_INDEX_INTERVAL_SECS", default_value_t = 5)]
     pub marketplace_index_interval_secs: u64,
 
@@ -761,7 +761,8 @@ mod tests {
                 && !c.marketplace.marketplace_trade_events_index_enabled
                 && !c.marketplace.marketplace_sales_index_enabled
                 && !c.marketplace.marketplace_committee_index_enabled
-                && !c.marketplace.marketplace_third_party_registry_index_enabled,
+                && !c.marketplace.marketplace_third_party_registry_index_enabled
+                && !c.marketplace.marketplace_collections_index_enabled,
             "the chain indexes are opt-in"
         );
         assert_eq!(

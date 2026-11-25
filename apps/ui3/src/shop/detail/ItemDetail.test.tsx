@@ -129,6 +129,8 @@ describe("the item route (a collection item, sold by its creator)", () => {
       invalidateShopQueries();
       const view = itemPage({ session, overrides: resaleOnly, offers: { kind: "resale" } });
       expect(await screen.findByText("Not for sale")).toBeTruthy();
+      const info = screen.getByRole("img", { name: "Availability information" });
+      expect(info).toHaveAttribute("aria-description", "This item isn't listed for sale right now. Get notified when it becomes available.");
       expect(screen.queryByTestId("price-mana")).toBeNull();
       expect(asked.length).toBeGreaterThan(0);
       expect(asked.every((t) => t === "primary")).toBe(true);

@@ -332,18 +332,14 @@ const ROWS: &[Row] = &[
     // lamb2's `/collections/wearables` takes `collectionId`, `wearableId`
     // and `textSearch` by default; operators can opt in to extended filters.
     same("lambdas", "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", "false"),
-    // lamb2's LAND subgraph: parcel operators and permissions until the
-    // land-authz index is published.
-    upstream(
-        "mirrors",
-        "LAND_SUBGRAPH_URL",
-        "https://subgraph.decentraland.org/land-manager",
-    ),
     mirrored("indexes", "MARKETPLACE_NFT_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_SALES_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_COMMITTEE_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),
+    // The collections walk keeps a log nothing reads yet: an operator's
+    // opt-in under every posture.
+    same("indexes", "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", "false"),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",
@@ -930,7 +926,10 @@ fn refuse_followers(posture: Posture, env: &Lookup) -> anyhow::Result<()> {
         .iter()
         .filter(|row| follows(row))
         .map(|row| row.key)
-        .chain(["MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED"])
+        .chain([
+            "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED",
+            "MARKETPLACE_COLLECTIONS_INDEX_ENABLED",
+        ])
         .filter(|key| env(key).is_some_and(|v| switched_on(&v)))
         .collect();
     if !on.is_empty() {

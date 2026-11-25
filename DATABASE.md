@@ -214,8 +214,9 @@ access excludes clears, `/env*` and `/usage*`.
 `GET /world-storage/collaborator` is a rare, user-initiated, self-scoped listing.
 It derives membership at read time through `worlds.logs_permissions_decoded`, with no
 stored projection. The partial GIN `world_scenes_logs_permissions_decoded_idx` covers
-local world scenes; `deployments_scene_logs_permissions_decoded_idx` covers live
-Genesis scenes, followed by an `active_pointers_entity_id_idx` probe per match.
+local world scenes; `deployments_scene_v_logs_permissions_decoded_idx` covers live
+Genesis scenes (content stores metadata as `{"v": metadata}`, so it indexes
+`entity_metadata -> 'v' -> 'logsPermissions'`), followed by an `active_pointers_entity_id_idx` probe per match.
 Superseded Genesis rows leave the index. One statement counts and pages the
 matches by `deployed_at DESC, scene_id` with `LIMIT/OFFSET`.
 The function decodes JSON escapes as `JSON.parse` does and leaves out an entry
@@ -224,10 +225,12 @@ can fail an insert through an index. It reads the escapes as Unicode, so the dat
 must use the `UTF8` server encoding (the one `catalyst` supports): under another
 encoding a non-ASCII escape would fail the insert or the index build. `schema apply`
 and `schema migrate` check the server encoding before any schema changes. A database stamped before it keeps the
-superseded `worlds.logs_permissions` and its two indexes, which `catalyst schema
-status` does not report, until their release drops them. Run it once, with the
-administrative role, after `catalyst schema migrate` created the decoded function
-and every replica runs a binary that queries it (an older `serve` calls the old
+superseded `worlds.logs_permissions` and its two indexes, and a database migrated
+before the `v` path keeps `deployments_scene_logs_permissions_decoded_idx` on the
+unwrapped path; `catalyst schema status` reports none of them. Their release drops
+them. Run it with the administrative role, after `catalyst schema migrate` created
+the decoded function and its current indexes and every replica runs a binary that
+queries them (an older `serve` calls the old
 function from its storage grant and `GET /collaborator`, which fail after the
 drop); it refuses a database without the decoded function and both its indexes
 built and valid, and drops the old indexes concurrently, outside a transaction
@@ -237,7 +240,7 @@ built and valid, and drops the old indexes concurrently, outside a transaction
 psql "$DATABASE_URL" -X -f schemas/releases/worlds-logs-permissions-retired.sql
 ```
 
-The object pass builds `deployments_scene_logs_permissions_decoded_idx` on
+The object pass builds `deployments_scene_v_logs_permissions_decoded_idx` on
 `content.deployments` in the migrate transaction, not concurrently, so writes to
 that table wait for the build (unmeasured on production). To build it outside
 that window, run beforehand, with the same definition as `schemas/20_worlds.sql`
@@ -245,9 +248,9 @@ that window, run beforehand, with the same definition as `schemas/20_worlds.sql`
 
 ```sql
 CREATE FUNCTION worlds.logs_permissions_decoded(text) ... ; -- as in schemas/20_worlds.sql
-CREATE INDEX CONCURRENTLY deployments_scene_logs_permissions_decoded_idx
+CREATE INDEX CONCURRENTLY deployments_scene_v_logs_permissions_decoded_idx
     ON content.deployments
-    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'logsPermissions')::text))
+    USING gin (worlds.logs_permissions_decoded((entity_metadata -> 'v' -> 'logsPermissions')::text))
     WHERE entity_type = 'scene' AND deleter_deployment IS NULL;
 ```
 
@@ -303,6 +306,11 @@ access or other scenes' environment values. Mirroring cannot overwrite local
 saves or grant host authority. Keep live CRDT/tick state in the scene runtime;
 persist only what the restart contract requires. Test cross-scene/player
 isolation, redeploy, revocation and restart.
+
+A Genesis scene's storage scope (realm `main`) is its effective base
+parcel: the declared `metadata.scene.base` when it is one of the scene's parcels,
+else its least parcel. The resolver reads it at `entity_metadata -> 'v'`, where
+content stores the metadata as `{"v": metadata}`.
 
 Places owns one active identity row per world scene, explicitly bound to its
 current `(world_name, entity_id)` deployment. Worlds calls the Places identity
@@ -1899,10 +1907,39 @@ changed since the listing was created. It writes `dissolved` for an estate
 without parcels once the index head is newer than the listing. The index
 reads run only on a published land-authz snapshot. The refresh route
 (`PATCH /v1/rentals-listings/{id}`) applies the fold and the same cancellation
-rules to one listing, using the asset row that the marketplace subgraph reader
-returned when that row is newer than `rental_assets.nft_updated_at`. The
-route then writes the row to `signatures.rental_assets` only when it is no
-older than the stored one, so a lagging reader replaces no metadata.
+rules to one listing. A third-party transfer must postdate listing creation.
+Dissolution requires a membership observation after listing creation whose
+block is at least the stored membership block. The refresh also compares the
+metadata source block before using the asset to close a listing or update
+its metadata.
+
+Create and refresh bind the asset read to the signed or stored listing chain.
+On mainnet nodes with the NFT walk enabled, they read the NFT index
+publication and LAND rights in one database snapshot.
+Incomplete mint or transfer times, an unavailable publication, or a document
+beyond the LAND fold returns the unavailable envelope. A transfer beyond the
+NFT publication also waits for metadata to catch up. The NFT index publishes
+Ethereum mainnet metadata. Mainnet create requires the Rentals publication.
+During an outage an existing open listing still returns 409. A listing by a lessor whose asset is in Rentals
+custody requires a published Rentals cursor and a rent at or after the LAND
+transfer into custody. PATCH rechecks a current custody observation when a
+later Rentals publication names the lessor, even if its first refresh already
+saved the transfer time. The status job reads the Rentals publication and
+the rent in its LAND snapshot. A dissolution write locks the asset and
+rechecks its membership version before closing the listing. The periodic job can
+establish a third-party transfer or dissolution from published LAND alone.
+Only a transfer verdict based on venue custody requires the Rentals publication.
+Writes hold shared locks on the observed cursor rows until commit, so a concurrent
+rewind or ordinary cursor update waits for the write transaction.
+
+Nodes that do not walk the NFT index, including Sepolia, read listing assets
+from the configured marketplace subgraph. The subgraph reports transfer time
+in seconds and the block number and time of its estate membership snapshot. A missing or
+unavailable subgraph returns the marketplace-subgraph unavailable envelope.
+A walking node always uses its local publications. Each indexed asset lookup
+reads the LAND and NFT publications in a single snapshot, probes the token,
+its document and its first and latest transfers, and reads parcel proximity.
+For an estate it also scans its member parcels to compute size and proximity.
 
 Workload: mainnet holds thousands of listings, of which hundreds are open
 (an estimate, not a measurement). Each pass does the following:
@@ -1912,22 +1949,31 @@ Workload: mainnet holds thousands of listings, of which hundreds are open
 - One snapshot select over the open rows of the LAND and Estate registries,
   with one primary-key probe into `land_authz.token_right` per row, one
   `authz_event_ownership_idx` probe for the latest transfer, one
-  `estate_land_estate_idx` probe per estate and, while the `rentals` index is
-  published, one `rental_event_asset_idx` probe for the asset's latest rent.
+  `estate_land_estate_idx` probe per estate and, while the chain-matched
+  Rentals index is published, one `rental_event_asset_idx` probe for the
+  asset's latest rent.
 - One batched `UPDATE` by id, guarded by `status = 'open'`.
 
 Invariants:
 
 - `cancel_reason` is NULL unless the status is `cancelled` (a row `CHECK`).
-- The routes never move `rental_assets.nft_updated_at` backwards, and a
-  reader row older than the stored one replaces no asset detail. The refresh
-  route skips such a row. The create route still creates the listing, and
-  its upsert keeps the stored category, search text, distance to plaza, road
-  adjacency, estate size, `fetched_at` and time; a row that is not older
-  replaces them. A reader that answers from an older block
-  and then from a less old one therefore cannot pass the refresh route's
-  newer-row test. The signatures-server import writes the upstream time as
-  it is.
+- Step `0067_rental_asset_membership_block` adds the metadata source block
+  and published LAND membership block. Existing rows, parcels, and imported
+  metadata start at zero; the next indexed fill records the versions. Create
+  and refresh compare both block versions independently of the legacy
+  `nft_updated_at` timestamp, so a current indexed snapshot replaces
+  preexisting subgraph-era metadata even when its event timestamp is older.
+  `nft_updated_at` remains the greatest observed timestamp. Equal block
+  evidence can refresh the row.
+- The routes never move `rental_assets.nft_updated_at` backwards. Metadata
+  details are guarded by `metadata_block` and `membership_block`, not by that
+  legacy timestamp; an older published source version replaces no details,
+  while the next current snapshot can replace imported or subgraph-era values.
+  Create still creates the listing when its source version is older, and its
+  upsert keeps the stored metadata. The refresh route skips an older source
+  version. A reader that answers from an older block and then a less old one
+  cannot pass the newer-row test. The signatures-server import resets both
+  block versions to zero.
 - A cancellation with no recorded cause keeps NULL. Rows imported from
   signatures-server, which records no cause, are of this kind.
 - A reopening never makes a second open listing of an asset
@@ -1958,20 +2004,14 @@ Invariants:
 - A cancellation that is not a nonce move is never undone, so an unknown never
   cancels. No published index, no indexed token, or an indexed transfer older
   than the listing all leave the listing open.
-- A token the Rentals contract owns keeps its listing unless an indexed rent
-  shows that the contract holds it for another lessor. The asset's latest
-  `rented` row in `shop.rental_event` counts only when it is no older than
-  the token's arrival in the contract, because an older rent means the
-  `rentals` index has not reached the rent the token arrived under (an
-  accepted offer, for example). The job requires the rent's `block_number` to
-  be at or after that of the latest folded `transfer` in
-  `land_authz.authz_event`: both indexes commit whole blocks of the same
-  chain, and a rent either moves the token in its own transaction or finds
-  it already in the contract. The refresh route has no chain position for the
-  subgraph's asset row, so it requires the rent's `block_time` to be at or
-  after the row's `updatedAt`. When that row was updated again after the
-  rent, the route decides nothing and the job's block comparison decides.
-  While the `rentals` index is not published, neither path reads custody.
+- For a token owned by the mainnet Rentals contract, a published rent at or
+  after the latest transfer into the venue identifies its lessor. Once the
+  Rentals cursor covers that transfer, an absent or older rent establishes
+  that nobody holds custody. Create returns 401 and a later transfer closes
+  an open listing as `transferred`. While the cursor trails the arrival,
+  create returns the `rentals-index` unavailable response and status leaves
+  the listing open. Sepolia reads ownership from the marketplace subgraph.
+  At its venue, create refuses relisting and status leaves custody unknown.
 - The signatures-server import keeps a node reason only while upstream also
   says `cancelled`, and clears it otherwise. It skips an upstream row older
   than the stored one, except that an upstream `executed` or `claimed`
@@ -2497,8 +2537,8 @@ revokes, whose `address` a catalog write does not have.
 ## Market chain index cursors
 
 `shop.chain_cursor` holds one row per projection: an index (`nft`,
-`trade_events`, `rentals`, `rentals_sepolia`, `mana_transfers`, `sales`, `committee`) on one
-network (`ethereum`, `matic`). A window commit writes it once, and so do a
+`trade_events`, `rentals`, `rentals_sepolia`, `mana_transfers`, `sales`, `committee`,
+`third_party_registry`, `collections`) on one network (`ethereum`, `matic`). A window commit writes it once, and so do a
 fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
 "Reorgs").
@@ -2828,6 +2868,98 @@ means there are no matching providers. The index exposes on-chain slot
 availability as the maximum less consumed slots. Publish reservations and
 submission state still belong to the service that processes the submission.
 
+## Collections index
+
+The Polygon `collections` walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED`, off
+under every posture) reads the `TRADE_RPC_URLS` 137 entry. It walks two kinds
+of log from the first factory's start block (15,202,000), on the shared
+`shop.chain_cursor` (see "Market chain index cursors"):
+- the collection factories' `ProxyCreated`;
+- the events of every collection the factories created.
+
+Those events are the items added, rescued and edited, the mints (`Issue`),
+the global and item minters and managers, approval, editability,
+completion, creatorship and ownership. The walk keeps them in
+`shop.collection_event`, appended with each window's cursor advance and
+deleted past a rewind. Its publication means the log is complete to
+`folded_block`. No route reads these tables yet: `shop.collections` and
+`shop.items` are still the collections subgraph's copy (`mirrors`).
+
+**Workload.** Polygon holds about 6,200 collections, 12,000 items and 5.3
+million mints, so the log is about 5.3 million rows, nearly all `issue`.
+Averaged since the first factory (2021), that is about 3,000 mints a day.
+Every mint is kept: an item's supply and its minters' allowances are exact
+only from them. Measured on Postgres 17 with one million rows shaped like
+the walk's `issue` rows, a row takes 174 bytes in the table and 41 in the
+primary key. 5.3 million rows therefore take about 1.1 GB. A window writes its rows
+in batches of 1,000 inside the cursor's transaction. The primary key
+(network, block, log index) serves the rewind's range delete. The partial
+index on `proxy_created` lists the walked collections for the address
+filter and the creation reads.
+
+**Address filter.** A window's filter is fixed before its logs are read. A
+collection created inside a window emits its `initialize` events right after
+the factory's `ProxyCreated`, in the same transaction, so the walked
+`ProxyCreated` logs cannot supply the filter for that window.
+
+The filter takes the factories' own lists instead: `collectionsSize()` and
+`collections(i)`, read by the gate before each attempt into
+`shop.collection_hint`, one row per address, about 6,200 rows that only
+grow. That is a superset of what any window can create. A factory's
+collections enter the filter from the block the factory was deployed. Each
+index is read once at the finalized block and marked final; the indexes
+past it are read at the latest block at every refresh until the finalized
+block reaches them, so the filter already takes a collection the walk can
+reach. A provisional address that a reorg replaced stays as a hint the
+filter takes in vain, and the address read at the finalized block is added
+beside it. Once every list is final up to the finalized block, a refresh
+costs the four `collectionsSize()` reads.
+
+A refresh reads at most 1,000 indexes, in chunks of 200 kept as soon as
+they are read. Both lists' indexes below their finalized sizes come first,
+and the provisional ones get what is left. While those final indexes are
+not read whole, the attempt waits for the next interval; a fresh node's
+lists take about seven attempts. Provisional indexes the budget leaves
+unread never hold an attempt back; a window that walks one of their
+collections still fails.
+
+A size past 1,000,000 fails the refresh before any index is read. The
+indexes to read are found from the stored rows, so a refresh's work is
+bounded by the table and the budget whatever an endpoint answers. If any
+index does not answer, the refresh fails the attempt, so no window walks on
+a list that was not read whole. A JSON-RPC batch the endpoint refuses, or
+answers only in part (geth answers a batch past its limit with one error),
+is halved and sent again; a single call it refuses as a batch goes as a
+plain request, and an endpoint that answers batches with nothing gets single
+calls. Holes are counted below the finalized size the endpoint answers, so a
+final row stored past it does not hide one. A window that walks a `ProxyCreated` of an address outside its
+filter fails before it commits, and the next attempt reads the lists again.
+Every pass reads the hints from the table again, alone or shared. A
+hint is only a filter: a collection exists for the index once its
+`ProxyCreated` is walked. The gate first checks that the endpoint serves
+chain 137.
+
+**Creation state.** `initialize` sets a collection's name, symbol, creator,
+approval and editability without an event. The gate reads them once per
+collection into `shop.collection_seed`:
+- walked collections first, then final hints (a provisional one may never
+  exist);
+- at most 500 collections per attempt, ten JSON-RPC batches of 100 calls
+  for each 200 collections;
+- at Polygon's finalized block, recorded in `read_block`.
+
+A collection with no code at that block waits for a later attempt. A read
+that fails is logged and does not stop the walk. Rows are never rewound:
+they are a finalized block's state. Whatever folds the log takes a value
+from the last walked event that sets it. It takes the read only when no
+event does and `read_block` is at or below the block it folds to; then the
+value has not changed since creation.
+
+**Decoding.** Every factory collection shares one ABI for these topics. A
+log of a walked topic that does not decode fails its window instead of
+being skipped. A `ProxyCreated` from any contract other than the two
+factories fails it too. Strings are read as lossy UTF-8, with NUL removed.
+
 ## Auth API relay state workload
 
 `/auth-api` (`services/catalyst/explore/src/api/auth_api/`) is the sign-in
@@ -3131,6 +3263,7 @@ a cleaned row deleted, and the place's `place_removal_state` row with it once
 neither catalogue holds the place and no pending row for it remains. Its context lookups read
 `explore.place_indexed`, joined to `content.active_pointers` and
 `content.deployments` for shared-scene rooms, by primary key or world name.
+Its cleanup ends the stream keys of the removed place ("Scene stream keys").
 Neither table has an FK: queue rows outlive catalogue deletion.
 
 Workload and invariants for removal notices: one immutable recipient set per
@@ -3171,8 +3304,9 @@ whose backing scenes are gone. No grant history is inferred from parcel overlap.
 scene, one row for each `(place_id, admin_address)`. `place_id` is the place of
 the scene, read from the active deployment by the room resolver
 (`ActiveDeployment::place_key`): the `explore.world_scene_place` identity of a
-world scene, the canonical base parcel of a Genesis scene. These are the keys
-that scene storage uses.
+world scene, the canonical base parcel of a Genesis scene (its declared base,
+read at `entity_metadata -> 'v'`, when the scene holds that parcel; otherwise
+its first parcel). These are the keys that scene storage uses.
 
 Workload: one primary-key read for each scene-signed gatekeeper request of a
 wallet that is not the owner (`Policy::is_admin`: `/scene-admin`, `/scene-bans`,
@@ -3213,7 +3347,21 @@ Invariants:
   the grant. For one place and wallet the script keeps an active grant before
   a revoked one, then the row with the newest change
   (`COALESCE(removed_at, added_at)`), also against a row the place already
-  has. It removes each entity row that it moved.
+  has. It removes each entity row that it moved. It can run again: it moves
+  only rows that have an entity key, and never changes the key of a row that
+  is on a parcel or a world-scene identity.
+- A Genesis grant on its scene's least parcel, while the scene's place is
+  another declared base, is read by no request of that scene, and no script
+  moves it: the same row can be a grant made for an earlier scene whose base
+  was that parcel and that the place removal cleanup has not revoked, which
+  this scene does not inherit. A database that holds
+  Genesis grants on parcel keys when it takes the release can hold such
+  rows. The operator lists them with the check in
+  `infra/containers/README.md` "Scene admin upgrade" (active Genesis
+  deployments whose `social.scene_base_parcel` over `{v,scene,base}` differs
+  from the one over no declared base, joined to the active grants on the
+  latter) and sets `place_id` to the place on each row made for the listed
+  scene.
 - A row keeps the entity key when its entity is not deployed, or has no
   parcel that parses. A world scene with no active identity reads its grants
   by entity id, so a retired world scene still reads such a row inside its
@@ -3223,7 +3371,9 @@ Invariants:
   the effective base parcel that the room resolver computes
   (`ParcelSet::effective_base`). The release script and the import loads of
   scene admins and scene bans call it; `the_sql_base_parcel_is_the_resolvers`
-  compares the two.
+  compares the two. Its callers pass the declared base from where it is
+  stored: `entity_metadata #>> '{v,scene,base}'` for a Genesis scene,
+  `entity #>> '{metadata,scene,base}'` for a world scene.
 
 ## Scene bans
 
@@ -3275,9 +3425,83 @@ Invariants:
   not supported after the move; restore the matching backup. A row of an
   entity that is not deployed, or has no parcel that parses, keeps its key,
   and no request reads it. A local preview scene, which has no deployment,
-  keeps its entity id.
+  keeps its entity id. A ban on a scene's least parcel while the scene's
+  place is another declared base stays where it is, as an admin grant does
+  ("Scene admin grants"), and no longer refuses its wallet; the same operator
+  check lists it, and the upgrade re-keys it before players are admitted
+  (`infra/containers/README.md`, "Scene admin upgrade").
 - A kick intent queued before the release names the entity id; the removal
   job reads its ban again on the scene's place (`legacy_ban_key`).
+
+## Scene stream keys
+
+`social.scene_stream_access` (`schemas/40_social.sql`) holds at most one active
+stream key for each `place_id` (`scene_stream_access_active_place_key`). The
+place of a Genesis scene's key is the catalogue place based on its base parcel;
+the place of a world scene's key is the scene's place
+(`ActiveDeployment::place_key`, its `explore.world_scene_place` identity), so
+each scene of a world has its own key, streaming into its own room
+([ADR](docs/adr/2026-11-21-world-stream-keys-per-scene.md)).
+
+Workload: each scene-signed stream verb and stream link first rechecks the
+keys of its place and, for a world scene, of its room (one read each and one
+authority decision per key found, usually one or none), then reads the active
+key it acts on; a watcher token reads that key alone. Hundreds a day: a
+Genesis key by place (the partial unique index), a world scene's key by room
+(`scene_stream_access_active_room_idx`), over hundreds of active rows. A
+watcher of a world without a parcel, and a stream link of a world scene, count
+the world's `worlds.world_scenes` rows up to two; a watcher of a multi-scene
+world without a parcel reads the world's active scene-room keys up to two.
+A world scene's mint, reset and presenter routes read whether its world has a
+listed catalogue place (`explore.place`, `explore.place_world_local`, by
+`world_name`, not disabled other than by an opt-out, the reason read from
+`explore.place_moderation` by primary key); a revocation whose recheck ended a replaced key reads that
+key's room binding (`explore.world_scene_place`, `explore.world_scene_binding`,
+by primary key). A held row that cannot move is revoked after one LiveKit
+`ListIngress`.
+
+Invariants:
+
+- A world scene's key is the active key streaming into its room. A row under
+  the scene's place that streams into another room is not this scene's: an
+  imported world-scene identity is a place UUID and can equal the catalogue id
+  a world's single key was stored under, so the room, not the place, decides.
+  Before a world scene stores a key under its place, such a row moves to the
+  place of the scene of its room, which keeps its stream; when it cannot (its
+  room has no scene, or that scene has a key of its own) it is revoked while
+  idle and still under that place, before any ingress is minted; a live one
+  answers 409. The move bumps the row's `streaming_state_version`, so a
+  revocation read before a concurrent move is not stored.
+- A key minted under the world's catalogue place before keys were per scene
+  stays the key of the scene whose room it streams into: that scene reads,
+  resets and revokes it, and its replacement is stored under the scene's place.
+  It ends at its first replacement, a revocation or its expiry: four days, or
+  later while a broadcast that was live at the deadline goes on (at most the
+  four-hour streaming cap). Publisher identities keep the place they were
+  minted under; a revocation evicts by room and credential, whatever the place.
+- A removed world ends every active key whose room is one of its scene rooms
+  (`starts_with(room_id, <world room prefix>)`), the catalogue place's
+  included. Any removal event of a world place does, also one for a single
+  scene's Places row, as the grant cleanup revokes the grants of every scene
+  of the world. A removed Genesis place ends its own key and no key streaming
+  into a world scene room.
+- The notice of a world scene key's cleanup names the world (its catalogue
+  place, else the world alone) with the footprint of the scene of the key's
+  room, so the holders of its parcels are told; its owner is the world's.
+- Of several active keys streaming into one room, every reader by room
+  takes the one under its own scene's place (`place_id = admin_place_key`),
+  then the newest (`streaming::ROOM_KEY_ORDER`): the verbs and the presenter
+  routes act on the same key.
+- A held row is moved only to a current scene (one with an identity), and
+  revoked only while LiveKit reports its ingress idle.
+- Rollout: stop the old API replicas before the new binaries serve. An old
+  replica stores a world key under the world's catalogue place, with its
+  scene in `admin_place_key`; the `BEFORE INSERT` trigger
+  `scene_stream_access_scene_place` refuses a `w1:` room row whose
+  `admin_place_key` is set and differs from `place_id`, so its mint fails
+  instead of adding a second key to the room. Imported rows (`admin_place_key`
+  NULL), updates and stored rows are untouched. Drop the trigger before
+  rolling back to an older binary.
 
 ## Stream key notifications
 

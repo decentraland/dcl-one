@@ -40,7 +40,6 @@ pub(crate) fn market_settings(
                 .matic_collections_subgraph_url
                 .clone(),
             marketplace_subgraph_url: config.market_upstreams.marketplace_subgraph_url.clone(),
-            land_subgraph_url: config.market_upstreams.land_subgraph_url.clone(),
             trades_sync_upstream_url: config.market_upstreams.trades_sync_upstream_url.clone(),
             trades_sync_interval_secs: config.market_upstreams.trades_sync_interval_secs,
             trades_sync_pages_per_run: config.market_upstreams.trades_sync_pages_per_run,
@@ -74,6 +73,7 @@ pub(crate) fn market_settings(
             third_party_registry_enabled: config
                 .marketplace
                 .marketplace_third_party_registry_index_enabled,
+            collections_enabled: config.marketplace.marketplace_collections_index_enabled,
             interval: Duration::from_secs(
                 config.marketplace.marketplace_index_interval_secs.max(1),
             ),

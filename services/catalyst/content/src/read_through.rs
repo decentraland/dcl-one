@@ -34,7 +34,7 @@ use tokio::time::Instant;
 
 use super::deploy_remote_entity::{
     BufferSink, ByteBudget, ByteReservation, ContentSource, DownloadPeers, RemoteDeployment,
-    deploy_entity_streaming, fetch_verified, stream_body,
+    Requester, deploy_entity_streaming, fetch_verified, stream_body,
 };
 use super::failed_deployments_store::LiveFailedDeploymentsStore;
 use super::queries::{self, EntityDoc};
@@ -810,7 +810,15 @@ impl Upstream {
         let budget = self.deployer.inflight_bytes().as_ref();
         let mut fetched = Err(SyncError::NoServers);
         for server in &servers {
-            fetched = fetch_verified(&self.client, id, server, 0, Some(budget)).await;
+            fetched = fetch_verified(
+                &self.client,
+                id,
+                server,
+                0,
+                Some(budget),
+                Requester::ReadThrough,
+            )
+            .await;
             if fetched.is_ok() {
                 break;
             }
@@ -835,6 +843,7 @@ impl Upstream {
             &self.deployer,
             RemoteDeployment {
                 entity_id: id,
+                entity_type: &entity_type,
                 auth_chain: &chain,
                 context: DeploymentContext::Synced,
                 report: None,
@@ -925,7 +934,16 @@ impl Upstream {
         };
         let budget = self.deployer.inflight_bytes().as_ref();
         for server in self.sources.iter().chain(&self.file_sources) {
-            match fetch_verified(&self.client, hash, server, 0, Some(budget)).await {
+            match fetch_verified(
+                &self.client,
+                hash,
+                server,
+                0,
+                Some(budget),
+                Requester::ReadThrough,
+            )
+            .await
+            {
                 Ok((bytes, hold)) => {
                     if let Err(e) = self.storage.store(hash, bytes.into()).await {
                         tracing::warn!(hash, error = %e, "read-through: storing a content file failed");

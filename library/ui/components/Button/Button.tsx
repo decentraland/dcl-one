@@ -48,8 +48,6 @@ export type ButtonProps = NativeProps &
     size?: 'xl' | 'lg' | 'md' | 'sm'
     /** Responsive uses the mobile dimensions below 768px or with a coarse primary pointer. */
     viewport?: 'desktop' | 'mobile' | 'responsive'
-    /** Marks a destructive primary or outlined action. */
-    tone?: 'danger'
     loading?: boolean
     leadingIcon?: ReactNode
     trailingIcon?: ReactNode
@@ -58,7 +56,8 @@ export type ButtonProps = NativeProps &
     forceState?: 'hover' | 'pressed' | 'focus'
     contentLayout?: 'intrinsic' | 'fill'
   } & ({ iconOnly?: false } | ({ iconOnly: true } & AccessibleName)) &
-  ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName))
+  ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName)) &
+  ({ tone?: never } | { tone?: 'danger'; variant?: 'primary' | 'outline'; iconOnly?: false })
 
 export function Button({
   children,
