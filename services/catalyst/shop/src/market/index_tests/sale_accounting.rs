@@ -1721,3 +1721,138 @@ async fn a_store_purchase_and_order_in_one_receipt_settle_after_a_failed_batch()
     );
     db.drop().await;
 }
+
+#[tokio::test]
+async fn sale_ids_survive_catalogue_discovery_and_reinclusion_at_different_log_positions() {
+    use crate::market::{sale_fold, sale_history};
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Ethereum;
+    let block = nft_index::deployments::Deployments::mainnet(net).start + 20;
+    let chain = FakeChain::new(block + 12, vec![], 1000, 100);
+    chain.chain_id.store(1, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let state = state_over(db.pool.clone(), &url, index_settings(100, 20), false);
+    let rpc = Rpc::at(&state.http, &url);
+    let hash = format!("0x{:064x}", 123);
+    let venue = nft_index::deployments::Deployments::mainnet(net).markets[0].0;
+    let kept = crate::land_authz::LAND_REGISTRY_MAINNET;
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
+        full_history,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
+        SELECT ix,'ethereum',1,1,$1,$2,true,$1,timezone('UTC',now()),$3,$1,0 FROM unnest(ARRAY['nft','sales','trade_events']) ix")
+        .bind(block as i64).bind(chain.hash_of(block)).bind(sale_history::VERSION).execute(&db.pool).await.unwrap();
+    // The venue log exists even though neither of the first two contracts
+    // is in the catalogue. Only the later LAND order is initially retained.
+    sqlx::query("INSERT INTO shop.nft_event(network,block_number,log_index,block_time,kind,emitter,contract_address,token_id,from_address,to_address,amount,tx_hash)
+        SELECT 'ethereum',$1,v.n,86400,'order_successful',$2,v.c,v.n,$3,$4,50,$5
+        FROM (VALUES(4,$6::text),(9,$7::text)) v(n,c)")
+        .bind(block as i64).bind(venue).bind(ALICE).bind(BOB).bind(&hash).bind(CARL).bind(kept).execute(&db.pool).await.unwrap();
+    let mut traded = trade_events::tests::traded_log(
+        block,
+        2,
+        trade_events::marketplaces(net)[0].0,
+        BOB,
+        ALICE,
+        "0x01",
+        1,
+        false,
+    );
+    traded.transaction_hash = Some(hash.clone());
+    let mut trade = trade_events::decode_log(&traded, 86400).unwrap().unwrap();
+    trade.assets = Some(
+        json!({"sent":[{"assetType":"3","contractAddress":DAVE,"value":"1","beneficiary":BOB,"extra":"0x"}],
+        "received":[{"assetType":"1","contractAddress":listings::mana_token(1),"value":"12","beneficiary":ALICE,"extra":"0x"}],"uses":"1"}),
+    );
+    let mut conn = db.pool.acquire().await.unwrap();
+    trade_events::insert_events(&mut conn, net, &[trade])
+        .await
+        .unwrap();
+    drop(conn);
+    let expected = format!("ethereum-{hash}-2-0");
+    let read_id = || {
+        sqlx::query_scalar::<_, String>(
+            "SELECT public_id FROM shop.sale_asset WHERE contract_address=$1",
+        )
+        .bind(kept)
+        .fetch_one(&db.pool)
+    };
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert_eq!(read_id().await.unwrap(), expected);
+
+    // Upgrade a version-one marker with an ID numbered only over retained
+    // executions. Repair uses persisted venue rows on this unchanged tip.
+    sqlx::query("UPDATE shop.sale_asset SET public_id=$1")
+        .bind(format!("ethereum-{hash}-0-0"))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.sale_publication SET input_version=1")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(
+        sale_fold::snapshot(&db.pool, &[net], chrono::Utc::now())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert_eq!(read_id().await.unwrap(), expected);
+    assert!(
+        sale_fold::snapshot(&db.pool, &[net], chrono::Utc::now())
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    sqlx::query("INSERT INTO shop.nft_contract(network,contract_address,walked_from_block,backfill_from_block,backfilled_to_block)
+        VALUES('ethereum',$1,$2+1::bigint,$2,$2)").bind(CARL).bind(block as i64).execute(&db.pool).await.unwrap();
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert_eq!(read_id().await.unwrap(), expected);
+    let added: String =
+        sqlx::query_scalar("SELECT public_id FROM shop.sale_asset WHERE contract_address=$1")
+            .bind(CARL)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(added, format!("ethereum-{hash}-1-0"));
+
+    // With both catalogue orders retained, the old fills were 0 and 1.
+    // Moving the first to 1 has to release the second row's old unique ID.
+    sqlx::query("UPDATE shop.sale_asset SET public_id=$1 WHERE contract_address=$2")
+        .bind(format!("ethereum-{hash}-0-0"))
+        .bind(CARL)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.sale_asset SET public_id=$1 WHERE contract_address=$2")
+        .bind(format!("ethereum-{hash}-1-0"))
+        .bind(kept)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.sale_publication SET input_version=1")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert_eq!(read_id().await.unwrap(), expected);
+
+    // The same transaction is re-included one block later after 30 more logs.
+    sqlx::query("UPDATE shop.nft_event SET block_number=block_number+1,log_index=log_index+30 WHERE tx_hash=$1").bind(&hash).execute(&db.pool).await.unwrap();
+    sqlx::query("UPDATE shop.trade_event SET block_number=block_number+1,log_index=log_index+30 WHERE tx_hash=$1").bind(&hash).execute(&db.pool).await.unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET last_block=$1,last_block_hash=$2,folded_block=$1,sale_verified_through=$1,
+        sale_history_revision=sale_history_revision+1,sale_dirty_from=$3")
+        .bind(block as i64+1).bind(chain.hash_of(block+1)).bind(block as i64).execute(&db.pool).await.unwrap();
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert_eq!(read_id().await.unwrap(), expected);
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM shop.sale_asset WHERE block_number=$1")
+            .bind(block as i64 + 1)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining, 2);
+    db.drop().await;
+}
