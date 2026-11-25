@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate, useParams } from 'react-router-dom';
+import { Navigate, useParams } from 'react-router';
 
 import { useDispatch, useSelector } from '#store';
 import { useAuth } from '/@/hooks/useAuth';
