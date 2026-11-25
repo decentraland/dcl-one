@@ -34,7 +34,8 @@ export default function AvatarStage({ options, unityMode = "builder", cover = nu
   // A lighter device draws with Babylon whatever the flag says, so it does not wait for it.
   const settled = device === "lite" || (device === "full" && unityFlag !== null);
   const unity = !unityFailed && device === "full" && unityFlag === true;
-  const frame = `${unity ? "unity" : "babylon"}|${previewBase(options.urns)}`;
+  // Unity's mode is read once, from the mount URL: a new one is a new frame, drawn again from the start.
+  const frame = `${unity ? `unity:${unityMode}` : "babylon"}|${previewBase(options.urns)}`;
   const scene = `${frame}|${JSON.stringify(options)}`;
   // Whether the preview has drawn or failed belongs to this visit to these options: coming back to options drawn or
   // failed before starts over, covered and mounted. Reset during render, so no frame shows the last visit's answer.

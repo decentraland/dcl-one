@@ -153,6 +153,18 @@ describe("coming back to options seen before", () => {
 });
 
 describe("changes", () => {
+  test("a new Unity mode is a new frame, covered until it draws", () => {
+    const view = render(<AvatarStage options={OUTFIT} unityMode="builder" cover={<span data-testid="cover" />} />);
+    const first = frame()!.contentWindow;
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(cover()).toBeNull();
+
+    view.rerender(<AvatarStage options={OUTFIT} unityMode="marketplace" cover={<span data-testid="cover" />} />);
+    expect(frame()!.contentWindow).not.toBe(first);
+    expect(params().get("mode")).toBe("marketplace");
+    expect(cover()).not.toBeNull();
+  });
+
   test("new items reload the scene in the same iframe, covered again until it draws", () => {
     primeRemoteFlags({ "dapps-unity-wearable-preview": false });
     const { change } = stage();
