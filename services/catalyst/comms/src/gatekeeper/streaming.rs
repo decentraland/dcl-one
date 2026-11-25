@@ -743,16 +743,20 @@ async fn refuse_barred(
     }
 }
 
-/// The Genesis place holding `parcel`, preferring the one based there. With
-/// `based_there` only a place based on `parcel` counts, so a catalogue that
-/// has not caught up with a redeploy never lends another scene's admins.
-/// Whether `world` has a catalogue place (`explore.place` or
-/// `explore.place_world_local`). A blocked or removed world has none.
+/// A catalogue row that lists its world: not disabled, or disabled only by
+/// its owner's opt-out, which is no removal (`explore.place_removal`'s rule).
+const LISTED: &str = "NOT (p.disabled AND COALESCE((SELECT m.reason FROM explore.place_moderation m \
+     WHERE m.place_id = p.id AND m.disabled IS NOT NULL), p.raw->>'disabled_reason') \
+     IS DISTINCT FROM 'opt_out')";
+
+/// Whether `world` has a listed catalogue place (`explore.place` or
+/// `explore.place_world_local`, [`LISTED`]). A disabled or removed world has
+/// none.
 pub(super) async fn world_catalogued(pool: &PgPool, world: &WorldName) -> Result<bool, ApiError> {
-    Ok(sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM explore.place WHERE world AND lower(world_name) = lower($1)) \
-         OR EXISTS (SELECT 1 FROM explore.place_world_local WHERE world AND lower(world_name) = lower($1))",
-    )
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT EXISTS (SELECT 1 FROM explore.place p WHERE world AND lower(world_name) = lower($1) AND {LISTED}) \
+         OR EXISTS (SELECT 1 FROM explore.place_world_local p WHERE world AND lower(world_name) = lower($1) AND {LISTED})"
+    )))
     .bind(world.display())
     .fetch_one(pool)
     .await?)
@@ -767,6 +771,9 @@ pub(super) async fn require_world_place(pool: &PgPool, world: &WorldName) -> Res
     }
 }
 
+/// The Genesis place holding `parcel`, preferring the one based there. With
+/// `based_there` only a place based on `parcel` counts, so a catalogue that
+/// has not caught up with a redeploy never lends another scene's admins.
 async fn resolve_place_id(
     pool: &PgPool,
     parcel: &str,
@@ -883,6 +890,7 @@ async fn free_scene_place(
     match revoke_held(state, id, place_id).await? {
         Held::Freed => Ok(()),
         Held::Live => Err(renewal_conflict()),
+        Held::Unknown => Err(service_unavailable(INGRESS_STATE_UNAVAILABLE_MSG)),
         Held::Changed => Err(concurrent_change()),
     }
 }
@@ -894,6 +902,8 @@ pub(crate) enum Held {
     Freed,
     /// Streaming: it stays.
     Live,
+    /// LiveKit did not say whether it streams: it stays.
+    Unknown,
     /// It changed between the read and the revocation.
     Changed,
 }
@@ -903,7 +913,7 @@ pub(crate) enum Held {
 /// stays. Idle means LiveKit, not only the flag, says its ingress is not
 /// publishing: a lost `ingress_started` leaves the flag down on a live
 /// broadcast, which is raised and kept. An ingress state that cannot be read
-/// keeps the key.
+/// keeps the key (503).
 pub(crate) async fn revoke_held(
     state: &SharedState,
     id: Uuid,
@@ -931,7 +941,7 @@ pub(crate) async fn revoke_held(
             }
             Ok(None) | Err(_) => {
                 tracing::warn!(place_id, access_id = %id, "ingress state unavailable; the held key stays");
-                return Ok(Held::Live);
+                return Ok(Held::Unknown);
             }
         }
     }
@@ -1224,6 +1234,10 @@ fn renewal_conflict() -> ApiError {
 /// request worked on it: nothing need be streaming, and a retry decides anew.
 pub const CONCURRENT_CHANGE_MSG: &str =
     "The stream access changed while this request was handling it. Please try again.";
+
+/// LiveKit did not report the state of an ingress a request must not cut.
+pub const INGRESS_STATE_UNAVAILABLE_MSG: &str =
+    "The stream state is unavailable. Please try again.";
 
 fn concurrent_change() -> ApiError {
     ApiError::http(409, CONCURRENT_CHANGE_MSG)

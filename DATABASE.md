@@ -3329,8 +3329,9 @@ watcher of a world without a parcel, and a stream link of a world scene, count
 the world's `worlds.world_scenes` rows up to two; a watcher of a multi-scene
 world without a parcel reads the world's active scene-room keys up to two.
 A world scene's mint, reset and presenter routes read whether its world has a
-catalogue place (`explore.place`, `explore.place_world_local`, by
-`world_name`); a revocation whose recheck ended a replaced key reads that
+listed catalogue place (`explore.place`, `explore.place_world_local`, by
+`world_name`, not disabled other than by an opt-out, the reason read from
+`explore.place_moderation` by primary key); a revocation whose recheck ended a replaced key reads that
 key's room binding (`explore.world_scene_place`, `explore.world_scene_binding`,
 by primary key). A held row that cannot move is revoked after one LiveKit
 `ListIngress`.

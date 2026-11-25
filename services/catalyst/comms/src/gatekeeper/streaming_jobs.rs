@@ -674,10 +674,11 @@ async fn evict_publishers(state: &CommsState, row: &Cleanup) -> Result<(), ApiEr
     };
     // The room's own successor, under whatever place: a world scene's key
     // can replace one stored under the world's catalogue place.
-    let successor: Option<Uuid> = sqlx::query_scalar(
+    let successor: Option<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT id FROM social.scene_stream_access \
-         WHERE active AND id <> $1 AND room_id = $2 ORDER BY created_at DESC LIMIT 1",
-    )
+         WHERE active AND id <> $1 AND room_id = $2 ORDER BY {} LIMIT 1",
+        super::ROOM_KEY_ORDER
+    )))
     .bind(row.access_id)
     .bind(&room)
     .fetch_optional(&state.pool)

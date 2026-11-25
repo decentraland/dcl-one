@@ -2093,7 +2093,10 @@ async fn presenter_room(state: &CommsState, sf: &SignedFetch) -> Result<String, 
         Some((world, _)) => match super::world_catalogued(&state.pool, world).await {
             Ok(true) => Ok(Some(&bound.footprint)),
             Ok(false) => Ok(None),
-            Err(_) => Err("world catalogue unavailable"),
+            Err(error) => {
+                tracing::error!(error = %error.message, world = world.key(), "world catalogue not read for a presenter");
+                Err("world catalogue unavailable")
+            }
         },
         None => stored.get().await,
     };

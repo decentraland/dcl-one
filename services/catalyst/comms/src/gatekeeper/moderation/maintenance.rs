@@ -46,19 +46,14 @@ async fn cleanup(
     }
     let mut ended = Vec::new();
     if event.cleaned_at.is_none() {
-        // A removed world ends the key of each of its scenes. A world event
-        // without a usable name is retried: the Genesis branch would keep them.
-        let world = match event.world {
-            true => Some(
-                event
-                    .world_name
-                    .as_deref()
-                    .and_then(|name| WorldName::parse(name).ok())
-                    .ok_or_else(|| ApiError::internal("removed world has no valid name"))?,
-            ),
-            false => None,
-        };
-        let world = world.as_ref().map(WorldName::key);
+        // A removed world ends the key of each of its scenes, by its key as
+        // `WorldName` spells it. A name no world can have names no scene room:
+        // the key under its catalogue place still ends, and the cleanup commits.
+        let world = event.world.then(|| {
+            let name = event.world_name.as_deref().unwrap_or_default();
+            name.trim().to_lowercase()
+        });
+        let world = world.as_deref();
         let ingress =
             streaming::removed_place_has_ingress(&mut *tx, &event.place_id, world).await?;
         if ingress && !state.livekit.configured {
@@ -2334,10 +2329,10 @@ mod tests {
         assert_eq!(still, [false, false, true], "the world's scene keys end");
     }
 
-    /// A world event whose name does not parse is retried: the Genesis branch
-    /// would leave the world's scene keys alive.
+    /// A world event whose name no world can have is still cleaned: the key
+    /// under its catalogue place ends, whatever room it streams into.
     #[tokio::test]
-    async fn a_world_removal_without_a_valid_name_is_retried() {
+    async fn a_world_removal_without_a_valid_name_is_cleaned() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
         };
@@ -2347,18 +2342,32 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let error = cleanup(&Arc::new(state), &RemovedPlaces::new(pool.clone()), &event)
-            .await
-            .unwrap_err();
-        assert_eq!(error.code, 500);
-        let pending: bool = sqlx::query_scalar(
-            "SELECT cleaned_at IS NULL FROM explore.place_removal_pending WHERE event_id = $1",
+        let room = crate::rooms::worlds_service_scene_room(
+            &WorldName::parse("unnamed.dcl.eth").unwrap(),
+            &crate::world_identity::SceneId::parse("bafy").unwrap(),
+        );
+        let key: uuid::Uuid = sqlx::query_scalar("INSERT INTO social.scene_stream_access (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at) VALUES ($1, 'rtmp://example.invalid/live', $2, '', $3, 'test', $4) RETURNING id")
+            .bind(&event.place_id).bind(uuid::Uuid::new_v4().to_string()).bind(room)
+            .bind(event.removed_at - chrono::Duration::seconds(1))
+            .fetch_one(&pool).await.unwrap();
+        // Only the notice may fail; the cleanup commits first.
+        let _ = cleanup(&Arc::new(state), &RemovedPlaces::new(pool.clone()), &event).await;
+        let cleaned: bool = sqlx::query_scalar(
+            "SELECT cleaned_at IS NOT NULL FROM explore.place_removal_pending WHERE event_id = $1",
         )
         .bind(event.event_id)
-        .fetch_one(&pool)
+        .fetch_optional(&pool)
         .await
-        .unwrap();
-        assert!(pending);
+        .unwrap()
+        .unwrap_or(true);
+        assert!(cleaned);
+        let active: bool =
+            sqlx::query_scalar("SELECT active FROM social.scene_stream_access WHERE id = $1")
+                .bind(key)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!active);
     }
 
     #[tokio::test]

@@ -1858,6 +1858,22 @@ async fn an_unlisted_world_mints_nothing_and_still_revokes() {
         .signed(KEY, "GET", "/cast/presenters", &metadata, None)
         .await;
     assert_eq!(status, StatusCode::OK, "listed: {body}");
+    // Disabled by a moderator: unlisted. By its owner's opt-out: still listed.
+    for (reason, expected) in [
+        ("moderation", StatusCode::NOT_FOUND),
+        ("opt_out", StatusCode::OK),
+    ] {
+        sqlx::query("UPDATE explore.place SET disabled = true, raw = raw || jsonb_build_object('disabled_reason', $2::text) WHERE world AND lower(world_name) = $1")
+            .bind(world.key())
+            .bind(reason)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, body) = h
+            .signed(KEY, "GET", "/cast/presenters", &metadata, None)
+            .await;
+        assert_eq!(status, expected, "{reason}: {body}");
+    }
     sqlx::query("DELETE FROM explore.place WHERE world AND lower(world_name) = $1")
         .bind(world.key())
         .execute(&pool)
