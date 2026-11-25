@@ -1907,10 +1907,39 @@ changed since the listing was created. It writes `dissolved` for an estate
 without parcels once the index head is newer than the listing. The index
 reads run only on a published land-authz snapshot. The refresh route
 (`PATCH /v1/rentals-listings/{id}`) applies the fold and the same cancellation
-rules to one listing, using the asset row that the marketplace subgraph reader
-returned when that row is newer than `rental_assets.nft_updated_at`. The
-route then writes the row to `signatures.rental_assets` only when it is no
-older than the stored one, so a lagging reader replaces no metadata.
+rules to one listing. A third-party transfer must postdate listing creation.
+Dissolution requires a membership observation after listing creation whose
+block is at least the stored membership block. The refresh also compares the
+metadata source block before using the asset to close a listing or update
+its metadata.
+
+Create and refresh bind the asset read to the signed or stored listing chain.
+On mainnet nodes with the NFT walk enabled, they read the NFT index
+publication and LAND rights in one database snapshot.
+Incomplete mint or transfer times, an unavailable publication, or a document
+beyond the LAND fold returns the unavailable envelope. A transfer beyond the
+NFT publication also waits for metadata to catch up. The NFT index publishes
+Ethereum mainnet metadata. Mainnet create requires the Rentals publication.
+During an outage an existing open listing still returns 409. A listing by a lessor whose asset is in Rentals
+custody requires a published Rentals cursor and a rent at or after the LAND
+transfer into custody. PATCH rechecks a current custody observation when a
+later Rentals publication names the lessor, even if its first refresh already
+saved the transfer time. The status job reads the Rentals publication and
+the rent in its LAND snapshot. A dissolution write locks the asset and
+rechecks its membership version before closing the listing. The periodic job can
+establish a third-party transfer or dissolution from published LAND alone.
+Only a transfer verdict based on venue custody requires the Rentals publication.
+Writes hold shared locks on the observed cursor rows until commit, so a concurrent
+rewind or ordinary cursor update waits for the write transaction.
+
+Nodes that do not walk the NFT index, including Sepolia, read listing assets
+from the configured marketplace subgraph. The subgraph reports transfer time
+in seconds and the block number and time of its estate membership snapshot. A missing or
+unavailable subgraph returns the marketplace-subgraph unavailable envelope.
+A walking node always uses its local publications. Each indexed asset lookup
+reads the LAND and NFT publications in a single snapshot, probes the token,
+its document and its first and latest transfers, and reads parcel proximity.
+For an estate it also scans its member parcels to compute size and proximity.
 
 Workload: mainnet holds thousands of listings, of which hundreds are open
 (an estimate, not a measurement). Each pass does the following:
@@ -1920,22 +1949,31 @@ Workload: mainnet holds thousands of listings, of which hundreds are open
 - One snapshot select over the open rows of the LAND and Estate registries,
   with one primary-key probe into `land_authz.token_right` per row, one
   `authz_event_ownership_idx` probe for the latest transfer, one
-  `estate_land_estate_idx` probe per estate and, while the `rentals` index is
-  published, one `rental_event_asset_idx` probe for the asset's latest rent.
+  `estate_land_estate_idx` probe per estate and, while the chain-matched
+  Rentals index is published, one `rental_event_asset_idx` probe for the
+  asset's latest rent.
 - One batched `UPDATE` by id, guarded by `status = 'open'`.
 
 Invariants:
 
 - `cancel_reason` is NULL unless the status is `cancelled` (a row `CHECK`).
-- The routes never move `rental_assets.nft_updated_at` backwards, and a
-  reader row older than the stored one replaces no asset detail. The refresh
-  route skips such a row. The create route still creates the listing, and
-  its upsert keeps the stored category, search text, distance to plaza, road
-  adjacency, estate size, `fetched_at` and time; a row that is not older
-  replaces them. A reader that answers from an older block
-  and then from a less old one therefore cannot pass the refresh route's
-  newer-row test. The signatures-server import writes the upstream time as
-  it is.
+- Step `0067_rental_asset_membership_block` adds the metadata source block
+  and published LAND membership block. Existing rows, parcels, and imported
+  metadata start at zero; the next indexed fill records the versions. Create
+  and refresh compare both block versions independently of the legacy
+  `nft_updated_at` timestamp, so a current indexed snapshot replaces
+  preexisting subgraph-era metadata even when its event timestamp is older.
+  `nft_updated_at` remains the greatest observed timestamp. Equal block
+  evidence can refresh the row.
+- The routes never move `rental_assets.nft_updated_at` backwards. Metadata
+  details are guarded by `metadata_block` and `membership_block`, not by that
+  legacy timestamp; an older published source version replaces no details,
+  while the next current snapshot can replace imported or subgraph-era values.
+  Create still creates the listing when its source version is older, and its
+  upsert keeps the stored metadata. The refresh route skips an older source
+  version. A reader that answers from an older block and then a less old one
+  cannot pass the newer-row test. The signatures-server import resets both
+  block versions to zero.
 - A cancellation with no recorded cause keeps NULL. Rows imported from
   signatures-server, which records no cause, are of this kind.
 - A reopening never makes a second open listing of an asset
@@ -1966,20 +2004,14 @@ Invariants:
 - A cancellation that is not a nonce move is never undone, so an unknown never
   cancels. No published index, no indexed token, or an indexed transfer older
   than the listing all leave the listing open.
-- A token the Rentals contract owns keeps its listing unless an indexed rent
-  shows that the contract holds it for another lessor. The asset's latest
-  `rented` row in `shop.rental_event` counts only when it is no older than
-  the token's arrival in the contract, because an older rent means the
-  `rentals` index has not reached the rent the token arrived under (an
-  accepted offer, for example). The job requires the rent's `block_number` to
-  be at or after that of the latest folded `transfer` in
-  `land_authz.authz_event`: both indexes commit whole blocks of the same
-  chain, and a rent either moves the token in its own transaction or finds
-  it already in the contract. The refresh route has no chain position for the
-  subgraph's asset row, so it requires the rent's `block_time` to be at or
-  after the row's `updatedAt`. When that row was updated again after the
-  rent, the route decides nothing and the job's block comparison decides.
-  While the `rentals` index is not published, neither path reads custody.
+- For a token owned by the mainnet Rentals contract, a published rent at or
+  after the latest transfer into the venue identifies its lessor. Once the
+  Rentals cursor covers that transfer, an absent or older rent establishes
+  that nobody holds custody. Create returns 401 and a later transfer closes
+  an open listing as `transferred`. While the cursor trails the arrival,
+  create returns the `rentals-index` unavailable response and status leaves
+  the listing open. Sepolia reads ownership from the marketplace subgraph.
+  At its venue, create refuses relisting and status leaves custody unknown.
 - The signatures-server import keeps a node reason only while upstream also
   says `cancelled`, and clears it otherwise. It skips an upstream row older
   than the stored one, except that an upstream `executed` or `claimed`
