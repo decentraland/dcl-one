@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use bevy::time::TimeUpdateStrategy;
-use common::rpc::RpcStreamReceiver;
+use common::{rpc::RpcStreamReceiver, structs::PrimaryPlayerRes};
 use comms::{chat_reaction::emoji_to_atlas_index, NetworkMessage, TransportType};
 use system_bridge::AnalyticsEvent;
 use tokio::sync::mpsc;
@@ -11,8 +11,8 @@ use super::*;
 const PEER: Address = Address::repeat_byte(0xab);
 const FRAME: f32 = 0.05;
 
-/// The reaction systems as the plugin chains them, a signed-in local player with an outbox, a
-/// stream to the HUD and a listener on analytics.
+/// The plugin in an app of its own, with a signed-in local player, a stream to the HUD and a
+/// listener on analytics.
 struct World {
     app: App,
     local: Entity,
@@ -31,40 +31,31 @@ fn world() -> World {
     metrics.add_listener(listener);
 
     let mut app = App::new();
-    app.add_plugins(MinimalPlugins)
-        .add_event::<SystemApi>()
-        .add_event::<ReactionEvent>()
-        .add_event::<ReactionPlayed>()
-        .init_resource::<ReactionStats>()
-        .init_resource::<AppConfig>()
-        .insert_resource(wallet)
-        .insert_resource(metrics)
-        .insert_resource(SegmentConfig::new(
-            "user".into(),
-            "session".into(),
-            "1.0".into(),
-            None,
-            false,
-        ))
-        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
-            FRAME,
-        )))
-        .add_systems(
-            Update,
-            (
-                accept_local_reactions,
-                receive_reactions.run_if(on_event::<ReactionEvent>),
-                play_queued_reactions,
-                flush_reactions,
-                pipe_reactions_to_scene,
-                report_reaction_visualization.run_if(resource_changed::<AppConfig>),
-            )
-                .chain(),
-        );
-    let local = app
-        .world_mut()
-        .spawn((PrimaryUser::default(), ReactionOutbox::default()))
-        .id();
+    app.add_plugins((
+        MinimalPlugins,
+        console::ConsolePlugin {
+            add_bevy_console: false,
+        },
+    ))
+    .add_event::<SystemApi>()
+    .add_event::<ReactionEvent>()
+    .init_resource::<AppConfig>()
+    .insert_resource(wallet)
+    .insert_resource(metrics)
+    .insert_resource(SegmentConfig::new(
+        "user".into(),
+        "session".into(),
+        "1.0".into(),
+        None,
+        false,
+    ))
+    .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
+        FRAME,
+    )))
+    .add_plugins(ReactionPlugin);
+    // as the engine spawns them: the outbox is the plugin's to add
+    let local = app.world_mut().spawn(PrimaryUser::default()).id();
+    app.insert_resource(PrimaryPlayerRes(local));
 
     let (sender, hud) = RpcStreamSender::channel();
     app.world_mut()
