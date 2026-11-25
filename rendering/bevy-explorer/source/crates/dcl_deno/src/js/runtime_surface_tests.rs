@@ -619,6 +619,74 @@ fn serialize_and_deserialize_are_disabled() {
     });
 }
 
+/// A scene setter on `Array.prototype` that rejects a promise does not abort the runtime, and
+/// the rejection still reaches the scene's handler.
+#[test]
+fn rejections_raised_by_an_array_setter_do_not_abort() {
+    run_in_child("rejections_raised_by_an_array_setter_do_not_abort", || {
+        let mut runtime = client_runtime();
+        eval(
+            &mut runtime,
+            r#"
+            Object.defineProperty(Array.prototype, "0", {
+                set() { Promise.reject(1); },
+                configurable: true,
+            });
+            setTimeout(() => Promise.reject(0), 0);
+            "#
+            .to_owned(),
+        )
+        .unwrap();
+        run_event_loop(&mut runtime);
+        let logs = runtime
+            .op_state()
+            .borrow()
+            .borrow::<Vec<dcl_types::SceneLogMessage>>()
+            .iter()
+            .map(|log| log.message.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(logs, [r#"ERROR "Unhandled promise rejection: " 0"#], "{logs:?}");
+        format!("{logs:?}")
+    });
+}
+
+/// The same setter in a sealed server scene, which drains rejections without `Deno`.
+#[test]
+fn sealed_scene_rejections_raised_by_an_array_setter_do_not_abort() {
+    run_in_child("sealed_scene_rejections_raised_by_an_array_setter_do_not_abort", || {
+        let mut runtime = client_runtime();
+        {
+            let state = runtime.op_state();
+            let mut state = state.borrow_mut();
+            state.put(context(true));
+            state.put(common::structs::SceneJsFile(std::sync::Arc::new(
+                r#"
+                Object.defineProperty(Array.prototype, "0", {
+                    set() { Promise.reject(1); },
+                    configurable: true,
+                });
+                setTimeout(() => Promise.reject(0), 0);
+                globalThis.__sealed = typeof Deno === "undefined";
+                "#
+                .to_owned(),
+            )));
+        }
+        eval(&mut runtime, r#"require("~scene.js")"#.to_owned()).unwrap();
+        run_event_loop(&mut runtime);
+        let sealed = eval(&mut runtime, "String(__sealed)".to_owned()).unwrap();
+        let logs = runtime
+            .op_state()
+            .borrow()
+            .borrow::<Vec<dcl_types::SceneLogMessage>>()
+            .iter()
+            .map(|log| log.message.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(sealed, "true");
+        assert_eq!(logs, [r#"ERROR "Unhandled promise rejection: " 0"#], "{logs:?}");
+        format!("{logs:?}")
+    });
+}
+
 /// deno_core's timer clock reads at the same 2 ms resolution as `performance.now()`, both
 /// called directly and through the timer fields a prototype setter can observe.
 #[test]

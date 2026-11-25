@@ -40,6 +40,7 @@ pub mod inspector;
 pub mod local_storage;
 pub mod op_wrappers;
 mod plain;
+mod rejections;
 mod sources;
 mod structured_clone;
 pub mod websocket;
@@ -120,6 +121,7 @@ pub fn create_runtime(
     for op in clock::override_ops()
         .into_iter()
         .chain(structured_clone::override_ops())
+        .chain(rejections::override_ops())
     {
         op_map.insert(op.name, op);
     }
