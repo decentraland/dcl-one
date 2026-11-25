@@ -284,6 +284,16 @@ pub struct SceneLoopSchedule {
     schedule: Schedule,
 }
 
+#[cfg(feature = "test-support")]
+impl SceneLoopSchedule {
+    /// An empty scene loop, for other crates' tests that build a plugin scheduling into it.
+    pub fn empty() -> Self {
+        Self {
+            schedule: Schedule::new(SceneLoopLabel),
+        }
+    }
+}
+
 /// The time from the start of one scene loop pass to the start of the next while the loop
 /// can only wait for replies.
 const SCENE_REPLY_POLL: Duration = Duration::from_micros(250);

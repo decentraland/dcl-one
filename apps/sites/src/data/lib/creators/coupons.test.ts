@@ -115,6 +115,23 @@ describe('when building the collections root', () => {
   it('should refuse an empty set', () => {
     expect(() => collectionsRoot([])).toThrow(DiscountInputError)
   })
+
+  // The roots @openzeppelin/merkle-tree 1.0.8 gives for `StandardMerkleTree.of(rows, ['address'])`, where row `i`
+  // of `count` holds the address `(i + 1) * 0x9e3779b1`.
+  it.each([
+    [1, '0xde3213704e96168c495be143974c97e92531b93810981dff5165a51913efeb9c'],
+    [2, '0x102d7ffef96b8a77687f9886a3ec63411db0c8ff8796302ef9b1bce8692c0b71'],
+    [3, '0x492203f1095d9dea9446de3ae1b6e838a6d9d2467090d6d79ea131edeccf2bc5'],
+    [4, '0xbb1af8dd4d32242dbef985ce08887f5cc0666e5a228caaaeda073b830cc53d52'],
+    [5, '0x7afbf6099398723b1f1973e18baa5c5c2cea7a182caa82ee4399800d1aab966d'],
+    [6, '0x5430de338d59eb3879324c0261594160f48e7f2e4d31c96125db68a5055f2273'],
+    [7, '0x3118f90705dc8bd9a070d2d7defd310d16dd93451b08d5fdfe0ab0503628f649'],
+    [8, '0xf0770fbd3f440b08afa3b1d521c1b7e1f76dc272631ec4c8fc3585def507a4a7'],
+    [13, '0xbed3dcf4455ee74eff08663216fb09fa8bc83252552467631a9fb68457347187']
+  ])('should give the root of the OpenZeppelin tree for %i collections', (count, root) => {
+    const address = (i: number) => `0x${((i + 1) * 0x9e3779b1).toString(16).padStart(40, '0')}`
+    expect(collectionsRoot(Array.from({ length: count }, (_, i) => address(i)))).toBe(root)
+  })
 })
 
 describe('when validating the terms of a discount', () => {

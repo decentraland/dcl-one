@@ -11,6 +11,8 @@ workspace = true
 [features]
 default = []
 gen-tests = []
+# helpers other crates' tests use
+test-support = []
 
 [dependencies]
 common = { workspace = true }

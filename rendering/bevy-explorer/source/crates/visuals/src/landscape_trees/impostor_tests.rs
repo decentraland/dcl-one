@@ -31,7 +31,7 @@ use super::{
     },
     material::{StoneMaterial, TreeMaterial},
     prototypes::PROTOTYPES,
-    spawn_tests::{layout, open_land},
+    spawn_tests::{layout, open_land, settle},
     LandscapeTreeAssets, LandscapeTreesPlugin, Tree, ASSET_DIR, IMPOSTOR_DIR,
 };
 use crate::solids::Solid;
@@ -340,7 +340,7 @@ fn drawn(app: &mut App, key: (IVec2, u32)) -> Option<(Entity, bool, Vec<Drawn>)>
 #[test]
 fn lod_follows_the_camera() {
     let mut app = open_land(6, Vec3::ZERO);
-    app.update();
+    settle(&mut app);
     let (key, position) = a_tree01(&mut app);
 
     look_from(&mut app, position + Vec3::new(10.0, 2.0, 0.0));
@@ -368,7 +368,7 @@ fn lod_follows_the_camera() {
 #[test]
 fn impostors_off_culls_past_the_mesh() {
     let mut app = open_land(6, Vec3::ZERO);
-    app.update();
+    settle(&mut app);
     let (key, position) = a_tree01(&mut app);
     app.world_mut().resource_mut::<ImpostorsEnabled>().0 = false;
 
@@ -389,7 +389,7 @@ fn zoom_leaves_the_classes_alone() {
     use super::lod::TreeInstances;
 
     let mut app = open_land(6, Vec3::ZERO);
-    app.update();
+    settle(&mut app);
     let (_, position) = a_tree01(&mut app);
     look_from(&mut app, position + Vec3::new(150.0, 2.0, 0.0));
     let counts = app.world().resource::<TreeInstances>().counts();
@@ -822,10 +822,10 @@ fn bake_landscape_impostors() {
 }
 
 /// What the classes cost at the default and the farthest landscape distance, from the city's east
-/// edge with every
-/// parcel of the layout counted as empty land (more than the client ever has in range): the
-/// first pass, which spawns what draws, a pass after each one-step move, and a frame with the
-/// camera still. Timings in this build's profile; run in release for the client's figures:
+/// edge with every parcel of the layout counted as empty land (more than the client ever has in
+/// range): the first pass, which works out every class and spawns the nearest `SPAWN_BUDGET`
+/// instances that draw, the frames until the rest have spawned, a pass after each one-step move,
+/// and a frame with the camera still. Timings in this build's profile; run in release for the client's figures:
 ///
 /// ```text
 /// cargo test -p visuals lod_pass_cost -- --ignored --nocapture
@@ -887,6 +887,13 @@ fn lod_cost_at(distance: f32) {
     let started = Instant::now();
     app.update();
     let first = started.elapsed();
+    let started = Instant::now();
+    let mut fill_frames = 0;
+    while app.world().resource::<TreeInstances>().pending() {
+        app.update();
+        fill_frames += 1;
+    }
+    let fill = started.elapsed();
     let counts = app.world().resource::<TreeInstances>().counts();
 
     let steps = 100;
@@ -918,7 +925,7 @@ fn lod_cost_at(distance: f32) {
     let replace = started.elapsed();
     println!(
         "at {distance} m: {total} instances in range; mesh / impostor / culled {counts:?}; \
-         first pass {first:?}, a frame after a step {moving:?}, a still frame {still:?}; \
+         first pass {first:?}, then {fill_frames} frames to spawn the rest in {fill:?}, a frame after a step {moving:?}, a still frame {still:?}; \
          on a parcel change, the scan {scan:?} and the update of the list {replace:?}; \
          batches: {model_batches} of models, {impostor_batches} of impostors over {impostors} impostors"
     );

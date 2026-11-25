@@ -16,7 +16,9 @@ use bevy::{
 };
 use common::structs::{PrimaryCamera, PLAYER_CAMERA_FOV};
 
-use super::{impostor::TreeImpostor, prototypes::PROTOTYPES, LandscapeTreeAssets, Tree};
+use super::{
+    impostor::TreeImpostor, prototypes::PROTOTYPES, LandscapeTreeAssets, Tree, SPAWN_BUDGET,
+};
 use crate::{
     solids::{prototype_solids, Solid},
     terrain::TerrainSurface,
@@ -183,6 +185,12 @@ impl TreeInstances {
         self.passes
     }
 
+    /// Whether instances still wait to start drawing.
+    #[cfg(test)]
+    pub(crate) fn pending(&self) -> bool {
+        self.changed
+    }
+
     /// What the drawn instances batch into: the distinct (mesh, material) pairs of the models,
     /// the distinct impostor materials, and the impostors.
     #[cfg(test)]
@@ -290,7 +298,9 @@ pub(crate) struct LodState {
 }
 
 /// Work out the classes of the instances whose class may have changed, when something they
-/// depend on has changed, and change what those whose class changed draw.
+/// depend on has changed, and change what those whose class changed draw. At most `SPAWN_BUDGET`
+/// instances that drew nothing start to draw in one pass, the nearest to the camera first; the
+/// others wait for the next frame's pass.
 pub(crate) fn update_lods(
     mut commands: Commands,
     mut instances: ResMut<TreeInstances>,
@@ -323,6 +333,7 @@ pub(crate) fn update_lods(
     };
     instances.changed = false;
     instances.passes += 1;
+    let TreeInstances { cells, changed, .. } = &mut *instances;
 
     // the distances at which each prototype at scale 1 leaves its model, and draws nothing
     let switch = switch_distance;
@@ -336,14 +347,16 @@ pub(crate) fn update_lods(
         (mesh, far)
     });
 
-    for cell in instances.cells.values_mut() {
+    // instances that drew nothing and now draw: their horizontal distance, cell, index and class
+    let mut spawns = Vec::new();
+    for (key, cell) in cells.iter_mut() {
         if let Some((at, slack)) = cell.checked {
             if !switches_moved && at.distance_squared(position) < slack * slack {
                 continue;
             }
         }
         let mut slack = f32::INFINITY;
-        for instance in &mut cell.instances {
+        for (index, instance) in cell.instances.iter_mut().enumerate() {
             let prototype = &PROTOTYPES[instance.prototype];
             let scale = instance.transform.scale.y;
             let reference = instance.transform.transform_point(prototype.lod.reference);
@@ -358,14 +371,33 @@ pub(crate) fn update_lods(
             if lod == Lod::Impostor && !enabled.0 {
                 lod = Lod::Culled;
             }
-            if lod != instance.lod {
-                instance.lod = lod;
-                switch_lod(&mut commands, instance, &draw, &assets, &surface);
+            if lod == instance.lod {
+                continue;
             }
+            if instance.entity.is_none() && lod != Lod::Culled {
+                let horizontal = instance.transform.translation.xz().distance(position.xz());
+                spawns.push((horizontal, *key, index, lod));
+                continue;
+            }
+            instance.lod = lod;
+            switch_lod(&mut commands, instance, &draw, &assets, &surface);
         }
         // whatever the slack, the camera moves a step before anything is worked out again
         cell.checked = Some((position, slack.max(LOD_STEP)));
     }
+
+    spawns.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+    let later = spawns.split_off(spawns.len().min(SPAWN_BUDGET));
+    for (_, key, index, lod) in spawns {
+        let instance = &mut cells.get_mut(&key).unwrap().instances[index];
+        instance.lod = lod;
+        switch_lod(&mut commands, instance, &draw, &assets, &surface);
+    }
+    // cells with instances still to draw are worked out again in the next frame
+    for (_, key, _, _) in &later {
+        cells.get_mut(key).unwrap().checked = None;
+    }
+    *changed = !later.is_empty();
 }
 
 /// Change what an instance draws to its class.

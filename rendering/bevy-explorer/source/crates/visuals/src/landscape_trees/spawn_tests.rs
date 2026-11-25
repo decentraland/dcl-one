@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use bevy::{
     asset::LoadState,
     gltf::{Gltf, GltfPlugin},
-    platform::collections::HashMap,
+    platform::collections::{HashMap, HashSet},
     prelude::*,
     render::mesh::skinning::SkinnedMeshInverseBindposes,
     scene::ScenePlugin,
@@ -20,7 +20,7 @@ use super::{
     layout::{TreeLayout, TreeLayoutLoader, TreeLayouts, GENESIS_LABEL, WORLDS_LABEL},
     material::{Surface, SURFACES, TERRAIN_TEXTURE},
     prototypes::PROTOTYPES,
-    tree_radius_parcels, LandscapeTreeAssets, Tree, ASSET_DIR, LAYOUT,
+    tree_radius_parcels, LandscapeTreeAssets, Tree, ASSET_DIR, LAYOUT, SPAWN_BUDGET,
 };
 use crate::{
     solids::{prototype_solids, Solid},
@@ -141,6 +141,20 @@ pub(super) fn spawned(app: &mut App) -> Vec<Spawned> {
             solid: solid.is_some(),
         })
         .collect()
+}
+
+/// Runs frames until the spawn queue has drained: a frame that spawns nothing.
+pub(super) fn settle(app: &mut App) {
+    let mut count = usize::MAX;
+    for _ in 0..10_000 {
+        app.update();
+        let now = spawned(app).len();
+        if now == count {
+            return;
+        }
+        count = now;
+    }
+    panic!("the trees never settled");
 }
 
 /// Genesis City's layout, or the Worlds' when `worlds`.
@@ -345,7 +359,7 @@ fn unknown_parcel_has_no_trees() {
 #[test]
 fn realm_switch_swaps_layout() {
     let mut app = open_land(6, Vec3::ZERO);
-    app.update();
+    settle(&mut app);
     let genesis = layout(false);
     let worlds = layout(true);
     let check = |trees: &[Spawned], layout: &TreeLayout| {
@@ -371,7 +385,7 @@ fn realm_switch_swaps_layout() {
     app.world_mut()
         .resource_mut::<ScenePointers>()
         .reset_terrain(true);
-    app.update();
+    settle(&mut app);
     let after = spawned(&mut app);
     check(&after, &worlds);
     // the two layouts place the same instances, each at its own scales
@@ -395,7 +409,7 @@ fn bush01_has_no_solid() {
     }
 
     let mut app = open_land(6, Vec3::ZERO);
-    app.update();
+    settle(&mut app);
     let genesis = layout(false);
     let trees = spawned(&mut app);
     let prototype = |tree: &Spawned| genesis.instances(tree.parcel)[tree.index as usize].prototype;
@@ -450,7 +464,7 @@ fn lowering_distance_despawns_far_trees() {
     let player = Vec3::ZERO;
     let mut app = open_land(40, player);
     app.world_mut().resource_mut::<LandscapeDistance>().0 = 7000.0;
-    app.update();
+    settle(&mut app);
     let far = |trees: &[Spawned]| {
         trees
             .iter()
@@ -470,6 +484,35 @@ fn lowering_distance_despawns_far_trees() {
     let mut added = app.world_mut().query_filtered::<(), Added<Tree>>();
     assert_eq!(added.iter(app.world()).count(), 0, "nothing respawns");
     assert_eq!(spawned(&mut app).len(), near.len());
+}
+
+/// Filling the distance spreads over frames, nearest first, at most the budget in each.
+#[test]
+fn spawning_spreads_over_frames_nearest_first() {
+    let player = Vec3::ZERO;
+    let mut app = open_land(40, player);
+    app.update();
+    let first = spawned(&mut app);
+    assert_eq!(first.len(), SPAWN_BUDGET);
+
+    app.update();
+    assert_eq!(spawned(&mut app).len(), 2 * SPAWN_BUDGET);
+    settle(&mut app);
+    let all = spawned(&mut app);
+    assert!(all.len() > 2 * SPAWN_BUDGET, "{}", all.len());
+
+    let distance = |tree: &Spawned| tree.transform.translation.xz().distance(player.xz());
+    let early: HashSet<_> = first.iter().map(|tree| (tree.parcel, tree.index)).collect();
+    let farthest_early = first.iter().map(distance).fold(0.0, f32::max);
+    let nearest_later = all
+        .iter()
+        .filter(|tree| !early.contains(&(tree.parcel, tree.index)))
+        .map(distance)
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        farthest_early <= nearest_later,
+        "{farthest_early} > {nearest_later}"
+    );
 }
 
 #[test]
@@ -558,17 +601,20 @@ fn landscape_trees_schedule_is_acyclic() {
     use bevy::ecs::schedule::ScheduleLabel;
     use scene_runner::{
         initialize_scene::process_scene_lifecycle,
-        update_world::transform_and_parent::configure_post_update_sets,
+        update_world::{transform_and_parent::TransformAndParentPlugin, CrdtExtractors},
+        SceneLoopSchedule,
     };
 
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin::default()))
         .init_asset::<Shader>()
         .init_asset::<Mesh>()
-        .init_asset::<Image>();
+        .init_asset::<Image>()
+        .init_resource::<CrdtExtractors>()
+        .insert_resource(SceneLoopSchedule::empty());
     // the explorer's own order of the transform, collider and camera sets, before the realm's
     // scene lifecycle
-    configure_post_update_sets(&mut app);
+    TransformAndParentPlugin.build(&mut app);
     app.add_systems(PostUpdate, process_scene_lifecycle.in_set(RealmLifecycle));
     crate::terrain::TerrainPlugin.build(&mut app);
     super::LandscapeTreesPlugin.build(&mut app);
@@ -764,21 +810,16 @@ fn every_surface_is_used() {
 #[ignore = "needs a GPU; run with --ignored"]
 fn landscape_tree_shader_compiles() {
     use bevy::{
-        asset::RenderAssetUsages,
         core_pipeline::prepass::{DepthPrepass, NormalPrepass},
-        log::LogPlugin,
         render::{
             camera::RenderTarget,
-            pipelined_rendering::PipelinedRenderingPlugin,
             render_resource::{
-                CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor, ShaderDefVal,
-                TextureDimension, TextureFormat, TextureUsages,
+                CachedPipelineState, PipelineCache, PipelineDescriptor, ShaderDefVal,
             },
             RenderApp,
         },
-        window::ExitCondition,
-        winit::WinitPlugin,
     };
+    use pipeline_test::{compile_pipelines, headless_app, render_target};
 
     use super::{
         embed_shaders,
@@ -786,22 +827,8 @@ fn landscape_tree_shader_compiles() {
         TreeMaterial,
     };
 
-    let mut app = App::new();
-    app.add_plugins(
-        DefaultPlugins
-            .build()
-            .disable::<LogPlugin>()
-            .disable::<WinitPlugin>()
-            // keeps the render app in this app, so the pipeline cache is readable
-            .disable::<PipelinedRenderingPlugin>()
-            .set(WindowPlugin {
-                primary_window: None,
-                exit_condition: ExitCondition::DontExit,
-                close_when_requested: false,
-            }),
-    );
+    let mut app = headless_app();
     app.add_plugins((
-        assets::EmbedAssetsPlugin,
         MaterialPlugin::<TreeMaterial>::default(),
         MaterialPlugin::<StoneMaterial>::default(),
     ));
@@ -810,6 +837,7 @@ fn landscape_tree_shader_compiles() {
     app.cleanup();
 
     let server = app.world().resource::<AssetServer>().clone();
+    let target = render_target(&mut app);
     let mut textures = Vec::new();
     let world = app.world_mut();
     let mut materials = Vec::new();
@@ -822,20 +850,6 @@ fn landscape_tree_shader_compiles() {
     let (material, loading) = stone_material(rock, rock.stone.as_ref().unwrap(), &server);
     textures.extend(loading);
     let stone = world.resource_mut::<Assets<StoneMaterial>>().add(material);
-    let mut images = world.resource_mut::<Assets<Image>>();
-    let mut target = Image::new_fill(
-        Extent3d {
-            width: 64,
-            height: 64,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        &[0, 0, 0, 0],
-        TextureFormat::Bgra8UnormSrgb,
-        RenderAssetUsages::all(),
-    );
-    target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
-    let target = images.add(target);
     let cube = world.resource_mut::<Assets<Mesh>>().add(
         Mesh::from(Cuboid::new(0.5, 1.0, 0.5))
             .with_generated_tangents()
@@ -884,11 +898,7 @@ fn landscape_tree_shader_compiles() {
         app.update();
         std::thread::sleep(Duration::from_millis(1));
     }
-    // a few frames queue every pipeline; then they compile in the background
-    for _ in 0..10 {
-        app.update();
-    }
-    let started = Instant::now();
+    let ok = compile_pipelines(&mut app);
     // whether a pipeline's fragment shader is the stones' variant
     let is_stone = |descriptor: &PipelineDescriptor| {
         let PipelineDescriptor::RenderPipelineDescriptor(descriptor) = descriptor else {
@@ -900,42 +910,15 @@ fn landscape_tree_shader_compiles() {
             )
         })
     };
-    let mut ok;
-    let mut stone_ok;
-    let mut errors = Vec::new();
-    loop {
-        app.update();
-        let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
-        ok = 0;
-        stone_ok = 0;
-        errors.clear();
-        let mut pending = 0;
-        for pipeline in cache.pipelines() {
-            match &pipeline.state {
-                CachedPipelineState::Ok(_) => {
-                    ok += 1;
-                    if is_stone(&pipeline.descriptor) {
-                        stone_ok += 1;
-                    }
-                }
-                CachedPipelineState::Err(error) => errors.push(error.to_string()),
-                _ => pending += 1,
-            }
-        }
-        if pending == 0 {
-            break;
-        }
-        assert!(
-            started.elapsed() < Duration::from_secs(60),
-            "{pending} pipelines still compiling"
-        );
-    }
-    println!("{ok} pipelines compiled");
-    assert!(
-        errors.is_empty(),
-        "pipeline errors:\n{}",
-        errors.join("\n\n")
-    );
+    let stone_ok = app
+        .sub_app(RenderApp)
+        .world()
+        .resource::<PipelineCache>()
+        .pipelines()
+        .filter(|pipeline| {
+            matches!(pipeline.state, CachedPipelineState::Ok(_)) && is_stone(&pipeline.descriptor)
+        })
+        .count();
     // the three surfaces' main, depth and normal prepass, and shadow passes
     assert!(ok >= 9, "only {ok} pipelines compiled");
     assert!(stone_ok >= 1, "no stone pipeline compiled");

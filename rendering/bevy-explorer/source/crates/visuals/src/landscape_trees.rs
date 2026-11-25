@@ -471,6 +471,12 @@ struct Landscape<'w> {
     layouts: Res<'w, Assets<TreeLayout>>,
 }
 
+/// The most instances that start to draw in one frame (`lod::update_lods`). Filling the Landscape
+/// Distance at start, after a teleport or a larger distance spreads over frames, nearest first,
+/// instead of stalling one; a parcel resolving empty once that is done spawns its few instances
+/// in the frame it resolves.
+pub(crate) const SPAWN_BUDGET: usize = 500;
+
 #[derive(Default)]
 struct TreeState {
     centre: Option<IVec2>,
