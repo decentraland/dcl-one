@@ -68,7 +68,6 @@ import {
   showConfirm,
   showDialog,
   showToast,
-  Skeleton,
   Slider,
   Submenu,
   SubmitField,
@@ -303,13 +302,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
           {variant}
         </Button>
       ))}
-    </div>
-  ),
-
-  Skeleton: () => (
-    <div style={row}>
-      <Skeleton style={{ width: 126, height: 126 }} />
-      <Skeleton tone="band" style={{ width: 200, height: 22 }} />
     </div>
   ),
 

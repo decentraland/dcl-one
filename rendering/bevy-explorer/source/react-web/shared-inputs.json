@@ -1225,10 +1225,6 @@
           "kind": "regular"
         },
         {
-          "name": "gradient-loading.webp",
-          "kind": "regular"
-        },
-        {
           "name": "hover-bg.webp",
           "kind": "regular"
         },
@@ -3318,14 +3314,6 @@
         },
         {
           "name": "ShowcaseIndex.ts",
-          "kind": "regular"
-        },
-        {
-          "name": "Skeleton.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "Skeleton.tsx",
           "kind": "regular"
         },
         {
@@ -7647,6 +7635,10 @@
         {
           "name": "logo-pattern.webp",
           "kind": "regular"
+        },
+        {
+          "name": "skeleton-sweep.webp",
+          "kind": "regular"
         }
       ]
     },
@@ -10568,10 +10560,6 @@
       "sha256": "f39b495f3126a420e3fcbcac59116bea596897a271d06263f840d6eba2b80722"
     },
     {
-      "path": "library/ui/apps/hud/assets/backpack/gradient-loading.webp",
-      "sha256": "dee4bc1d859ac1dabb7f15db732c97ba56496af298bf29995c889dc2eb11e322"
-    },
-    {
       "path": "library/ui/apps/hud/assets/backpack/hover-bg.webp",
       "sha256": "7ab95d4534b03793c1f0bc8a2c9cf58219db55e175a8ddf5738b76541e9203a1"
     },
@@ -12413,19 +12401,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "0ceb3b9ae3a2adc2ef13679cfe42a04321e787486a515cdd54886ba8e2733848"
+      "sha256": "6cf8825c560ec373fa09a697655b2451970b5c3efa59b5833d698eaac058d92f"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "552eccd82e4d8aebc68a40277f83cf0e8407118ccc5e83afb638076733f2e4f9"
-    },
-    {
-      "path": "library/ui/apps/hud/design/Skeleton.module.css",
-      "sha256": "8f4fc80f5157213711a1643f7c8683ca1a3521524a607995bf8fb3fa36bf231b"
-    },
-    {
-      "path": "library/ui/apps/hud/design/Skeleton.tsx",
-      "sha256": "79e830f93fe22331dbf23c05b3c4b9c5b0db6c1aaa2346d26df5d17abca7d897"
+      "sha256": "fc4c9afeefb672f128319f20b1ffc94cff2a1d5f6c7a8c2e379a0ae0fccc2479"
     },
     {
       "path": "library/ui/apps/hud/design/Slider.module.css",
@@ -12529,7 +12509,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "3b2fa373039262e545c7709576711ddf28b2320ab399d8215cc38ddcd20635c8"
+      "sha256": "8917783e063672bbd1c66b1efc315cea367416d8df6554c0a73bdd16d4953a63"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -12557,7 +12537,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "b0254650c3b4b108f47a360695704dadce234df7e7059d1bd8b2ab157d979e50"
+      "sha256": "752bbb9c5c2cb3e61bba890405cf9ad0791b1b54c246a42d1f19678353190fe1"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -12869,7 +12849,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/EventCard.tsx",
-      "sha256": "167a81405fa18bbf358d8ec2f6813d9cc095da377b5376107a8c520bb976d060"
+      "sha256": "6a006b52d168d9cfc8b4d578851dfc0e5170771adf0db917c6ce198124cf70a6"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventDetail.module.css",
@@ -12985,7 +12965,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PhotoDetail.tsx",
-      "sha256": "4c6d081779444fa24218f4749d80d80e4af7f2d4cb0e488bc354ae1442e33f36"
+      "sha256": "9de71fcbc82cadf3f5f55a71f6449579d2d449fd26cab14a37cf1264b9f976d4"
     },
     {
       "path": "library/ui/apps/hud/features/gallery/PhotoPersonRow.tsx",
@@ -16092,6 +16072,14 @@
       }
     },
     {
+      "path": "library/ui/assets/skeleton-sweep.webp",
+      "sha256": "dee4bc1d859ac1dabb7f15db732c97ba56496af298bf29995c889dc2eb11e322",
+      "lfs": {
+        "oid": "dee4bc1d859ac1dabb7f15db732c97ba56496af298bf29995c889dc2eb11e322",
+        "size": 2386
+      }
+    },
+    {
       "path": "library/ui/components/AnimatedBackground/AnimatedBackground.module.css",
       "sha256": "a016665633e10a79f097ea309a849d8a03f96f8e0c5691536dbc4cd32cea9394"
     },
@@ -16425,11 +16413,11 @@
     },
     {
       "path": "library/ui/components/Skeleton/Skeleton.module.css",
-      "sha256": "f91020e1f1a694fc8361bdd358b8794fccd48407964f4a0571a71300a44b3a28"
+      "sha256": "7eb86f2b8a3cbce6674b26adcee6696f4b2937e832c93a93dc86bbe8a5fa0801"
     },
     {
       "path": "library/ui/components/Skeleton/Skeleton.tsx",
-      "sha256": "93da8ad34841b0a6ecbc1b34912eddf4b86c0a298b48dc120e764b14a17e4098"
+      "sha256": "17ee7e7d61b1a4d01052d1e326a2163afb962be0c2928c2b2b2b9d1793d9e24f"
     },
     {
       "path": "library/ui/components/Spinner/Spinner.module.css",
@@ -21781,21 +21769,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/design/Skeleton.tsx",
-      "to": "library/ui/apps/hud/design/Skeleton.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Skeleton.tsx",
-      "to": "library/ui/apps/hud/design/Skeleton.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Skeleton.tsx",
-      "to": "library/ui/apps/hud/design/Skeleton.module.css",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/design/Slider.tsx",
       "to": "library/ui/apps/hud/design/Slider.module.css",
       "kind": "native:runtime"
@@ -22993,21 +22966,6 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Skeleton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Skeleton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Skeleton.tsx",
       "kind": "test:runtime"
     },
     {
@@ -24328,6 +24286,21 @@
     {
       "from": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
       "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -28048,6 +28021,21 @@
     {
       "from": "library/ui/apps/hud/features/events/EventCard.tsx",
       "to": "library/ui/apps/hud/features/events/eventFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/events/EventCard.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -65522,11 +65510,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/Skeleton.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Slider.tsx",
       "kind": "type"
     },
@@ -68683,21 +68666,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/backpack/equipped-outline.webp",
-      "kind": "test:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/backpack/gradient-loading.webp",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/backpack/gradient-loading.webp",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/assets/backpack/gradient-loading.webp",
       "kind": "test:asset"
     },
     {
@@ -75053,6 +75021,21 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/assets/logo-pattern.webp",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/assets/skeleton-sweep.webp",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/assets/skeleton-sweep.webp",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/assets/skeleton-sweep.webp",
       "kind": "test:asset"
     }
   ]

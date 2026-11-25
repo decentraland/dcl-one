@@ -49,10 +49,47 @@
     animation: overlay-sheen 1400ms linear infinite;
   }
 
+  /* Not in Figma: the Explorer HUD's page placeholders. The caller sizes and rounds them; the band is an image. */
+  .sweep,
+  .band {
+    display: block;
+    width: auto;
+    height: auto;
+    border-radius: 0;
+  }
+
+  .sweep {
+    background: rgba(138, 65, 212, 0.62); /* the HUD's translucent purple; no token */
+  }
+
+  /* On a dark card only the band shows. */
+  .band {
+    background: transparent;
+  }
+
+  .sweep::after,
+  .band::after {
+    background: url('../../assets/skeleton-sweep.webp') center / 100% 100% no-repeat;
+    transform: none;
+    animation: hud-sweep 1000ms linear infinite;
+  }
+
+  .band::after {
+    background: var(--skeleton-band, #8f42db); /* the HUD's band purple; no token */
+    mask: url('../../assets/skeleton-sweep.webp') center / 100% 100% no-repeat;
+    -webkit-mask: url('../../assets/skeleton-sweep.webp') center / 100% 100% no-repeat;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .root::after {
       animation: none;
       transform: translateX(100%);
+    }
+
+    /* The HUD's band rests in place. */
+    .sweep::after,
+    .band::after {
+      transform: none;
     }
 
     .neutral {
@@ -64,6 +101,16 @@
 @keyframes pulse {
   50% {
     opacity: 0.4;
+  }
+}
+
+@keyframes hud-sweep {
+  from {
+    transform: translateX(calc(-1 * var(--skeleton-sweep, 130%)));
+  }
+
+  to {
+    transform: translateX(var(--skeleton-sweep, 130%));
   }
 }
 

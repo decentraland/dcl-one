@@ -37,10 +37,28 @@ describe('Skeleton', () => {
     })
   })
 
+  describe('when the tone is sweep or band', () => {
+    it('adds the tone class and keeps the size the consumer gives it', () => {
+      const { container } = render(
+        <>
+          <Skeleton tone="sweep" className="tile" />
+          <Skeleton tone="band" className="line" style={{ width: 200 }} />
+        </>
+      )
+      const sweep = container.children[0] as HTMLElement
+      const band = container.children[1] as HTMLElement
+      expect(sweep.className).toMatch(/sweep/)
+      expect(sweep.className).toMatch(/tile/)
+      expect(band.className).toMatch(/band/)
+      expect(band.style.width).toBe('200px')
+      expect(band).toHaveAttribute('aria-hidden', 'true')
+    })
+  })
+
   describe('when no tone is given', () => {
     it('adds neither tone class', () => {
       const { container } = render(<Skeleton />)
-      expect(container.firstElementChild?.className).not.toMatch(/neutral|overlay/)
+      expect(container.firstElementChild?.className).not.toMatch(/neutral|overlay|sweep|band/)
     })
   })
 })

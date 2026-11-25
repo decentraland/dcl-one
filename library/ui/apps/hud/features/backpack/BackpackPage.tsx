@@ -4,8 +4,9 @@
 // grid, and a right-hand detail panel. Wearables + Emotes tabs. Data via the bridge relay
 // of fetchWearablesPage; equipping goes back through setAvatar.
 
+import { Skeleton } from '@dcl/one-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Chip, ColorPicker, HintsButton, KeyCap, MaskIcon, OptionMenu, Pager, SearchField, Skeleton, Tabs, WearableCard, rarityPanel, rarityTile, type Rarity, type TabItem, NameSeal } from '../../design'
+import { Button, Chip, ColorPicker, HintsButton, KeyCap, MaskIcon, OptionMenu, Pager, SearchField, Tabs, WearableCard, rarityPanel, rarityTile, type Rarity, type TabItem, NameSeal } from '../../design'
 import allIcon from '../../assets/category-icons/all.png'
 import arrowLeftIcon from '../../assets/backpack/icon-arrow-left.webp'
 import emptySearchArt from '../../assets/backpack/empty-search.webp'
@@ -754,7 +755,7 @@ export function BackpackPage({
                   </div>}
                   {backpack.loading ? (
                     <div className={styles.grid} aria-busy="true">
-                      {Array.from({ length: PAGE_SIZE }, (_, i) => <Skeleton key={i} className={styles.skeleton} />)}
+                      {Array.from({ length: PAGE_SIZE }, (_, i) => <Skeleton tone="sweep" key={i} className={styles.skeleton} />)}
                     </div>
                   ) : pageItems.length === 0 ? (
                     <EmptyResults search={searchDebounced !== ''} />

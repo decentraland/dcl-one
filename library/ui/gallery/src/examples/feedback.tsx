@@ -244,12 +244,14 @@ export const feedbackEntries: GalleryEntry[] = [
     examples: [
       {
         id: 'tones',
-        title: 'Brand, neutral and overlay tones',
+        title: 'Brand, neutral, overlay, sweep and band tones',
         render: () => (
           <div className={layout.stack}>
             <Skeleton style={{ display: 'block', width: 280, height: 160 }} />
             <Skeleton tone="neutral" style={{ display: 'block', width: 200, height: 20 }} />
             <Skeleton tone="overlay" style={{ display: 'block', width: 256, height: 146 }} />
+            <Skeleton tone="sweep" style={{ width: 126, height: 126 }} />
+            <Skeleton tone="band" style={{ width: 200, height: 22 }} />
           </div>
         )
       }

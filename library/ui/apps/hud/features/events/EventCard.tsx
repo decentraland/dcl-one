@@ -1,8 +1,9 @@
 // The cards an event shows as: small and big in a calendar column, big in a day's grid, the
 // banner in the highlighted carousel, and the empty slot that offers to create one.
 
+import { Skeleton } from '@dcl/one-ui'
 import { useState, type CSSProperties } from 'react'
-import { Button, Avatar, ContextMenu, MaskIcon, Skeleton, Tooltip, openPopup } from '../../design'
+import { Button, Avatar, ContextMenu, MaskIcon, Tooltip, openPopup } from '../../design'
 import type { EventData, Friend } from '@explorer-core/engine/protocol'
 import type { EventCommunity } from '../session/useEngineSession'
 import addGradientIcon from '../../assets/events/add-icn-gradient.png'

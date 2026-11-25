@@ -25,7 +25,6 @@ export const SHOWCASE_INDEX = [
   { name: 'SignIn', title: 'Sign-in: SubmitField, method buttons, CodeInput, chase spinner', components: ['SubmitField', 'Button', 'CodeInput', 'Checkbox'] },
   { name: 'LogoPattern', title: 'Logo pattern (the loading and sign-in backdrop)', components: ['LogoPattern'] },
   { name: 'BareButton', title: 'Button (bare: a translucent fill, sized by the caller)', components: ['Button'] },
-  { name: 'Skeleton', title: 'Skeleton', components: ['Skeleton'] },
   { name: 'Dialogs', title: 'Dialogs (imperative popup layer — showDialog / showConfirm)', components: ['PopupHost', 'Button'] },
   { name: 'Modal', title: 'Modal (the dialog card: ModalShell, or Modal with ModalTitle and ModalActions)', components: ['Modal', 'ModalTitle', 'ModalActions', 'ModalShell', 'Button'] },
   { name: 'Tooltip', title: 'Tooltip (hover the chips)', components: ['Tooltip'] },
