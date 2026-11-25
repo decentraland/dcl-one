@@ -34,6 +34,7 @@ explorer = [
   "dep:alloy-core",
   "dep:wallet",
   "dep:analytics",
+  "dep:ban_block",
 ]
 
 [dependencies]
@@ -58,6 +59,7 @@ system_bridge = { workspace = true, optional = true }
 social = { workspace = true, optional = true }
 wallet = { workspace = true, optional = true }
 analytics = { workspace = true, optional = true }
+ban_block = { workspace = true, optional = true }
 
 bevy = { workspace = true }
 bevy_kira_audio = { workspace = true }

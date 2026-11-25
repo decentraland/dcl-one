@@ -19,6 +19,7 @@ use analytics::{
     },
     segment_system::{SegmentConfig, SegmentMetricsEvents},
 };
+use ban_block::BanBlock;
 use bevy::{platform::collections::HashMap, prelude::*};
 use common::{
     rpc::RpcStreamSender,
@@ -154,9 +155,11 @@ fn accept_local_reactions(
 }
 
 /// Peers' messages: what their sender may send is queued on the sender, to play one at a time.
+/// Nothing is taken from a sender the local user must not see.
 fn receive_reactions(
     mut commands: Commands,
     mut events: EventReader<ReactionEvent>,
+    ban_block: BanBlock,
     mut senders: Query<(
         &mut ReactionGuard,
         Option<&mut ReactionQueue>,
@@ -175,7 +178,12 @@ fn receive_reactions(
         let Ok((mut guard, queue, blocked)) = senders.get_mut(event.sender) else {
             continue;
         };
-        if blocked {
+        // the marker follows a block or ban by a frame or two, and a player who has just
+        // appeared has none yet: their first message is asked about by address
+        if blocked
+            || ban_block.is_blocked_either_way(event.from)
+            || ban_block.is_addr_banned_in_scene(event.from)
+        {
             stats.dropped.blocked += 1;
             continue;
         }

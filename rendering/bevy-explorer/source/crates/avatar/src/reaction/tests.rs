@@ -40,6 +40,9 @@ fn world() -> World {
     .add_event::<SystemApi>()
     .add_event::<ReactionEvent>()
     .init_resource::<AppConfig>()
+    // what a block or ban is asked of
+    .init_resource::<ban_block::PlatformBanStatus>()
+    .init_resource::<ban_block::SceneAdmission>()
     .insert_resource(wallet)
     .insert_resource(metrics)
     .insert_resource(SegmentConfig::new(
