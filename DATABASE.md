@@ -1950,7 +1950,7 @@ Workload: mainnet holds thousands of listings, of which hundreds are open
 Invariants:
 
 - `cancel_reason` is NULL unless the status is `cancelled` (a row `CHECK`).
-- Step `0064_rental_asset_membership_block` adds the metadata source block
+- Step `0067_rental_asset_membership_block` adds the metadata source block
   and published LAND membership block. Existing rows, parcels, and imported
   metadata start at zero; the next indexed fill records the versions. Create
   and refresh compare both block versions independently of the legacy
