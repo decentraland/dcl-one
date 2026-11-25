@@ -62,7 +62,7 @@ pub(crate) fn holds(
 ) -> bool {
     match purpose {
         Purpose::Authorize => {
-            let ethereum = chain_walk::mainnet_chain(ChainNet::Ethereum);
+            let ethereum = ChainNet::Ethereum.chain_id();
             if chain_walk::is_ready_on(cursor, ethereum, now) {
                 return true;
             }

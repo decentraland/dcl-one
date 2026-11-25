@@ -100,7 +100,8 @@ static EVENTS: LazyLock<Vec<Event>> = LazyLock::new(|| {
 });
 
 fn venues(net: ChainNet) -> Vec<(&'static str, Venue)> {
-    let mut venues: Vec<_> = nft_index::legacy_marketplaces(net)
+    let mut venues: Vec<_> = nft_index::deployments::Deployments::mainnet(net)
+        .markets
         .iter()
         .enumerate()
         .map(|(i, &(address, _))| {

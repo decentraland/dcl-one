@@ -185,8 +185,7 @@ pub fn complete(c: &Cursor) -> bool {
         && c.folded_block.is_some()
         && c.folded_at.is_some()
         && c.quarantined_at.is_none()
-        && ChainNet::parse(&c.network)
-            .is_some_and(|net| c.chain_id == Some(chain_walk::mainnet_chain(net)))
+        && ChainNet::parse(&c.network).is_some_and(|net| c.chain_id == Some(net.chain_id()))
 }
 
 /// [`complete`], published within [`READY_WINDOW`] at `now`.
@@ -752,7 +751,7 @@ pub(crate) mod test_support {
             )
             .bind(net.db_name())
             .bind(age.as_secs_f64())
-            .bind(chain_walk::mainnet_chain(*net))
+            .bind(net.chain_id())
             .execute(pool)
             .await
             .unwrap();

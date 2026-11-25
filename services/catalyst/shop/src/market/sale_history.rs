@@ -57,7 +57,8 @@ pub(super) fn validate_log(
     let required = match ix.indexer() {
         INDEXER_NFT => {
             topic.eq_ignore_ascii_case(nft_index::TOPIC_ORDER_SUCCESSFUL)
-                && nft_index::legacy_marketplaces(ix.net())
+                && nft_index::deployments::Deployments::mainnet(ix.net())
+                    .markets
                     .iter()
                     .any(|(address, _)| log.address.eq_ignore_ascii_case(address))
         }
@@ -149,7 +150,10 @@ fn group(addresses: impl IntoIterator<Item = &'static str>, topics: &[&str]) -> 
 fn groups(owner: &Owner) -> Vec<LogGroup> {
     let mut groups = match (owner.indexer, owner.net) {
         (INDEXER_NFT, net) => vec![group(
-            nft_index::legacy_marketplaces(net).iter().map(|v| v.0),
+            nft_index::deployments::Deployments::mainnet(net)
+                .markets
+                .iter()
+                .map(|v| v.0),
             &[nft_index::TOPIC_ORDER_SUCCESSFUL],
         )],
         (INDEXER_TRADE_EVENTS, net) => vec![group(
