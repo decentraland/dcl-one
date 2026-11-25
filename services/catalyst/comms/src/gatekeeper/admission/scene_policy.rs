@@ -195,8 +195,9 @@ pub(super) fn parse_xy(s: &str) -> Option<(i32, i32)> {
 }
 
 /// The LAND manager document of a Genesis parcel through the permission
-/// core (`Policy::land_document`: the `land_authz` index once its fold is
-/// published, else `COMMS_LAND_OPERATORS_URL`). Upstream's `getLandOperators`
+/// core (`Policy::land_document`: the attached `land_authz` index alone,
+/// unavailable until its fold is published; `COMMS_LAND_OPERATORS_URL` only
+/// without an index). Upstream's `getLandOperators`
 /// re-throws on a transport error and on any non-2xx, so a source fault
 /// reaches the caller as a rejection and never as "this parcel has no
 /// operators". Without any source v2 has no LAND evidence at all: that is
@@ -214,15 +215,26 @@ pub(super) async fn try_fetch_land_operators(
         Ok(None) => {
             tracing::debug!(
                 parcel,
-                "no LAND operator source (land-authz index not ready, COMMS_LAND_OPERATORS_URL unset); no LAND operator is protected"
+                "no LAND operator source (no land-authz index attached, COMMS_LAND_OPERATORS_URL unset); no LAND operator is protected"
             );
             Ok(None)
+        }
+        // The index's own name, on a ban and on an admin listing alike.
+        Err(e) if e.is_land_index_not_ready() => {
+            tracing::warn!(error = %e, parcel, "LAND operators undetermined: land-authz index not ready");
+            Err(service_unavailable(LAND_INDEX_UNREADY_MSG))
         }
         Err(e) => {
             tracing::warn!(error = %e, parcel, "LAND operators could not be read");
             Err(service_unavailable(LAND_OPERATORS_UNAVAILABLE_MSG))
         }
     }
+}
+
+/// Whether `error` is the attached land-authz index not being published
+/// ([`try_fetch_land_operators`]).
+fn is_land_index_unready(error: &ApiError) -> bool {
+    error.code == 503 && error.message == LAND_INDEX_UNREADY_MSG
 }
 
 /// The addresses a place's other permission surfaces grant: the world's
@@ -275,11 +287,18 @@ async fn try_get_land_operator_addresses(
     Ok(BTreeSet::new())
 }
 
-/// The listing's best-effort variant: an outage reads as no extra address.
-pub async fn get_extra_addresses(state: &CommsState, place: &PlaceInfo) -> BTreeSet<String> {
-    try_get_extra_addresses(state, place)
-        .await
-        .unwrap_or_default()
+/// The listing's best-effort variant: an outage reads as no extra address,
+/// except an attached land-authz index that is not published, which is an
+/// error: an empty set would mark every Genesis admin removable.
+pub async fn get_extra_addresses(
+    state: &CommsState,
+    place: &PlaceInfo,
+) -> Result<BTreeSet<String>, ApiError> {
+    match try_get_extra_addresses(state, place).await {
+        Ok(extra) => Ok(extra),
+        Err(e) if is_land_index_unready(&e) => Err(e),
+        Err(_) => Ok(BTreeSet::new()),
+    }
 }
 
 /// Holders of a linker-server lease over any of `parcels`, from the document
@@ -408,10 +427,10 @@ pub async fn names_for(
 /// An explicit active `scene_admins` row, else ownership of the place: the
 /// world's NAME (personal rule, then the name authority; never the stored
 /// owner) for a world, the LAND (a parcel directly or through its estate) for a
-/// Genesis place, all through `Policy::is_admin`. Without a marketplace
-/// reader a non-admin caller is refused (the old crate's "only explicit
-/// scene admins can moderate" degrade); a reader that cannot be asked is
-/// 503, never "not an owner".
+/// Genesis place, all through `Policy::is_admin`. Without a LAND index a
+/// non-admin caller is refused (the old crate's "only explicit scene admins
+/// can moderate" degrade); an index that cannot be read or is not published
+/// is 503, never "not an owner".
 pub async fn scene_owner_or_admin_decision(
     state: &CommsState,
     place: &PlaceLookup<'_>,

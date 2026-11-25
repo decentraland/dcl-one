@@ -4,13 +4,30 @@
   .root {
     display: inline-block;
     box-sizing: border-box;
-    width: 30px;
-    height: 30px;
+    width: var(--spinner-size, 30px);
+    height: var(--spinner-size, 30px);
     border: 4px solid;
     border-radius: var(--dcl-radius-full);
     border-top-color: var(--dcl-primary-primary);
     transform: rotate(45deg);
     animation: turn 1s linear infinite;
+  }
+
+  /* Fixed ring diameters and proportional stroke widths match Shop. Foundations cover the 16 and 24 px diameters. */
+  .root[data-size='16'] {
+    --spinner-size: var(--dcl-space-16);
+    border-width: 2px;
+  }
+  .root[data-size='20'] {
+    --spinner-size: 20px;
+    border-width: 3px;
+  }
+  .root[data-size='24'] {
+    --spinner-size: var(--dcl-space-24);
+    border-width: 3px;
+  }
+  .root[data-size='40'] {
+    --spinner-size: 40px;
   }
 
   .dark {

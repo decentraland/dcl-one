@@ -19,8 +19,10 @@
 //! open-listing reads leave it out.
 //!
 //! The verdicts close a trade only while the network's cursor is published
-//! (`chain_walk::is_ready`): an index still catching up could show a stale
-//! signature index as a cancellation, and would miss the latest executions.
+//! (`chain_walk::published_sql_on`: a fold published within 30 minutes; a
+//! pass in progress keeps the previous publish): an index still catching up
+//! could show a stale signature index as a cancellation, and would miss the
+//! latest executions.
 //! So the open-listing reads fail closed: every route that lists, prices or
 //! reports the status of trades answers the unavailable envelope naming
 //! this index until it is current on every network ([`require_current`],
@@ -914,7 +916,7 @@ pub async fn stale_networks_on(
 pub fn stale_message(stale: &[ChainNet]) -> String {
     let names: Vec<&str> = stale.iter().map(|n| n.db_name()).collect();
     format!(
-        "the trade-events index has not published a recent fold on {} (it must be within 30 minutes of the chain head): sold and cancelled off-chain listings cannot be told from open ones until it does",
+        "the trade-events index has not published a fold on {} within the last 30 minutes: sold and cancelled off-chain listings cannot be told from open ones until it does",
         names.join(" and ")
     )
 }
@@ -924,34 +926,48 @@ pub fn stale_message(stale: &[ChainNet]) -> String {
 /// prices or reports the status of trades (`trades::ready`). A database
 /// error reads as not current: the envelope, never a guess.
 pub async fn require_current(state: &MarketplaceState) -> Result<(), Response> {
-    let read = async {
-        let mut conn = state.pool.acquire().await?;
-        stale_networks_on(&mut conn, &ChainNet::ALL, Utc::now()).await
+    let mut conn = match state.pool.acquire().await {
+        Ok(conn) => conn,
+        Err(e) => return Err(unreadable(e)),
     };
-    match read.await {
+    require_current_on(&mut conn, Utc::now()).await
+}
+
+/// [`require_current`] read on `conn` at `now`: a reader that runs its
+/// reads in one snapshot decides on the cursors that snapshot sees.
+pub async fn require_current_on(
+    conn: &mut PgConnection,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), Response> {
+    match stale_networks_on(conn, &ChainNet::ALL, now).await {
         Ok(stale) if stale.is_empty() => Ok(()),
         Ok(stale) => Err(unavailable(
             Source::TradeEventsIndex,
             &stale_message(&stale),
         )),
-        Err(e) => {
-            tracing::warn!(error = %e, "cannot read shop.chain_cursor; treating the trade-events index as not current");
-            Err(unavailable(
-                Source::TradeEventsIndex,
-                "the trade-events index state cannot be read",
-            ))
-        }
+        Err(e) => Err(unreadable(e)),
     }
 }
 
+/// The envelope of a cursor read that failed: not current, never a guess.
+fn unreadable(e: sqlx::Error) -> Response {
+    tracing::warn!(error = %e, "cannot read shop.chain_cursor; treating the trade-events index as not current");
+    unavailable(
+        Source::TradeEventsIndex,
+        "the trade-events index state cannot be read",
+    )
+}
+
 /// The readiness rule of the trade-events cursor as the verdict SQL reads
-/// it: [`chain_walk::ready_sql_on`] with the chains this process serves
+/// it: the publish marker ([`chain_walk::published_sql_on`]: a fold
+/// published within 30 minutes, not `folded_block = last_block`, which every
+/// pass breaks while it walks and folds), with the chains this process serves
 /// ([`super::catalog::served_chains`], the trade-events walk's
 /// `MARKETPLACE_INDEX_CHAIN_ID_*`), so a cursor bound to another chain never
 /// lends its verdicts.
 fn verdicts_ready_sql(alias: &str, now_p: &str) -> String {
     let (ethereum, matic) = super::catalog::served_chains();
-    chain_walk::ready_sql_on(alias, now_p, ethereum, matic)
+    chain_walk::published_sql_on(alias, now_p, ethereum, matic)
 }
 
 /// The chain verdict of trade `t` (`sold` | `cancelled`), NULL when open or
@@ -1789,8 +1805,10 @@ pub(crate) mod tests {
         let sql = closed_on_chain_sql("t", "$1");
         assert!(
             sql.contains("tcs.trade_id = t.id")
-                && sql.contains("tcc.folded_block = tcc.last_block")
-                && sql.contains("$1 - interval '30 minutes'"),
+                && sql.contains("tcc.folded_block IS NOT NULL")
+                && !sql.contains("tcc.folded_block = tcc.last_block")
+                && sql.contains("$1 - interval '1800 seconds'")
+                && sql.contains("$1 + interval '600 seconds'"),
             "{sql}"
         );
         assert!(chain_status_sql("t", "$2").contains("tcs.status <> 'open'"));

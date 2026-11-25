@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import ManaMark from "../../atoms/ManaMark";
 import EmptyState from "../../components/EmptyState";
 import type { ShopClient } from "@shop/api/shop";
@@ -326,7 +326,7 @@ export default function LandsPage({ client, loadTiles }: LandsPageProps) {
               <Button size="sm" variant="secondary" onClick={tiles.reload}>
                 Try again
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setView(false)}>
+              <Button size="sm" variant="outline" onClick={() => setView(false)}>
                 Show the list instead
               </Button>
             </div>

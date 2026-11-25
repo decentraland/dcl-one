@@ -231,8 +231,8 @@ Trade digest upgrade: run `catalyst schema migrate` before deploying. Step `0069
 `shop.trades.trade_digest` and `shop.trade_chain_state.digest_failed_at`, and needs no backfill: the next
 trade-events fold settles every V3 trade's digest. Every route that lists, prices or reports the status of
 trades (the v3 catalog feeds and prices, orders, bids, the order legs of `/v1/nfts` and `/v1/items`) now answers
-the `trade-events-index` envelope until that index is current on both networks: a fold published within
-30 minutes of the chain head. `/v1/trades` keeps serving the stored records once the trades mirror is ready. Expect that while the walk catches up
+the `trade-events-index` envelope until that index is current on both networks: a fold published within the
+last 30 minutes (a pass in progress keeps the previous publish). `/v1/trades` keeps serving the stored records once the trades mirror is ready. Expect that while the walk catches up
 or rebuilds. The explorer map's grid also waits for it on Ethereum. A node that does not walk the index
 (`MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED`, on under the mirror posture) answers the envelope on those routes.
 

@@ -1907,10 +1907,41 @@ changed since the listing was created. It writes `dissolved` for an estate
 without parcels once the index head is newer than the listing. The index
 reads run only on a published land-authz snapshot. The refresh route
 (`PATCH /v1/rentals-listings/{id}`) applies the fold and the same cancellation
-rules to one listing, using the asset row that the marketplace subgraph reader
-returned when that row is newer than `rental_assets.nft_updated_at`. The
-route then writes the row to `signatures.rental_assets` only when it is no
-older than the stored one, so a lagging reader replaces no metadata.
+rules to one listing. A third-party transfer must postdate listing creation.
+Dissolution requires a membership observation after listing creation whose
+block is at least the stored membership block. The refresh also compares the
+metadata source block before using the asset to close a listing or update
+its metadata.
+
+Create and refresh bind the asset read to the signed or stored listing chain.
+On mainnet nodes with the NFT walk enabled, they read the NFT index
+publication and LAND rights in one database snapshot.
+Incomplete mint or transfer times, an unavailable publication, or a document
+beyond the LAND fold returns the unavailable envelope. A transfer beyond the
+NFT publication also waits for metadata to catch up. The NFT index publishes
+Ethereum mainnet metadata. A mainnet NFT walker uses published LAND to
+authorize the direct owner and returns 401 when a third party owns the token.
+It checks the observed LAND revision in the insertion transaction. During a
+Rentals outage an existing open listing still returns 409. A listing by a lessor whose asset is in Rentals
+custody requires a published Rentals cursor and a rent at or after the LAND
+transfer into custody. PATCH rechecks a current custody observation when a
+later Rentals publication names the lessor, even if its first refresh already
+saved the transfer time. The status job reads the Rentals publication and
+the rent in its LAND snapshot. A dissolution write locks the asset and
+rechecks its membership version before closing the listing. The periodic job can
+establish a third-party transfer or dissolution from published LAND alone.
+Only a transfer verdict based on venue custody requires the Rentals publication.
+Writes hold shared locks on the observed cursor rows until commit, so a concurrent
+rewind or ordinary cursor update waits for the write transaction.
+
+Nodes that do not walk the NFT index, including Sepolia, read listing assets
+from the configured marketplace subgraph. The subgraph reports transfer time
+in seconds and the block number and time of its estate membership snapshot. A missing or
+unavailable subgraph returns the marketplace-subgraph unavailable envelope.
+A walking node always uses its local publications. Each indexed asset lookup
+reads the LAND and NFT publications in a single snapshot, probes the token,
+its document and its first and latest transfers, and reads parcel proximity.
+For an estate it also scans its member parcels to compute size and proximity.
 
 Workload: mainnet holds thousands of listings, of which hundreds are open
 (an estimate, not a measurement). Each pass does the following:
@@ -1920,22 +1951,31 @@ Workload: mainnet holds thousands of listings, of which hundreds are open
 - One snapshot select over the open rows of the LAND and Estate registries,
   with one primary-key probe into `land_authz.token_right` per row, one
   `authz_event_ownership_idx` probe for the latest transfer, one
-  `estate_land_estate_idx` probe per estate and, while the `rentals` index is
-  published, one `rental_event_asset_idx` probe for the asset's latest rent.
+  `estate_land_estate_idx` probe per estate and, while the chain-matched
+  Rentals index is published, one `rental_event_asset_idx` probe for the
+  asset's latest rent.
 - One batched `UPDATE` by id, guarded by `status = 'open'`.
 
 Invariants:
 
 - `cancel_reason` is NULL unless the status is `cancelled` (a row `CHECK`).
-- The routes never move `rental_assets.nft_updated_at` backwards, and a
-  reader row older than the stored one replaces no asset detail. The refresh
-  route skips such a row. The create route still creates the listing, and
-  its upsert keeps the stored category, search text, distance to plaza, road
-  adjacency, estate size, `fetched_at` and time; a row that is not older
-  replaces them. A reader that answers from an older block
-  and then from a less old one therefore cannot pass the refresh route's
-  newer-row test. The signatures-server import writes the upstream time as
-  it is.
+- Step `0067_rental_asset_membership_block` adds the metadata source block
+  and published LAND membership block. Existing rows, parcels, and imported
+  metadata start at zero; the next indexed fill records the versions. Create
+  and refresh compare both block versions independently of the legacy
+  `nft_updated_at` timestamp, so a current indexed snapshot replaces
+  preexisting subgraph-era metadata even when its event timestamp is older.
+  `nft_updated_at` remains the greatest observed timestamp. Equal block
+  evidence can refresh the row.
+- The routes never move `rental_assets.nft_updated_at` backwards. Metadata
+  details are guarded by `metadata_block` and `membership_block`, not by that
+  legacy timestamp; an older published source version replaces no details,
+  while the next current snapshot can replace imported or subgraph-era values.
+  Create still creates the listing when its source version is older, and its
+  upsert keeps the stored metadata. The refresh route skips an older source
+  version. A reader that answers from an older block and then a less old one
+  cannot pass the newer-row test. The signatures-server import resets both
+  block versions to zero.
 - A cancellation with no recorded cause keeps NULL. Rows imported from
   signatures-server, which records no cause, are of this kind.
 - A reopening never makes a second open listing of an asset
@@ -1966,20 +2006,14 @@ Invariants:
 - A cancellation that is not a nonce move is never undone, so an unknown never
   cancels. No published index, no indexed token, or an indexed transfer older
   than the listing all leave the listing open.
-- A token the Rentals contract owns keeps its listing unless an indexed rent
-  shows that the contract holds it for another lessor. The asset's latest
-  `rented` row in `shop.rental_event` counts only when it is no older than
-  the token's arrival in the contract, because an older rent means the
-  `rentals` index has not reached the rent the token arrived under (an
-  accepted offer, for example). The job requires the rent's `block_number` to
-  be at or after that of the latest folded `transfer` in
-  `land_authz.authz_event`: both indexes commit whole blocks of the same
-  chain, and a rent either moves the token in its own transaction or finds
-  it already in the contract. The refresh route has no chain position for the
-  subgraph's asset row, so it requires the rent's `block_time` to be at or
-  after the row's `updatedAt`. When that row was updated again after the
-  rent, the route decides nothing and the job's block comparison decides.
-  While the `rentals` index is not published, neither path reads custody.
+- For a token owned by the mainnet Rentals contract, a published rent at or
+  after the latest transfer into the venue identifies its lessor. Once the
+  Rentals cursor covers that transfer, an absent or older rent establishes
+  that nobody holds custody. Create returns 401 and a later transfer closes
+  an open listing as `transferred`. While the cursor trails the arrival,
+  create returns the `rentals-index` unavailable response and status leaves
+  the listing open. Sepolia reads ownership from the marketplace subgraph.
+  At its venue, create refuses relisting and status leaves custody unknown.
 - The signatures-server import keeps a node reason only while upstream also
   says `cancelled`, and clears it otherwise. It skips an upstream row older
   than the stored one, except that an upstream `executed` or `claimed`
@@ -2816,9 +2850,12 @@ Invariants:
   newer than the backoff, so the step's loop ends. A permanent failure costs
   one rebuild per trade every 10 minutes.
 - The open-listing reads (`unified_trades`, `/v1/bids`) list a trade only
-  while its network's trade-events cursor is current
-  (`chain_walk::ready_sql_on`), in the same statement. A trade that is sold,
-  cancelled or marked is not listed. The routes that list, price or report
+  while its network's trade-events cursor holds a publish
+  (`chain_walk::published_sql_on`: a fold published within 30 minutes; a
+  pass in progress keeps the previous publish), in the same statement. A
+  trade that is sold, cancelled or marked is not listed. A marked trade
+  still counts in the duplicate-listing refusal: it may still execute, or
+  be verified later. The routes that list, price or report
   the status of trades refuse with the `trade-events-index` envelope until
   the index is current on both networks. `/v1/trades` and
   `/v1/trades/{id}` serve the stored records, which carry no status, so
@@ -3270,6 +3307,7 @@ a cleaned row deleted, and the place's `place_removal_state` row with it once
 neither catalogue holds the place and no pending row for it remains. Its context lookups read
 `explore.place_indexed`, joined to `content.active_pointers` and
 `content.deployments` for shared-scene rooms, by primary key or world name.
+Its cleanup ends the stream keys of the removed place ("Scene stream keys").
 Neither table has an FK: queue rows outlive catalogue deletion.
 
 Workload and invariants for removal notices: one immutable recipient set per
@@ -3438,6 +3476,76 @@ Invariants:
   (`infra/containers/README.md`, "Scene admin upgrade").
 - A kick intent queued before the release names the entity id; the removal
   job reads its ban again on the scene's place (`legacy_ban_key`).
+
+## Scene stream keys
+
+`social.scene_stream_access` (`schemas/40_social.sql`) holds at most one active
+stream key for each `place_id` (`scene_stream_access_active_place_key`). The
+place of a Genesis scene's key is the catalogue place based on its base parcel;
+the place of a world scene's key is the scene's place
+(`ActiveDeployment::place_key`, its `explore.world_scene_place` identity), so
+each scene of a world has its own key, streaming into its own room
+([ADR](docs/adr/2026-11-21-world-stream-keys-per-scene.md)).
+
+Workload: each scene-signed stream verb and stream link first rechecks the
+keys of its place and, for a world scene, of its room (one read each and one
+authority decision per key found, usually one or none), then reads the active
+key it acts on; a watcher token reads that key alone. Hundreds a day: a
+Genesis key by place (the partial unique index), a world scene's key by room
+(`scene_stream_access_active_room_idx`), over hundreds of active rows. A
+watcher of a world without a parcel, and a stream link of a world scene, count
+the world's `worlds.world_scenes` rows up to two; a watcher of a multi-scene
+world without a parcel reads the world's active scene-room keys up to two.
+A world scene's mint, reset and presenter routes read whether its world has a
+listed catalogue place (`explore.place`, `explore.place_world_local`, by
+`world_name`, not disabled other than by an opt-out, the reason read from
+`explore.place_moderation` by primary key); a revocation whose recheck ended a replaced key reads that
+key's room binding (`explore.world_scene_place`, `explore.world_scene_binding`,
+by primary key). A held row that cannot move is revoked after one LiveKit
+`ListIngress`.
+
+Invariants:
+
+- A world scene's key is the active key streaming into its room. A row under
+  the scene's place that streams into another room is not this scene's: an
+  imported world-scene identity is a place UUID and can equal the catalogue id
+  a world's single key was stored under, so the room, not the place, decides.
+  Before a world scene stores a key under its place, such a row moves to the
+  place of the scene of its room, which keeps its stream; when it cannot (its
+  room has no scene, or that scene has a key of its own) it is revoked while
+  idle and still under that place, before any ingress is minted; a live one
+  answers 409. The move bumps the row's `streaming_state_version`, so a
+  revocation read before a concurrent move is not stored.
+- A key minted under the world's catalogue place before keys were per scene
+  stays the key of the scene whose room it streams into: that scene reads,
+  resets and revokes it, and its replacement is stored under the scene's place.
+  It ends at its first replacement, a revocation or its expiry: four days, or
+  later while a broadcast that was live at the deadline goes on (at most the
+  four-hour streaming cap). Publisher identities keep the place they were
+  minted under; a revocation evicts by room and credential, whatever the place.
+- A removed world ends every active key whose room is one of its scene rooms
+  (`starts_with(room_id, <world room prefix>)`), the catalogue place's
+  included. Any removal event of a world place does, also one for a single
+  scene's Places row, as the grant cleanup revokes the grants of every scene
+  of the world. A removed Genesis place ends its own key and no key streaming
+  into a world scene room.
+- The notice of a world scene key's cleanup names the world (its catalogue
+  place, else the world alone) with the footprint of the scene of the key's
+  room, so the holders of its parcels are told; its owner is the world's.
+- Of several active keys streaming into one room, every reader by room
+  takes the one under its own scene's place (`place_id = admin_place_key`),
+  then the newest (`streaming::ROOM_KEY_ORDER`): the verbs and the presenter
+  routes act on the same key.
+- A held row is moved only to a current scene (one with an identity), and
+  revoked only while LiveKit reports its ingress idle.
+- Rollout: stop the old API replicas before the new binaries serve. An old
+  replica stores a world key under the world's catalogue place, with its
+  scene in `admin_place_key`; the `BEFORE INSERT` trigger
+  `scene_stream_access_scene_place` refuses a `w1:` room row whose
+  `admin_place_key` is set and differs from `place_id`, so its mint fails
+  instead of adding a second key to the room. Imported rows (`admin_place_key`
+  NULL), updates and stored rows are untouched. Drop the trigger before
+  rolling back to an older binary.
 
 ## Stream key notifications
 
@@ -3907,6 +4015,30 @@ skewed popularity, 300,000 owners of whom 20 hold about 30,000 tokens each,
 - `/v1/nfts`: an owner's `category=wearable` page 95 ms and its capped total
   131 ms for the 30,000-token owner, under 1 ms for a typical owner (with the
   names leg when no category is named).
+
+On a mainnet NFT walker, a LAND or estate `/v1/nfts` page reads the LAND
+publication and the required NFT publications in one repeatable-read snapshot.
+Both owner searches and ownerless catalogue pages read the collections, NAME
+and LAND sources that their filters can include. This includes unfiltered
+browsing, search, sale filters and sorting. A missing required publication returns its source's 503
+for the whole page. The rental-status filter, page, count, estate members,
+rental listings and open order enrichment all use the same snapshot. An empty
+rental filter result is returned only after the publication checks.
+
+An owner filter that includes LAND also reads the mainnet Rentals publication.
+It finds the wallet's candidate rents with `rental_event_lessor_idx` and the
+latest published rent or claim per asset with `rental_event_asset_idx`.
+An unclaimed rent counts past expiry while the venue owns the token and the
+rent covers its latest transfer into custody. Each event query stops at its
+source's published height. Owner pages can use the last fresh Rentals fold
+while the walker processes a newer window. A published claim ends the rental
+match immediately. Direct ownership becomes visible when LAND publishes the
+transfer back. Before routing owner inventory to a mainnet walker, check
+`ethereum.fullHistory` and `ethereum.ready` at
+`GET /signatures-api/v1/rentals-index` on that node. If Rentals has yet to publish
+through a transfer into the venue, the owner page returns the `rentals-index`
+503. Both page and count include these assets, and the NFT still reports its
+on-chain owner.
 
 The `/v1/nfts` page without an owner reads each source's first `first +
 skip` rows under the filters and the sort, then sorts and pages their union,

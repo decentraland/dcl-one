@@ -688,7 +688,6 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'ETH_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-ethereum-mainnet',
             'MATIC_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-matic-mainnet',
             'MARKETPLACE_SUBGRAPH_URL': 'https://subgraph.decentraland.org/marketplace',
-            'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager',
             'MARKETPLACE_NFT_INDEX_ENABLED': 'true', 'LAND_AUTHZ_INDEX_ENABLED': 'true',
             'SHOP_RENTALS_INDEX_ENABLED': 'true',
             # The Shop's listings wait for the trade-events index to be current on both networks (its
@@ -737,7 +736,6 @@ def testnet_env(config, refuse_exposed_relayer=True):
         'ETH_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-ethereum-sepolia',
         'MATIC_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-matic-amoy',
         'MARKETPLACE_SUBGRAPH_URL': 'https://subgraph.decentraland.org/marketplace-sepolia',
-        'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager-sepolia',
         'ETH_RPC_URL': 'https://rpc.decentraland.org/sepolia',
         'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/amoy',
         'TRADE_RPC_URLS': '80002=https://rpc.decentraland.org/amoy,11155111=https://rpc.decentraland.org/sepolia',

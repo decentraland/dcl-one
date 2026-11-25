@@ -1590,7 +1590,7 @@ async fn the_listing_routes_fail_closed_until_the_trade_events_index_is_current_
         .unwrap();
     let (code, _, message) = listing_gate(&st).await;
     assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{message}");
-    assert!(message.contains("on ethereum ("), "{message}");
+    assert!(message.contains("fold on ethereum within"), "{message}");
     assert_eq!(
         listed_ids(&db.pool).await,
         vec![id.clone()],
@@ -1600,8 +1600,57 @@ async fn the_listing_routes_fail_closed_until_the_trade_events_index_is_current_
     trade_events::tests::publish_cursors(&db.pool).await;
     assert_eq!(listing_gate(&st).await.0, StatusCode::OK);
 
-    // The cursor falls behind after the gate: the statement drops the trade,
-    // and the next gate refuses; the records stay served.
+    // A pass in progress (its windows advanced `last_block`, its fold has not
+    // published yet) keeps the previous publish: the routes serve, the trade
+    // stays listed, and a sold one stays closed.
+    let (sold, _) = seed_trade(
+        &db.pool,
+        "public_nft_order",
+        ALICE,
+        "0x00000000000000000000000000000000000000aa",
+        1,
+        0,
+        (3, "0x00000000000000000000000000000000000000c1", "2"),
+        (1, ZERO, "1"),
+    )
+    .await;
+    sqlx::query("INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1::uuid, 'matic', 1, 'sold', 10)")
+        .bind(&sold)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = last_block + 500 WHERE indexer = 'trade_events'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(listing_gate(&st).await.0, StatusCode::OK, "mid-pass");
+    assert_eq!(listed_ids(&db.pool).await, vec![id.clone()], "mid-pass");
+
+    // The walker's clock a few minutes ahead of the reader's still counts;
+    // past the skew allowance it does not.
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) + interval '5 minutes' WHERE indexer = 'trade_events'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(listing_gate(&st).await.0, StatusCode::OK, "within the skew");
+    assert_eq!(listed_ids(&db.pool).await, vec![id.clone()]);
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) + interval '11 minutes' WHERE indexer = 'trade_events'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        listing_gate(&st).await.0,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "past the skew"
+    );
+    assert!(listed_ids(&db.pool).await.is_empty());
+    trade_events::tests::publish_cursors(&db.pool).await;
+
+    // The publish is withdrawn after the gate (a rewind, a divergence): the
+    // statement drops the trade, and the next gate refuses; the records stay
+    // served.
     sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL WHERE indexer = 'trade_events' AND network = 'matic'")
         .execute(&db.pool)
         .await
@@ -1614,7 +1663,8 @@ async fn the_listing_routes_fail_closed_until_the_trade_events_index_is_current_
 
 /// `/v1/bids` reports a bid only while its network's trade-events index is
 /// current, and never a V3 bid whose cancellation digest could not be
-/// established: its cancellation would go unseen.
+/// established: its cancellation would go unseen. A pass in progress keeps
+/// the previous publish: a sold bid stays `sold`, never `open`.
 #[tokio::test]
 async fn an_unverifiable_v3_bid_is_not_reported() {
     let Some(db) = ScratchDb::create().await else {
@@ -1639,30 +1689,44 @@ async fn an_unverifiable_v3_bid_is_not_reported() {
             .0
         }
     };
-    let (kept, unverifiable) = (bid("1").await, bid("2").await);
+    let (kept, unverifiable, sold) = (bid("1").await, bid("2").await, bid("3").await);
     sqlx::query("INSERT INTO shop.trade_chain_state (trade_id, network, status, folded_block, digest_failed_at) VALUES ($1::uuid, 'matic', 'open', 10, timezone('UTC', now()))")
         .bind(&unverifiable)
         .execute(&db.pool)
         .await
         .unwrap();
+    sqlx::query("INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1::uuid, 'matic', 1, 'sold', 10)")
+        .bind(&sold)
+        .execute(&db.pool)
+        .await
+        .unwrap();
     let reported = || async {
-        let mut ids: Vec<String> = sqlx::query_as::<_, (String, String)>(sqlx::AssertSqlSafe(
-            super::bids::test_trades_bids_sql(),
-        ))
+        let mut rows: Vec<(String, String)> = sqlx::query_as::<_, (String, String)>(
+            sqlx::AssertSqlSafe(super::bids::test_trades_bids_sql()),
+        )
         .bind(chrono::Utc::now().naive_utc())
         .bind(None::<chrono::NaiveDateTime>)
         .fetch_all(&db.pool)
         .await
-        .unwrap()
-        .into_iter()
-        .map(|(id, _)| id)
-        .collect();
-        ids.sort();
-        ids
+        .unwrap();
+        rows.sort();
+        rows
     };
     assert!(reported().await.is_empty(), "no cursor, no bid");
     trade_events::tests::publish_cursors(&db.pool).await;
-    assert_eq!(reported().await, vec![kept]);
+    let mut want = vec![
+        (kept.clone(), "open".to_string()),
+        (sold.clone(), "sold".to_string()),
+    ];
+    want.sort();
+    assert_eq!(reported().await, want);
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = last_block + 500 WHERE indexer = 'trade_events'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(reported().await, want, "mid-pass");
     db.drop().await;
 }
 
@@ -3875,6 +3939,10 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
         (wearable.as_deref(), issued.as_deref()),
         (Some("jester_feet"), Some("1"))
     );
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+        SELECT 'rentals',network,start_block,last_block,folded_block,folded_at,true,chain_id
+        FROM shop.chain_cursor WHERE indexer='nft' AND network='ethereum'")
+        .execute(&db.pool).await.unwrap();
     // A read naming no category also answers the owner's names and LAND,
     // their indexes being published.
     let (code, body) = get_json(&app, &format!("/v1/nfts?owner={ALICE}&network=ETHEREUM")).await;
@@ -5582,10 +5650,13 @@ async fn the_rentals_index_attaches_behind_its_switch_and_chain_endpoints() {
     assert_eq!(index.indexer(), "rentals_sepolia");
     assert_eq!(index.chain_id(), 11_155_111);
     assert_eq!(index.start_block(), 3_831_254);
-    assert!(
-        both.iter()
-            .any(|projection| projection.lease == "rentals-index-ethereum")
-    );
+    let mainnet = both
+        .iter()
+        .find(|projection| projection.lease == "rentals-index-ethereum")
+        .unwrap();
+    let longest_retry = mainnet.cfg.wait_after_failure(u32::MAX);
+    assert!(longest_retry <= std::time::Duration::from_secs(30));
+    assert!(longest_retry < chain_walk::READY_WINDOW.to_std().unwrap());
     assert!(
         super::chain_jobs::projections(&with_sepolia, ChainNet::Ethereum, Some(false))
             .iter()

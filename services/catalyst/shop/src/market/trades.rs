@@ -415,13 +415,28 @@ pub enum NotReady {
 /// every network (`trade_events::require_current`), which the open-listing
 /// reads close sold and cancelled trades by.
 pub async fn ready(state: &MarketplaceState) -> Result<Readiness, Response> {
-    let readiness = readiness(state).await.map_err(mirror_refusal)?;
+    let readiness = readiness(state).await.map_err(not_ready_response)?;
     super::trade_events::require_current(state).await?;
     Ok(readiness)
 }
 
+/// [`ready`] on `conn` at `now`: the mirror's pass marker (uncached) and the
+/// trade-events verdicts read on the snapshot the reads that follow run on
+/// (the nft pages read from the database).
+pub async fn ready_on(
+    state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
+    now: DateTime<Utc>,
+) -> Result<Readiness, Response> {
+    let readiness = readiness_on(state, conn, now)
+        .await
+        .map_err(not_ready_response)?;
+    super::trade_events::require_current_on(conn, now).await?;
+    Ok(readiness)
+}
+
 /// The answer to a [`NotReady`] pass marker: the `trades-mirror` envelope.
-fn mirror_refusal(not_ready: NotReady) -> Response {
+pub(super) fn not_ready_response(not_ready: NotReady) -> Response {
     match not_ready {
         NotReady::Refused(why) => unavailable(Source::TradesMirror, &why),
         NotReady::Database(e) => {
@@ -519,7 +534,10 @@ pub async fn require_ready(state: &MarketplaceState) -> Result<(), Response> {
 /// no status (`/v1/trades`, `/v1/trades/{id}`): the mirror's pass only. The
 /// trade-events verdicts do not change what they answer.
 pub async fn require_mirror_ready(state: &MarketplaceState) -> Result<(), Response> {
-    readiness(state).await.map(|_| ()).map_err(mirror_refusal)
+    readiness(state)
+        .await
+        .map(|_| ())
+        .map_err(not_ready_response)
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

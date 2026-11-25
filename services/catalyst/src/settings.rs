@@ -40,7 +40,6 @@ pub(crate) fn market_settings(
                 .matic_collections_subgraph_url
                 .clone(),
             marketplace_subgraph_url: config.market_upstreams.marketplace_subgraph_url.clone(),
-            land_subgraph_url: config.market_upstreams.land_subgraph_url.clone(),
             trades_sync_upstream_url: config.market_upstreams.trades_sync_upstream_url.clone(),
             trades_sync_interval_secs: config.market_upstreams.trades_sync_interval_secs,
             trades_sync_pages_per_run: config.market_upstreams.trades_sync_pages_per_run,

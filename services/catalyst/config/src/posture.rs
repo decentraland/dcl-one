@@ -332,13 +332,6 @@ const ROWS: &[Row] = &[
     // lamb2's `/collections/wearables` takes `collectionId`, `wearableId`
     // and `textSearch` by default; operators can opt in to extended filters.
     same("lambdas", "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", "false"),
-    // lamb2's LAND subgraph: parcel operators and permissions until the
-    // land-authz index is published.
-    upstream(
-        "mirrors",
-        "LAND_SUBGRAPH_URL",
-        "https://subgraph.decentraland.org/land-manager",
-    ),
     mirrored("indexes", "MARKETPLACE_NFT_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_SALES_INDEX_ENABLED"),

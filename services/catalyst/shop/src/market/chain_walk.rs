@@ -886,16 +886,21 @@ pub fn mainnet_chain(net: ChainNet) -> i64 {
 /// chain `chain_id`: a whole history folded through its last block within
 /// [`READY_WINDOW`], bound to that chain and not in quarantine.
 pub fn is_ready_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
-    let Some(folded_at) = c.folded_at else {
-        return false;
-    };
-    let age = now.naive_utc().signed_duration_since(folded_at);
-    c.full_history
-        && c.folded_block == Some(c.last_block)
-        && c.chain_id == Some(chain_id)
-        && c.quarantined_at.is_none()
-        && age >= ChronoDuration::zero()
-        && age <= READY_WINDOW
+    fresh_fold_on(c, chain_id, now) == Some(c.last_block)
+}
+
+/// The published height for a reader that bounds every event query by that
+/// height. A forward walk may already have committed the next window.
+pub(super) fn fresh_fold_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> Option<i64> {
+    let age = now.naive_utc().signed_duration_since(c.folded_at?);
+    c.folded_block.filter(|folded| {
+        c.full_history
+            && *folded <= c.last_block
+            && c.chain_id == Some(chain_id)
+            && c.quarantined_at.is_none()
+            && age >= ChronoDuration::zero()
+            && age <= READY_WINDOW
+    })
 }
 
 /// [`is_ready_on`] for the indexes that read mainnet only: every index but
@@ -923,6 +928,27 @@ pub fn ready_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: 
           AND {alias}.chain_id = CASE {alias}.network WHEN 'ethereum' THEN {ethereum_chain}::bigint WHEN 'matic' THEN {matic_chain}::bigint END \
           AND {alias}.quarantined_at IS NULL \
           AND {alias}.folded_at <= {now_p} AND {alias}.folded_at >= {now_p} - interval '30 minutes')"
+    )
+}
+
+/// The publish marker alone as SQL, for the fail-closed readers of an index
+/// whose every pass advances `last_block` before it folds and publishes
+/// (`trade_events`; the `nft` readers' `owned_items::Rule::Fresh`): the whole
+/// history walked, a fold published (`folded_block`, cleared by every
+/// rewind, divergence, unpublish, quarantine and rebuild) within
+/// [`READY_WINDOW`] of the caller's clock, bound to the expected chain and
+/// out of quarantine, without `folded_block = last_block`, which a pass
+/// breaks for as long as it walks and folds. `folded_at` is the walker's
+/// clock: one up to [`MAX_CLOCK_SKEW`] ahead of the caller's still counts.
+pub fn published_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: i64) -> String {
+    format!(
+        "({alias}.full_history AND {alias}.folded_block IS NOT NULL \
+          AND {alias}.chain_id = CASE {alias}.network WHEN 'ethereum' THEN {ethereum_chain}::bigint WHEN 'matic' THEN {matic_chain}::bigint END \
+          AND {alias}.quarantined_at IS NULL \
+          AND {alias}.folded_at <= {now_p} + interval '{skew} seconds' \
+          AND {alias}.folded_at >= {now_p} - interval '{window} seconds')",
+        skew = MAX_CLOCK_SKEW.num_seconds(),
+        window = READY_WINDOW.num_seconds(),
     )
 }
 
