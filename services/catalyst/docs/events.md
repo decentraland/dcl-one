@@ -85,6 +85,24 @@ Event rows honor in-app preferences at their first insertion. A hidden row is re
 
 Every newly stored event notice also enters `social.notification_deliveries` for the `email` channel, governed by the recipient's social subscription (`ignore_all_email`, per-type settings, community opt-outs), not by the legacy `notify_by_email` profile flag; the old service's own email and web-push code was dead. See `docs/adr/2026-11-01-event-notification-delivery.md`.
 
+## Who listens to legacy event messages
+
+The legacy events service announces event changes (created, approved, rejected, deleted, starting soon, started, ended) on the platform's shared message bus. This node does not post to that bus, so once the legacy service stops, anything listening for those messages stops hearing them.
+
+| Listener | What it does with them | After the switch |
+| --- | --- | --- |
+| Notifications | Inbox notices | This node sends them itself |
+| Engagement | The same inbox notices | This node sends them itself |
+| Social (event ended only) | Community event metrics | This node records them itself |
+| Badges | Nothing | Safe to drop |
+
+Every other listener on the bus ignores event messages. Two things to keep in mind:
+
+- The discovery service can post the same event messages to the bus, so listeners may keep receiving some of them after the legacy service stops.
+- The badges attendance sync, which is off today, reads the legacy events website directly rather than the bus. It would need a new source if it is turned on.
+
+This list comes from the infrastructure configuration. Before the legacy service stops, check the bus's live subscriptions for anything not listed here.
+
 ## Conditional repair for an early staging default
 
 No automatic historical rewrite is performed. This repair applies only to a deployment whose rows store the website's absolute default. Check the affected deployment and take a database backup before any authorized maintenance.
