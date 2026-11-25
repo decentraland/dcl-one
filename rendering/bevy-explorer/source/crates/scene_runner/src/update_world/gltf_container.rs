@@ -255,7 +255,8 @@ impl GltfLoaded {
 
 /// The value the model was loaded for: a scene may put the same value again, which keeps it.
 #[derive(Component)]
-struct GltfSource(PbGltfContainer);
+pub(crate) struct GltfSource(PbGltfContainer);
+
 #[derive(Component, Default)]
 pub struct GltfProcessed {
     pub instance_id: Option<InstanceId>,
