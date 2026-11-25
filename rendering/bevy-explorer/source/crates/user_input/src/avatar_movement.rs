@@ -374,6 +374,9 @@ pub struct ActivePlayerComponent<C: Component> {
     /// The scene's `tick_number` when `component` was picked. A later reply of the scene, even in
     /// the same frame, ends a latest-frame choice.
     scene_last_tick: u32,
+    /// The frame in which a latest-frame pick took `component`. A second reply of the same scene
+    /// in that frame keeps the one-shot fields of the first.
+    picked_frame: Option<u32>,
     scene_start_tick: u32,
     scene_is_portable: bool,
     /// Engine dispatch time (`RendererSceneContext::reply_sent`) of the scene tick
@@ -406,6 +409,7 @@ impl<C: Component + FromConfig> FromConfig for ActivePlayerComponent<C> {
             scene: Entity::PLACEHOLDER,
             entity: Entity::PLACEHOLDER,
             scene_last_tick: 0,
+            picked_frame: None,
             scene_start_tick: 0,
             scene_is_portable: true,
             initiated_at: 0.0,
@@ -526,6 +530,7 @@ impl<C: Component + Clone + FromConfig> ActivePlayerComponent<C> {
                 scene: scene_ent.root,
                 entity,
                 scene_last_tick: ctx.tick_number,
+                picked_frame: None,
                 scene_start_tick: ctx.start_tick,
                 scene_is_portable: ctx.is_portable,
                 initiated_at: ctx.reply_sent,
@@ -549,7 +554,6 @@ impl ActivePlayerComponent<AvatarMovement> {
         player_res: Res<PrimaryPlayerRes>,
         config: Res<AppConfig>,
         frame: Res<FrameCount>,
-        mut picked_in: Local<Option<u32>>,
     ) {
         let Ok(mut current_choice) = player.single_mut() else {
             commands.entity(player_res.0).try_insert(
@@ -567,7 +571,7 @@ impl ActivePlayerComponent<AvatarMovement> {
         ) {
             // a re-dispatch can bring a second reply of the scene in the same frame, and the
             // components are read once a frame
-            if *picked_in == Some(frame.0)
+            if current_choice.picked_frame == Some(frame.0)
                 && choice.scene == current_choice.scene
                 && choice.entity == current_choice.entity
             {
@@ -575,7 +579,7 @@ impl ActivePlayerComponent<AvatarMovement> {
                     .component
                     .keep_one_shot_fields(&current_choice.component);
             }
-            *picked_in = Some(frame.0);
+            choice.picked_frame = Some(frame.0);
             *current_choice = choice;
         }
     }
@@ -621,6 +625,7 @@ fn choose_latest_frame<'a, C: Component + Clone + FromConfig>(
             scene: scene_ent.root,
             entity,
             scene_last_tick: ctx.tick_number,
+            picked_frame: None,
             scene_start_tick: ctx.start_tick,
             scene_is_portable: ctx.is_portable,
             initiated_at: ctx.reply_sent,

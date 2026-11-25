@@ -87,6 +87,7 @@ fn world_with_player(position: Vec3, velocity: Vec3) -> (World, Entity) {
                 scene: Entity::PLACEHOLDER,
                 entity: Entity::PLACEHOLDER,
                 scene_last_tick: 0,
+                picked_frame: None,
                 scene_start_tick: 0,
                 scene_is_portable: true,
                 initiated_at: 1.0,
