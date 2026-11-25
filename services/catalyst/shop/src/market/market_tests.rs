@@ -3748,28 +3748,14 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     ).bind(height).bind(venue).bind(PAYER).bind(SELLER).bind(assets).bind(&hash).execute(pool).await.unwrap();
     sqlx::query("INSERT INTO shop.nft_contract(network,contract_address,walked_from_block) VALUES('matic',$1,$2)")
         .bind(CREATOR).bind(height).execute(pool).await.unwrap();
-    let empty: &[&str] = &[];
-    sqlx::query(include_str!("sale_fold/executions.sql"))
-        .bind("matic")
-        .bind(height - 1)
-        .bind(height)
-        .bind(empty)
-        .bind("")
-        .bind("")
-        .bind(empty)
-        .bind([venue].as_slice())
-        .bind(empty)
-        .execute(pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("sale_fold/legs.sql"))
-        .bind("matic")
-        .bind(height - 1)
-        .bind(height)
-        .bind(listings::mana_token(137))
-        .execute(pool)
-        .await
-        .unwrap();
+    super::sale_fold::write_rows(
+        &mut *pool.acquire().await.unwrap(),
+        super::chain_walk::ChainNet::Matic,
+        height - 1,
+        height,
+    )
+    .await
+    .unwrap();
 
     let (status, list) = get(
         app.clone(),

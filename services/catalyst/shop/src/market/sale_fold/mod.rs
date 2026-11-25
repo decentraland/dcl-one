@@ -292,7 +292,12 @@ pub async fn snapshot(
     }))
 }
 
-async fn write_rows(c: &mut PgConnection, net: ChainNet, from: i64, to: i64) -> anyhow::Result<()> {
+pub(super) async fn write_rows(
+    c: &mut PgConnection,
+    net: ChainNet,
+    from: i64,
+    to: i64,
+) -> anyhow::Result<()> {
     let registry_assets: &[&str] = match net {
         ChainNet::Ethereum => &[
             crate::land_authz::LAND_REGISTRY_MAINNET,
