@@ -62,11 +62,12 @@ pub(crate) fn establish_admin(
     }
 }
 
-/// The reports gate (the cross-wallet credits list and its grant reasons):
-/// the operator bearer, or a signed-fetch request whose signer is one of
-/// `CREDITS_READ_ADMIN_ADDRESSES`, the old server's read-only and read-write
-/// admin lists, so the ops dashboard reads them with its wallet as it did.
-/// Anything else answers the old server's 401.
+/// The reports gate (the cross-wallet credits list and its grant reasons) and
+/// the studio reads: the operator bearer, or a signed-fetch request whose
+/// signer is one of `CREDITS_READ_ADMIN_ADDRESSES`, the old server's read-only
+/// and read-write admin lists, or of `CREDITS_WRITE_ADMIN_ADDRESSES` (a write
+/// admin reads too), so the ops dashboard reads them with its wallet as it
+/// did. Anything else answers the old server's 401.
 pub(crate) async fn require_read_admin(
     state: &SharedState,
     headers: &HeaderMap,
@@ -78,14 +79,63 @@ pub(crate) async fn require_read_admin(
     if establish_admin(state.settings.admin_token.as_deref(), headers).is_ok() {
         return Ok(());
     }
-    if state.settings.read_admin_addresses.is_empty() {
-        return Err(ApiError::unauthorized(REFUSED));
+    let settings = &state.settings;
+    let admins = [
+        settings.read_admin_addresses.as_slice(),
+        settings.write_admin_addresses.as_slice(),
+    ];
+    signed_admin(
+        state, headers, "GET", route_path, original, &admins, REFUSED,
+    )
+    .await
+    .map(drop)
+}
+
+/// The studio write gate: the operator bearer, or a signed-fetch request over
+/// `method` and the route whose signer is one of
+/// `CREDITS_WRITE_ADMIN_ADDRESSES` (the old server's read-write admins), so
+/// the ops dashboard changes studios with its wallet as it did. Answers the
+/// audit actor: the bearer's [`RequireAdmin::audit_actor_description`], or the
+/// signer's address, so a wallet's change names who made it. Anything else
+/// answers the old server's 401.
+pub(crate) async fn require_write_admin(
+    state: &SharedState,
+    headers: &HeaderMap,
+    method: &str,
+    route_path: &str,
+    original: &axum::extract::OriginalUri,
+) -> Result<String, ApiError> {
+    const REFUSED: &str =
+        "Unauthorized: the admin token or a write-admin signed request is required";
+    if let Ok(admin) = establish_admin(state.settings.admin_token.as_deref(), headers) {
+        return Ok(admin.audit_actor_description());
+    }
+    let admins = [state.settings.write_admin_addresses.as_slice()];
+    signed_admin(
+        state, headers, method, route_path, original, &admins, REFUSED,
+    )
+    .await
+}
+
+/// The signer of a signed-fetch request over `method` and `route_path` when it
+/// is one of `admins`; otherwise `refused` as a 401.
+async fn signed_admin(
+    state: &SharedState,
+    headers: &HeaderMap,
+    method: &str,
+    route_path: &str,
+    original: &axum::extract::OriginalUri,
+    admins: &[&[String]],
+    refused: &'static str,
+) -> Result<String, ApiError> {
+    if admins.iter().all(|list| list.is_empty()) {
+        return Err(ApiError::unauthorized(refused));
     }
     // The shared path rule admits a proxy `x-original-path` that merely ENDS
     // with the route, and a bare `/credits` is also the tail of every wallet's
     // own balance route (`/credits/users/{address}/credits`), which an admin
-    // signs routinely. A replayed signature over that path must not open the
-    // cross-wallet list, so here the header counts only when it IS the route.
+    // signs routinely. A replayed signature over that path must not open an
+    // admin route, so here the header counts only when it IS the route.
     let mut headers = headers.clone();
     let foreign = headers.get(ORIGINAL_PATH_HEADER).is_some_and(|v| {
         v.to_str().map_or(true, |raw| {
@@ -95,18 +145,16 @@ pub(crate) async fn require_read_admin(
     if foreign {
         headers.remove(ORIGINAL_PATH_HEADER);
     }
-    let signer = super::handlers::signer_from(state, &headers, "GET", route_path, original)
+    let signer = super::handlers::signer_from(state, &headers, method, route_path, original)
         .await
-        .map_err(|_| ApiError::unauthorized(REFUSED))?;
-    if state
-        .settings
-        .read_admin_addresses
+        .map_err(|_| ApiError::unauthorized(refused))?;
+    if admins
         .iter()
-        .any(|a| a == signer.as_str())
+        .any(|list| list.iter().any(|a| a == signer.as_str()))
     {
-        Ok(())
+        Ok(signer.as_str().to_string())
     } else {
-        Err(ApiError::unauthorized(REFUSED))
+        Err(ApiError::unauthorized(refused))
     }
 }
 

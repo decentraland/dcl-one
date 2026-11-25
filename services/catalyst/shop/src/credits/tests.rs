@@ -321,6 +321,7 @@ struct StateCfg {
     require_purchase_intent: bool,
     admin_token: Option<&'static str>,
     writes_enabled: bool,
+    daily_studio_deposit_limit_cents: Option<i64>,
 }
 
 impl Default for StateCfg {
@@ -334,6 +335,7 @@ impl Default for StateCfg {
             require_purchase_intent: false,
             admin_token: None,
             writes_enabled: true,
+            daily_studio_deposit_limit_cents: None,
         }
     }
 }
@@ -354,6 +356,7 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
         credits_onchain_authorize_enabled: cfg.onchain_authorize_enabled,
         require_purchase_intent: cfg.require_purchase_intent,
         admin_token: cfg.admin_token.map(str::to_string),
+        daily_studio_deposit_limit_cents: cfg.daily_studio_deposit_limit_cents,
         marketplace_markup_bps: 0,
         mana_price_max_staleness_secs: 3600,
         ..RawSettings::default()
@@ -10893,5 +10896,836 @@ async fn the_cancel_return_sends_the_buyer_back_to_the_order_surface() {
     assert_eq!(
         landing("ord_unknown".into()).await,
         "https://shop/credits?order=ord_unknown&canceled=1"
+    );
+}
+
+/// The operator bearer the studio tests send.
+fn admin_bearer() -> HeaderMap {
+    let mut bearer = HeaderMap::new();
+    bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
+    bearer
+}
+
+fn studio_state(pool: PgPool, daily_limit_cents: Option<i64>) -> SharedState {
+    test_state(
+        pool,
+        StateCfg {
+            admin_token: Some("s3cret"),
+            daily_studio_deposit_limit_cents: daily_limit_cents,
+            ..StateCfg::default()
+        },
+    )
+}
+
+/// Creates a studio over the admin route and answers its id.
+async fn create_test_studio(app: &Router, name: &str) -> String {
+    let (status, _, v) = send(
+        app,
+        "POST",
+        "/credits/admin/studios",
+        admin_bearer(),
+        Some(json!({ "name": name })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    v["studio"]["id"].as_str().unwrap().to_string()
+}
+
+/// A studio's life over the operator routes, with credits-server's codes.
+#[tokio::test]
+async fn a_studio_is_created_listed_renamed_and_paused() {
+    let Some(pool) = pool().await else { return };
+    let app = app(studio_state(pool.clone(), None));
+    let name = unique("Studio");
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/studios",
+        HeaderMap::new(),
+        Some(json!({ "name": name })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "no bearer and no admin wallet, no studio: {v}"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/studios",
+        admin_bearer(),
+        Some(json!({ "name": format!("  {name}  ") })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let studio = &v["studio"];
+    let id = studio["id"].as_str().unwrap().to_string();
+    assert_eq!(studio["name"], name.as_str(), "trimmed");
+    assert_eq!(studio["status"], "active");
+    assert_eq!(studio["createdBy"], "token:CATALYRST_CREDITS_ADMIN_TOKEN");
+    assert_eq!(
+        (
+            studio["balanceCents"].as_i64(),
+            studio["operatorCount"].as_i64()
+        ),
+        (Some(0), Some(0))
+    );
+    assert!(
+        studio["createdAt"].as_i64().unwrap() > 1_700_000_000_000,
+        "epoch milliseconds"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/studios",
+        admin_bearer(),
+        Some(json!({ "name": name.to_uppercase() })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::CONFLICT, Some("STUDIO_NAME_TAKEN")),
+        "a name differing only in case: {v}"
+    );
+    for (body, why) in [
+        (json!({ "name": "two\nlines" }), "a line break"),
+        (json!({ "name": "zero\u{200B}width" }), "a format character"),
+        (json!({}), "no name"),
+        (json!([name]), "not an object"),
+    ] {
+        let (status, _, v) = send(
+            &app,
+            "POST",
+            "/credits/admin/studios",
+            admin_bearer(),
+            Some(body),
+        )
+        .await;
+        assert_eq!(
+            (status, v["code"].as_str()),
+            (StatusCode::BAD_REQUEST, Some("INVALID_REQUEST")),
+            "{why}: {v}"
+        );
+    }
+
+    let (status, _, v) = send(&app, "GET", "/credits/admin/studios", admin_bearer(), None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert!(
+        v["studios"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == id.as_str()),
+        "{v}"
+    );
+
+    let path = format!("/credits/admin/studios/{id}");
+    let (status, _, v) = send(
+        &app,
+        "PATCH",
+        &path,
+        admin_bearer(),
+        Some(json!({ "status": "paused", "name": format!("{name} Two") })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        (v["studio"]["status"].as_str(), v["studio"]["name"].as_str()),
+        (Some("paused"), Some(format!("{name} Two").as_str()))
+    );
+    for (body, message) in [
+        (json!({}), "Nothing to update"),
+        (
+            json!({ "status": "closed" }),
+            "\"status\" must be \"active\" or \"paused\"",
+        ),
+        (json!({ "name": null }), "\"name\" is required"),
+    ] {
+        let (status, _, v) = send(&app, "PATCH", &path, admin_bearer(), Some(body)).await;
+        assert_eq!(
+            (status, v["error"].as_str(), v["code"].as_str()),
+            (
+                StatusCode::BAD_REQUEST,
+                Some(message),
+                Some("INVALID_REQUEST")
+            ),
+            "{v}"
+        );
+    }
+
+    let (status, _, v) = send(&app, "GET", &path, admin_bearer(), None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["studio"]["status"], "paused");
+    assert_eq!(v["page"], json!({ "limit": 50, "offset": 0, "total": 0 }));
+    assert_eq!(v["grantLimits"], json!({ "maxGrantCents": null }));
+
+    let unknown = format!("/credits/admin/studios/{}", uuid::Uuid::new_v4());
+    let (status, _, v) = send(&app, "GET", &unknown, admin_bearer(), None).await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "PATCH",
+        &unknown,
+        admin_bearer(),
+        Some(json!({ "status": "active" })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        "/credits/admin/studios/not-a-uuid",
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, v["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("Invalid studio id")),
+        "{v}"
+    );
+
+    let actions: Vec<String> = sqlx::query_scalar(
+        "SELECT action FROM ops.admin_audit WHERE domain = 'credits' AND target = $1 ORDER BY id",
+    )
+    .bind(&id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(actions, ["studio.create", "studio.update"]);
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// An operator is added once (in any case) and removed once; an unknown
+/// studio and an unknown operator are told apart.
+#[tokio::test]
+async fn a_studio_operator_is_added_once_and_removed_once() {
+    let Some(pool) = pool().await else { return };
+    let app = app(studio_state(pool.clone(), None));
+    let id = create_test_studio(&app, &unique("Operators")).await;
+    let wallet = scratch_wallet();
+    let operators = format!("/credits/admin/studios/{id}/operators");
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &operators,
+        admin_bearer(),
+        Some(json!({ "address": wallet.address.to_uppercase().replace("0X", "0x") })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    assert_eq!(
+        v,
+        json!({ "studioId": id, "address": wallet.address, "added": true })
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &operators,
+        admin_bearer(),
+        Some(json!({ "address": wallet.address })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["added"].as_bool()),
+        (StatusCode::OK, Some(false)),
+        "already an operator: {v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &operators,
+        admin_bearer(),
+        Some(json!({ "address": "0x12" })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["error"].as_str()),
+        (
+            StatusCode::BAD_REQUEST,
+            Some("\"address\" must be a wallet address")
+        ),
+        "{v}"
+    );
+    let unknown = uuid::Uuid::new_v4();
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &format!("/credits/admin/studios/{unknown}/operators"),
+        admin_bearer(),
+        Some(json!({ "address": wallet.address })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        &format!("/credits/admin/studios/{id}"),
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["studio"]["operatorCount"], 1);
+    assert_eq!(v["operators"][0]["address"], wallet.address.as_str());
+    assert_eq!(
+        v["operators"][0]["addedBy"],
+        "token:CATALYRST_CREDITS_ADMIN_TOKEN"
+    );
+
+    let one = format!("{operators}/{}", wallet.address);
+    let (status, _, v) = send(&app, "DELETE", &one, admin_bearer(), None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v,
+        json!({ "studioId": id, "address": wallet.address, "removed": true })
+    );
+    let (status, _, v) = send(&app, "DELETE", &one, admin_bearer(), None).await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("OPERATOR_NOT_FOUND")),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "DELETE",
+        &format!(
+            "/credits/admin/studios/{unknown}/operators/{}",
+            wallet.address
+        ),
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "DELETE",
+        &format!("{operators}/nope"),
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, v["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("Invalid wallet address")),
+        "{v}"
+    );
+
+    let actions: Vec<String> = sqlx::query_scalar(
+        "SELECT action FROM ops.admin_audit WHERE domain = 'credits' AND target = $1 ORDER BY id",
+    )
+    .bind(&id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        actions,
+        [
+            "studio.create",
+            "studio.operator.add",
+            "studio.operator.remove"
+        ],
+        "a no-op is not audited"
+    );
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// A studio's budget: a deposit, its replay, the day's ceiling over every
+/// studio, an adjustment either way never below zero, and new budget refused
+/// while no ceiling is set. Its own database: the ceiling sums every studio.
+#[tokio::test]
+async fn a_studio_budget_stays_within_its_balance_and_the_days_ceiling() {
+    let Some(db) = OwnDatabase::create("studio_budget").await else {
+        return;
+    };
+    // $12.00 of new budget a day.
+    let unset = app(studio_state(db.pool.clone(), None));
+    let app = app(studio_state(db.pool.clone(), Some(1200)));
+    let id = create_test_studio(&app, "Acme").await;
+    let other = create_test_studio(&app, "Other").await;
+    let budget = format!("/credits/admin/studios/{id}/budget");
+    let change = |kind: &str, credits: i64, note: Option<&str>, key: &str| json!({ "kind": kind, "credits": credits, "note": note, "idempotencyKey": key });
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 100, None, "deposit-0001")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let first = v["entryId"].as_str().unwrap().to_string();
+    assert_eq!(
+        v,
+        json!({ "entryId": first, "studioId": id, "kind": "deposit", "usdCents": 1000, "balanceCents": 1000, "replayed": false })
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 100, None, "deposit-0001")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["entryId"].as_str(), v["replayed"].as_bool()),
+        (StatusCode::OK, Some(first.as_str()), Some(true)),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 101, None, "deposit-0001")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::CONFLICT, Some("IDEMPOTENCY_KEY_REUSED")),
+        "{v}"
+    );
+
+    // The ceiling counts every studio's new budget.
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &format!("/credits/admin/studios/{other}/budget"),
+        admin_bearer(),
+        Some(change("deposit", 30, None, "deposit-0002")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{v}");
+    assert_eq!(v["code"], "DAILY_DEPOSIT_LIMIT_EXCEEDED");
+    assert_eq!(
+        v["error"],
+        "Daily studio deposit limit exceeded: $10.00 already added today, $3.00 requested, limit $12.00"
+    );
+
+    for (body, message) in [
+        (
+            change("deposit", -5, None, "deposit-0003"),
+            "A deposit must be positive; use an adjustment to take budget away",
+        ),
+        (
+            change("adjustment", -50, None, "adjust-0001"),
+            "An adjustment needs a \"note\" saying why",
+        ),
+        (
+            change("adjustment", -50, Some("  "), "adjust-0001"),
+            "An adjustment needs a \"note\" saying why",
+        ),
+        (
+            change("refund", 5, None, "refund-0001"),
+            "\"kind\" must be \"deposit\" or \"adjustment\"",
+        ),
+    ] {
+        let (status, _, v) = send(&app, "POST", &budget, admin_bearer(), Some(body)).await;
+        assert_eq!(
+            (status, v["error"].as_str()),
+            (StatusCode::BAD_REQUEST, Some(message)),
+            "{v}"
+        );
+    }
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 5, None, "short")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("INVALID_REQUEST")),
+        "a short key: {v}"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("adjustment", -50, Some("overpaid"), "adjust-0001")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["balanceCents"].as_i64()),
+        (StatusCode::CREATED, Some(500)),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("adjustment", -60, Some("too far"), "adjust-0002")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::CONFLICT, Some("STUDIO_BUDGET_EXCEEDED")),
+        "{v}"
+    );
+    // An upward adjustment is new budget: exactly up to the ceiling.
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("adjustment", 20, Some("bonus"), "adjust-0003")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["balanceCents"].as_i64()),
+        (StatusCode::CREATED, Some(700)),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 1, None, "deposit-0004")),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "the day is spent: {v}"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        &format!("/credits/admin/studios/{id}?limit=2"),
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["page"], json!({ "limit": 2, "offset": 0, "total": 3 }));
+    let entries = v["entries"].as_array().unwrap();
+    assert_eq!(
+        entries
+            .iter()
+            .map(|e| (e["kind"].as_str().unwrap(), e["usdCents"].as_i64().unwrap()))
+            .collect::<Vec<_>>(),
+        [("adjustment", 200), ("adjustment", -500)],
+        "newest first"
+    );
+    assert_eq!(entries[1]["note"], "overpaid");
+    assert_eq!(
+        (
+            entries[0]["creditId"].clone(),
+            entries[0]["recipient"].clone()
+        ),
+        (Value::Null, Value::Null)
+    );
+    let studio = &v["studio"];
+    assert_eq!(
+        (
+            studio["balanceCents"].as_i64(),
+            studio["depositedCents"].as_i64(),
+            studio["grantedCents"].as_i64(),
+            studio["grantCount"].as_i64()
+        ),
+        (Some(700), Some(1000), Some(0), Some(0))
+    );
+
+    // Without a ceiling new budget is refused; a replay and a reduction are not.
+    let (status, _, v) = send(
+        &unset,
+        "POST",
+        &format!("/credits/admin/studios/{other}/budget"),
+        admin_bearer(),
+        Some(change("deposit", 1, None, "deposit-0005")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("DEPOSITS_NOT_CONFIGURED")
+        ),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &unset,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 100, None, "deposit-0001")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["replayed"].as_bool(), v["balanceCents"].as_i64()),
+        (StatusCode::OK, Some(true), Some(700)),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &unset,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("adjustment", -10, Some("fee"), "adjust-0004")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["balanceCents"].as_i64()),
+        (StatusCode::CREATED, Some(600)),
+        "{v}"
+    );
+
+    let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM ops.admin_audit WHERE domain = 'credits' AND action = 'studio.budget' AND target = $1")
+        .bind(&id)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        audited, 4,
+        "one row per written entry, none for a replay or a refusal"
+    );
+    db.drop().await;
+}
+
+/// Two deposits that each fit the day's ceiling but not together: the
+/// deposits lock lets exactly one through, across studios.
+#[tokio::test]
+async fn concurrent_studio_deposits_never_pass_the_days_ceiling_together() {
+    let Some(db) = OwnDatabase::create("studio_ceiling").await else {
+        return;
+    };
+    let app = app(studio_state(db.pool.clone(), Some(1000)));
+    let a = create_test_studio(&app, "A").await;
+    let b = create_test_studio(&app, "B").await;
+    let deposit = |studio: &str, key: &str| {
+        let app = app.clone();
+        let path = format!("/credits/admin/studios/{studio}/budget");
+        let body = json!({ "kind": "deposit", "credits": 60, "idempotencyKey": key });
+        async move { send(&app, "POST", &path, admin_bearer(), Some(body)).await }
+    };
+    let ((sa, _, va), (sb, _, vb)) =
+        tokio::join!(deposit(&a, "race-a-0001"), deposit(&b, "race-b-0001"));
+    let mut statuses = [sa, sb];
+    statuses.sort();
+    assert_eq!(
+        statuses,
+        [StatusCode::CREATED, StatusCode::TOO_MANY_REQUESTS],
+        "{va} {vb}"
+    );
+    let inflow: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(usd_cents), 0)::bigint FROM credits.studio_budget_entries",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(inflow, 600);
+    db.drop().await;
+}
+
+/// The ops dashboard's wallets, as credits-server's read and read-write
+/// admins: a write admin's signed change names its address as the actor, and
+/// it reads too; a read admin reads but changes nothing; a signature binds
+/// its method; anyone else gets the gate's 401. The bearer keeps working.
+#[tokio::test]
+async fn studio_admins_sign_with_their_wallets() {
+    let Some(pool) = pool().await else { return };
+    let writer = scratch_wallet();
+    let reader = scratch_wallet();
+    let stranger = scratch_wallet();
+    let settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        admin_token: Some("s3cret".into()),
+        read_admin_addresses: reader.address.clone(),
+        write_admin_addresses: format!(" {} ,", writer.address.to_uppercase().replace("0X", "0x")),
+        ..RawSettings::default()
+    })
+    .unwrap();
+    let state: SharedState = Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        None,
+    ));
+    let app = app(state.clone());
+    let canonical = Router::new().nest("/shop-api", super::shop_router(state));
+
+    let (status, v) = call(
+        &app,
+        &writer,
+        "post",
+        "/credits/admin/studios",
+        &[],
+        Some(json!({ "name": unique("Signed") })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let id = v["studio"]["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        v["studio"]["createdBy"],
+        writer.address.as_str(),
+        "the signer is the actor"
+    );
+    let path = format!("/credits/admin/studios/{id}");
+
+    let (status, v) = call(&app, &reader, "get", &path, &[], None).await;
+    assert_eq!(status, StatusCode::OK, "a read admin reads: {v}");
+    let (status, v) = call(
+        &canonical,
+        &writer,
+        "get",
+        &format!("/shop-api/admin/studios/{id}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a write admin reads, on the canonical path too: {v}"
+    );
+    let (status, v) = call(
+        &app,
+        &reader,
+        "patch",
+        &path,
+        &[],
+        Some(json!({ "status": "paused" })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a read admin changes nothing: {v}"
+    );
+    let (status, v) = call(&app, &stranger, "get", "/credits/admin/studios", &[], None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{v}");
+    let (status, _, v) = send(
+        &app,
+        "PATCH",
+        &path,
+        signed_headers(&writer, "get", &path).await,
+        Some(json!({ "status": "paused" })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a signature binds its method: {v}"
+    );
+
+    let operator = scratch_wallet();
+    let (status, v) = call(
+        &app,
+        &writer,
+        "post",
+        &format!("{path}/operators"),
+        &[],
+        Some(json!({ "address": operator.address })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let mut bearer = HeaderMap::new();
+    bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
+    let (status, _, v) = send(
+        &app,
+        "PATCH",
+        &path,
+        bearer,
+        Some(json!({ "status": "paused" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "the bearer still works: {v}");
+
+    let actors: Vec<(String, String)> = sqlx::query_as(
+        "SELECT action, actor FROM ops.admin_audit WHERE domain = 'credits' AND target = $1 ORDER BY id",
+    )
+    .bind(&id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        actors,
+        [
+            ("studio.create".to_string(), writer.address.clone()),
+            ("studio.operator.add".to_string(), writer.address.clone()),
+            (
+                "studio.update".to_string(),
+                "token:CATALYRST_CREDITS_ADMIN_TOKEN".to_string()
+            ),
+        ]
+    );
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[test]
+fn a_bad_write_admin_address_fails_startup() {
+    let err = Settings::parse(RawSettings {
+        write_admin_addresses: "0x12".to_string(),
+        ..RawSettings::default()
+    })
+    .err()
+    .expect("refused");
+    assert!(
+        err.to_string().contains("CREDITS_WRITE_ADMIN_ADDRESSES"),
+        "{err}"
     );
 }

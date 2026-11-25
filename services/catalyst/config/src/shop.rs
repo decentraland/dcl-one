@@ -445,8 +445,17 @@ pub struct ShopConfig {
     /// cross-wallet credits list and its grant reasons), comma-separated: the
     /// old credits server's `READ_ONLY_ADMIN_ADDRESSES` and
     /// `READ_WRITE_ADMIN_ADDRESSES` together. Empty leaves them to the bearer.
+    /// A write admin (`CREDITS_WRITE_ADMIN_ADDRESSES`) reads them too.
     #[arg(long, env = "CREDITS_READ_ADMIN_ADDRESSES", default_value = "")]
     pub credits_read_admin_addresses: String,
+
+    /// Wallets whose signed requests may change the studios (create, rename,
+    /// pause, operators, budget) and read what a read admin reads,
+    /// comma-separated: the old credits server's `READ_WRITE_ADMIN_ADDRESSES`.
+    /// Empty leaves the changes to the bearer. An entry that is not a wallet
+    /// address fails startup.
+    #[arg(long, env = "CREDITS_WRITE_ADMIN_ADDRESSES", default_value = "")]
+    pub credits_write_admin_addresses: String,
 
     /// The hCaptcha secret (or `_FILE`); unset skips the token check.
     #[arg(long, env = "CREDITS_CAPTCHA_SECRET", hide_env_values = true)]
@@ -634,6 +643,17 @@ pub struct ShopConfig {
 
     #[arg(long, env = "CREDITS_CHECKOUT_CANCEL_URL_BUILDER")]
     pub credits_checkout_cancel_url_builder: Option<String>,
+
+    /// The most new studio budget (deposits and upward adjustments, every
+    /// studio together) one UTC day may add, in USD cents (credits-server's
+    /// `DAILY_STUDIO_DEPOSIT_LIMIT_CENTS`). Unset or negative refuses new
+    /// budget.
+    #[arg(
+        long,
+        env = "CREDITS_DAILY_STUDIO_DEPOSIT_LIMIT_CENTS",
+        allow_negative_numbers = true
+    )]
+    pub credits_daily_studio_deposit_limit_cents: Option<i64>,
 
     /// Attach the CreditUsed index (credits.usages, over RPC_ENDPOINT_POLYGON
     /// and CREDITS_MANAGER_CONTRACT); POST /credits/authorize mints only while it is ready.

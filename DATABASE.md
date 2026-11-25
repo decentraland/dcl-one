@@ -1762,6 +1762,55 @@ IP and links. Addresses are lower-cased and checked by the table; the handler
 normalises the body's. The bootstrap defines the table; an existing database
 gains it from the object pass, so no step exists.
 
+## Credits studios workload
+
+`credits.studios`, `credits.studio_operators` and
+`credits.studio_budget_entries` (`schemas/60_ops.sql`;
+`shop/src/credits/studios.rs`) hold credits-server's
+studios: scene studios that give Credits out of a budget an operator assigns.
+A studio has a name (unique ignoring case) and a status (`active` or
+`paused`); its operators are the wallets that act for it; its budget is a
+ledger in USD cents (1 Credit = 10 cents) whose balance is the sum of its
+entries. A `deposit` adds, an `adjustment` moves either way, and a `grant`
+takes and names the one `credits.ledger` row it credited.
+
+Writers are the operator routes under `/credits/admin/studios` and
+`/shop-api/admin/studios` (`CATALYRST_CREDITS_ADMIN_TOKEN`): create, rename,
+pause or resume a studio, add or remove an operator, and record a deposit or
+an adjustment. Each writes one `ops.admin_audit` row in its own transaction
+(`studio.create`, `studio.update`, `studio.operator.add`,
+`studio.operator.remove`, `studio.budget`). Readers are the same routes: the
+studio list (one aggregate of every entry grouped by studio, and of the
+operators), a studio's figures, operators and history page (newest first, by
+`studio_budget_entries_studio_idx`, whose `INCLUDE (usd_cents)` also answers
+the balance), and the day's new budget, read under the deposits lock by
+`studio_budget_entries_inflow_idx`. Rows are few: an operator's studios, their
+wallets, and a budget entry per deposit, adjustment or grant.
+
+Locks: a change that adds budget first takes the service-wide advisory lock
+(`pg_advisory_xact_lock`, the first 15 hex digits of the SHA-256 of
+`studio-budget-deposits`, credits-server's), then the studio's row
+(`FOR UPDATE`); any other budget change, and adding or removing an operator,
+takes the studio's row alone. Each statement after a lock reads a snapshot
+taken after it was granted (READ COMMITTED), so a balance or the day's total
+is never read from before the previous holder committed.
+
+Invariants: a studio's balance never goes below zero (checked under its row
+lock before the entry is written). The new budget written in one UTC day of
+the database clock, every studio together, never exceeds
+`CREDITS_DAILY_STUDIO_DEPOSIT_LIMIT_CENTS`; unset or negative refuses new budget
+(fail-closed), and an entry's `created_at` is the clock read under the
+deposits lock, so the day it is counted in is the day the next check reads.
+An idempotency key is used once per studio (`studio_budget_entries_idempotency_uidx`)
+with the hash of the request it wrote: a repeat with the same request answers
+that entry before any ceiling or balance check, and with another request is
+refused. A `grant` names exactly one ledger row and no other kind names one
+(`studio_budget_entries_ledger_check`, `studio_budget_entries_ledger_uidx`);
+the ledger row cannot be deleted under it. Entries are never updated or
+deleted. Addresses are lower-cased and checked by the table; the handlers
+normalise them. The bootstrap defines the tables; an existing database gains
+them from the object pass, so no step exists.
+
 ## Credits checkout and broker claim edges
 
 A credits checkout line buys through the shop broker under the claim key

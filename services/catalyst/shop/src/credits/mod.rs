@@ -15,8 +15,10 @@
 //! the operator routes `/admin/credits/{grant,revoke}`,
 //! `/admin/users/{a}/block`, `/admin/packs[/{sku}]`, `/admin/purchases`,
 //! `/admin/checkouts[/{id}/{refund,force-fulfill}]`, `/admin/ledger`,
-//! `/admin/grants/{ref}/{reclaim,release}`, `/admin/reconcile` behind
-//! `CATALYRST_CREDITS_ADMIN_TOKEN` (`admin.rs`).
+//! `/admin/grants/{ref}/{reclaim,release}`, `/admin/reconcile` and
+//! `/admin/studios[/{id}[/budget|/operators[/{address}]]]` behind
+//! `CATALYRST_CREDITS_ADMIN_TOKEN` (`admin.rs`, `studios.rs`; the studios
+//! also answer the read and write admin wallets' signed requests).
 //!
 //! Where each route reads and writes:
 //! - the wallet routes, the cart and the checkout: local (`credits.wallets`,
@@ -96,6 +98,7 @@ pub mod reports;
 pub mod settlement;
 pub mod store;
 pub mod stripe;
+pub mod studios;
 pub mod trial;
 pub mod usage;
 pub mod wallet;
@@ -148,6 +151,9 @@ pub struct RawSettings {
     /// `CREDITS_READ_ADMIN_ADDRESSES` (empty): comma-separated wallets whose
     /// signed requests may read the credits reports.
     pub read_admin_addresses: String,
+    /// `CREDITS_WRITE_ADMIN_ADDRESSES` (empty): comma-separated wallets whose
+    /// signed requests may change the studios, and read what a read admin reads.
+    pub write_admin_addresses: String,
     /// `CREDITS_CAPTCHA_SECRET` (or `_FILE`): the hCaptcha secret; unset skips the token check.
     pub captcha_secret: Option<String>,
     /// `CREDITS_CAPTCHA_VERIFY_URL` (`https://hcaptcha.com/siteverify`).
@@ -198,6 +204,10 @@ pub struct RawSettings {
     /// `cancel_url` lands on this node's cancel-return for the order; unset,
     /// `cancel_url` is the surface's cancel page.
     pub public_url: Option<String>,
+    /// `CREDITS_DAILY_STUDIO_DEPOSIT_LIMIT_CENTS` (credits-server's
+    /// `DAILY_STUDIO_DEPOSIT_LIMIT_CENTS`): the most new studio budget one UTC
+    /// day may add, every studio together; unset or negative refuses new budget.
+    pub daily_studio_deposit_limit_cents: Option<i64>,
     /// `CREDITS_USAGE_INDEX_ENABLED` (false): attach the CreditUsed index.
     pub usage_index_enabled: bool,
     /// `RPC_ENDPOINT_POLYGON` (or `_FILE`): the collections chain's JSON-RPC the index reads.
@@ -245,6 +255,7 @@ impl Default for RawSettings {
             writes_enabled: false,
             admin_token: None,
             read_admin_addresses: String::new(),
+            write_admin_addresses: String::new(),
             captcha_secret: None,
             captcha_verify_url: DEFAULT_CAPTCHA_VERIFY_URL.to_string(),
             stripe_secret_key: None,
@@ -269,6 +280,7 @@ impl Default for RawSettings {
             checkout_success_url_builder: None,
             checkout_cancel_url_builder: None,
             public_url: None,
+            daily_studio_deposit_limit_cents: None,
             usage_index_enabled: false,
             usage_rpc_url: None,
             usage_chain_id: usage::CHAIN_POLYGON,
@@ -300,6 +312,10 @@ pub struct Settings {
     /// Lowercased `CREDITS_READ_ADMIN_ADDRESSES`: the wallets that may read
     /// the credits reports with a signed request (`admin::require_read_admin`).
     pub read_admin_addresses: Vec<String>,
+    /// Lowercased `CREDITS_WRITE_ADMIN_ADDRESSES`: the wallets that may change
+    /// the studios with a signed request (`admin::require_write_admin`); they
+    /// read too.
+    pub write_admin_addresses: Vec<String>,
     pub captcha_secret: Option<String>,
     pub captcha_verify_url: String,
     pub stripe_secret_key: Option<String>,
@@ -326,6 +342,9 @@ pub struct Settings {
     /// `PUBLIC_URL` without a trailing `/`: the base of the cancel-return URL
     /// Stripe sends an abandoning buyer to.
     pub public_url: Option<String>,
+    /// The day's ceiling on new studio budget, in cents; `None` (unset or
+    /// negative) refuses new budget (`studios.rs`).
+    pub daily_studio_deposit_limit_cents: Option<i64>,
     /// The CreditUsed index (`usage.rs`); its contract is `credits_manager_contract`.
     pub usage: usage::Settings,
     /// Which MANA top-up transfers are credited (`handlers::topup`).
@@ -349,15 +368,19 @@ fn non_empty(v: Option<String>) -> Option<String> {
 /// not a wallet address fails startup, so a typo can't silently lock the
 /// dashboard out or let a malformed entry stand in for an admin.
 pub fn parse_read_admin_addresses(raw: &str) -> anyhow::Result<Vec<String>> {
+    parse_admin_addresses("CREDITS_READ_ADMIN_ADDRESSES", raw)
+}
+
+/// A comma-separated list of admin wallets read from `env`, lowercased, as
+/// [`parse_read_admin_addresses`] reads its own.
+pub fn parse_admin_addresses(env: &str, raw: &str) -> anyhow::Result<Vec<String>> {
     raw.split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| {
             crate::shared::identity::Address::parse(s)
                 .map(|a| a.into_string())
-                .map_err(|_| {
-                    anyhow::anyhow!("CREDITS_READ_ADMIN_ADDRESSES: {s:?} is not a wallet address")
-                })
+                .map_err(|_| anyhow::anyhow!("{env}: {s:?} is not a wallet address"))
         })
         .collect()
 }
@@ -583,6 +606,10 @@ impl Settings {
             writes_enabled: raw.writes_enabled,
             admin_token: non_empty(raw.admin_token),
             read_admin_addresses: parse_read_admin_addresses(&raw.read_admin_addresses)?,
+            write_admin_addresses: parse_admin_addresses(
+                "CREDITS_WRITE_ADMIN_ADDRESSES",
+                &raw.write_admin_addresses,
+            )?,
             captcha_secret,
             captcha_verify_url,
             stripe_secret_key,
@@ -611,6 +638,9 @@ impl Settings {
             checkout_builder_urls: non_empty(raw.checkout_success_url_builder)
                 .zip(non_empty(raw.checkout_cancel_url_builder)),
             public_url: non_empty(raw.public_url).map(|u| u.trim_end_matches('/').to_string()),
+            daily_studio_deposit_limit_cents: raw
+                .daily_studio_deposit_limit_cents
+                .filter(|c| *c >= 0),
             usage,
             topup: handlers::topup::TopupPolicy {
                 start_block: raw.topup_start_block,
@@ -1117,6 +1147,7 @@ pub fn router(state: SharedState) -> Router {
             get(handlers::authorize::usage_index_status),
         )
         .merge(handlers::admin::router())
+        .merge(handlers::studios::router())
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .layer(axum::middleware::from_fn(
             crate::shared::cors::cors_middleware,
@@ -1235,6 +1266,7 @@ pub fn shop_router(state: SharedState) -> Router {
         )
         .route("/dev/topup/mock-card", post(handlers::packs::mock_topup))
         .merge(handlers::admin::shop_router())
+        .merge(handlers::studios::router())
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .layer(axum::middleware::from_fn(
             crate::shared::cors::cors_middleware,

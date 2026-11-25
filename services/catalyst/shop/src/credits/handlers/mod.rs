@@ -18,6 +18,7 @@ pub mod packs;
 pub mod prices;
 pub mod reports;
 pub mod stripe;
+pub mod studios;
 pub mod topup;
 pub mod users;
 
