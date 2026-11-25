@@ -9,7 +9,7 @@ use common::{
 use dcl_component::{DclReader, DclWriter, SceneComponentId, SceneEntityId, ToDclWriter};
 use dcl_types::{
     interface::{CrdtStore, CrdtType},
-    RendererResponse, SceneId, SceneLogMessage, SceneResourceCounters,
+    RendererResponse, SceneId, SceneLogMessage, SceneResourceCounters, SceneWake,
 };
 use scene_material::{BoundRegion, SceneBounds};
 
@@ -198,6 +198,15 @@ impl RendererSceneContext {
     pub fn sender(&self) -> Option<&tokio::sync::mpsc::UnboundedSender<RendererResponse>> {
         match &self.state {
             SceneState::Live { handle, .. } => Some(&handle.sender),
+            _ => None,
+        }
+    }
+
+    /// Whether the engine wakes the scene's runtime when it sends it something, while the scene
+    /// runs.
+    pub(crate) fn wake(&self) -> Option<&SceneWake> {
+        match &self.state {
+            SceneState::Live { handle, .. } => Some(&handle.wake),
             _ => None,
         }
     }

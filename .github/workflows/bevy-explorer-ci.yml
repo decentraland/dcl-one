@@ -154,6 +154,7 @@ jobs:
       test: ${{ steps.plan.outputs.test }}
       headless: ${{ steps.plan.outputs.headless }}
       web: ${{ steps.plan.outputs.web }}
+      relay-wake: ${{ steps.plan.outputs.relay-wake }}
       native-matrix: ${{ steps.plan.outputs.native-matrix == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:macos') }}
       images: ${{ steps.consumers.outputs.images }}
       held: ${{ steps.plan.outputs.held }}
@@ -353,7 +354,9 @@ jobs:
           key: ${{ steps.target-cache-key.outputs.key }}
           restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
       - name: Restore the path dependencies' cached file times
-        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+        run: |
+          python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+          mkdir -p target/cargo-messages
       # Scope RUSTC_WRAPPER to compilation so the dependency-cache key stays unchanged.
       - name: Restore the Windows compiler cache tool
         id: compiler-cache-tool
@@ -376,19 +379,30 @@ jobs:
         with:
           path: ${{ runner.tool_cache }}/sccache/0.19.0
           key: ${{ steps.compiler-cache-tool.outputs.cache-primary-key }}
+      # Every cargo call of a native job writes its messages to target/cargo-messages: the prune keeps only the units they name.
       - name: Test the texture decoder boundaries
-        run: cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target
+        run: |
+          cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target \
+            --no-run --message-format=json-render-diagnostics > target/cargo-messages/basisu.jsonl
+          cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target
       # the patched Bevy crates are git dependencies, not workspace members, so `cargo test --all`
       # never compiles their tests, and cargo tests a non-member with dev-dependencies only from
       # its own workspace. Only this job rebuilds that workspace, at ../bevy. It has no lock file:
       # it starts from this one, so the crates.io dependencies both share keep their versions.
       # These are the crates the explorer patches for KTX2 and glTF loading, with the features the
-      # explorer enables on them.
+      # explorer enables on them, and `bevy_pbr`, whose skinning the explorer patches: a run of its
+      # own, so its dependencies add no feature to the first two.
       - name: Test the patched Bevy crates
         run: |
           cp Cargo.lock ../bevy/Cargo.lock
           cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf --lib \
+            --features bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd --target-dir target/fork-tests \
+            --no-run --message-format=json-render-diagnostics > target/cargo-messages/fork-tests.jsonl
+          cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf --lib \
             --features bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd --target-dir target/fork-tests
+          cargo test --manifest-path ../bevy/Cargo.toml -p bevy_pbr --lib --target-dir target/fork-tests \
+            --no-run --message-format=json-render-diagnostics > target/cargo-messages/fork-tests-pbr.jsonl
+          cargo test --manifest-path ../bevy/Cargo.toml -p bevy_pbr --lib --target-dir target/fork-tests
       - name: Run the native test suite
         env:
           RUSTC_WRAPPER: ${{ runner.os == 'Windows' && steps.compiler-cache.outcome == 'success' && 'sccache' || '' }}
@@ -398,11 +412,11 @@ jobs:
           # Reports belong to this run, including when an older target was restored.
           rm -rf target/cargo-timings
           # The dcl_deno_ipc integration test makes Cargo build the sidecar in this invocation.
-          if ! cargo test --all --profile ci-test --locked --timings --no-run --message-format=json-render-diagnostics > target/native-test-artifacts.jsonl; then
+          if ! cargo test --all --profile ci-test --locked --timings --no-run --message-format=json-render-diagnostics > target/cargo-messages/native-tests.jsonl; then
             export RUSTC_WRAPPER=
-            cargo test --all --profile ci-test --locked --timings --no-run --message-format=json-render-diagnostics > target/native-test-artifacts.jsonl
+            cargo test --all --profile ci-test --locked --timings --no-run --message-format=json-render-diagnostics > target/cargo-messages/native-tests.jsonl
           fi
-          python3 "$GITHUB_WORKSPACE/tooling/dev-regressions.py" --bevy-artifacts target/native-test-artifacts.jsonl
+          python3 "$GITHUB_WORKSPACE/tooling/dev-regressions.py" --bevy-artifacts target/cargo-messages/native-tests.jsonl
           cargo test --all --profile ci-test --locked -- --test-threads=1
       - name: Test environment and shadow shader pipelines
         if: runner.os == 'Linux'
@@ -410,10 +424,13 @@ jobs:
           WGPU_BACKEND: vulkan
         run: |
           set -o pipefail
+          cargo test -p visuals --lib --profile ci-test --locked --no-run --message-format=json-render-diagnostics \
+            > target/cargo-messages/visuals.jsonl
           cargo test -p visuals --lib --profile ci-test --locked -- --ignored --test-threads=1 \
             | tee "$RUNNER_TEMP/explorer-shader-tests.log"
           grep -Fx 'test environment::tests::scene_environment_pipelines_compile ... ok' "$RUNNER_TEMP/explorer-shader-tests.log"
           grep -Fx 'test shell_texturing::test::soft_shadow_pipelines_compile ... ok' "$RUNNER_TEMP/explorer-shader-tests.log"
+          grep -Fx 'test skinned_pipelines_test::skinned_meshes_draw_with_computed_skin_matrices ... ok' "$RUNNER_TEMP/explorer-shader-tests.log"
       - name: Use Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -424,6 +441,8 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -o pipefail
+          cargo test --all --lib --profile ci-test --locked --no-run --message-format=json-render-diagnostics \
+            > target/cargo-messages/gateway.jsonl
           cargo test --all --lib --profile ci-test --locked \
             gateway::gateway_tests::gateway_routes_match_deployment -- --ignored --exact \
             | tee "$RUNNER_TEMP/explorer-gateway-routes.log"
@@ -453,9 +472,9 @@ jobs:
         env:
           RUSTC_WRAPPER: ${{ runner.os == 'Windows' && steps.compiler-cache.outcome == 'success' && 'sccache' || '' }}
         run: |
-          if ! cargo build --package benchmark --release --locked; then
+          if ! cargo build --package benchmark --release --locked --message-format=json-render-diagnostics > target/cargo-messages/benchmark.jsonl; then
             export RUSTC_WRAPPER=
-            cargo build --package benchmark --release --locked
+            cargo build --package benchmark --release --locked --message-format=json-render-diagnostics > target/cargo-messages/benchmark.jsonl
           fi
       - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
@@ -562,8 +581,12 @@ jobs:
           key: ${{ steps.target-cache-key.outputs.key }}
           restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
       - name: Restore the path dependencies' cached file times
-        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+        run: |
+          python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+          mkdir -p target/cargo-messages
       - name: Build headless engine and sidecar
+        env:
+          CARGO_MESSAGES: ${{ github.workspace }}/rendering/bevy-explorer/source/target/cargo-messages/headless.jsonl
         run: python3 ../../../apps/bevy-explorer/build-headless.py
       - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
@@ -770,11 +793,13 @@ jobs:
           key: ${{ steps.target-cache-key.outputs.key }}
           restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
       - name: Restore the path dependencies' cached file times
-        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
-      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: |
+          python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+          mkdir -p target/cargo-messages
+      - run: cargo clippy --locked --workspace --all-targets --message-format=json-render-diagnostics -- -D warnings > target/cargo-messages/clippy.jsonl
         shell: bash
       - name: Avatar crate without the explorer feature
-        run: cargo check --locked -p avatar --no-default-features
+        run: cargo check --locked -p avatar --no-default-features --message-format=json-render-diagnostics > target/cargo-messages/avatar.jsonl
         shell: bash
       - name: Record the path dependencies' file times for the cache
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
@@ -807,6 +832,103 @@ jobs:
         working-directory: rendering/bevy-explorer/source
         shell: bash
     timeout-minutes: 100
+    needs:
+      - changes
+  relay-wake:
+    # The scene relays' wake on the engine's send (crates/dcl_wasm `relay_wake`), as a scene worker waits for
+    # it: `Atomics.waitAsync` on shared wasm memory, in a dedicated worker of headless Chrome. The host tests
+    # in the Test Suite cover the send, the bump and the notify; this job covers the browser's side.
+    if: needs.changes.outputs.relay-wake == 'true'
+    name: Relay wake in the browser
+    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04 || 'ubuntu-24.04' }}
+    env:
+      CARGO_INCREMENTAL: '0'
+      # no debug information: a smaller cache and a faster link; the test needs none
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Reserve disk space on the hosted Linux runner
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        working-directory: .
+        run: |-
+          avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          if [ "${avail:-0}" -lt 40 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          fi
+          df -h /
+      # The web build's toolchain: shared memory needs build-std (.cargo/config.toml).
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: nightly-2026-04-15
+          targets: wasm32-unknown-unknown
+          components: rust-src
+      - name: Stamp rust-src with the toolchain date so cached build-std artifacts stay fresh
+        run: |
+          d=$(rustc -vV | sed -n 's/^commit-date: //p')
+          find "$(rustc --print sysroot)/lib/rustlib/src" -type f -exec touch -t "${d//-/}0000" {} +
+      - name: Install the web build tools from the flake
+        uses: ./.github/actions/bevy-explorer-tools
+        with:
+          package: bevy-web-tools
+      - name: Install the pinned WASM binding generator and its test runner
+        run: python3 ../../../apps/bevy-explorer/install-web-tools.py --no-opt --test-runner
+      # After the tool steps: the key reads the environment they export (see the Test Suite).
+      - name: Identify the wasm test build cache
+        id: target-cache-key
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" key --lane relay-wake
+      - name: Restore the wasm test build cache
+        id: target-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          key: ${{ steps.target-cache-key.outputs.key }}
+          restore-keys: ${{ steps.target-cache-key.outputs.restore-keys }}
+      - name: Restore the path dependencies' cached file times
+        run: |
+          python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+          mkdir -p target/cargo-messages
+      # The runner image's Chrome and its matching driver; the test runner serves the page cross-origin
+      # isolated, so the memory is shared.
+      - name: Test the relay wake in headless Chrome
+        run: |
+          export CHROMEDRIVER="${CHROMEWEBDRIVER:?the runner image provides Chrome and its driver}/chromedriver"
+          export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner
+          cargo test --locked -p dcl_wasm --lib --target wasm32-unknown-unknown \
+            --no-run --message-format=json-render-diagnostics > target/cargo-messages/relay-wake.jsonl
+          cargo test --locked -p dcl_wasm --lib --target wasm32-unknown-unknown
+      - name: Record the path dependencies' file times for the cache
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
+      # Saved as the Clippy job saves its cache.
+      - name: Prune the wasm test build cache
+        if: >-
+          github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true' &&
+          (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          !startsWith(steps.target-cache.outputs.cache-matched-key, steps.target-cache-key.outputs.dependencies)))
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-target-cache.py" prune target
+      - name: Save the wasm test build cache
+        if: >-
+          github.run_attempt == '1' && steps.target-cache.outputs.cache-hit != 'true' &&
+          (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          !startsWith(steps.target-cache.outputs.cache-matched-key, steps.target-cache-key.outputs.dependencies)))
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          key: ${{ steps.target-cache-key.outputs.key }}
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+        shell: bash
+    timeout-minutes: 60
     needs:
       - changes
   toml:
@@ -1406,7 +1528,7 @@ jobs:
   # draft and an unmerged close must not leave a pass or a skip behind.
   gate:
     name: Explorer CI gate
-    needs: [source, changes, fmt, toml, clippy, test, headless-smoke, build-deploy-web, package-web, images-compile, images]
+    needs: [source, changes, fmt, toml, clippy, test, relay-wake, headless-smoke, build-deploy-web, package-web, images-compile, images]
     if: ${{ always() && !(github.event.action == 'closed' && github.event.pull_request.merged) }}
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 5

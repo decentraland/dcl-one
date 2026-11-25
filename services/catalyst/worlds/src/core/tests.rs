@@ -137,6 +137,29 @@ async fn fixture_on_pool(
     settings: Settings,
     blocked_world_names: &str,
 ) -> Fixture {
+    fixture_with_names(
+        pool,
+        personal,
+        forward_to,
+        ens,
+        settings,
+        blocked_world_names,
+        None,
+    )
+    .await
+}
+
+/// [`fixture_on_pool`] whose policy reads its DCL NAMEs from `name_source`
+/// instead of the marketplace subgraph fake (`names`).
+async fn fixture_with_names(
+    pool: PgPool,
+    personal: PersonalWorldsPolicy,
+    forward_to: Option<&str>,
+    ens: Option<(Arc<crate::ens::EnsResolver>, i64)>,
+    settings: Settings,
+    blocked_world_names: &str,
+    name_source: Option<Arc<dyn crate::chain_index::names::NameAuthority>>,
+) -> Fixture {
     let (market, names) = index_with_names().await;
     let dir = std::env::temp_dir().join(format!(
         "catalyst-worlds-core-{}-{}",
@@ -144,9 +167,14 @@ async fn fixture_on_pool(
         Uuid::new_v4().simple()
     ));
     let storage = Arc::new(Storage::from_config(&dir).await.unwrap());
-    let mut policy = Policy::new(pool.clone(), personal, Some(market.clone())).with_name_deny_list(
-        Arc::new(super::names::NameDenyList::new(blocked_world_names)),
-    );
+    let policy = Policy::new(pool.clone(), personal, Some(market.clone()));
+    let policy = match name_source {
+        Some(source) => policy.with_name_authority(Some(source)),
+        None => policy.with_subgraph_names(),
+    };
+    let mut policy = policy.with_name_deny_list(Arc::new(super::names::NameDenyList::new(
+        blocked_world_names,
+    )));
     if let Some((resolver, cap)) = ens {
         policy = policy.with_ens(Some(resolver), cap);
     }
@@ -662,6 +690,7 @@ async fn a_name_transfer_moves_ownership_on_the_next_publish() {
     f.names.forget(&old.address);
     f.names.set(&new.address, world.label());
     f.market.graph.names.clear();
+    f.market.graph.name_owner.clear();
 
     let body = post_entity(
         &f.app,
@@ -5469,7 +5498,8 @@ async fn a_stalled_settings_upload_answers_the_upstream_timeout_text() {
         f.pool.clone(),
         PersonalWorldsPolicy::disabled(),
         Some(f.market.clone()),
-    );
+    )
+    .with_subgraph_names();
     let app = router(Arc::new(CoreState::new(
         f.pool.clone(),
         f.storage.clone(),
@@ -8693,6 +8723,7 @@ async fn a_new_holder_publishes_then_the_reconcile_finds_nothing_to_change() {
     f.names.forget(&old.address);
     f.names.set(&new.address, world.label());
     f.market.graph.names.clear();
+    f.market.graph.name_owner.clear();
     post_entity(
         &f.app,
         &deployment(&new, &world, "After", "0,0", &["0,0"]).await,

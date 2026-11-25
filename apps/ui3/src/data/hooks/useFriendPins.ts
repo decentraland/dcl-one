@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import type { FriendEntry } from "../../generated/bridge/FriendEntry";
 import type { NearbyPlayer } from "../../generated/bridge/NearbyPlayer";
 import { useBridgeState } from "../../overlay/bridge";
-import { coordsToPercent, parseCoords } from "../catalyst/places";
+import { coordsToPercent, parseCoords } from "@web-core/catalyst/places";
 
 export type FriendPin = {
   address: string;

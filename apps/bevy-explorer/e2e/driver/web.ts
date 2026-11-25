@@ -26,6 +26,7 @@ interface WebDriver {
   frameTargets(): unknown[]
   consoleMessages(): { at: number; target: string; kind: string; text: string }[]
   screenshot(): Promise<Buffer>
+  resizeView(size: [number, number] | null, options?: { timeout?: number }): Promise<void>
   close(): Promise<void> | void
   readonly product?: string
 }
@@ -150,6 +151,11 @@ export class WebConsole implements Console {
       console: this.#driver.consoleMessages().map(consoleLine),
       screenshot: await this.#driver.screenshot().catch(() => undefined)
     }
+  }
+
+  /** Allows 20 s for the app frame to draw at the new size, past the driver's 5 s default. */
+  async resizeView(size: [number, number] | null): Promise<void> {
+    await this.#driver.resizeView(size, { timeout: 20_000 })
   }
 
   async close(): Promise<void> {

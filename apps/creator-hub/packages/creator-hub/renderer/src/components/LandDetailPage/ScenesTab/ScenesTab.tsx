@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 
 import type { Land } from '/@/lib/land';
 import { getLandName } from '/@/modules/store/management/utils';

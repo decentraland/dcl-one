@@ -38,8 +38,9 @@ import { openCommunityModal } from '../communities/CommunityModal'
 import { openEventDetail } from '../events/EventDetail'
 import { eventCalendarUrl, eventCopyLink, eventShareUrl } from '../events/eventFormat'
 import { lobbyEvents } from '../events/eventsStore'
-import { PhotoDetail } from '../gallery/PhotoDetail'
+import { usePhotoViewer } from '../gallery/usePhotoViewer'
 import { useOwnReelActions } from '../gallery/useOwnReelActions'
+import { photoDestination } from '../gallery/reelActions'
 import { useReelList } from '../gallery/useReelList'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { openPlaceDetail } from '../places/PlaceDetail'
@@ -523,6 +524,30 @@ export function LobbyHome({
   const unread = session.notifications.unread
   const nameColor = profile ? userColor(profile.address, profile.name, profile.hasClaimedName, profile.nameColor) : 'var(--lobby-snow)'
 
+  const openPhoto = photoIndex != null ? reel.photos[photoIndex] : undefined
+  usePhotoViewer(
+    photoIndex != null && openPhoto != null
+      ? {
+          photos: reel.photos,
+          index: photoIndex,
+          meta: session.gallery.metas[openPhoto.id],
+          canEdit: true,
+          onIndex: setPhotoIndex,
+          onLoadMeta: session.gallery.loadPhoto,
+          loadWearables: session.gallery.loadWearables,
+          onClose: () => setPhotoIndex(null),
+          onSetPublic: reelActions.setPublic,
+          onJumpIn: (place) => {
+            if (pick(photoDestination(place))) setPhotoIndex(null)
+          },
+          onDelete: (photo) =>
+            void reelActions.remove(photo).then((removed) => {
+              if (removed) setPhotoIndex(null)
+            })
+        }
+      : null
+  )
+
   return (
     <div ref={rootRef} className={cx(styles.root, editing && styles.editing)} style={backpackHole}>
       {/* the Backpack opens over the lobby: the engine sets the lobby's stage aside, as it is, until it closes */}
@@ -691,28 +716,6 @@ export function LobbyHome({
             />
           </div>
         </>
-      )}
-
-      {photoIndex != null && reel.photos[photoIndex] != null && (
-        <div className={styles.photo}>
-          <PhotoDetail
-            photos={reel.photos}
-            index={photoIndex}
-            meta={session.gallery.metas[reel.photos[photoIndex].id]}
-            isSelf
-            onIndex={setPhotoIndex}
-            onLoadMeta={session.gallery.loadPhoto}
-            onClose={() => setPhotoIndex(null)}
-            onTeleport={(x, y) => {
-              if (pick({ kind: 'parcel', x, y })) setPhotoIndex(null)
-            }}
-            onDelete={(photo) =>
-              void reelActions.remove(photo).then((removed) => {
-                if (removed) setPhotoIndex(null)
-              })
-            }
-          />
-        </div>
       )}
 
       {avatarTip && !editing && (

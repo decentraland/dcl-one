@@ -76,6 +76,10 @@ export type TabsBarItem = Readonly<{
   href: string
   /** Hide inactive routes on narrow layouts; the controlled current route remains visible. */
   hiddenOnMobile?: boolean
+  /** A shortcut shown only on screens up to 768px wide. */
+  mobileOnly?: boolean
+  /** Apply the campaign gradient to the label while retaining the standard underline and focus ring. */
+  accent?: 'campaign'
 }>
 /** Render one native anchor and forward children, className, data-label, aria-current and events. */
 export type TabsBarLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
@@ -102,10 +106,12 @@ export type TabsBarNavigationProps = SharedProps & {
   children?: never
   variant?: never
 } & (
-    | { page?: 'create'; search?: never; actions?: never }
-    | { page: 'blog'; search: ReactNode; actions?: never }
+    | { page?: 'create'; layout?: never; search?: never; actions?: never }
+    | { page: 'shop'; layout: 'links'; search?: never; actions?: never }
+    | { page: 'blog'; layout?: never; search: ReactNode; actions?: never }
     | {
         page: 'shop' | 'learn'
+        layout?: never
         /** Explicit caller-owned content, including empty or loading states. */
         search: ReactNode
         actions: ReactNode
@@ -115,6 +121,7 @@ export type TabsBarNavigationProps = SharedProps & {
 /** Navigation precedes caller-owned controls in visual and keyboard order at every size. */
 function NavigationTabsBar({
   page = 'create',
+  layout,
   items,
   activeId,
   current = 'page',
@@ -132,7 +139,7 @@ function NavigationTabsBar({
   })
   const listRef = useRef<HTMLUListElement>(null)
   const routeLayout = JSON.stringify(
-    items.map((item) => [item.id, item.label, item.href, !!item.hiddenOnMobile])
+    items.map((item) => [item.id, item.label, item.href, !!item.hiddenOnMobile, !!item.mobileOnly])
   )
   useLayoutEffect(() => {
     const list = listRef.current
@@ -204,6 +211,7 @@ function NavigationTabsBar({
     <nav
       aria-label={label.trim() || 'Sections'}
       data-page={page}
+      data-layout={layout}
       className={[styles.routeRoot, className].filter(Boolean).join(' ')}
     >
       <div className={styles.routeNavigation} data-region="navigation">
@@ -216,6 +224,8 @@ function NavigationTabsBar({
               <li
                 key={item.id}
                 className={styles.routeItem}
+                data-mobile-only={(item.mobileOnly && item.id !== activeId) || undefined}
+                data-accent={item.accent}
                 data-mobile-hidden={(item.hiddenOnMobile && item.id !== activeId) || undefined}
               >
                 {LinkComponent ? (
@@ -245,7 +255,7 @@ function NavigationTabsBar({
           })}
         </ul>
       </div>
-      {page !== 'create' ? (
+      {page !== 'create' && layout !== 'links' ? (
         <div className={styles.routeControls} data-region="controls">
           <div className={styles.routeSearch} data-region="search">
             {search}

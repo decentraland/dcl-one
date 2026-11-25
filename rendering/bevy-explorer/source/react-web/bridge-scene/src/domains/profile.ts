@@ -503,7 +503,7 @@ export function registerProfile(ctx: Ctx): void {
     const [equippedWearables, equippedEmotes] = await Promise.all([
       // Only our OWN urns go through resolveEquippedSet (it indexes tokens for the equip handler);
       // shopUrls because the passport is the only surface that renders a SHOP action.
-      (isSelf ? resolveEquippedSet : resolveWearables)(wearableUrns, { shopUrls: true }).catch(() => undefined),
+      (isSelf ? resolveEquippedSet : resolveWearables)(wearableUrns, { shopUrls: true, dropFailed: true }).catch(() => undefined),
       resolveEquippedEmotes(emoteEntries).catch(() => undefined)
     ])
     const profile: Profile = {

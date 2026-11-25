@@ -69,7 +69,8 @@ export type CartStore = {
 
 export const CART_KEY_PREFIX = "dcl-shop-cart:v1:";
 export const CHECKOUT_KEY_PREFIX = "dcl-shop-checkout:v1:";
-const ANONYMOUS = "anonymous";
+/** The account part of the cart key while signed out. */
+export const ANONYMOUS = "anonymous";
 
 const EMPTY: CartSnapshot = Object.freeze({ account: null, lines: [], checkout: null }) as CartSnapshot;
 

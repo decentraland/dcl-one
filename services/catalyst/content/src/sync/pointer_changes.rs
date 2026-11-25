@@ -13,6 +13,7 @@ use super::repository::LiveDeploymentRepository;
 /// MB); the cap stops a misbehaving peer from growing the buffer without
 /// limit, as every other reader's does.
 const MAX_PAGE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PAGES_PER_POLL: usize = 10_000;
 use super::{SyncDeployment, SyncError, Timestamp};
 use crate::batch_deployer::{BatchDeployer, DeploymentReport};
 
@@ -23,14 +24,9 @@ pub struct PointerChangesOptions<'a> {
     pub entity_type_filter: Option<&'a HashSet<String>>,
 }
 
-/// The peers a scheduled entity's files may be downloaded from; read per entity, so a running
-/// stream follows a changed peer list.
-pub type PeerUrls = std::sync::RwLock<std::sync::Arc<[String]>>;
-
 /// Where a stream hands its deployments and how their acknowledgement is tracked.
 pub struct ScheduleTarget<'a> {
     pub deployer: &'a BatchDeployer,
-    pub content_servers: &'a PeerUrls,
     pub report: &'a std::sync::Arc<DeploymentReport>,
 }
 
@@ -67,10 +63,8 @@ fn settled_cursor(from: Timestamp, greatest: Timestamp, span_ms: Timestamp) -> T
 /// Upstream `isUsableTimestamp`. These values become the stream's high-water mark, and the persisted
 /// resume state only ever moves forward (`advance_sync_frontier` / `advance_server_sync_cursor` are
 /// GREATEST-monotonic), so a single bad one is permanent: the node then polls /pointer-changes from a
-/// point no real deployment can exceed and silently stops syncing. Hence the check before the
-/// tentative mark ever sees the value. The JS safe-integer clause is a non-concern here: i64 covers
-/// every value serde hands us, and anything that saturated on the way in (1e999 -> i64::MAX) fails
-/// the upper bound.
+/// point no real deployment can exceed and silently stops syncing. The deployment parser already
+/// checks that timestamps encode whole milliseconds.
 pub(crate) fn is_usable_timestamp(ts: Timestamp, now_ms: Timestamp) -> bool {
     ts >= 0 && ts <= now_ms.saturating_add(MAX_TIMESTAMP_CLOCK_SKEW_MS)
 }
@@ -80,9 +74,7 @@ pub(crate) fn is_usable_timestamp(ts: Timestamp, now_ms: Timestamp) -> bool {
 /// the confirmed timestamp at the next poll boundary and from there the durable, GREATEST-monotonic
 /// frontier, so one hostile delta reaching the max() below would poison the node permanently.
 ///
-/// Rejection skips the single delta rather than failing the stream, matching upstream's deliberate
-/// trade: failing would let one permanently-broken record stall every later deployment from that
-/// server.
+/// Malformed and oversized rows are skipped before scheduling or advancing the mark.
 fn accept_delta_and_advance_mark(
     item: serde_json::Value,
     from_timestamp: Timestamp,
@@ -111,11 +103,28 @@ fn accept_delta_and_advance_mark(
         }
     };
 
-    let entity_ts_ok = is_usable_timestamp(deployment.entity_timestamp, now_ms);
-    let local_ts_ok = deployment
-        .local_timestamp
-        .is_none_or(|ts| is_usable_timestamp(ts, now_ms));
-    if !entity_ts_ok || !local_ts_ok {
+    if let Err(reason) = deployment.validate_shape() {
+        report_rejected("invalid deployment", reason.into());
+        return None;
+    }
+    let Some(local_ts) = deployment.local_timestamp else {
+        report_rejected("invalid deployment", "localTimestamp is required".into());
+        return None;
+    };
+    if let Err(reason) = check_delta_limits(&deployment) {
+        crate::metrics::OVERSIZED_POINTER_CHANGES
+            .handle([])
+            .increment(1);
+        report_rejected("oversized deployment", reason);
+        return None;
+    }
+    if let Err(reason) = deployment.validate_auth_chain() {
+        report_rejected("invalid deployment", reason.into());
+        return None;
+    }
+    if !is_usable_timestamp(deployment.entity_timestamp, now_ms)
+        || !is_usable_timestamp(local_ts, now_ms)
+    {
         report_rejected(
             "implausible timestamp",
             format!(
@@ -126,13 +135,56 @@ fn accept_delta_and_advance_mark(
         return None;
     }
 
-    if let Some(local_ts) = deployment.local_timestamp
-        && local_ts >= from_timestamp
-    {
+    if local_ts >= from_timestamp {
         *greatest_timestamp = (*greatest_timestamp).max(local_ts);
     }
 
     Some(deployment)
+}
+
+fn check_delta_limits(deployment: &SyncDeployment) -> Result<(), String> {
+    const MAX_POINTERS: usize = 10_000;
+    const MAX_AUTH_LINKS: usize = 100;
+    const MAX_FIELD_BYTES: usize = 256 * 1024;
+    const MAX_ROW_BYTES: usize = 1024 * 1024;
+
+    if deployment.pointers.len() > MAX_POINTERS {
+        return Err(format!(
+            "pointer-change delta exceeds {MAX_POINTERS} pointers"
+        ));
+    }
+    if deployment.auth_chain.len() > MAX_AUTH_LINKS {
+        return Err(format!(
+            "pointer-change delta exceeds {MAX_AUTH_LINKS} auth links"
+        ));
+    }
+
+    let mut bytes = 0;
+    let mut add = |len| {
+        if len > MAX_FIELD_BYTES {
+            return Err(format!(
+                "pointer-change delta field exceeds {MAX_FIELD_BYTES} bytes"
+            ));
+        }
+        bytes += len;
+        if bytes > MAX_ROW_BYTES {
+            return Err(format!(
+                "pointer-change delta exceeds {MAX_ROW_BYTES} field bytes"
+            ));
+        }
+        Ok(())
+    };
+    add(deployment.entity_type.len())?;
+    add(deployment.entity_id.len())?;
+    for pointer in &deployment.pointers {
+        add(pointer.len())?;
+    }
+    for link in &deployment.auth_chain {
+        add(link.link_type.to_string().len())?;
+        add(link.payload.len())?;
+        add(link.signature.as_deref().map_or(0, str::len))?;
+    }
+    Ok(())
 }
 
 /// Rows already delivered at or after the poll's `from`, so the overlap every poll re-reads costs
@@ -191,9 +243,19 @@ async fn fetch_page(
     client: &Client,
     url: &str,
 ) -> Result<(Vec<serde_json::Value>, bool), SyncError> {
+    let started = std::time::Instant::now();
+    let page = fetch_page_body(client, url).await;
+    crate::sync::metrics::pointer_changes_page(url, started.elapsed());
+    page
+}
+
+async fn fetch_page_body(
+    client: &Client,
+    url: &str,
+) -> Result<(Vec<serde_json::Value>, bool), SyncError> {
     let resp = client.get(url).send().await?.error_for_status()?;
     let resp = crate::sync_types::refuse_redirect(resp, &format!("pointer-changes page {url}"))?;
-    let body = crate::http::read_body_capped(resp, MAX_PAGE_BYTES)
+    let body = crate::http::read_peer_body_capped(resp, MAX_PAGE_BYTES)
         .await
         .map_err(|e| SyncError::Other(format!("pointer-changes page {url}: {e}")))?;
     let page: PointerChangesPage = serde_json::from_slice(&body)?;
@@ -208,19 +270,19 @@ async fn fetch_page(
 /// not either), so it reads the same rows again downwards: following it, a poll never got past
 /// its first page, and a page that one flush filled with a single timestamp stalled the stream
 /// for good.
-fn keyset_next_url(server: &str, page: &[serde_json::Value]) -> Option<String> {
+fn keyset_next_url(server: &str, page: &[serde_json::Value], now_ms: Timestamp) -> Option<String> {
     let (from, last_id) = page.iter().rev().find_map(|delta| {
-        let from = match delta.get("localTimestamp")? {
-            serde_json::Value::Number(n) => n.to_string(),
-            _ => return None,
-        };
+        let from = crate::sync_types::timestamp_number(delta.get("localTimestamp")?.as_number()?)?;
+        if !is_usable_timestamp(from, now_ms) {
+            return None;
+        }
         Some((from, delta.get("entityId")?.as_str()?))
     })?;
     let mut url = url::Url::parse(&format!("{server}/pointer-changes")).ok()?;
     url.query_pairs_mut()
         .append_pair("sortingOrder", "ASC")
         .append_pair("sortingField", "local_timestamp")
-        .append_pair("from", &from)
+        .append_pair("from", &from.to_string())
         .append_pair("lastId", last_id);
     Some(url.to_string())
 }
@@ -233,13 +295,14 @@ fn page_entity_ids(page: &[serde_json::Value]) -> HashSet<String> {
 
 /// The resume cursor (`progress`, the return value, and the persisted frontier) only ever reflects
 /// CONFIRMED progress: the high-water timestamp stays tentative while entities are merely scheduled
-/// and commits at each poll boundary -- the end of a pagination chain -- after the deployer has
+/// and commits at each poll boundary after the deployer has
 /// drained and every deployment this stream scheduled has been acknowledged (deployed, or durably
 /// recorded in failed_deployments). A boundary where something remains unacknowledged fails the
 /// stream instead, so the caller reconnects from the last confirmed timestamp. Committing per entity,
 /// as this used to, let a later confirmed entity carry the cursor past an earlier one still in flight
 /// -- a crash in that window skipped it forever. The cursor a boundary confirms is the
-/// [`settled_cursor`], the overlap behind the high-water mark, and the next poll starts there.
+/// [`settled_cursor`], the overlap behind the high-water mark. A batch that reaches the page cap
+/// checkpoints its acknowledged prefix and resumes at its exact keyset within this run.
 /// `settled_polls` counts the boundaries this run settled.
 #[allow(clippy::too_many_arguments)]
 pub async fn deploy_entities_from_pointer_changes<S>(
@@ -255,11 +318,35 @@ pub async fn deploy_entities_from_pointer_changes<S>(
 where
     S: Fn() -> bool,
 {
-    let ScheduleTarget {
-        deployer,
-        content_servers,
-        report,
-    } = target;
+    deploy_pointer_pages::<_, MAX_PAGES_PER_POLL>(
+        client,
+        server,
+        options,
+        target,
+        heartbeat_repo,
+        progress,
+        settled_polls,
+        should_stop,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn deploy_pointer_pages<S, const PAGE_LIMIT: usize>(
+    client: &Client,
+    server: &str,
+    options: &PointerChangesOptions<'_>,
+    target: ScheduleTarget<'_>,
+    heartbeat_repo: Option<std::sync::Arc<LiveDeploymentRepository>>,
+    progress: &std::sync::atomic::AtomicI64,
+    settled_polls: &std::sync::atomic::AtomicU64,
+    should_stop: S,
+) -> Result<Timestamp, SyncError>
+where
+    S: Fn() -> bool,
+{
+    let ScheduleTarget { deployer, report } = target;
+    let advertisers = [server.to_owned()];
     let entity_type_filter = options.entity_type_filter;
     let mut last_beat: Option<std::time::Instant> = None;
     let mut last_persisted = options.from_timestamp;
@@ -274,34 +361,34 @@ where
     let mut confirmed_timestamp = options.from_timestamp;
     let mut rejected_logged: u64 = 0;
     let mut delivered = DeliveredWindow::default();
-    let mut url = format!(
-        "{}/pointer-changes?sortingOrder=ASC&sortingField=local_timestamp&from={}",
-        server, options.from_timestamp
-    );
-
-    let spawn_fetch = |u: String| {
+    let first_page = |from| {
+        format!(
+            "{server}/pointer-changes?sortingOrder=ASC&sortingField=local_timestamp&from={from}"
+        )
+    };
+    let spawn_fetch = |in_flight: &mut tokio::task::JoinSet<_>, u: String| {
         let c = client.clone();
-        tokio::spawn(async move { fetch_page(&c, &u).await })
+        in_flight.spawn(async move { fetch_page(&c, &u).await });
     };
 
     let mut poll_started = std::time::Instant::now();
-    let mut in_flight = Some(spawn_fetch(url.clone()));
+    // Dropping the stream also cancels its page fetch.
+    let mut in_flight = tokio::task::JoinSet::new();
+    spawn_fetch(&mut in_flight, first_page(options.from_timestamp));
     let mut previous_page: HashSet<String> = HashSet::new();
+    let mut pages_fetched = 0;
 
     loop {
         if should_stop() {
-            if let Some(h) = in_flight.take() {
-                h.abort();
-            }
             return Ok(confirmed_timestamp);
         }
 
-        let (items, more) = match in_flight.take() {
-            Some(h) => h
-                .await
-                .map_err(|e| SyncError::Other(format!("pointer-changes prefetch join: {e}")))??,
-            None => fetch_page(client, &url).await?,
-        };
+        let (items, more) = in_flight
+            .join_next()
+            .await
+            .expect("one pointer-changes page is queued on every iteration")
+            .map_err(|e| SyncError::Other(format!("pointer-changes prefetch join: {e}")))??;
+        pages_fetched += 1;
         let span = poll_started.elapsed();
 
         if let Some(repo) = &heartbeat_repo
@@ -330,23 +417,22 @@ where
             );
         }
         previous_page = page_ids;
+        let now_ms = chrono::Utc::now().timestamp_millis();
         let next = if more && !repeated {
-            keyset_next_url(server, &items)
+            keyset_next_url(server, &items, now_ms)
         } else {
             None
         };
 
-        if let Some(next) = &next {
-            in_flight = Some(spawn_fetch(next.clone()));
-            url = next.clone();
+        let reached_page_limit = pages_fetched == PAGE_LIMIT;
+        if let Some(next) = &next
+            && !reached_page_limit
+        {
+            spawn_fetch(&mut in_flight, next.clone());
         }
 
-        let now_ms = chrono::Utc::now().timestamp_millis();
         for item in items {
             if should_stop() {
-                if let Some(h) = in_flight.take() {
-                    h.abort();
-                }
                 return Ok(confirmed_timestamp);
             }
 
@@ -371,13 +457,13 @@ where
             }
 
             delivered.record_delivered(&deployment);
-            let servers = content_servers.read().unwrap().clone();
+            report.record_streamed(&deployment.entity_type);
             deployer
-                .schedule_entity_deployment(deployment, &servers, Some(report))
+                .schedule_entity_deployment(deployment, &advertisers, Some(report))
                 .await?;
         }
 
-        if next.is_none() {
+        if next.is_none() || reached_page_limit {
             deployer.on_idle().await?;
             if !report.is_complete() {
                 return Err(SyncError::Other(format!(
@@ -409,18 +495,23 @@ where
                 last_persisted = confirmed_timestamp;
             }
 
-            if options.wait_time_ms == 0 {
+            if next.is_none() && options.wait_time_ms == 0 {
                 break;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(options.wait_time_ms)).await;
-            delivered.begin_poll(confirmed_timestamp);
-            previous_page.clear();
-            url = format!(
-                "{}/pointer-changes?sortingOrder=ASC&sortingField=local_timestamp&from={}",
-                server, confirmed_timestamp
-            );
-            poll_started = std::time::Instant::now();
-            in_flight = Some(spawn_fetch(url.clone()));
+            if options.wait_time_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(options.wait_time_ms)).await;
+            }
+            pages_fetched = 0;
+            if let Some(next) = next {
+                // Keep the chain's full span for cursor safety. The keyset still moves
+                // forward when the overlap keeps the durable timestamp unchanged.
+                spawn_fetch(&mut in_flight, next);
+            } else {
+                delivered.begin_poll(confirmed_timestamp);
+                previous_page.clear();
+                poll_started = std::time::Instant::now();
+                spawn_fetch(&mut in_flight, first_page(confirmed_timestamp));
+            }
         }
     }
 
@@ -458,10 +549,10 @@ mod tests {
 
     fn delta(local_timestamp: serde_json::Value) -> serde_json::Value {
         serde_json::json!({
-            "entityId": "QmPoisonPoisonPoisonPoisonPoisonPoisonPoison1",
+            "entityId": crate::auth::hash_bytes_v1(b"delta test"),
             "entityType": "scene",
             "pointers": ["0,0"],
-            "authChain": [],
+            "authChain": [{"type": "SIGNER", "payload": "0x0000000000000000000000000000000000000001"}],
             "entityTimestamp": 1_700_000_000_000i64,
             "localTimestamp": local_timestamp,
         })
@@ -469,6 +560,20 @@ mod tests {
 
     const NOW_MS: i64 = 1_750_000_000_000;
     const FROM_TS: i64 = 1_600_000_000_000;
+
+    #[test]
+    fn a_keyset_uses_the_last_usable_timestamp_even_if_its_row_cannot_deploy() {
+        let rows = [
+            serde_json::from_str(r#"{"entityId": "usable-boundary", "localTimestamp": 1.7e12}"#)
+                .unwrap(),
+            serde_json::json!({"entityId": "too-far", "localTimestamp": i64::MAX}),
+        ];
+        let next = keyset_next_url("http://localhost", &rows, NOW_MS).unwrap();
+        let next = url::Url::parse(&next).unwrap();
+        let params: std::collections::HashMap<_, _> = next.query_pairs().collect();
+        assert_eq!(params["from"], "1700000000000");
+        assert_eq!(params["lastId"], "usable-boundary");
+    }
 
     #[test]
     fn far_future_local_timestamp_is_rejected_and_never_moves_the_mark() {
@@ -553,14 +658,41 @@ mod tests {
     }
 
     #[test]
-    fn delta_without_local_timestamp_is_scheduled_but_never_moves_the_mark() {
+    fn delta_without_local_timestamp_is_rejected_and_never_moves_the_mark() {
         let mut item = delta(serde_json::json!(0));
         item.as_object_mut().unwrap().remove("localTimestamp");
         let mut mark = FROM_TS;
         let mut logged = 0;
         let accepted = accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged);
-        assert!(accepted.is_some());
+        assert!(accepted.is_none());
         assert_eq!(mark, FROM_TS);
+    }
+
+    #[test]
+    fn malformed_deltas_are_skipped_before_scheduling_or_advancing() {
+        let mut mark = FROM_TS;
+        let mut logged = 0;
+        for (field, value) in [
+            ("entityId", serde_json::json!("not-a-cid")),
+            ("pointers", serde_json::json!([])),
+            ("authChain", serde_json::json!([])),
+            (
+                "authChain",
+                serde_json::json!([{"type": "ECDSA_SIGNED_ENTITY", "payload": "id"}]),
+            ),
+            ("localTimestamp", serde_json::Value::Null),
+            ("localTimestamp", serde_json::json!(FROM_TS as f64 + 0.5)),
+        ] {
+            let mut item = delta(serde_json::json!(FROM_TS + 1_000));
+            item[field] = value;
+            assert!(
+                accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged)
+                    .is_none(),
+                "{field}"
+            );
+        }
+        assert_eq!(mark, FROM_TS);
+        assert_eq!(logged, 6);
     }
 
     /// The stream never sends `includeAuthChain`, and `SyncDeployment` parses
@@ -578,6 +710,45 @@ mod tests {
         assert!(accepted.is_none());
         assert_eq!(mark, FROM_TS);
         assert_eq!(logged, 1);
+    }
+
+    #[test]
+    fn oversized_deltas_are_skipped_before_advancing_the_mark() {
+        let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+        let mut mark = FROM_TS;
+        let mut logged = 0;
+        for pointers in [
+            vec!["0,0".to_string(); 10_001],
+            vec!["a".repeat(256 * 1024 + 1)],
+            vec!["a".repeat(256 * 1024); 4],
+        ] {
+            let mut item = delta(serde_json::json!(FROM_TS + 1_000));
+            item["pointers"] = serde_json::json!(pointers);
+            assert!(
+                accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged)
+                    .is_none()
+            );
+        }
+        let mut item = delta(serde_json::json!(FROM_TS + 1_000));
+        let mut links = item["authChain"].as_array().unwrap().clone();
+        links.extend(std::iter::repeat_n(
+            serde_json::json!({"type": "ECDSA_EPHEMERAL", "payload": "payload", "signature": "signature"}),
+            100,
+        ));
+        item["authChain"] = serde_json::json!(links);
+        assert!(
+            accept_delta_and_advance_mark(item, FROM_TS, NOW_MS, &mut mark, &mut logged).is_none()
+        );
+        assert_eq!(mark, FROM_TS);
+        assert_eq!(logged, 4);
+        assert!(
+            recorder
+                .handle()
+                .render()
+                .lines()
+                .any(|line| line == "content_sync_oversized_pointer_changes_total 4")
+        );
     }
 
     fn deployment_at(entity_id: &str, local_ts: Timestamp) -> SyncDeployment {
@@ -768,6 +939,7 @@ mod tests {
             Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
             BloomFilter::with_capacity(100),
         );
+        batch.set_peers(vec![base.to_owned()]).await;
         let report = Arc::new(DeploymentReport::default());
         let progress = std::sync::atomic::AtomicI64::new(0);
         let confirmed = deploy_entities_from_pointer_changes(
@@ -780,7 +952,6 @@ mod tests {
             },
             ScheduleTarget {
                 deployer: &batch,
-                content_servers: &PeerUrls::new(std::sync::Arc::from(vec![base.to_owned()])),
                 report: &report,
             },
             None,
@@ -901,5 +1072,138 @@ mod tests {
             "the cursor settles the overlap behind the newest row: {confirmed}"
         );
         assert_eq!((report.scheduled(), report.lost()), (2, 0));
+    }
+
+    #[tokio::test]
+    async fn a_peer_repeating_an_oversized_delta_can_still_deliver_valid_rows() {
+        use std::sync::atomic::Ordering;
+
+        let Some(pool) = crate::sync_test_support::test_pool(3).await else {
+            return;
+        };
+        let prefix = crate::sync_test_support::unique();
+        let mut entities = scenes(&prefix, 0, &[900_000, 1_000_000]).await.into_iter();
+        let (mut oversized, rejected, rejected_body) = entities.next().unwrap();
+        let (valid, accepted, accepted_body) = entities.next().unwrap();
+        oversized["pointers"] = serde_json::json!(vec!["0,0"; 10_001]);
+        let (base, server, served) = spawn_peer(
+            vec![oversized, valid],
+            Vec::new(),
+            std::collections::HashMap::from([
+                (rejected.clone(), rejected_body),
+                (accepted.clone(), accepted_body),
+            ]),
+        )
+        .await;
+
+        let (confirmed, report) =
+            stream_into(&pool, &base, 10, || served.load(Ordering::SeqCst) >= 3).await;
+        server.abort();
+        let missing = missing(&pool, &[rejected.clone(), accepted]).await;
+        forget(pool, &prefix).await;
+
+        assert_eq!(missing, [rejected]);
+        assert!((600_000..=700_000).contains(&confirmed), "{confirmed}");
+        assert_eq!((report.scheduled(), report.lost()), (1, 0));
+    }
+
+    #[tokio::test]
+    async fn the_page_cap_confirms_progress_then_continues_inside_a_shared_timestamp() {
+        use crate::batch_deployer::BatchDeployerConfig;
+        use crate::bloom_filter::BloomFilter;
+        use crate::failed_deployments_store::LiveFailedDeploymentsStore;
+        use crate::sync_deployer::LiveSyncDeployer;
+        use axum::extract::Query;
+        use std::collections::HashMap;
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicI64, AtomicU64, Ordering},
+        };
+
+        let rows: Vec<_> = scenes("page-cap", 0, &[1_000_000, 1_000_000, 1_000_000, 1_200_000])
+            .await
+            .into_iter()
+            .map(|(row, _, _)| row)
+            .collect();
+        let cap_last_id = rows[1]["entityId"].as_str().unwrap().to_owned();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let observed = requests.clone();
+        let progress = Arc::new(AtomicI64::new(0));
+        let observed_progress = progress.clone();
+        let app = axum::Router::new().route(
+            "/pointer-changes",
+            axum::routing::get(move |Query(query): Query<HashMap<String, String>>| {
+                let mut requests = observed.lock().unwrap();
+                let page = requests.len();
+                requests.push((
+                    query["from"].clone(),
+                    query.get("lastId").cloned(),
+                    observed_progress.load(Ordering::Relaxed),
+                ));
+                let row = rows.get(page).cloned();
+                let more = page + 1 < rows.len();
+                async move {
+                    axum::Json(serde_json::json!({
+                        "deltas": row.into_iter().collect::<Vec<_>>(),
+                        "pagination": {"moreData": more}
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/postgres")
+            .unwrap();
+        let (storage, tmp) = crate::sync_test_support::temp_storage("pointer-page-cap").await;
+        let _cleanup = crate::sync_test_support::RemoveOnDrop(tmp);
+        let client = reqwest::Client::new();
+        let batch = BatchDeployer::new(
+            BatchDeployerConfig::default(),
+            crate::sync::test_sync_client(client.clone()),
+            storage.clone(),
+            pool.clone(),
+            Arc::new(LiveSyncDeployer::new(
+                pool.clone(),
+                storage,
+                2,
+                crate::sync_deployer::SyncValidation::AuthChainOnly,
+            )),
+            Arc::new(LiveFailedDeploymentsStore::new(pool)),
+            BloomFilter::with_capacity(10),
+        );
+        let settled_polls = AtomicU64::new(0);
+        let result = deploy_pointer_pages::<_, 2>(
+            &client,
+            &base,
+            &PointerChangesOptions {
+                from_timestamp: 0,
+                wait_time_ms: 0,
+                entity_type_filter: Some(&HashSet::new()),
+            },
+            ScheduleTarget {
+                deployer: &batch,
+                report: &Arc::new(DeploymentReport::default()),
+            },
+            None,
+            &progress,
+            &settled_polls,
+            || false,
+        )
+        .await
+        .unwrap();
+
+        server.abort();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        let (from, last_id, checkpoint) = &requests[2];
+        assert_eq!(from, "1000000");
+        assert_eq!(last_id.as_deref(), Some(cap_last_id.as_str()));
+        assert!((600_000..=700_000).contains(checkpoint), "{checkpoint}");
+        assert!(result > *checkpoint);
+        assert_eq!(progress.load(Ordering::Relaxed), result);
+        assert_eq!(settled_polls.load(Ordering::Relaxed), 2);
     }
 }

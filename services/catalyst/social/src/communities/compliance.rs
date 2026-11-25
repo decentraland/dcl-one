@@ -484,8 +484,8 @@ impl super::State {
         let cached:Option<Value>=sqlx::query_scalar("SELECT result FROM social.community_compliance_cache WHERE model=$1 AND input_hash=$2 AND expires_at>timezone('UTC',now())").bind(model).bind(hash.as_slice()).fetch_optional(&self.pool).await.map_err(|error|{tracing::error!(%error,"community compliance cache read failed");CommError::Internal})?;
         let result = if let Some(value) = cached {
             let result = ResultValue::from_value(value).map_err(unavailable)?;
-            metrics::counter!("ai_compliance_validation_total", "result" => if result.is_compliant { "compliant_cached" } else { "non-compliant_cached" }).increment(1);
-            metrics::histogram!("ai_compliance_validation_duration_seconds")
+            dcl_metrics::counter!("ai_compliance_validation_total", "result" => if result.is_compliant { "compliant_cached" } else { "non-compliant_cached" }).increment(1);
+            dcl_metrics::histogram!("ai_compliance_validation_duration_seconds")
                 .record(started.elapsed().as_secs_f64());
             result
         } else {
@@ -493,23 +493,23 @@ impl super::State {
                 .compliance
                 .get_or_init(|| Adapter::new(self.settings.compliance.clone()));
             let adapter = adapter.as_ref().map_err(|error| {
-                metrics::counter!("ai_compliance_validation_total", "result" => "failed")
+                dcl_metrics::counter!("ai_compliance_validation_total", "result" => "failed")
                     .increment(1);
                 unavailable(format!(
                     "Unexpected error during compliance validation: {error}"
                 ))
             })?;
             let result = adapter.validate_bounded(content).await.map_err(|error| {
-                metrics::counter!("ai_compliance_validation_total", "result" => "failed")
+                dcl_metrics::counter!("ai_compliance_validation_total", "result" => "failed")
                     .increment(1);
                 unavailable(error)
             })?;
-            metrics::histogram!("ai_compliance_validation_duration_seconds")
+            dcl_metrics::histogram!("ai_compliance_validation_duration_seconds")
                 .record(started.elapsed().as_secs_f64());
-            metrics::counter!("ai_compliance_validation_total", "result" => if result.is_compliant { "compliant" } else { "non-compliant" }).increment(1);
+            dcl_metrics::counter!("ai_compliance_validation_total", "result" => if result.is_compliant { "compliant" } else { "non-compliant" }).increment(1);
             sqlx::query("INSERT INTO social.community_compliance_cache(model,input_hash,result,expires_at) VALUES($1,$2,$3,timezone('UTC',now())+interval '2 hours') ON CONFLICT(model,input_hash) DO UPDATE SET result=EXCLUDED.result,expires_at=EXCLUDED.expires_at")
                 .bind(model).bind(hash.as_slice()).bind(serde_json::to_value(&result).unwrap()).execute(&self.pool).await.map_err(|error| {
-                    metrics::counter!("ai_compliance_validation_total", "result" => "failed").increment(1);
+                    dcl_metrics::counter!("ai_compliance_validation_total", "result" => "failed").increment(1);
                     unavailable(format!("Unexpected error during compliance validation: {error}"))
                 })?;
             result

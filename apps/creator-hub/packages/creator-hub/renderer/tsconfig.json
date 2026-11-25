@@ -14,7 +14,8 @@
       "#store": ["./src/modules/store"],
       "/@/*": ["./src/*"],
       "/shared/*": ["../shared/*"],
-      "@ui/*": ["../../../../ui3/src/*"]
+      "@ui/*": ["../../../../ui3/src/*"],
+      "@dcl/one-ui": ["../../../../../library/ui/components/Tooltip/Tooltip.tsx"]
     },
     "lib": ["ESNext", "dom", "dom.iterable"],
     "jsx": "react-jsx",

@@ -1,5 +1,6 @@
 """Development CI keeps platform coverage and reusable, isolated build snapshots."""
 from pathlib import Path
+import fnmatch
 import json
 import os
 import re
@@ -234,6 +235,117 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 prune(deps, "")
 
+    def test_smoke_prunes_verified_binary_and_dynamic_library_variants(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary) / 'deps'
+            deps.mkdir()
+            app = deps.parent / 'catalyst'
+            app.write_bytes(b'current')
+            current = deps / ('catalyst-' + 'a' * 16)
+            old = deps / ('catalyst-' + 'b' * 16)
+            old.write_bytes(b'old')
+            other = deps / ('other-' + 'b' * 16)
+            other.touch()
+            libraries = []
+            for suffix in ('.so', '.dylib'):
+                active = deps / ('libmacro-' + 'a' * 16 + suffix)
+                stale = deps / ('libmacro-' + 'b' * 16 + suffix)
+                active.touch()
+                libraries.append(str(active))
+                stale.write_bytes(b'old')
+            library_receipts = json.dumps({'reason': 'compiler-artifact', 'filenames': libraries})
+            os.link(app, current)
+            # The smoke profile disables debug info, so this receipt lists only the executable.
+            bin_receipt = json.dumps({'reason': 'compiler-artifact', 'target': {'kind': ['bin']},
+                                      'filenames': [str(app)], 'executable': str(app)})
+            receipts = library_receipts + '\n' + bin_receipt
+            self.assertEqual(prune(deps, receipts), 9)
+            self.assertTrue(all(Path(lib).exists() for lib in libraries))
+            self.assertFalse(old.exists())
+            self.assertTrue(current.samefile(app))
+            self.assertTrue(other.exists())
+            self.assertEqual(prune(deps, receipts), 0)
+
+    def test_smoke_reports_when_hashed_binaries_are_kept(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        for reported in (False, True):
+            with self.subTest(app_reported=reported), tempfile.TemporaryDirectory() as temporary:
+                deps = Path(temporary) / 'deps'
+                deps.mkdir()
+                app = deps.parent / 'catalyst'
+                app.write_bytes(b'current')
+                candidate = deps / ('catalyst-' + 'a' * 16)
+                lib = deps / ('libcrate-' + 'a' * 16 + '.rlib')
+                lib.touch()
+                stale = deps / ('libcrate-' + 'b' * 16 + '.rlib')
+                stale.write_bytes(b'old')
+                filenames = [str(lib)]
+                if reported:
+                    filenames.append(str(app))
+                    candidate.write_bytes(b'unmatched')
+                else:
+                    os.link(app, candidate)
+                receipt = json.dumps({'reason': 'compiler-artifact', 'filenames': filenames})
+                # Keeping the binaries does not stop the superseded library from being pruned.
+                with patch('builtins.print') as diagnostic:
+                    self.assertEqual(prune(deps, receipt), 3)
+                    diagnostic.assert_called_once()
+                    self.assertIn('Kept all 1 hashed Catalyst', diagnostic.call_args.args[0])
+                self.assertTrue(candidate.exists())
+                self.assertTrue(lib.exists())
+                self.assertFalse(stale.exists())
+
+    def test_smoke_prunes_a_dangling_library_symlink(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary)
+            active = deps / ('libcrate-' + 'a' * 16 + '.so')
+            active.touch()
+            obsolete = deps / ('libcrate-' + 'b' * 16 + '.so')
+            obsolete.symlink_to('missing-library')
+            link_size = obsolete.lstat().st_size
+            receipt = json.dumps({'reason': 'compiler-artifact', 'filenames': [str(active)]})
+            self.assertEqual(prune(deps, receipt), link_size)
+            self.assertFalse(obsolete.is_symlink())
+            self.assertTrue(active.exists())
+
+    def test_smoke_counts_only_the_last_unlinked_name(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary) / 'deps'
+            deps.mkdir()
+            active, obsolete, linked = [deps / ('libcrate-' + c * 16 + '.rlib') for c in 'abc']
+            active.touch()
+            obsolete.write_bytes(b'old')
+            os.link(obsolete, obsolete.with_suffix('.rmeta'))
+            linked.write_bytes(b'shared')
+            survivor = deps.parent / 'retained'
+            os.link(linked, survivor)
+            receipt = json.dumps({'reason': 'compiler-artifact', 'filenames': [str(active)]})
+            self.assertEqual(prune(deps, receipt), 3)
+            self.assertEqual(set(deps.iterdir()), {active})
+            self.assertEqual(survivor.read_bytes(), b'shared')
+
+    def test_smoke_recognizes_copied_binaries_by_contents(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary) / 'deps'
+            deps.mkdir()
+            app = deps.parent / 'catalyst'
+            app.write_bytes(b'current')
+            first, second, stale = [deps / ('catalyst-' + c * 16) for c in 'abc']
+            for copy in (first, second):
+                copy.write_bytes(app.read_bytes())
+            stale.write_bytes(b'expired')
+            stamp = app.stat().st_mtime_ns
+            os.utime(stale, ns=(stamp, stamp))
+            lib = deps / ('libcrate-' + 'a' * 16 + '.rlib')
+            lib.touch()
+            receipts = json.dumps({'reason': 'compiler-artifact', 'filenames': [str(lib), str(app)]})
+            self.assertEqual(prune(deps, receipts), 7)
+            self.assertEqual(set(deps.iterdir()), {first, second, lib})
+
     def test_smoke_gives_unchanged_sources_the_snapshot_file_times(self):
         # Cargo decides by file time. The snapshot is of no use to Cargo unless the checkout's
         # unchanged files get the times they had when the snapshot was built.
@@ -251,7 +363,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         condition = lambda name: re.search(r'(?m)^        if: (.+)$', steps[name]).group(1)
         self.assertEqual(condition('Record the source file times in the snapshot'),
                          condition('Save successful smoke build snapshot'))
-        self.assertEqual(condition('Prune superseded Rust libraries from the smoke snapshot'),
+        self.assertEqual(condition('Prune superseded Rust build artifacts from the smoke snapshot'),
                          condition('Save successful smoke build snapshot'))
         self.assertLess(smoke.index('python3 tooling/catalyst-smoke-cache.py'), smoke.index(record))
         self.assertNotIn('        if:', steps['Give unchanged sources the file times of the snapshot'])
@@ -350,6 +462,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         prefix = 'foundation-dev-v2-smoke-decentraland/dcl-one-Linux-X64-'
         deps = 'v0-rust-dev-tests-'
         bevy = 'v0-rust-bevy-explorer-native-ci-test-test-Linux-x64-'
+
+        def native(lane, generation):
+            return f'bevy-native-v1-{lane}-Linux-X64-' + '-'.join(['0' * 16] * 3 + [generation * 16])
         caches = [
             {'id': 1, 'ref': 'refs/heads/main', 'key': prefix + 'old'},
             {'id': 2, 'ref': 'refs/heads/main', 'key': prefix + 'new'},
@@ -375,6 +490,14 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 22, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
             {'id': 23, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'c' * 64},
             {'id': 24, 'ref': 'refs/pull/10/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
+            # A hyphenated lane is one family per ref, apart from the other lanes of the same platform.
+            {'id': 25, 'ref': 'refs/heads/main', 'key': native('relay-wake', '1')},
+            {'id': 26, 'ref': 'refs/heads/main', 'key': native('relay-wake', '2')},
+            {'id': 27, 'ref': 'refs/heads/main', 'key': native('relay-wake', '3')},
+            {'id': 28, 'ref': 'refs/heads/main', 'key': native('test', '1')},
+            {'id': 29, 'ref': 'refs/heads/main', 'key': native('test', '2')},
+            {'id': 30, 'ref': 'refs/pull/11/merge', 'key': native('relay-wake', '1')},
+            {'id': 31, 'ref': 'refs/pull/11/merge', 'key': native('relay-wake', '2')},
         ]
         with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule', 'PR_NUMBER': '',
                                      'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
@@ -391,6 +514,10 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/20',
             'repos/decentraland/dcl-one/actions/caches/22',
             'repos/decentraland/dcl-one/actions/caches/24',
+            'repos/decentraland/dcl-one/actions/caches/25',
+            'repos/decentraland/dcl-one/actions/caches/26',
+            'repos/decentraland/dcl-one/actions/caches/28',
+            'repos/decentraland/dcl-one/actions/caches/30',
         ])
         self.assertEqual(sum('graphql' in call.args[0] for call in cli.call_args_list), 1)
 
@@ -433,6 +560,39 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     current = fingerprint()
                     self.assertNotEqual(previous, current)
                     previous = current
+
+    def test_creator_hub_workflows_track_shared_tooltip_sources(self):
+        ci = CREATOR_HUB.read_text()
+        push_patterns = re.findall(r"^      - '([^']+)'$", ci, re.M)
+        pr_pattern = re.search(r"grep -qE '([^']+)'", ci)[1]
+        shared_filter = {'library/ui/components/Tooltip/**', 'library/ui/package.json'}
+        def ui_paths(paths):
+            return {path for path in paths if path.startswith('library/ui/')}
+
+        self.assertEqual(ui_paths(push_patterns), shared_filter)
+        for path in ['library/ui/components/Tooltip/Tooltip.tsx',
+                     'library/ui/components/Tooltip/Tooltip.module.css', 'library/ui/package.json']:
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatch(path, pattern) for pattern in push_patterns))
+                self.assertRegex(path, pr_pattern)
+        for unrelated in ['docs/ui-components.md', 'library/ui/components/Button/Button.tsx',
+                          'library/ui/index.ts', 'library/ui/pnpm-lock.yaml']:
+            self.assertNotRegex(unrelated, pr_pattern)
+
+        for workflow in ['build', 'e2e']:
+            source = CREATOR_HUB.with_name(f'creator-hub-{workflow}.yml').read_text()
+            cached = re.findall(r"'(library/ui/[^']+)'", source)
+            self.assertEqual(set(cached), shared_filter, workflow)
+        sources = {path.removesuffix('/**') for path in shared_filter}
+        for workflow in ['inspector', 'desktop']:
+            source = CREATOR_HUB.with_name(f'creator-hub-{workflow}.yml').read_text()
+            version_paths = re.search(r'change_path: "([^"]+)"', source)[1].split()
+            self.assertEqual(ui_paths(version_paths), sources, workflow)
+            if workflow == 'inspector':
+                note_paths = re.search(r"paths: '([^']+)'", source)[1].split(',')
+                sections = re.search(r"section_names: '([^']+)'", source)[1].split(',')
+                self.assertEqual(set(version_paths), set(note_paths))
+                self.assertEqual(len(note_paths), len(sections))
 
     def test_creator_hub_desktop_builds_need_the_label_on_pull_requests(self):
         source = CREATOR_HUB.read_text().split('jobs:\n', 1)[1]

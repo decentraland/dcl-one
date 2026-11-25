@@ -18,7 +18,7 @@ describe('acceptedEntryParams', () => {
     expect(names).toContain('fps')
     expect(names).toContain('pulseCertificateHash')
     // host-forced and debug switches are known, not advertised
-    for (const internal of ['native', 'hud', 'mock', 'gate', 'simerror']) expect(names).not.toContain(internal)
+    for (const internal of ['native', 'hud', 'mock', 'gate', 'simerror', 'sceneLoop']) expect(names).not.toContain(internal)
   })
 })
 
@@ -26,6 +26,8 @@ describe('unrecognisedEntryParams', () => {
   it('is empty for a link made of accepted params only', () => {
     expect(unrecognisedEntryParams(new URLSearchParams('?realm=x&position=1,2&mock=1&preview&world=boedo'))).toEqual([])
     expect(unrecognisedEntryParams(new URLSearchParams('?native=1&hud=0&gate=gpu&gpuGuide=1&simerror=realm&debugPanel=1'))).toEqual([])
+    // the engine's boot.js reads the scene loop mode from this page's url
+    expect(unrecognisedEntryParams(new URLSearchParams('?sceneLoop=both&realm=x'))).toEqual([])
     // the shell's guest wallet choice (features/auth/guest.ts) is the page's own
     expect(unrecognisedEntryParams(new URLSearchParams('?guestWallet=thirdweb'))).toEqual([])
     // campaign links: Segment reads them, never called out
