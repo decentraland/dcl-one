@@ -19,8 +19,9 @@
 //! `decentraland/events@b60d5bbd`), cited per item.
 
 use std::collections::HashMap;
-use std::sync::{LazyLock, RwLock};
+use std::sync::LazyLock;
 
+use parking_lot::RwLock;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -449,10 +450,10 @@ pub fn one_of_enums(values: &[&str]) -> Prop {
 fn regex_for(pattern: &'static str) -> &'static Regex {
     static CACHE: LazyLock<RwLock<HashMap<&'static str, &'static Regex>>> =
         LazyLock::new(Default::default);
-    if let Some(re) = CACHE.read().unwrap_or_else(|e| e.into_inner()).get(pattern) {
+    if let Some(re) = CACHE.read().get(pattern) {
         return re;
     }
-    let mut cache = CACHE.write().unwrap_or_else(|e| e.into_inner());
+    let mut cache = CACHE.write();
     cache.entry(pattern).or_insert_with(|| {
         // ajv compiles with the `u` flag, where `\d` is ASCII; Rust's `\d` is Unicode.
         let rust = pattern.replace("\\d", "[0-9]");

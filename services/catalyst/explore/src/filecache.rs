@@ -16,12 +16,13 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use parking_lot::Mutex;
 use tokio::io::AsyncWriteExt;
 
 const EVICT_MIN_AGE: Duration = Duration::from_secs(3600);
@@ -115,11 +116,11 @@ impl FileCache {
     }
 
     pub fn note_access(&self, rel: &str) {
-        self.touched.lock().unwrap().insert(rel.to_string());
+        self.touched.lock().insert(rel.to_string());
     }
 
     pub fn flush_touches(&self) {
-        let keys: Vec<String> = std::mem::take(&mut *self.touched.lock().unwrap())
+        let keys: Vec<String> = std::mem::take(&mut *self.touched.lock())
             .into_iter()
             .collect();
         for rel in keys {
@@ -201,7 +202,6 @@ impl FileCache {
         if self
             .last_evict
             .lock()
-            .unwrap()
             .is_some_and(|at| at.elapsed() < EVICT_MIN_INTERVAL)
         {
             return;
@@ -291,7 +291,7 @@ impl FileCache {
         self.drain_evicted();
         self.bytes.store(total, Ordering::Relaxed);
         self.entries.store(remaining, Ordering::Relaxed);
-        *self.last_evict.lock().unwrap() = Some(Instant::now());
+        *self.last_evict.lock() = Some(Instant::now());
         Ok(total)
     }
 
@@ -498,7 +498,7 @@ impl<K: Clone + Hash + Eq> Supply<K> {
     }
 
     fn cached(&self, key: &K, rel: &str) -> Option<Bytes> {
-        let bytes = self.bytes.lock().unwrap().get(key)?;
+        let bytes = self.bytes.lock().get(key)?;
         self.store.note_access(rel);
         Some(bytes)
     }
@@ -510,12 +510,12 @@ impl<K: Clone + Hash + Eq> Supply<K> {
     }
 
     fn remember(&self, key: &K, bytes: Bytes) {
-        self.misses.lock().unwrap().remove(key);
-        self.bytes.lock().unwrap().insert(key.clone(), bytes);
+        self.misses.lock().remove(key);
+        self.bytes.lock().insert(key.clone(), bytes);
     }
 
     fn remember_miss(&self, key: &K) {
-        let mut misses = self.misses.lock().unwrap();
+        let mut misses = self.misses.lock();
         let now = Instant::now();
         if misses.len() >= MISS_MAX_ENTRIES {
             misses.retain(|_, until| *until > now);
@@ -527,7 +527,7 @@ impl<K: Clone + Hash + Eq> Supply<K> {
     }
 
     pub fn is_known_miss(&self, key: &K) -> bool {
-        let mut misses = self.misses.lock().unwrap();
+        let mut misses = self.misses.lock();
         match misses.get(key) {
             Some(until) if *until > Instant::now() => true,
             Some(_) => {
