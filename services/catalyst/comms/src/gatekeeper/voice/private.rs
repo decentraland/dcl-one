@@ -1,4 +1,6 @@
 //! Private messaging and private voice-call workflows.
+use crate::metrics::declarations;
+
 use super::*;
 
 /// GET /private-messages/token: an explorer-signed fetch; the platform ban
@@ -102,7 +104,9 @@ pub(crate) async fn publish_private_messages_privacy(
     }
     let result = update_private_messages_participant(state, address, privacy).await;
     if result.is_err() {
-        metrics::counter!("comms_private_messages_privacy_room_failures_total").increment(1);
+        declarations::PRIVATE_MESSAGES_PRIVACY_ROOM_FAILURES
+            .handle([])
+            .increment(1);
     }
     result
 }

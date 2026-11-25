@@ -455,8 +455,9 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
   // The scene editor owns the screen: no chrome in 'edit', only the reticle and prompts in 'play',
   // and no loading overlay in either (a scene reloads on every edit).
   const editorMode = session.editor.mode
-  // photo mode shows only its own overlay (and the reticle) over the world
-  const chrome = !pageOpen && editorMode === 'off' && !session.photoMode.active
+  // photo mode shows only its own overlay (and the reticle) over the world; the HideUi key hides
+  // the chrome and the reticle and keeps the scene's own UI
+  const chrome = !pageOpen && editorMode === 'off' && !session.photoMode.active && !session.hudHidden
 
   // Tell the engine how much of the screen the persistent HUD occupies. A full-screen page is
   // transient, so the last in-world value stands while one is open.
@@ -516,7 +517,7 @@ function Hud({ integratedGpu, host }: { integratedGpu: GpuAdapterInfo | null; ho
           {chrome && <VoiceChatPanel />}
           {chrome && <SceneVoiceChatBanner />}
           {/* Reticle (when pointer-locked) + world-hover prompt — hidden under a full-screen page. */}
-          {!pageOpen && editorMode !== 'edit' && (
+          {!pageOpen && editorMode !== 'edit' && !session.hudHidden && (
             <Pointer
               hover={session.hover}
               locked={session.cursorLocked}

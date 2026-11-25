@@ -22,7 +22,10 @@
     "rootDir": "src/",
     "types": ["node"],
     "paths": {
-      "@ui/*": ["../../../ui3/src/*"]
+      "@ui/*": ["../../../ui3/src/*"],
+      "@dcl/one-ui/components/Tooltip/Tooltip": [
+        "../../../../library/ui/components/Tooltip/Tooltip.tsx"
+      ]
     }
   },
   "exclude": ["**/*.spec.ts"],

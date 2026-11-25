@@ -272,6 +272,7 @@ export function fakeSession(): EngineSession {
     setInteractableArea: vi.fn(),
     logout: vi.fn(),
     menuOpen: false,
+    hudHidden: false,
     closeAllPanels: vi.fn(),
     login: {
       status: 'sign-in-or-guest',

@@ -2091,9 +2091,13 @@ async fn spawn_mock_upstream(behaviour: MockBehaviour, seen: Seen) -> String {
 
 /// No local broadcast provider and no chain, so the only route is the upstream forward.
 fn upstream_app(pool: &PgPool, upstream_base: &str, timeout: Duration) -> axum::Router {
+    // A forwarding relay is a testnet relay: a Polygon mainnet one refuses to
+    // start with an upstream (`Settings::validate`, which also refuses this
+    // loopback stub, so the state is built without it).
     let settings = Settings {
         transactions_upstream_url: Some(upstream_base.to_string()),
         transactions_upstream_timeout: timeout,
+        collections_chain_id: 80_002,
         ..Settings::for_tests()
     };
     router(state(pool.clone(), settings))

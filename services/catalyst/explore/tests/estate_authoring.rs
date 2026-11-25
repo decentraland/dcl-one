@@ -70,7 +70,6 @@ async fn public_create_patch_and_admin_create_use_native_estate_membership() {
             pool.clone(),
             dcl_http::Outbound::for_tests(),
             land_settings,
-            None,
         )));
     let app = router(state.clone());
     // The old user path answered 404 without a Catalyst profile for the signer
