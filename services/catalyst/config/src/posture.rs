@@ -831,12 +831,12 @@ pub fn unchecked_profile_items(config: &Config) -> Option<&'static str> {
 }
 
 /// A mirror replaces a Catalyst whose lambdas always check the profiles'
-/// items and names against their owner. On mainnet (the chains the walk
-/// reads) the wearables, emotes and DCL NAMEs all read the nft index, so the
+/// items and names against their owner. On mainnet the wearables, emotes
+/// and DCL NAMEs all read the nft index, so the
 /// index stays on with a JSON-RPC endpoint for chain 137 (`TRADE_RPC_URLS`;
 /// chain 1 falls back to `ETH_RPC_URL`, which a mirror always has). Off
-/// mainnet the index walks nothing: the names read the marketplace subgraph,
-/// which may not be blanked there, and the items are served as deployed. An
+/// mainnet profile readers use the marketplace subgraph for names while the
+/// testnet NFT walks populate the catalogue. Items are served as deployed. An
 /// island, with no ownership source, serves both as deployed.
 fn refuse_unfiltered_profiles(config: &Config, env: &Lookup) -> anyhow::Result<()> {
     if config.node.eth_network.trim() != "mainnet" {

@@ -29,12 +29,17 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
     ))?;
     let jobs = jobs_from_config(&config, &pool);
     let settings = market_settings(&config, &content::own_hosts(&config))?;
+    settings.check_writer_pair()?;
     settings
         .market
         .indexes
         .check_catalogue_db(
             &pool,
             settings.market.indexes.nft_enabled || settings.market.mirrors_enabled,
+            [
+                settings.eth_collections_subgraph_url.as_deref(),
+                settings.matic_collections_subgraph_url.as_deref(),
+            ],
         )
         .await?;
     let market = Arc::new(shop::market::MarketplaceState::new(

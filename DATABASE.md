@@ -2578,7 +2578,8 @@ A catalogue database serves one Ethereum/Polygon pair. The NFT worker uses
 `MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM` and `MARKETPLACE_INDEX_CHAIN_ID_MATIC`
 to select mainnet (1/137) or Sepolia/Amoy (11155111/80002). Its RPC must
 serve that chain. At startup the catalogue writer checks the pair against
-`ETH_NETWORK` and the database binding. Each database can have independent
+`ETH_NETWORK` and the database binding. The API process leaves the binding
+to the index writer, even when they share settings. Each database can have independent
 Ethereum and Sepolia Rentals histories.
 The `nft_catalogue_pair` row in `shop.worker_progress` identifies the pair.
 `shop.mirror_state.chain_id` identifies each mirror's completed chain-bound
@@ -2599,11 +2600,11 @@ committee, collections, third-party registry and MANA transfer walks, even
 when the mirror posture enables them and mainnet RPCs are available. The
 separately keyed Ethereum Rentals histories keep their own endpoints.
 
-A Sepolia deployment that mirrored the legacy mainnet default URLs can
-explicitly replace that copy after migration 0070. Check the intended
-database and the URLs in `shop.mirror_state`, stop its catalogue writers,
-and configure the Sepolia and Amoy graph and RPC sources. Run
-`psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tooling/migration/rebind-legacy-catalogue-to-testnet.sql`
+A Sepolia catalogue whose mirrors are bound to the mainnet default URLs
+can be rebound when it has a Sepolia LAND cursor. Check the intended database
+and the URLs in `shop.mirror_state`, stop its catalogue writers, and
+configure the Sepolia and Amoy graph and RPC sources. Run
+`PGOPTIONS="-c rebind.confirm_testnet=yes" psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tooling/migration/rebind-legacy-catalogue-to-testnet.sql`
 on that database, then restart its writers. The command logs the rebind,
 clears both descriptive mirrors and their publication, and records the
 testnet pair in one transaction. A database with an existing pair binding,

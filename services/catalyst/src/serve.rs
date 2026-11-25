@@ -185,14 +185,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     db::bootstrap(&pool).await?;
     let self_hosts = content::own_hosts(&config);
     let market_settings = crate::settings::market_settings(&config, &self_hosts)?;
-    market_settings
-        .market
-        .indexes
-        .check_catalogue_db(
-            &pool,
-            market_settings.market.indexes.nft_enabled || market_settings.market.mirrors_enabled,
-        )
-        .await?;
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
     worlds::rooms::ensure_scene_admin_place_release(&pool).await?;
     worlds::rooms::ensure_genesis_scene_ban_release(&pool).await?;

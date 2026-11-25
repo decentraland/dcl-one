@@ -477,6 +477,38 @@ impl Settings {
         }
     }
 
+    pub fn catalogue_chain(&self, net: chain_walk::ChainNet) -> Option<i64> {
+        crate::land_authz::land_network(&self.eth_network).map(|land| {
+            if land == crate::land_authz::LAND_SEPOLIA {
+                net.testnet_chain_id()
+            } else {
+                net.chain_id()
+            }
+        })
+    }
+
+    pub fn check_writer_pair(&self) -> anyhow::Result<()> {
+        if self.market.indexes.nft_enabled || self.market.mirrors_enabled {
+            self.market
+                .indexes
+                .check_chains()
+                .map_err(anyhow::Error::msg)?;
+            for net in chain_walk::ChainNet::ALL {
+                let expected = self
+                    .catalogue_chain(net)
+                    .ok_or_else(|| anyhow::anyhow!("ETH_NETWORK names no supported catalogue"))?;
+                let configured = self.market.indexes.chain_id(net);
+                anyhow::ensure!(
+                    configured == expected,
+                    "ETH_NETWORK={} requires the {} catalogue chain {expected}, configured {configured}",
+                    self.eth_network,
+                    net.db_name()
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// The collections subgraphs configured, in the order the mirrors walk them.
     pub fn collection_networks(&self) -> Vec<graph::Network> {
         let mut out = Vec::new();
@@ -884,13 +916,7 @@ impl MarketplaceState {
         if id == net.chain_id() {
             return self.chain_rpc_url(net);
         }
-        let land = self.land_network()?;
-        let expected = if land == crate::land_authz::LAND_SEPOLIA {
-            net.testnet_chain_id()
-        } else {
-            net.chain_id()
-        };
-        if expected != id {
+        if self.settings.catalogue_chain(net)? != id {
             return None;
         }
         match net {

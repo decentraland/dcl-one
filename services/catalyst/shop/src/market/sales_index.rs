@@ -410,7 +410,7 @@ pub async fn fold(
     let bids = sqlx::query(FOLD_BIDS_SQL)
         .bind(ChainNet::Matic.db_name())
         .bind(since)
-        .bind(chain_walk::mainnet_chain(ChainNet::Matic))
+        .bind(ChainNet::Matic.chain_id())
         .bind(chain_walk::INDEXER_NFT)
         .bind(recheck_from)
         .execute(&mut *tx)

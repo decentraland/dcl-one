@@ -113,34 +113,15 @@ pub(crate) fn market_settings(
         )?)
         .with_trusted_proxies(config.node.http_trusted_proxy_cidrs.clone()),
     );
-    let indexes = &settings.market.indexes;
-    // A graph-only node can keep its existing trade-specific configuration.
-    if indexes.nft_enabled || settings.market.mirrors_enabled {
-        let network = land_authz::land_network(&config.node.eth_network)
-            .context("ETH_NETWORK names no supported catalogue")?;
-        for net in shop::market::chain_walk::ChainNet::ALL {
-            let expected = if network == land_authz::LAND_SEPOLIA {
-                net.testnet_chain_id()
-            } else {
-                net.chain_id()
-            };
-            anyhow::ensure!(
-                indexes.chain_id(net) == expected,
-                "ETH_NETWORK={} requires the {} catalogue chain {}, configured {}",
-                config.node.eth_network,
-                net.db_name(),
-                expected,
-                indexes.chain_id(net)
-            );
-        }
-    }
     Ok(settings)
 }
 
 fn checked_indexes(
     indexes: shop::market::chain_walk::IndexSettings,
 ) -> anyhow::Result<shop::market::chain_walk::IndexSettings> {
-    indexes.check_chains().map_err(anyhow::Error::msg)?;
+    indexes
+        .check_supported_chain_ids()
+        .map_err(anyhow::Error::msg)?;
     Ok(indexes)
 }
 
@@ -253,24 +234,31 @@ mod tests {
     }
 
     #[test]
-    fn catalogue_pair_must_match_eth_network_even_on_a_separate_mirror_writer() {
+    fn only_catalogue_writers_require_eth_network_to_match_the_pair() {
         for switch in [
             "MARKETPLACE_NFT_INDEX_ENABLED",
             "MARKETPLACE_MIRRORS_ENABLED",
         ] {
-            let config = Config::parse_env_for_tests([
-                ("DATABASE_URL", "postgres:///catalyst"),
-                ("ETH_NETWORK", "sepolia"),
-                (switch, "true"),
-            ])
-            .unwrap();
-            assert!(
-                market_settings(&config, &[])
-                    .err()
-                    .unwrap()
-                    .to_string()
-                    .contains("ETH_NETWORK=sepolia")
-            );
+            for (network, ethereum, matic) in [
+                ("sepolia", "1", "137"),
+                ("mainnet", "11155111", "80002"),
+                ("unsupported", "1", "137"),
+                ("sepolia", "11155111", "137"),
+            ] {
+                let config = Config::parse_env_for_tests([
+                    ("DATABASE_URL", "postgres:///catalyst"),
+                    ("ETH_NETWORK", network),
+                    ("MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", ethereum),
+                    ("MARKETPLACE_INDEX_CHAIN_ID_MATIC", matic),
+                    (switch, "true"),
+                ])
+                .unwrap();
+                let settings = market_settings(&config, &[]).expect("API settings");
+                assert!(
+                    settings.check_writer_pair().is_err(),
+                    "{network} {ethereum}/{matic}"
+                );
+            }
         }
     }
 
