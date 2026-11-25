@@ -228,7 +228,6 @@ pub fn history_key(channel: &str) -> Option<String> {
 /// Stores every DM or community message sent or received, and every reaction to one, under the
 /// local account. DMs and DM reactions from anyone blocked either way are not stored, since a DM
 /// history is never trimmed; community messages and reactions all are, and are hidden on read.
-#[allow(clippy::too_many_arguments)]
 pub fn record_dms(
     mut chats: EventReader<ChatEvent>,
     mut received: EventReader<PrivateChatReceived>,

@@ -36,10 +36,14 @@ It refuses a tree with uncommitted changes, runs the seven checks (fetch-source,
 
 The record states what your local run reported. CI checks that it names the head's port inputs and that every result is `pass`; it is not proof that the checks ran, an independent review, an attestation or evidence of live Figma parity. Say so in the pull request, and ask for review of the exact commit proposed for merge.
 
-## 4. A new public Figma URL
+## 4. A new or re-pointed mapping
+
+`check-mappings` reads `library/ui/figma-mapping-manifest.json`, not the capture, and CI runs it on every pull request. After adding a `*.figma.ts` or changing its node, run `pnpm figma manifest refresh` with `FIGMA_TOKEN` and `FIGMA_FILE_KEY` set and commit the manifest with the mapping; `pnpm figma manifest verify` reports what the live file changed since. Neither needs a port verification record. `figma/MAINTENANCE.md`, "Mapping manifest", has the rules.
+
+## 5. A new public Figma URL
 
 The privileged key scan reads the URL allowlist from the default branch. A public Figma URL therefore lands in two pull requests: first its `figma/key-guard-allow.json` entry, merged to main; then the change that adds the URL. Never put a file key, a component key or a private URL anywhere in the tree, a log or a pull request.
 
-## 5. Hand back
+## 6. Hand back
 
 Push, read CI, and get CODEOWNERS review at the exact SHA. Then tell the contributor which components resolve after the change (`pnpm --silent figma resolve --mapping-only --name '<set name>' --variant 'Prop=Value'`; a set name and its values come from the design, so keep them in single quotes and write a `'` inside as `'\''`) so they can rerun the consumer skill.

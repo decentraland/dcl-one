@@ -25,11 +25,18 @@ import type {
   FriendStatusData,
   HoverAction,
   HoverEvent,
+  ItemPurchaseRequest,
+  SetItemPurchaseState,
   HomeScene,
+  OutfitsData,
   LiveSceneInfo,
+  LobbyStage,
+  MapPinInfo,
+  WorldAccessVerdict,
   PermanentPermissionItem,
   PermissionRequestEvent,
   PhotoModeState,
+  PlatformBanNotice,
   PortableInfo,
   ProfileChangedEvent,
   ProximityEvent,
@@ -47,9 +54,9 @@ import type {
 export type { FriendData, FriendStatusData, FriendRequestData }
 export type BlockingStatus = BlockingStatusData
 
-// Per-player modifiers from AvatarModifierArea (privacy zones etc), only for players carrying one —
-// e.g. hideProfile means the local player is standing in a DISABLE_PASSPORTS area, so `userId`'s
-// passport should not be opened. Only present in the array when at least one flag is set.
+// Per-player AvatarModifierArea flags and Pulse absence. For example, hideProfile disables
+// opening the player's passport. A room-only peer appears with pulseAbsent even when both hide
+// flags are false. An entry is present when at least one flag is set.
 export type { AvatarModifierState }
 
 export type SocialApi = {
@@ -145,8 +152,14 @@ export type PermissionUsedRaw = {
 
 export type BevyApiInterface = {
   getHomeScene: () => Promise<HomeScene>
+  /** null takes the lobby stage down. */
+  setLobbyStage?: (stage: LobbyStage | null) => Promise<void>
+  quit?: () => void
+  /** Whether the local user may enter a world (`name.dcl.eth`), by the realm change's own check. */
+  getWorldAccess?: (world: string) => Promise<WorldAccessVerdict>
   /** Pin the home scene the engine boots into and the HUD's home actions go to. */
   setHomeScene: (home: { realm: string; parcel: { x: number; y: number } }) => Promise<void>
+  clearHomeScene: () => Promise<void>
   /** What the welcome page must show for the signed-in account (all false when the host shows none). */
   getWelcome?: () => Promise<WelcomeState>
   /** The welcome page's accept: records the terms for this install. A held new profile deploys with
@@ -212,9 +225,16 @@ export type BevyApiInterface = {
   getAvatarModifiers: () => Promise<AvatarModifierState[]>
   getPermissionRequestStream: () => Promise<AsyncIterable<PermissionRequestRaw>>
   setSinglePermission: (body: SetSinglePermission) => void
+  /** Scene requests to open the item purchase confirmation. Optional: absent on runtimes whose
+   *  SystemApi predates it. */
+  getItemPurchaseRequestStream?: () => Promise<AsyncIterable<ItemPurchaseRequest>>
+  setItemPurchaseState?: (body: SetItemPurchaseState) => void
   /** Password prompts for a world being entered (and their withdrawal). Optional: absent on
    *  runtimes whose SystemApi predates it. */
   getWorldAccessStream?: () => Promise<AsyncIterable<WorldAccessEvent>>
+  /** The signed-in wallet's platform ban: now, then again on every change. Optional: absent on
+   *  runtimes whose SystemApi predates it. */
+  getPlatformBanStream?: () => Promise<AsyncIterable<PlatformBanNotice>>
   /** Answer a password prompt; `password: null` = the player gave up. */
   setWorldPassword?: (body: { password: string | null }) => void
   setPermanentPermission: (body: SetPermanentPermissionBody) => void
@@ -224,6 +244,8 @@ export type BevyApiInterface = {
   /** The portables the player can see and stop, tagged by kind: the whole list on subscribe and on
    *  every change (never the HUD's own scene or a startup portable). */
   getPortablesStream: () => Promise<AsyncIterable<PortableInfo[]>>
+  /** The map pins of portable experiences: the whole list on subscribe and on every change. */
+  getMapPinsStream: () => Promise<AsyncIterable<MapPinInfo[]>>
   /** Live scenes, for resolving a permission request's scene name (hash → title) and the current
    *  scene to reload — `/reload` uses `parcels`/`isSuper` to target the scene the player stands in,
    *  never the bridge. */
@@ -231,7 +253,14 @@ export type BevyApiInterface = {
   /** The current realm's satellite map tiles (`configurations.map.satelliteView` in its
    *  `/about`), null or undefined when it advertises none — only Genesis City realms do. */
   getSatelliteView: () => Promise<SatelliteView | null | undefined>
-  setAvatar: (data: SetAvatarData) => Promise<unknown>
+  /** One deep-zoom satellite detail tile, decoded by the engine from its Basis KTX2 file: base64
+   *  JPEG bytes (no `data:` prefix). `path` is relative to the tile source. Rejects on failure;
+   *  absent in builds without tile decoding. */
+  getSatelliteTile?: (path: string) => Promise<string>
+  setAvatar: (data: SetAvatarData) => Promise<number>
+  /** Signs and deploys the player's catalyst `outfits` entity; rejects for a guest, when `address`
+   *  is not the signed-in account, or when the catalyst refuses it. */
+  deployOutfits: (address: string, outfits: OutfitsData) => Promise<void>
   /** Any user's full deployed profile as the engine holds it (own, nearby and remote players,
    *  guests included), resolved through its profile cache and fetch cascade. Rejects once the
    *  engine has concluded the address can't be resolved. */
@@ -244,6 +273,8 @@ export type BevyApiInterface = {
   /** Each service's base url by its web param, as the engine resolves it: the service's
    *  override, else its composition from the base domain. */
   getServiceUrls: () => Promise<Record<string, string>>
+  /** The official wallets the nametags mark (lowercase `0x` addresses). Older engines lack it. */
+  getOfficialWallets?: () => Promise<string[]>
   getRealmProvider: () => Promise<string>
   getPreviousLogin: () => Promise<{ userId: string | null }>
   loginPrevious: () => Promise<{ success: boolean; error: string }>

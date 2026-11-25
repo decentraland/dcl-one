@@ -55,8 +55,10 @@ async fn op_teleport_to(
     position_x: Option<i32>,
     position_y: Option<i32>,
     #[string] realm: Option<String>,
+    #[string] spawn_point: Option<String>,
 ) -> Result<bool, anyhow::Error> {
-    dcl_js::restricted_actions::op_teleport_to(state, position_x, position_y, realm).await
+    dcl_js::restricted_actions::op_teleport_to(state, position_x, position_y, realm, spawn_point)
+        .await
 }
 
 #[op2(async)]
@@ -109,8 +111,13 @@ async fn op_open_nft_dialog(
 }
 
 #[op2(async)]
-async fn op_open_explorer_ui(op_state: Rc<RefCell<OpState>>, ui: i32) -> Result<i32, AnyError> {
-    dcl_js::restricted_actions::op_open_explorer_ui(op_state, ui).await
+async fn op_open_explorer_ui(
+    op_state: Rc<RefCell<OpState>>,
+    ui: i32,
+    request_id: u32,
+    #[string] item_urn: Option<String>,
+) -> Result<i32, AnyError> {
+    dcl_js::restricted_actions::op_open_explorer_ui(op_state, ui, request_id, item_urn).await
 }
 
 #[op2(async)]

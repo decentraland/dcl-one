@@ -155,6 +155,9 @@ ENet and the C# WebTransport adapter have dedicated loops. WebTransport's Rust l
 
 Rust `PulseServer` owns the peer map, boards, grid and simulation through ordinary mutable fields. Its cooperative loop handles transport activity, simulation and clustering; `PeerSimulation::simulate_tick` iterates the observers serially. The cluster module explicitly relies on this same-task access. ENet's current `Host::service` asynchronously waits for socket readiness or a poll timer. WebTransport already has a named adapter thread backed by a QUIC runtime and session tasks; NATS has a separate drain task. Those background activities do not make peer processing sharded.
 
+The single-loop capacity check is tracked in [#1554](https://github.com/decentraland/dcl-one/issues/1554).
+Measure the deployed loop at the intended workload before undertaking the worker stages below.
+
 ```mermaid
 flowchart LR
   E[Async ENet service] --> L[Single PulseServer loop]
@@ -247,21 +250,27 @@ In C#, `PeerIndex` equality/hashing uses only the slot; its transport is a routi
 
 Use an explicit registration generation or immutable registration identity for read fences. Keep counter exhaustion a checked invariant, and check the expected registration again before applying delayed results. Pre-auth events also need an allocation/connection fence if they can outlive their slot; an auth registration does not exist yet at that point.
 
-Preserve two-phase disconnect:
+The C# reference separates loss of visibility from slot cleanup.
 
 1. A requested disconnect stops further gameplay handling and travels through the owning transport's ordered output.
 2. The transport's disconnect event reaches the owner behind previously queued input. The owner marks disconnecting, clears active visibility and removes grid membership.
 3. After cleanup grace, the owner clears snapshot/identity/profile state and releases the allocator slot. Wallet removal is conditional on the expected binding so old cleanup cannot erase its replacement.
 
-Observer retirement is counted in simulation ticks; recycling and transport timeouts use elapsed time. The source's nominal stale-view bound is about four seconds at its defaults and cleanup grace is five seconds. Overruns can invert that order. Registration fences remain necessary even with those defaults.
+In C# Pulse the stale-view sweep sends `PlayerLeft` 3.05–4.0 seconds after the last observation at the default tick rate. Slot cleanup uses a separate five-second wall-clock grace. Tick overruns can invert that order. [C# disconnect tests](https://github.com/decentraland/Pulse/blob/91e44f89dd5a857e4ebe08259bec5fc808ae797b/src/DCLPulseTests/PeerSimulationTests.TwoPhaseDisconnect.cs#L32-L53)
 
 Use RAII (`Drop`) to release owned buffers and handles, but do not use object destruction as a substitute for the protocol-visible disconnect state machine. A dropped `Arc` does not tell the client that a player left.
+
+#### PlayerLeft on disconnect
+
+Rust Pulse sends one reliable `PlayerLeft` during disconnect cleanup to each authenticated player or scene listener whose view still contains the departing subject. A connection that never authenticated, a listener disconnecting, and a player that never became visible produce no avatar departure. An observer whose view has already expired receives no second leave. A connected player moving out of range still ages out through the normal stale-view sweep. [Server wire regression](../../comms/src/pulse/server/application.rs) · [Disconnect audit #1552](https://github.com/decentraland/dcl-one/issues/1552)
+
+On same-wallet takeover, observers receive the old subject's leave before the replacement becomes visible. Sending during cleanup preserves that order and retires the old subject ID before its slot can be reused. Bevy ignores a leave for an unknown subject. Unity Explorer also leaves other avatars alone. For two subject IDs of the same wallet in the same realm, Unity keeps the replacement if the old leave arrives late. A replacement join cancels a pending wallet removal. If Unity has already consumed the removal, the replacement can restore the avatar from its fresh profile and movement. [Takeover review](https://github.com/decentraland/dcl-one/pull/201#pullrequestreview-5783854290) · [Unity takeover tests](https://github.com/decentraland/unity-explorer/blob/4c85b8603e969aad463b5779db73272242c17505/Explorer/Assets/DCL/Multiplayer/Movement/Tests/PulseMultiplayerBusRealmFilteringShould.cs#L372-L434) · [Unity post-removal test](https://github.com/decentraland/unity-explorer/blob/4c85b8603e969aad463b5779db73272242c17505/Explorer/Assets/DCL/Multiplayer/Movement/Tests/PulseMultiplayerBusRealmFilteringShould.cs#L765-L792)
 
 ## Preserve behavior through complete flows
 
 ### Connect and authenticate
 
-Follow the same recognizable path: transport admission -> connected event -> owning worker -> handshake validation -> identity registration -> optional initial-state publication -> authenticated response. Validate the chain, delegation/signing address, expiry and signed `connect:/` payload through the shared auth implementation. Keep replay/attempt policies and bans at their current boundaries. The baseline includes the timestamp in that signed payload but has no independent freshness-window check; dcl-one intentionally applies a 60-second window and durable replay journal (`pulse-6` below). The verifier's window is inclusive; the journal also rejects future timestamps. Do not describe legacy auth as server-bound or conflate it with deferred V4 authentication.
+Follow the same recognizable path: transport admission -> connected event -> owning worker -> handshake validation -> identity registration -> optional initial-state publication -> authenticated response. Validate the chain, delegation/signing address, expiry and signed `connect:/` payload through the shared auth implementation. Keep replay/attempt policies and bans at their current boundaries. The baseline includes the timestamp in that signed payload but has no independent freshness-window check; dcl-one intentionally applies a 60-second window and durable replay journal (`pulse-6` below). The window is inclusive and applies on both sides of the server's clock, in the verifier and in the journal alike: a handshake signed up to 60 s ahead, by a client whose clock runs fast, is admitted and consumed. Do not describe legacy auth as server-bound or conflate it with deferred V4 authentication.
 
 Duplicate-wallet handling must target the incumbent owner through the coordination path. Never mutate another worker's peer map. If authentication or authority checking becomes async, preserve a pending state and fence its result against a replaced connection. Keep rejection-before-disconnect output ordering.
 
@@ -279,7 +288,7 @@ Preserve the default full-state resync and the optional delta mode. A delta base
 
 Validate unique realms and inclusive parcel rectangles, including the cumulative realm/rectangle budget. A valid update replaces the complete subscription on the next tick; invalid input cannot partially apply it. Re-evaluate the live whitelist, preserving structural and authentication checks even when budget exemptions apply. After listener authentication, only resync and listener-update messages are accepted.
 
-Listeners receive positional/emote output without player profile announcements and contribute no visible snapshot or cluster member. Removed subjects follow stale-view grace. Apply dcl-one's accepted listener authorization requirement separately from this shared behavior; verify scoped authority separately from baseline behavior.
+Listeners receive positional/emote output without player profile announcements and contribute no visible snapshot or cluster member. Subjects leaving the listener’s parcel set follow stale-view grace. A subject disconnecting follows the [disconnect delivery rule](#playerleft-on-disconnect). Apply dcl-one's accepted listener authorization requirement separately from this shared behavior; verify scoped authority separately from baseline behavior.
 
 ### Clusters and assignments
 
@@ -305,9 +314,10 @@ These are constraints from the destination's [ownership guide](comms-crate.md) a
 | Durable admission safety | Pinned infrastructure retains Pulse recovery; shared SQL hazards and replica island-refresh are destination extensions | Keep Pulse nonpersistent. Gatekeeper persists wallet-wide admission fences, immutable attempts and logical receipts; only primary removes, all serves verify for refresh. Confirmed fenced cleanup can recover; unknown never retries/expires and requires controlled maintenance. Every queued credential keeps its original stamp and exact committed fence. |
 | Authentication | Baseline client authentication | Keep public Pulse V4 and native/negotiated Archipelago V4 authentication deferred. Ordinary signed `/ws` and shared ownership/fencing remain active. |
 | Profile and emote handling | Every authenticated profile announcement; no separate emote-ID length cap | Keep nonnegative, strictly increasing profile versions outside the teleport/emote budget. Keep emote-ID validation bounded by the packet, without the extra 512-character cap. |
+| Disconnect notification | The observer's stale-view sweep retires a disconnected subject. | Send one reliable leave during cleanup to each observer still holding that subject. Preserve leave-before-replacement ordering on same-wallet takeover. [Disconnect delivery](#playerleft-on-disconnect) |
 | Shared ENet | Native ENet channel 1 is sequenced unreliable with per-packet throttle bypass | Use the shared pinned source in `library/vendor/rusty_enet` for Pulse and native Bevy. Keep independent drivers and apply bypass explicitly to channel 1; do not disable throttling globally. |
 | Native receive limits | No pinned upstream 64 KiB/256 receive-allocation policy | Pulse-only 8192 payload/65536 charged queued bytes/256 commands, typed terminal early reason 16 for valid oversized declarations, exact accounting release and unchanged client/outgoing defaults. Aggregate refusal is nonterminal. This is approved destination resource policy; deterministic/source evidence does not establish full client/runtime, final-head CI or measured capacity. |
-| Presence authority | Iteration-2 plans propose a separate parcel presence feed | Social online derives from complete Pulse wallet topology; room occupancy/capacity has a distinct LiveKit authority. Do not merge these data sources merely to match a newer plan. |
+| Presence authority | Iteration-2 plans propose a separate parcel presence feed | Social online derives from complete Pulse wallet topology united with World room presence ([ADR](../../../../docs/adr/2026-11-21-world-presence-counts-as-online.md)); room occupancy/capacity keeps its distinct LiveKit authority. Do not add a parcel presence feed merely to match a newer plan. |
 | Bans | Upstream ban polling/enforcement | Keep the destination's conditional moderator HTTP snapshot and common policy; do not add another ban bus. |
 | Remote configuration | Broad upstream remote configuration/provider and operational representation | Keep the four permitted remote IP-limit settings and the destination's full-lifetime connection accounting. Other upstream settings do not become remotely writable. |
 | Scene-listener authority | Verify against pinned source through private acceptance review | Require listener authority scoped to the authoritative address and parcels. |
@@ -354,13 +364,32 @@ Treat configuration as part of the migration contract. The source layers JSON, e
 | --- | --- | --- |
 | `Transport:BindHost`, `Transport:Port` | `PULSE_BIND` | Translate host and port explicitly. Checked-in C# configuration uses UDP 7777; Rust defaults to 9000. Keep deployment routing consistent with the advertised endpoint. |
 | `WebTransport:Enabled`, host/port and size limits | `PULSE_WT_ENABLED`, `PULSE_WT_BIND`, `PULSE_WT_MAX_MESSAGE_BYTES`, `PULSE_WT_MAX_DATAGRAM_BYTES` | Preserve disabled-by-default behavior, TLS inputs and effective frame/datagram limits. |
-| `Peers:MaxWorkerThreads` | No current worker-count environment setting | Introduce/document it with sharding, preserving zero/nonpositive as automatic selection. |
-| `Peers:SnapshotHistoryCapacity` | `DEFAULT_RING_CAPACITY` in `server` | Source class defaults to 10 but checked-in JSON sets 20; Rust uses the effective value 20. Preserve event fallback when the exact history target is no longer retained. |
-| `Peers:SimulationSteps` | `DEFAULT_SIMULATION_STEPS` and the process tick interval | Verify both pacing and tier divisors; matching the array alone does not establish matching missed-tick behavior. |
-| `Transport:MaxPeers` | Separate `ENET_CAPACITY` and `WT_CAPACITY` ranges | Source shares a 4095-slot pool; current Rust allocates ranges of 4095 and 4096. Resolve total capacity and allocation semantics explicitly when adding logical slots. |
+| `Peers:MaxWorkerThreads` | One peer-processing loop | Expose worker count only if the deployed measurement calls for sharding. |
+| `Peers:SnapshotHistoryCapacity` | `PULSE_SNAPSHOT_HISTORY_CAPACITY` (default 20) | Set the retained snapshots per peer slot from 1 to 256. Preserve event fallback when the exact history target is no longer retained. |
+| `Peers:SimulationSteps` | `PULSE_SIMULATION_STEPS_MS` (default `50,100,200`) | Set the three tier intervals in milliseconds. The first value drives the loop ticker and ranges from 1 to 1000 ms. The other two are nondecreasing whole multiples of the first. Missed-tick behavior still needs separate verification. |
+| `Peers:ResyncWithDelta` | `PULSE_RESYNC_WITH_DELTA` (default false) | Enable a targeted delta when the client's baseline is still retained. Otherwise send full state. |
+| `Peers:SelfMirrorEnabled`, `Peers:SelfMirrorTier` | No equivalent operator setting | Track self-mirror separately as a diagnostic feature. Ordinary peer simulation and its capacity measurement do not depend on it. |
+| `Transport:PeerTimeoutMs` | Fixed at 5000 ms for every connected ENet peer | Both server-side ENet timeout bounds are five seconds. The client controls its own loss detection. |
+| `Transport:MaxPeers` | `PULSE_MAX_PEERS` (default and maximum 4095) | One post-connect admission ceiling counts pending and authenticated connections across ENet and WebTransport. Transport-local slot ranges route connections and bound transport allocations. The Rust ceiling tracks live reservations rather than the C# allocator's post-disconnect recycling grace. |
+| `Transport:MaxConcurrentConnections` | ENet's transport-local capacity stays fixed | Use the shared admission ceiling to bound Pulse's live peer population. It applies after the transport allocates its connection. |
+| `Transport:Hardening:PreAuth:*` | One pending-auth budget across ENet and WebTransport | Both transports share 512 pending connections and 32 per source IP. Authentication or disconnect releases pending capacity. The Rust process uses fixed limits for these two budgets. |
 | `SpatialHashAreaOfInterest` radii, `SceneListener:MaxParcels` | `PULSE_AOI_*`, `PULSE_SCENE_LISTENER_MAX_PARCELS` | Verify units, allowed ranges and listener exemptions. |
 | `Clusters:*`, `Nats:*` | `PULSE_CLUSTERS_*`, `PULSE_NATS_*` | Translate cadence, debounce, prefix and outbox capacity. Preserve the retained recovery bounds and internal lookup/completion contract; an outbox limit cannot discard unfinished cleanup. |
 | `Transport:Hardening:IpLimiter:*` | `PULSE_IP_LIMITER_*` and the restricted flag document | Preserve defaults, zero-as-unlimited, live accounting and last-good refresh behavior under the reviewed configuration contract. |
+
+The peer ceiling and simulation settings take effect at startup. Either transport can fill the shared
+admission budgets. Pulse checks the 30-second authentication deadline on each base tick, so a
+larger base interval also increases the time between checks.
+
+The stale-view sweep retires a connected subject that leaves an observer's interest set 61–80 base
+ticks after the last observation. At nominal pacing this takes 3.05–4 seconds with a 50 ms base
+interval or 61–80 seconds with a 1000 ms interval. [Disconnect cleanup](#playerleft-on-disconnect)
+sends departures directly to observers still holding the subject.
+
+Pulse preallocates snapshot history for all 8,191 transport slots at startup, including when
+WebTransport is disabled or `PULSE_MAX_PEERS` is set below its default. Setting
+`PULSE_SNAPSHOT_HISTORY_CAPACITY` to 256 allocates 2,096,896 snapshot entries, 12.8 times the
+default ring storage. Account for this memory when raising the history capacity.
 
 Remaining options need the same explicit disposition: mapped, fixed by the destination, intentionally different under an accepted decision, or missing work. Include metrics, replay persistence, ban polling, timeouts, self mirror and resync mode in that inventory before release.
 
@@ -383,7 +412,7 @@ The project's validated [code style](../../../../rendering/bevy-explorer/docs/gu
 
 Keep the source hot-path discipline: reuse buffers and collections, avoid per-observer allocation and boxing, and keep debug formatting out of packet/tick loops. Measure allocation and contention rather than assuming Rust makes the port faster. Existing destination batching/caches need their own behavior and performance evidence after worker partitioning.
 
-Preserve transport details through explicit fixtures. ENet channel 0 is reliable control/events and channel 1 is unreliable sequenced movement/deltas with explicit local sender-throttle bypass; channel 2 is declared unsequenced and unused by the baseline. The shared dependency preserves these independent packet properties without adding a wire flag. Pulse also enforces its incoming-only native allocation policy before reassembly; preserve ordinary/connected local event adapters and stale-generation identity checks. Pulse applies its application envelope before decoding: up to 4096 bytes accepted, 4097–8192 dropped through the corruption budget, and larger packets disconnected immediately with reason 16 and lifecycle cleanup. WebTransport reliable frames carry a four-byte big-endian length. Client-to-server datagrams carry a channel byte and big-endian sequence header, while server-to-client datagrams carry the raw payload. Do not make the two datagram directions symmetric as a cleanup.
+Preserve transport details through explicit fixtures. ENet channel 0 is reliable control/events and channel 1 is unreliable sequenced movement/deltas with explicit local sender-throttle bypass; channel 2 is declared unsequenced and unused by the baseline. The shared dependency preserves these independent packet properties without adding a wire flag. Pulse also enforces its incoming-only native allocation policy before reassembly; preserve ordinary/connected local event adapters and stale-generation identity checks. Pulse applies its application envelope before decoding: up to 4096 bytes accepted, 4097–8192 dropped through the corruption budget, and larger packets disconnected immediately with reason 16 and lifecycle cleanup. WebTransport reliable frames carry a four-byte big-endian length, checked against the same envelope with the message cap (`PULSE_WT_MAX_MESSAGE_BYTES`, 4096 by default) in place of 4096: a frame up to twice the cap past it has its payload skipped unread, so the stream keeps its framing, and is charged to the corruption budget; a longer one ends the session at once with reason 16. The baseline's WebTransport adapter charges every overrun to the budget and drops the bytes it holds, which loses the framing. The QUIC host pings a connection that has been silent for a third of its 30-second idle timeout, so Pulse can close an unauthenticated client with reason 2 on the first base tick that checks its expired 30-second authentication deadline; without the pings the idle timeout usually closes it first, with no reason. Client-to-server datagrams carry a channel byte and big-endian sequence header, while server-to-client datagrams carry the raw payload. Do not make the two datagram directions symmetric as a cleanup.
 
 ## Shutdown and failure handling
 
@@ -401,7 +430,7 @@ Make each wait bounded or explicitly wakeable. Avoid a shutdown cycle where tran
 
 ## Migration sequence and evidence
 
-Follow the [implementation pipeline](implementation-pipeline.md). The stages below describe work packages; they are not a request to execute them as part of writing this guide. Keep architectural choices distinct from accepted decisions and include proposed decision and change-request updates in the task report.
+Follow the [implementation pipeline](implementation-pipeline.md). The stages below describe work packages; they are not a request to execute them as part of writing this guide. Keep architectural choices distinct from accepted decisions and include proposed decision and change-request updates in the task report. Run the load check on the single loop before starting stages 3 through 6 for sharding.
 
 | Stage | Change | Evidence required before moving on |
 | --- | --- | --- |
@@ -409,12 +438,14 @@ Follow the [implementation pipeline](implementation-pipeline.md). The stages bel
 | 2. Make responsibilities visible | Extract named handlers from `PulseServer`, retaining the existing `snapshot::PeerSnapshotPublisher`; preserve calls, recovery authority and shared legacy fences. Keep public V4 authentication deferred. | Existing focused Rust tests remain green; no new runtime/threading, wire or policy differences. |
 | 3. Establish the owner boundary | Introduce unified incoming/outgoing enums, logical peer identity and the router/worker API. Run one worker first through the full transport-to-output path. | Connect/data/disconnect FIFO, mixed transports, rejection flush and slot reuse pass end to end. |
 | 4. Make publication safe | Replace exclusively borrowed boards with safe per-slot publication/read APIs; retain registration and exact-sequence semantics. | Concurrent read/write/recycle cases and target-eviction tests pass; no unsound custom seqlock. |
-| 5. Implement fixed worker shards from Pulse | Move peer maps and observer views to dedicated workers; route all external mutations through their queues. | Two peers on different workers exercise teleport, resync, disconnect and same-wallet reconnect under controlled scheduling. One-worker and multiworker traces agree within the documented concurrency semantics. |
+| 5. Implement fixed worker shards if the load check establishes a need | Move peer maps and observer views to dedicated workers; route all external mutations through their queues. | Two peers on different workers exercise teleport, resync, disconnect and same-wallet reconnect under controlled scheduling. One-worker and multiworker traces agree within the documented concurrency semantics. |
 | 6. Isolate cluster derivation | Run the tracker separately over published boards; preserve the feed seam and accepted lookup contract. | Sticky IDs/debounce/realm behavior and broker-disconnected operation pass; tracker load cannot stall peer processing. |
 | 7. Complete operational mapping | Verify flags, bans, health/about/metrics ownership, limits, task supervision and shutdown. Document translated environment/config keys. | Linux/Windows start/stop and effective configuration checks pass; output shapes/auth follow the chosen contract. |
 | 8. Measure and release | Run equivalent workload and client/broker tests; follow the repository's separate rollout gates. | Protocol parity/accepted exceptions, concurrency correctness, performance budget and operator readiness are evidenced at the final revision. |
 
-Do not combine stage 2's file decomposition with an overload-policy change, a quantization change, a new batching format or a new transport. When comparing traces, control the clock, event order, peer allocation and cluster boot seed. Compare per-peer behavior and defined subjects; neither protobuf map ordering nor cross-peer thread scheduling is a global deterministic wire order.
+Do not combine stage 2's file decomposition with an overload-policy change, a quantization change, a new batching format or a new transport.
+
+When comparing traces, control the clock, event order and peer allocation. Replace each boot UUID with a consistent placeholder throughout the trace and use distinct placeholders for different UUIDs. Align placeholders for corresponding boots across traces and preserve the cluster counters. Compare per-peer behavior and defined subjects. Protobuf map ordering and cross-peer thread scheduling can vary.
 
 ### Behavior coverage
 
@@ -453,6 +484,18 @@ Generate protobuf from the pinned schema source through the existing documented 
 
 For performance, compare source and destination on the same hardware, release configuration, peer count, realm density, movement/event mix and transport. Include dense O(N²) fan-out, sparse/multi-realm loads, scene listeners, reconnect churn and broker outage. Record tick p50/p95/p99 and overruns, input-to-send latency, CPU, memory/allocation, queue age/depth, board contention and outbound bytes. Agree the acceptance budget from the source measurements before claiming the safe board or worker design is fast enough. Tracker-only microbenchmarks do not establish full synchronization capacity.
 
+For [#1554](https://github.com/decentraland/dcl-one/issues/1554), collect the Rust process's Prometheus
+series in Grafana on a representative deployment. Record the deployed revision, effective Pulse
+settings, peer and listener counts, ENet/WebTransport mix, movement rates, realm density, and
+reconnect rate. Use `pulse_admitted_connections` and `pulse_pending_auth_connections` to
+correlate the load with the base-tier ticker. Compare the `pulse_simulation_tick_duration_seconds`
+and `pulse_simulation_tick_delay_seconds` histograms with the configured interval alongside
+end-to-end state delivery, CPU, memory and network pressure. The duration measures work inside
+the tick. The delay measures how late it begins and can expose interference from other work on the
+same loop, including clustering. Consider worker sharding if the target workload exceeds the agreed
+delivery or tick budget and peer processing is the measured bottleneck. Keep the capacity check
+pending until the deployed measurement is available.
+
 ## Completion criteria for the migration
 
 The migration is ready for a former Pulse developer to review when:
@@ -460,7 +503,7 @@ The migration is ready for a former Pulse developer to review when:
 - Each functional map row leads to a named Rust responsibility or an explicit accepted destination owner.
 - The developer can trace handshake, movement, resync, listener update, disconnect and cluster assignment using the same conceptual steps as in C#.
 - A code reader can identify each state owner, each reader and every cross-thread message without following a global lock or an implicit async mutation.
-- Fixed worker sharding, separate cluster work, per-peer FIFO and generation fencing are demonstrated by tests, rather than inferred from the use of Tokio.
+- The deployed peer loop meets its workload budget. Any worker or tracker split has tests covering per-peer FIFO, generation fencing and cross-worker behavior.
 - Wire and behavior fixtures cover both transports, concurrency/lifetime cases and accepted deviations; operational surfaces and effective configuration are accounted for.
 - Performance and failure evidence belongs to the final implementation revision, including the synchronization strategy actually shipped.
 

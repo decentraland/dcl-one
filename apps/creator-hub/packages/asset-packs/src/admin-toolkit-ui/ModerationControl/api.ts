@@ -1,9 +1,9 @@
 import type { Result } from '../fetch-utils';
-import { getDomain, wrapSignedFetch } from '../fetch-utils';
+import { serviceUrl, wrapSignedFetch } from '../fetch-utils';
 
 const URLS = () => ({
-  SCENE_ADMIN: `https://comms-gatekeeper.decentraland.${getDomain()}/scene-admin`,
-  SCENE_BAN: `https://comms-gatekeeper.decentraland.${getDomain()}/scene-bans`,
+  SCENE_ADMIN: serviceUrl('comms-gatekeeper', '/scene-admin'),
+  SCENE_BAN: serviceUrl('comms-gatekeeper', '/scene-bans'),
 });
 
 type SceneAdminResponse = {

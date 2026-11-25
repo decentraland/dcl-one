@@ -73,9 +73,9 @@ fn parse_uuid(raw: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw.trim()).map_err(|_| ApiError::not_found("Not found"))
 }
 
-/// The curation queue: the committee (memoised five minutes) and the
-/// collections under review, both from the collections subgraphs; empty
-/// lists without a reader, as the old node answered without its side pool.
+/// The curation queue: the committee's current members from the Polygon
+/// committee index (empty until it is published) and the collections under
+/// review from the collections subgraphs (empty without a reader).
 pub async fn get_curation_collections(
     State(state): State<SharedState>,
     OriginalUri(original): OriginalUri,
@@ -84,22 +84,20 @@ pub async fn get_curation_collections(
 ) -> Result<Json<ApiData<CurationCollectionsOut>>, ApiError> {
     admin(&state, &headers, "get", &original, &uri).await?;
 
-    let (committee, collections) = match state
+    let committee = match crate::committee::current_members(state.items.pool()).await {
+        Ok(members) => onchain::shape_committee(members.unwrap_or_default()),
+        Err(error) => {
+            tracing::warn!(error = %error, "committee read failed");
+            return Err(ApiError::http(503, "committee unavailable"));
+        }
+    };
+    let collections = match state
         .market
         .as_deref()
         .filter(|m| onchain::configured(Some(m)))
     {
-        Some(market) => {
-            let committee = state.committee_memo.get_or_fetch((), || async {
-                onchain::committee_members(market)
-                    .await
-                    .map(std::sync::Arc::new)
-            });
-            let (committee, collections) =
-                tokio::try_join!(committee, onchain::collections_under_review(market))?;
-            (committee.as_ref().clone(), collections)
-        }
-        None => (Vec::new(), Vec::new()),
+        Some(market) => onchain::collections_under_review(market).await?,
+        None => Vec::new(),
     };
 
     Ok(Json(ApiData::ok(CurationCollectionsOut {

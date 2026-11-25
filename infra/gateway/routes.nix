@@ -4,10 +4,16 @@
     "/content/entities"
   ];
   internal = [
+    "/internal/message-router"
     "/internal/pulse"
     "/metrics"
   ];
   node = [
+    {
+      path = "/health";
+      probe = "/health";
+      exact = true;
+    }
     {
       path = "/admin/api";
       probe = "/admin/api/jobs";

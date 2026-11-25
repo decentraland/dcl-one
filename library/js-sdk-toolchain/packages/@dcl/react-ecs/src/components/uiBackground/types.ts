@@ -1,5 +1,5 @@
-import { BorderRect } from '@dcl/ecs'
-import { Color4 } from '@dcl/ecs/dist/components/generated/pb/decentraland/common/colors.gen'
+import type { BorderRect } from '@dcl/ecs'
+import type { Color4 } from '@dcl/ecs/dist/components/generated/pb/decentraland/common/colors.gen'
 
 /**
  * @public

@@ -9,22 +9,37 @@
 //  - or the same call sent directly from the buyer, with no value;
 //  - and in both, `useCredits` itself: one credit, no MANA from the wallet, no more spent than the credit
 //    holds, no custom call, and an external call to the sales' own venue that mints or accepts exactly the
-//    confirmed items for the buyer: each unit once, as many of each as confirmed, nothing else.
+//    confirmed items for the buyer: each unit once, as many of each as confirmed, nothing else;
+//  - paying with Credits and MANA together (`split`), in two separate permissions, each only as a meta-transaction
+//    through the fee-free relay (never sent from the wallet: a direct send beside a relayed one whose answer was lost
+//    could both land):
+//    - `approve`: MANA's approve of exactly the gap the buyer confirmed to the trusted CreditsManager, only while the
+//      buyer's own AUTHORIZE runs it, and nothing else (no sale). It needs no record of the purchase kept, and never
+//      counts as handed off;
+//    - `sale`: the `useCredits` of exactly the credit the node issued (its salt), worth exactly C, crediting at most C,
+//      taking exactly the gap G from the wallet, with exactly the external call reviewed (its price and coupon
+//      included), and nothing else (no approve).
 //
 // Before each signature or transaction it reads the wallet's selected account and checks the login is
 // still the one confirmed. Anything else is refused before it reaches the wallet.
 
 import { decodeAbiParameters, decodeFunctionData, getAbiItem, toFunctionSelector, type Hex } from 'viem'
+import { idToSalt } from '../../../shop/checkout/purchase/encoding'
 import type { Eip1193Provider } from '../../../data/auth/wallet'
-import { COLLECTION_STORE_ABI, CREDITS_MANAGER_ABI, MARKETPLACE_ABI } from '@shop/checkout/chain/abi'
+import { COLLECTION_STORE_ABI, CREDITS_MANAGER_ABI, ERC20_ABI, MARKETPLACE_ABI } from '@shop/checkout/chain/abi'
+import { requireContracts, type ContractInfo } from '../../../shop/checkout/chain/contracts'
 import { chainIdSalt, DOMAIN_TYPE, metaTxType } from '../../../shop/checkout/chain/metatx'
+import { RefusedBeforeWallet } from '../../../shop/checkout/chain/wallet'
 import { ASSET_TYPE } from '../../../shop/checkout/purchase/encoding'
 import type { ChainId } from '@shop/model/chain'
 import { AMOY_ADD_PARAMS } from '../../../shop/wallet/chain'
 import type { TrustedManager } from './config'
 
-/** A refused request, in EIP-1193's terms: 4100 unauthorized, 4200 unsupported. */
-export class WalletRefusal extends Error {
+/**
+ * A refused request, in EIP-1193's terms: 4100 unauthorized, 4200 unsupported. Always refused here, before the wallet is
+ * handed anything: a `RefusedBeforeWallet`, which is how the checkout tells it from an answer of the wallet's.
+ */
+export class WalletRefusal extends RefusedBeforeWallet {
   override name = 'WalletRefusal'
   constructor(
     message: string,
@@ -46,12 +61,31 @@ export interface PurchaseIntent {
   current(): boolean
   /** Whether the purchase's progress is kept before signing (`authorized`) or handing off (`handedOff`). */
   durable?(stage: 'authorized' | 'handedOff'): boolean
+  /** Paying with Credits and MANA together: the MANA the buyer confirmed for the rest. Absent: Credits alone. */
+  split?: SplitTerms
+}
+
+/** A purchase paid with Credits and MANA together, as one permission: its approve, or its sale. */
+export interface SplitTerms {
+  /** The MANA the buyer confirmed paying beyond the credit, in wei (more than zero). */
+  gapWei: bigint
+  /** `approve`: only MANA's exact approve to the manager; `sale`: only the relayed useCredits bound to `sale`. */
+  phase: 'approve' | 'sale'
+  /** Whether MANA's approve may go now: only while the buyer's own AUTHORIZE runs it, never on the rails' initiative. */
+  mayApprove(): boolean
+  /**
+   * The sale it binds (phase `sale`): the credit's exact value C, the external call's data as reviewed, and the credit the
+   * node issued for it (null until it has, and then nothing may be signed).
+   */
+  sale?: { creditWei: bigint; callData: Hex; credit(): { id: string } | null }
 }
 
 const STORE_BUY = getAbiItem({ abi: COLLECTION_STORE_ABI, name: 'buy' })
 const ACCEPT = getAbiItem({ abi: MARKETPLACE_ABI, name: 'accept' })
 const ACCEPT_WITH_COUPON = getAbiItem({ abi: MARKETPLACE_ABI, name: 'acceptWithCoupon' })
 const SELECTOR = { storeBuy: toFunctionSelector(STORE_BUY), accept: toFunctionSelector(ACCEPT), acceptWithCoupon: toFunctionSelector(ACCEPT_WITH_COUPON) }
+const APPROVE = getAbiItem({ abi: ERC20_ABI, name: 'approve' })
+const APPROVE_SELECTOR = toFunctionSelector(APPROVE)
 const META_TX_TYPE = metaTxType('functionData')
 const TX_FIELDS = new Set(['from', 'to', 'data', 'value', 'gas', 'maxFeePerGas', 'maxPriorityFeePerGas'])
 /** The external call's own expiry, as the rails set it (a day), with room for a slow clock. */
@@ -73,7 +107,7 @@ function refuse(why: string): never {
 }
 
 /** Whether `got` names exactly the units of `want`, each as often (in any order). */
-function sameUnits(got: { contract: string; itemId: bigint }[], want: PurchaseIntent['units']): boolean {
+export function sameUnits(got: { contract: string; itemId: bigint }[], want: PurchaseIntent['units']): boolean {
   if (want.length === 0 || got.length !== want.length) return false
   const count = new Map<string, number>()
   for (const u of want) count.set(`${u.contract}:${u.itemId}`, (count.get(`${u.contract}:${u.itemId}`) ?? 0) + 1)
@@ -98,7 +132,18 @@ export function checkUseCredits(data: unknown, intent: PurchaseIntent, nowSecond
   if (decoded.functionName !== 'useCredits') refuse('The Shop only signs its own purchases.')
   const [args] = decoded.args
   if (args.credits.length !== 1 || args.creditsSignatures.length !== 1) refuse('A purchase spends one credit.')
-  if (args.maxUncreditedValue !== 0n) refuse('A Credits purchase takes no MANA from your wallet.')
+  const split = intent.split
+  if (split) {
+    if (split.phase !== 'sale' || !split.sale) refuse('The Shop only approves MANA in this step.')
+    // Exactly the gap confirmed: never more, and never another figure standing in for it (a zero gap is no split).
+    if (split.gapWei <= 0n || args.maxUncreditedValue !== split.gapWei) refuse('The purchase would take other MANA from your wallet than you confirmed.')
+    // Exactly the credit the node issued for it, worth exactly its share, crediting no more, for exactly the call reviewed.
+    const issued = split.sale.credit()
+    const [credit] = args.credits
+    if (!issued || lower(credit.salt) !== lower(idToSalt(issued.id))) refuse('The purchase spends another credit than the one issued for it.')
+    if (credit.value !== split.sale.creditWei || args.maxCreditedValue !== split.sale.creditWei) refuse('The purchase would spend another share of Credits than you confirmed.')
+    if (lower(args.externalCall.data) !== lower(split.sale.callData)) refuse('The purchase is not the one you confirmed.')
+  } else if (args.maxUncreditedValue !== 0n) refuse('A Credits purchase takes no MANA from your wallet.')
   if (args.maxCreditedValue > args.credits[0].value) refuse('The purchase would spend more than its credit holds.')
   if (args.customExternalCallSignature !== '0x') refuse('The Shop makes no custom calls.')
   const call = args.externalCall
@@ -134,6 +179,65 @@ export function checkUseCredits(data: unknown, intent: PurchaseIntent, nowSecond
   }
 }
 
+/** The chain's MANA, from its registry; null where it lists none. */
+function manaOf(chainId: number): ContractInfo | null {
+  try {
+    return requireContracts(chainId as ChainId).mana
+  } catch {
+    return null
+  }
+}
+
+/** `0x`, a 4-byte selector and two 32-byte words, in hex. */
+const APPROVE_DATA_LENGTH = 2 + 8 + 64 * 2
+
+/** MANA's approve of exactly a split's gap to the trusted CreditsManager, only while the buyer authorizes it. */
+function checkSplitApprove(data: unknown, intent: PurchaseIntent): void {
+  const split = intent.split
+  if (!split) refuse('The Shop only signs its own purchases.')
+  if (split.phase !== 'approve') refuse('The Shop doesn’t approve MANA while it buys.')
+  // Exactly approve(address, uint256): the selector and two words, no trailing bytes.
+  if (typeof data !== 'string' || data.length !== APPROVE_DATA_LENGTH || !/^0x[0-9a-fA-F]*$/.test(data) || lower(data.slice(0, 10)) !== APPROVE_SELECTOR) refuse('The Shop only approves MANA for its own purchases.')
+  let spender: string
+  let amount: bigint
+  try {
+    ;[spender, amount] = decodeAbiParameters(APPROVE.inputs, `0x${data.slice(10)}`)
+  } catch {
+    refuse('The Shop only approves MANA for its own purchases.')
+  }
+  if (lower(spender) !== intent.manager.address) refuse('The Shop only lets the Credits manager spend your MANA.')
+  if (amount !== split.gapWei) refuse('The Shop only approves the MANA you confirmed for this purchase.')
+  if (!split.mayApprove()) refuse('MANA is approved only when you authorize it, so nothing was sent.')
+}
+
+/** Whether a meta-transaction's domain or a transaction's target is the chain's MANA, for a split only. */
+function splitMana(intent: PurchaseIntent, address: unknown): ContractInfo | null {
+  if (!intent.split) return null
+  const mana = manaOf(intent.chainId)
+  return mana && lower(address) === lower(mana.address) ? mana : null
+}
+
+/** MANA's own meta-transaction for the buyer: the split's approve, in MANA's exact EIP-712 schema. */
+function checkManaMetaTransaction(typed: Record<string, Record<string, unknown>>, mana: ContractInfo, intent: PurchaseIntent): void {
+  const { types, domain, primaryType, message } = typed
+  const field = mana.metaTx
+  const ok =
+    field != null &&
+    sameKeys(types, ['EIP712Domain', 'MetaTransaction']) &&
+    sameFields(types.EIP712Domain, DOMAIN_TYPE) &&
+    sameFields(types.MetaTransaction, metaTxType(field)) &&
+    sameKeys(domain, ['name', 'version', 'verifyingContract', 'salt']) &&
+    domain.name === mana.name &&
+    domain.version === mana.version &&
+    lower(domain.salt) === lower(chainIdSalt(intent.chainId as ChainId)) &&
+    (primaryType as unknown) === 'MetaTransaction' &&
+    sameKeys(message, ['nonce', 'from', field]) &&
+    /^\d{1,78}$/.test(String(message.nonce)) &&
+    lower(message.from) === intent.buyer
+  if (!ok) refuse('The Shop only signs its own purchases.')
+  checkSplitApprove(message[field!], intent)
+}
+
 /**
  * The CreditsManager's meta-transaction for the buyer, exactly as the rails build it, and nothing more.
  * Returns the typed data as checked, for the wallet to sign that and not the text it was read from.
@@ -148,6 +252,11 @@ export function checkMetaTransaction(from: unknown, data: unknown, intent: Purch
   }
   if (!sameKeys(typed, ['types', 'domain', 'primaryType', 'message'])) refuse('The Shop only signs its own purchases.')
   const { types, domain, primaryType, message } = typed as Record<string, Record<string, unknown>>
+  const mana = splitMana(intent, (domain as Record<string, unknown> | undefined)?.verifyingContract)
+  if (mana) {
+    checkManaMetaTransaction(typed as Record<string, Record<string, unknown>>, mana, intent)
+    return typed
+  }
   const { manager } = intent
   const ok =
     sameKeys(types, ['EIP712Domain', 'MetaTransaction']) &&
@@ -172,7 +281,10 @@ export function checkTransaction(tx: unknown, intent: PurchaseIntent): void {
   if (tx == null || typeof tx !== 'object' || Array.isArray(tx) || Object.keys(tx).some((k) => !TX_FIELDS.has(k))) refuse('The Shop only sends its own purchases.')
   const t = tx as { from?: unknown; to?: unknown; data?: unknown; value?: unknown }
   const value = typeof t.value === 'string' || typeof t.value === 'number' || typeof t.value === 'bigint' ? BigInt(t.value) : 0n
-  if (lower(t.from) !== intent.buyer || lower(t.to) !== intent.manager.address || value !== 0n) refuse('The Shop only sends its own purchases.')
+  if (lower(t.from) !== intent.buyer || value !== 0n) refuse('The Shop only sends its own purchases.')
+  // A split goes only through the relay, its approve and its sale alike: never sent from the wallet.
+  if (intent.split) refuse('The Shop sends a purchase with Credits and MANA only through its fee-free relay.')
+  if (lower(t.to) !== intent.manager.address) refuse('The Shop only sends its own purchases.')
   checkUseCredits(t.data, intent)
 }
 
@@ -191,12 +303,15 @@ export function guardedProvider(provider: Eip1193Provider, intent: PurchaseInten
   const stillCurrent = (): void => {
     if (!intent.current()) refuse('Your sign-in changed meanwhile. Open the item again to buy it.')
   }
-  /** The login, then the wallet's account (awaited), then the login again: nothing awaits after it. */
-  const ready = async (stage: 'authorized' | 'handedOff'): Promise<void> => {
+  /**
+   * The login, then the wallet's account (awaited), then the login again: nothing awaits after it. A sale also needs its
+   * progress kept (`stage`); a split's approve isn't the sale, and needs none.
+   */
+  const ready = async (stage: 'authorized' | 'handedOff' | null): Promise<void> => {
     stillCurrent()
     await assertWalletAccount(provider, intent.buyer)
     stillCurrent()
-    if (intent.durable && !intent.durable(stage)) refuse("This browser couldn't keep a record of the purchase, so it wasn't sent.")
+    if (stage && intent.durable && !intent.durable(stage)) refuse("This browser couldn't keep a record of the purchase, so it wasn't sent.")
   }
   return {
     async request({ method, params }) {
@@ -223,16 +338,27 @@ export function guardedProvider(provider: Eip1193Provider, intent: PurchaseInten
           if (args.length !== 2) refuse('The Shop only signs its own purchases.')
           // What the wallet signs is the data as checked, serialized again: never the original text, which a
           // wallet's own parser might read differently (a repeated key, say).
-          const checked = JSON.stringify(checkMetaTransaction(args[0], args[1], intent))
-          await ready('authorized')
+          const typed = checkMetaTransaction(args[0], args[1], intent)
+          const checked = JSON.stringify(typed)
+          const approve = splitMana(intent, (typed as { domain: { verifyingContract?: unknown } }).domain.verifyingContract) != null
+          await ready(approve ? null : 'authorized')
+          // Asked again after the awaits: the buyer's AUTHORIZE may have ended meanwhile.
+          if (approve && !intent.split!.mayApprove()) refuse('MANA is approved only when you authorize it, so nothing was sent.')
           return provider.request({ method, params: [args[0], checked] })
         }
         case 'eth_sendTransaction':
           if (args.length !== 1) refuse('The Shop only sends its own purchases.')
           checkTransaction(args[0], intent)
-          // A wallet on another network would spend gas there and leave the purchase pending.
-          if (lower(await provider.request({ method: 'eth_chainId' })) !== chainHex) refuse('Your wallet is on another network. Switch it to the Shop’s and try again.')
-          await ready('handedOff')
+          // Everything before the wallet is handed the transaction: whatever stops it here (a refusal, or a read of the
+          // wallet that fails or disconnects), the wallet never got it.
+          try {
+            // A wallet on another network would spend gas there and leave the purchase pending.
+            if (lower(await provider.request({ method: 'eth_chainId' })) !== chainHex) refuse('Your wallet is on another network. Switch it to the Shop’s and try again.')
+            await ready('handedOff')
+          } catch (e) {
+            if (e instanceof RefusedBeforeWallet) throw e
+            throw Object.assign(new WalletRefusal("Your wallet didn't answer before the purchase was sent, so nothing was sent. Try again.", 4100), { cause: e })
+          }
           return provider.request({ method, params })
         default:
           throw new WalletRefusal(`The Shop doesn't use ${method}.`, 4200)

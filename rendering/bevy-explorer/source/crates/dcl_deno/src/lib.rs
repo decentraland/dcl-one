@@ -1,5 +1,6 @@
 pub mod js;
 
+use common::sync::MutexExt;
 use std::{
     panic::{self, AssertUnwindSafe},
     sync::Mutex,
@@ -37,7 +38,7 @@ static TERMINATED: Lazy<Mutex<HashMap<SceneId, std::time::Instant>>> = Lazy::new
 /// loop doesn't exit on uncaught errors, so without the flag a deterministic
 /// wedge would just re-enter its loop on the next tick.
 pub fn terminate_scene(scene_id: SceneId) {
-    let running = match VM_HANDLES.lock().unwrap().get(&scene_id) {
+    let running = match VM_HANDLES.lock_ignore_poison().get(&scene_id) {
         Some((handle, kill_flag)) => {
             bevy::log::warn!(
                 "[{scene_id:?}] scene thread still running after kill; force-terminating"
@@ -50,8 +51,7 @@ pub fn terminate_scene(scene_id: SceneId) {
     };
     if running {
         TERMINATED
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .entry(scene_id)
             .or_insert_with(std::time::Instant::now);
     }
@@ -59,8 +59,8 @@ pub fn terminate_scene(scene_id: SceneId) {
 
 /// Scene threads still running at least `min_age` after [`terminate_scene`] forced them.
 pub fn zombie_scene_count(min_age: std::time::Duration) -> usize {
-    let mut terminated = TERMINATED.lock().unwrap();
-    let running = VM_HANDLES.lock().unwrap();
+    let mut terminated = TERMINATED.lock_ignore_poison();
+    let running = VM_HANDLES.lock_ignore_poison();
     terminated.retain(|id, _| running.contains_key(id));
     terminated
         .values()
@@ -88,7 +88,6 @@ pub(crate) fn test_platform() {
     });
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_scene(
     initial_crdt_store: CrdtStore,
     scene_context: CrdtContext,
@@ -128,7 +127,7 @@ pub fn spawn_scene(
                 error!("[{id:?}] caught scene thread panic: {e:?}");
             }
 
-            VM_HANDLES.lock().unwrap().remove(&id);
+            VM_HANDLES.lock_ignore_poison().remove(&id);
         })
         .unwrap();
 

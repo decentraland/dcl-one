@@ -1,5 +1,5 @@
 // TODO(figma-ds): replace with the generated BlogIndex template when the DCL UI library lands
-import { useId } from 'react'
+import { useId, type ReactNode } from 'react'
 import { BlogFeaturedCard } from './BlogFeaturedCard'
 import { BlogPostCard } from './BlogPostCard'
 import { BlogLink } from './BlogRouting'
@@ -19,6 +19,7 @@ export type BlogIndexPageProps = {
   /** The search shown in the field; with `searched`, the page is its results. */
   query: string
   searched?: boolean
+  desktopSearch?: ReactNode
   /** The posts loaded so far, newest first (search: best match first). */
   posts: readonly BlogCard[]
   /** Every post the list has, loaded or not. */
@@ -37,6 +38,7 @@ export function BlogIndexPage({
   subtitle,
   query,
   searched,
+  desktopSearch,
   posts,
   total,
   nextHref,
@@ -50,7 +52,13 @@ export function BlogIndexPage({
     activeCategory && !categories.some((c) => c.slug === activeCategory) ? null : activeCategory
   return (
     <BlogShell>
-      <BlogTabsMenu categories={categories} activeCategory={active} current="page" query={query} />
+      <BlogTabsMenu
+        categories={categories}
+        activeCategory={active}
+        current="page"
+        query={query}
+        desktopSearch={desktopSearch}
+      />
       <div className={styles.inner}>
         <header className={styles.hero}>
           <h1 className={styles.title}>{title}</h1>

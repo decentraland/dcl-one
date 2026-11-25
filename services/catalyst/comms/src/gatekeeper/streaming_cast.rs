@@ -17,18 +17,47 @@
 //!   the platform ban, then the scene ban of the room the stream runs in
 //!   and, for a world, its access policy; a subscribe-only token whose
 //!   `dcl.castWatcher` attribute carries the wallet, so the ban and world
-//!   access sweeps reach a watcher already in the room.
+//!   access sweeps reach a watcher already in the room, and the join guard
+//!   removes one banned since its token ([`refuse_on_join`]; upstream reads
+//!   the bans at the token only).
 //! - `GET /presenters`, `PUT|DELETE /presenters/{identity}` (signed as
-//!   scene): owner or admin of the place the room's stream credential is
-//!   stored for. As upstream, a demotion does not stick for a scene admin:
+//!   scene): the platform ban, then owner or admin of the place the room's
+//!   stream credential is stored for. As upstream, a demotion does not stick for a scene admin:
 //!   the next join of that admin adds them back.
 //!
 //! Publisher identities name the credential that minted them
 //! (`stream:<place>:<access id>:<uuid>`, `presentation-bot:<room>:<access
 //! id>:<uuid>`; upstream has `stream:<place>:<uuid>`). Revoking or replacing a
-//! credential removes its publishers and their presenter entries, and the
-//! `participant_joined` webhook removes one that connects later with a token
-//! still inside its five-minute lifetime.
+//! credential, or removing its place from the catalogue, removes its
+//! publishers and their presenter entries, and the `participant_joined`
+//! webhook removes one that connects later with a token still inside its
+//! five-minute lifetime.
+//!
+//! A key lives only while the wallet that generated it would still be given
+//! it ([`recheck_keys`]): not platform-banned, not denied, and holding the key
+//! decision on the room's scene (a world scene's admin through the wallet that
+//! granted it). The check runs on every publisher token and stream link,
+//! when a scene admin is removed, when a wallet is banned, when PostgreSQL
+//! announces a deployment or an authority change of a world ([`listen`]),
+//! and in the key job for the losses with no event here. Upstream never reads
+//! the minter again: there a key works until it expires or an admin revokes it.
+//!
+//! A key is for one scene room. A redeploy gives the scene a new entity id
+//! and so a new room, and the key made before would feed a room no scene
+//! uses: the same check revokes a key whose scene no longer stands in its
+//! room ([`still_deployed`]), which ends a stream still running there.
+//! Upstream keeps that key until the next stream link or `POST
+//! /scene-stream-access` replaces it (409 while it streams): its `GET`
+//! answers it and its tokens publish into the old room. A scene admin is
+//! granted on the scene's place (`ActiveDeployment::place_key`), as upstream
+//! grants on the Places place: a redeploy of the same place keeps the grant.
+//!
+//! The `streaming` flag follows LiveKit and not only its two webhooks, which
+//! upstream applies in arrival order: the streaming job raises the flag of a
+//! credential whose ingress publishes and lowers one with no stream, an
+//! `ingress_ended` is ignored while LiveKit reports the ingress live, and a
+//! stream link asks LiveKit before it replaces an idle credential. So a lost
+//! or late webhook does not lift the four-hour cap or the renewal conflict.
 //!
 //! A display name is shown as asked, without invisible characters, and a name
 //! that reads as another wallet's address (in full or abbreviated, through the
@@ -39,7 +68,13 @@
 //! Errors answer upstream's `{"error": msg}` with its statuses; a signature
 //! refusal answers the crypto middleware's `{"ok": false, "message"}` and a
 //! body refusal `@dcl/schema-validator-component`'s. Local preview realms are
-//! not special-cased: upstream does so only with `ALLOW_LOCAL_PREVIEW=true`.
+//! not special-cased here, and `ALLOW_LOCAL_PREVIEW` does not apply to Cast
+//! (it only skips `/get-scene-adapter`'s deployment check); upstream's Cast
+//! skips the place permission check for them when that setting is on.
+
+use std::collections::BTreeSet;
+use std::sync::Mutex;
+use std::time::Duration;
 
 use axum::Json;
 use axum::body::Bytes;
@@ -51,6 +86,7 @@ use chrono::NaiveDateTime;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use sqlx::PgPool;
+use sqlx::postgres::PgListener;
 use uuid::Uuid;
 
 use super::super::admission::scene::{self, PlaceLookup};
@@ -61,8 +97,8 @@ use super::super::errors::{ApiError, forbidden, service_unavailable, unauthorize
 use super::super::livekit::{AccessToken, TRACK_SOURCE_MICROPHONE, VideoGrants};
 use super::super::{CommsState, SharedState};
 use super::{
-    Context, FOUR_DAYS_MS, NOT_AUTHORIZED_TO_STREAM_MSG, active_access, issue_access,
-    refuse_if_platform_banned, resolve_place_id,
+    Context, FOUR_DAYS_MS, KeyTarget, NOT_AUTHORIZED_TO_STREAM_MSG, active_access, issue_access,
+    refuse_barred, resolve_place_id,
 };
 use crate::access::SceneBanKey;
 use crate::rooms::{ParsedRoom, ResolveError, ResolvedRoom, RoomRequest};
@@ -93,7 +129,6 @@ pub const SCENE_BANNED_WATCHER_MSG: &str = "You are banned from this scene";
 pub const NO_REALM_MSG: &str = "Access denied, invalid signed-fetch request, no realm";
 pub const INVALID_PRESENTER_IDENTITY_MSG: &str =
     "participantIdentity must be a valid Ethereum address or streamer identity";
-const PLACE_NOT_FOUND_MSG: &str = "place not found for this scene";
 const LIVEKIT_UNCONFIGURED_MSG: &str =
     "LiveKit is not configured (set LIVEKIT_API_KEY / LIVEKIT_API_SECRET)";
 
@@ -117,6 +152,7 @@ struct KeyedAccess {
     id: Uuid,
     place_id: String,
     room_id: Option<String>,
+    generated_by: String,
     created_at: NaiveDateTime,
     expiration_time: Option<NaiveDateTime>,
 }
@@ -136,7 +172,7 @@ fn now_ms() -> i64 {
 /// The active credential holding `key` (`scene_stream_access_active_key_idx`).
 async fn access_by_key(pool: &PgPool, key: &str) -> Result<Option<KeyedAccess>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT id, place_id, room_id, created_at, expiration_time FROM social.scene_stream_access \
+        "SELECT id, place_id, room_id, generated_by, created_at, expiration_time FROM social.scene_stream_access \
          WHERE streaming_key = $1 AND active ORDER BY created_at DESC LIMIT 1",
     )
     .bind(key)
@@ -148,12 +184,13 @@ async fn access_by_key(pool: &PgPool, key: &str) -> Result<Option<KeyedAccess>, 
 /// (`scene_stream_access_active_room_idx`). An expired row the expiry job has
 /// not deactivated yet counts as none.
 async fn access_by_room(pool: &PgPool, room: &str) -> Result<Option<KeyedAccess>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT id, place_id, room_id, created_at, expiration_time FROM social.scene_stream_access \
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT id, place_id, room_id, generated_by, created_at, expiration_time FROM social.scene_stream_access \
          WHERE room_id = $1 AND active \
          AND COALESCE(expiration_time, created_at + interval '4 days') > timezone('UTC', now()) \
-         ORDER BY created_at DESC LIMIT 1",
-    )
+         ORDER BY {} LIMIT 1",
+        super::ROOM_KEY_ORDER
+    )))
     .bind(room)
     .fetch_optional(pool)
     .await
@@ -162,18 +199,328 @@ async fn access_by_room(pool: &PgPool, room: &str) -> Result<Option<KeyedAccess>
 /// A key's credential for the publishing tokens: unknown 401, expired 401,
 /// without a room 401 (upstream's `validateStreamerToken` and
 /// `generatePresentationBotToken`). Returns the place, the room and the
-/// credential's id, which the publisher identities carry.
-async fn publishing_access(pool: &PgPool, key: &str) -> Result<(String, String, Uuid), ApiError> {
-    let access = access_by_key(pool, key)
+/// credential's id, which the publisher identities carry. A key whose minter
+/// lost the place is revoked here and answers as an unknown one.
+async fn publishing_access(
+    state: &SharedState,
+    key: &str,
+) -> Result<(String, String, Uuid), ApiError> {
+    let access = access_by_key(&state.pool, key)
         .await?
         .ok_or_else(|| unauthorized(INVALID_STREAMING_KEY_MSG))?;
     if now_ms() >= expires_ms(access.created_at, access.expiration_time) {
         return Err(unauthorized(EXPIRED_STREAMING_KEY_MSG));
     }
+    if !matches!(keep_or_revoke(state, &access).await?, Checked::Kept) {
+        return Err(unauthorized(INVALID_STREAMING_KEY_MSG));
+    }
     let room = access
         .room_id
         .ok_or_else(|| unauthorized(INVALID_STREAMING_KEY_MSG))?;
     Ok((access.place_id, room, access.id))
+}
+
+/// Why `access` ends now, if it does: the wallet that generated it would not
+/// be given the key (the gates of [`generate_stream_link`] on the scene of the
+/// credential's room), or that scene no longer stands there
+/// ([`still_deployed`]). An authority that cannot be read is an error, never
+/// a loss. A key with no recorded minter (an imported one) ends with its
+/// scene or at its expiry.
+async fn key_ends(
+    state: &CommsState,
+    access: &KeyedAccess,
+) -> Result<Option<&'static str>, ApiError> {
+    let minter = Address::parse(&access.generated_by).ok();
+    if let Some(minter) = &minter
+        && let Some(why) = super::barred(state, minter, None).await?
+    {
+        return Ok(Some(why));
+    }
+    let room = access.room_id.as_deref().unwrap_or_default();
+    let resolved = room_scene(state, room).await?;
+    if !still_deployed(state, room, resolved.as_ref()).await? {
+        return Ok(Some(SCENE_REPLACED));
+    }
+    let Some(minter) = minter else {
+        return Ok(None);
+    };
+    // A world scene's key is decided on that scene, wherever the row is stored.
+    let world_scene = resolved.as_ref().and_then(|resolved| {
+        let world = resolved.realm.world()?;
+        Some((world, resolved.deployment.as_ref()?))
+    });
+    let decision = match world_scene {
+        Some((world, deployment)) => {
+            let target = KeyTarget::deployed(state, world, deployment, room.to_owned());
+            target.decide(state, &minter).await
+        }
+        None => {
+            let scene = match &resolved {
+                Some(resolved) => super::scene_authority(state, resolved, &access.place_id).await?,
+                None => None,
+            }
+            .unwrap_or_else(|| PlaceLookup::new(state, &access.place_id, scene::NO_ADMINS));
+            scene::scene_manager_decision(state, &scene, &minter).await
+        }
+    };
+    match decision {
+        PermissionDecision::Allowed => Ok(None),
+        decision if super::lacks_authority(&decision) => Ok(Some("its minter lost the place")),
+        PermissionDecision::Refused(why) => Err(why.into()),
+    }
+}
+
+/// Whether the scene of a credential's `room` is the one deployed now on its
+/// base parcel, as a stream link binds it ([`Context::resolve`]). A redeploy
+/// gives the scene a new entity id and so a new room, and the key made before
+/// would feed a room no scene uses. That the room resolves is not enough: a
+/// world keeps a replaced scene for a week and resolves its room, for the
+/// players still in it. A Genesis scene this node does not store counts as
+/// standing; one it stores without an active deployment was replaced.
+async fn still_deployed(
+    state: &CommsState,
+    room: &str,
+    resolved: Option<&ResolvedRoom>,
+) -> Result<bool, ApiError> {
+    let Some(ResolvedRoom {
+        realm,
+        scene_id: Some(scene),
+        deployment,
+        ..
+    }) = resolved
+    else {
+        // A world scene room resolves to a deployment or to nothing.
+        return Ok(resolved.is_some() || !room.starts_with(crate::rooms::SCENE_ROOM_PREFIX));
+    };
+    // A world room resolves with its deployment; a Genesis room names its scene alone.
+    let scenes = &state.scenes;
+    let base = match deployment {
+        Some(placed) => Ok(Some(placed.base)),
+        None => (scenes.resolve(RoomRequest::Adapter { realm, scene }).await)
+            .map(|scene| scene.deployment.map(|placed| placed.base)),
+    };
+    let current = match base {
+        Ok(Some(parcel)) => scenes.resolve(RoomRequest::Parcel { realm, parcel }).await,
+        Ok(None) => {
+            let unknown =
+                "SELECT NOT EXISTS (SELECT FROM content.deployments WHERE entity_id = $1)";
+            let unknown = sqlx::query_scalar(unknown).bind(scene.as_str());
+            return unknown.fetch_one(&state.pool).await.map_err(|error| {
+                AuthorityNotEstablished::store_unavailable("content.deployments", &error).into()
+            });
+        }
+        Err(error) => Err(error),
+    };
+    match current {
+        Ok(current) => Ok(current.room == room),
+        Err(ResolveError::NoSceneAtParcel { .. }) => Ok(false),
+        Err(ResolveError::Db(error)) => {
+            Err(AuthorityNotEstablished::store_unavailable("content.deployments", &error).into())
+        }
+        Err(_) => Ok(true),
+    }
+}
+
+/// What a recheck did with one key.
+enum Checked {
+    Kept,
+    /// This recheck revoked it.
+    Revoked(RevokedKey),
+    /// Someone else ended it meanwhile.
+    Gone,
+}
+
+/// A key a recheck revoked: its room, and whether it ended because its scene
+/// was replaced or removed (a redeploy of its place).
+pub(crate) struct RevokedKey {
+    pub room: Option<String>,
+    pub replaced: bool,
+}
+
+const SCENE_REPLACED: &str = "its scene was replaced or removed";
+
+/// Revokes `access` when it ends ([`key_ends`]), as `DELETE
+/// /scene-stream-access` does: the ingress is deleted, its publishers leave
+/// and the place's owner is told. A webhook or the reconciliation can change
+/// the row between the snapshot and the write: the revocation is tried
+/// again, and is an error while it is not stored.
+async fn keep_or_revoke(state: &SharedState, access: &KeyedAccess) -> Result<Checked, ApiError> {
+    let Some(why) = key_ends(state, access).await? else {
+        return Ok(Checked::Kept);
+    };
+    for _ in 0..3 {
+        let revoke = super::jobs::CleanupCommand::Revoke;
+        let Some(revocation) = super::jobs::prepare(state, access.id, revoke).await? else {
+            return Ok(Checked::Gone);
+        };
+        if revocation.record(&state.pool).await? {
+            tracing::info!(place_id = %access.place_id, minter = %access.generated_by, why, "stream key revoked");
+            super::settle_cleanup(state, access.id, &access.place_id);
+            return Ok(Checked::Revoked(RevokedKey {
+                room: access.room_id.clone(),
+                replaced: why == SCENE_REPLACED,
+            }));
+        }
+    }
+    Err(super::concurrent_change())
+}
+
+/// The active credentials a recheck reads.
+#[derive(Clone, Copy)]
+pub(crate) enum Keys<'a> {
+    /// The one streaming into this room: an admin of its scene was removed.
+    Room(&'a str),
+    /// Those this wallet generated: it was banned.
+    Minter(&'a str),
+    /// The place's: a stream link is about to answer it.
+    Place(&'a str),
+    /// One page of places after this cursor: the periodic pass. The cursor
+    /// moves to each key before its check, so a pass that is cut goes on with
+    /// the next key, and returns to the start after the last page.
+    After(&'a Mutex<String>),
+    /// Every one: notifications were lost.
+    All,
+    /// That of the Genesis scene this deployment replaced or removed.
+    Replaced(&'a str),
+    /// Those of the scene rooms that start with this: a world's.
+    World(&'a str),
+}
+
+/// [`keep_or_revoke`] on each credential `keys` selects; one that cannot be
+/// decided keeps its key for the next recheck. Returns the keys this recheck
+/// revoked itself.
+pub(crate) async fn recheck_keys(state: &SharedState, keys: Keys<'_>) -> Vec<RevokedKey> {
+    let after;
+    let (filter, value) = match keys {
+        Keys::Room(room) => ("room_id = $1", room),
+        Keys::Minter(wallet) => ("lower(generated_by) = $1", wallet),
+        Keys::Place(place) => ("place_id = $1", place),
+        Keys::After(cursor) => {
+            after = cursor.lock().unwrap().clone();
+            ("place_id > $1 ORDER BY place_id LIMIT 20", after.as_str())
+        }
+        Keys::All => ("place_id > $1", ""),
+        Keys::Replaced(entity) => (
+            "split_part(room_id, ':', 3) IN (SELECT $1 UNION ALL SELECT entity_id \
+             FROM content.deployments WHERE deleter_deployment = \
+             (SELECT id FROM content.deployments WHERE entity_id = $1))",
+            entity,
+        ),
+        Keys::World(rooms) => ("starts_with(room_id, $1)", rooms),
+    };
+    let rows: Vec<KeyedAccess> = match sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT id, place_id, room_id, generated_by, created_at, expiration_time \
+         FROM social.scene_stream_access WHERE active AND {filter}"
+    )))
+    .bind(value)
+    .fetch_all(&state.pool)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(%error, "stream keys not read for a recheck");
+            return Vec::new();
+        }
+    };
+    let mut revoked = Vec::new();
+    for access in &rows {
+        if let Keys::After(cursor) = keys {
+            cursor.lock().unwrap().clone_from(&access.place_id);
+        }
+        match keep_or_revoke(state, access).await {
+            Ok(Checked::Kept | Checked::Gone) => {}
+            Ok(Checked::Revoked(key)) => revoked.push(key),
+            Err(error) => {
+                tracing::warn!(place_id = %access.place_id, %error, "stream key recheck undecided; the key stays");
+            }
+        }
+    }
+    if let Keys::After(cursor) = keys
+        && rows.len() < 20
+    {
+        cursor.lock().unwrap().clear();
+    }
+    revoked
+}
+
+/// The check a notification asks for, `wake` being its payload: `scene:<entity
+/// id>` (a Genesis deploy or unpublish), `world:<name>` (the world's scenes,
+/// owner or grants changed), or empty for every key.
+pub(crate) async fn recheck_notified(state: &SharedState, wake: &str) {
+    let rooms;
+    let keys = match wake.split_once(':') {
+        None => Keys::All,
+        Some(("scene", entity)) => Keys::Replaced(entity),
+        Some((_, world)) => {
+            rooms = crate::rooms::world_scene_room_prefix(world);
+            Keys::World(&rooms)
+        }
+    };
+    recheck_keys(state, keys).await;
+}
+
+/// The channels of the writes that can make a key stale: every deployment
+/// row, and a world's scene, owner and grant changes (`schemas/20_worlds.sql`).
+const CHANNELS: [&str; 2] = ["new_deployment", "world_authority"];
+
+/// Calls `check` with each `scene:` and `world:` payload announced on
+/// [`CHANNELS`], and with an empty one at each subscription: PostgreSQL keeps
+/// no notification for a session that is away. The subscription holds one
+/// connection of `pool` and is read while a check runs. The payloads that
+/// wait are a set: those that repeat during a check are one check. A session
+/// that is idle for a minute is asked a statement: one that ended with no
+/// error fails there, and the listener subscribes again.
+pub(crate) async fn listen<F: Future<Output = ()>>(pool: &PgPool, check: impl Fn(String) -> F) {
+    let waiting = Mutex::new(BTreeSet::new());
+    let ready = tokio::sync::Notify::new();
+    let wake = |payload: &str| {
+        waiting.lock().unwrap().insert(payload.to_owned());
+        ready.notify_one();
+    };
+    let subscription = async {
+        loop {
+            let ended: sqlx::Result<()> = async {
+                let mut listener = PgListener::connect_with(pool).await?;
+                listener.listen_all(CHANNELS).await?;
+                wake("");
+                loop {
+                    let idle = Duration::from_secs(60);
+                    match tokio::time::timeout(idle, listener.try_recv()).await {
+                        Ok(message) => {
+                            let Some(message) = message? else {
+                                return Ok(());
+                            };
+                            if let Some(("scene" | "world", _)) = message.payload().split_once(':')
+                            {
+                                wake(message.payload());
+                            }
+                        }
+                        Err(_) => {
+                            let ping = sqlx::query("SELECT 1").execute(&mut listener);
+                            let ping = tokio::time::timeout(Duration::from_secs(10), ping);
+                            ping.await.map_err(|_| sqlx::Error::PoolTimedOut)??;
+                        }
+                    }
+                }
+            }
+            .await;
+            tracing::warn!(
+                ?ended,
+                "stream key listener disconnected; it subscribes again"
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    };
+    let checks = async {
+        loop {
+            ready.notified().await;
+            let batch = std::mem::take(&mut *waiting.lock().unwrap());
+            for payload in batch {
+                check(payload).await;
+            }
+        }
+    };
+    tokio::join!(subscription, checks);
 }
 
 /// A publisher identity minted for credential `access_id`:
@@ -218,19 +565,34 @@ enum Publisher {
     Tagged(Uuid),
 }
 
-/// Classifies `identity` against the streamer prefix of `place_id` and the
-/// bot prefix of `room`.
-fn classify_publisher(identity: &str, place_id: &str, room: &str) -> Publisher {
-    let rest = identity
-        .strip_prefix("stream:")
-        .and_then(|r| r.strip_prefix(place_id))
-        .or_else(|| {
-            identity
-                .strip_prefix("presentation-bot:")
-                .and_then(|r| r.strip_prefix(room))
-        })
-        .and_then(|r| r.strip_prefix(':'));
-    let Some(rest) = rest else {
+/// Classifies `identity`, a participant of `room`: a streamer of any place
+/// (only keys of `room` mint streamers into it, and a key moved to another
+/// place keeps its minting place in the identity), read from the right as
+/// [`tagged_access`] reads it, since a preview place id holds colons; or a
+/// bot of `room`.
+fn classify_publisher(identity: &str, room: &str) -> Publisher {
+    if let Some(rest) = identity.strip_prefix("stream:") {
+        let Some((head, uuid)) = rest.rsplit_once(':') else {
+            return Publisher::Other;
+        };
+        if Uuid::parse_str(uuid).is_err() {
+            return Publisher::Other;
+        }
+        return match head.rsplit_once(':') {
+            Some((place, access)) if !place.is_empty() => match Uuid::parse_str(access) {
+                Ok(access) => Publisher::Tagged(access),
+                // `stream:<place with colons>:<uuid>`, minted before tagging.
+                Err(_) => Publisher::Untagged,
+            },
+            _ if head.is_empty() => Publisher::Other,
+            _ => Publisher::Untagged,
+        };
+    }
+    let Some(rest) = identity
+        .strip_prefix("presentation-bot:")
+        .and_then(|r| r.strip_prefix(room))
+        .and_then(|r| r.strip_prefix(':'))
+    else {
         return Publisher::Other;
     };
     match rest.split_once(':') {
@@ -279,32 +641,147 @@ async fn load_place(pool: &PgPool, id: &str) -> Result<Option<CastPlace>, sqlx::
     .await
 }
 
-/// A watch location's place: a name ending in `.eth` is a world, anything
-/// else a Genesis parcel, resolved as the stream link keyed its credential.
-async fn watch_place(pool: &PgPool, location: &str) -> Result<(String, CastPlace), ApiError> {
+/// The place a world scene's key shows: the world's catalogue row (the
+/// local one first, as the removal feed reads it), else the world alone.
+async fn world_place(pool: &PgPool, world: &WorldName) -> Result<CastPlace, sqlx::Error> {
+    let row = sqlx::query_as(
+        "SELECT title, world, world_name, base_position FROM explore.place_indexed \
+         WHERE world AND lower(world_name) = $1 \
+         ORDER BY (raw->>'local' = 'true') DESC NULLS LAST, id LIMIT 1",
+    )
+    .bind(world.key())
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.unwrap_or_else(|| CastPlace {
+        title: None,
+        world: true,
+        world_name: Some(world.display().to_owned()),
+        base_position: String::new(),
+    }))
+}
+
+/// The place a key stored under `place_id` streaming into `room` shows: a
+/// world scene room's world ([`world_place`]), else the catalogue place.
+async fn key_place(
+    pool: &PgPool,
+    place_id: &str,
+    room: Option<&str>,
+) -> Result<Option<CastPlace>, sqlx::Error> {
+    match room.and_then(crate::rooms::decode_world_scene_room) {
+        Some((world, _)) => world_place(pool, &world).await.map(Some),
+        None => load_place(pool, place_id).await,
+    }
+}
+
+/// The room of `world`'s only scene with an active, unexpired key; `None`
+/// when no scene room or more than one has one.
+async fn single_keyed_room(
+    pool: &PgPool,
+    world: &WorldName,
+) -> Result<Option<String>, sqlx::Error> {
+    let rooms: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT room_id FROM social.scene_stream_access \
+         WHERE active AND starts_with(room_id, $1) \
+         AND COALESCE(expiration_time, created_at + interval '4 days') > timezone('UTC', now()) \
+         LIMIT 2",
+    )
+    .bind(crate::rooms::world_scene_room_prefix(world.key()))
+    .fetch_all(pool)
+    .await?;
+    Ok(match <[String; 1]>::try_from(rooms) {
+        Ok([room]) => Some(room),
+        Err(_) => None,
+    })
+}
+
+/// The key a watch location reads, with the room of a world scene
+/// ([`active_access`]), and the place it shows. A name ending in `.eth` is a
+/// world: the scene on `parcel`, or without one the world's only scene (a
+/// multi-scene world needs the parcel, as upstream's `fetchWorldSceneId`).
+/// Anything else is a Genesis parcel, resolved as the stream link keyed its
+/// credential.
+async fn watch_place(
+    state: &CommsState,
+    location: &str,
+    parcel: Option<&str>,
+) -> Result<(String, Option<String>, CastPlace), ApiError> {
+    let pool = &state.pool;
     let id = if location.to_lowercase().ends_with(".eth") {
         let not_found =
             || ApiError::not_found(format!("No world scene place found for world {location}"));
         let world = WorldName::parse(location).map_err(|_| not_found())?;
-        resolve_place_id(pool, Some(&world), "", false)
-            .await?
-            .ok_or_else(not_found)?
+        let realm = crate::world_identity::RealmId::World(world.clone());
+        let resolved = match parcel {
+            Some(raw) => {
+                let parcel = Parcel::parse(raw).map_err(|_| not_found())?;
+                state
+                    .scenes
+                    .resolve(RoomRequest::Parcel {
+                        realm: &realm,
+                        parcel,
+                    })
+                    .await
+            }
+            None => {
+                let scenes = match state.scenes.world_scene_count(&world).await {
+                    Ok(scenes) => scenes,
+                    Err(ResolveError::Db(error)) => {
+                        return Err(super::scene_identity_unavailable(&error));
+                    }
+                    Err(_) => return Err(not_found()),
+                };
+                if scenes > 1 {
+                    // A `/w/<world>` link handed out before keys were per
+                    // scene still reads the world's one key: the only scene
+                    // room of the world with an active key.
+                    let Some(room) = single_keyed_room(pool, &world).await? else {
+                        return Err(ApiError::bad_request(format!(
+                            "A parcel is required to resolve a scene in multi-scene world {location}"
+                        )));
+                    };
+                    state
+                        .scenes
+                        .resolve(RoomRequest::NamedWorldScene { room: &room })
+                        .await
+                } else {
+                    // A world-shaped scene id resolves to the world's active scene.
+                    let scene = crate::world_identity::SceneId::parse(world.display())
+                        .map_err(|_| not_found())?;
+                    state
+                        .scenes
+                        .resolve(RoomRequest::Adapter {
+                            realm: &realm,
+                            scene: &scene,
+                        })
+                        .await
+                }
+            }
+        };
+        let resolved = match resolved {
+            Ok(resolved) => resolved,
+            Err(ResolveError::Db(error)) => return Err(super::scene_identity_unavailable(&error)),
+            Err(_) => return Err(not_found()),
+        };
+        if resolved.realm != realm {
+            return Err(not_found());
+        }
+        let deployment = resolved.deployment.as_ref().ok_or_else(not_found)?;
+        let place = world_place(pool, &world).await?;
+        return Ok((deployment.place_key(), Some(resolved.room), place));
     } else {
         let not_found = || ApiError::not_found(format!("No place found with parcel {location}"));
         // Upstream matches the place's `positions` verbatim.
         match Parcel::parse(location) {
-            Ok(parcel) if parcel.canonical() == location => {
-                resolve_place_id(pool, None, location, false)
-                    .await?
-                    .ok_or_else(not_found)?
-            }
+            Ok(parcel) if parcel.canonical() == location => resolve_place_id(pool, location, false)
+                .await?
+                .ok_or_else(not_found)?,
             _ => return Err(not_found()),
         }
     };
     let place = load_place(pool, &id)
         .await?
         .ok_or_else(|| ApiError::not_found(format!("No place found with id {id}")))?;
-    Ok((id, place))
+    Ok((id, None, place))
 }
 
 /// The scene `room` belongs to, with its realm (a world or the shared
@@ -321,15 +798,34 @@ async fn room_scene(state: &CommsState, room: &str) -> Result<Option<ResolvedRoo
                 .await
             {
                 Ok(resolved) => Ok(Some(resolved)),
-                Err(ResolveError::Db(error)) => Err(AuthorityNotEstablished::store_unavailable(
-                    "worlds.world_scenes",
-                    &error,
-                )
-                .into()),
+                Err(ResolveError::Db(error)) => Err(super::scene_identity_unavailable(&error)),
                 Err(_) => Ok(None),
             }
         }
         _ => Ok(None),
+    }
+}
+
+/// Where the bans of a room live.
+enum RoomBans {
+    Key(SceneBanKey),
+    /// A world lobby: no scene bans.
+    Lobby,
+    /// A Genesis scene this node does not hold: refused, never its entity id.
+    Unresolved,
+}
+
+async fn scene_ban_key(state: &CommsState, scene: &ResolvedRoom) -> Result<RoomBans, ApiError> {
+    match scene
+        .resolve_ban_key(state.scenes.as_ref(), state.settings.allow_local_preview)
+        .await
+    {
+        Ok(Some(key)) => Ok(RoomBans::Key(key)),
+        Ok(None) => Ok(RoomBans::Lobby),
+        Err(ResolveError::Db(error)) => {
+            Err(AuthorityNotEstablished::store_unavailable("content.deployments", &error).into())
+        }
+        Err(_) => Ok(RoomBans::Unresolved),
     }
 }
 
@@ -525,8 +1021,9 @@ const STREAMER_PRESENTERS_MAX: usize = 32;
 /// this that is not in the room can no longer join.
 const STREAMER_TOKEN_TTL_MS: i64 = 5 * 60 * 1000;
 
-/// Upstream's `addPresenter` for a new streamer id, in one read and one write
-/// of the room's metadata: streamer ids of the place that are not in the room
+/// Upstream's `addPresenter` for a streamer id, the one way a streamer id
+/// enters `presenters` (a token, a join), in one read and one write of the
+/// room's metadata: streamer ids of the place that are not in the room
 /// and whose token has expired go first; if the place still has
 /// `STREAMER_PRESENTERS_MAX`, the oldest not in the room make way (a token
 /// minted moments ago and not yet connected included). Connected streamers
@@ -856,19 +1353,20 @@ pub async fn generate_stream_link(
     require_livekit(&state)?;
     // Before the admin lookup, so the refusal is no admin-status oracle.
     let device_id = device_identifier(&sf.metadata);
-    refuse_if_platform_banned(&state, &sf.signer, device_id.as_deref()).await?;
-    if state.deny_list.is_denied(sf.signer.as_str()).await {
-        return Err(forbidden(NOT_AUTHORIZED_TO_STREAM_MSG));
-    }
-    // The room and the authorizing place both come from the one bound scene.
+    let denied = forbidden(NOT_AUTHORIZED_TO_STREAM_MSG);
+    refuse_barred(&state, &sf.signer, device_id.as_deref(), denied).await?;
+    // The room, the key and the authority all come from the one bound scene.
     let bound = Context::resolve(&state, &sf.metadata).await?;
-    let world = bound.world_scene.as_ref().map(|(world, _)| world);
-    let base = bound.footprint.base_position.clone().unwrap_or_default();
-    let place_id = resolve_place_id(&state.pool, world, &base, true)
-        .await?
-        .ok_or_else(|| ApiError::not_found(PLACE_NOT_FOUND_MSG))?;
-    let place = PlaceLookup::resolved(&state, &place_id, bound.footprint);
-    match scene::scene_owner_or_admin_decision(&state, &place, &sf.signer).await {
+    if let Some((world, _)) = &bound.world_scene {
+        super::require_world_place(&state.pool, world).await?;
+    }
+    let world_base = bound.world_scene.as_ref().map(|(world, _)| {
+        let base = bound.footprint.base_position.clone().unwrap_or_default();
+        (world.clone(), base)
+    });
+    let target = KeyTarget::bound(&state, bound).await?;
+    let place_id = target.place_id.clone();
+    match target.decide(&state, &sf.signer).await {
         PermissionDecision::Allowed => {}
         PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
             tracing::warn!(signer = %sf.signer, place_id, "stream link refused: not a scene admin");
@@ -876,8 +1374,19 @@ pub async fn generate_stream_link(
         }
         PermissionDecision::Refused(why) => return Err(why.into()),
     }
-    let access = issue_access(&state, &state.ingress(), &place_id, &bound.room, &sf.signer).await?;
-    let row = load_place(&state.pool, &place_id).await?;
+    let key = (place_id.as_str(), target.world_room.as_deref());
+    // A key whose minter lost the place is never the one answered.
+    super::recheck_target(&state, key.0, key.1).await;
+    let access = issue_access(
+        &state,
+        &state.ingress(),
+        key,
+        &target.room,
+        &sf.signer,
+        &target.admin_place_key,
+    )
+    .await?;
+    let row = key_place(&state.pool, &place_id, Some(&target.room)).await?;
     let (title, location) = match &row {
         Some(row) => (
             row.title.clone().filter(|t| !t.is_empty()),
@@ -887,6 +1396,22 @@ pub async fn generate_stream_link(
                 .unwrap_or_else(|| row.base_position.clone()),
         ),
         None => (None, "none".to_owned()),
+    };
+    // A world with several scenes needs the scene's parcel to watch it
+    // (upstream cast2's `/w/<world>/parcel/<parcel>`); a lookup that fails
+    // keeps the parcel, which every world accepts.
+    let location = match &world_base {
+        Some((world, _))
+            if state
+                .scenes
+                .world_scene_count(world)
+                .await
+                .is_ok_and(|n| n < 2) =>
+        {
+            location
+        }
+        Some((_, base)) => format!("{location}/parcel/{base}"),
+        None => location,
     };
     let (stream_link, watcher_link) =
         build_stream_links(&state.settings.cast2_url, &access.streaming_key, &location);
@@ -931,7 +1456,7 @@ pub async fn stream_info(
             "Stream access is missing room information",
         ));
     }
-    let place = load_place(&state.pool, &access.place_id)
+    let place = key_place(&state.pool, &access.place_id, access.room_id.as_deref())
         .await?
         .ok_or_else(|| ApiError::bad_request("Place not found"))?;
     let world_name = place.world_name.filter(|w| !w.is_empty());
@@ -975,7 +1500,7 @@ pub async fn streamer_token(
     let key = text(&body, "token").unwrap_or_default();
     let display_name = shown_name(text(&body, "identity").unwrap_or_default(), None);
     let display_name = display_name.as_str();
-    let (place_id, room, access_id) = publishing_access(&state.pool, key).await?;
+    let (place_id, room, access_id) = publishing_access(&state, key).await?;
     // The streamer is registered as a presenter in the room's metadata.
     require_livekit(&state)?;
     // A unique LiveKit identity naming the credential; the display name rides
@@ -1035,12 +1560,11 @@ pub async fn watcher_token(
     let display_name = display_name.as_str();
     // Before the location, so an unresolvable place still refuses.
     let device_id = device_identifier(&sf.metadata);
-    refuse_if_platform_banned(&state, watcher, device_id.as_deref()).await?;
-    if state.deny_list.is_denied(watcher.as_str()).await {
-        return Err(unauthorized(super::super::voice::DENY_LISTED_MSG));
-    }
-    let (place_id, place) = watch_place(&state.pool, location).await?;
-    let access = active_access(&state.pool, &place_id)
+    let denied = unauthorized(super::super::voice::DENY_LISTED_MSG);
+    refuse_barred(&state, watcher, device_id.as_deref(), denied).await?;
+    let parcel = text(&body, "parcel").filter(|parcel| !parcel.is_empty());
+    let (place_id, world_room, place) = watch_place(&state, location, parcel).await?;
+    let access = active_access(&state.pool, &place_id, world_room.as_deref())
         .await?
         .ok_or_else(|| no_active_stream(location))?;
     if now_ms() >= expires_ms(access.created_at, access.expiration_time) {
@@ -1053,9 +1577,9 @@ pub async fn watcher_token(
     let scene_room = room_scene(&state, &room)
         .await?
         .ok_or_else(|| no_active_stream(location))?;
-    let ban_key = scene_room
-        .ban_key()
-        .ok_or_else(|| no_active_stream(location))?;
+    let RoomBans::Key(ban_key) = scene_ban_key(&state, &scene_room).await? else {
+        return Err(no_active_stream(location));
+    };
     if is_scene_banned(&state, &ban_key, watcher).await? {
         tracing::warn!(%watcher, place_id, "cast watcher token refused: scene ban");
         return Err(forbidden(SCENE_BANNED_WATCHER_MSG));
@@ -1177,7 +1701,7 @@ pub async fn presentation_bot_token(
         Err(refusal) => return Ok(refusal),
     };
     let key = text(&body, "streamingKey").unwrap_or_default();
-    let (_place_id, room, access_id) = publishing_access(&state.pool, key).await?;
+    let (_place_id, room, access_id) = publishing_access(&state, key).await?;
     let identity = publisher_identity("presentation-bot", &room, access_id);
     let token = mint(
         &state,
@@ -1237,7 +1761,6 @@ pub(crate) fn watcher_wallet(
 /// removes a revoked publisher that connects later.
 pub(crate) async fn evict_revoked_publishers(
     state: &CommsState,
-    place_id: &str,
     room: &str,
     keep: Option<Uuid>,
 ) -> Result<(), ApiError> {
@@ -1245,7 +1768,7 @@ pub(crate) async fn evict_revoked_publishers(
         return Ok(());
     }
     let rooms = state.room_service();
-    let revoked = |identity: &str| match classify_publisher(identity, place_id, room) {
+    let revoked = |identity: &str| match classify_publisher(identity, room) {
         Publisher::Other => false,
         Publisher::Untagged => true,
         Publisher::Tagged(access) => Some(access) != keep,
@@ -1299,23 +1822,83 @@ pub(crate) async fn evict_revoked_publishers(
 /// The `participant_joined` webhook for Cast publishers: a revoked key's
 /// publisher is removed (`refuse_revoked_publisher`); a streamer of the live
 /// credential is (again) a presenter, which a full reconnect's leave of the
-/// old session may have removed.
+/// old session may have removed. Only a failed guard is an error.
 pub async fn on_publisher_joined(
     state: &CommsState,
     room: &str,
     identity: &str,
+    watcher: Option<&Address>,
 ) -> Result<(), ApiError> {
-    if refuse_revoked_publisher(state, room, identity).await? || !identity.starts_with("stream:") {
+    if refuse_on_join(state, room, identity, watcher).await? || !identity.starts_with("stream:") {
         return Ok(());
     }
     if !state.livekit.configured {
         return Ok(());
     }
-    state
-        .room_service()
-        .append_to_room_metadata_array(room, PRESENTERS_FIELD, identity)
-        .await
-        .map_err(|e| ApiError::internal(format!("cast presenters: {e}")))
+    // The guard let it in, so the room has an active credential.
+    let access = access_by_room(&state.pool, room).await;
+    let access = access.inspect_err(
+        |error| tracing::warn!(room, %error, "cast credential not read for a streamer's join"),
+    );
+    let Ok(Some(access)) = access else {
+        return Ok(());
+    };
+    if let Err(error) = add_streamer_presenter(state, room, &access.place_id, identity).await {
+        tracing::warn!(room, %error, "cast presenters not updated on join");
+    }
+    Ok(())
+}
+
+/// The join guards of `participant_joined`: a publisher of a revoked key
+/// ([`refuse_revoked_publisher`]), and a `watcher` (its wallet, from the
+/// token's attribute) banned or deny-listed since its token ([`super::barred`]),
+/// or banned from the room's scene. The removal of a banned wallet reads each room once, and
+/// the token lives five minutes more. A world's access is the access sweep's.
+/// Returns whether it removed the participant.
+pub async fn refuse_on_join(
+    state: &CommsState,
+    room: &str,
+    identity: &str,
+    watcher: Option<&Address>,
+) -> Result<bool, ApiError> {
+    let Some(wallet) = watcher.filter(|_| state.livekit.configured) else {
+        return refuse_revoked_publisher(state, room, identity).await;
+    };
+    let banned = super::barred(state, wallet, None).await?.is_some()
+        || match room_scene(state, room).await? {
+            Some(scene) => match scene_ban_key(state, &scene).await? {
+                RoomBans::Key(key) => is_scene_banned(state, &key, wallet).await?,
+                RoomBans::Lobby => false,
+                RoomBans::Unresolved => true,
+            },
+            None => false,
+        };
+    if banned {
+        state
+            .room_service()
+            .remove_participant(room, identity)
+            .await
+            .map_err(|e| ApiError::internal(format!("cast join guard: {e}")))?;
+        tracing::info!(room, identity, "banned cast watcher refused on join");
+    }
+    Ok(banned)
+}
+
+/// Whether `identity`, a `stream:` or `presentation-bot:` publisher of
+/// `room`, belongs to the room's active Cast credential: the credential it is
+/// tagged with is the active one, or, untagged, the room still streams.
+pub async fn publisher_credential_current(
+    pool: &PgPool,
+    room: &str,
+    identity: &str,
+) -> Result<bool, sqlx::Error> {
+    let active = access_by_room(pool, room).await?;
+    Ok(match (tagged_access(identity), &active) {
+        (Some(access), Some(active)) => access == active.id,
+        (Some(_), None) => false,
+        // Untagged: kept while the room still streams, as before tagging.
+        (None, active) => active.is_some(),
+    })
 }
 
 pub async fn refuse_revoked_publisher(
@@ -1328,14 +1911,7 @@ pub async fn refuse_revoked_publisher(
     {
         return Ok(false);
     }
-    let active = access_by_room(&state.pool, room).await?;
-    let allowed = match (tagged_access(identity), &active) {
-        (Some(access), Some(active)) => access == active.id,
-        (Some(_), None) => false,
-        // Untagged: kept while the room still streams, as before tagging.
-        (None, active) => active.is_some(),
-    };
-    if allowed {
+    if publisher_credential_current(&state.pool, room, identity).await? {
         return Ok(false);
     }
     state
@@ -1370,8 +1946,13 @@ pub async fn add_admin_presenter_on_join(
     let Some(access) = access_by_room(&state.pool, room).await? else {
         return Ok(false);
     };
-    let place = PlaceLookup::new(state, &access.place_id);
-    match scene::scene_owner_or_admin_decision(state, &place, identity).await {
+    // The room's own scene: explicit admins are granted on its place.
+    let place = match room_scene(state, room).await? {
+        Some(resolved) => super::scene_authority(state, &resolved, &access.place_id).await?,
+        None => None,
+    }
+    .unwrap_or_else(|| PlaceLookup::new(state, &access.place_id, scene::NO_ADMINS));
+    match scene::scene_manager_decision(state, &place, identity).await {
         PermissionDecision::Allowed => {
             add_presenter(state, room, identity.as_str()).await?;
             Ok(true)
@@ -1437,7 +2018,7 @@ pub fn spawn_admin_presenter_on_join(state: SharedState, room: String, identity:
         );
         return;
     };
-    tokio::spawn(async move {
+    crate::shared::task::spawn(async move {
         let _permit = permit;
         match tokio::time::timeout(
             ADMIN_LOOKUP_TIMEOUT,
@@ -1490,16 +2071,36 @@ pub fn is_valid_presenter_identity(identity: &str) -> bool {
 /// The signed scene's room, once the signer owns or administers the place
 /// the room's active stream credential is stored for (upstream's
 /// `validatePresenterAdmin`): no stream 404, a vanished place 404, anyone
-/// else 403.
+/// else 403. A platform-banned or denied signer is refused first, as on the
+/// stream link: a banned wallet holds no Cast authority (upstream has no ban
+/// gate here).
 async fn presenter_room(state: &CommsState, sf: &SignedFetch) -> Result<String, ApiError> {
     require_scene_metadata(sf, "sceneId is required in authMetadata")?;
     require_livekit(state)?;
-    let room = Context::resolve(state, &sf.metadata).await?.room;
+    let device_id = device_identifier(&sf.metadata);
+    let denied = forbidden(NOT_PRESENTER_ADMIN_MSG);
+    refuse_barred(state, &sf.signer, device_id.as_deref(), denied).await?;
+    let bound = Context::resolve(state, &sf.metadata).await?;
+    let room = bound.room;
     let access = access_by_room(&state.pool, &room)
         .await?
         .ok_or_else(|| no_active_stream(&room))?;
-    let place = PlaceLookup::new(state, &access.place_id);
-    match place.get().await {
+    // A Genesis key's catalogue place must still exist; a world scene's key
+    // is stored under its scene's place, which is no catalogue row, and needs
+    // its world's.
+    let stored = PlaceLookup::new(state, &access.place_id, scene::NO_ADMINS);
+    let stored = match &bound.world_scene {
+        Some((world, _)) => match super::world_catalogued(&state.pool, world).await {
+            Ok(true) => Ok(Some(&bound.footprint)),
+            Ok(false) => Ok(None),
+            Err(error) => {
+                tracing::error!(error = %error.message, world = world.key(), "world catalogue not read for a presenter");
+                Err("world catalogue unavailable")
+            }
+        },
+        None => stored.get().await,
+    };
+    match stored {
         Ok(Some(_)) => {}
         Ok(None) => {
             return Err(ApiError::not_found(format!(
@@ -1517,7 +2118,9 @@ async fn presenter_room(state: &CommsState, sf: &SignedFetch) -> Result<String, 
             ));
         }
     }
-    match scene::scene_owner_or_admin_decision(state, &place, &sf.signer).await {
+    // The signed scene is the room's: its explicit admins are granted on
+    // its place key (`/scene-admin`), not on the credential's place.
+    match scene::scene_manager_decision(state, &bound.place, &sf.signer).await {
         PermissionDecision::Allowed => Ok(room),
         PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
             Err(forbidden(NOT_PRESENTER_ADMIN_MSG))
@@ -1631,4 +2234,48 @@ pub async fn demote_presenter(
     Ok(Json(
         json!({ "message": "Participant demoted from presenter" }),
     ))
+}
+
+#[cfg(test)]
+mod publisher_tests {
+    use super::*;
+
+    /// A streamer is read from the right, whatever its place holds; a bot
+    /// only in its own room.
+    #[test]
+    fn publishers_classify_by_credential_whatever_their_place() {
+        let (access, uuid) = (Uuid::new_v4(), Uuid::new_v4());
+        let room = "scene:LocalPreview:bafkreiscene";
+        for place in [
+            "8f9e1529-cb0d-5b49-927e-b6fea90116c3",
+            "scene:LocalPreview:bafkreiscene",
+        ] {
+            assert_eq!(
+                classify_publisher(&format!("stream:{place}:{access}:{uuid}"), room),
+                Publisher::Tagged(access),
+                "{place}"
+            );
+            assert_eq!(
+                classify_publisher(&format!("stream:{place}:{uuid}"), room),
+                Publisher::Untagged,
+                "{place}"
+            );
+        }
+        assert_eq!(
+            classify_publisher(&format!("presentation-bot:{room}:{access}:{uuid}"), room),
+            Publisher::Tagged(access)
+        );
+        for other in [
+            format!("presentation-bot:another-room:{access}:{uuid}"),
+            format!("stream:{access}:not-a-uuid"),
+            format!("stream::{uuid}"),
+            "0x0000000000000000000000000000000000000001".to_owned(),
+        ] {
+            assert_eq!(
+                classify_publisher(&other, room),
+                Publisher::Other,
+                "{other}"
+            );
+        }
+    }
 }

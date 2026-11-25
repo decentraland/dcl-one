@@ -43,11 +43,6 @@ path = "tests/sockets_2.rs"
 name = "sockets_3"
 path = "tests/sockets_3.rs"
 
-[[test]]
-name = "stats_metrics_engine"
-path = "tests/stats_metrics_engine.rs"
-required-features = ["test-support"]
-
 # The application crate plus the leaf crates it re-exports (src/lib.rs): http, auth,
 # fed, db (with schema_migrate) and jobs depend on nothing else in the application, so
 # an edit elsewhere never recompiles them (AGENTS.md, METRICS.md "Dev loop").
@@ -62,6 +57,7 @@ members = [
     "camera-reel",
     "chain-index",
     "comms",
+    "comms-e2e",
     "config",
     "content",
     "db",
@@ -69,6 +65,7 @@ members = [
     "fed",
     "jobs",
     "land-authz",
+    "message-router",
     "price",
     "shared",
     "shop",
@@ -79,7 +76,7 @@ members = [
     "../../library/dcl-*",
     "../../apps/dcl-scene-cli",
 ]
-exclude = ["../../library/vendor/rusty_enet"]
+exclude = ["../../library/vendor/rusty_enet", "cast-bot"]
 # The upstream Explorer, vendored ENet and asset converter build independently.
 
 [workspace.package]
@@ -136,6 +133,8 @@ url = "2.5.8"
 feruca = "0.12.0"
 regex = "1.13.1"
 tiny-skia = "0.12.0"
+# The Cast presenter's PDF renderer (comms/src/cast_presenter/render.rs), pure Rust.
+hayro = "0.9.0"
 prost = "0.14.4"
 # build-time proto codegen without protoc (comms; the scene crates pin their own)
 prost-build = "0.14"
@@ -157,11 +156,13 @@ k256 = { version = "0.13.4", features = ["ecdsa"] }
 aes-gcm = "0.11.1"
 rand = "0.10.3"
 rusty_enet = { path = "../../library/vendor/rusty_enet", version = "0.4.0" }
-web-transport-quinn = "0.13.2"
+web-transport-quinn = "0.14.0"
 rustls = "0.23.46"
+rustls-native-certs = "0.8.5"
 rustls-pemfile = "2.2.0"
 rustls-pki-types = "1.15.1"
 async-nats = "0.50.0"
+dcl-metrics = { path = "../../library/dcl-metrics" }
 metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", features = ["http-listener"] }
 toml = "1.1.8"
@@ -175,13 +176,19 @@ openmls_rust_crypto = "0.6.0"
 openmls_traits = "0.6.0"
 tls_codec = "0.5.0"
 ts-rs = "12"
+# The auth relay's Socket.IO server (explore).
+socketioxide = { version = "0.18.9", default-features = false }
+# The message router's LiveKit participant: the Explorer's patched client-sdk-rust, the same
+# commit of this repository that rendering/bevy-explorer/source/Cargo.toml names
+# (rendering/bevy-explorer/patches/client-sdk-rust/source.toml `rev`; a test of the router
+# checks both name it). Its DataReceived event carries the sender's identity.
+livekit = { git = "https://github.com/decentraland/dcl-one", rev = "b2f8bc84000333ea843578959c9d11caccaa9474", features = ["rustls-tls-webpki-roots"] }
 
 # Dev-only, shared by the member crates' tests.
 tokio-tungstenite = "0.30.0"
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
 
 [dependencies]
-v8.workspace = true
 dcl-http = { workspace = true, features = ["db"] }
 dcl-auth.workspace = true
 catalyst-fed = { path = "fed" }
@@ -232,7 +239,7 @@ alloy-sol-types.workspace = true
 getrandom.workspace = true
 web-transport-quinn.workspace = true
 async-nats.workspace = true
-metrics.workspace = true
+dcl-metrics.workspace = true
 ts-rs = { workspace = true, optional = true }
 
 [features]
@@ -245,7 +252,7 @@ tikv-jemallocator = "0.7"
 
 [dev-dependencies]
 bcrypt.workspace = true
-catalyst-db = { path = "db", features = ["scratch"] }
+catalyst-db = { path = "db", features = ["test-support"] }
 catalyst-fed = { path = "fed", features = ["test-support"] }
 catalyst-shop = { path = "shop", features = ["test-support"] }
 catalyst-camera-reel = { path = "camera-reel", features = ["test-support"] }
@@ -279,6 +286,13 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 debug = false
 opt-level = 1
+
+# These crates run in build scripts and procedural macros during a node build.
+[profile.dev.package.cc]
+opt-level = 0
+
+[profile.dev.package.syn]
+opt-level = 0
 
 # The scene CLI is one binary people download: its symbol table is 13 MB of a
 # 106 MB file and nothing reads it at run time. The node keeps its symbols.

@@ -35,6 +35,7 @@ import { registerCommunities } from './domains/communities'
 import { registerEvents } from './domains/events'
 import { registerGallery } from './domains/gallery'
 import { registerPlaces } from './domains/places'
+import { registerLobby } from './domains/lobby'
 import { registerMapPlayers } from './domains/mapPlayers'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
@@ -45,9 +46,13 @@ import { registerProximity } from './domains/proximity'
 import { registerSystemAction } from './domains/systemAction'
 import { registerBindings } from './domains/bindings'
 import { registerAvatarPointer } from './domains/avatarPointer'
+import { registerAvatarModifiers } from './domains/avatarModifiers'
 import { registerPermissions } from './domains/permissions'
+import { registerMapPins } from './domains/mapPins'
 import { registerPortables } from './domains/portables'
 import { registerWorldAccess } from './domains/worldAccess'
+import { registerItemPurchase } from './domains/itemPurchase'
+import { registerPlatformBan } from './domains/platformBan'
 import { registerEditor } from './domains/editor'
 
 export function main(): void {
@@ -55,13 +60,14 @@ export function main(): void {
   console.log = (...args) => { _log('[System Scene]', ...args); }
 
   startBridge((ctx) => {
+    const avatarModifiers = registerAvatarModifiers(ctx)
     registerSession(ctx)
     registerConnectivity(ctx)
     registerAnalytics(ctx)
     registerTextureOptimization(ctx)
     registerProfile(ctx)
     registerFriends(ctx)
-    registerChat(ctx)
+    registerChat(ctx, avatarModifiers)
     registerDm(ctx)
     registerUiSound(ctx)
     registerVoice(ctx)
@@ -83,17 +89,21 @@ export function main(): void {
     registerEvents(ctx)
     registerGallery(ctx)
     registerPlaces(ctx)
-    registerMapPlayers(ctx)
+    registerLobby(ctx)
+    registerMapPlayers(ctx, avatarModifiers)
     registerWorld(ctx)
     registerPointer(ctx)
     registerProximity(ctx)
     registerPhotoMode(ctx)
     registerSystemAction(ctx)
     registerBindings(ctx)
-    registerAvatarPointer(ctx)
+    registerAvatarPointer(ctx, avatarModifiers)
     registerPermissions(ctx)
     registerPortables(ctx)
+    registerMapPins(ctx)
     registerWorldAccess(ctx)
+    registerItemPurchase(ctx)
+    registerPlatformBan(ctx)
     registerEditor(ctx)
     registerAvatarPreview(ctx)
     registerMinimap(ctx)

@@ -113,6 +113,27 @@ CREATE TABLE land_authz.estate_land (
 -- The parcels of an estate (parcels_updatable_by's estate branch, estate size).
 CREATE INDEX estate_land_estate_idx ON land_authz.estate_land (estate_token_id);
 
+-- Estate data documents, appended with the log they came from: the Estate
+-- registry's CreateEstate and Update logs whose data parses as a version-0
+-- document (the marketplace subgraph's buildData), with the name and
+-- description it carries (NULL when absent). The latest row of an estate
+-- names it; a document that does not parse writes no row. A reorg rewind
+-- deletes the rows past its block, as it does the log's.
+CREATE TABLE land_authz.estate_data_event (
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    token_address varchar(42) NOT NULL,
+    estate_id numeric(78,0) NOT NULL,
+    name text,
+    description text,
+    PRIMARY KEY (block_number, log_index),
+    CONSTRAINT estate_data_event_token_address_lowercase CHECK (token_address = lower(token_address))
+);
+
+-- An estate's latest document: one index probe per dissolved-estate read.
+CREATE INDEX estate_data_event_estate_idx ON land_authz.estate_data_event
+    (token_address, estate_id, block_number DESC, log_index DESC);
+
 -- Account-wide rights per registry: UpdateManager and ApprovalForAll
 -- authorise an operator over everything an account holds in one contract.
 CREATE TABLE land_authz.account_right (
@@ -154,6 +175,11 @@ CREATE TABLE land_authz.index_cursor (
     last_block_hash text,
     checkpoint_block bigint,
     checkpoint_hash text,
+    -- Raised in the statement of every write that changes the log other than
+    -- by appending past the cursor (a reorg or replay rewind, the block-time
+    -- repair): between two raises, a change to what the folds publish moves
+    -- the newest folded event instead.
+    rewrites bigint NOT NULL DEFAULT 0,
     CONSTRAINT index_cursor_network_known CHECK (network IN ('ethereum-mainnet', 'ethereum-sepolia')),
     CONSTRAINT index_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block)
 );

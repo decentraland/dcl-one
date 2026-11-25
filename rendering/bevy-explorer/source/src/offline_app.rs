@@ -88,6 +88,7 @@ pub fn offline_app(config: AppConfig, realm: &str, content_server: String) -> Ap
         unload: config.scene_unload_extra_distance,
         load_imposter: 0.0,
     });
+    app.insert_resource(config.audio.clone());
     app.insert_resource(config);
 
     app.configure_sets(Startup, SetupSets::Init.before(SetupSets::Main));
@@ -101,6 +102,7 @@ pub fn offline_app(config: AppConfig, realm: &str, content_server: String) -> Ap
         })
         .add_plugins(SceneBoundPlugin)
         .add_plugins(SceneRunnerPlugin)
+        .add_plugins(crate::client_window_focus::ClientWindowFocusPlugin)
         .add_plugins(CommsPlugin)
         .add_plugins(RestrictedActionsPlugin)
         .add_plugins(DclImposterPlugin {

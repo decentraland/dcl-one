@@ -13,9 +13,10 @@ export interface Home {
 
 export const NO_HOME: Home = { parcel: null, world: null }
 
-/** The home the session holds: a realm (null for the default one) and an `x,y` parcel. */
-export function homeOf(scene: { realm: string | null; parcel: string } | null): Home {
-  if (scene == null) return NO_HOME
+/** The home the session holds: a realm (null for the default one) and an `x,y` parcel; none
+ *  when the account pinned no home. */
+export function homeOf(scene: { realm: string | null; parcel: string; pinned: boolean } | null): Home {
+  if (scene == null || !scene.pinned) return NO_HOME
   if (scene.realm != null) return { parcel: null, world: scene.realm }
   return { parcel: parseParcel(scene.parcel), world: null }
 }
@@ -45,6 +46,13 @@ export function isHomeParcel(home: Home, parcel: Vec2 | null): boolean {
  */
 export function isPlacePanelHome(home: Home, place: DiscoverPlace, origin: Vec2 | null): boolean {
   return isHomePlace(home, place) || (isRoad(place.title) && isHomeParcel(home, origin))
+}
+
+/** `realm` is null for the default realm; a road saves the parcel it was picked at. */
+export function placeHomeTarget(place: DiscoverPlace, origin: Vec2 | null): { realm: string | null; parcel: Vec2 } | null {
+  if (isWorldPlace(place)) return place.world_name != null ? { realm: place.world_name, parcel: { x: 0, y: 0 } } : null
+  const parcel = isRoad(place.title) && origin != null ? origin : parseParcel(place.base_position)
+  return parcel != null ? { realm: null, parcel } : null
 }
 
 /** See `isPlacePanelHome`. `world` is the World the player is in, or null in Genesis City. */

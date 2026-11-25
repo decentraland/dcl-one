@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getStreamInfo, getStreamerToken } from "@/data/lib/catalyst/cast";
 import type { TrackContext } from "@/core/lib/telemetry/track";
+import { usePageView } from "@/core/lib/telemetry/page-view";
 
 import CastConsole, { type LiveBindings } from "../cast-stream/CastConsole";
 import type {
@@ -12,14 +13,11 @@ import type {
   ShareScreenFn,
 } from "../cast-stream/machine";
 import { StreamerStage, useCastTracks } from "./CastStage";
+import { CAST_STREAMER_TITLE, castPageView, type CastPageInfo } from "./page-view";
 import { joinCast, probeDevices, type CastSession, type Publish } from "./session";
 
 /** The name a streamer who typed none is shown with. */
 const DEFAULT_STREAMER_NAME = "Speaker";
-
-const resolveToken: ResolveTokenFn = async ({ token, signal }) => ({
-  info: await getStreamInfo(token, { signal }),
-});
 
 /** A session's change feed as a binding: `onChange(session)` on every room event. */
 function bindSession(session: CastSession | null, onChange: (s: CastSession) => void): () => void {
@@ -40,6 +38,14 @@ export default function LiveCastStream({
   const busy = useRef(false);
   const [toggling, setToggling] = useState(false);
   const tracks = useCastTracks(session);
+  const [info, setInfo] = useState<CastPageInfo | null>(null);
+  usePageView(castPageView(CAST_STREAMER_TITLE, info));
+
+  const resolveToken = useCallback<ResolveTokenFn>(async ({ token, signal }) => {
+    const streamInfo = await getStreamInfo(token, { signal });
+    setInfo(streamInfo);
+    return { info: streamInfo };
+  }, []);
 
   useEffect(
     () => () => {
@@ -135,39 +141,15 @@ export default function LiveCastStream({
       stopShare,
       bindShareEnded,
       bindConnectionLost,
-      stage: session ? <StreamerStage tracks={tracks} muted={false} /> : undefined,
+      stage: session ? (muted) => <StreamerStage tracks={tracks} muted={muted} /> : undefined,
       participants: session ? session.participantCount() : undefined,
-      notice: audioBlocked ? (
-        <button
-          type="button"
-          className="cast-console__btn cast-console__btn--active"
-          onClick={() => void session?.startAudio()}
-        >
-          Enable audio
-        </button>
-      ) : undefined,
-      liveControls: session ? (
-        <>
-          <button
-            type="button"
-            className={"cast-console__btn" + (micOn ? "" : " cast-console__btn--active")}
-            disabled={toggling}
-            aria-pressed={!micOn}
-            onClick={() => void toggle("microphone")}
-          >
-            {micOn ? "Mute microphone" : "Unmute microphone"}
-          </button>
-          <button
-            type="button"
-            className={"cast-console__btn" + (camOn ? "" : " cast-console__btn--active")}
-            disabled={toggling}
-            aria-pressed={!camOn}
-            onClick={() => void toggle("camera")}
-          >
-            {camOn ? "Turn camera off" : "Turn camera on"}
-          </button>
-        </>
-      ) : undefined,
+      micOn,
+      cameraOn: camOn,
+      toggleMicrophone: () => void toggle("microphone"),
+      toggleCamera: () => void toggle("camera"),
+      devicesBusy: toggling,
+      audioBlocked,
+      enableAudio: () => void session?.startAudio(),
     }),
     [
       goLive,

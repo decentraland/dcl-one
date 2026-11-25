@@ -176,6 +176,18 @@ Notes for reviewers:
   rebuilds `agents/bevy` whenever its sources are newer than its bundle. Note a
   running watch server does NOT re-run it — restart `pnpm run start` (or run `make
   build-bevy-agent`) after an agent change.
+- **AI sharing against a local service.** The service that stores shared AI
+  conversations (Assistant Insights, in the private dcl-two repository) runs on
+  a laptop with `make dev && make seed` in `services/assistant-insights`. Point
+  a dev build at it with one variable; no JSON config to edit and no flag to set:
+
+  ```bash
+  cd packages/creator-hub && VITE_AI_SHARING_API_URL=http://localhost:3000 pnpm run start
+  ```
+
+  In a dev build it overrides `AI_SHARING_API_URL` and turns the
+  `creatorhub-ai-prompt-sharing` flag on (a stored flag override can still turn
+  it off). Packaged and release builds ignore it (`renderer/src/lib/aiSharingDevUrl.ts`).
 
 ## 📋 Makefile Commands
 
@@ -353,7 +365,7 @@ Handles desktop application builds:
 - **Code Signing** - Automatic code signing for macOS and Windows
 - **Notarization** - macOS notarization
 - **Artifact Distribution** - Uploads to S3 and GitHub releases
-- **PR Testing** - Provides download links for PR testing; a pull request builds the macOS and Windows installers only with the `ci:desktop` label, and the Linux installers only with the `ci:linux` label (label, then push or reopen)
+- **PR Testing** - Provides download links for PR testing; a pull request builds the macOS, Windows and Linux installers only with the `ci:desktop` label, and the Linux installers alone with the `ci:linux` label (label, then push or reopen)
 
 ## 🏗️ Architecture
 

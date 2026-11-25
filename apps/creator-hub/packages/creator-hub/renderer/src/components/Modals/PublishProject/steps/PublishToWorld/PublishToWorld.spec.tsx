@@ -1,5 +1,5 @@
 import { Provider } from 'react-redux';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -138,6 +138,15 @@ describe('PublishToWorld', () => {
 
       expect(screen.getByText('Current World')).toBeTruthy();
       expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull();
+    });
+  });
+
+  describe('when the owner picks one of their Worlds', () => {
+    it('should not ask for their parcel permissions, which the server has none of', async () => {
+      await renderStep();
+
+      expect(api.fetchWorldSettings).toHaveBeenCalled();
+      expect(api.fetchParcelsPermission).not.toHaveBeenCalled();
     });
   });
 

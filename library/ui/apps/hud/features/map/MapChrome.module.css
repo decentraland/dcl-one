@@ -135,8 +135,11 @@
   height: 28px;
   object-fit: contain;
 }
+/* The label takes the row's free width, so every switch lines up at the row's end, with or without
+   an icon before it. */
 .layerLabel {
-  width: 164px;
+  flex: 1;
+  min-width: 0;
   font-size: var(--type-16);
   font-weight: var(--fw-semibold);
   line-height: 28px;
@@ -200,6 +203,20 @@
   gap: 6.2px;
   width: max-content;
   padding: 10px 5.3px 0;
+}
+/* Wrapped, the rows run down over the map, which keeps the pointer between the chips. */
+.categoriesWrap {
+  height: auto;
+  overflow: visible;
+  pointer-events: none;
+}
+.categoriesWrap .categoryRow {
+  flex-wrap: wrap;
+  row-gap: 10.7px;
+  width: auto;
+}
+.categoriesWrap .category {
+  pointer-events: auto;
 }
 .category {
   display: flex;

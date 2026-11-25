@@ -1,3 +1,4 @@
+use common::sync::MutexExt;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -59,7 +60,6 @@ fn console_relay(mut write: EventWriter<PrintConsoleLine>, mut relay: ResMut<Con
 #[command(name = "/debug_dump_scene")]
 struct DebugDumpScene;
 
-#[allow(clippy::too_many_arguments)]
 fn debug_dump_scene(
     mut input: ConsoleCommand<DebugDumpScene>,
     containing_scene: ContainingScene,
@@ -110,7 +110,7 @@ fn debug_dump_scene(
             let count = Arc::new(Mutex::new((0, 0, 0)));
 
             for content_file in def.content.files() {
-                count.lock().unwrap().0 += 1;
+                count.lock_ignore_poison().0 += 1;
                 let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
                     scene.hash.to_string(),
                     content_file.to_owned(),
@@ -125,7 +125,7 @@ fn debug_dump_scene(
                 let send = console_relay.send.clone();
                 tasks.push(IoTaskPool::get().spawn(async move {
                     let report = |fail: Option<String>| {
-                        let mut count = count.lock().unwrap();
+                        let mut count = count.lock_ignore_poison();
                         if let Some(fail) = fail {
                             count.2 += 1;
                             let _ = send.send(fail);

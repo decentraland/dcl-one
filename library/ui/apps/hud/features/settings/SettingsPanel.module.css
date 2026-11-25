@@ -200,3 +200,22 @@
   text-align: center;
   color: var(--ink-45);
 }
+
+/* The lobby's section modal: no shell gutter to undo, and the head clear of the modal's close
+   button, on its 68 px header line. */
+.compact {
+  margin: 0;
+  --menu-title-end: 92px;
+}
+.compact .head {
+  height: 68px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

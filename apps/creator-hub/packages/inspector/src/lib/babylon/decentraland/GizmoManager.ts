@@ -286,6 +286,14 @@ export function createGizmoManager(context: SceneContext) {
 
   return {
     gizmoManager,
+    /** The layers every gizmo draws in, to hide them all for a screenshot. */
+    getUtilityLayers() {
+      return [
+        gizmoManager.utilityLayer,
+        gizmoManager.keepDepthUtilityLayer,
+        freeTransformer.getUtilityLayer(),
+      ];
+    },
     isEnabled() {
       return isEnabled;
     },

@@ -106,9 +106,14 @@ describe('when a text node carries its own line height', () => {
     expect(whiteSpace(quest({ lineHeight: { unit: 'PERCENT', value: 100 } }), env)).toEqual([])
   })
 
-  it('should fall back to the style line height when the node has none', () => {
-    expect(whiteSpace(quest({ lineHeight: undefined }), env)).toEqual(['nowrap'])
-    expect(whiteSpace(quest({ lineHeight: undefined, h: 42 }), env)).toEqual([])
+  describe('and the node has no line height', () => {
+    it('should fall back to the style line height for a single line', () => {
+      expect(whiteSpace(quest({ lineHeight: undefined }), env)).toEqual(['nowrap'])
+    })
+
+    it('should fall back to the style line height for two lines', () => {
+      expect(whiteSpace(quest({ lineHeight: undefined, h: 42 }), env)).toEqual([])
+    })
   })
 
   it('should fall back to the style line height for an auto line height', () => {
@@ -147,7 +152,7 @@ describe('when a text node carries its own line height', () => {
     expect(env.report.notes).not.toContain('text-wrap-ambiguous:Description')
   })
 
-  it('should flag a fixed-height box even when it holds less than two lines', () => {
+  it('should flag a fixed-height box that holds less than two lines', () => {
     expect(whiteSpace(quest({ sizing: ['FILL', 'FIXED'], h: 17 }), env)).toEqual(['nowrap'])
     expect(env.report.notes).toContain('text-wrap-ambiguous:Description')
   })

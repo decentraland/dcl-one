@@ -65,12 +65,16 @@ export type EventCardProps = {
    * the public `JumpInCTA` (size `sm`) and a share action.
    */
   actions?: ReactNode
-  /** Announced to assistive technology, not shown: the outcome of an action, e.g. "Link copied.". */
+  /** The outcome of an action, announced to assistive technology. */
   announcement?: string
+  /** Show the announcement inside the card as well. */
+  showAnnouncement?: boolean
   /** Renders `href` (a router link); a plain anchor without it. */
   linkComponent?: EventCardLinkComponent
   /** The title's heading level. */
   headingLevel?: 2 | 3 | 4 | 5 | 6
+  /** Fades the cover alone (an event still in review); the text keeps its contrast. */
+  dimmed?: boolean
 }
 
 function Anchor(props: EventCardLinkProps) {
@@ -101,8 +105,10 @@ export function EventCard({
   playersLabel,
   actions,
   announcement,
+  showAnnouncement = false,
   linkComponent: Link = Anchor,
-  headingLevel = 3
+  headingLevel = 3,
+  dimmed = false
 }: EventCardProps) {
   const Heading = `h${headingLevel}` as const
   const hasActions = actions !== undefined && actions !== null && actions !== false
@@ -119,7 +125,10 @@ export function EventCard({
   ) : null
   const status =
     announcement !== undefined ? (
-      <span role="status" className={styles.visuallyHidden}>
+      <span
+        role="status"
+        className={showAnnouncement && announcement ? styles.announcement : styles.visuallyHidden}
+      >
         {announcement}
       </span>
     ) : null
@@ -147,7 +156,11 @@ export function EventCard({
             </div>
           ) : null}
           {time ? (
-            <div className={[styles.reveal, live ? styles.hideOnHover : undefined].filter(Boolean).join(' ')}>
+            <div
+              className={[styles.reveal, live ? styles.hideOnHover : undefined]
+                .filter(Boolean)
+                .join(' ')}
+            >
               <div className={[styles.revealInner, styles.timeRow].join(' ')}>
                 <p className={styles.smallTime}>
                   <GeneralTime size={20} aria-hidden="true" />
@@ -165,7 +178,7 @@ export function EventCard({
           ) : null}
           {status}
         </div>
-        <div className={styles.media}>
+        <div className={styles.media} data-dimmed={dimmed || undefined}>
           <CardImage className={styles.cover} src={image} alt="" priority={priority} />
           {badges}
         </div>
@@ -184,8 +197,10 @@ export function EventCard({
         .join(' ')}
     >
       {showMedia ? (
-        <div className={styles.media}>
-          {image ? <CardImage className={styles.cover} src={image} alt="" priority={priority} /> : null}
+        <div className={styles.media} data-dimmed={dimmed || undefined}>
+          {image ? (
+            <CardImage className={styles.cover} src={image} alt="" priority={priority} />
+          ) : null}
           {badges}
         </div>
       ) : null}
@@ -276,12 +291,20 @@ export type EventCardActionProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>,
  * An action of an EventCard, named by `aria-label`. A toggle (Remind me) passes `aria-pressed`, which
  * also tints its glyph.
  */
-export function EventCardAction({ icon, label, className, type = 'button', ...rest }: EventCardActionProps) {
+export function EventCardAction({
+  icon,
+  label,
+  className,
+  type = 'button',
+  ...rest
+}: EventCardActionProps) {
   return (
     <button
       {...rest}
       type={type}
-      className={[styles.action, label ? styles.labelled : undefined, className].filter(Boolean).join(' ')}
+      className={[styles.action, label ? styles.labelled : undefined, className]
+        .filter(Boolean)
+        .join(' ')}
     >
       {icon}
       {label ? <span className={styles.actionLabel}>{label}</span> : null}
@@ -289,10 +312,7 @@ export function EventCardAction({ icon, label, className, type = 'button', ...re
   )
 }
 
-export type EventCardActionLinkProps = Omit<
-  AnchorHTMLAttributes<HTMLAnchorElement>,
-  'children'
-> & {
+export type EventCardActionLinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'children'> & {
   'aria-label': string
   href: string
   icon: ReactNode

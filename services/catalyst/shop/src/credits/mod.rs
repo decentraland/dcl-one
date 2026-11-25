@@ -652,6 +652,9 @@ pub struct State {
     /// An event failed since the last round started: the next round starts
     /// from the beginning without waiting for the reconcile interval.
     pub(crate) goal_scan_retry: std::sync::atomic::AtomicBool,
+    /// The `dapps` rollout flags the market reads (`market::features`); none without a market, and then every
+    /// flag reads off.
+    pub(crate) dapps_flags: Option<Arc<crate::market::features::DappsFlags>>,
 }
 
 pub type SharedState = Arc<State>;
@@ -664,6 +667,7 @@ impl State {
         sources: Sources,
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
+        let dapps_flags = sources.market.as_ref().map(|m| m.dapps_flags());
         let market: Arc<dyn pricing::Market> = Arc::new(pricing::LocalMarket {
             pool: pool.clone(),
             market: sources.market,
@@ -674,7 +678,9 @@ impl State {
             Some(economy) => Arc::new(escrow::EconomyBroker::new(economy)),
             None => Arc::new(escrow::NoBroker),
         };
-        Self::with_sources(pool, http, settings, market, broker, eip1654)
+        let mut state = Self::with_sources(pool, http, settings, market, broker, eip1654);
+        state.dapps_flags = dapps_flags;
+        state
     }
 
     /// The constructor the tests use with a fake market and broker.
@@ -768,7 +774,22 @@ impl State {
             revoker,
             feed,
             goals_chain: chain,
+            dapps_flags: None,
         }
+    }
+
+    /// Whether this node takes a Credits part (`creditsCents`): the market's `dapps-shop-credits-mana-split`
+    /// (`market::features::CREDITS_MANA_SPLIT`). Off without the market's flags.
+    pub fn credits_mana_split(&self) -> bool {
+        self.dapps_flags
+            .as_ref()
+            .is_some_and(|flags| flags.credits_mana_split())
+    }
+
+    /// The tests' `dapps` flags in place of the market's.
+    pub fn with_dapps_flags(mut self, flags: Arc<crate::market::features::DappsFlags>) -> Self {
+        self.dapps_flags = Some(flags);
+        self
     }
 
     /// The tests' gate in place of the chain read.

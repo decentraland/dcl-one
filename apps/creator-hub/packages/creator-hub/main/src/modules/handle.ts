@@ -5,8 +5,9 @@ import type { Ipc, IpcError, IpcResult } from '/shared/types/ipc';
 import { captureException } from '@sentry/electron/main';
 import { StreamError } from './bin';
 
+// `rawBody`/`body` carry request payloads; an AI sharing upload's are conversation records.
 const SENSITIVE_KEY =
-  /^x-identity-|auth-?chain|auth_chain|authorization|password|token|secret|email|contact/i;
+  /^x-identity-|auth-?chain|auth_chain|authorization|password|token|secret|email|contact|^(raw)?body$/i;
 
 const CONTENT_CHANNELS = new Set<keyof Ipc>([
   'ai.submitSignInCode',
@@ -15,6 +16,9 @@ const CONTENT_CHANNELS = new Set<keyof Ipc>([
   'ai.askResult',
   'ai.mirrorPush',
   'ai.remoteCommand',
+  // Its handler writes the error itself; logging the arguments too would repeat it.
+  'electron.logRendererError',
+  'electron.fetchAuthIdentity',
 ]);
 
 function shortenDataUrl(value: unknown) {
@@ -38,8 +42,12 @@ export function formatArgs(args: unknown[]): string {
     .join(' ');
 }
 
+// The AI sharing queue's channels carry wallet addresses and record ids.
+const isContentChannel = (channel: keyof Ipc) =>
+  CONTENT_CHANNELS.has(channel) || channel.startsWith('aiSharing.');
+
 function logArgs(channel: keyof Ipc, args: unknown[]) {
-  return CONTENT_CHANNELS.has(channel) ? '[redacted]' : formatArgs(args);
+  return isContentChannel(channel) ? '[redacted]' : formatArgs(args);
 }
 
 export async function handle<T extends keyof Ipc>(

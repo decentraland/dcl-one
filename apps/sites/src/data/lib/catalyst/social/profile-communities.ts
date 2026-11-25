@@ -1,88 +1,87 @@
-import { signedFetch } from "../../auth/signer";
+import { z } from "zod";
+
 import type { AuthIdentity } from "../../auth/types";
+import { CatalystError, getJSON, signedGetJSON } from "../client";
 
-import { CatalystError, catalystBase } from "../client";
-import { CommunitySchema } from "./communities";
-
-const PATH = "/v1/communities";
-
+/**
+ * The communities a profile lists, from two reads of the social API. Client-safe: the browser reads
+ * the same routes.
+ *
+ * - `/v1/members/:address/communities`, unsigned: the member's public, listed communities, each with
+ *   its id, its name and the member's role, and nothing else.
+ * - `/v1/communities?onlyMemberOf=true`, signed by the member: every community of the signer, private
+ *   and unlisted ones too, with the members count, the privacy and the picture the API names.
+ */
 export type ProfileCommunity = {
   id: string;
   name: string;
+  role: "owner" | "moderator" | "member";
+  /** Only the member's own signed list carries the count and the privacy. */
   membersCount: number | null;
-  role: "owner" | "admin" | "member";
-  thumb: string | null;
+  privacy: "public" | "private" | null;
+  /** The picture the API names, when it names one; otherwise the page reads the image by id. */
+  thumbnailUrl: string | null;
 };
 
-function unwrapData<T = unknown>(env: unknown): T {
-  const e = env as { data?: T } | null;
-  return (e?.data ?? env) as T;
+/** `total` is the node's count: more than the rows when the member has more than one page. */
+export type ProfileCommunities = { communities: ProfileCommunity[]; total: number };
+
+/** One request; the profile shows no second page. */
+export const PROFILE_COMMUNITIES_LIMIT = 100;
+
+const PageSchema = z.object({ data: z.object({ results: z.array(z.unknown()), total: z.number() }) });
+
+const RowSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().trim().min(1),
+  role: z.string().nullish(),
+  membersCount: z.number().nullish(),
+  privacy: z.enum(["public", "private"]).nullish(),
+  thumbnailUrl: z.string().nullish(),
+});
+
+function roleOf(value: string | null | undefined): ProfileCommunity["role"] {
+  return value === "owner" || value === "moderator" ? value : "member";
 }
 
-function mapRole(role: string | null): ProfileCommunity["role"] {
-  if (role === "owner") return "owner";
-  if (role === "moderator" || role === "admin") return "admin";
-  return "member";
+/** A page that is not the API's envelope is a failure; a row that is not a community is left out. */
+function readPage(raw: unknown, url: string): ProfileCommunities {
+  const page = PageSchema.safeParse(raw);
+  if (!page.success) throw new CatalystError("Profile communities failed validation", url);
+  const communities: ProfileCommunity[] = [];
+  for (const result of page.data.data.results) {
+    const row = RowSchema.safeParse(result);
+    if (!row.success) continue;
+    communities.push({
+      id: row.data.id,
+      name: row.data.name,
+      role: roleOf(row.data.role),
+      membersCount: row.data.membersCount ?? null,
+      privacy: row.data.privacy ?? null,
+      thumbnailUrl: row.data.thumbnailUrl ?? null,
+    });
+  }
+  return { communities, total: page.data.data.total };
 }
 
-function mapThumb(thumbnailUrl: string | null): string | null {
-  const u = (thumbnailUrl ?? "").trim();
-  if (!u || u === "N/A") return null;
-  return `url("${u.replace(/"/g, "%22")}") center / cover no-repeat`;
-}
-
-function displayableName(name: string | null): boolean {
-  if (name === null) return false;
-  const n = name.trim();
-  return n.length > 0 && n.length <= 60 && !/[<>]/.test(n);
+export async function fetchMemberCommunities(
+  address: string,
+  opts: { signal?: AbortSignal } = {},
+): Promise<ProfileCommunities> {
+  const url = `/v1/members/${encodeURIComponent(address.toLowerCase())}/communities`;
+  const raw = await getJSON<unknown>(url, { query: { limit: PROFILE_COMMUNITIES_LIMIT }, signal: opts.signal });
+  return readPage(raw, url);
 }
 
 export async function fetchMyCommunities(
   identity: AuthIdentity,
-  opts: { signal?: AbortSignal; base?: string; limit?: number } = {},
-): Promise<ProfileCommunity[]> {
-  const limit = opts.limit ?? 100;
-  const url = `${catalystBase(opts.base)}${PATH}?onlyMemberOf=true&limit=${limit}`;
-  const res = await signedFetch(identity, url, {
-    method: "GET",
+  opts: { signal?: AbortSignal } = {},
+): Promise<ProfileCommunities> {
+  const url = "/v1/communities";
+  const raw = await signedGetJSON<unknown>(url, {
+    identity,
+    query: { onlyMemberOf: true, limit: PROFILE_COMMUNITIES_LIMIT },
     signal: opts.signal,
-    headers: { accept: "application/json" },
   });
-  if (!res.ok) {
-    throw new CatalystError(
-      `Catalyst returned ${res.status} ${res.statusText}`,
-      url,
-      res.status,
-    );
-  }
-
-  let raw: unknown;
-  try {
-    raw = await res.json();
-  } catch (err) {
-    throw new CatalystError(
-      `Catalyst returned invalid JSON: ${(err as Error)?.message ?? "parse error"}`,
-      url,
-      res.status,
-    );
-  }
-
-  const data = unwrapData<{ results?: unknown[] }>(raw);
-  const results = Array.isArray(data?.results) ? data.results : [];
-
-  const out: ProfileCommunity[] = [];
-  for (const node of results) {
-    const parsed = CommunitySchema.safeParse(node);
-    if (!parsed.success) continue;
-    const c = parsed.data;
-    if (!displayableName(c.name)) continue;
-    out.push({
-      id: c.id,
-      name: c.name,
-      membersCount: c.membersCount,
-      role: mapRole(c.role),
-      thumb: mapThumb(c.thumbnailUrl),
-    });
-  }
-  return out;
+  return readPage(raw, url);
 }

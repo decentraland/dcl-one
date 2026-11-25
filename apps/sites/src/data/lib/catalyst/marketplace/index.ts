@@ -7,6 +7,7 @@ import { itemAsset } from "@shop/model/asset";
 import type { ChainId } from "@shop/model/chain";
 import { formatMana as formatExactMana, parseManaWei } from "@shop/model/money";
 import { SIGNED_OUT } from "@shop/model/settlement";
+import { isSoldOutPrimary } from "@shop/discovery/cardPrice";
 import { ruleFor } from "@shop/payment/rule";
 
 import { formatMana } from "./money";
@@ -24,6 +25,7 @@ export type FetchCatalogParams = {
   search?: string;
   network?: string;
   minPrice?: string;
+  ids?: readonly string[];
 };
 
 export async function fetchCatalog(
@@ -35,6 +37,7 @@ export async function fetchCatalog(
       ...opts,
       query: {
         first: params.first,
+        id: params.ids,
         skip: params.skip,
         category: params.category,
         rarity: params.rarity,
@@ -206,7 +209,8 @@ function safeRarity(r: string | null | undefined): string {
  * What a card may show, under the Shop's payment rule (library/shop payment/rule, read for a signed-out
  * visitor): an eligible primary wearable or emote shows its credit price, or says the credit price is
  * unavailable when the quote failed (never a MANA fallback); anything MANA only (a resale, an item that
- * mints on Ethereum, a non-wearable) shows its MANA in exact units.
+ * mints on Ethereum, a non-wearable) shows its MANA in exact units. A sold-out primary (library/shop
+ * discovery/cardPrice `isSoldOutPrimary`) has no mint price; its cheapest resale, if any, is still shown.
  */
 export type CardPayment =
   | { kind: "credits"; credits: string }
@@ -232,8 +236,16 @@ function exactMana(wei: string | null | undefined): string | null {
   return formatExactMana(parsed, { group: true });
 }
 
-export function cardPayment(item: CatalogItem, credits: string | null): CardPayment {
-  if (item.isOnSale && weiGtZero(item.price)) {
+/** The facts `cardPayment` reads, so a caller with a narrower row than `CatalogItem` can use it. */
+export type CardSaleFacts = Pick<
+  CatalogItem,
+  "isOnSale" | "price" | "minListingPrice" | "contractAddress" | "chainId" | "network" | "category" | "itemId" | "available"
+>;
+
+export function cardPayment(item: CardSaleFacts, credits: string | null): CardPayment {
+  // A catalogue row's own sale is the primary mint. A sold-out mint (the Shop's rule) has no mint price, but
+  // its resales are separate listings and keep theirs, as the Shop's discovery rows do.
+  if (!isSoldOutPrimary(item) && item.isOnSale && weiGtZero(item.price)) {
     const contract = parseEvmAddress(item.contractAddress);
     const chainId = item.chainId ?? (item.network === "ETHEREUM" ? 1 : 137);
     const kind = item.category === "wearable" || item.category === "emote" ? item.category : "other";
@@ -282,83 +294,6 @@ export function toCollectibleCard(
     network: toCardNetwork(item.network),
     image: item.thumbnail ?? undefined,
   };
-}
-
-export type CreationItem = {
-  id: string;
-  name: string;
-  creator: string;
-  price: string | null;
-  rarity: string;
-  category: string | null;
-  body: string | null;
-  smart: boolean;
-};
-
-export type Creations = { wearables: CreationItem[]; emotes: CreationItem[] };
-
-function wearableBodyShape(item: CatalogItem): string | null {
-  const data = item.data as Record<string, unknown>;
-  const w = data?.wearable as Record<string, unknown> | undefined;
-  const shapes = w?.bodyShapes;
-  if (!Array.isArray(shapes) || shapes.length === 0) return null;
-  const strs = shapes.filter((s): s is string => typeof s === "string");
-  const female = strs.some((s) => /female/i.test(s));
-  const male = strs.some((s) => /male/i.test(s) && !/female/i.test(s));
-  if (male && female) return "unisex";
-  if (female) return "female";
-  if (male) return "male";
-  return "unisex";
-}
-
-export function toCreationItem(item: CatalogItem, creatorName?: string): CreationItem {
-  const isEmote = item.category === "emote";
-  const data = item.data as Record<string, unknown>;
-  const wearable = data?.wearable as Record<string, unknown> | undefined;
-  const subCategory =
-    typeof wearable?.category === "string" ? wearable.category : item.category;
-  return {
-    id: item.id,
-    name: item.name ?? "Untitled",
-    creator: creatorName?.trim() || shortAddress(item.creator),
-    price: catalogManaPrice(item),
-    rarity: safeRarity(item.rarity),
-    category: isEmote ? null : subCategory ?? null,
-    body: isEmote ? null : wearableBodyShape(item),
-    smart: wearable?.isSmart === true,
-  };
-}
-
-export function toCreations(items: CatalogItem[], creatorName?: string): Creations {
-  const wearables: CreationItem[] = [];
-  const emotes: CreationItem[] = [];
-  for (const it of items) {
-    const card = toCreationItem(it, creatorName);
-    if (it.category === "emote") emotes.push(card);
-    else wearables.push(card);
-  }
-  return { wearables, emotes };
-}
-
-export function withCreatorName(creations: Creations, creatorName?: string): Creations {
-  const name = creatorName?.trim();
-  if (!name) return creations;
-  const relabel = (c: CreationItem): CreationItem => ({ ...c, creator: name });
-  return { wearables: creations.wearables.map(relabel), emotes: creations.emotes.map(relabel) };
-}
-
-export async function fetchCreations(
-  creator: string,
-  params: { first?: number; creatorName?: string } = {},
-  opts: GetOptions = {},
-): Promise<Creations> {
-  const env = parseMarketEnvelope(
-    await getJSON<unknown>("/marketplace-api/v1/items", {
-      ...opts,
-      query: { creator: creator.toLowerCase(), first: params.first ?? 48 },
-    }),
-  );
-  return toCreations(parseCatalogItems(env.data), params.creatorName);
 }
 
 function parcelCoords(nft: NftResult["nft"]): { x: number; y: number } | null {

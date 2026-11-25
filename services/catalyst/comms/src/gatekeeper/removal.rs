@@ -1,4 +1,6 @@
 //! Comms-owned durable ban removals; no network call runs in a SQL transaction.
+use crate::metrics::declarations;
+
 use crate::gatekeeper::admission::cluster::safety::{DispatchPhase, DispatchState};
 use std::sync::Arc;
 use std::time::Duration;
@@ -226,7 +228,9 @@ async fn failed(pool: &PgPool, row: &Intent, error: &anyhow::Error) -> Result<()
         .bind(&row.root_key).bind(&row.target_key).bind(row.generation).bind(row.claim_id).bind(attempt)
         .bind(now_utc() + chrono::Duration::milliseconds(delay as i64)).bind(now_utc()).execute(pool).await?.rows_affected();
     if updated != 0 {
-        metrics::counter!("comms_livekit_removal_failures_total").increment(1);
+        declarations::LIVEKIT_REMOVAL_FAILURES
+            .handle([])
+            .increment(1);
         if attempt >= 10 {
             tracing::error!(attempt, age_seconds=(now_utc()-row.created_at).num_seconds(), cause=%row.cause_kind, error=%error, "LiveKit enforcement still pending; continuing retries");
         } else {
@@ -240,10 +244,11 @@ fn sfu(error: RoomServiceError) -> anyhow::Error {
     anyhow!("LiveKit request failed: {error:?}")
 }
 
-/// The `<world>:<base>` key of a world scene intent queued before the
-/// `schemas/releases/world-scene-ban-keys.sql` release,
-/// which names the scene's entity id (bans moved, queued intents did not).
-async fn legacy_world_ban_key(
+/// The stable key of a scene intent queued before the release that moved its
+/// bans, which names the scene's entity id (bans moved, queued intents did
+/// not): `<world>:<base>` after `schemas/releases/world-scene-ban-keys.sql`,
+/// a Genesis scene's place after `schemas/releases/genesis-scene-ban-keys.sql`.
+async fn legacy_ban_key(
     state: &CommsState,
     row: &Intent,
 ) -> Result<Option<crate::access::SceneBanKey>> {
@@ -255,6 +260,29 @@ async fn legacy_world_ban_key(
         return Ok(None);
     };
     let rooms = row.scope.as_array().map(Vec::as_slice).unwrap_or_default();
+    let genesis = rooms
+        .iter()
+        .filter_map(Value::as_str)
+        .filter_map(crate::rooms::parse_room)
+        .find_map(|room| match room {
+            crate::rooms::ParsedRoom::Local(local) if local.scene_id.as_ref() == Some(&scene) => {
+                Some(local)
+            }
+            _ => None,
+        });
+    if let Some(local) = genesis {
+        return match local
+            .resolve_ban_key(state.scenes.as_ref(), state.settings.allow_local_preview)
+            .await
+        {
+            Ok(key) => Ok(key),
+            Err(crate::rooms::ResolveError::Db(error)) => {
+                Err(anyhow!("scene identity unavailable: {error:?}"))
+            }
+            // An overwritten scene: no ban is read for it.
+            Err(_) => Ok(None),
+        };
+    }
     let Some(world) = rooms
         .iter()
         .filter_map(Value::as_str)
@@ -308,7 +336,7 @@ async fn authorized(state: &CommsState, row: &Intent, actor: &Address) -> Result
             {
                 return Ok(true);
             }
-            Ok(match legacy_world_ban_key(state, row).await? {
+            Ok(match legacy_ban_key(state, row).await? {
                 Some(key) => {
                     state
                         .moderation
@@ -589,9 +617,9 @@ pub(super) fn spawn_jobs(state: &Arc<CommsState>, jobs: &Jobs) {
                 passes=passes.wrapping_add(1);
                 if passes%60==1 {
                     let (count,oldest,attempts):(i64,Option<NaiveDateTime>,Option<i32>)=sqlx::query_as("SELECT count(*),min(created_at),max(attempts) FROM social.livekit_removal_intents").fetch_one(&state.pool).await?;
-                    metrics::gauge!("comms_livekit_removal_pending").set(count as f64);
-                    metrics::gauge!("comms_livekit_removal_oldest_seconds").set(oldest.map(|at|(now_utc()-at).num_seconds().max(0)).unwrap_or(0) as f64);
-                    metrics::gauge!("comms_livekit_removal_max_attempts").set(attempts.unwrap_or(0) as f64);
+                    declarations::LIVEKIT_REMOVAL_PENDING.handle([]).set(count as f64);
+                    declarations::LIVEKIT_REMOVAL_OLDEST_SECONDS.handle([]).set(oldest.map(|at|(now_utc()-at).num_seconds().max(0)).unwrap_or(0) as f64);
+                    declarations::LIVEKIT_REMOVAL_MAX_ATTEMPTS.handle([]).set(attempts.unwrap_or(0) as f64);
                     ctx.progress(format!("{count} pending removal intents"));
                 }
                 ctx.pass_done();
@@ -1639,16 +1667,12 @@ mod tests {
             .unwrap();
         let name = format!("dcl_island_job_{}", Uuid::new_v4().simple());
         assert!(name.bytes().all(|v| v.is_ascii_alphanumeric() || v == b'_'));
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(8)
             .connect_with(base.connect_options().as_ref().clone().database(&name))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         let (state, fixture, server) = sfu_fixture(pool.clone()).await;
         let actor = wallet();
         let island = format!("island-{}", Uuid::new_v4());
@@ -2049,16 +2073,12 @@ mod tests {
             .await
             .unwrap();
         let name = format!("dcl_liveness_{}", uuid::Uuid::new_v4().simple());
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(8)
             .connect_with(base.connect_options().as_ref().clone().database(&name))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         (pool, admin, name)
     }
     async fn liveness_drop_pool(pool: &sqlx::PgPool, admin: &sqlx::PgPool, name: &str) {
@@ -2330,9 +2350,13 @@ async fn resume_island_quarantines(state: &CommsState) -> Result<()> {
         }
         .await;
         if let Err(error) = result {
-            metrics::counter!("comms_island_cleanup_maintenance_failed_total").increment(1);
+            declarations::ISLAND_CLEANUP_MAINTENANCE_FAILED
+                .handle([])
+                .increment(1);
             if error.is::<IslandDispatchUncertain>() {
-                metrics::counter!("comms_island_cleanup_uncertain_total").increment(1);
+                declarations::ISLAND_CLEANUP_UNCERTAIN
+                    .handle([])
+                    .increment(1);
             }
             tracing::warn!(dispatch_id=%id,%error,"island cleanup maintenance failed; admission remains closed");
         }

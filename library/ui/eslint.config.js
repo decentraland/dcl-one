@@ -12,6 +12,7 @@ export default tseslint.config(
       'figma/test/fixtures',
       'figma/capture',
       'figma/review/review-dist',
+      'gallery/dist',
       'figma/review/src/generated',
       'templates',
       // The Explorer HUD UI keeps the conventions of the HUD it moved from (react-web, which has no linter);
@@ -25,5 +26,21 @@ export default tseslint.config(
     languageOptions: { globals: { console: 'readonly', process: 'readonly', URL: 'readonly' } }
   },
   ...tseslint.configs.recommended,
-  { files: ['figma/review/src/**/*.{ts,tsx}'], ...reactHooks.configs.flat.recommended }
+  {
+    files: ['**/*.{ts,tsx,mts,cts}'],
+    rules: {
+      '@typescript-eslint/consistent-type-imports': [
+        'error',
+        {
+          prefer: 'type-imports',
+          fixStyle: 'separate-type-imports',
+          disallowTypeAnnotations: false
+        }
+      ]
+    }
+  },
+  {
+    files: ['figma/review/src/**/*.{ts,tsx}', 'gallery/src/**/*.{ts,tsx}'],
+    ...reactHooks.configs.flat.recommended
+  }
 )

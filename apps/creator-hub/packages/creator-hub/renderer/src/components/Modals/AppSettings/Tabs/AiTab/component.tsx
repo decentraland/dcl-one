@@ -6,7 +6,7 @@ import IconButton from '@ui/atoms/IconButton';
 import Spinner from '@ui/atoms/Spinner';
 import Text from '@ui/atoms/Text';
 import TextField from '@ui/atoms/TextField';
-import Tooltip from '@ui/atoms/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import { ai, misc } from '#preload';
 
@@ -281,7 +281,13 @@ function AgentConnect({
   );
 }
 
-const AiTab: React.FC<BaseTabProps> = ({ settings, updateSettings }) => {
+// `children` renders at the end of the tab, inside its layout: the settings modal passes the
+// store-backed sharing section this way, since this tab itself takes only settings props.
+const AiTab: React.FC<BaseTabProps & { children?: ReactNode }> = ({
+  settings,
+  updateSettings,
+  children,
+}) => {
   const handleAiAssistantChange = useCallback(
     (checked: boolean) => {
       updateSettings({
@@ -485,6 +491,7 @@ const AiTab: React.FC<BaseTabProps> = ({ settings, updateSettings }) => {
           </div>
         )}
       </div>
+      {children}
     </div>
   );
 };

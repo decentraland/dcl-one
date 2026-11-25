@@ -1,12 +1,14 @@
-import { LastWriteWinElementSetComponentDefinition, Entity, IEngine } from '../../engine'
-import {
-  Material,
+import type { LastWriteWinElementSetComponentDefinition, Entity, IEngine } from '../../engine'
+import type {
   MaterialTransparencyMode,
   PBMaterial,
   PBMaterial_PbrMaterial,
   PBMaterial_UnlitMaterial
 } from '../generated/index.gen'
 import {
+  Material
+} from '../generated/index.gen'
+import type {
   AvatarTexture,
   Texture,
   TextureFilterMode,
@@ -14,7 +16,7 @@ import {
   TextureWrapMode,
   VideoTexture
 } from '../generated/types.gen'
-import { Color3, Color4 } from '../generated/pb/decentraland/common/colors.gen'
+import type { Color3, Color4 } from '../generated/pb/decentraland/common/colors.gen'
 
 /**
  * @public

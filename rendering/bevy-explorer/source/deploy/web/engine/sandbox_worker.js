@@ -134,7 +134,7 @@ function createJsContext(wasmApi, context) {
   // two scenes agreeing on a bucket name would have a shared filesystem.
   deleteFromPrototypeChain(self.navigator, "storage");
   deleteFromPrototypeChain(self.navigator, "storageBuckets");
-  // the page's service worker registration (and its cache routes) is no scene's business
+  // Scenes cannot access the page's service worker registration.
   deleteFromPrototypeChain(self.navigator, "serviceWorker");
   // the scene server's one-per-scene lock (headless.js) is held by name, which a scene could take
   deleteFromPrototypeChain(self.navigator, "locks");
@@ -187,10 +187,15 @@ function createJsContext(wasmApi, context) {
   const ops = Object.create(null);
   for (const exportName in wasmApi) {
     if (exportName.substring(0, 3) === "op_") {
+      const traced = !UNTRACED_OPS.has(exportName);
       Object.defineProperty(ops, exportName, {
         configurable: false,
         get() {
           return (...args) => {
+            if (traced) {
+              lastOp.name = exportName;
+              lastOp.at = performance.now();
+            }
             // wrap ops to inject context arg
             return wasmApi[exportName](context, ...args);
           };
@@ -371,6 +376,30 @@ var sceneId = undefined;
 // still can't forge the SHUTDOWN_COMPLETE ack and pass itself off as exited.
 var killToken = undefined;
 var shutdownToken = undefined;
+
+// Where the scene loop is and the last op the scene called, printed when the engine has to shut
+// the worker down: a scene wedged in an await is usually waiting on that op. Module-scoped, so
+// scene code can't rewrite them.
+const phase = { name: "starting", at: performance.now() };
+const lastOp = { name: undefined, at: 0 };
+// logging and per-tick bookkeeping ops, which would hide the op the scene is waiting on
+const UNTRACED_OPS = new Set([
+  "op_log",
+  "op_error",
+  "op_begin_tick",
+  "op_continue_running",
+  "op_communicated_with_renderer",
+]);
+function setPhase(name) {
+  phase.name = name;
+  phase.at = performance.now();
+}
+function describePhase() {
+  const now = performance.now();
+  const since = (at) => `${((now - at) / 1000).toFixed(2)}s ago`;
+  const op = lastOp.name === undefined ? "none" : `${lastOp.name}, ${since(lastOp.at)}`;
+  return `phase ${phase.name} since ${since(phase.at)}; last op ${op}`;
+}
 function postToEngine(message) {
   workerPostMessage({ ...message, killToken });
 }
@@ -410,6 +439,22 @@ function tearDown() {
 const relayAtomicsStore = Atomics.store;
 const relayAtomicsLoad = Atomics.load;
 const relayAtomicsWait = Atomics.wait;
+// Waiting for the engine's send (crates/dcl_wasm/src/relay_wake.rs, `RelayWake`): the view of the
+// wake word is a view of engine memory, so it only ever goes to these captured functions.
+const relayWaitAsync = Atomics.waitAsync;
+const relayThen = Function.prototype.call.bind(Promise.prototype.then);
+const relayDefineProperty = Object.defineProperty;
+// Calls `f` once the wait's promise settles. `then`, even captured, reads the promise's
+// `constructor` and that constructor's `Symbol.species`, both of which scene code can redefine on
+// `Promise.prototype` and `Promise`: a getter that throws, or a constructor that never calls back,
+// would stop the relay for good. The promise gets its own `constructor`, undefined, so `then`
+// reads neither and chains with the built-in Promise. The descriptor has no prototype, so a
+// `get` or `set` scene code put on Object.prototype can't make it invalid.
+const relayOnSettled = (promise, f) => {
+  relayDefineProperty(promise, "constructor", { __proto__: null, value: undefined });
+  relayThen(promise, f);
+};
+const RelayInt32Array = Int32Array;
 const relaySetTimeout = setTimeout;
 const relayPostTask = self.scheduler?.postTask?.bind(self.scheduler);
 const relayLog = {
@@ -434,7 +479,7 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
     if (relayAtomicsLoad(killFlags, KILL) === 1) {
       relayAtomicsStore(killFlags, IN_RUST, 0);
       // last words: nothing after the wait ever runs
-      relayLog.warn(`[Relay] scene ${sceneId}: kill flag set; parking until terminate`);
+      relayLog.warn(`[Relay] scene ${sceneId}: kill flag set; parking until terminate (${describePhase()})`);
       relayAtomicsWait(killFlags, PARK, 0);
     }
   };
@@ -530,6 +575,11 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
   if (!got) throw new Error("no scene in the relay queue");
   // from the engine's side, not the scene runtime's
   sceneId = BigInt.asUintN(64, enter(() => relay.relay_scene_id()));
+  // the word the engine bumps when it sends this scene something; undefined: the relay polls on a
+  // 1 ms sleep
+  // an i32 without the glue: as unsigned, for an address past 2 GiB
+  const wakePtr = enter(() => relay.relay_wake_ptr()) >>> 0;
+  const wakeView = wakePtr ? new RelayInt32Array(sharedMemory.buffer, wakePtr, 1) : undefined;
 
   let done = false;
   let finishRequested = false;
@@ -556,14 +606,26 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
   // prototype, so reading its members can't reach anything scene code defined.
   const sleep = (ms, f) =>
     relayPostTask ? relayPostTask(f, { __proto__: null, delay: ms }) : relaySetTimeout(f, ms);
+  // idle wait for the engine's send: at most the poll's 1 ms, so what wakes no one (global updates,
+  // the kill flag, the scene's own replies) is still seen within a poll interval
+  const RELAY_IDLE_MS = 1;
+  // a wait that failed to start has been logged
+  let waitFailed = false;
   const step = () => {
     if (done) return;
     let killed = 0;
     let moved = 0;
+    let wake = 0;
+    let seen = 0;
     try {
       enter(() => {
         killed = relay.relay_killed();
-        if (!killed) moved = relay.relay_pump();
+        if (!killed) {
+          wake = wakeView ? relay.relay_wake_mode() : 0;
+          // before the pump: a send after this changes the word, so the wait below can't miss it
+          if (wake) seen = relayAtomicsLoad(wakeView, 0);
+          moved = relay.relay_pump();
+        }
       });
       if (checkFailure()) killed = 1;
     } catch (e) {
@@ -583,7 +645,27 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
       }
       return;
     }
-    sleep(moved ? 0 : 1, step);
+    if (moved || !wake) {
+      sleep(moved ? 0 : 1, step);
+      return;
+    }
+    // outside A (IN_RUST clear), so the engine may terminate the worker during the wait
+    try {
+      const waited = relayWaitAsync(wakeView, 0, seen, RELAY_IDLE_MS);
+      if (waited.async) relayOnSettled(waited.value, step);
+      // "not-equal": the engine sent something since the load
+      else sleep(0, step);
+    } catch (e) {
+      // Nothing scheduled the next step, so without this the relay would stop and its scene
+      // with it, silently. The step sleeps the poll's 1 ms instead, as a relay the engine does
+      // not wake; the next step tries the wait again. Logged once: a wait that fails, fails
+      // every millisecond.
+      if (!waitFailed) {
+        waitFailed = true;
+        relayLog.error(`[Relay] scene ${sceneId}: waiting for the engine's send failed; polling`, e);
+      }
+      sleep(1, step);
+    }
   };
   step();
 }
@@ -600,7 +682,7 @@ self.onmessage = async (event) => {
     // engine kill escalation: the kill flag is already set, but the scene never came back
     // to the loop check (wedged in an await). A genuine SHUTDOWN runs with an empty JS
     // stack, so no op is in flight; close() discards the parked scene task.
-    console.warn("[Sandbox Worker] SHUTDOWN received, tearing down");
+    console.warn(`[Sandbox Worker] scene ${sceneId}: SHUTDOWN received, tearing down (${describePhase()})`);
     tearDown();
     return;
   }
@@ -627,6 +709,7 @@ self.onmessage = async (event) => {
     }
 
     try {
+      setPhase("relay start");
       await relayStart(compiledModule, sharedMemory, event.data.payload.sceneModule);
     } catch (e) {
       console.error("[Relay] start failed:", e);
@@ -659,6 +742,7 @@ self.onmessage = async (event) => {
     });
 
     try {
+      setPhase("scene construction");
       wasmContext = await sceneApi.wasm_init_scene();
     } catch (e) {
       console.error("[Scene Worker] Error during scene construction:", e);
@@ -676,17 +760,21 @@ self.onmessage = async (event) => {
       const ops = jsContext.Deno.core.ops;
 
       // preload modules
+      setPhase("module preload");
       await preloadModules(wasmContext, sceneApi.builtin_module);
 
+      setPhase("scene code load");
       const sceneCode = wasmContext.get_source();
       let module = await runWithScope(sceneCode);
 
       // send any initial rpc requests
+      setPhase("initial send");
       ops.op_crdt_send_to_renderer([]);
 
       // the initial send drew on the tick's send allowance; give onStart a full one
       ops.op_set_elapsed(0);
 
+      setPhase("onStart");
       await module.onStart();
       // drop onStart's handshake round trips from the first onUpdate's dt (dcl_js::end_start)
       ops.op_end_start();
@@ -700,6 +788,7 @@ self.onmessage = async (event) => {
         // engine-time dt from the previous tick's renderer response, capped (dcl_js::begin_tick)
         const dt = ops.op_begin_tick();
         var err = undefined;
+        setPhase(`onUpdate ${count}`);
         try {
           await module.onUpdate(dt);
         } catch (e) {

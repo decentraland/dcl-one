@@ -1,0 +1,62 @@
+[package]
+name = "catalyst-message-router"
+version.workspace = true
+edition = "2024"
+description = "Community chat message router: a LiveKit participant on the private messages room that relays a member's community message to the community's members"
+publish = false
+
+[lib]
+name = "catalyst_message_router"
+path = "src/lib.rs"
+
+# Its own process, never linked into `catalyst`: a libwebrtc fault stops the router, not serve.
+# Build it with `cargo build -p catalyst-message-router --features livekit`.
+[[bin]]
+name = "catalyst-message-router"
+path = "src/main.rs"
+required-features = ["livekit"]
+
+# A member's message through a real livekit-server (MESSAGE_ROUTER_LIVEKIT_SERVER_BIN) and the
+# node's schema (CATALYST_TEST_DATABASE_URL); it skips without either.
+[[test]]
+name = "livekit_e2e"
+path = "tests/livekit_e2e.rs"
+required-features = ["livekit"]
+
+[features]
+# The LiveKit participant (libwebrtc). Off by default so a workspace build or test compiles
+# the routing, membership and token code without downloading libwebrtc.
+livekit = ["dep:livekit"]
+
+[dependencies]
+catalyst-db = { path = "../db" }
+catalyst-shared = { path = "../shared" }
+catalyst-config = { path = "../config" }
+livekit = { workspace = true, optional = true }
+tokio.workspace = true
+axum.workspace = true
+sqlx.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+uuid.workspace = true
+reqwest.workspace = true
+url.workspace = true
+prost.workspace = true
+getrandom.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+dcl-metrics.workspace = true
+
+[build-dependencies]
+prost-build.workspace = true
+protox.workspace = true
+
+[dev-dependencies]
+catalyst-db = { path = "../db", features = ["test-support"] }
+tokio = { workspace = true, features = ["test-util"] }
+toml.workspace = true
+dcl-livekit-token.workspace = true
+tower = { version = "0.5", features = ["util"] }

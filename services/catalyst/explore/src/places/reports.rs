@@ -902,10 +902,7 @@ mod tests {
         // Schema-shape changes need their own database: scratch pools in this
         // process otherwise share the tables used by the route tests.
         let database = format!("report_migration_{}", uuid::Uuid::new_v4().simple());
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {database}")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &database).await;
         // Await cleanup before propagating a setup or assertion panic. Merely
         // spawning cleanup from Drop can lose it when the test runtime exits.
         let outcome = std::panic::AssertUnwindSafe(async {
@@ -914,7 +911,6 @@ mod tests {
                 .connect_with(admin.connect_options().as_ref().clone().database(&database))
                 .await
                 .unwrap();
-            crate::db::apply_schema(&pool).await.unwrap();
             // Recreate the previous column shape on this disposable test database.
             sqlx::query("ALTER TABLE explore.place_reports DROP COLUMN upload_token_hash")
                 .execute(&pool)

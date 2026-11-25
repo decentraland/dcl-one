@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
-import { aboutDocument, BODY_SHAPES, buildPreviewWearable, buildScene, contentHash, EMPTY_REALM_MAP, PREVIEW_WEARABLE_URN, serveRealm, type BuiltScene, type PreviewWearable, type RealmServer } from '../driver/realm.ts'
+import { type aboutDocument, BODY_SHAPES, buildPreviewWearable, buildScene, contentHash, EMPTY_REALM_MAP, PREVIEW_WEARABLE_URN, serveRealm, type BuiltScene, type PreviewWearable, type RealmServer } from '../driver/realm.ts'
 
 describe('realm', () => {
   let dir: string
@@ -45,6 +45,50 @@ describe('realm', () => {
     assert.deepEqual(host.entity.metadata.featureToggles, { portableExperiences: 'disabled' })
     assert.deepEqual(host.entity.content, scene.entity.content)
     assert.notEqual(host.entity.id, scene.entity.id)
+  })
+
+  test('contentFailures answers a file 503 for its first GETs, then serves it; HEAD is not counted', async () => {
+    const hash = contentHash(Buffer.from([1, 2, 3]))
+    const flaky = await serveRealm({ scenes: [scene], port: 0, contentFailures: new Map([[hash, 2]]) })
+    try {
+      const url = `${flaky.realm}/content/contents/${hash}`
+      assert.equal((await fetch(url, { method: 'HEAD' })).status, 200)
+      const statuses = []
+      for (let i = 0; i < 3; i++) {
+        const response = await fetch(url)
+        await response.arrayBuffer()
+        statuses.push(response.status)
+      }
+      assert.deepEqual(statuses, [503, 503, 200])
+      assert.equal(flaky.contentGets.get(hash), 3)
+    } finally {
+      await flaky.close()
+    }
+  })
+
+  test('requests lists each request with its entity file, status and duration once closed', async () => {
+    const hash = contentHash(Buffer.from([1, 2, 3]))
+    const logged = await serveRealm({ scenes: [scene], port: 0, contentFailures: new Map([[hash, 1]]) })
+    try {
+      for (const url of [`${logged.realm}/content/contents/${hash}`, `${logged.realm}/content/contents/${hash}`, `${logged.realm}/nothing`]) {
+        await (await fetch(url)).arrayBuffer()
+      }
+      // a response's close can follow the client's read by a tick
+      for (let i = 0; i < 100 && logged.requests.some((request) => request.ms === undefined); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      assert.deepEqual(
+        logged.requests.map(({ method, path, file, status, finished }) => ({ method, path, file, status, finished })),
+        [
+          { method: 'GET', path: `/content/contents/${hash}`, file: 'assets/models/a.glb', status: 503, finished: true },
+          { method: 'GET', path: `/content/contents/${hash}`, file: 'assets/models/a.glb', status: 200, finished: true },
+          { method: 'GET', path: '/nothing', file: undefined, status: 404, finished: true }
+        ]
+      )
+      assert.ok(logged.requests.every((request) => !Number.isNaN(Date.parse(request.at))))
+    } finally {
+      await logged.close()
+    }
   })
 
   test('the hash is stable for the same bytes', () => {

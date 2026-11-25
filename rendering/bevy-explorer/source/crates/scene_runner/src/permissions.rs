@@ -49,7 +49,6 @@ impl PermissionManager {
     }
 }
 
-#[allow(clippy::type_complexity)]
 #[derive(SystemParam)]
 pub struct Permission<'w, 's, T: Send + Sync + 'static> {
     pub success: Local<'s, Vec<(T, PermissionType, Option<String>, Entity)>>,
@@ -115,7 +114,7 @@ impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
             .ok()
     }
 
-    fn is_system_scene(&self, hash: &str) -> bool {
+    pub fn is_system_scene(&self, hash: &str) -> bool {
         self.system_scenes.as_ref().is_some_and(|ss| {
             ss.scenes
                 .iter()
@@ -183,6 +182,12 @@ impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
                 ));
             }
         }
+    }
+
+    /// Withdraws every question of type `ty` still waiting for the player: dropping it closes
+    /// its prompt, and no use is recorded.
+    pub fn withdraw_all(&mut self, ty: PermissionType) {
+        self.pending.retain(|(_, pending_ty, ..)| *pending_ty != ty);
     }
 
     pub fn check_unique(

@@ -13,6 +13,7 @@ PR #12 · change: `abc1234` · base: `main` at `def5678` · [run](https://github
 - **— informational** — the 0.1% worst metrics average only the few worst frames of a run, so a single OS hiccup swings them by a lot; they are shown for context and never earn a verdict.
 - **⚠️ no verdict** — the two builds' sessions were not comparable (very different sample counts, or too few usable runs), so no conclusion is drawn from them.
 - **Exceptions per run** — the average number of exceptions in a run's log, not counting teardown ones logged while the app quits. Flagged only on a difference of at least 2 per run and 1.5× the other build; exception kinds the baseline never threw are called out under the table. The *Exception breakdown* groups all of them by the explorer's report category and exception type (as totals across the runs).
+- **Hiccups per run / Peak memory** — from the `perf_summary` lines an explorer writes when its measured phase ends: frames over its hiccup threshold (the larger of 50 ms and two target frame times) and the peak engine memory. Hiccups follow the exceptions rule, given fully separated run ranges and the same hiccup threshold in both builds (⚠️ no verdict when the thresholds differ); memory the frame-time rule with a floor of 32 MiB. The *Top scopes* list is the self time per run of the scopes the explorer's profiler recorded. Shown only when a run wrote them.
 - A run that logged **unusually many exceptions** (at least 10 and 5× the median of its build's runs — e.g. a service was down during it) is excluded from all numbers and called out under the table.
 - The **Overall** line at the top only reacts to a metric that moved on **two or more machines**, or by **10% or more** on one — a single modest 🟢/🔴 cell can still be a statistical fluke.
 </details>
@@ -25,8 +26,8 @@ PR #12 · change: `abc1234` · base: `main` at `def5678` · [run](https://github
 | CPU average | 23.0 ms (22.9–23.1) | 21.0 ms (20.9–21.1) | -2.0 ms | 🟢 9% faster |
 | CPU 1% worst | 32.0 ms (31.4–32.6) | 30.0 ms (29.0–31.0) | -2.0 ms | 🟢 6% faster |
 | CPU 0.1% worst | 32.0 ms (31.4–32.6) | 30.0 ms (29.0–31.0) | -2.0 ms | — informational |
-| GPU average | 6.4 ms (6.3–6.5) | 6.4 ms (6.3–6.5) | 0.0 ms | ⚪ within noise |
-| GPU 1% worst | 10.0 ms (9.0–11.0) | 10.0 ms (9.0–11.0) | 0.0 ms | ⚪ within noise |
+| GPU average | 6.4 ms (6.3–6.5) | 6.4 ms (6.3–6.5) | 0.0 ms | ⚠️ no verdict — GPU timing unreliable on Metal |
+| GPU 1% worst | 10.0 ms (9.0–11.0) | 10.0 ms (9.0–11.0) | 0.0 ms | ⚠️ no verdict — GPU timing unreliable on Metal |
 | GPU 0.1% worst | 10.0 ms (9.0–11.0) | 10.0 ms (9.0–11.0) | 0.0 ms | — informational |
 | Exceptions per run | 0 | 0 | 0 | ⚪ no significant change |
 

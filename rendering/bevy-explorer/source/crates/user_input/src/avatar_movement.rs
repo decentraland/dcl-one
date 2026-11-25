@@ -8,6 +8,7 @@ use bevy::{
 };
 use common::{
     dynamics::{PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS, PLAYER_GROUND_THRESHOLD},
+    inputs::MOVE_SET,
     sets::{PostUpdateSets, SceneSets},
     structs::{
         avatar_tilt_quat, AppConfig, AvatarDynamicState, EngineMovementControl, LocomotionSpeeds,
@@ -27,13 +28,14 @@ use dcl_component::{
     DclReader, DclWriter, SceneComponentId, SceneEntityId,
 };
 use dcl_types::interface::{ComponentPosition, CrdtType};
+use input_manager::{InputManager, InputPriority};
 use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
     IpfsAssetServer,
 };
 
 use scene_runner::{
-    initialize_scene::PARCEL_SIZE,
+    initialize_scene::{PortableScenes, PARCEL_SIZE},
     renderer_context::RendererSceneContext,
     update_world::{
         avatar_modifier_area::InputModifier,
@@ -102,6 +104,7 @@ impl Plugin for AvatarMovementPlugin {
                 resolve_collisions,
                 apply_impulses,
                 apply_movement,
+                record_own_movement,
                 record_ground_collider,
                 accumulate_movement_periods,
             )
@@ -127,7 +130,6 @@ fn locomotion_speeds(
 }
 
 /// Keeps the player's [`LocomotionSpeeds`] in step with the active locomotion settings.
-#[allow(clippy::type_complexity)]
 fn update_locomotion_speeds(
     mut player: Query<(
         &PrimaryUser,
@@ -413,7 +415,6 @@ struct CollisionPush(Vec3);
 
 impl<C: Component + Clone + FromConfig> ActivePlayerComponent<C> {
     // pick from available of any write-time, based on priority
-    #[allow(clippy::too_many_arguments)]
     fn pick_by_priority(
         mut commands: Commands,
         q: Query<(Entity, Ref<C>, &SceneEntity)>,
@@ -543,7 +544,6 @@ impl<C: Component + Clone + FromConfig> ActivePlayerComponent<C> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn apply_impulses(
     impulses: Query<(&PhysicsCombinedImpulse, &SceneEntity), Changed<PhysicsCombinedImpulse>>,
     forces: Query<(Ref<PhysicsCombinedForce>, &SceneEntity)>,
@@ -643,6 +643,9 @@ pub fn apply_movement(
             scenes
                 .iter_mut()
                 .fold(transform.translation.y, |gh, (_, mut collider_data)| {
+                    if !collider_data.grounds_avatar(transform.translation.as_dvec3()) {
+                        return gh;
+                    }
                     gh.min(
                         collider_data
                             .get_ground(transform.translation)
@@ -682,7 +685,7 @@ pub fn apply_movement(
         let mut contact_normal = DVec3::ZERO;
         if movement_control.suppress_clipping.is_empty() {
             for (e, mut collider_data) in scenes.iter_mut() {
-                if let Some(hit) = collider_data.cast_avatar_nearest(
+                if let Some(hit) = collider_data.cast_avatar_nearest_in_scene(
                     position,
                     velocity,
                     step_time,
@@ -735,6 +738,9 @@ pub fn apply_movement(
         scenes
             .iter_mut()
             .fold(transform.translation.y, |gh, (_, mut collider_data)| {
+                if !collider_data.grounds_avatar(transform.translation.as_dvec3()) {
+                    return gh;
+                }
                 gh.min(
                     collider_data
                         .get_ground(transform.translation)
@@ -753,6 +759,57 @@ fn end_jump_on_landing(dynamic_state: &mut AvatarDynamicState) {
     if dynamic_state.ground_height < 0.2 && dynamic_state.velocity.y <= 0.0 {
         dynamic_state.jump_time = -1.0;
     }
+}
+
+// Below this an impulse or force sum is no push: a zero `PhysicsCombinedForce` still sets
+// `external_velocity`.
+const NO_EXTERNAL_VELOCITY: f32 = 1e-3;
+
+// The player's own walking, for analytics: the controller's displacement after collisions, so
+// lifts, platforms and walls add nothing. Only a startup portable counts (launch-time, console or
+// server-hosted, which includes the default controller); a parcel scene's override, a smart
+// wearable or scene-spawned portable, a suppression, an impulse or force this frame, or no
+// movement input held leaves none.
+fn record_own_movement(
+    mut player: Query<
+        (
+            &mut AvatarDynamicState,
+            &ActivePlayerComponent<AvatarMovement>,
+        ),
+        With<PrimaryUser>,
+    >,
+    scenes: Query<&RendererSceneContext>,
+    portables: Res<PortableScenes>,
+    info: Res<AvatarMovementInfo>,
+    movement_control: Res<EngineMovementControl>,
+    input_manager: InputManager,
+) {
+    let Ok((mut dynamic_state, movement)) = player.single_mut() else {
+        return;
+    };
+    let startup_controller = scenes
+        .get(movement.scene())
+        .ok()
+        .filter(|ctx| ctx.is_portable)
+        .and_then(|ctx| portables.get(&ctx.hash))
+        .is_some_and(|source| source.is_startup());
+    let pushed = info
+        .0
+        .external_velocity
+        .is_some_and(|v| v.world_vec_to_vec3().length() > NO_EXTERNAL_VELOCITY);
+    // a zero request skips `apply_movement`'s solve, leaving `actual_velocity` stale
+    let own = startup_controller
+        && movement.component.velocity != Vec3::ZERO
+        && !movement_suppressed(&movement_control, movement)
+        && !pushed
+        && input_manager.get_analog(MOVE_SET, InputPriority::Scene) != Vec2::ZERO;
+    let velocity = info
+        .0
+        .actual_velocity
+        .filter(|_| own)
+        .map_or(Vec3::ZERO, |v| v.world_vec_to_vec3());
+    // `step_time` is this frame's delta, the one `actual_velocity` was divided by
+    dynamic_state.own_displacement = velocity * info.0.step_time;
 }
 
 // (scene entity, collider id) of collider player is standing on
@@ -785,6 +842,9 @@ fn record_ground_collider(
         let Ok(mut collider_data) = scenes.get_mut(scene) else {
             continue;
         };
+        if !collider_data.grounds_avatar(transform.translation.as_dvec3()) {
+            continue;
+        }
 
         if let Some((height, collider_id)) = collider_data.get_ground(transform.translation) {
             if height < best_height {
@@ -896,10 +956,13 @@ fn resolve_collisions(
     {
         prev = current_offset;
 
+        let position = transform.translation.as_dvec3() + current_offset;
         for (_, mut collider_data) in scenes.iter_mut() {
+            if !collider_data.reaches_avatar(position) {
+                continue;
+            }
             // Note: collisions that intersect the avatar central segment are automatically excluded here
-            let (scene_min, scene_max) =
-                collider_data.avatar_constraints(transform.translation.as_dvec3() + current_offset);
+            let (scene_min, scene_max) = collider_data.avatar_constraints(position);
 
             constraint_min = constraint_min.max(scene_min + current_offset);
             constraint_max = constraint_max.min(scene_max + current_offset);
@@ -964,6 +1027,7 @@ fn resolve_collisions(
 
     central.0 = scenes
         .iter_mut()
+        .filter(|(_, collider_data)| collider_data.reaches_avatar(transform.translation.as_dvec3()))
         .flat_map(|(scene, mut collider_data)| {
             let results = collider_data.avatar_central_collisions(transform.translation.as_dvec3());
             if results.is_empty() {
@@ -987,7 +1051,6 @@ fn resolve_collisions(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn broadcast_movement_info(
     mut info: ResMut<AvatarMovementInfo>,
     active_components: Query<
@@ -1134,6 +1197,9 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod scene_reach_tests;
 
 #[cfg(test)]
 mod jump_tests {

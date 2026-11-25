@@ -1,7 +1,9 @@
 //! Vocabulary every domain shares: signed-fetch verification, identities,
-//! the dRPC framework, LiveKit tokens, write gates, the descriptive-data
-//! `as_of` rule, the audit writer, caches and HTTP/upstream helpers. It
-//! sits below the domains and uses only the leaf crates.
+//! the dRPC framework, LiveKit tokens, internal service request signatures,
+//! the message router's token contract,
+//! write gates, the descriptive-data `as_of` rule, the audit writer, caches
+//! and HTTP/upstream helpers. It sits below the domains and uses only the
+//! leaf crates.
 
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use dcl_auth as auth;
@@ -14,15 +16,18 @@ pub mod client_ip;
 pub mod collections;
 pub mod cors;
 pub mod drain;
+pub mod eip1654_budget;
 pub mod errors;
 pub mod feature_flags;
 pub mod health;
 pub mod http_util;
 pub mod identity;
 pub mod js;
+pub mod json_number;
 pub mod limits;
 pub mod livekit;
 pub mod markup;
+pub mod message_router;
 pub mod notifications;
 pub mod nul_guard;
 pub mod openapi;
@@ -31,7 +36,10 @@ pub mod query_params;
 pub mod routing;
 pub mod rpc;
 pub mod segment_signature;
+pub mod send_sync;
 pub mod signed_fetch;
+pub mod signed_request;
+pub mod task;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_http;
 #[cfg(any(test, feature = "test-support"))]

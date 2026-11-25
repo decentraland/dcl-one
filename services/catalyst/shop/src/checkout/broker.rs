@@ -12,7 +12,7 @@ use crate::checkout::calls::{
     parse_wei, parse_wei_allow_zero,
 };
 use crate::checkout::claims::{
-    BROKER_PENDING_TAKEOVER_SECS, BrokerPurchaseClaim, claim_broker_purchase,
+    BROKER_PENDING_TAKEOVER_SECS, BrokerPurchaseClaim, checkout_frozen, claim_broker_purchase,
 };
 use crate::checkout::trade::{
     TradeDelivery, TradeExpectations, TradeIn, ValidatedTrade, build_trade_accept,
@@ -634,6 +634,13 @@ pub async fn resume(state: &SharedState, key: &str) -> Result<String, ApiError> 
     Ok(resume_existing(ctx).await?.forward_tx_hash)
 }
 
+fn frozen_checkout(key: &str) -> ApiError {
+    ApiError::Conflict(format!(
+        "broker buy {key:?} refused: its credits checkout is frozen (reversing, reversed or \
+         failed), so it is not bought"
+    ))
+}
+
 async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
     let BuyContext {
         state,
@@ -648,8 +655,10 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
          FROM shop.broker_purchases WHERE idempotency_key = $1",
     )
     .bind(key)
-    .fetch_one(&state.pool)
-    .await?;
+    .fetch_optional(&state.pool)
+    .await?
+    // only a frozen credits checkout's line is refused a claim row
+    .ok_or_else(|| frozen_checkout(key))?;
 
     match row.status.as_str() {
         "confirmed" => {
@@ -671,9 +680,14 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
         // was taken by a concurrent caller, or it is a claim kept from before
         // transactions were recorded ahead of their broadcast, whose failure
         // cannot prove that nothing was sent.
-        "error" if row.write_ahead => Err(ApiError::Conflict(format!(
-            "broker buy {key:?} failed before broadcast; retry the buy request to buy it again"
-        ))),
+        "error" if row.write_ahead => {
+            if checkout_frozen(&state.pool, key).await? {
+                return Err(frozen_checkout(key));
+            }
+            Err(ApiError::Conflict(format!(
+                "broker buy {key:?} failed before broadcast; retry the buy request to buy it again"
+            )))
+        }
         "error" => Err(ApiError::Conflict(format!(
             "broker buy {key:?} failed under a claim that did not record its transaction \
              before sending; it may have been broadcast, so it is not bought again \u{2014} \

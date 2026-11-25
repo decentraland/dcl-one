@@ -14,6 +14,11 @@
     box-shadow: inset 0 -1px 0 0 var(--dcl-transparencies-white-20);
   }
 
+  .compact {
+    composes: underline;
+    background: transparent;
+  }
+
   .pill {
     flex-wrap: wrap;
     gap: var(--dcl-space-16);
@@ -27,6 +32,10 @@
   @media (min-width: 1024px) {
     .insetContent {
       padding-inline: var(--dcl-space-32);
+    }
+
+    .compact.insetContent {
+      padding-inline: 0;
     }
   }
 
@@ -105,6 +114,17 @@
   }
   .routeText {
     composes: routeLabel from '../Tabs/Tabs.module.css';
+  }
+  /* Create remounts the bar with each route. Start the incoming underline at its centre on mount. */
+  @media (prefers-reduced-motion: no-preference) {
+    @starting-style {
+      .routeRoot[data-page='create'] .routeLink[aria-current] {
+        --tab-scale: 0;
+        background-position:
+          center bottom var(--tab-underline-offset),
+          left 0 bottom var(--tab-underline-offset);
+      }
+    }
   }
   .routeLink:focus-visible {
     outline-offset: -2px;
@@ -198,6 +218,79 @@
     }
     .routeActions {
       gap: var(--dcl-space-8);
+    }
+  }
+
+  .routeRoot[data-page='blog'] {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--dcl-space-24);
+  }
+
+  .routeRoot[data-page='blog'] .routeNavigation {
+    flex: 1 1 0;
+    width: auto;
+  }
+
+  .routeRoot[data-page='blog'] .routeControls {
+    flex: none;
+    max-width: none;
+    width: auto;
+    padding-block: var(--dcl-space-12);
+  }
+
+  .routeRoot[data-page='blog'] .routeSearch {
+    flex: none;
+    width: auto;
+  }
+
+  @media (max-width: 767px) {
+    .routeRoot[data-page='blog'] .routeControls {
+      display: none;
+    }
+  }
+}
+
+@layer dcl.components {
+  /* ShopChrome supplies the surrounding search, shortcuts and responsive rows. */
+  .routeRoot[data-layout='links'] {
+    display: block;
+    padding: 0;
+    min-height: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .routeRoot[data-layout='links'] .routeNavigation {
+    width: 100%;
+    padding: 0;
+  }
+  @media (width > 768px) {
+    .routeItem[data-mobile-only] {
+      display: none;
+    }
+  }
+
+  @media (forced-colors: none) {
+    .routeItem[data-accent='campaign'] .routeLink > span {
+      color: transparent;
+      background-image: var(--dcl-gradient-rainbow);
+      background-size: 200% 100%;
+      background-clip: text;
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .routeItem[data-accent='campaign'] .routeLink > span {
+      animation: campaignGradient 6s ease-in-out infinite alternate;
+    }
+  }
+
+  @keyframes campaignGradient {
+    from {
+      background-position-x: 0%;
+    }
+    to {
+      background-position-x: 100%;
     }
   }
 }

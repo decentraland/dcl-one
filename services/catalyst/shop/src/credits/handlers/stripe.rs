@@ -6,20 +6,27 @@
 //! reversal REVOKES the granted Credits, bounded by the purchase. Stripe
 //! does not order deliveries, so a reversal is also recorded against its
 //! PaymentIntent, and a grant that lands after it applies it in the same
-//! transaction; both serialize on the PaymentIntent.
+//! transaction; both serialize on the PaymentIntent. An event whose
+//! `livemode` differs from the secret key's mode is refused before its id is
+//! claimed; without a secret key there is no mode to compare, and the
+//! endpoint's signing secret alone decides. A dispute opened as an inquiry
+//! (`warning_*`) revokes nothing until `charge.dispute.funds_withdrawn`.
 //!
 //! The Stripe endpoint must deliver every event handled below, among them
 //! `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
-//! `checkout.session.async_payment_failed` and `payment_intent.succeeded`. A
-//! delayed payment method completes its session unpaid, which records the
-//! session's payment intent on the order. When the payment clears, whichever
-//! of `async_payment_succeeded` and `payment_intent.succeeded` lands first
-//! credits it, through the same grant, and the other adds nothing. Both are
-//! needed: a `payment_intent.succeeded` that arrives before the completion
-//! recorded the intent finds no order, and only the session's event credits
-//! it then. `payment_intent.payment_failed` is not handled: it also fires for
-//! an attempt the buyer retried in the open session, and a late delivery of
-//! one would fail an order whose debit is still on its way.
+//! `checkout.session.async_payment_failed`, `payment_intent.succeeded`,
+//! `charge.refunded`, `charge.dispute.created` and
+//! `charge.dispute.funds_withdrawn` (without it an inquiry that escalates is
+//! never revoked). A delayed payment method completes its session unpaid,
+//! which records the session's payment intent on the order. When the payment
+//! clears, whichever of `async_payment_succeeded` and
+//! `payment_intent.succeeded` lands first credits it, through the same grant,
+//! and the other adds nothing. Both are needed: a `payment_intent.succeeded`
+//! that arrives before the completion recorded the intent finds no order, and
+//! only the session's event credits it then. `payment_intent.payment_failed`
+//! is not handled: it also fires for an attempt the buyer retried in the open
+//! session, and a late delivery of one would fail an order whose debit is
+//! still on its way.
 
 use axum::Json;
 use axum::body::Bytes;
@@ -80,6 +87,18 @@ pub async fn webhook(
         .ok_or_else(|| ApiError::bad_request("event missing type"))?
         .to_string();
 
+    // Before the claim, so a refused event never consumes its id; an event without `livemode` is not live.
+    // Without a secret key (a node only settling payments already started) there is no mode to compare.
+    let event_live = event.get("livemode").and_then(JsonValue::as_bool) == Some(true);
+    if let Some(server_live) = state.settings.stripe_secret_key.as_deref().map(is_live_key)
+        && event_live != server_live
+    {
+        tracing::error!(event_id = %event_id, event_type = %event_type, event_live, server_live, "refusing a Stripe event from the other mode: check STRIPE_SECRET_KEY and the webhook endpoint");
+        return Err(ApiError::bad_request(
+            "Event mode does not match the server configuration",
+        ));
+    }
+
     let mut tx = state.credits.pool.begin().await?;
     let needs_processing =
         Credits::record_stripe_event_in_tx(&mut tx, &event_id, &event_type, &event).await?;
@@ -127,6 +146,10 @@ pub async fn webhook(
         }
         "charge.refunded" => {
             apply_partial_refund(&state, &mut tx, &object, &event_id).await?;
+        }
+        "charge.dispute.created" if is_inquiry(&object) => {
+            // An inquiry withdraws no funds; `charge.dispute.funds_withdrawn` reports one that escalates.
+            tracing::info!(event_id = %event_id, status = object.get("status").and_then(|v| v.as_str()).unwrap_or(""), "dispute inquiry opened; nothing revoked");
         }
         "charge.dispute.created" | "charge.dispute.funds_withdrawn" => {
             apply_full_reversal(&state, &mut tx, &object, &event_id, "disputed").await?;
@@ -360,6 +383,19 @@ async fn mark_session_terminal(
         }
     }
     Ok(())
+}
+
+/// A live secret key (`sk_live_`, or a restricted `rk_live_`) serves live events only; any other serves test events.
+pub(crate) fn is_live_key(secret_key: &str) -> bool {
+    secret_key.starts_with("sk_live_") || secret_key.starts_with("rk_live_")
+}
+
+/// A dispute opened as an inquiry (`warning_*` status): no funds are withdrawn while it stays one.
+pub(crate) fn is_inquiry(dispute: &JsonValue) -> bool {
+    dispute
+        .get("status")
+        .and_then(JsonValue::as_str)
+        .is_some_and(|s| s.starts_with("warning_"))
 }
 
 async fn apply_partial_refund(

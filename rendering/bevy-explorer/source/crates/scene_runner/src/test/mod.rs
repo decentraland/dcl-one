@@ -1,6 +1,5 @@
-use std::{path::PathBuf, sync::Mutex, time::Instant};
-
-use std::{collections::BTreeMap, fs::File, io::Write};
+use common::sync::MutexExt;
+use std::{collections::BTreeMap, sync::Mutex};
 
 use bevy::{
     app::{PluginGroupBuilder, ScheduleRunnerPlugin},
@@ -21,7 +20,6 @@ use dcl_deno_ipc::init_runtime;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use scene_material::SceneBoundPlugin;
-use spin_sleep::SpinSleeper;
 use system_bridge::SystemBridgePlugin;
 use ui_core::{scrollable::ScrollTargetEvent, stretch_uvs_image::StretchUvMaterial};
 
@@ -40,9 +38,9 @@ use common::{
     rpc::RpcCallEvent,
     sets::RealmLifecycle,
     structs::{
-        AppConfig, CurrentRealm, CursorLocks, GraphicsSettings, PermissionUsed, PreviewMode,
-        PrimaryCamera, PrimaryPlayerRes, SceneGlobalLight, SceneLoadDistance, ServerConfiguration,
-        TimeOfDay, ToolTips,
+        AppConfig, AudioSettings, ClientWindowFocus, CurrentRealm, CursorLocks, GraphicsSettings,
+        PermissionUsed, PreviewMode, PrimaryCamera, PrimaryPlayerRes, SceneGlobalLight,
+        SceneLoadDistance, ServerConfiguration, TimeOfDay, ToolTips,
     },
 };
 use comms::CommsPlugin;
@@ -69,7 +67,7 @@ impl PluginGroup for TestPlugins {
     fn build(self) -> PluginGroupBuilder {
         let builder = PluginGroupBuilder::start::<Self>();
 
-        let mut log_added = LOG_ADDED.lock().unwrap();
+        let mut log_added = LOG_ADDED.lock_ignore_poison();
         let builder = if !*log_added {
             *log_added = true;
             builder.add(LogPlugin::default())
@@ -121,6 +119,8 @@ fn init_test_app(entity_json: &str) -> App {
     let mut app = App::new();
 
     // Add our systems
+    app.insert_resource(ClientWindowFocus::Focused);
+    app.init_resource::<AudioSettings>();
     app.insert_resource(AppConfig {
         graphics: GraphicsSettings {
             fps_target: 0,
@@ -219,8 +219,6 @@ fn init_test_app(entity_json: &str) -> App {
     });
     app.world_mut().insert_resource(SceneLoopSchedule {
         schedule: skip_loop_schedule,
-        next_frame_end: Instant::now(),
-        sleeper: SpinSleeper::default(),
     });
 
     // run app once to get the scene initialized
@@ -239,8 +237,6 @@ fn init_test_app(entity_json: &str) -> App {
 
     app.world_mut().insert_resource(SceneLoopSchedule {
         schedule: Schedule::new(SceneLoopLabel),
-        next_frame_end: Instant::now(),
-        sleeper: SpinSleeper::default(),
     });
 
     app
@@ -258,8 +254,10 @@ macro_rules! assert_output_eq {
 }
 
 // write output to file
-#[allow(dead_code)]
+#[cfg(feature = "gen-tests")]
 fn write_expected(expected: String, filename: &str) {
+    use std::{fs::File, io::Write, path::PathBuf};
+
     let mut path = PathBuf::from(file!());
     path.pop();
     path.push(filename);
@@ -533,6 +531,124 @@ fn cyclic_recovery() {
         let graph = make_graph(&mut app);
         check_or_write!(graph, "expected/cyclic_recovery.dot");
     }
+}
+
+/// One scene tick: writes each `(entity, parent)` as a transform, then runs the lifecycle and
+/// parenting systems.
+fn set_parents(app: &mut App, store: &mut CrdtStore, tick: u32, parents: &[(u16, u16)]) {
+    let (scene, mut context) = app
+        .world_mut()
+        .query::<(Entity, &mut RendererSceneContext)>()
+        .single_mut(app.world_mut())
+        .unwrap();
+    for &(id, parent) in parents {
+        let entity = SceneEntityId { id, generation: 0 };
+        if context.bevy_entity(entity).is_none() {
+            context.nascent.insert(entity);
+        }
+        store.try_update(
+            SceneComponentId::TRANSFORM,
+            CrdtType::LWW_ENT,
+            entity,
+            SceneCrdtTimestamp(tick),
+            Some(&mut DclReader::new(&make_reparent_buffer(parent))),
+        );
+    }
+    let updates = store
+        .take_updates()
+        .lww
+        .get(&SceneComponentId::TRANSFORM)
+        .cloned()
+        .unwrap_or_default();
+    app.world_mut()
+        .entity_mut(scene)
+        .insert(CrdtStateComponent::<CrdtLWWState, DclTransformAndParent>::new(updates));
+    Schedule::new(SceneLoopLabel)
+        .add_systems(
+            (
+                process_scene_entity_lifecycle,
+                process_transform_and_parent_updates,
+            )
+                .chain(),
+        )
+        .run(app.world_mut());
+}
+
+/// The scene id of the parent of every scene entity below the root.
+fn parents(app: &mut App) -> BTreeMap<u16, u16> {
+    let world = app.world_mut();
+    let mut entities = world.query::<(&SceneEntity, &ChildOf)>();
+    entities
+        .iter(world)
+        .filter_map(|(entity, parent)| {
+            let parent = world.get::<SceneEntity>(parent.parent())?;
+            Some((entity.id.id, parent.id.id))
+        })
+        .collect()
+}
+
+#[test]
+fn flat_hierarchy() {
+    let mut app = init_test_app("empty_scene.entity_definition");
+    let cubes = (512..528).map(|id| (id, 0)).collect::<Vec<_>>();
+    set_parents(&mut app, &mut CrdtStore::default(), 0, &cubes);
+    assert_eq!(parents(&mut app), BTreeMap::from_iter(cubes));
+}
+
+#[test]
+fn reparenting() {
+    let mut app = init_test_app("empty_scene.entity_definition");
+    let mut store = CrdtStore::default();
+    let mut chain = [
+        (512, 0),
+        (513, 512),
+        (514, 513),
+        (515, 514),
+        (516, 515),
+        (517, 516),
+    ];
+    set_parents(&mut app, &mut store, 0, &chain);
+    assert_eq!(parents(&mut app), BTreeMap::from(chain));
+
+    chain[2] = (514, 0);
+    set_parents(&mut app, &mut store, 1, &chain[2..3]);
+    assert_eq!(parents(&mut app), BTreeMap::from(chain));
+}
+
+#[test]
+fn late_entities() {
+    let mut app = init_test_app("empty_scene.entity_definition");
+    let mut store = CrdtStore::default();
+    // a parent the scene has not sent yet is created below the root
+    set_parents(
+        &mut app,
+        &mut store,
+        0,
+        &[(515, 514), (516, 515), (517, 516)],
+    );
+    assert_eq!(
+        parents(&mut app),
+        BTreeMap::from([(514, 0), (515, 514), (516, 515), (517, 516)])
+    );
+
+    set_parents(&mut app, &mut store, 1, &[(514, 513)]);
+    assert_eq!(
+        parents(&mut app),
+        BTreeMap::from([(513, 0), (514, 513), (515, 514), (516, 515), (517, 516)])
+    );
+
+    set_parents(&mut app, &mut store, 2, &[(513, 512), (512, 0)]);
+    assert_eq!(
+        parents(&mut app),
+        BTreeMap::from([
+            (512, 0),
+            (513, 512),
+            (514, 513),
+            (515, 514),
+            (516, 515),
+            (517, 516)
+        ])
+    );
 }
 
 #[test]

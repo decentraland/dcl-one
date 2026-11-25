@@ -8,8 +8,10 @@ import { openPopup, showConfirm } from '../../design'
 import { useSession } from '../session/SessionContext'
 import { requestPassport, useProfile } from '../session/profileStore'
 import { relationshipOf } from '@explorer-core/lib/relationship'
+import { track } from '@explorer-core/lib/analytics'
 import { openNameEdit } from './NameEditModal'
 import { ProfilePassport, type PassportTab } from './ProfilePassport'
+import styles from './ProfilePassport.module.css'
 import type { Profile } from '@explorer-core/engine/protocol'
 import { splitName, userColor } from '@explorer-core/lib/identity'
 import { hexToColor3 } from '@explorer-core/lib/color'
@@ -19,6 +21,7 @@ import { startCallWith } from '../voiceChat/callGate'
 import { openGiftPicker } from '../gifting/GiftPicker'
 import { useGiftingAvailable } from '../gifting/useGifting'
 import { canJumpToFriend, jumpToFriend } from '../friends/jumpToFriend'
+import { travelToPhoto } from '../gallery/reelActions'
 
 export function Passport({
   userId,
@@ -45,8 +48,7 @@ export function Passport({
   const a = userId.toLowerCase()
   const isSelf = !!session.profile.data && session.profile.data.address.toLowerCase() === a
   const known = useProfile(userId)
-  // a guest's account is a throwaway key on one device: an item sent there would be lost with it
-  const canGift = useGiftingAvailable() && !isSelf && known?.isGuest !== true
+  const canGift = useGiftingAvailable() && !isSelf
   const stored: Profile =
     known ??
     (isSelf && session.profile.data
@@ -69,6 +71,15 @@ export function Passport({
   // Still this account's own passport: a colour picked before an account switch is not the next one's.
   const ownRef = useRef(isSelf)
   ownRef.current = isSelf
+  // Social butterfly counts other players' passports; one's own is `profile_opened`. Reported
+  // once your profile is known, so your own passport is never taken for someone else's.
+  const meKnown = session.profile.data != null
+  const reported = useRef<string | null>(null)
+  useEffect(() => {
+    if (!meKnown || reported.current === a) return
+    reported.current = a
+    track(isSelf ? 'profile_opened' : 'passport_opened', { receiver_id: userId })
+  }, [a, userId, isSelf, meKnown])
   useEffect(
     () => () => {
       const picked = pickedRef.current
@@ -143,9 +154,10 @@ export function Passport({
         remove: session.gallery.remove,
         metas: session.gallery.metas,
         loadPhoto: session.gallery.loadPhoto,
-        onTeleport: (x, y) => {
+        loadWearables: session.gallery.loadWearables,
+        onJumpIn: (place) => {
           // A refused Jump In leaves the passport and its photo open.
-          if (session.map.teleport(x, y) === 'refused') return false
+          if (travelToPhoto(place, session.map) === 'refused') return false
           onClose()
           return true
         },
@@ -176,6 +188,7 @@ export function openPassport(userId: string, tab?: PassportTab): () => void {
       />
     ),
     {
+      className: styles.scrim,
       backdropClickCloses: () => !dirty.current,
       // Sync `true` when there is nothing to lose, so an ordinary close stays as immediate as it
       // was; only an edit in progress opens the dialog.

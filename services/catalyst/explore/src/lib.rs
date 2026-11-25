@@ -14,6 +14,7 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 // The crates this one builds on, under their module names (AGENTS.md).
+pub(crate) use catalyst_chain_index as chain_index;
 pub(crate) use catalyst_config::config;
 pub(crate) use catalyst_content as content;
 #[cfg(test)]
@@ -36,6 +37,7 @@ pub(crate) mod json_date;
 mod keyed_locks;
 pub mod mirror_state;
 pub mod moderation_hooks;
+pub mod node_assets;
 pub mod opensea;
 pub mod places;
 pub mod rate;
@@ -131,9 +133,11 @@ impl MirrorSource {
 pub struct Settings {
     /// The node's content base URL; thumbnails from it pass the image filter.
     pub content_public_url: String,
-    /// The deployment's own domain, swapped into mirrored upstream poster
-    /// URLs; `None` (a decentraland.org node, or no PUBLIC_URL) keeps them.
-    pub asset_rewrite_domain: Option<String>,
+    /// The deployment's public base used for node-local asset paths in API records.
+    /// When unset, records retain their upstream asset URLs.
+    pub asset_rewrite_base: Option<String>,
+    /// The configured public base for local posters. An unset value stays relative.
+    pub configured_public_base: Option<String>,
     /// Bearer for the events moderation routes; unset refuses them.
     pub events_admin_token: Option<String>,
     /// Optional moderation webhook, dispatched only with operator writes enabled.
@@ -217,19 +221,31 @@ impl std::fmt::Debug for Settings {
 }
 
 impl Settings {
-    /// The old `asset_rewrite_domain` rule: the public host unless it is
-    /// decentraland.org or a subdomain. Only a domain can carry the
-    /// `events-assets-*` subdomain, so an IP address, `localhost` or another
-    /// single-label host (a local development stack) keeps the upstream URLs.
-    pub fn asset_rewrite_domain_for(public_url: Option<&str>) -> Option<String> {
-        public_url
-            .and_then(|u| url::Url::parse(u).ok())
-            .and_then(|u| match u.host() {
-                Some(url::Host::Domain(h)) => Some(h.to_string()),
-                _ => None,
-            })
-            .filter(|h| h.contains('.'))
-            .filter(|h| h != "decentraland.org" && !h.ends_with(".decentraland.org"))
+    /// Use the complete public base for node-local paths when the node has
+    /// a public domain outside decentraland.org.
+    pub fn asset_rewrite_base_for(public_url: Option<&str>) -> Option<String> {
+        let url = Self::parse_public_base(public_url?)?;
+        let url::Host::Domain(host) = url.host()? else {
+            return None;
+        };
+        (host.contains('.') && host != "decentraland.org" && !host.ends_with(".decentraland.org"))
+            .then(|| url.as_str().trim_end_matches('/').to_owned())
+    }
+
+    pub fn configured_public_base_for(public_url: Option<&str>) -> Option<String> {
+        let url = Self::parse_public_base(public_url?)?;
+        Some(url.as_str().trim_end_matches('/').to_owned())
+    }
+
+    fn parse_public_base(value: &str) -> Option<url::Url> {
+        let url = url::Url::parse(value).ok()?;
+        (matches!(url.scheme(), "http" | "https")
+            && url.host().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none())
+        .then_some(url)
     }
 
     pub fn events_asset_base_for(public_url: &str) -> String {
@@ -239,7 +255,8 @@ impl Settings {
     pub fn for_tests() -> Self {
         Self {
             content_public_url: "http://localhost/content/".to_string(),
-            asset_rewrite_domain: None,
+            asset_rewrite_base: None,
+            configured_public_base: None,
             events_admin_token: None,
             events_slack_webhook: None,
             events_upcoming_summaries_enabled: false,
@@ -301,9 +318,23 @@ pub struct ExploreState {
     /// The Snapshot voting-power client the favorite and like writes score
     /// their signer with (`places::voting_power`).
     pub voting_power: places::voting_power::Client,
+    /// The content read-through event profiles fall back to; `None` reads this node's alone.
+    pub read_through: Option<Arc<content::read_through::ReadThrough>>,
 }
 
 pub type SharedState = Arc<ExploreState>;
+
+/// The prefixes `serve` nests this router under, besides the root mount.
+pub const NESTS: [&str; 2] = ["/places", "/events"];
+
+/// The nest-stripped route, so a proxy's `x-original-path` can match it.
+fn signed_path(path: &str) -> signed_fetch::SignedPath {
+    let local = NESTS
+        .into_iter()
+        .find_map(|nest| path.strip_prefix(nest).filter(|rest| rest.starts_with('/')))
+        .unwrap_or(path);
+    signed_fetch::SignedPath::new(path, local)
+}
 
 impl ExploreState {
     pub fn new(
@@ -313,11 +344,16 @@ impl ExploreState {
     ) -> Self {
         Self {
             voting_power: places::voting_power::Client::new(settings.snapshot_score_url.clone()),
-            places: PlacesComponent::new(pool.clone(), &settings.content_public_url)
-                .with_worlds_mirror(settings.worlds_upstream.is_some()),
+            places: PlacesComponent::new(
+                pool.clone(),
+                &settings.content_public_url,
+                settings.asset_rewrite_base.clone(),
+            )
+            .with_worlds_mirror(settings.worlds_upstream.is_some()),
             events: EventsComponent::new(
                 pool.clone(),
-                settings.asset_rewrite_domain.clone(),
+                settings.asset_rewrite_base.clone(),
+                settings.configured_public_base.clone(),
                 settings.events_asset_base_url.clone(),
             ),
             schedules: SchedulesComponent::new(pool.clone()),
@@ -329,12 +365,22 @@ impl ExploreState {
             eip1654,
             storage: None,
             cors: Arc::new(cors::Policy::upstream()),
+            read_through: None,
         }
     }
 
     /// The blob store the poster uploads land in.
     pub fn with_storage(mut self, storage: Arc<crate::storage::Storage>) -> Self {
         self.storage = Some(storage);
+        self
+    }
+
+    /// The content read-through event profiles fall back to.
+    pub fn with_read_through(
+        mut self,
+        read_through: Option<Arc<content::read_through::ReadThrough>>,
+    ) -> Self {
+        self.read_through = read_through;
         self
     }
 
@@ -430,6 +476,7 @@ impl ExploreState {
                 E::CatalystUnavailable(_) => {
                     ApiError::service_unavailable("Signature verification unavailable")
                 }
+                E::RateLimited => ApiError::http(429, e.to_string()),
             }
         })
     }
@@ -440,10 +487,10 @@ impl ExploreState {
         method: &str,
         path: &str,
     ) -> Result<String, signed_fetch::SignedFetchError> {
-        signed_fetch::require_signer(
+        signed_fetch::require_signer_at(
             headers,
             method,
-            path,
+            &signed_path(path),
             signed_fetch::PayloadPolicy::V6ThenLegacy,
             self.eip1654.as_deref(),
         )
@@ -454,10 +501,10 @@ impl ExploreState {
     /// The lowercased signer of a signed-fetch request, or `None` for an
     /// anonymous or unverifiable one.
     pub async fn viewer(&self, headers: &HeaderMap, method: &str, path: &str) -> Option<String> {
-        signed_fetch::optional_signer(
+        signed_fetch::optional_signer_at(
             headers,
             method,
-            path,
+            &signed_path(path),
             signed_fetch::PayloadPolicy::V6ThenLegacy,
             self.eip1654.as_deref(),
         )
@@ -481,6 +528,7 @@ impl ExploreState {
                     base: self.settings.events_base_url.clone(),
                     jump_in_site_url: self.settings.jump_in_site_url.clone(),
                     asset_base: self.settings.events_asset_base_url.clone(),
+                    public_base: self.settings.configured_public_base.clone(),
                 },
                 jobs,
             );
@@ -534,6 +582,7 @@ impl ExploreState {
                         &pool,
                         &source,
                         interval,
+                        &places::mirror::PAGE_RETRY_DELAYS,
                         &ctx.cancel,
                     )
                     .await?;
@@ -572,6 +621,7 @@ impl ExploreState {
                         &pool,
                         &source,
                         interval,
+                        &places::mirror::PAGE_RETRY_DELAYS,
                         &ctx.cancel,
                     )
                     .await?;
@@ -1117,6 +1167,82 @@ mod tests {
 
     use super::*;
 
+    /// A signature over the host-rewritten path verifies only as the proxy reports it.
+    #[tokio::test]
+    async fn a_signature_over_the_rewritten_host_path_verifies_under_the_nest() {
+        use signed_fetch::test_support::{address, signed_headers};
+        let state = offline_state();
+        let forwarded = |mut headers: HeaderMap, original: &str| {
+            headers.insert(
+                signed_fetch::ORIGINAL_PATH_HEADER,
+                original.parse().unwrap(),
+            );
+            headers
+        };
+        let signed = signed_headers("post", "/api/events", "{}", true).await;
+        let ok = state
+            .signer(
+                &forwarded(signed.clone(), "/api/events?x=1"),
+                "post",
+                "/events/api/events",
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok, address());
+        let rating = "/api/places/7b5c2f8e-6b0a-4c55-9a43-1f1d3c0e8a10/rating";
+        let signed_rating = signed_headers("put", rating, "{}", true).await;
+        let ok = state
+            .wkc_signer(
+                &forwarded(signed_rating, rating),
+                "put",
+                &format!("/places{rating}"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok, address());
+        assert!(
+            state
+                .viewer(
+                    &forwarded(signed.clone(), "/api/events"),
+                    "post",
+                    "/events/api/events"
+                )
+                .await
+                .is_some()
+        );
+
+        // The root mount verifies with or without the forwarded path.
+        for headers in [signed.clone(), forwarded(signed.clone(), "/api/events")] {
+            let ok = state.signer(&headers, "post", "/api/events").await.unwrap();
+            assert_eq!(ok, address());
+        }
+
+        // Missing or mismatched forwarded path, or another signed path: refused.
+        for (headers, path) in [
+            (signed.clone(), "/events/api/events"),
+            (
+                forwarded(signed.clone(), "/api/events"),
+                "/events/api/schedules",
+            ),
+            (
+                forwarded(
+                    signed_headers("post", "/api/schedules", "{}", true).await,
+                    "/api/events",
+                ),
+                "/events/api/events",
+            ),
+            (
+                forwarded(signed.clone(), "/api/events"),
+                "/places/api/events/x",
+            ),
+        ] {
+            assert!(
+                state.signer(&headers, "post", path).await.is_err(),
+                "{path}"
+            );
+        }
+    }
+
     #[test]
     fn a_mirror_source_must_be_a_public_upstream_that_is_not_this_node() {
         let ok = MirrorSource::checked(
@@ -1160,20 +1286,24 @@ mod tests {
     }
 
     #[test]
-    fn the_asset_rewrite_domain_is_the_public_host_unless_it_is_decentraland() {
+    fn the_asset_rewrite_base_preserves_the_public_mount_unless_it_is_decentraland() {
         assert_eq!(
-            Settings::asset_rewrite_domain_for(Some("https://interconnected.online/")).as_deref(),
-            Some("interconnected.online")
+            Settings::asset_rewrite_base_for(Some("https://node.example:8443/prefix/")).as_deref(),
+            Some("https://node.example:8443/prefix")
         );
         assert_eq!(
-            Settings::asset_rewrite_domain_for(Some("https://events.decentraland.org")),
+            Settings::asset_rewrite_base_for(Some("https://interconnected.online/")).as_deref(),
+            Some("https://interconnected.online")
+        );
+        assert_eq!(
+            Settings::asset_rewrite_base_for(Some("https://events.decentraland.org")),
             None
         );
         assert_eq!(
-            Settings::asset_rewrite_domain_for(Some("https://decentraland.org")),
+            Settings::asset_rewrite_base_for(Some("https://decentraland.org")),
             None
         );
-        assert_eq!(Settings::asset_rewrite_domain_for(None), None);
+        assert_eq!(Settings::asset_rewrite_base_for(None), None);
         for local in [
             "http://127.0.0.1:5212",
             "http://localhost:5212/",
@@ -1181,12 +1311,12 @@ mod tests {
             "http://devbox:5212",
         ] {
             assert_eq!(
-                Settings::asset_rewrite_domain_for(Some(local)),
+                Settings::asset_rewrite_base_for(Some(local)),
                 None,
                 "{local}"
             );
         }
-        assert_eq!(Settings::asset_rewrite_domain_for(Some("garbage")), None);
+        assert_eq!(Settings::asset_rewrite_base_for(Some("garbage")), None);
     }
 
     #[test]
@@ -1307,18 +1437,15 @@ mod tests {
     #[tokio::test]
     async fn unknown_api_routes_answer_the_upstream_json_404() {
         let app = router(offline_state());
-        let nested = Router::new()
-            .nest("/places", router(offline_state()))
-            .nest("/events", router(offline_state()));
+        let nested = NESTS.into_iter().fold(Router::new(), |nested, nest| {
+            nested.nest(nest, router(offline_state()))
+        });
         let expected = json!({"ok": false, "error": "NotFound", "code": "not_found"});
-        for (app, uri) in [
-            (&app, "/api/nope"),
-            (&app, "/api/places/x/nope/deeper"),
-            (&app, "/api"),
-            (&nested, "/places/api/nope"),
-            (&nested, "/events/api/nope"),
-        ] {
-            let (status, headers, body) = send(app, Method::GET, uri, &[]).await;
+        let root =
+            ["/api/nope", "/api/places/x/nope/deeper", "/api"].map(|uri| (&app, uri.to_string()));
+        let mounts = NESTS.map(|nest| (&nested, format!("{nest}/api/nope")));
+        for (app, uri) in root.into_iter().chain(mounts) {
+            let (status, headers, body) = send(app, Method::GET, &uri, &[]).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
             assert_eq!(body, expected, "{uri}");
             assert_eq!(headers["content-type"], "application/json", "{uri}");

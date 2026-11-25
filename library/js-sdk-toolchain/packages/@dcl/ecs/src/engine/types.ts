@@ -1,16 +1,16 @@
 import type { ISchema } from '../schemas/ISchema'
-import { MapResult, Spec } from '../schemas/Map'
-import { OnChangeFunction } from '../systems/crdt'
-import { Transport } from '../systems/crdt/types'
-import {
+import type { MapResult, Spec } from '../schemas/Map'
+import type { OnChangeFunction } from '../systems/crdt'
+import type { Transport } from '../systems/crdt/types'
+import type {
   ComponentDefinition,
   GrowOnlyValueSetComponentDefinition,
   LastWriteWinElementSetComponentDefinition
 } from './component'
-import { Entity, IEntityContainer, EntityState } from './entity'
+import type { Entity, IEntityContainer, EntityState } from './entity'
 import { ValueSetOptions } from './grow-only-value-set-component-definition'
-import { ReadonlyComponentSchema } from './readonly'
-import { SystemFn, SystemItem } from './systems'
+import type { ReadonlyComponentSchema } from './readonly'
+import type { SystemFn, SystemItem } from './systems'
 export * from './component'
 export { ValueSetOptions }
 

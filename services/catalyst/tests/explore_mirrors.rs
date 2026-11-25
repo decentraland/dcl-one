@@ -38,6 +38,8 @@ const WORLDS_PAGE: &str = include_str!("fixtures/explore_mirrors/worlds_page.jso
 const ACTIVE_PAGE: &str =
     include_str!("fixtures/explore_mirrors/upstream_events_active_page0.json");
 const HOUR: Duration = Duration::from_secs(3600);
+/// The production retry count without its 2+4+8 s of sleeps.
+const RETRY: [Duration; 3] = [Duration::ZERO; 3];
 
 fn fixture_worlds() -> Vec<Value> {
     let body: Value = serde_json::from_str(WORLDS_PAGE).unwrap();
@@ -432,6 +434,7 @@ async fn worlds_pass_pages_upserts_sweeps_twice_missed_and_records_a_complete_pa
         &pool,
         &up.source(),
         HOUR,
+        &RETRY,
         &CancellationToken::new(),
     )
     .await
@@ -494,6 +497,7 @@ async fn worlds_pass_fails_open_never_sweeps_and_reports_incomplete() {
         &pool,
         &up.source(),
         HOUR,
+        &RETRY,
         &CancellationToken::new(),
     )
     .await
@@ -605,7 +609,7 @@ async fn a_cancelled_worlds_pass_resumes_from_its_persisted_cursor() {
     let run = {
         let (pool, source, cancel) = (pool.clone(), up.source(), cancel.clone());
         tokio::spawn(async move {
-            places_mirror::run_worlds_pass(&client(), &pool, &source, HOUR, &cancel).await
+            places_mirror::run_worlds_pass(&client(), &pool, &source, HOUR, &RETRY, &cancel).await
         })
     };
     up.hold.notified().await;
@@ -628,6 +632,7 @@ async fn a_cancelled_worlds_pass_resumes_from_its_persisted_cursor() {
         &pool,
         &up.source(),
         HOUR,
+        &RETRY,
         &CancellationToken::new(),
     )
     .await
@@ -666,6 +671,7 @@ async fn a_cancelled_worlds_pass_resumes_from_its_persisted_cursor() {
         &pool,
         &up.source(),
         HOUR,
+        &RETRY,
         &CancellationToken::new(),
     )
     .await
@@ -715,7 +721,7 @@ async fn a_resumed_worlds_pass_after_a_skipped_page_is_incomplete_and_never_swee
     let run = {
         let (pool, source, cancel) = (pool.clone(), up.source(), cancel.clone());
         tokio::spawn(async move {
-            places_mirror::run_worlds_pass(&client(), &pool, &source, HOUR, &cancel).await
+            places_mirror::run_worlds_pass(&client(), &pool, &source, HOUR, &RETRY, &cancel).await
         })
     };
     up.hold.notified().await;
@@ -728,6 +734,7 @@ async fn a_resumed_worlds_pass_after_a_skipped_page_is_incomplete_and_never_swee
         &pool,
         &up.source(),
         HOUR,
+        &RETRY,
         &CancellationToken::new(),
     )
     .await
@@ -831,6 +838,7 @@ async fn a_complete_places_pass_replaces_the_derived_rows_keeps_worlds_and_serve
         &pool,
         &up.source(),
         HOUR,
+        &RETRY,
         &CancellationToken::new(),
     )
     .await
@@ -987,6 +995,7 @@ async fn a_places_mirror_serves_its_copy_with_as_of_and_503_before_its_first_pas
         &pool,
         &up.source(),
         HOUR,
+        &RETRY,
         &CancellationToken::new(),
     )
     .await
@@ -1268,6 +1277,7 @@ async fn an_empty_upstream_answer_leaves_the_derived_rows_in_place() {
         &pool,
         &up.source(),
         HOUR,
+        &RETRY,
         &CancellationToken::new(),
     )
     .await
@@ -1289,6 +1299,7 @@ async fn a_failed_places_page_keeps_the_cursor_and_the_next_run_resumes_there() 
         &pool,
         &up.source(),
         HOUR,
+        &RETRY,
         &CancellationToken::new(),
     )
     .await
@@ -1326,8 +1337,12 @@ async fn upsert_real_page_is_idempotent_and_serves() {
         "upsert is idempotent"
     );
 
-    let component =
-        EventsComponent::new(pool.clone(), None, "https://events.decentraland.org".into());
+    let component = EventsComponent::new(
+        pool.clone(),
+        None,
+        None,
+        "https://events.decentraland.org".into(),
+    );
     let sample_id = events[0]["id"].as_str().unwrap();
     let rec = component
         .get(sample_id)
@@ -2105,10 +2120,16 @@ async fn a_resumed_worlds_pass_stopped_at_the_offset_ceiling_did_not_fetch_all()
         .await
         .unwrap();
 
-    let out =
-        places_mirror::run_worlds_pass(&client(), &pool, &source, HOUR, &CancellationToken::new())
-            .await
-            .unwrap();
+    let out = places_mirror::run_worlds_pass(
+        &client(),
+        &pool,
+        &source,
+        HOUR,
+        &RETRY,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     assert_eq!(out.resumed_from, Some(100_000));
     assert_eq!((out.failed_pages, out.failed_rows), (0, 0));
     assert!(!out.fetched_all && !out.complete && !out.cancelled);
@@ -2250,8 +2271,12 @@ async fn the_viewers_attendance_rides_in_the_list_and_get_statements() {
     .execute(&pool)
     .await
     .unwrap();
-    let component =
-        EventsComponent::new(pool.clone(), None, "https://events.decentraland.org".into());
+    let component = EventsComponent::new(
+        pool.clone(),
+        None,
+        None,
+        "https://events.decentraland.org".into(),
+    );
 
     let filters = EventListFilters {
         limit: 200,
@@ -2589,10 +2614,16 @@ async fn live_worlds_pass_against_places_decentraland_org() {
     .unwrap();
     let client = catalyst::http::Outbound::new(catalyst::http::HttpClientCfg::serve(4)).unwrap();
     let started = std::time::Instant::now();
-    let out =
-        places_mirror::run_worlds_pass(&client, &pool, &source, HOUR, &CancellationToken::new())
-            .await
-            .unwrap();
+    let out = places_mirror::run_worlds_pass(
+        &client,
+        &pool,
+        &source,
+        HOUR,
+        &places_mirror::PAGE_RETRY_DELAYS,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     eprintln!("live worlds pass: {out:?} in {:?}", started.elapsed());
     assert!(out.complete, "{out:?}");
     assert!(out.upserted > 1000, "{out:?}");
@@ -2637,6 +2668,7 @@ async fn a_local_rsvp_outside_the_upstream_preview_keeps_the_signed_delta_estima
     events_mirror::upsert_event(&db.pool, &event).await.unwrap();
     let component = EventsComponent::new(
         db.pool.clone(),
+        None,
         None,
         "https://events.decentraland.org".into(),
     );

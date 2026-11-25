@@ -220,10 +220,6 @@
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 19.5px;
 }
-/* a card over the lobby is 374px narrower than the page: four columns keep the card's 358px width */
-.gridCard {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
 .more {
   align-self: center;
   margin-top: 20px;

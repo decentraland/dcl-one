@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createIdentity, createIdentityKeys, signWithKeys } from '../../renderer/src/lib/identity';
 import { signedHeaders } from '../../renderer/src/lib/signedFetch';
-import { request, resolveUrl } from '../src/modules/metrics';
+import { parseRetryAfter, request, resolveUrl } from '../src/modules/metrics';
 
 const BASE = 'https://creators-data.decentraland.zone/v1';
 
@@ -330,6 +330,19 @@ describe('request', () => {
       });
     });
 
+    it('should pass on how long the service asked the client to wait', async () => {
+      stubFetch({
+        ok: false,
+        status: 503,
+        headers: new Headers({ 'retry-after': '3600' }),
+        text: () => Promise.resolve('{"message":"writes are off"}'),
+      });
+
+      const response = await request({ baseUrl: BASE, path: '/metrics', body });
+
+      expect(response).toMatchObject({ ok: false, status: 503, retryAfterSeconds: 3600 });
+    });
+
     it('should report a 401 rather than throwing, so the UI can render it', async () => {
       stubFetch({ ok: false, status: 401, text: () => Promise.resolve('') });
 
@@ -349,5 +362,22 @@ describe('request', () => {
       ).toMatchObject({ ok: false, status: 0 });
       expect(fetchSpy).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('when a response asks the client to wait', () => {
+  const NOW = Date.parse('2026-11-12T12:00:00Z');
+
+  it('should read Retry-After given in seconds', () => {
+    expect(parseRetryAfter('3600', NOW)).toBe(3600);
+  });
+
+  it('should read Retry-After given as a date', () => {
+    expect(parseRetryAfter('Wed, 12 Nov 2026 12:01:00 GMT', NOW)).toBe(60);
+  });
+
+  it('should ignore a missing or unreadable value', () => {
+    expect(parseRetryAfter(null, NOW)).toBeNull();
+    expect(parseRetryAfter('soon', NOW)).toBeNull();
   });
 });

@@ -104,19 +104,26 @@ pub async fn op_kernel_fetch_headers(
 }
 
 #[wasm_bindgen]
-pub async fn op_set_avatar(state: &WorkerContext, avatar: JsValue) -> Result<u32, WasmError> {
+pub async fn op_set_avatar(
+    state: &WorkerContext,
+    owner: String,
+    avatar: JsValue,
+) -> Result<JsValue, WasmError> {
     // map_err rather than serde_parse!'s unwrap: with deny_unknown_fields a caller mistake
     // must surface as a catchable JS error, not a worker panic.
     let avatar = serde_wasm_bindgen::from_value(avatar)
         .map_err(|e| WasmError::from(anyhow::anyhow!("setAvatar: {e}")))?;
-    dcl_js::system_api::op_set_avatar(state.rc(), avatar)
-        .await
-        .map_err(WasmError::from)
+    let result = dcl_js::system_api::op_set_avatar(state.rc(), owner, avatar).await?;
+    result
+        .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+        .map_err(|e| WasmError::from(anyhow::anyhow!("setAvatar: {e}")))
 }
 
 #[wasm_bindgen]
-pub async fn op_native_input(state: &WorkerContext) -> String {
-    dcl_js::system_api::op_native_input(state.rc()).await
+pub async fn op_native_input(state: &WorkerContext) -> Result<String, WasmError> {
+    dcl_js::system_api::op_native_input(state.rc())
+        .await
+        .map_err(WasmError::from)
 }
 
 #[wasm_bindgen]
@@ -180,6 +187,11 @@ pub async fn op_get_service_urls(state: &WorkerContext) -> Result<JsValue, WasmE
 }
 
 #[wasm_bindgen]
+pub async fn op_get_official_wallets(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_official_wallets(state.rc()).await)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_welcome(state: &WorkerContext) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::system_api::op_get_welcome(state.rc()).await)
 }
@@ -192,14 +204,44 @@ pub async fn op_accept_terms(state: &WorkerContext) -> Result<(), WasmError> {
 }
 
 #[wasm_bindgen]
+pub async fn op_get_world_access(
+    state: &WorkerContext,
+    world: String,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_world_access(state.rc(), world).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_satellite_tile(
+    state: &WorkerContext,
+    path: String,
+) -> Result<String, WasmError> {
+    Ok(dcl_js::system_api::op_get_satellite_tile(state.rc(), path).await?)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_satellite_view(state: &WorkerContext) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::system_api::op_get_satellite_view(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub fn op_set_lobby_stage(state: &WorkerContext, stage: JsValue) -> Result<(), WasmError> {
+    // map_err rather than serde_parse!'s unwrap: a malformed stage throws in JS, as on Deno.
+    let stage = serde_wasm_bindgen::from_value(stage)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("setLobbyStage: {e}")))?;
+    dcl_js::system_api::op_set_lobby_stage(state.rc(), stage);
+    Ok(())
 }
 
 #[wasm_bindgen]
 pub fn op_set_home_scene(state: &WorkerContext, realm: String, parcel: JsValue) {
     serde_parse!(parcel);
     dcl_js::system_api::op_set_home_scene(state.rc(), realm, parcel);
+}
+
+#[wasm_bindgen]
+pub fn op_clear_home_scene(state: &WorkerContext) {
+    dcl_js::system_api::op_clear_home_scene(state.rc());
 }
 
 #[wasm_bindgen]
@@ -319,6 +361,32 @@ pub async fn op_read_permission_used_stream(
     rid: u32,
 ) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::system_api::op_read_permission_used_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_item_purchase_request_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_item_purchase_request_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_item_purchase_request_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_item_purchase_request_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub fn op_set_item_purchase_state(
+    state: &WorkerContext,
+    id: u32,
+    purchase_state: JsValue,
+) -> Result<(), WasmError> {
+    // map_err rather than serde_parse!'s unwrap: an unknown state throws in JS, as on Deno.
+    let purchase_state = serde_wasm_bindgen::from_value(purchase_state)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("setItemPurchaseState: {e}")))?;
+    dcl_js::system_api::op_set_item_purchase_state(state.rc(), id, purchase_state);
+    Ok(())
 }
 
 #[wasm_bindgen]
@@ -459,6 +527,19 @@ pub async fn op_read_world_access_stream(
                 .unwrap()
         })
         .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_platform_ban_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_platform_ban_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_platform_ban_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_platform_ban_stream(state.rc(), rid).await)
 }
 
 #[wasm_bindgen]
@@ -878,6 +959,19 @@ pub async fn op_read_block_update_stream(
 }
 
 #[wasm_bindgen]
+pub async fn op_deploy_outfits(
+    state: &WorkerContext,
+    address: String,
+    outfits: JsValue,
+) -> Result<(), WasmError> {
+    let outfits = serde_wasm_bindgen::from_value(outfits)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("deployOutfits: {e}")))?;
+    dcl_js::system_api::op_deploy_outfits(state.rc(), address, outfits)
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_portables_stream(state: &WorkerContext) -> u32 {
     dcl_js::system_api::op_get_portables_stream(state.rc()).await
 }
@@ -888,4 +982,17 @@ pub async fn op_read_portables_stream(
     rid: u32,
 ) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::system_api::op_read_portables_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_map_pins_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_map_pins_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_map_pins_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_map_pins_stream(state.rc(), rid).await)
 }

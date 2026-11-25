@@ -1,4 +1,4 @@
-use crate::{default_color_grading, scatter_bloom};
+use crate::{default_color_grading, scatter_bloom, BLOOM_SCATTER};
 use async_tungstenite::{async_std::ConnectStream, WebSocketStream};
 use bevy::{
     core_pipeline::tonemapping::{DebandDither, Tonemapping},
@@ -100,10 +100,14 @@ pub fn write_config_file<T: Serialize>(config: &T) {
             return;
         }
     }
-    if let Err(e) = write_atomically(
-        &config_file,
-        serde_json::to_string(config).unwrap().as_bytes(),
-    ) {
+    let json = match serde_json::to_string(config) {
+        Ok(json) => json,
+        Err(e) => {
+            bevy::log::error!("can't serialize {}: {e}", config_file.display());
+            return;
+        }
+    };
+    if let Err(e) = write_atomically(&config_file, json.as_bytes()) {
         bevy::log::error!("can't write {}: {e}", config_file.display());
     }
 }
@@ -215,7 +219,7 @@ pub fn default_camera_components() -> impl Bundle {
         Tonemapping::AcesFitted,
         DebandDither::Enabled,
         default_color_grading(),
-        scatter_bloom(),
+        scatter_bloom(BLOOM_SCATTER),
         ShadowFilteringMethod::Gaussian,
     )
 }

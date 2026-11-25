@@ -73,14 +73,37 @@ pub(super) async fn ops_states(
         pool.clone(),
     );
 
+    // The upstream is checked like every mirror source: public, and not this node.
+    let imposters_upstream =
+        match non_empty(&Some(config.imposters.bvimposters_upstream_url.clone())) {
+            Some(url) => {
+                let bind_url = format!("http://{}", config.node.bind_addr());
+                let local_urls: Vec<&str> =
+                    [Some(sources.public_url), config.node.content_url.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .chain(std::iter::once(bind_url.as_str()))
+                        .collect();
+                Some(
+                    explore::MirrorSource::checked(&url, &local_urls)
+                        .context("BVIMPOSTERS_UPSTREAM_URL")?
+                        .base()
+                        .to_string(),
+                )
+            }
+            None => None,
+        };
     let imposters = explore::imposters::State::new(
         explore::imposters::Settings::resolve(explore::imposters::RawSettings {
             store_root: non_empty(&Some(config.imposters.bvimposters_store_root.clone())),
             store_max_bytes: Some(config.imposters.bvimposters_store_max_bytes),
             mem_cache_bytes: Some(config.imposters.bvimposters_mem_cache_bytes),
+            upstream_url: imposters_upstream,
+            upstream_realm: non_empty(&Some(config.imposters.bvimposters_upstream_realm.clone())),
             bake: imposters_bake_settings(config),
         })
         .context("BVIMPOSTERS_* configuration")?,
+        http_client.clone(),
     )
     .await
     .context("opening the imposter store")?;
@@ -217,6 +240,7 @@ pub(super) async fn worlds_states(
                     .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
                     .with_public_url(&worlds::Settings::from_config(config).public_url)
                     .with_max_file_count(config.worlds.max_file_count)
+                    .with_realm_name(worlds::node_realm_name(config))
                     .with_access_caps(
                         config.worlds.access_max_wallets,
                         config.worlds.access_max_communities,
@@ -434,6 +458,7 @@ pub(super) async fn comms_states(
     room_event_store: Option<Arc<dyn comms::gatekeeper::events::RoomEventStore>>,
     presence: Arc<comms::presence::Presence>,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
+    content_denylist: Arc<content::Denylist>,
     primary: bool,
     jobs: &Arc<jobs::Jobs>,
 ) -> anyhow::Result<CommsStage> {
@@ -469,7 +494,9 @@ pub(super) async fn comms_states(
     )
     .with_ban_status(ban_status.clone())
     .with_name_owner_reader(Arc::new(super::adapters::ShopNameOwners(market.clone())))
+    .with_name_authority(market.name_authority.clone())
     .with_deny_list_url(config.worlds.deny_list())
+    .with_content_denylist(content_denylist)
     .with_cluster(comms::gatekeeper::admission::cluster::ClusterConfig {
         nats_url: non_empty(&config.worlds.nats_url),
         takeover_retry_delay_ms: config.worlds.cluster_takeover_retry_delay_ms,
@@ -479,11 +506,16 @@ pub(super) async fn comms_states(
         peer_state_max: config.worlds.cluster_peer_state_max,
         peer_state_ttl_ms: config.worlds.cluster_peer_state_ttl_ms,
         control_v4_audience: non_empty(&config.worlds.archipelago_control_v4_audience),
+        ..Default::default()
     })
     .context("ARCHIPELAGO_CONTROL_V4_AUDIENCE and NATS_URL configuration")?
     .with_max_users_per_world(config.worlds.max_users_per_world)
     .with_shared_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute)
     .with_room_authority_key(non_empty(&config.room_authority.pulse_room_authority_key).as_deref())?
+    .with_message_router_key(
+        non_empty(&config.message_router.message_router_key).as_deref(),
+        non_empty(&config.message_router.message_router_identity_prefix).as_deref(),
+    )?
     .with_room_event_sink(room_events);
     let gatekeeper = match room_event_store {
         Some(store) => gatekeeper.with_room_event_store(store),
@@ -495,6 +527,10 @@ pub(super) async fn comms_states(
     let archipelago = archipelago::build_state(archipelago_settings, gatekeeper.clone(), jobs)
         .await
         .context("wiring archipelago")?;
+    // Social reads the union of Pulse islands and World presence from events and recovery.
+    gatekeeper
+        .presence
+        .attach_topology(archipelago.feed.topology.clone());
     if primary {
         gatekeeper.start_island_feed(jobs, archipelago.clone());
     }
@@ -576,7 +612,6 @@ pub(super) fn social_states(
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     explore: &explore::SharedState,
     onboarding: Arc<explore::api::onboarding::OnboardingState>,
-    metrics_handle: comms::metrics::PrometheusHandle,
 ) -> anyhow::Result<social::States> {
     config
         .social
@@ -672,7 +707,6 @@ pub(super) fn social_states(
                 .trim_end_matches('/')
                 .to_string(),
             faces: faces.clone(),
-            archipelago_stats_url: non_empty(&config.social.archipelago_stats_url),
             places_ownership_check: config.social.communities_places_ownership_check,
             mirror_interval: Duration::from_secs(
                 config.social.communities_mirror_interval_secs.max(1),
@@ -693,8 +727,9 @@ pub(super) fn social_states(
         pool.clone(),
         notifications::Settings {
             admin_token: non_empty(&config.social.catalyrst_notifications_admin_token),
-            events_base_url: public_url.clone(),
+            events_base_url: config.explore.events_site_url.clone(),
             events_asset_base_url: explore.settings.events_asset_base_url.clone(),
+            events_public_base: explore.settings.configured_public_base.clone(),
             signing_key: non_empty(&config.social.signing_key),
             service_base_url: config.social.notifications_service_base_url.clone(),
             community_cdn_url: communities.settings.cdn_url.clone(),
@@ -896,11 +931,6 @@ pub(super) fn social_states(
             writes_enabled: config.writes.social_writes_enabled,
             commit_hash: config.node.commit_hash.clone(),
             current_version: config.social.social_rpc_current_version.clone(),
-            metrics_path: config.social.wkc_metrics_public_path.clone(),
-            metrics_bearer_token: config.social.wkc_metrics_bearer_token.clone(),
-            metrics_reset_at_night: config.social.wkc_metrics_reset_at_night.as_deref()
-                == Some("true"),
-            metrics_handle: Some(metrics_handle),
             profile_source: Some(communities.profiles.registry()),
         },
         eip1654,
@@ -929,4 +959,97 @@ pub(super) fn social_states(
         rpc,
         segment_webhooks,
     })
+}
+
+#[cfg(test)]
+mod event_notice_configuration_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn event_email_origins_follow_the_public_site_and_keep_images_and_jump_links() {
+        let pool = crate::db::scratch::isolated_pool(4)
+            .await
+            .expect("real PostgreSQL required");
+        let directory =
+            std::env::temp_dir().join(format!("event-email-origins-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(storage::Storage::from_config(&directory).await.unwrap());
+        let http = http::Outbound::for_tests();
+        for custom in [false, true] {
+            let mut vars = vec![("DATABASE_URL", "postgres://unused@127.0.0.1:1/postgres")];
+            if custom {
+                vars.extend([
+                    ("PUBLIC_URL", "https://node.example.org"),
+                    ("EVENTS_BASE_URL", "https://legacy-events.example.org"),
+                    ("EVENTS_SITE_URL", "https://site.example.org"),
+                    ("JUMP_IN_SITE_URL", "https://jump.example.org"),
+                ]);
+            }
+            let config = Config::parse_env_for_tests(vars).unwrap();
+            let content = Arc::new(content::ContentState::new(
+                pool.clone(),
+                content::Settings::for_tests(),
+                storage.clone(),
+            ));
+            let market = Arc::new(shop::market::MarketplaceState::new(
+                pool.clone(),
+                http.clone(),
+                shop::market::Settings::for_tests(),
+            ));
+            let comms = Arc::new(comms::gatekeeper::CommsState::new(
+                pool.clone(),
+                http.clone(),
+                comms::gatekeeper::Settings::for_tests(),
+                None,
+                None,
+                Arc::new(comms::interfaces::test_support::StubPolicy::default()),
+                Arc::new(comms::interfaces::test_support::StubScenes::default()),
+                Arc::new(comms::presence::Presence::new()),
+                Arc::new(comms::interfaces::test_support::StubDirectory::default()),
+            ));
+            let mut settings = explore::Settings::for_tests();
+            settings.events_base_url = config.explore.events_base_url.clone();
+            settings.configured_public_base = config.node.public_url.clone();
+            settings.events_asset_base_url = "https://node.example.org/events".into();
+            settings.jump_in_site_url = config.explore.jump_in_site_url.clone();
+            let explore = Arc::new(explore::ExploreState::new(pool.clone(), settings, None));
+            let onboarding = Arc::new(explore::api::onboarding::OnboardingState::new(pool.clone()));
+            let social = social_states(
+                &config, &pool, &storage, &http, &content, &market, comms, None, &explore,
+                onboarding,
+            )
+            .unwrap();
+            let settings = &social.notifications.settings;
+            assert_eq!(
+                settings.events_base_url,
+                if custom {
+                    "https://site.example.org"
+                } else {
+                    "https://decentraland.org"
+                }
+            );
+            assert_eq!(
+                explore.settings.events_base_url,
+                if custom {
+                    "https://legacy-events.example.org"
+                } else {
+                    "https://events.decentraland.org"
+                }
+            );
+            assert_eq!(settings.events_public_base, config.node.public_url);
+            assert_eq!(
+                settings.events_asset_base_url,
+                "https://node.example.org/events"
+            );
+            assert_eq!(
+                settings.jump_in_site_url,
+                if custom {
+                    "https://jump.example.org"
+                } else {
+                    "https://decentraland.org/jump"
+                }
+            );
+            drop(social);
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 }

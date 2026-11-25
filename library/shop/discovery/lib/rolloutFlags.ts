@@ -25,6 +25,30 @@ export const REMOTE_FLAG = {
    * then only they get in (seller/lib/featureFlags.ts).
    */
   myStore: "shop-my-store",
+  /**
+   * Not the Shop's: Sites' Places page reads it from the same `dapps` file (sites@production discover.flags.ts
+   * useLiveMinUsers). While on, its variant's payload is the head count a scene needs for Live Now.
+   */
+  placesLiveMinUsers: "places-live-min-user",
+  /**
+   * Buying with Polygon MANA in the in-world Shop (/play): its purchase dialog lets a self-custody buyer pick Credits
+   * or MANA for one item. Off, the in-world Shop buys with Credits only. Only the /play shell reads it
+   * (play/shell/shop/purchase.ts); a host may declare it (`manaInWorld`).
+   */
+  manaInWorld: "shop-mana-in-world",
+  /**
+   * Credits and MANA paying one item together (the MANA option's split, payment/present.ts): offered only with this on
+   * AND an offer the node marks `splittable`, read per page render (never a module switch), with no host declaration.
+   * The lock is the node's credits service reading the same key: off, it refuses a Credits part on both authorize
+   * routes and marks no offer `splittable`, so the flag is turned on only where the node does.
+   */
+  creditsManaSplit: "shop-credits-mana-split",
+  /**
+   * Not the Shop's own: the Builder and Sites' creators preview read the same `dapps` key. On, the item page asks the
+   * wearable-preview iframe for its Unity renderer (`unity`, `mode=marketplace`) where pickRenderer allows the full
+   * renderer; off, on a lighter device, or when Unity fails to load, the iframe draws with Babylon.
+   */
+  unityWearablePreview: "unity-wearable-preview",
 } as const;
 
 export type RemoteFlag = (typeof REMOTE_FLAG)[keyof typeof REMOTE_FLAG];
@@ -79,7 +103,7 @@ export type ShopFlags = {
 };
 
 /** The switches a host may declare itself (the native shop, a journey): a declared one stands over the file. */
-export type HostShopFlags = Partial<ShopFlags> & { marketplaceFeatures?: boolean; myStore?: boolean };
+export type HostShopFlags = Partial<ShopFlags> & { marketplaceFeatures?: boolean; myStore?: boolean; manaInWorld?: boolean };
 
 /** A switch as the host declared it, else as the file answered (`null` while it has not). */
 export function declaredOr(declared: HostShopFlags, key: keyof HostShopFlags, remote: boolean | null): boolean | null {

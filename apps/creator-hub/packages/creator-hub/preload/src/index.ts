@@ -35,6 +35,7 @@ export const fs = {
 };
 
 export * as ai from './modules/ai';
+export * as aiSharing from './modules/ai-sharing';
 export * as consoleWindow from './modules/console-window';
 export * as auth from './modules/auth';
 export * as editor from './modules/editor';
@@ -51,5 +52,6 @@ export * as scene from './modules/scene';
 export * as custom from './modules/custom';
 export * as oxc from './modules/oxc';
 export * as optimizer from './modules/optimizer';
+export * as recording from './modules/recording';
 export * as sceneExport from './modules/scene-export';
 export * as landUnpublish from './modules/land-unpublish';

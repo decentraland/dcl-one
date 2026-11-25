@@ -3,7 +3,7 @@ import { VscQuestion as QuestionIcon } from 'react-icons/vsc';
 import { AiOutlineInfoCircle as InfoIcon } from 'react-icons/ai';
 import { FiAlertTriangle as WarningIcon } from 'react-icons/fi';
 import { cx } from '../../../lib/utils/cx';
-import Tooltip from '@ui/atoms/Tooltip';
+import { Tooltip } from '../Tooltip';
 
 import type { Position, Props } from './types';
 
@@ -12,7 +12,6 @@ import './InfoTooltip.css';
 type Side = 'top' | 'bottom' | 'left' | 'right';
 
 const MAX_WIDTH = 250;
-// The spacing of the Semantic UI popup this tooltip replaces: 0.714em of its 11px text.
 const GAP = 8;
 
 const getSide = (position: Position): Side => position.split(' ')[0] as Side;
@@ -33,7 +32,6 @@ const InfoTooltip: React.FC<Props> = ({
   onOpen,
   onClose,
 }) => {
-  // The trigger is the anchor, so no wrapper element is added around it.
   const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
   const [isHovered, setIsHovered] = useState(false);
   const [isClosedByClick, setIsClosedByClick] = useState(false);
@@ -51,9 +49,13 @@ const InfoTooltip: React.FC<Props> = ({
     [onOpen, onClose],
   );
 
-  const handleTriggerClick = useCallback(() => {
-    if (closeOnTriggerClick && isHovered) setIsClosedByClick(true);
-  }, [closeOnTriggerClick, isHovered]);
+  const handleTriggerClick = useCallback(
+    (event: React.MouseEvent) => {
+      if (!trigger) event.preventDefault();
+      if (closeOnTriggerClick && isHovered) setIsClosedByClick(true);
+    },
+    [trigger, closeOnTriggerClick, isHovered],
+  );
 
   const renderIconTrigger = useCallback(() => {
     switch (type) {

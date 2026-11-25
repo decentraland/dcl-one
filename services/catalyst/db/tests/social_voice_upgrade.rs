@@ -8,7 +8,7 @@ use sqlx::{
 };
 const STEP: &str = "0020_social_voice_notifications";
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 28] = [
+const PREPARED_PENDING_STEPS: [&str; 38] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -37,6 +37,16 @@ const PREPARED_PENDING_STEPS: [&str; 28] = [
     "0047_shop_sale_notification_producers",
     "0048_broker_purchases_write_ahead",
     "0049_land_authz_cursor_block_hash",
+    "0050_explore_poster_avif",
+    "0051_explore_auth_identity_request_id",
+    "0052_shop_committee_index",
+    "0053_shop_bid_received_producer",
+    "0054_shop_chain_cursor_ownership",
+    "0055_shop_chain_cursor_divergence",
+    "0056_signatures_rental_cancel_reason",
+    "0057_worlds_thumbnail_alias_expiry",
+    "0058_streaming_notification_recipients",
+    "0059_shop_sepolia_rentals_index",
 ];
 const PREPARED_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
@@ -227,11 +237,28 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
         .execute(pool)
         .await
         .unwrap();
+    let expected_steps: Vec<_> = PREPARED_PENDING_STEPS
+        .into_iter()
+        .chain([
+            "0060_shop_third_party_registry_index",
+            "0061_content_processed_snapshot_types",
+            "0062_shop_estate_repair_reset",
+            "0063_shop_collections_index",
+            "0064_shop_sale_accounting",
+            "0065_shop_collections_projection",
+            "0066_map_grid_change_marks",
+            "0067_rental_asset_membership_block",
+            "0069_shop_trade_digest",
+            "0070_shop_mirror_chain",
+            "0071_shop_testnet_sale_and_trade_venues",
+            "0072_shop_verified_item_rows",
+        ])
+        .collect();
     let done = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)
         .await
         .unwrap();
     assert_eq!(
-        done.steps, PREPARED_PENDING_STEPS,
+        done.steps, expected_steps,
         "only steps the prepared capture lacks run; recorded historical steps never replay"
     );
     let after: String = sqlx::query_scalar(facts_sql).fetch_one(pool).await.unwrap();
@@ -256,7 +283,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
     );
     let ledger: Vec<(String, String, bool, chrono::NaiveDateTime)> =
         sqlx::query_as(ledger_sql).fetch_all(pool).await.unwrap();
-    assert_eq!(ledger.len(), before.len() + PREPARED_PENDING_STEPS.len());
+    assert_eq!(ledger.len(), before.len() + expected_steps.len());
     for row in &before {
         assert!(
             ledger.contains(row),
@@ -266,7 +293,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
     let added: Vec<_> = ledger.iter().filter(|row| !before.contains(row)).collect();
     assert_eq!(
         added.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
-        PREPARED_PENDING_STEPS
+        expected_steps
     );
     let embedded = schema_migrate::parse_steps(MIGRATIONS_SQL);
     for row in added {

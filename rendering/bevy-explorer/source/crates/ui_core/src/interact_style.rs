@@ -47,7 +47,6 @@ impl Plugin for InteractStylePlugin {
 
 // run condition for `set_interaction_style`: a style input (or styled target) changed, or some
 // node is still hovered/pressed (the pressed style tracks global input state, not a component).
-#[allow(clippy::type_complexity)]
 fn interaction_style_dirty(
     changed: Query<
         (),
@@ -73,7 +72,6 @@ fn interaction_style_dirty(
     !changed.is_empty() || interactions.iter().any(|i| i != &Interaction::None)
 }
 
-#[allow(clippy::type_complexity)]
 pub fn set_interaction_style(
     mut q: Query<(
         Entity,

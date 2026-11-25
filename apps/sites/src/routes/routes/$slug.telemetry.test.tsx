@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { createRoutesStub } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
   Object.assign(window, { __vite_plugin_react_preamble_installed__: true });
@@ -11,7 +11,7 @@ vi.hoisted(() => {
 
 const track = vi.hoisted(() => vi.fn());
 vi.mock("@/core/lib/telemetry/track", () => ({ track }));
-vi.mock("@ui/web/frames/SitesChrome", () => ({
+vi.mock("@/features/components/chrome/SitesLayout", () => ({
   default: ({ children }: { children?: ReactNode }) => <>{children}</>,
 }));
 
@@ -38,33 +38,44 @@ const calls = (event: string) =>
     .filter(([name]) => name === event)
     .map(([, props]) => props);
 
-afterEach(() => {
-  cleanup();
-  track.mockClear();
-});
-
-describe("when a legal page is read", () => {
-  it("should track one view per document, also after sidebar navigation", async () => {
-    render(<Stub initialEntries={["/privacy"]} />);
-    await screen.findByRole("heading", { level: 1, name: LEGAL_DOCS.privacy.title });
-
-    await userEvent.click(screen.getByRole("link", { name: "Terms of Use" }));
-    await screen.findByRole("heading", { level: 1, name: LEGAL_DOCS.terms.title });
-
-    await waitFor(() =>
-      expect(calls("lp_legal_viewed")).toEqual([{ doc: "privacy" }, { doc: "terms" }]),
-    );
+describe("LegalSlugRoute telemetry", () => {
+  afterEach(() => {
+    cleanup();
+    vi.resetAllMocks();
   });
 
-  it("should track a contents click with its section", async () => {
-    const [entry] = LEGAL_DOCS.privacy.toc;
-    render(<Stub initialEntries={["/privacy"]} />);
-    await screen.findByRole("heading", { level: 1, name: LEGAL_DOCS.privacy.title });
+  describe("when a legal page is read", () => {
+    beforeEach(async () => {
+      render(<Stub initialEntries={["/privacy"]} />);
+      await screen.findByRole("heading", { level: 1, name: LEGAL_DOCS.privacy.title });
+    });
 
-    await userEvent.click(screen.getAllByRole("link", { name: entry.label })[0]);
+    describe("and the reader navigates to another document from the sidebar", () => {
+      beforeEach(async () => {
+        await userEvent.click(screen.getByRole("link", { name: "Terms of Use" }));
+        await screen.findByRole("heading", { level: 1, name: LEGAL_DOCS.terms.title });
+      });
 
-    expect(calls("lp_legal_section_clicked")).toEqual([
-      { doc: "privacy", section: entry.id },
-    ]);
+      it("should track one view per document", async () => {
+        await waitFor(() =>
+          expect(calls("lp_legal_viewed")).toEqual([{ doc: "privacy" }, { doc: "terms" }]),
+        );
+      });
+    });
+
+    describe("and the reader clicks a contents entry", () => {
+      let entry: (typeof LEGAL_DOCS.privacy.toc)[number];
+
+      beforeEach(async () => {
+        [entry] = LEGAL_DOCS.privacy.toc;
+        await userEvent.click(screen.getAllByRole("link", { name: entry.label })[0]);
+      });
+
+      it("should track the click with its section", () => {
+        expect(calls("lp_legal_section_clicked")).toEqual([
+          { doc: "privacy", section: entry.id },
+        ]);
+      });
+    });
   });
 });

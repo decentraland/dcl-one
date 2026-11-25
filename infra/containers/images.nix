@@ -1,4 +1,4 @@
-{ pkgs, catalyst, sites, gateway, revision }:
+{ pkgs, catalyst, cast-bot, message-router, sites, gateway, nginx, revision }:
 let
   inherit (pkgs) lib;
   accounts = pkgs.runCommand "foundation-container-accounts" { } ''
@@ -19,10 +19,11 @@ let
     "org.opencontainers.image.revision" = revision;
     "org.opencontainers.image.licenses" = "AGPL-3.0";
   };
-  layered = build: name: package: config: build {
+  # `packages`: one package, or a list whose `bin/` directories merge into the image's `/bin`.
+  layered = build: name: packages: config: build {
     inherit name;
     tag = "nix";
-    contents = [ package pkgs.cacert accounts ];
+    contents = lib.toList packages ++ [ pkgs.cacert accounts ];
     # Give each runtime store path its own stable layer, including Sites'
     # production dependencies and docs. Avoid fromImage: dockerTools would
     # include the runtime closure again on top of that base image.
@@ -50,10 +51,15 @@ let
     ];
     ExposedPorts."5212/tcp" = { };
   };
-  apis = build: build "foundation-apis" catalyst {
+  # `serve` starts one `cast-bot` per Cast presentation (CAST_BOT_BIN); the image carries it beside
+  # the node, which never links it (docs/adr/2026-11-17-cast-presenter-bot-process.md). The
+  # community chat message router runs as its own container from this image, with the entrypoint
+  # /bin/catalyst-message-router (docs/adr/2026-11-18-community-chat-message-router.md).
+  apis = build: build "foundation-apis" [ catalyst message-router ] {
     Entrypoint = [ "${lib.getExe catalyst}" ];
     Cmd = [ "serve" ];
     Env = [
+      "CAST_BOT_BIN=${lib.getExe cast-bot}"
       "HOME=/data" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
       "HTTP_SERVER_HOST=0.0.0.0" "HTTP_SERVER_PORT=5210"
       "STORAGE_ROOT_FOLDER=/data/content" "AB_CDN_CACHE_DIR=/data/ab-cdn"
@@ -77,7 +83,7 @@ in {
     Entrypoint = [ "${lib.getExe gateway}" ];
     Env = [
       "HOME=/data" "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
-      "PATH=${lib.makeBinPath [ pkgs.python3 pkgs.nginx ]}"
+      "PATH=${lib.makeBinPath [ pkgs.python3 nginx ]}"
     ];
     ExposedPorts."8080/tcp" = { };
     StopSignal = "SIGQUIT";
@@ -90,4 +96,6 @@ in {
   image-sites-polygon-credits-stream = webPolygonCredits stream;
   # Its compiled app, saved with the plain one in the `sites-app` image cache (tooling/image-cache.py).
   sites-app-polygon-credits = sitesPolygonCredits.app;
+  # The hosted component gallery the Sites image serves under /ui-gallery/, its own image cache entry.
+  ui-gallery = sites.uiGallery;
 }

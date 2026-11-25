@@ -149,7 +149,6 @@ fn spawn_compositor(
 /// Below scale 1, sizes the scene target for the window and render scale and points the primary
 /// camera and the compositor's material at it. At scale 1, points the primary camera at the
 /// window and shrinks the scene target to 1x1. The UI goes to whichever camera draws the window.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn sync_scene_target(
     mut commands: Commands,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -255,6 +254,7 @@ fn sync_scene_target(
 #[cfg(test)]
 mod tests {
     use bevy::window::WindowResolution;
+    use common::sync::MutexExt;
 
     use super::*;
 
@@ -606,7 +606,7 @@ mod tests {
         let sink = drawn.clone();
         app.world_mut().spawn(Screenshot::image(output)).observe(
             move |trigger: Trigger<ScreenshotCaptured>| {
-                *sink.lock().unwrap() = Some(trigger.0.clone());
+                *sink.lock_ignore_poison() = Some(trigger.0.clone());
             },
         );
         for _ in 0..5 {
@@ -640,8 +640,7 @@ mod tests {
         assert_eq!(compositor_pipelines, 1);
 
         let drawn = drawn
-            .lock()
-            .unwrap()
+            .lock_ignore_poison()
             .take()
             .expect("the output was captured");
         assert!(

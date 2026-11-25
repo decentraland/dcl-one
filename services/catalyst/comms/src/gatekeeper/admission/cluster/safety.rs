@@ -1,5 +1,7 @@
 //! Shared island safety facts. Stable wallet locks serialize first admission
 //! with first cleanup; remote calls never run while these transactions live.
+use crate::metrics::declarations;
+
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
 
@@ -171,59 +173,67 @@ impl SafetyStore {
     pub(crate) async fn lock(&self, wallet: &str) -> Result<SafetyLease, GatewayError> {
         self.lock_with_source(wallet, None).await
     }
-    pub(crate) async fn lock_with_source(
-        &self,
-        wallet: &str,
-        source: Option<(&str, &str)>,
-    ) -> Result<SafetyLease, GatewayError> {
-        if wallet.is_empty() || wallet != wallet.to_ascii_lowercase() {
-            return Err(GatewayError::Unknown);
-        }
-        let mut tx = self.pool.begin().await.map_err(|_| GatewayError::Unknown)?;
-        for setting in [
-            "SET LOCAL lock_timeout = '1500ms'",
-            "SET LOCAL statement_timeout = '1500ms'",
-            "SET LOCAL idle_in_transaction_session_timeout = '5000ms'",
-        ] {
-            sqlx::query(setting)
-                .execute(&mut *tx)
-                .await
-                .map_err(|_| GatewayError::Unknown)?;
-        }
-        if self.generation_required
-            && let Some((audience, source)) = source
-        {
-            super::generation::lock(&mut tx, audience, source)
-                .await
-                .map_err(|_| GatewayError::Unknown)?;
-        }
-        sqlx::query(
-            "INSERT INTO social.island_admission_fences(wallet) VALUES ($1) ON CONFLICT DO NOTHING",
-        )
-        .bind(wallet)
-        .execute(&mut *tx)
-        .await
-        .map_err(|_| GatewayError::Unknown)?;
-        let row=sqlx::query("SELECT generation,token_floor FROM social.island_admission_fences WHERE wallet=$1 FOR UPDATE")
-            .bind(wallet).fetch_one(&mut *tx).await.map_err(|_|GatewayError::Unknown)?;
-        let generation: i64 = row
-            .try_get("generation")
+    /// Boxed so its awaiters don't re-prove the future `Send`.
+    pub(crate) fn lock_with_source<'a>(
+        &'a self,
+        wallet: &'a str,
+        source: Option<(&'a str, &'a str)>,
+    ) -> futures::future::BoxFuture<'a, Result<SafetyLease, GatewayError>> {
+        Box::pin(async move {
+            if wallet.is_empty() || wallet != wallet.to_ascii_lowercase() {
+                return Err(GatewayError::Unknown);
+            }
+            let mut tx = self.pool.begin().await.map_err(|_| GatewayError::Unknown)?;
+            for setting in [
+                "SET LOCAL lock_timeout = '1500ms'",
+                "SET LOCAL statement_timeout = '1500ms'",
+                "SET LOCAL idle_in_transaction_session_timeout = '5000ms'",
+            ] {
+                sqlx::query(setting)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|_| GatewayError::Unknown)?;
+            }
+            if self.generation_required
+                && let Some((audience, source)) = source
+            {
+                super::generation::lock(&mut tx, audience, source)
+                    .await
+                    .map_err(|_| GatewayError::Unknown)?;
+            }
+            sqlx::query(
+                "INSERT INTO social.island_admission_fences(wallet) VALUES ($1) ON CONFLICT DO NOTHING",
+            )
+            .bind(wallet)
+            .execute(&mut *tx)
+            .await
             .map_err(|_| GatewayError::Unknown)?;
-        let token_floor: i64 = row
-            .try_get("token_floor")
+            let row = sqlx::query(
+                "SELECT generation,token_floor FROM social.island_admission_fences WHERE wallet=$1 FOR UPDATE",
+            )
+            .bind(wallet)
+            .fetch_one(&mut *tx)
+            .await
             .map_err(|_| GatewayError::Unknown)?;
-        if generation <= 0
-            || token_floor < 0
-            || token_floor as u64 > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS
-        {
-            return Err(GatewayError::Unknown);
-        }
-        Ok(SafetyLease {
-            snapshot: SafetySnapshot {
-                generation: generation as u64,
-                token_floor: token_floor as u64,
-            },
-            tx,
+            let generation: i64 = row
+                .try_get("generation")
+                .map_err(|_| GatewayError::Unknown)?;
+            let token_floor: i64 = row
+                .try_get("token_floor")
+                .map_err(|_| GatewayError::Unknown)?;
+            if generation <= 0
+                || token_floor < 0
+                || token_floor as u64 > crate::protocol::bus::cluster::MAX_CONSUMER_SECONDS
+            {
+                return Err(GatewayError::Unknown);
+            }
+            Ok(SafetyLease {
+                snapshot: SafetySnapshot {
+                    generation: generation as u64,
+                    token_floor: token_floor as u64,
+                },
+                tx,
+            })
         })
     }
     pub async fn authorize(
@@ -319,7 +329,9 @@ impl SafetyStore {
         let count:i64=sqlx::query_scalar("SELECT (SELECT count(*) FROM social.island_takeover_receipts WHERE NOT acknowledged AND retired_by_source IS NULL)+(SELECT count(*) FROM (SELECT wallet,intent_root_key,intent_target_key,intent_generation FROM social.island_cleanup_dispatches WHERE purpose='island_enforcement' AND state IN ('dispatched','quarantine','settled_late') GROUP BY wallet,intent_root_key,intent_target_key,intent_generation) obligations)")
             .fetch_one(&mut **tx).await.map_err(|_|GatewayError::Unknown)?;
         if count >= CAPACITY {
-            metrics::counter!("comms_island_safety_capacity_refused_total").increment(1);
+            declarations::ISLAND_SAFETY_CAPACITY_REFUSED
+                .handle([])
+                .increment(1);
             return Err(GatewayError::Unknown);
         }
         Ok(())
@@ -935,7 +947,9 @@ impl SafetyStore {
             lease.commit().await
             }.await;
             if result.is_err() {
-                metrics::counter!("comms_island_cleanup_maintenance_failed_total").increment(1);
+                declarations::ISLAND_CLEANUP_MAINTENANCE_FAILED
+                    .handle([])
+                    .increment(1);
                 tracing::warn!(%wallet,"island compaction wallet unavailable; retaining all evidence");
             }
         }

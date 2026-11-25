@@ -174,6 +174,10 @@ settings:
 overrides:
   '@dcl/quests-client>@dcl/sdk': 7.22.6-25007982108.commit-83012ab
   '@dcl/sdk-commands>typescript': 7.0.2
+  '@dcl/sdk-commands>undici': 7.30.2
+  '@dcl/sdk-commands>i18next': ^26.3.4
+  '@dcl/sdk-commands>uuid': ^11.1.1
+  dcl-catalyst-client>cookie: '-'
   protobufjs: 7.6.6
   extract-zip: file:../../../zip-extract
   '@dcl/inspector>@dcl/asset-packs': '-'
@@ -223,10 +227,6 @@ packages:
     resolution: {integrity: sha512-KKBU1VGYR7ORr3At5HAtUQ+TV3SzRCXmA/8OdDZiLDBIZxVyzXuztPjfLd3BV1PRAQGCMWWSHYhL0F8d5uHBDQ==}
     engines: {node: '>=6.0.0'}
     hasBin: true
-
-  '@babel/runtime@7.29.7':
-    resolution: {integrity: sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw==}
-    engines: {node: '>=6.9.0'}
 
   '@babel/types@7.29.7':
     resolution: {integrity: sha512-4zBIxpPzowiZpusoFkyGVwakdRJUyuH5PxQ/PrqghfdFWWasvnCdPfQXHrenDai+gyLARulZjZowCOj6fjT4pA==}
@@ -444,10 +444,6 @@ packages:
     engines: {node: '>=12'}
     cpu: [x64]
     os: [win32]
-
-  '@fastify/busboy@2.1.1':
-    resolution: {integrity: sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==}
-    engines: {node: '>=14'}
 
   '@lukeed/csprng@1.1.0':
     resolution: {integrity: sha512-Z7C/xXCiGWsg0KuKsHTKJxbWhpI3Vs5GwLfOean7MGyVFGqdRgBbAjOCh6u4bbjPc/8MJ2pZmK/0DLdCbivLDA==}
@@ -827,10 +823,6 @@ packages:
   concat-map@0.0.1:
     resolution: {integrity: sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg==}
 
-  cookie@0.5.0:
-    resolution: {integrity: sha512-YZ3GUyn/o8gfKJlnlX7g7xq4gyO6OSuhGPKaaGssGB2qgDUS0gPgtTvoyZLTt9Ab6dC4hfc9dV5arkvc/OCmrw==}
-    engines: {node: '>= 0.6'}
-
   core-util-is@1.0.3:
     resolution: {integrity: sha512-ZQBvi1DcpJ4GDqanjucZ2Hj3wEO5pZDS89BWbkcrvdxksJorwUDDZamX9ldFkp9aw2lmBDLgkObEA4DWNJ9FYQ==}
 
@@ -949,8 +941,8 @@ packages:
   fast-deep-equal@3.1.3:
     resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
 
-  fast-uri@3.1.3:
-    resolution: {integrity: sha512-i70LwGWUduXqzicKXWshooq+sWL1K3WUU5rKZNG/0i3a1OSoX3HqhH5WbWwTmqWfor4urUakGPiRQcleRZTwOg==}
+  fast-uri@3.1.9:
+    resolution: {integrity: sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==}
 
   fill-range@7.1.1:
     resolution: {integrity: sha512-YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg==}
@@ -1036,10 +1028,10 @@ packages:
   i18next-fs-backend@2.6.6:
     resolution: {integrity: sha512-mYGu6Nt8RIp3X/U8Y+Gej1wo5xmYWmGKLqBGMCC2OCAou5rW5epeHgHmVcw20mJs9Z9+DAPHIxQPNCgFyPRMeg==}
 
-  i18next@25.10.10:
-    resolution: {integrity: sha512-cqUW2Z3EkRx7NqSyywjkgCLK7KLCL6IFVFcONG7nVYIJ3ekZ1/N5jUsihHV6Bq37NfhgtczxJcxduELtjTwkuQ==}
+  i18next@26.7.2:
+    resolution: {integrity: sha512-RsOY3BeaCDdkk52NeJSFAXELQ2rQXBO/tOub6L8ue2ICPfR/FRDWDOfEDg4xMPd1SqO5goVYQ6i72qWEUB/PPw==}
     peerDependencies:
-      typescript: ^5 || ^6
+      typescript: ^5 || ^6 || ^7
     peerDependenciesMeta:
       typescript:
         optional: true
@@ -1466,16 +1458,15 @@ packages:
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
-  undici@5.29.0:
-    resolution: {integrity: sha512-raqeBD6NQK4SkWhQzeYKd1KmIG6dllBOTt55Rmkt4HtI9mwdWtJljnrXjAFUBLTSN67HWrOIZ3EPF4kjUw80Bg==}
-    engines: {node: '>=14.0'}
+  undici@7.30.2:
+    resolution: {integrity: sha512-mLyPQnHwUxaM/rideoK/+KL8DaAJLRl4aBCfmX444aCSLnIaomqPLtNRe2jdCYcsk5wZzXrDIQC8ZeYNRAYyIA==}
+    engines: {node: '>=20.18.1'}
 
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
-  uuid@9.0.1:
-    resolution: {integrity: sha512-b+1eJOlsR9K8HJpow9Ok3fiWOWSIcIzXodvv0rQjVoOVNpWMpxf1wZNpt4y9h10odCNrqnYp1OBzRktckBe3sA==}
-    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
+  uuid@11.1.1:
+    resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
     hasBin: true
 
   varint@5.0.2:
@@ -1538,8 +1529,6 @@ snapshots:
   '@babel/parser@7.28.5':
     dependencies:
       '@babel/types': 7.29.7
-
-  '@babel/runtime@7.29.7': {}
 
   '@babel/types@7.29.7':
     dependencies:
@@ -1681,7 +1670,7 @@ snapshots:
       extract-zip: '@dcl/zip-extract@file:../../../zip-extract'
       fp-future: 1.0.1
       glob: 9.3.5
-      i18next: 25.10.10(typescript@7.0.2)
+      i18next: 26.7.2(typescript@7.0.2)
       i18next-fs-backend: 2.6.6
       ignore: 5.3.2
       node-fetch: 2.7.0
@@ -1690,8 +1679,8 @@ snapshots:
       prompts: 2.4.2
       qrcode: 1.5.4
       typescript: 7.0.2
-      undici: 5.29.0
-      uuid: 9.0.1
+      undici: 7.30.2
+      uuid: 11.1.1
     transitivePeerDependencies:
       - '@well-known-components/interfaces'
       - bufferutil
@@ -1786,8 +1775,6 @@ snapshots:
 
   '@esbuild/win32-x64@0.18.20':
     optional: true
-
-  '@fastify/busboy@2.1.1': {}
 
   '@lukeed/csprng@1.1.0': {}
 
@@ -2018,7 +2005,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.3
+      fast-uri: 3.1.9
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -2177,8 +2164,6 @@ snapshots:
 
   concat-map@0.0.1: {}
 
-  cookie@0.5.0: {}
-
   core-util-is@1.0.3: {}
 
   crc-32@1.2.2: {}
@@ -2203,7 +2188,6 @@ snapshots:
       '@dcl/hashing': 3.0.4
       '@dcl/schemas': 23.1.0
       '@well-known-components/fetch-component': 2.0.2
-      cookie: 0.5.0
       cross-fetch: 3.2.0
       form-data: 4.0.6
     transitivePeerDependencies:
@@ -2309,7 +2293,7 @@ snapshots:
 
   fast-deep-equal@3.1.3: {}
 
-  fast-uri@3.1.3: {}
+  fast-uri@3.1.9: {}
 
   fill-range@7.1.1:
     dependencies:
@@ -2408,9 +2392,7 @@ snapshots:
 
   i18next-fs-backend@2.6.6: {}
 
-  i18next@25.10.10(typescript@7.0.2):
-    dependencies:
-      '@babel/runtime': 7.29.7
+  i18next@26.7.2(typescript@7.0.2):
     optionalDependencies:
       typescript: 7.0.2
 
@@ -2851,13 +2833,11 @@ snapshots:
 
   undici-types@8.3.0: {}
 
-  undici@5.29.0:
-    dependencies:
-      '@fastify/busboy': 2.1.1
+  undici@7.30.2: {}
 
   util-deprecate@1.0.2: {}
 
-  uuid@9.0.1: {}
+  uuid@11.1.1: {}
 
   varint@5.0.2: {}
 

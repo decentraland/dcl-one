@@ -13,10 +13,10 @@
 //! write route also accepts, the federation log and its content routes are
 //! `fed` (over `crate::fed`). A member who leaves, is banned or is kicked from a
 //! private community leaves its voice room ([`State::evict_from_private_community_voice`]
-//! through the [`VoiceEviction`] the comms module attaches in `main`). What
-//! did not come along, and why, is listed in `README.md`'s deviations; in
-//! short: the archipelago presence probe, which is configured explicitly and
-//! degrades to "everyone offline".
+//! through the [`VoiceEviction`] the comms module attaches in `main`). The
+//! `onlyOnline` member filter reads the wallet topology (Pulse islands and World
+//! rooms) the social RPC's connectivity stream reads, attached in `serve`
+//! ([`State::set_topology`]).
 //!
 //! Mount it twice: at the root (the old `social-api.decentraland.org` host
 //! paths) and nested under `/social-api` (the gateway prefix); the
@@ -31,7 +31,6 @@ pub mod fed;
 pub mod friendship;
 pub mod http;
 pub mod mirror;
-pub mod presence;
 pub mod profiles;
 pub mod queries;
 pub mod ranking;
@@ -58,6 +57,8 @@ pub(crate) mod voice;
 mod write_support;
 
 #[cfg(test)]
+pub(crate) mod test_names;
+#[cfg(test)]
 mod tests;
 
 use std::sync::Arc;
@@ -75,7 +76,6 @@ use crate::{Address, CommunityId};
 
 use auth::SignedPath;
 use http::CommError;
-use presence::Presence;
 use profiles::ProfilesCache;
 
 /// The old `catalyrst-communities` service's settings. `main.rs` fills it
@@ -99,13 +99,12 @@ pub struct Settings {
     pub restricted_names: Vec<String>,
     /// `COMMUNITIES_CDN_URL` (the old `CDN_URL`), default `PUBLIC_URL`: the
     /// base of `thumbnailUrl`; this node serves the thumbnail at
-    /// `/social/communities/{id}/raw-thumbnail.png` under it.
+    /// `/social/communities/{id}/raw-thumbnail.png` under it. Emitted URLs
+    /// carry `?v=<hash>`, so a caching CDN must key on `v` only and strip
+    /// other query parameters.
     pub cdn_url: String,
     /// Where profile pictures are served (`profiles::FaceUrls`).
     pub faces: profiles::FaceUrls,
-    /// `ARCHIPELAGO_STATS_URL`: the comms presence source of `onlyOnline`;
-    /// unset renders every member offline.
-    pub archipelago_stats_url: Option<String>,
     /// `COMMUNITIES_PLACES_OWNERSHIP_CHECK` (default true: upstream's
     /// `validateOwnership` always asks the places API, `PLACES_API_URL` being
     /// required): places added to a community must be owned by the caller
@@ -153,7 +152,6 @@ impl Settings {
             restricted_names: Vec::new(),
             cdn_url: "http://cdn.test".to_string(),
             faces: profiles::FaceUrls::new(None, "http://127.0.0.1:9/profile-images/", false),
-            archipelago_stats_url: None,
             places_ownership_check: true,
             mirror_interval: std::time::Duration::from_secs(3600),
             referral: referral::Settings::for_tests(),
@@ -170,7 +168,9 @@ pub struct State {
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     pub profiles: ProfilesCache,
     pub referral: referral::Referral,
-    pub presence: Presence,
+    /// The wallet topology (Pulse islands and World rooms), attached with the
+    /// social RPC's (`serve`): who `onlyOnline` counts as online. Unattached, no one is.
+    pub topology: std::sync::OnceLock<Arc<crate::comms::topology::Topology>>,
     /// One DAPPS document shared by moderator, compliance and referral decisions.
     pub flags: Arc<crate::explore::api::feature_flags::Snapshot>,
     analytics: std::sync::OnceLock<crate::analytics::Analytics>,
@@ -186,9 +186,9 @@ pub struct State {
     /// The social RPC's fan-out, attached in `serve`: membership changes and
     /// deletions reach the open community-member connectivity streams.
     pub updates: std::sync::OnceLock<crate::rpc::pubsub::PubSub>,
-    /// The process's shared chain reader, attached by `serve`. Profile claims
-    /// are user-authored and cannot establish NAME ownership.
-    pub chain_index: std::sync::OnceLock<Arc<crate::chain_index::ChainIndex>>,
+    /// The node's DCL NAME source, attached by `serve`. Profile claims are
+    /// user-authored and cannot establish NAME ownership.
+    pub name_authority: std::sync::OnceLock<Arc<dyn crate::chain_index::names::NameAuthority>>,
     /// Explore's explorer-flags document, attached once explore is up: the official wallets
     /// (`features::official_wallets`). Unattached, no post is official.
     pub explorer_flags: std::sync::OnceLock<Arc<crate::explore::api::feature_flags::Snapshot>>,
@@ -255,9 +255,7 @@ pub type SharedState = Arc<State>;
 const DM_SENDS_PER_MINUTE: u32 = 60;
 
 impl State {
-    /// `http` is the process's outbound client; the presence probe uses its
-    /// raw form because `ARCHIPELAGO_STATS_URL` is operator configuration
-    /// (typically a loopback service), not user input.
+    /// `http` is the process's outbound client.
     pub fn new(
         pool: PgPool,
         storage: Arc<Storage>,
@@ -269,7 +267,6 @@ impl State {
         let profiles = ProfilesCache::new(pool.clone(), settings.faces.clone());
         let referral =
             referral::Referral::new(pool.clone(), http.clone(), settings.referral.clone());
-        let presence = Presence::new(http.raw().clone(), settings.archipelago_stats_url.clone());
         let dm_limiter = RateLimiter::new(DM_SENDS_PER_MINUTE, std::time::Duration::from_secs(60));
         Self {
             pool,
@@ -278,7 +275,7 @@ impl State {
             eip1654,
             profiles,
             referral,
-            presence,
+            topology: std::sync::OnceLock::new(),
             flags: Arc::new(crate::explore::api::feature_flags::Snapshot::empty()),
             analytics: std::sync::OnceLock::new(),
             compliance: std::sync::OnceLock::new(),
@@ -286,7 +283,7 @@ impl State {
             voice: std::sync::OnceLock::new(),
             worlds: std::sync::OnceLock::new(),
             updates: std::sync::OnceLock::new(),
-            chain_index: std::sync::OnceLock::new(),
+            name_authority: std::sync::OnceLock::new(),
             explorer_flags: std::sync::OnceLock::new(),
             mirror_source: std::sync::OnceLock::new(),
             pass_markers: copies::Markers::new(copies::MARKER_TTL),
@@ -328,7 +325,7 @@ impl State {
         method: &str,
         path: &SignedPath,
     ) -> Result<Address, CommError> {
-        Ok(auth::require_signer(headers, method, path, self.eip1654.as_deref()).await?)
+        Ok(auth::require_signer(headers, method, path, self.eip1654.as_ref()).await?)
     }
 
     pub async fn optional_signer(
@@ -337,7 +334,7 @@ impl State {
         method: &str,
         path: &SignedPath,
     ) -> Option<Address> {
-        auth::try_extract_signer(headers, method, path, self.eip1654.as_deref()).await
+        auth::try_extract_signer(headers, method, path, self.eip1654.as_ref()).await
     }
 
     pub fn admin_bearer(&self, headers: &HeaderMap) -> bool {
@@ -356,6 +353,11 @@ impl State {
         thumbnail_url(&self.settings.cdn_url, &id.to_string())
     }
 
+    /// The thumbnail URL versioned by the stored hash (bare when none).
+    pub fn versioned_thumbnail_url(&self, id: CommunityId, hash: Option<&str>) -> String {
+        versioned_thumbnail_url(&self.settings.cdn_url, &id.to_string(), hash)
+    }
+
     /// Attaches the comms module's voice-room kick (once).
     pub fn set_voice_eviction(&self, voice: Arc<dyn VoiceEviction>) {
         let _ = self.voice.set(voice);
@@ -370,8 +372,9 @@ impl State {
             .unwrap_or_default()
     }
 
-    pub fn set_chain_index(&self, index: Arc<crate::chain_index::ChainIndex>) {
-        let _ = self.chain_index.set(index);
+    /// Attaches the node's DCL NAME source (selected once, by the shop).
+    pub fn set_name_authority(&self, names: Arc<dyn crate::chain_index::names::NameAuthority>) {
+        let _ = self.name_authority.set(names);
     }
 
     /// Attaches explore's explorer-flags document, which names the official wallets (once).
@@ -379,15 +382,31 @@ impl State {
         let _ = self.explorer_flags.set(flags);
     }
 
+    /// Whether `wallet` holds a DCL NAME now: the authorization of creating
+    /// a community (directly or federated) and of receiving its ownership.
+    /// A source that cannot establish it refuses (503), never "holds none".
     pub(crate) async fn has_owned_name(&self, wallet: &Address) -> Result<bool, CommError> {
-        let index = self.chain_index.get().ok_or(CommError::Internal)?;
-        crate::chain_index::graph::owned_names(index, wallet.as_str())
-            .await
-            .map(|names| !names.is_empty())
-            .map_err(|error| {
+        use crate::chain_index::names::{NamesError, Purpose};
+        let names = self.name_authority.get().ok_or_else(|| {
+            CommError::Status(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "no DCL NAME source on this node".into(),
+            )
+        })?;
+        match names.owned_names(wallet.as_str(), Purpose::Authorize).await {
+            Ok(answer) => Ok(!answer.value.is_empty()),
+            Err(NamesError::NotEstablished(message)) => {
+                tracing::warn!(%message, %wallet, "NAME ownership not established");
+                Err(CommError::Status(
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    message,
+                ))
+            }
+            Err(error) => {
                 tracing::error!(%error, %wallet, "NAME ownership lookup failed");
-                CommError::Internal
-            })
+                Err(CommError::Internal)
+            }
+        }
     }
 
     /// Attaches the worlds module's re-admission (once).
@@ -395,14 +414,28 @@ impl State {
         let _ = self.worlds.set(worlds);
     }
 
+    /// Attaches the wallet topology (once).
+    pub fn set_topology(&self, topology: Arc<crate::comms::topology::Topology>) {
+        let _ = self.topology.set(topology);
+    }
+
+    /// The wallets online now, lowercased: the topology's current snapshot
+    /// (shared, not copied), none when it is unattached or has expired.
+    pub fn online_wallets(&self) -> Arc<std::collections::BTreeSet<String>> {
+        self.topology
+            .get()
+            .map(|t| t.snapshot().wallets)
+            .unwrap_or_default()
+    }
+
     /// Attaches the social RPC's fan-out (once).
     pub fn set_updates(&self, updates: crate::rpc::pubsub::PubSub) {
         let _ = self.updates.set(updates);
     }
 
-    /// A join (`online`) or a leave, kick or ban reaches the community's
-    /// members on open community-member connectivity streams and the member
-    /// itself (upstream's `COMMUNITY_MEMBER_STATUS_UPDATES_CHANNEL`).
+    /// A join or removal reaches the affected member as a membership change.
+    /// Co-members on open connectivity streams see the corresponding roster change
+    /// when membership and topology agree with it.
     pub async fn member_status_changed(
         &self,
         community_id: CommunityId,
@@ -460,7 +493,7 @@ impl State {
         target: &Address,
     ) {
         match queries::is_private(&self.pool, community_id).await {
-            Ok(true) => match self.voice.get() {
+            Ok(Some(true)) => match self.voice.get() {
                 Some(voice) => match voice.evict(community_id, target.as_str()).await {
                     Ok(()) => {
                         tracing::info!(%community_id, %target, "kicked user from private community voice chat")
@@ -473,7 +506,7 @@ impl State {
                     tracing::warn!(%community_id, %target, room = %crate::comms::rooms::community_voice_chat_room_name(&community_id), "no voice transport attached; the private community voice seat stays")
                 }
             },
-            Ok(false) => {}
+            Ok(_) => {}
             Err(e) => {
                 tracing::warn!(error = %e, %community_id, %target, "privacy lookup for voice eviction failed; skipping kick")
             }
@@ -491,26 +524,27 @@ impl State {
         extra: serde_json::Value,
         audience: crate::notifications::community::Audience<'_>,
     ) {
-        let name: Option<String> = match sqlx::query_scalar(
-            "SELECT name FROM social.communities WHERE id = $1",
+        let row: Option<(String, Option<String>)> = match sqlx::query_as(
+            "SELECT c.name, t.thumbnail_hash FROM social.communities c \
+             LEFT JOIN social.community_thumbnails t ON t.community_id = c.id WHERE c.id = $1",
         )
         .bind(community_id)
         .fetch_optional(&self.pool)
         .await
         {
-            Ok(name) => name,
+            Ok(row) => row,
             Err(error) => {
                 tracing::warn!(%error, %community_id, kind, "community notification: name lookup failed");
                 None
             }
         };
-        let Some(name) = name else {
+        let Some((name, hash)) = row else {
             return;
         };
         let mut metadata = serde_json::json!({
             "communityId": community_id.as_uuid(),
             "communityName": name,
-            "thumbnailUrl": self.thumbnail_url(community_id),
+            "thumbnailUrl": self.versioned_thumbnail_url(community_id, hash.as_deref()),
         });
         if let (Some(m), serde_json::Value::Object(extra)) = (metadata.as_object_mut(), extra) {
             m.extend(extra);
@@ -570,6 +604,21 @@ pub fn thumbnail_url(cdn: &str, id: &str) -> String {
         cdn.trim_end_matches('/'),
         id
     )
+}
+
+/// The query parameter that versions a thumbnail URL by its content hash.
+pub const THUMBNAIL_VERSION_PARAM: &str = "v";
+
+/// `thumbnail_url` plus `?v=<hash>`, so an update changes the URL; a hash
+/// that is not URL-safe leaves it bare.
+pub fn versioned_thumbnail_url(cdn: &str, id: &str, hash: Option<&str>) -> String {
+    let url = thumbnail_url(cdn, id);
+    match hash {
+        Some(h) if !h.is_empty() && h.bytes().all(|b| b.is_ascii_alphanumeric()) => {
+            format!("{url}?{THUMBNAIL_VERSION_PARAM}={h}")
+        }
+        _ => url,
+    }
 }
 
 /// The request's own path (the gateway prefix included when nested) beside

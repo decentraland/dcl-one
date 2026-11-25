@@ -101,8 +101,16 @@ thumbnail names, and fails (exit 1, listing them) when one is missing: run
   CIDv0 against either upstream spelling (raw sha256, or `ipfs add`).
 - Upstream's uploaded thumbnails are keyed by the sha256 hex of their bytes.
   They are stored under their `hash_bytes_v1` CID, and `world` rewrites
-  `thumbnail_hash` to that CID, so a thumbnail of any size resolves.
-  Deploy-derived thumbnails already are a scene content CID.
+  `thumbnail_hash` to that CID. It records the verified hex-to-CID mapping
+  in `worlds.thumbnail_aliases` for uploads over 256 KiB and up to 1 MiB,
+  so saved hex URLs still resolve on the worlds mount. To recover mappings
+  on an earlier import, run `blobs worlds-content-server` and replay the
+  `world` step with `--since` set before the source rows. The aliases are
+  recorded even for worlds that retain newer local settings. Import pins
+  these blobs by clearing `mirror_expires_at` on a matching alias previously
+  recorded by the mirror. The import verification checks pinned aliases.
+  Deploy-derived
+  thumbnails already are a scene content CID.
 - The store layout is the node's: `<STORAGE_ROOT_FOLDER>/contents/<sha1
   shard>/<cid>`, written through a new staging file (`O_EXCL|O_NOFOLLOW`, as
   the node) and a rename; the staging file is removed when the read fails. Run
@@ -118,7 +126,7 @@ thumbnail names, and fails (exit 1, listing them) when one is missing: run
   recorded size are skipped, so the copy runs again before each
   `run --since last`. A file the store already holds for an unrecorded key is
   re-hashed, and copied again when its bytes do not match.
-- `--verify` lists each imported local scene (and world thumbnail) whose
+- `--verify` lists each imported local scene, world thumbnail and legacy alias whose
   blobs are not in the store. It checks existence; the copy checked content.
 - Places: upstream Places stored an uploaded world thumbnail as the image URL
   `<worlds server>/contents/<sha256 hex>`. The `places` source's `place` step
@@ -172,6 +180,12 @@ the columns' range are capped (`max_parcels` at 2^31-1).
 - `forward_outbox`: upstream forwarding of new local publishes.
 - `world_access_log`: upstream has no such table.
 - `worlds.world_scene_identity`: a frozen upgrade source. It is never written.
+- Stream key notifications: the loads of `worlds.world_scenes` (local scenes),
+  `worlds.worlds` (an owner change), `worlds.world_permissions` (a removed grant)
+  and `worlds.world_permission_parcels` fire the `world_authority` triggers of
+  `schemas/20_worlds.sql` in the load's transaction. PostgreSQL sends one
+  notification per world and transaction at commit; the gatekeeper's key
+  listener then checks that world's stream keys. The loads need no change.
 
 ## Blocked names: required cutover preflight
 
@@ -187,3 +201,17 @@ unrelated sibling name. Setting `blocked_since` on existing worlds would miss
 blocked names without rows and does not establish equivalent admission checks.
 For a nonempty list, retain the current service owner until an equivalent target
 exact-name policy is implemented and verified across deployment and read routes.
+
+The `world_scene` load locks affected worlds and active identities in order,
+stages exact retiring bindings, deletes their backing scenes, then retires
+only bindings still matching the saved tuple and lacking a backing scene.
+The final retirement snapshots active admin namespaces into both catalogue
+legs before periodic removal. Identities imported ahead of their backing
+scenes are not retired by an unrelated batch. Real scene insertion clears
+catalogue removal evidence while queued removal events retain theirs.
+
+Identity updates and retirements also write `explore.world_scene_binding`
+through its schema trigger. Exact displaced `(world_name, entity_id, identity)`
+facts survive replay, retirement and deletion; imports never clear them.
+These facts support deferred legacy streaming notices without assigning
+a sibling scene or inferring authority from parcel overlap.

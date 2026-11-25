@@ -230,9 +230,19 @@ pub async fn recheck_charge(
 impl CoreState {
     /// The DCL world keys `wallet` holds now; `None` without a names reader.
     pub async fn held_worlds(&self, wallet: &Address) -> Result<Option<Vec<String>>, String> {
+        self.held_worlds_using(None, wallet).await
+    }
+
+    /// [`Self::held_worlds`], read on `conn` when given (a session the caller
+    /// holds, never a second pool connection).
+    pub async fn held_worlds_using(
+        &self,
+        conn: Option<&mut sqlx::PgConnection>,
+        wallet: &Address,
+    ) -> Result<Option<Vec<String>>, String> {
         let labels = self
             .policy
-            .held_name_labels(wallet)
+            .held_name_labels_using(conn, wallet)
             .await
             .map_err(|e| e.to_string())?;
         Ok(labels.map(|labels| labels.iter().map(|l| format!("{l}.dcl.eth")).collect()))
@@ -312,7 +322,7 @@ impl CoreState {
             .await
             .map_err(CapError::Unavailable)?;
         let mut held = self
-            .held_worlds(&owner)
+            .held_worlds_using(conn.as_deref_mut(), &owner)
             .await
             .map_err(CapError::Unavailable)?;
         // `owner` was resolved as this world's holder.

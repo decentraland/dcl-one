@@ -43,9 +43,11 @@ const DIAGNOSTICS = {
       node: 'The node is not a component of the captured library. Check the instance comes from the library and resolve again with its component set nodeId; this is an identity problem, not a missing mapping.',
       'stale-mapping': `The node is not in the capture, but a mapping still targets it (details.files): a stale mapping, which is a library defect. Do not build a replacement. ${REPORT}`,
       'mapping-node':
-        'A mapping targets a node that is not in the capture. Point the mapping at the captured component set, or retire it.'
+        'A mapping targets a node that is not in the capture or the mapping manifest. Point the mapping at the captured component set and refresh the manifest, or retire it.',
+      'manifest-orphan':
+        'The mapping manifest holds a node that no mapping names. Refresh the manifest (pnpm figma manifest refresh).'
     },
-    maintainerReasons: ['mapping-node']
+    maintainerReasons: ['mapping-node', 'manifest-orphan']
   },
   'identity-ambiguous': {
     severity: 'error',

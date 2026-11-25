@@ -12,7 +12,7 @@
     border-radius: var(--dcl-radius-lg);
     background: var(--dcl-transparencies-black-40);
     color: var(--dcl-neutrals-snow);
-    /* The reference card lifts and glows over 200ms. */
+    /* Small cards lift and glow over 200ms. */
     transition:
       transform 200ms,
       box-shadow 200ms;
@@ -41,6 +41,11 @@
     flex: none;
     overflow: hidden;
     background: var(--dcl-neutrals-onix);
+  }
+
+  /* A dimmed card fades its cover only, so the title, host and time keep their contrast. */
+  .media[data-dimmed] {
+    opacity: 0.5;
   }
 
   .cover {
@@ -187,8 +192,18 @@
      (the HUD keeps the surface as its own --events-card-live, outside the shared foundations). */
   .small.isLive {
     background:
-      radial-gradient(33% 54% at 50% 150%, rgb(224 0 97 / 0.35), rgb(224 0 97 / 0.105) 60%, transparent),
-      radial-gradient(53% 78% at 50% 150%, rgb(224 0 97 / 0.5), rgb(224 0 97 / 0.125) 60%, transparent),
+      radial-gradient(
+        33% 54% at 50% 150%,
+        rgb(224 0 97 / 0.35),
+        rgb(224 0 97 / 0.105) 60%,
+        transparent
+      ),
+      radial-gradient(
+        53% 78% at 50% 150%,
+        rgb(224 0 97 / 0.5),
+        rgb(224 0 97 / 0.125) 60%,
+        transparent
+      ),
       #680d4a;
   }
 
@@ -205,6 +220,7 @@
   /* A day column: a 16:9 cover above the text. A live event is marked on its leading edge. */
   .day {
     flex-direction: column;
+    container-type: inline-size;
   }
 
   .day .media {
@@ -220,8 +236,44 @@
     white-space: nowrap;
   }
 
-  .day.isLive {
-    box-shadow: inset 4px 0 0 var(--dcl-system-red);
+  .day.isLive::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 1;
+    width: 5px;
+    background: var(--dcl-brand-ruby);
+    pointer-events: none;
+  }
+
+  .day.isLive .media {
+    height: min(62.5cqw, 200px);
+    aspect-ratio: auto;
+  }
+
+  .day.isLive .body {
+    background: var(--dcl-transparencies-black-60);
+  }
+
+  .day.isLive .actions > * {
+    position: relative;
+    z-index: 1;
+    pointer-events: auto;
+  }
+
+  .announcement {
+    composes: text626f64792f736d from '../../foundations/typography/text-styles.module.css';
+    position: absolute;
+    z-index: 2;
+    inset-block-end: var(--dcl-space-48);
+    inset-inline-start: var(--dcl-space-12);
+    max-inline-size: calc(100% - var(--dcl-space-24));
+    padding: var(--dcl-space-4) var(--dcl-space-8);
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-neutrals-onix);
+    color: var(--dcl-neutrals-snow);
+    overflow-wrap: anywhere;
+    pointer-events: none;
   }
 
   /* Badges over the cover */
@@ -433,18 +485,24 @@
     white-space: nowrap;
   }
 
-  /* A device that hovers, from tablet width: the actions wait, hidden, over the time. Hover or focus
-     inside the card lifts it (4px, with the reference's 30% white glow), fades the time out and fades
-     and slides the actions up 8px into its place, all over 200ms. Hidden by opacity only, the actions
-     stay in the accessibility tree and in reverse Tab order. */
+  /* Hover or focus reveals future event actions over the start time. Waiting actions stay in
+     the accessibility tree so they can be reached by reverse Tab. */
   @media (hover: hover) and (min-width: 768px) {
-    .card:hover,
-    .card:focus-within {
+    .small:hover,
+    .small:focus-within {
       transform: translateY(-4px);
       box-shadow: 0 2px 12px 12px color-mix(in srgb, var(--dcl-neutrals-white) 30%, transparent);
     }
 
-    .day.hasActions .footer {
+    .day.isLive .media {
+      transition: height 250ms ease;
+    }
+
+    .day.isLive:hover .media {
+      height: min(78cqw, 260px);
+    }
+
+    .day.hasActions:not(.isLive) .footer {
       position: relative;
       flex-direction: row;
       align-items: center;
@@ -460,7 +518,7 @@
       opacity: 0;
     }
 
-    .day.hasActions .actions {
+    .day.hasActions:not(.isLive) .actions {
       position: absolute;
       inset: 0;
       opacity: 0;
@@ -470,14 +528,30 @@
         transform 200ms;
     }
 
-    .day.hasActions .action {
-      width: 32px;
+    .day.hasActions:not(.isLive) .action {
       height: 32px;
       pointer-events: none;
     }
 
-    .day.hasActions .labelled {
-      width: auto;
+    .day.hasActions:not(.isLive) .action:not(.labelled) {
+      width: 32px;
+    }
+
+    @container (max-width: 224px) {
+      .day.hasActions:not(.isLive) .labelled {
+        flex-shrink: 1;
+        min-width: 0;
+        padding-inline: var(--dcl-space-4);
+      }
+
+      .day.hasActions:not(.isLive) .labelled > svg {
+        display: none;
+      }
+
+      .day.hasActions:not(.isLive) .actionLabel {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
     }
 
     .day.hasActions:hover .actions,
@@ -544,8 +618,21 @@
     }
   }
 
+  /* A day card has no line of its own, as in decentraland.org/events' day column. Forced colours drop
+     its background, so it takes a system-colour boundary there; the focus outline still wins. */
+  @media (forced-colors: active) {
+    .day {
+      outline: 1px solid CanvasText;
+      outline-offset: -1px;
+    }
+  }
+
   /* Under reduced motion every state changes at once, in place. */
   @media (prefers-reduced-motion: reduce) {
+    .day.isLive .media {
+      transition: none;
+    }
+
     .card,
     .day.hasActions .time,
     .day.hasActions .actions,

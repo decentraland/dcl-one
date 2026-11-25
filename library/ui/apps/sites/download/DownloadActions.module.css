@@ -101,6 +101,33 @@
   line-height: 1.5;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .sourceAction:not(:focus-visible) {
+    outline: 3px solid transparent;
+    outline-offset: 4px;
+    transition: outline-color 150ms ease;
+  }
+
+  .sourceAction:hover:not(:focus-visible) {
+    outline-color: var(--dcl-neutrals-white);
+  }
+}
+
+/* The reference keeps its fill on hover and press: the ring above is its only pointer feedback. */
+.sourceActions .sourceAction:is(:hover, :active):not(:disabled) {
+  background: var(--dcl-action-primary);
+}
+
+.sourceActions .sourceEpic:is(:hover, :active):not(:disabled) {
+  background: var(--dcl-neutrals-white);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sourceAction:not(:focus-visible) {
+    transition: none;
+  }
+}
+
 .sourceEpic {
   color: #242129; /* reference #242129 (sites Hero.styled.ts), no token */
   gap: var(--dcl-space-24);

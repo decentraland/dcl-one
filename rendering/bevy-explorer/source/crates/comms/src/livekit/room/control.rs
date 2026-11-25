@@ -60,7 +60,6 @@ pub(super) struct RoomConnections<'w, 's> {
     commands: Commands<'w, 's>,
     policy: Res<'w, State<ConnectionAvailability>>,
     no_render: Option<Res<'w, NoRenderApp>>,
-    #[allow(clippy::type_complexity)]
     rooms: Query<
         'w,
         's,

@@ -1,4 +1,9 @@
 use super::*;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use hmac::{Hmac, KeyInit, Mac};
+use sha2::{Digest, Sha256};
+
+type HmacSha256 = Hmac<Sha256>;
 use crate::protocol::room_authority::PROOF_DOMAIN;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tower::ServiceExt;
@@ -279,25 +284,25 @@ async fn authentication_binds_raw_body_method_path_timestamp_and_canonical_heade
 async fn replay_registry_is_bounded_and_does_not_evict_live_nonces() {
     let (authority, _) = authority();
     let now = Instant::now();
-    {
-        let mut entries = authority.replays.lock().unwrap();
-        for id in 0..MAX_REPLAYS {
-            entries.insert((id as u128).to_be_bytes(), now + REPLAY_TTL);
-        }
+    for id in 0..MAX_REPLAYS {
+        authority
+            .replays
+            .admit((id as u128).to_be_bytes(), now)
+            .unwrap();
     }
     let headers = signed_headers(&[], "100", [0xff; 16], "POST", AUTHORITY_PATH);
     assert_eq!(
         authority.authenticate(&headers, &[], 100, now),
         Err(DenialReason::Capacity)
     );
-    assert_eq!(authority.replays.lock().unwrap().len(), MAX_REPLAYS);
+    assert_eq!(authority.replays.len(), MAX_REPLAYS);
     tokio::time::advance(REPLAY_TTL).await;
     assert!(
         authority
             .authenticate(&headers, &[], 100, Instant::now())
             .is_ok()
     );
-    assert_eq!(authority.replays.lock().unwrap().len(), 1);
+    assert_eq!(authority.replays.len(), 1);
 }
 
 #[tokio::test]
@@ -667,7 +672,7 @@ async fn request_pressure_is_rejected_before_body_authentication_or_policy() {
     let response = authority.handle(http_request(vec![0xff], [1; 16])).await;
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_denied(reply(response).await, DenialReason::Capacity);
-    assert!(authority.replays.lock().unwrap().is_empty());
+    assert!(authority.replays.is_empty());
     assert_eq!(policy.calls.load(Ordering::SeqCst), 0);
     drop(permits);
 }
