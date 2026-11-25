@@ -441,7 +441,7 @@
   },
   "apps/sites/src/features/social/submit-hangout/SubmitHangout.module.css": {
     "primitives": 0,
-    "tokens": 55
+    "tokens": 54
   },
   "apps/sites/src/features/social/submit-hangout/SubmitSuccess.module.css": {
     "primitives": 0,

@@ -10,7 +10,7 @@ import {
 import { Button as OneButton, GeneralAdd, GeneralCamera, GeneralDelete, GeneralInfoButton } from "@dcl/one-ui";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useMachine } from "@xstate/react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useHref, useLinkClickHandler, useSearchParams } from "react-router";
 
 
 import type { TrackContext } from "@/core/lib/telemetry/track";
@@ -170,6 +170,9 @@ function SubmitHangoutInner({
 }: InnerProps) {
   const { locale, text, errorText } = useEventsCopy();
   const [, setSearchParams] = useSearchParams();
+  const cancelTo = mode === "edit" ? "/events?tab=my" : "/events";
+  const cancelHref = useHref(cancelTo);
+  const cancelClick = useLinkClickHandler<HTMLAnchorElement>(cancelTo);
 
   const snapshot = useRef(
     resolveHangoutSnapshot({ step: stateId, trackCtx, draft, submit, track }),
@@ -313,7 +316,7 @@ function SubmitHangoutInner({
                           {text("Delete")}
                         </Button>
                       )}
-                      <Link className={styles.cancel} to={mode === "edit" ? "/events?tab=my" : "/events"}>{text("Cancel")}</Link>
+                      <Button size="lg" variant="tertiary" href={cancelHref} onClick={cancelClick}>{text("Cancel")}</Button>
                       <Button size="lg" disabled={!canSubmit} onClick={() => send({ type: "SUBMIT" })}>{text(mode === "edit" ? "Save changes" : "Submit Event")}</Button>
                     </div>
                   </div>
