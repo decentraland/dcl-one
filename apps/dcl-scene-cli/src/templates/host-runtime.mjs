@@ -80,6 +80,59 @@ function readVarint(buf, at) {
   }
   return [n >>> 0, at]
 }
+/* an rfc4 packet's top-level fields (multi-byte tags too), or null when
+   malformed: varints as numbers, length-delimited fields as buffers, fixed32
+   fields as floats */
+function rfc4Fields(buf) {
+  const fields = new Map()
+  let at = 0
+  while (at < buf.length) {
+    let tag
+    ;[tag, at] = readVarint(buf, at)
+    const field = tag >>> 3
+    const wire = tag & 7
+    if (field === 0 || at > buf.length) return null
+    if (wire === 0) {
+      let v
+      ;[v, at] = readVarint(buf, at)
+      fields.set(field, v)
+    } else if (wire === 2) {
+      let len
+      ;[len, at] = readVarint(buf, at)
+      if (at + len > buf.length) return null
+      fields.set(field, buf.subarray(at, at + len))
+      at += len
+    } else if (wire === 5) {
+      if (at + 4 > buf.length) return null
+      fields.set(field, buf.readFloatLE(at))
+      at += 4
+    } else if (wire === 1) {
+      if (at + 8 > buf.length) return null
+      at += 8
+    } else return null
+  }
+  return fields
+}
+/* an explorer's non-scene rfc4 packet (protocol_version 100, no Scene
+   field): its Position (Packet.position = 1) as {x, y, z, qx, qy, qz, qw} in
+   world space, or {} for any other kind (chat, profiles, animation); null for
+   scene traffic and for raw bytes. proto3 leaves zero floats out, so a
+   missing field is 0. */
+function rfc4NonScene(buf) {
+  const f = rfc4Fields(buf)
+  if (!f || f.get(11) !== 100 || f.has(6)) return null
+  const pos = f.get(1)
+  if (!(pos instanceof Uint8Array)) return {}
+  const p = rfc4Fields(Buffer.from(pos))
+  if (!p) return {}
+  const g = (n) => (typeof p.get(n) === 'number' ? p.get(n) : 0)
+  return { x: g(3), y: g(4), z: g(5), qx: g(6), qy: g(7), qz: g(8), qw: g(9) }
+}
+// Explorers frame a scene message's data with one CommsMessageType byte
+// (1 string, 2 binary, 3 comms data) and read data without one as a string;
+// the SDK's sync speaks binary, so the host adds and strips that byte, as an
+// explorer does for its own scene.
+const COMMS_BINARY = 2
 /* the scene message inside an rfc4 packet, or null for anything else
    (positions, profiles, chat -- the room carries them all) */
 function rfc4Unwrap(buf) {
@@ -199,6 +252,8 @@ function connect() {
       onPresence()
     } else if (frame.type === 'leave') {
       peers.delete(Number(frame.alias))
+      if (frame.address && ![...peers.values()].includes(String(frame.address).toLowerCase()))
+        positions.delete(String(frame.address).toLowerCase())
       if (frame.address) log('player left:', frame.address)
       onPresence()
     } else if (frame.type === 'update') {
@@ -207,6 +262,16 @@ function connect() {
       // explorer peers wrap scene traffic in rfc4; fake/test peers may speak
       // raw scene bytes -- accept both, ignore non-scene comms (positions,
       // profiles, chat)
+      // an explorer's position becomes the player's Transform on the server;
+      // its other comms (chat, profiles, animation) are not scene messages
+      const other = rfc4NonScene(raw)
+      if (other) {
+        if (from && 'x' in other) {
+          positions.set(from, other)
+          positionsDirty = true
+        }
+        return
+      }
       const unwrapped = rfc4Unwrap(raw)
       let body
       if (unwrapped) {
@@ -216,6 +281,11 @@ function connect() {
         }
         if (sceneId && unwrapped.sceneId && unwrapped.sceneId !== sceneId) return
         body = unwrapped.data
+        if (body.length && body[0] === COMMS_BINARY) body = body.subarray(1)
+        else if (body.length && body[0] <= 3) {
+          noteNonBinary(body[0])
+          return
+        }
       } else if (raw.length) {
         body = raw
       } else {
@@ -251,7 +321,9 @@ function doorSend(bytes, to) {
   if (!ws || ws.readyState !== 1) return
   // wrap for explorer peers when the scene id is known; raw until then
   // (before the first client, only test peers can be listening anyway)
-  const wire = sceneId ? rfc4Wrap(sceneId, bytes) : Buffer.from(bytes)
+  const wire = sceneId
+    ? rfc4Wrap(sceneId, Buffer.concat([Buffer.from([COMMS_BINARY]), Buffer.from(bytes)]))
+    : Buffer.from(bytes)
   const frame = { type: 'update', body: wire.toString('base64') }
   if (to && to.length) frame.to = to
   ws.send(JSON.stringify(frame))
@@ -271,6 +343,51 @@ function onPresence() {
   presenceDirty = true
 }
 const presenceEntities = new Map()
+
+// each player's last Position (world space) -> a Transform on its presence
+// entity, relative to the scene's base parcel, so server code can read where
+// a player stands (Transform.getOrNull(playerEntity)) as client code does
+const positions = new Map()
+let positionsDirty = false
+const [baseParcelX, baseParcelY] = String(sceneJson.scene?.base ?? '0,0').split(',').map(Number)
+function applyPositions() {
+  positionsDirty = false
+  const reg = fakeGlobal.__dclOneHostRegistry && fakeGlobal.__dclOneHostRegistry()
+  if (!reg) {
+    positionsDirty = true
+    return
+  }
+  let engine, Transform
+  try {
+    const ecs = reg['@dcl/sdk/ecs']
+    engine = ecs.engine
+    Transform = ecs.Transform || ecs.components.Transform(engine)
+  } catch {
+    return
+  }
+  for (const [addr, p] of positions) {
+    const ent = presenceEntities.get(addr)
+    if (ent === undefined) {
+      positionsDirty = true
+      continue
+    }
+    Transform.createOrReplace(ent, {
+      position: { x: p.x - 16 * (baseParcelX || 0), y: p.y, z: p.z - 16 * (baseParcelY || 0) },
+      rotation: { x: p.qx, y: p.qy, z: p.qz, w: p.qw },
+      scale: { x: 1, y: 1, z: 1 }
+    })
+  }
+}
+
+// a scene message framed as a string or comms data reaches no server code
+// (the sync is binary); say so once per kind instead of dropping it silently
+const nonBinaryNoted = new Set()
+function noteNonBinary(kind) {
+  if (nonBinaryNoted.has(kind)) return
+  nonBinaryNoted.add(kind)
+  tech('scene message framed as ' + (kind === 1 ? 'a string' : kind === 3 ? 'comms data' : 'type ' + kind) +
+    ' ignored: the server reads binary messages')
+}
 
 // RealmInfo -> the sdk sync transport. Its room-ready logic hangs off
 // RealmInfo.onChange(RootEntity).isConnectedSceneRoom, and ecs onChange fires
@@ -553,6 +670,7 @@ setInterval(async () => {
   const dt = (now - last) / 1000
   last = now
   if (presenceDirty) reconcilePresence()
+  if (positionsDirty) applyPositions()
   if (realmDirty) pushRealmInfo()
   try {
     await loader.onUpdate(dt)

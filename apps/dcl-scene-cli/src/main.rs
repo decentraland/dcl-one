@@ -286,6 +286,11 @@ enum Command {
         )]
         explorer_alpha: bool,
         #[arg(
+            long,
+            help = "Start the native Bevy explorer on this preview, scene rooms included (decentra-bevy on PATH, or DCL_ONE_NATIVE_BIN); --no-client or --ci keep it from launching"
+        )]
+        native: bool,
+        #[arg(
             long = "web",
             visible_alias = "bevy-web",
             help = "Open the hosted web explorer on this preview in a browser; --no-browser, --no-client or --ci keep it closed"
@@ -327,9 +332,13 @@ enum Command {
         landscape_terrain_enabled: bool,
         #[arg(
             long,
-            help = "Add skip-auth-screen=true to the desktop deep link. With this flag or --multi-instance, the link has only the parameters of the given flags; with neither, it has both"
+            value_name = "true|false",
+            num_args = 0..=1,
+            default_missing_value = "true",
+            value_parser = clap::builder::BoolishValueParser::new(),
+            help = "Add skip-auth-screen=true to the desktop deep link (`--skip-auth-screen false` leaves it out). With this flag or --multi-instance, the link has only the parameters of the given flags; with neither, it has both"
         )]
-        skip_auth_screen: bool,
+        skip_auth_screen: Option<bool>,
         #[arg(long = "local-scene", hide = true)]
         local_scene: bool,
         #[arg(long, hide = true)]
@@ -1167,6 +1176,7 @@ async fn run(command: Command) -> Result<()> {
             no_client,
             mobile,
             explorer_alpha,
+            native,
             web,
             dclenv,
             realm,
@@ -1225,14 +1235,19 @@ async fn run(command: Command) -> Result<()> {
             })?;
             let launch_desktop = explorer_alpha && !ci && !no_client;
             let launch_web = web && !no_browser && !ci && !no_client;
+            let launch_native = native && !ci && !no_client;
             for (given, note) in [
                 (
                     no_browser && !talk && !web && !ci,
                     "--no-browser has no effect without --talk or --web (dcl-scene-cli opens a browser only for those)",
                 ),
                 (
-                    no_client && !explorer_alpha && !web,
-                    "--no-client has no effect without --explorer-alpha or --web (dcl-scene-cli launches a client only when asked)",
+                    no_client && !explorer_alpha && !web && !native,
+                    "--no-client has no effect without --explorer-alpha, --web or --native (dcl-scene-cli launches a client only when asked)",
+                ),
+                (
+                    native && !launch_native,
+                    "--native: not starting the native explorer (--ci or --no-client); its command line still prints",
                 ),
                 (
                     explorer_alpha && !launch_desktop,
@@ -1305,6 +1320,7 @@ async fn run(command: Command) -> Result<()> {
                 position,
                 launch_desktop,
                 launch_web,
+                launch_native,
             })
             .await
         }
@@ -1811,6 +1827,8 @@ mod tests {
                 "9000",
             ],
             &["start", "-p", "0", "-d", "-b", "-w", "-m", "--web"],
+            &["start", "--mcp", "--skip-auth-screen", "true"],
+            &["start", "--skip-auth-screen", "false", "--multi-instance"],
             &[
                 "deploy",
                 "--dir",
@@ -1894,6 +1912,24 @@ mod tests {
             Command::Start { position, .. } => assert_eq!(position, Some((3, -4))),
             _ => panic!("not a start command"),
         }
+    }
+
+    /// `--skip-auth-screen` takes an optional `true|false`, as upstream's help
+    /// says, so the launch line `--skip-auth-screen true` runs on both CLIs.
+    #[test]
+    fn skip_auth_screen_takes_an_optional_boolean() {
+        let skip = |args: &[&str]| match parse(args) {
+            Command::Start {
+                skip_auth_screen, ..
+            } => skip_auth_screen,
+            _ => panic!("not a start command"),
+        };
+        assert_eq!(skip(&[]), None);
+        assert_eq!(skip(&["--skip-auth-screen"]), Some(true));
+        assert_eq!(skip(&["--skip-auth-screen", "true"]), Some(true));
+        assert_eq!(skip(&["--skip-auth-screen", "false"]), Some(false));
+        assert_eq!(skip(&["--skip-auth-screen", "--mcp"]), Some(true));
+        assert!(try_start(&["--skip-auth-screen", "maybe"]).is_err());
     }
 
     #[test]

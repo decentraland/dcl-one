@@ -209,9 +209,10 @@ dependencies cannot be read. The run loads `@dcl/inspector` and `@dcl/ecs` from 
 
 ```
 dcl-scene-cli start [--dir D] [-p|--port N] [--skip-build] [--no-watch] [-m|--mobile]
-                    [--explorer-alpha] [--web] [--dclenv org|zone] [--realm URL] [--position X,Y]
+                    [--explorer-alpha] [--web] [--native] [--dclenv org|zone] [--realm URL]
+                    [--position X,Y]
                     [--hub] [-n|--open-deeplink-in-new-instance] [--landscape-terrain-enabled]
-                    [--skip-auth-screen] [--multi-instance]
+                    [--skip-auth-screen [true|false]] [--multi-instance]
                     [--data-layer] [--offline-comms]
                     [--no-livekit | --livekit-url WS_URL --livekit-api-key KEY
                      --livekit-api-secret SECRET|--livekit-api-secret-file F] [--livekit-room NAME]
@@ -232,8 +233,10 @@ routes the wearable preview page polls.
 
 The join block always prints the desktop deep link and the web URL; nothing launches unless asked.
 `--mobile` adds a scan-to-join QR code for the web URL (also served at `/mobile-preview`).
-`--explorer-alpha` opens the deep link in the desktop Explorer and `--web` opens the hosted web
-explorer in a browser (both off under `--ci` or `--no-client`, `--web` also under `--no-browser`).
+`--explorer-alpha` opens the deep link in the desktop Explorer, `--web` opens the hosted web
+explorer in a browser and `--native` starts the native Bevy explorer (`decentra-bevy` on PATH, or
+`DCL_ONE_NATIVE_BIN`) with the join block's `native:` arguments, which include this preview as its
+scene-room gatekeeper (all off under `--ci` or `--no-client`, `--web` also under `--no-browser`).
 `--dclenv zone` points the deep link's `dclenv` and the web explorer at decentraland.zone; `--realm`
 names another realm in the desktop deep links; `--position X,Y` picks the parcel the join links land
 on; `--hub`, `-n` and `--landscape-terrain-enabled` add the matching `=true` deep-link knobs. The
@@ -245,7 +248,9 @@ nothing (`local-scene=true` is already on every deep link).
 `&multi-instance=true&skip-auth-screen=true`. With one flag, or the two, the link has only the
 parameters of the given flags: `start --hub --skip-auth-screen` prints a link that ends with
 `&hub=true&skip-auth-screen=true`, and `start --hub --multi-instance` one that ends with
-`&hub=true&multi-instance=true`. There is no flag form for a link with neither parameter. The first
+`&hub=true&multi-instance=true`. `--skip-auth-screen true` is the same as the bare flag, and
+`--skip-auth-screen false` counts as a flag given without its parameter, so alone it prints a link
+with neither parameter. The first
 visit of the launch page checks the same parameters. The `desktop (2nd instance)` row of
 `--verbose` has `multi-instance=true` in all cases.
 
@@ -356,8 +361,8 @@ and `--multi-instance` included), and `webUrl` is the
 one `--web` opens. `dataLayerUrl` is `null` without `--data-layer`; `editorUrl` is `null` without
 `--data-layer` or with no `/inspector/*` UI installed. `clientsOpened` lists the clients (`talk`,
 `desktop`, `web`) for which the opener of the system (`xdg-open`, `open` on macOS, `explorer` on
-Windows) started: the `desktop:` row prints on every run, so read this field, not the row, to know
-whether a client was started. It is `[]` when the run opened nothing, as with `--explorer-alpha
+Windows) started, and `native` when the native explorer itself started: the `desktop:` row prints on
+every run, so read this field, not the row, to know whether a client was started. It is `[]` when the run opened nothing, as with `--explorer-alpha
 --no-client`. A started opener does not say that the client is installed or came up.
 
 `client-failed`, after `ready`, for each client whose opener did not start or ended with an exit
@@ -375,7 +380,8 @@ wait. An opener that stays until its application exits gives the status of that 
 late `client-failed` can come from the application and not from the launch. An opener that a
 signal ends gives no line. On Linux and macOS the opener runs in a process group of its own, so a
 Ctrl-C in the terminal of the CLI does not go to it. On Windows the status of `explorer` is not
-read.
+read. For `native` the messages name the explorer (`the native explorer did not start: …`, `the
+native explorer ended with …`); it runs apart the same way, and its status is read on Windows too.
 
 `token` is the capability token of [Token](#token), the one `/data-layer?token=` and the project
 writes ask for. It is on stdout for the parent process, which already owns the project folder; any
@@ -457,6 +463,12 @@ dcl-scene-cli host [--dir D] [--preview http://127.0.0.1:8000] [--room room-1]
 
 With `"authoritativeMultiplayer": true`, `start` also runs the bundle headless as the server (voice
 off); `--no-host` skips it; `host` runs only the server.
+
+The server serves every room of the preview. A player reaches it from the realm room or from a
+`scene-<sceneId>` room (explorers that use the scene gatekeeper, as Unity and bevy do), and its
+replies reach each player once, in the scene room when the player holds one. Scene messages carry
+the explorers' one-byte message type (2, binary), and each player's position reaches server code
+as that player's `Transform`.
 
 ### Storage
 

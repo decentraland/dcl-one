@@ -106,7 +106,8 @@ pub struct StartOptions {
     pub explorer_params: Vec<String>,
     /// `--multi-instance` and `--skip-auth-screen`: see `link_defaults`.
     pub multi_instance: bool,
-    pub skip_auth_screen: bool,
+    /// `None` without the flag, `Some(false)` for `--skip-auth-screen false`.
+    pub skip_auth_screen: Option<bool>,
     pub data_layer: bool,
     pub tunnel: Option<String>,
     pub tunnel_token: Option<String>,
@@ -134,6 +135,9 @@ pub struct StartOptions {
     pub launch_desktop: bool,
     /// `--web`: open the hosted web explorer once the banner prints.
     pub launch_web: bool,
+    /// `--native`: start the native Bevy explorer on this preview once the
+    /// banner prints.
+    pub launch_native: bool,
 }
 
 /// `--talk`: the web explorer that will be opened is let through the
@@ -807,12 +811,13 @@ fn lock_cache(st: &AppState) -> MutexGuard<'_, HashMap<PathBuf, (Instant, Value)
 
 /// The deep-link parameters a run turns on. With neither flag, both
 /// parameters; with a flag, only the parameters of the given flags, as
-/// upstream does.
-fn link_defaults(multi_instance: bool, skip_auth_screen: bool) -> Vec<&'static str> {
-    if !multi_instance && !skip_auth_screen {
+/// upstream does. `--skip-auth-screen false` is a flag given that turns its
+/// parameter off.
+fn link_defaults(multi_instance: bool, skip_auth_screen: Option<bool>) -> Vec<&'static str> {
+    if !multi_instance && skip_auth_screen.is_none() {
         return landing::DEFAULT_ON.to_vec();
     }
-    [multi_instance, skip_auth_screen]
+    [multi_instance, skip_auth_screen == Some(true)]
         .into_iter()
         .zip(landing::DEFAULT_ON)
         .filter_map(|(given, key)| given.then_some(key))
@@ -1046,7 +1051,8 @@ pub async fn start(opts: StartOptions) -> Result<()> {
         .position
         .unwrap_or_else(|| joinblock::base_coords(&scene_json));
     let realm_override = opts.realm.clone();
-    let (launch_desktop, launch_web) = (opts.launch_desktop, opts.launch_web);
+    let (launch_desktop, launch_web, launch_native) =
+        (opts.launch_desktop, opts.launch_web, opts.launch_native);
     tokio::spawn(async move {
         let mut optimized_assets_url = None;
         if let Some(s) = sidecar.as_mut()
@@ -1091,7 +1097,6 @@ pub async fn start(opts: StartOptions) -> Result<()> {
                 &params,
             ),
             realm_override,
-            native_hud: true,
             native_bin: joinblock::detect_native_bin(),
         };
         if is_multi {
@@ -1131,6 +1136,11 @@ pub async fn start(opts: StartOptions) -> Result<()> {
             ux::note_arrow(format!("Web explorer: {url}"));
             launches.push(open_client("web", "the web explorer", &url));
         }
+        if launch_native {
+            let (bin, args) = block.local_native_argv();
+            ux::note_arrow(format!("Native explorer: {bin} {}", args.join(" ")));
+            launches.push(start_native(&bin, &args));
+        }
         let started = |client| {
             let found = launches
                 .iter()
@@ -1140,7 +1150,12 @@ pub async fn start(opts: StartOptions) -> Result<()> {
         ux::event(&ready_event(
             &block,
             &banner_state,
-            [started("talk"), started("desktop"), started("web")],
+            [
+                started("talk"),
+                started("desktop"),
+                started("web"),
+                started("native"),
+            ],
         ));
         report_launches(launches);
         if let Some(trunk_url) = trunk_url {
@@ -1238,17 +1253,21 @@ fn client_failed(client: &'static str, message: String) {
 /// application. The status of the Windows opener is not read, because it is
 /// not a result of the launch.
 fn report_launches(launches: Vec<Launch>) {
-    let opener = crate::linker::OPENER;
     for (client, launch) in launches {
+        // the native explorer is the process itself; the others are the opener
+        let started = match client {
+            "native" => "the native explorer",
+            _ => crate::linker::OPENER,
+        };
         match launch {
-            Err(e) => client_failed(client, format!("{opener} did not start: {e}")),
-            Ok(_) if cfg!(windows) => {}
+            Err(e) => client_failed(client, format!("{started} did not start: {e}")),
+            Ok(_) if cfg!(windows) && client != "native" => {}
             Ok(mut child) => {
                 std::thread::spawn(move || {
                     if let Ok(status) = child.wait()
                         && status.code().is_some_and(|code| code != 0)
                     {
-                        client_failed(client, format!("{opener} ended with {status}"));
+                        client_failed(client, format!("{started} ended with {status}"));
                     }
                 });
             }
@@ -1256,7 +1275,19 @@ fn report_launches(launches: Vec<Launch>) {
     }
 }
 
-fn ready_event(block: &JoinBlock, st: &AppState, opened: [(bool, &'static str); 3]) -> ReadyEvent {
+/// Starts the native explorer for `start --native`. A start that fails says
+/// how to provide the binary.
+fn start_native(bin: &str, args: &[String]) -> Launch {
+    let child = crate::linker::spawn_apart(bin, args);
+    if let Err(e) = &child {
+        ux::note(format!(
+            "could not start {bin}: {e} \u{2014} put decentra-bevy on PATH or set DCL_ONE_NATIVE_BIN"
+        ));
+    }
+    ("native", child)
+}
+
+fn ready_event(block: &JoinBlock, st: &AppState, opened: [(bool, &'static str); 4]) -> ReadyEvent {
     let port = block.port;
     let url = format!("http://127.0.0.1:{port}");
     ReadyEvent {

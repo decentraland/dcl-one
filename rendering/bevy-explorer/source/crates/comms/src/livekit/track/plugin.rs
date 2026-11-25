@@ -524,8 +524,12 @@ fn audio_track_is_now_subscribed(
     published_by: Query<&PublishedBy>,
     participants: Query<&HostedBy>,
     voice_rooms: Query<(), With<VoiceRoom>>,
-    mut livekit_audio_manager: ResMut<LivekitAudioManager>,
+    // absent on a machine with no audio output (see `build_kira_audio_manager`)
+    livekit_audio_manager: Option<ResMut<LivekitAudioManager>>,
 ) {
+    let Some(mut livekit_audio_manager) = livekit_audio_manager else {
+        return;
+    };
     let entity = trigger.target();
     let Ok((track, is_audio, has_audio_streaming_sound, has_open_audio_sender, multiplier)) =
         tracks.get(entity)

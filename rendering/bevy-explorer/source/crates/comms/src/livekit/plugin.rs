@@ -248,10 +248,12 @@ fn build_kira_audio_manager(mut commands: Commands, audio_settings: Option<Res<A
     let (scene, voice) = audio_settings
         .map(|s| (s.scene(), s.voice_chat()))
         .unwrap_or((1.0, 1.0));
+    // a machine with no audio output (a server, CI, a headless session) runs without LiveKit audio
     let mut manager = match AudioManager::new(AudioManagerSettings::<DefaultBackend>::default()) {
         Ok(manager) => manager,
         Err(err) => {
-            debug_panic!("Failed to livekit build AudioManager due to '{err}'.");
+            warn!("no audio output ({err}): voice and LiveKit scene audio are off");
+            return;
         }
     };
     let scene_track = manager.add_sub_track(TrackBuilder::new().volume(scene as f64));

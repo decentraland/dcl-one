@@ -488,7 +488,9 @@ pub(crate) fn finish_credentials(
         match result.and_then(|adapter| {
             let (kind, _) =
                 parse_adapter(&adapter).map_err(|_| AdmissionError::new(FailureKind::Invalid))?;
-            if kind == AdapterKind::SignedLogin || (!realm && kind != AdapterKind::Livekit) {
+            // a scene room is a LiveKit room, or a websocket room from a preview without LiveKit
+            let scene_room = matches!(kind, AdapterKind::Livekit | AdapterKind::Websocket);
+            if kind == AdapterKind::SignedLogin || (!realm && !scene_room) {
                 return Err(AdmissionError::new(FailureKind::Invalid));
             }
             Ok(adapter)

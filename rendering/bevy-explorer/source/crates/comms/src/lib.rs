@@ -811,6 +811,12 @@ fn update_scene_connection(
         (Entity, &SceneRoomTarget, &livekit::LivekitTransport),
         With<livekit::room::Connected>,
     >,
+    ws_rooms: Query<(
+        Entity,
+        &SceneRoomTarget,
+        &websocket_room::WebsocketRoomTransport,
+        &room_connection::ConnectionHealth,
+    )>,
 ) {
     #[cfg(feature = "livekit")]
     let next = rooms.iter().next().and_then(|(entity, target, transport)| {
@@ -819,6 +825,19 @@ fn update_scene_connection(
     });
     #[cfg(not(feature = "livekit"))]
     let next = None;
+    // a preview without LiveKit serves its scene rooms as websocket rooms
+    let next = next.or_else(|| {
+        ws_rooms
+            .iter()
+            .find(|(.., health)| health.is_connected())
+            .map(|(entity, target, transport, _)| {
+                (
+                    target.scene.clone(),
+                    format!("ws-room:{}", transport.address),
+                    entity,
+                )
+            })
+    });
     if current.0 != next {
         current.0 = next;
     }

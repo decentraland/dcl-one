@@ -1146,7 +1146,6 @@ fn ready_block(port: u16) -> JoinBlock {
         optimized_assets_url: None,
         deep_link_extra: "&hub=true".to_string(),
         realm_override: None,
-        native_hud: true,
         native_bin: None,
     }
 }
@@ -1160,7 +1159,12 @@ fn the_ready_event_names_the_links_and_the_run_token() {
     let line = serde_json::to_string(&ready_event(
         &block,
         &st,
-        [(false, "talk"), (false, "desktop"), (false, "web")],
+        [
+            (false, "talk"),
+            (false, "desktop"),
+            (false, "web"),
+            (false, "native"),
+        ],
     ))
     .unwrap();
     assert!(
@@ -1200,12 +1204,17 @@ fn the_ready_event_names_the_links_and_the_run_token() {
 #[test]
 fn the_ready_event_names_the_data_layer_and_the_opened_clients() {
     let block = ready_block(8123);
-    let opened = [(true, "talk"), (false, "desktop"), (true, "web")];
+    let opened = [
+        (true, "talk"),
+        (false, "desktop"),
+        (true, "web"),
+        (true, "native"),
+    ];
     let with_ui = state_with_data_layer(PathBuf::from("inspector-public"));
     let event = serde_json::to_value(ready_event(&block, &with_ui, opened)).unwrap();
     assert_eq!(event["dataLayerUrl"], "ws://127.0.0.1:8123/data-layer");
     assert_eq!(event["editorUrl"], "http://127.0.0.1:8123/inspector/");
-    assert_eq!(event["clientsOpened"], json!(["talk", "web"]));
+    assert_eq!(event["clientsOpened"], json!(["talk", "web", "native"]));
 
     let (tx, host_rx) = tokio::sync::watch::channel(Default::default());
     let mut no_ui = state(vec![]);
@@ -2546,13 +2555,17 @@ async fn open_problems_are_served_and_drawn_by_the_pages() {
 #[test]
 fn the_link_flags_select_the_parameters_the_deep_link_turns_on() {
     assert_eq!(
-        link_defaults(false, false),
+        link_defaults(false, None),
         ["multi-instance", "skip-auth-screen"]
     );
-    assert_eq!(link_defaults(true, false), ["multi-instance"]);
-    assert_eq!(link_defaults(false, true), ["skip-auth-screen"]);
+    assert_eq!(link_defaults(true, None), ["multi-instance"]);
+    assert_eq!(link_defaults(false, Some(true)), ["skip-auth-screen"]);
     assert_eq!(
-        link_defaults(true, true),
+        link_defaults(true, Some(true)),
         ["multi-instance", "skip-auth-screen"]
     );
+    // `--skip-auth-screen false` is a flag given: it does not bring its
+    // parameter back through the defaults
+    assert!(link_defaults(false, Some(false)).is_empty());
+    assert_eq!(link_defaults(true, Some(false)), ["multi-instance"]);
 }

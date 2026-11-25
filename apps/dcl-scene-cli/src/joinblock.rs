@@ -105,14 +105,12 @@ pub struct JoinBlock {
     /// `start --realm`: the realm the desktop deep links name instead of
     /// this preview's own address.
     pub realm_override: Option<String>,
-    pub native_hud: bool,
-    /// From [`detect_native_bin`]; None prints the generic `bevy-explorer` name.
+    /// From [`detect_native_bin`]; None prints `decentra-bevy`.
     pub native_bin: Option<String>,
 }
 
-/// An explicit `DCL_ONE_NATIVE_BIN` wins, else `decentra-bevy` (the upstream
-/// bevy-explorer binary) is looked up on PATH. Upstream rejects unknown flags,
-/// so `native_cmd` drops the fork-only `--hud` when it prints that name.
+/// An explicit `DCL_ONE_NATIVE_BIN` wins, else `decentra-bevy` (the engine in
+/// `rendering/bevy-explorer`) is looked up on PATH.
 pub fn detect_native_bin() -> Option<String> {
     if let Ok(explicit) = std::env::var("DCL_ONE_NATIVE_BIN")
         && !explicit.is_empty()
@@ -438,17 +436,37 @@ impl JoinBlock {
         )
     }
 
+    /// The engine's binary and arguments for this preview. `--preview-gatekeeper`
+    /// makes it ask this preview for its scene rooms, where an authoritative
+    /// scene's server is reached.
+    fn native_argv(&self, realm: &str) -> (String, Vec<String>) {
+        let bin = self
+            .native_bin
+            .as_deref()
+            .unwrap_or("decentra-bevy")
+            .to_string();
+        let args = [
+            "--realm",
+            realm,
+            "--position",
+            &format!("{},{}", self.position.0, self.position.1),
+            "--preview",
+            "--preview-gatekeeper",
+            realm,
+        ]
+        .map(str::to_string)
+        .to_vec();
+        (bin, args)
+    }
+
     fn native_cmd(&self, realm: &str) -> String {
-        let bin = self.native_bin.as_deref().unwrap_or("bevy-explorer");
-        let hud = if self.native_hud && bin == "bevy-explorer" {
-            " --hud"
-        } else {
-            ""
-        };
-        format!(
-            "{bin} --server {realm} --location {},{} --preview{hud}",
-            self.position.0, self.position.1
-        )
+        let (bin, args) = self.native_argv(realm);
+        format!("{bin} {}", args.join(" "))
+    }
+
+    /// `start --native`: the engine's binary and arguments on this machine.
+    pub fn local_native_argv(&self) -> (String, Vec<String>) {
+        self.native_argv(&self.local_realm())
     }
 
     fn push_editor_row(&self, out: &mut String, realm: &str) {
@@ -685,7 +703,6 @@ mod tests {
             optimized_assets_url: None,
             deep_link_extra: String::new(),
             realm_override: None,
-            native_hud: true,
         }
     }
 
@@ -862,7 +879,7 @@ mod tests {
             "desktop (2nd instance): decentraland://realm=http%3A%2F%2F127.0.0.1%3A5600&position=52%2C-68&local-scene=true&dclenv=org&multi-instance=true"
         ));
         assert!(out.contains(
-            "native:   bevy-explorer --server http://10.1.2.20:5600 --location 52,-68 --preview --hud"
+            "native:   decentra-bevy --realm http://10.1.2.20:5600 --position 52,-68 --preview --preview-gatekeeper http://10.1.2.20:5600"
         ));
         assert!(out.contains(
             "web:      https://decentraland.org/bevy-web/?preview=true&realm=http://10.1.2.20:5600&position=52,-68"
@@ -990,7 +1007,7 @@ mod tests {
             "desktop:  decentraland://realm=https%3A%2F%2Ftunnel.example%2Ft%2Fabc123defg&position=52%2C-68&local-scene=true&dclenv=org"
         ));
         assert!(out.contains(
-            "native:   bevy-explorer --server https://tunnel.example/t/abc123defg --location 52,-68 --preview --hud"
+            "native:   decentra-bevy --realm https://tunnel.example/t/abc123defg --position 52,-68 --preview --preview-gatekeeper https://tunnel.example/t/abc123defg"
         ));
         assert!(out.contains(
             "mobile:   decentraland://open?preview=https://tunnel.example/t/abc123defg&position=52,-68"
@@ -998,18 +1015,37 @@ mod tests {
     }
 
     #[test]
-    fn native_hud_flag_is_omitted_when_disabled() {
+    fn start_native_runs_the_engine_on_this_machines_preview() {
+        let (bin, args) = full_block().local_native_argv();
+        assert_eq!(bin, "decentra-bevy");
+        assert_eq!(
+            args,
+            [
+                "--realm",
+                "http://127.0.0.1:5600",
+                "--position",
+                "52,-68",
+                "--preview",
+                "--preview-gatekeeper",
+                "http://127.0.0.1:5600",
+            ]
+        );
+    }
+
+    #[test]
+    fn native_line_names_the_engine_binary_it_found() {
         let mut b = full_block();
-        b.native_hud = false;
+        b.native_bin = Some("/opt/dcl/decentra-bevy".to_string());
         let out = b.render();
         assert!(out.contains(
-            "native:   bevy-explorer --server http://10.1.2.20:5600 --location 52,-68 --preview\n"
+            "native:   /opt/dcl/decentra-bevy --realm http://10.1.2.20:5600 --position 52,-68 --preview --preview-gatekeeper http://10.1.2.20:5600\n"
         ));
-        assert!(!out.contains("--hud"));
-        let internet = b.internet_section("https://tunnel.example/t/abc123defg");
-        assert!(internet.contains(
-            "native:   bevy-explorer --server https://tunnel.example/t/abc123defg --location 52,-68 --preview\n"
-        ));
+        for retired in ["--server", "--location", "--hud"] {
+            assert!(
+                !out.contains(retired),
+                "the engine rejects {retired}, so the native line never prints it"
+            );
+        }
     }
 
     #[test]

@@ -75,6 +75,8 @@ Clients must wait for `isStateSyncronized()` (note SDK typo) to return `true` be
 
 Read actual server-verified positions via `engine.getEntitiesWith(PlayerIdentityData)` + `Transform.getOrNull(entity)`. Never trust client-reported positions.
 
+A player's `Transform` is `null` until that player's first movement reaches the server, so a player can be listed before they have a position. Treat `null` as "not known yet" and skip that player for the tick; never read it as a failed proximity or height check.
+
 ## Storage
 
 Persist data across server restarts. **Server-only** — guard with `isServer()`. Import from `@dcl/sdk/server`.
@@ -127,6 +129,15 @@ The reliable pattern is a **server heartbeat**: the server writes `Date.now()` t
 
 Distinguish two failure modes at the UI layer — they look similar but behave very differently. Room-not-synced is transient (~1 s during scene load): buffer the action and auto-fire it from a retry system. Server-not-alive can last 15 s or more on a cold start and may never resolve: surface a "server waking up" popup rather than silently buffering, and auto-dismiss it the moment a heartbeat lands so a player who waited isn't left staring at a stale dialog. See `{baseDir}/references/auth-server-examples.md` → Server Liveness Heartbeat for a full implementation.
 
+## Every Decision Must Reach the Player
+
+The client shows only what the server sends. A rule the server applies without sending anything back is invisible, and to a player it looks like a broken game. Four mistakes come from this:
+
+- **A decided run must end on the server.** When the server decides an outcome (a rival reaches the goal first, a timer runs out, a round is won), set the run's phase to its end state, record the winner, send the end message and broadcast the new state. A server that only updates a counter leaves the client showing "keep going" after the run is over, and a restart handler that requires the end phase never fires.
+- **Start a run's clocks when a player starts, not when the server boots.** Keep timers per run: start them on the player's first message (a `hello` or join) and reset them in the restart path. A server outlives client reloads, so a clock started at boot hands every reloading player a run that is already half over.
+- **Never refuse silently.** When a request is invalid in the current state (a card already spent, a move outside its phase), either send which actions are available with each state broadcast so the client can disable the rest, or answer the refusal with a short reason the client shows. An early `return` leaves the button lit and the press doing nothing.
+- **A reload restarts the client only.** Client-side state (an elapsed clock, local UI) resets on reload while the server keeps its state, so the two disagree unless the server resets or re-sends its full state on the next `hello`. Send the full state on every `hello`, not only on the first one.
+
 ## Version Control of Deploys
 
 Client and server always move together (paired by hash). Existing players keep the old version until they rejoin. `Storage` data persists across versions.
@@ -135,6 +146,7 @@ Client and server always move together (paired by hash). Existing players keep t
 
 - **Log prefixes**: Use `[SERVER]` and `[CLIENT]` in `console.log()`
 - **Local multi-player**: Click Preview a second time in Creator Hub, or open `decentraland://realm=http://127.0.0.1:8000&local-scene=true&debug=true`
+- **Local server state outlives reloads**: the preview's server keeps running while you reload the scene, so a reload is not a fresh run. To test from a clean start, use the scene's restart path, or stop and restart the preview. The preview prints the server's `console.log` lines in its own terminal, prefixed as you log them (`[SERVER]`).
 - **Production logs**: `npx sdk-commands sdk-server-logs` (add `--world WORLD_NAME.dcl.eth` for Worlds). Prompts a wallet-signature challenge; signing wallet must be listed in `scene.json` `logsPermissions`. See `{baseDir}/references/server-patterns.md` → Production Logs.
 - **Server-log noise signatures**: two recurring errors in *server* logs both mean client-only code is running in the server branch. `RemoteError: not implemented` on `EngineApi.subscribe('comms')` → a `MessageBus` was constructed on the server (see Messages). `400 Invalid metadata content` from `comms-gatekeeper.decentraland.org` → server code called a client-context platform API via `signedFetch`. Neither crashes the server, but the repeating noise buries real server logs — gate the offending code behind `!isServer()`.
 - **Per-player entity error signatures**: `syncEntity failed because the id provided is already in use` → an explicit sync id collided (usually a hash-derived per-player id, or a same-frame remove-and-recreate with the same id); `[mutable] Component <name> for <id> not found` repeating every frame → a cached entity handle went stale on a long-running server. Both fixes in Per-Player Synced Entities above.

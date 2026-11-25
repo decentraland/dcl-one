@@ -926,16 +926,20 @@ pub(crate) const OPENER: &str = if cfg!(target_os = "macos") {
 /// Starts [`OPENER`] on `url`. `Ok` says that the opener process started,
 /// not that an application opened the URL.
 pub(crate) fn spawn_opener(url: &str) -> std::io::Result<std::process::Child> {
-    spawn_apart(OPENER, url)
+    spawn_apart(OPENER, [url])
 }
 
-/// Starts `program` on `url` with no stream of this process and, on Unix, in
-/// a process group of its own: a Ctrl-C in the terminal goes to the group of
-/// the CLI, and not to the opener or to an application that the opener runs.
-fn spawn_apart(program: &str, url: &str) -> std::io::Result<std::process::Child> {
+/// Starts `program` with `args`, no stream of this process and, on Unix, in a
+/// process group of its own: a Ctrl-C in the terminal goes to the group of the
+/// CLI, and not to the program or to an application that it runs.
+pub(crate) fn spawn_apart<I, S>(program: &str, args: I) -> std::io::Result<std::process::Child>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
     let mut command = std::process::Command::new(program);
     command
-        .arg(url)
+        .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -1255,7 +1259,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_opener_runs_in_a_process_group_of_its_own() {
-        let mut child = spawn_apart("sleep", "600").unwrap();
+        let mut child = spawn_apart("sleep", ["600"]).unwrap();
         let pid = child.id() as libc::pid_t;
         let (group, own) = unsafe { (libc::getpgid(pid), libc::getpgid(0)) };
         child.kill().unwrap();

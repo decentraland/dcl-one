@@ -69,6 +69,47 @@ impl Registry {
             .map(|peer| peer.address.as_str())
     }
 
+    /// The preview's scene host when exactly one is connected: its room,
+    /// alias and peer. The host serves every room of the preview, so it is a
+    /// member of each one (see `join_room` and `drop_peer`); with two hosts
+    /// connected neither is, since no room could tell which one is its server.
+    fn sole_host(&self) -> Option<(&str, u32, &Peer)> {
+        let mut hosts = self.rooms.iter().flat_map(|(room_id, room)| {
+            room.iter()
+                .filter(|(_, peer)| peer.address == HOST_ADDRESS)
+                .map(move |(alias, peer)| (room_id.as_str(), *alias, peer))
+        });
+        let only = hosts.next()?;
+        hosts.next().is_none().then_some(only)
+    }
+
+    /// One session per wallet across every room, for what the host sends: a
+    /// wallet's scene-room session when it holds one (explorers that use the
+    /// scene gatekeeper read scene traffic there), its realm session otherwise.
+    /// `wanted` narrows the wallets; `None` means all of them.
+    fn wallet_sessions(&self, wanted: Option<&HashSet<String>>) -> Vec<&Peer> {
+        let mut chosen: HashMap<&str, (bool, &Peer)> = HashMap::new();
+        for (room_id, room) in &self.rooms {
+            let scene_room = room_id.starts_with(SCENE_ROOM_PREFIX);
+            for peer in room.values() {
+                if peer.address == HOST_ADDRESS
+                    || wanted.is_some_and(|w| !w.contains(&peer.address))
+                {
+                    continue;
+                }
+                let held = chosen.get(peer.address.as_str()).map(|(scene, _)| *scene);
+                match held {
+                    Some(true) => {}
+                    Some(false) if !scene_room => {}
+                    _ => {
+                        chosen.insert(peer.address.as_str(), (scene_room, peer));
+                    }
+                }
+            }
+        }
+        chosen.into_values().map(|(_, peer)| peer).collect()
+    }
+
     fn host_for(&self, room_id: &str) -> Option<(u32, &Peer)> {
         fn host_in(room: &Room) -> Option<(u32, &Peer)> {
             room.iter()
@@ -244,13 +285,25 @@ fn verify_signed_message(
 
 /// Drops the room when it empties, and otherwise tells the rest of the room.
 fn drop_peer(reg: &mut Registry, room_id: &str, alias: u32) -> Option<Peer> {
+    let was_sole_host = reg.sole_host().is_some_and(|(_, host, _)| host == alias);
     let room = reg.rooms.get_mut(room_id)?;
     let peer = room.remove(&alias)?;
+    let leave = craft(ws_packet::Message::PeerLeaveMessage(WsPeerLeave { alias }));
     if room.is_empty() {
         reg.rooms.remove(room_id);
     } else {
-        let leave = craft(ws_packet::Message::PeerLeaveMessage(WsPeerLeave { alias }));
         send_all(room, None, &leave);
+    }
+    if was_sole_host {
+        for (other, room) in &reg.rooms {
+            if other != room_id {
+                send_all(room, None, &leave);
+            }
+        }
+    } else if let Some((host_room, _, host)) = reg.sole_host()
+        && host_room != room_id
+    {
+        let _ = host.tx.send(PeerFrame::Packet(leave));
     }
     Some(peer)
 }
@@ -276,16 +329,45 @@ fn join_room(
                 },
             ))));
     }
-    let room = reg.rooms.entry(room_id.to_string()).or_default();
-    let peer_identities: HashMap<u32, String> = room
-        .iter()
-        .filter(|(_, peer)| peer.address != address)
-        .map(|(peer_alias, peer)| (*peer_alias, peer.address.clone()))
-        .collect();
+    let is_host = address == HOST_ADDRESS;
+    // the host a joining wallet is served by, when it sits in another room
+    let remote_host = reg
+        .sole_host()
+        .filter(|(host_room, _, _)| !is_host && *host_room != room_id)
+        .map(|(_, host_alias, host)| (host_alias, host.tx.clone()));
+    // a joining host becomes the sole host unless one is already connected
+    let host_elsewhere = is_host && reg.sole_host().is_some();
+    let mut peer_identities: HashMap<u32, String> = if is_host && !host_elsewhere {
+        reg.rooms
+            .values()
+            .flatten()
+            .map(|(peer_alias, peer)| (*peer_alias, peer.address.clone()))
+            .collect()
+    } else {
+        reg.rooms
+            .get(room_id)
+            .into_iter()
+            .flatten()
+            .filter(|(_, peer)| peer.address != address)
+            .map(|(peer_alias, peer)| (*peer_alias, peer.address.clone()))
+            .collect()
+    };
     let join = craft(ws_packet::Message::PeerJoinMessage(WsPeerJoin {
         alias,
         address: address.to_string(),
     }));
+    if let Some((host_alias, host_tx)) = remote_host {
+        peer_identities.insert(host_alias, HOST_ADDRESS.to_string());
+        let _ = host_tx.send(PeerFrame::Packet(join.clone()));
+    }
+    if is_host && !host_elsewhere {
+        for (other, room) in &reg.rooms {
+            if other != room_id {
+                send_all(room, None, &join);
+            }
+        }
+    }
+    let room = reg.rooms.entry(room_id.to_string()).or_default();
     send_all(room, None, &join);
     room.insert(
         alias,
@@ -327,8 +409,22 @@ fn forward_update(st: &CommsState, room_id: &str, from_alias: u32, update: WsPee
     }));
     let reg = st.reg();
     if to_all {
-        if let Some(room) = reg.rooms.get(room_id) {
-            send_all(room, Some(from_alias), &bytes);
+        match reg.sole_host() {
+            Some((_, host, _)) if host == from_alias => {
+                for peer in reg.wallet_sessions(None) {
+                    let _ = peer.tx.send(PeerFrame::Packet(bytes.clone()));
+                }
+            }
+            sole => {
+                if let Some(room) = reg.rooms.get(room_id) {
+                    send_all(room, Some(from_alias), &bytes);
+                }
+                if let Some((host_room, _, host)) = sole
+                    && host_room != room_id
+                {
+                    let _ = host.tx.send(PeerFrame::Packet(bytes.clone()));
+                }
+            }
         }
         return;
     }
@@ -361,6 +457,10 @@ async fn deliver(sink: &mut SplitSink<WebSocket, Message>, frame: Option<PeerFra
 const HOST_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
 const HOST_RECIPIENT: &str = "authoritative-server";
+
+/// The rooms `POST /get-scene-adapter` hands out (`scene-<sceneId>`); the
+/// realm room (`room-1`) is every other room.
+const SCENE_ROOM_PREFIX: &str = "scene-";
 
 /// JSON side door for the scene host (multiplayer-server-design.md, M1). The
 /// host is our own process beside the preview, so it skips the signed
@@ -444,7 +544,21 @@ fn send_addressed(
 
 fn send_update_to(st: &CommsState, room_id: &str, from_alias: u32, to: &[String], bytes: &[u8]) {
     let wanted: HashSet<String> = to.iter().map(|a| a.to_lowercase()).collect();
-    send_addressed(&st.reg(), room_id, from_alias, &wanted, false, bytes);
+    let reg = st.reg();
+    if reg
+        .sole_host()
+        .is_some_and(|(_, host, _)| host == from_alias)
+    {
+        let targets = reg.wallet_sessions(Some(&wanted));
+        if targets.is_empty() {
+            tracing::debug!(room = %room_id, alias = from_alias, "mini-comms host update matched no peer");
+        }
+        for peer in targets {
+            let _ = peer.tx.send(PeerFrame::Packet(bytes.to_vec()));
+        }
+        return;
+    }
+    send_addressed(&reg, room_id, from_alias, &wanted, false, bytes);
 }
 
 async fn handle_host_socket(socket: WebSocket, st: Arc<CommsState>, room_id: String) {
@@ -817,6 +931,151 @@ mod tests {
             st.reg()
                 .session_in("room-1", "0x00000000000000000000000000000000000000c3"),
             None
+        );
+    }
+
+    fn broadcast(body: &[u8]) -> WsPeerUpdate {
+        addressed(body, &[])
+    }
+
+    /// Joins and leaves a receiver saw, as `join <alias> <address>` and
+    /// `leave <alias>`.
+    fn membership(rx: &mut UnboundedReceiver<PeerFrame>) -> Vec<String> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|frame| match frame {
+                PeerFrame::Packet(bytes) => match WsPacket::decode(bytes.as_slice()).ok()?.message?
+                {
+                    ws_packet::Message::PeerJoinMessage(j) => {
+                        Some(format!("join {} {}", j.alias, j.address))
+                    }
+                    ws_packet::Message::PeerLeaveMessage(l) => Some(format!("leave {}", l.alias)),
+                    _ => None,
+                },
+                PeerFrame::Kick(_) => None,
+            })
+            .collect()
+    }
+
+    fn welcome_peers(welcome: &[u8]) -> HashMap<u32, String> {
+        match WsPacket::decode(welcome).unwrap().message.unwrap() {
+            ws_packet::Message::WelcomeMessage(w) => w.peer_identities,
+            other => panic!("not a welcome: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_broadcast_from_a_scene_room_reaches_the_host_in_the_realm_room() {
+        let st = CommsState::default();
+        let (_host, mut host_rx) = join(&st, "room-1", HOST_ADDRESS);
+        let (alice, _alice_rx) = join(&st, SCENE, ALICE);
+        let (_bob, mut bob_rx) = join(&st, SCENE, BOB);
+        let (_carol, mut carol_rx) = join(&st, "room-1", CAROL);
+
+        forward_update(&st, SCENE, alice, broadcast(b"hello"));
+        assert_eq!(
+            bodies(&mut host_rx),
+            vec![(alice, b"hello".to_vec(), vec![])]
+        );
+        assert_eq!(
+            bodies(&mut bob_rx),
+            vec![(alice, b"hello".to_vec(), vec![])]
+        );
+        assert!(
+            bodies(&mut carol_rx).is_empty(),
+            "a scene-room broadcast stays in its room for wallets"
+        );
+    }
+
+    #[test]
+    fn the_host_broadcast_reaches_each_wallet_once_through_its_scene_session() {
+        let st = CommsState::default();
+        let (host, _host_rx) = join(&st, "room-1", HOST_ADDRESS);
+        let (_alice_realm, mut alice_realm_rx) = join(&st, "room-1", ALICE);
+        let (_alice_scene, mut alice_scene_rx) = join(&st, SCENE, ALICE);
+        let (_carol, mut carol_rx) = join(&st, "room-1", CAROL);
+
+        forward_update(&st, "room-1", host, broadcast(b"phase"));
+        assert_eq!(
+            bodies(&mut alice_scene_rx),
+            vec![(host, b"phase".to_vec(), vec![])]
+        );
+        assert!(
+            bodies(&mut alice_realm_rx).is_empty(),
+            "a wallet in a scene room gets the host's message once, there"
+        );
+        assert_eq!(
+            bodies(&mut carol_rx),
+            vec![(host, b"phase".to_vec(), vec![])],
+            "a wallet with only a realm session still hears the host"
+        );
+    }
+
+    #[test]
+    fn a_host_message_addressed_to_a_wallet_reaches_its_scene_session() {
+        let st = CommsState::default();
+        let (host, _host_rx) = join(&st, "room-1", HOST_ADDRESS);
+        let (_alice, mut alice_rx) = join(&st, SCENE, ALICE);
+        let (_bob, mut bob_rx) = join(&st, SCENE, BOB);
+        let bytes = craft(ws_packet::Message::PeerUpdateMessage(WsPeerUpdate {
+            from_alias: host,
+            body: b"just you".to_vec(),
+            unreliable: false,
+            recipients: Vec::new(),
+        }));
+
+        send_update_to(
+            &st,
+            "room-1",
+            host,
+            &[ALICE.to_uppercase().replace("0X", "0x")],
+            &bytes,
+        );
+        assert_eq!(
+            bodies(&mut alice_rx),
+            vec![(host, b"just you".to_vec(), vec![])]
+        );
+        assert!(bodies(&mut bob_rx).is_empty());
+    }
+
+    #[test]
+    fn the_host_is_a_member_of_every_room() {
+        let st = CommsState::default();
+        let (bob, mut bob_rx) = join(&st, SCENE, BOB);
+
+        let (tx, mut host_rx) = mpsc::unbounded_channel();
+        let (host, host_welcome) = join_room(&st, "room-1", HOST_ADDRESS, tx);
+        assert_eq!(
+            welcome_peers(&host_welcome).get(&bob).map(String::as_str),
+            Some(BOB),
+            "the host's welcome lists wallets in every room"
+        );
+        assert_eq!(
+            membership(&mut bob_rx),
+            vec![format!("join {host} {HOST_ADDRESS}")],
+            "a scene room sees the host arrive"
+        );
+
+        let (tx, _alice_rx) = mpsc::unbounded_channel();
+        let (alice, alice_welcome) = join_room(&st, SCENE, ALICE, tx);
+        assert_eq!(
+            welcome_peers(&alice_welcome).get(&host).map(String::as_str),
+            Some(HOST_ADDRESS),
+            "a wallet joining a scene room is welcomed with the host in it"
+        );
+        assert_eq!(
+            membership(&mut host_rx),
+            vec![format!("join {alice} {ALICE}")]
+        );
+
+        leave_room(&st, SCENE, alice);
+        assert_eq!(membership(&mut host_rx), vec![format!("leave {alice}")]);
+        bodies(&mut bob_rx);
+
+        leave_room(&st, "room-1", host);
+        assert_eq!(
+            membership(&mut bob_rx),
+            vec![format!("leave {host}")],
+            "the host leaves every room it served"
         );
     }
 

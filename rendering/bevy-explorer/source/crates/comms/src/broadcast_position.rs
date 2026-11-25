@@ -340,10 +340,11 @@ fn broadcast_position(
     // };
     debug!("sending movement: {movement_uncompressed:?}");
 
-    // Movement rides each rfc4 packet to exactly its consumer: `Movement` to Pulse alone (its routing
+    // Movement rides each rfc4 packet to its consumers: `Movement` to Pulse alone (its routing
     // transport bridges it into a `PlayerStateInput`), and `Position` to Archipelago, which clusters
-    // islands from it. Every realm is a Pulse realm, so no byte transport carries avatar state — a
-    // peer that can't be reached over Pulse can't be reached at all.
+    // islands from it, and to websocket rooms: a preview's scene room is one, and the scene's
+    // authoritative server there reads each player's position from it. Every realm is a Pulse
+    // realm, so other peers see avatar state only over Pulse.
     let dcl_rotation = DclQuat::from_bevy_quat(rotation);
     let position_packet = rfc4::Packet {
         message: Some(rfc4::packet::Message::Position(rfc4::Position {
@@ -366,7 +367,7 @@ fn broadcast_position(
     );
     broadcast_to(
         transports.iter(),
-        BroadcastTarget::ARCHIPELAGO,
+        BroadcastTarget::ARCHIPELAGO | BroadcastTarget::WEBSOCKET,
         true,
         &position_packet,
     );

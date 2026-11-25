@@ -3,5 +3,8 @@ Skills synced from https://github.com/decentraland/sdk-skills
 
 Local-only skills, not from upstream: migrate-smart-items-to-code.
 
+Diverged from upstream, kept here: authoritative-server (local preview behaviour and the
+rules for making server decisions visible). A re-sync keeps this tree's copy.
+
 Re-sync with scripts/sync-sdk-skills.sh; build.rs embeds this directory into
 the binary, so follow a sync with a build.

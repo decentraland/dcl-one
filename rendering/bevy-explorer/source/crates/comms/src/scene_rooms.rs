@@ -58,6 +58,7 @@ pub struct SceneRooms<'w, 's> {
             &'static Transport,
             Has<Connected>,
             Option<&'static crate::SceneRoomModeration>,
+            Option<&'static crate::room_connection::ConnectionHealth>,
         ),
     >,
 }
@@ -75,7 +76,7 @@ impl SceneRooms<'_, '_> {
     }
 
     pub fn transport(&self, scene_hash: &str) -> Option<&Transport> {
-        let (transport, _, _) = self.rooms.get(self.room(scene_hash)?).ok()?;
+        let (transport, ..) = self.rooms.get(self.room(scene_hash)?).ok()?;
         Some(transport)
     }
 
@@ -87,7 +88,9 @@ impl SceneRooms<'_, '_> {
     pub fn connected(&self, scene_hash: &str) -> bool {
         self.room(scene_hash)
             .and_then(|room| self.rooms.get(room).ok())
-            .is_some_and(|(_, connected, _)| connected)
+            .is_some_and(|(_, connected, _, socket)| {
+                connected || socket.is_some_and(|health| health.is_connected())
+            })
     }
 
     pub(crate) fn carries(&self, transport: Entity, scene_hash: &str) -> bool {
