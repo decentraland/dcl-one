@@ -105,12 +105,7 @@ pub fn stage(project: &Project, opts: &BuildOptions, art_root: &Path) -> Result<
     let main = project.main_output()?;
     let tsconfig = project.tsconfig()?;
     let paths = split::ChunkPaths::of(&main);
-    let generated = entrypoint::generate(
-        project,
-        opts.ignore_composite,
-        opts.custom_entry_point,
-        true,
-    )?;
+    let generated = entrypoint::generate(project, opts.ignore_composite, opts.custom_entry_point)?;
     split::write_generated(project, &generated.dir)?;
     split::write_marker(&generated.dir)?;
     let sdk_opts = sdk_chunk_options(
@@ -180,8 +175,8 @@ pub async fn emit_chunks(
         project,
         staged.prebuilt.as_ref(),
         art_root,
-        &paths.scene,
-        &paths.smart,
+        paths,
+        staged.generated.has_scripts,
     )
 }
 
@@ -498,15 +493,15 @@ pub fn install_smart_chunk(
     project: &Project,
     prebuilt: Option<&prebuilt::Prebuilt>,
     art_root: &Path,
-    scene_rel: &str,
-    smart_rel: &str,
+    paths: &split::ChunkPaths,
+    has_scripts: bool,
 ) -> Result<bool> {
     let Some(chunks) = prebuilt else {
         return Ok(false);
     };
-    let scene_chunk = art_root.join(scene_rel);
-    if !prebuilt::scene_needs_smart_chunk(project, &scene_chunk) {
-        prebuilt::remove_stale_smart_chunk(art_root, smart_rel);
+    let scene_chunk = art_root.join(&paths.scene);
+    if !prebuilt::scene_needs_smart_chunk(project, &scene_chunk, has_scripts) {
+        prebuilt::remove_stale_smart_chunk(art_root, &paths.smart);
         return Ok(false);
     }
     let Some(smart) = &chunks.smart else {
@@ -526,8 +521,8 @@ pub fn install_smart_chunk(
         ))
         .into());
     };
-    prebuilt::install(smart, &art_root.join(smart_rel))?;
-    tracing::info!("prebuilt smart-item chunk installed {smart_rel}");
+    prebuilt::install(smart, &art_root.join(&paths.smart))?;
+    tracing::info!("prebuilt smart-item chunk installed {}", paths.smart);
     Ok(true)
 }
 

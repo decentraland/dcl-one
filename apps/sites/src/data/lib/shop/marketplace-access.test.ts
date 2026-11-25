@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
+import { primeRemoteFlags, remoteFlagState, REMOTE_FLAG } from "@ui/shop/discovery/lib/remoteFlags";
 
 const facts = vi.hoisted(() => ({
   identity: null as { signer: string; expiration: string } | null,
@@ -11,21 +11,20 @@ const facts = vi.hoisted(() => ({
 }));
 vi.mock("../auth/index", () => ({ useAuth: () => ({ identity: facts.identity }) }));
 vi.mock("../auth/shop-wallet", () => ({ currentWalletKind: () => facts.kind, web3Usable: () => facts.usable }));
-const primed = vi.hoisted(() => ({ calls: 0 }));
-vi.mock("../feature-flags.browser", () => ({ primeDappsFlags: async () => void primed.calls++ }));
 
 import { useMarketplaceHere } from "./marketplace-access";
 
 const ACCOUNT = "0x" + "ab".repeat(20);
 const ON = { "dapps-shop-marketplace-features": true };
 const LATER = new Date(Date.now() + 86_400_000).toISOString();
+/** This server's flags route answers `ON`, or refuses with `status`. */
+const server = (status = 200) => vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ flags: ON }), { status }));
 
 afterEach(() => {
   cleanup();
   facts.identity = null;
   facts.kind = null;
   facts.usable = true;
-  primed.calls = 0;
   primeRemoteFlags(null);
   vi.restoreAllMocks();
 });
@@ -57,22 +56,27 @@ describe("the Marketplace on sites' own pages", () => {
     expect(renderHook(() => useMarketplaceHere(ACCOUNT)).result.current).toBe(false);
   });
 
-  it("primes the flags from this server's reading, as the Shop's own pages do", () => {
-    primeRemoteFlags(ON);
-    facts.identity = { signer: ACCOUNT, expiration: LATER };
-    renderHook(() => useMarketplaceHere(ACCOUNT));
-    expect(primed.calls).toBe(1);
-  });
-
-  it("uses only the Sites flag reader on mount and focus before the first answer", () => {
-    const external = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+  it("reads the flags once from this server on mount and focus, never from the service", async () => {
+    const fetched = server();
     facts.identity = { signer: ACCOUNT, expiration: LATER };
     facts.kind = "web3";
     const { result } = renderHook(() => useMarketplaceHere(ACCOUNT));
     window.dispatchEvent(new Event("focus"));
-    expect(primed.calls).toBe(2);
     expect(result.current).toBe(false);
-    expect(external).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current).toBe(true));
+    expect(fetched.mock.calls.map(([url]) => url)).toEqual(["/internal/feature-flags?variants=1"]);
+  });
+
+  it("gives up when this server cannot answer: a second mount and a focus ask nothing more", async () => {
+    const fetched = server(503);
+    facts.identity = { signer: ACCOUNT, expiration: LATER };
+    facts.kind = "web3";
+    renderHook(() => useMarketplaceHere(ACCOUNT));
+    await waitFor(() => expect(remoteFlagState(REMOTE_FLAG.marketplaceFeatures)).toBe(false));
+    expect(fetched).toHaveBeenCalledTimes(2);
+    renderHook(() => useMarketplaceHere(ACCOUNT));
+    await act(async () => void window.dispatchEvent(new Event("focus")));
+    expect(fetched).toHaveBeenCalledTimes(2);
   });
 
   it("skips both flag reads and focus refreshes for a signed-out visitor", () => {
@@ -80,7 +84,6 @@ describe("the Marketplace on sites' own pages", () => {
     const { result } = renderHook(() => useMarketplaceHere(null));
     window.dispatchEvent(new Event("focus"));
     expect(result.current).toBe(false);
-    expect(primed.calls).toBe(0);
     expect(readFlags).not.toHaveBeenCalled();
   });
 
@@ -95,7 +98,6 @@ describe("the Marketplace on sites' own pages", () => {
     facts.identity = { signer: ACCOUNT, expiration: LATER };
     rerender({ account: ACCOUNT });
     expect(result.current).toBe(true);
-    expect(primed.calls).toBe(1);
 
     primeRemoteFlags(null);
     const readFlags = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));

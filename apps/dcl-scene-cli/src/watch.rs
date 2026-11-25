@@ -456,6 +456,7 @@ pub struct BuiltinWatchSession {
     es_opts: EsbuildOptions,
     ignore_composite: bool,
     custom_entry_point: bool,
+    has_scripts: bool,
     split: SplitState,
     /// `Some` when the toolchain ships prebuilt chunks: the SDK chunk is copied
     /// rather than bundled, and the smart-item chunk is a separate file.
@@ -500,6 +501,7 @@ impl BuiltinWatchSession {
             es_opts: scene_opts,
             ignore_composite: opts.ignore_composite,
             custom_entry_point: opts.custom_entry_point,
+            has_scripts: generated.has_scripts,
             split: SplitState {
                 sdk_opts,
                 registry,
@@ -622,9 +624,10 @@ impl BuiltinWatchSession {
                     ));
                     continue;
                 }
-                Ok(Some(new_max)) => {
-                    if new_max != self.loader.max_composite_entity {
-                        self.loader.max_composite_entity = new_max;
+                Ok(Some(generated)) => {
+                    self.has_scripts = generated.has_scripts;
+                    if generated.max_composite_entity != self.loader.max_composite_entity {
+                        self.loader.max_composite_entity = generated.max_composite_entity;
                         self.rewrite_loader_stub();
                     }
                     true
@@ -647,8 +650,8 @@ impl BuiltinWatchSession {
                 &self.project,
                 self.prebuilt.as_ref(),
                 &self.project.root,
-                &self.loader.paths.scene,
-                &self.loader.paths.smart,
+                &self.loader.paths,
+                self.has_scripts,
             ) {
                 Ok(now) if now != self.loader.smart_installed => {
                     self.loader.smart_installed = now;
@@ -690,14 +693,14 @@ async fn regenerate_composites(
     ignore_composite: bool,
     custom_entry_point: bool,
     paths: &[PathBuf],
-) -> Result<Option<u32>> {
+) -> Result<Option<entrypoint::Generated>> {
     let touched = paths
         .iter()
         .any(|p| p.extension().and_then(|e| e.to_str()) == Some("composite"));
     if !touched {
         return Ok(None);
     }
-    let generated = entrypoint::generate(project, ignore_composite, custom_entry_point, true)?;
+    let generated = entrypoint::generate(project, ignore_composite, custom_entry_point)?;
     tracing::info!("composites changed, regenerated all-composites.js");
     if !ignore_composite {
         match crate::entity_names::write_if_changed(&project.root) {
@@ -715,7 +718,7 @@ async fn regenerate_composites(
     if let Err(e) = crate::data_layer::regenerate_main_crdt(&project.root, ignore_composite).await {
         ux::report_build(&e);
     }
-    Ok(Some(generated.max_composite_entity))
+    Ok(Some(generated))
 }
 
 async fn refresh_sdk_chunk_cli(project: &Project, sp: &mut SplitState, composites_changed: bool) {

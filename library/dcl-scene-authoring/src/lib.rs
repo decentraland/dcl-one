@@ -82,14 +82,19 @@ pub(crate) fn read_composite_text(files: &dyn SceneFiles, rel: &str) -> Result<S
     String::from_utf8(bytes).map_err(|e| format!("reading {rel}: {e}"))
 }
 
+/// `.dcl-one/sdk-boot.js`, which the generated entrypoint imports before the scene.
+pub const SDK_BOOT: &str = "import { engine, setCompositeProvider } from '@dcl/sdk/ecs'\n\
+                        import { compositeProvider } from '@dcl/sdk/composite-provider'\n\
+                        setCompositeProvider(engine, compositeProvider)\n";
+
 /// What the generated entrypoint needs to start the scene's scripts.
 #[derive(Default)]
 pub struct Scripts {
     /// `import * as script_<path> from "<root>/<path>"`, one line for each script file.
-    pub imports: String,
+    imports: String,
     /// The second argument of `_initializeScripts`, with its comma: the
     /// instances to start. Empty when the scene has no script.
-    pub argument: String,
+    argument: String,
     /// The composites that cannot be instanced. Their components are ignored.
     pub skipped: Vec<String>,
 }
@@ -98,6 +103,83 @@ impl Scripts {
     /// Whether the scene has no script to start.
     pub fn is_empty(&self) -> bool {
         self.imports.is_empty()
+    }
+
+    /// The generated entrypoint of a split build: the scene's `main`, after
+    /// its scripts. Its comments are part of the output: a development build
+    /// inlines this file's source into the scene chunk's sourcemap.
+    pub fn entrypoint(&self, safe_entry: &str, editor_scene: bool) -> String {
+        // The scene chunk holds the script modules: `~sdk/script-utils` is in a
+        // chunk that no scene owns, so the scene gives it the instances to start.
+        let composite_fill = format!(
+            "import {{ compositeFromLoader as __sceneComposites }} from './all-composites.js'\nObject.assign(compositeFromLoader, __sceneComposites)\n{}",
+            self.imports
+        );
+        let script_instances = &self.argument;
+        let editor_block = if editor_scene {
+            "\nimport { syncEntity } from '@dcl/sdk/network'\nimport players from '@dcl/sdk/players'\nimport { setCompositeProvider } from '@dcl/sdk/ecs'\nimport { initAssetPacks } from '@dcl/asset-packs/dist/scene-entrypoint'\nsetCompositeProvider(engine, compositeProvider)\ninitAssetPacks(engine, { syncEntity }, players)\n"
+                .to_string()
+        } else {
+            "false".to_string()
+        };
+        format!(
+            r#"// BEGIN AUTO GENERATED CODE "~sdk/scene-entrypoint"
+"use strict";
+import {{ engine, NetworkEntity }} from '@dcl/sdk/ecs'
+import * as sdk from '@dcl/sdk'
+import {{ compositeProvider }} from '@dcl/sdk/composite-provider'
+import {{ compositeFromLoader }} from '~sdk/all-composites'
+import {{ _initializeScripts }} from '~sdk/script-utils'
+// Registers the composite provider, and must be imported BEFORE the scene.
+// A scene that calls initAssetPacks() at module scope -- as the Creator Hub
+// templates do -- reads that provider while its own module body runs, and until
+// this existed the only thing registering it was `@dcl/sdk`'s body, which the
+// bundler emits at the END of the chunk. So the editor logged "[asset-packs] No
+// SDK composite provider registered; SPAWN_ENTITY cannot resolve composites"
+// and placing a smart item resolved nothing. Upstream sdk-commands has the same
+// ordering (logic/bundle.ts) and gets away with it only because upstream scenes
+// never call initAssetPacks themselves.
+//
+// A separate module because neither cheaper fix works: statements here run after
+// every import including the scene's, and the bundler does not honour moving
+// `@dcl/sdk` earlier -- a side-effect import is shaken to a bare require and the
+// re-export below then reads a `_dcl_sdk` binding that was never declared, while
+// `export * from` is emitted at the end wherever it is written.
+import './sdk-boot.js'
+import * as entrypoint from {safe_entry}
+{composite_fill}
+{editor_block}
+
+// `console.error(e)` drops the frames, and the host captures its own stack at
+// the call site — this catch block. `e.stack` carries the throw site, so it is
+// a superset of what upstream prints.
+function __reportSceneError(e: any) {{
+  console.error(e && e.stack ? e.stack : e)
+}}
+
+if ((entrypoint as any).main !== undefined) {{
+  function _INTERNAL_startup_system() {{
+    try {{
+      _initializeScripts(engine{script_instances})
+
+      const maybePromise = (entrypoint as any).main()
+      if (maybePromise && typeof maybePromise === 'object' && typeof (maybePromise as unknown as Promise<unknown>).then === 'function') {{
+        maybePromise.catch(__reportSceneError)
+      }}
+    }} catch (e) {{
+      __reportSceneError(e)
+    }} finally {{
+      engine.removeSystem(_INTERNAL_startup_system)
+    }}
+  }}
+  engine.addSystem(_INTERNAL_startup_system, Infinity)
+}}
+
+export * from '@dcl/sdk'
+export * from {safe_entry}
+export * from '~sdk/script-utils'
+"#
+        )
     }
 }
 

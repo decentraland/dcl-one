@@ -8,6 +8,8 @@ pub struct Generated {
     pub dir: PathBuf,
     pub entrypoint: PathBuf,
     pub max_composite_entity: u32,
+    /// Whether the entrypoint starts a script.
+    pub has_scripts: bool,
 }
 
 fn write_in(dir: &Path, name: &str, content: impl AsRef<[u8]>) -> Result<PathBuf> {
@@ -20,7 +22,6 @@ pub fn generate(
     project: &Project,
     ignore_composite: bool,
     custom_entry: bool,
-    split: bool,
 ) -> Result<Generated> {
     let dir = crate::scene::work_dir(&project.root)
         .map_err(|e| write_error(&project.root.join(".dcl-one"), e))?;
@@ -28,18 +29,24 @@ pub fn generate(
     let user_entry = project.root.join("src/index.ts");
     let safe_entry = serde_json::to_string(&user_entry.display().to_string().replace('\\', "/"))?;
 
+    // The scripts of the scene's composites; none with `--ignoreComposite`, as upstream.
+    let scripts = if custom_entry || ignore_composite {
+        Scripts::default()
+    } else {
+        let scene = crate::scene_files::SceneDir::new(&project.root);
+        dcl_scene_authoring::scripts(&scene, &project.root.display().to_string())
+    };
     let content = if custom_entry {
         format!(";\"use strict\";export * from {safe_entry}")
     } else {
-        let scripts = scripts(&project.root, ignore_composite);
         for message in &scripts.skipped {
             crate::ux::note_stderr(message);
         }
         write_all_composites(project, &dir, ignore_composite)?;
         let script_utils = script_utils_content(project, !scripts.is_empty());
         write_in(&dir, "script-utils.js", script_utils)?;
-        write_in(&dir, "sdk-boot.js", SDK_BOOT)?;
-        entrypoint_code(&safe_entry, project.is_editor_scene(), split, &scripts)
+        write_in(&dir, "sdk-boot.js", dcl_scene_authoring::SDK_BOOT)?;
+        scripts.entrypoint(&safe_entry, project.is_editor_scene())
     };
     let entrypoint = write_in(&dir, "entrypoint.ts", content)?;
 
@@ -52,6 +59,7 @@ pub fn generate(
         dir,
         entrypoint,
         max_composite_entity,
+        has_scripts: !scripts.is_empty(),
     })
 }
 
@@ -65,86 +73,6 @@ pub fn authoritative_multiplayer(project: &Project) -> bool {
         .get("authoritativeMultiplayer")
         .and_then(|v| v.as_bool())
         == Some(true)
-}
-
-const SDK_BOOT: &str = "import { engine, setCompositeProvider } from '@dcl/sdk/ecs'\n\
-                        import { compositeProvider } from '@dcl/sdk/composite-provider'\n\
-                        setCompositeProvider(engine, compositeProvider)\n";
-
-fn entrypoint_code(safe_entry: &str, editor_scene: bool, split: bool, scripts: &Scripts) -> String {
-    let composite_fill = if split {
-        "import { compositeFromLoader as __sceneComposites } from './all-composites.js'\nObject.assign(compositeFromLoader, __sceneComposites)\n"
-    } else {
-        ""
-    };
-    // The scene chunk holds the script modules: `~sdk/script-utils` is in a
-    // chunk that no scene owns, so the scene gives it the instances to start.
-    let composite_fill = format!("{composite_fill}{}", scripts.imports);
-    let script_instances = &scripts.argument;
-    let editor_block = if editor_scene {
-        "\nimport { syncEntity } from '@dcl/sdk/network'\nimport players from '@dcl/sdk/players'\nimport { setCompositeProvider } from '@dcl/sdk/ecs'\nimport { initAssetPacks } from '@dcl/asset-packs/dist/scene-entrypoint'\nsetCompositeProvider(engine, compositeProvider)\ninitAssetPacks(engine, { syncEntity }, players)\n"
-            .to_string()
-    } else {
-        "false".to_string()
-    };
-    format!(
-        r#"// BEGIN AUTO GENERATED CODE "~sdk/scene-entrypoint"
-"use strict";
-import {{ engine, NetworkEntity }} from '@dcl/sdk/ecs'
-import * as sdk from '@dcl/sdk'
-import {{ compositeProvider }} from '@dcl/sdk/composite-provider'
-import {{ compositeFromLoader }} from '~sdk/all-composites'
-import {{ _initializeScripts }} from '~sdk/script-utils'
-// Registers the composite provider, and must be imported BEFORE the scene.
-// A scene that calls initAssetPacks() at module scope -- as the Creator Hub
-// templates do -- reads that provider while its own module body runs, and until
-// this existed the only thing registering it was `@dcl/sdk`'s body, which the
-// bundler emits at the END of the chunk. So the editor logged "[asset-packs] No
-// SDK composite provider registered; SPAWN_ENTITY cannot resolve composites"
-// and placing a smart item resolved nothing. Upstream sdk-commands has the same
-// ordering (logic/bundle.ts) and gets away with it only because upstream scenes
-// never call initAssetPacks themselves.
-//
-// A separate module because neither cheaper fix works: statements here run after
-// every import including the scene's, and the bundler does not honour moving
-// `@dcl/sdk` earlier -- a side-effect import is shaken to a bare require and the
-// re-export below then reads a `_dcl_sdk` binding that was never declared, while
-// `export * from` is emitted at the end wherever it is written.
-import './sdk-boot.js'
-import * as entrypoint from {safe_entry}
-{composite_fill}
-{editor_block}
-
-// `console.error(e)` drops the frames, and the host captures its own stack at
-// the call site — this catch block. `e.stack` carries the throw site, so it is
-// a superset of what upstream prints.
-function __reportSceneError(e: any) {{
-  console.error(e && e.stack ? e.stack : e)
-}}
-
-if ((entrypoint as any).main !== undefined) {{
-  function _INTERNAL_startup_system() {{
-    try {{
-      _initializeScripts(engine{script_instances})
-
-      const maybePromise = (entrypoint as any).main()
-      if (maybePromise && typeof maybePromise === 'object' && typeof (maybePromise as unknown as Promise<unknown>).then === 'function') {{
-        maybePromise.catch(__reportSceneError)
-      }}
-    }} catch (e) {{
-      __reportSceneError(e)
-    }} finally {{
-      engine.removeSystem(_INTERNAL_startup_system)
-    }}
-  }}
-  engine.addSystem(_INTERNAL_startup_system, Infinity)
-}}
-
-export * from '@dcl/sdk'
-export * from {safe_entry}
-export * from '~sdk/script-utils'
-"#
-    )
 }
 
 /// Every composite under `root`, sorted; the walk itself is
@@ -251,15 +179,6 @@ pub fn script_utils_content(project: &Project, has_scripts: bool) -> String {
     script_utils_source(project).unwrap_or_else(|| SCRIPT_UTILS_STUB.to_string())
 }
 
-/// The scripts of the scene's composites; none with `--ignoreComposite`, as upstream.
-pub fn scripts(root: &Path, ignore_composite: bool) -> Scripts {
-    if ignore_composite {
-        return Scripts::default();
-    }
-    let scene = crate::scene_files::SceneDir::new(root);
-    dcl_scene_authoring::scripts(&scene, &root.display().to_string())
-}
-
 fn strip_cjs(code: &str) -> String {
     let mut out = String::with_capacity(code.len());
     for line in code.lines() {
@@ -356,33 +275,30 @@ fn top_level_require(line: &str) -> Option<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::{
-        SCRIPT_UTILS_STUB, entrypoint_code, rewrite_requires, scan_max_composite_entity,
-        script_utils_content, scripts, strip_cjs,
+        SCRIPT_UTILS_STUB, generate, rewrite_requires, scan_max_composite_entity,
+        script_utils_content, strip_cjs,
     };
     use crate::scene::{Project, Tmp};
 
     #[test]
-    fn entrypoint_imports_each_script_and_starts_its_instances() {
+    fn entrypoint_starts_the_scripts_unless_composites_are_ignored() {
         let t = Tmp::new("scripts");
         t.write(
             "assets/scene/main.composite",
             r#"{"version":1,"components":[{"name":"asset-packs::Script","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[{"path":"src/counter.ts","priority":0}]}}}}]}"#,
         );
-        let code = entrypoint_code("\"index.ts\"", false, true, &scripts(&t.0, false));
-        let file = t.0.join("src/counter.ts");
-        assert!(code.contains(&format!(
-            "import * as script_src_counter from \"{}\"\n",
-            file.display()
-        )));
-        assert!(code.contains(
-            r#"_initializeScripts(engine, [
-  { ...{"path":"src/counter.ts","priority":0,"entity":512}, module: script_src_counter }
-])"#
-        ));
-        let ignored = entrypoint_code("\"index.ts\"", false, true, &scripts(&t.0, true));
-        assert!(
-            ignored.contains("_initializeScripts(engine)\n") && !ignored.contains("script_src")
-        );
+        let project = Project {
+            root: t.0.clone(),
+            scene_json: serde_json::json!({"main": "bin/index.js"}),
+        };
+        let import = format!("from \"{}\"\n", t.0.join("src/counter.ts").display());
+        for ignore in [false, true] {
+            let made = generate(&project, ignore, false).unwrap();
+            let code = std::fs::read_to_string(made.entrypoint).unwrap();
+            assert_eq!(made.has_scripts, !ignore);
+            assert_eq!(code.contains(&import), !ignore);
+            assert_eq!(code.contains("_initializeScripts(engine)\n"), ignore);
+        }
     }
 
     #[test]

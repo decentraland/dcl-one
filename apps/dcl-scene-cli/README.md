@@ -166,7 +166,8 @@ The prebuilt smart-item chunk (`@dcl/sdk/prebuilt/smart.js`) holds `@dcl/asset-p
 
 The build bundles each script of a smart item (an entry of `asset-packs::Script` in a composite)
 into the scene chunk, and the scene starts it before `main()`. A scene with a script loads the
-smart-item chunk.
+smart-item chunk. The build reads the JSON form of an entry: a script entry in binary form is not
+started. With `--ignoreComposite` the build starts no script.
 
 The built-in pipeline bundles to `bin/index.js`, type-checks beside the build with incremental tsc
 (`.dcl-cache/`), and encodes `main.crdt` in Rust (`DCL_ONE_CRDT_VERIFY=1` compares with node).
