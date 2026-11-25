@@ -173,6 +173,10 @@ jobs:
       inspector-specs: ${{ needs.changes.outputs.e2e-inspector-specs }}
       creator-hub-offline: ${{ needs.changes.outputs.e2e-creator-hub-offline == 'true' }}
       creator-hub-live: ${{ needs.changes.outputs.e2e-creator-hub-live == 'true' }}
+    secrets:
+      CREATOR_HUB_E2E_PRIVATE_KEY: ${{ secrets.CREATOR_HUB_E2E_PRIVATE_KEY }}
+      CREATOR_HUB_E2E_NAME: ${{ secrets.CREATOR_HUB_E2E_NAME }}
+      CREATOR_HUB_E2E_LAND: ${{ secrets.CREATOR_HUB_E2E_LAND }}
   e2e-status:
     name: e2e status
     needs: [ changes, e2e ]

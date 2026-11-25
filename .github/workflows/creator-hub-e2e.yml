@@ -14,6 +14,13 @@ on:
       creator-hub-live:
         type: boolean
         default: false
+    secrets:
+      CREATOR_HUB_E2E_PRIVATE_KEY:
+        required: false
+      CREATOR_HUB_E2E_NAME:
+        required: false
+      CREATOR_HUB_E2E_LAND:
+        required: false
 
 permissions:
   contents: read
@@ -107,9 +114,8 @@ jobs:
     if: inputs.creator-hub-offline
     timeout-minutes: 45
     runs-on: macos-latest
-    environment: ${{ inputs.creator-hub-live && (github.ref == 'refs/heads/main' && 'creator-hub-e2e' || 'creator-hub-e2e-pr') || '' }}
     concurrency:
-      group: ${{ inputs.creator-hub-live && format('creator-hub-e2e-live-{0}', github.ref == 'refs/heads/main' && 'main' || 'pr') || format('creator-hub-e2e-offline-{0}', github.run_id) }}
+      group: ${{ inputs.creator-hub-live && 'creator-hub-e2e-live' || format('creator-hub-e2e-offline-{0}', github.run_id) }}
       cancel-in-progress: false
     env:
       HAS_LIVE_SECRETS: ${{ secrets.CREATOR_HUB_E2E_PRIVATE_KEY != '' }}
@@ -144,7 +150,7 @@ jobs:
           if [ "$GITHUB_ACTOR" = 'dependabot[bot]' ]; then
             echo "::warning::Dependabot runs get no CREATOR_HUB_E2E_PRIVATE_KEY, so the @live specs did not run."
           else
-            echo "::error::CREATOR_HUB_E2E_PRIVATE_KEY is not set in this run's environment, so the @live specs cannot run."
+            echo "::error::CREATOR_HUB_E2E_PRIVATE_KEY is not set in this repository, so the @live specs cannot run."
             exit 1
           fi
       - name: e2e live tier (reuses the app packaged above)

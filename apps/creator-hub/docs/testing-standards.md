@@ -235,14 +235,12 @@ manual run, and on a pull request whose changes touch the deploy flow or what th
 (`creator-hub-live` and `every-suite` in `apps/creator-hub/e2e-selection.json`) only once a maintainer adds the `ci:creator-hub-e2e` label:
 real `.zone` deploys never run on a pull request without that admission, a Dependabot run has no
 secrets and only warns that live did not run, any other run that selects live without
-`CREATOR_HUB_E2E_PRIVATE_KEY` in its environment fails, and the offline step is given no secrets
-at all. The live step reads `CREATOR_HUB_E2E_PRIVATE_KEY`,
-`CREATOR_HUB_E2E_NAME` and `CREATOR_HUB_E2E_LAND` from a GitHub environment: `creator-hub-e2e` on
-`main` (restricted to `main` in its deployment branch rules) and `creator-hub-e2e-pr` everywhere
-else, each with its own world and LAND, so a pull request never deploys to `main`'s targets; a
-separate wallet in `creator-hub-e2e-pr` also keeps `main`'s key from pull request code. Runs sharing an environment deploy one at a time (concurrency groups
-`creator-hub-e2e-live-main` and `creator-hub-e2e-live-pr`); a third run waiting on a group cancels the
-pending one, which a re-run recovers, and pull requests never cancel `main`.
+`CREATOR_HUB_E2E_PRIVATE_KEY` fails, and the offline step is given no secrets
+at all. The live step reads the repository secrets `CREATOR_HUB_E2E_PRIVATE_KEY`,
+`CREATOR_HUB_E2E_NAME` and `CREATOR_HUB_E2E_LAND`, which `creator-hub-ci.yml` passes to `e2e.yml`.
+`main` and pull requests share that wallet, world and LAND, so every live run deploys one at a time
+(concurrency group `creator-hub-e2e-live`); a third run waiting on the group cancels the pending
+one, which a re-run recovers.
 `test:e2e:live` runs only `@live` locally. **`@scene` is
 deliberately not in those scripts** — creating a scene runs a live `npm install`, so it can fail on
 registry outages rather than real regressions, which would make it a flaky PR gate. Run it on demand
