@@ -4990,12 +4990,14 @@ async fn a_partial_activity_names_the_unavailable_sources() {
     own.drop().await;
 }
 
-/// The order book's readiness reads the chains the node serves, never
-/// 1/137 by default: on the Sepolia/Amoy pair its snapshot takes nft
-/// publications bound to that pair (with the book caught up on them) and
-/// refuses ones bound to the mainnets. The routes reach this snapshot once
-/// the shared walk predicate counts a testnet walker; until then such a node
-/// keeps the subgraph reader.
+/// The order book reads the chains the node serves, never 1/137 by
+/// default: on the Sepolia/Amoy pair its snapshot takes nft publications
+/// bound to that pair (with the book caught up on them) and refuses ones
+/// bound to the mainnets; it serves only the collections the nft index
+/// walks there (of that chain and verified on it), in its page and its
+/// total; and its rows, and the v3 listings', carry the served chain. The
+/// routes reach this reader once the shared walk predicate counts a testnet
+/// walker; until then such a node keeps the subgraph reader.
 #[tokio::test]
 async fn the_order_book_readiness_reads_the_served_testnet_pair() {
     use super::chain_walk::ChainNet;
@@ -5061,6 +5063,112 @@ async fn the_order_book_readiness_reads_the_served_testnet_pair() {
     };
     // The snapshot holds a connection of the test pool until released.
     held.rollback().await.unwrap();
+    let t = tag();
+    let (verified, unverified, retained) =
+        (contract_of(&t, 1), contract_of(&t, 2), contract_of(&t, 3));
+    // A retained mainnet row stays out even when marked verified.
+    for (contract, chain, checked) in [
+        (&verified, 80_002, true),
+        (&unverified, 80_002, false),
+        (&retained, 137, true),
+    ] {
+        sqlx::query(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at, testnet_verified) \
+             SELECT 'matic', $1, $2, 'Pirates', $3, $3, 'urn:decentraland:amoy:collections-v2:' || $1, true, true, false, 1, 1, 1, timezone('UTC', now()), $4",
+        )
+        .bind(contract)
+        .bind(chain)
+        .bind(CREATOR)
+        .bind(checked)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let sepolia_land = super::nft_index::deployments::Deployments::for_chain(
+        ChainNet::Ethereum,
+        ChainNet::Ethereum.testnet_chain_id(),
+    )
+    .and_then(|d| d.land)
+    .unwrap()
+    .land_registry
+    .to_lowercase();
+    let token = (alloy_primitives::U256::from(3u64) << 216u32 | alloy_primitives::U256::from(1u64))
+        .to_string();
+    for (network, id, contract, token) in [
+        ("matic", "verified", &verified, token.as_str()),
+        ("matic", "unverified", &unverified, token.as_str()),
+        ("matic", "retained", &retained, token.as_str()),
+        ("ethereum", "parcel", &sepolia_land, "77"),
+    ] {
+        sqlx::query(
+            "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, buyer, price, expires_at, status, \
+                 created_block, created_log, created_at, updated_block, updated_log, updated_at) \
+             VALUES ($1, '0xmarket', $2, $3, $4::numeric, $5, $6, 10, 0, 'sold', 1, 0, 1, 1, 0, 1)",
+        )
+        .bind(network)
+        .bind(id)
+        .bind(contract)
+        .bind(token)
+        .bind(WALLET_A)
+        .bind(WALLET_B)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let read = |query: Vec<(&str, String)>| {
+        let state = &state;
+        let pairs: Vec<(String, String)> =
+            query.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+        async move {
+            let f = super::orders::parse_filters(&pairs).unwrap();
+            match super::orders::list_orders_from(state, &f, true).await {
+                Ok((page, total, _)) => {
+                    let mut page: Vec<(String, super::wire::ChainId)> =
+                        page.into_iter().map(|o| (o.id, o.chain_id)).collect();
+                    page.sort_by(|a, b| a.0.cmp(&b.0));
+                    (page, total)
+                }
+                Err(r) => panic!("the testnet book is ready: {}", r.status()),
+            }
+        }
+    };
+    assert_eq!(
+        read(vec![("status", "sold".into())]).await,
+        (
+            vec![
+                ("parcel".to_string(), super::wire::ChainId::EthereumSepolia),
+                ("verified".to_string(), super::wire::ChainId::MaticAmoy),
+            ],
+            2
+        ),
+        "the walked catalogue and the served registries, on the served chains"
+    );
+    for (contract, expected) in [(&verified, 1), (&unverified, 0), (&retained, 0)] {
+        let (page, total) = read(vec![
+            ("status", "sold".into()),
+            ("itemId", format!("{contract}-3")),
+        ])
+        .await;
+        assert_eq!(
+            (page.len(), total),
+            (expected, expected as i64),
+            "{contract}"
+        );
+    }
+    // A v3 listing carries its trade's chain, which the leg keeps to the
+    // served one, never the network's default.
+    let listing = sqlx::query(
+        "SELECT 'listing' AS id, NULL::text AS marketplace_address, '0xc' AS nft_address, '5' AS token_id, '10' AS price, \
+                '0xo' AS owner, NULL::text AS payee, 0::bigint AS created_at, 0::bigint AS expires_at, 'MATIC' AS network, \
+                80002::bigint AS chain_id, '5' AS issued_id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        super::orders::trade_row_order(&listing).chain_id,
+        super::wire::ChainId::MaticAmoy
+    );
     publish(false).await;
     let snapshot = super::orders::book_snapshot(&state, &ChainNet::ALL, false, true).await;
     assert_eq!(

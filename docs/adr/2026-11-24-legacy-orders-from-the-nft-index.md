@@ -33,8 +33,12 @@ source proves its seller holds the token: another owner, no owner (a burned
 token, a dissolved estate) or no row at all reads `transferred`, in the
 page, the status filters and the totals alike, so `status=open` never serves
 an order whose ownership is not proven. The reader serves only the orders of the contracts
-the subgraphs knew: a mirrored collection, the LAND and Estate registries,
-and the DCLRegistrar.
+the subgraphs knew, on the chain the node serves: a collection the nft index
+walks there (a mirrored row of that chain, verified on it on a testnet), and
+that chain's LAND and Estate registries and DCLRegistrar. The Marketplace
+logs also hold orders for other assets; those are not served. Each order's
+`chainId` is the chain the node serves on its network, and each v3
+listing's is its trade's, which the listings leg keeps to that chain.
 
 Readiness follows the ownership readers' fresh rule: the nft index complete
 and published within 30 minutes on every network the read names, from the

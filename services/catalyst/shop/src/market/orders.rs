@@ -221,7 +221,7 @@ pub(crate) fn parse_open_by_items(
 const TRADES_LEG_SQL: &str = "SELECT u.id::text AS id, u.trade_contract AS marketplace_address, u.contract_address_sent AS nft_address, u.token_id, \
         u.amount_received::text AS price, u.signer AS owner, u.beneficiary AS payee, \
         (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint AS created_at, (EXTRACT(EPOCH FROM u.expires_at) * 1000)::bigint AS expires_at, \
-        upper(u.network) AS network, mod(u.token_id::numeric, SHIFT::numeric)::text AS issued_id, u.item_id::text AS item_id \
+        upper(u.network) AS network, u.chain_id::bigint AS chain_id, mod(u.token_id::numeric, SHIFT::numeric)::text AS issued_id, u.item_id::text AS item_id \
  FROM unified_trades u \
  WHERE u.type = 'public_nft_order' AND u.token_id IS NOT NULL";
 
@@ -288,8 +288,10 @@ fn trades_leg_sql(extra: &str, check: OwnerCheck) -> String {
 
 /// An open v3 listing ([`TRADES_LEG_SQL`]'s row) as an order: its id is the
 /// trade's, and `tradeId` names it so a client cancels that trade.
-fn trade_row_order(r: &sqlx::postgres::PgRow) -> Order {
-    let (network, chain_id) = network_and_chain(&r.get::<String, _>("network"));
+pub(super) fn trade_row_order(r: &sqlx::postgres::PgRow) -> Order {
+    let (network, _) = network_and_chain(&r.get::<String, _>("network"));
+    // The trade's own chain, which the leg keeps to the served one.
+    let chain_id = wire_chain(r.get("chain_id"), network);
     let created_at: i64 = r.get("created_at");
     Order {
         id: r.get("id"),
@@ -396,7 +398,7 @@ fn nets_of(network: Option<Network>) -> &'static [ChainNet] {
 
 /// Whether `contract` is one of the node's LAND or Estate registries.
 fn is_land_registry(state: &MarketplaceState, contract: &str) -> bool {
-    let r = registries(state);
+    let r = served(state);
     !r.land.is_empty()
         && (contract.eq_ignore_ascii_case(&r.land) || contract.eq_ignore_ascii_case(&r.estate))
 }
@@ -411,7 +413,7 @@ fn reads_land(state: &MarketplaceState, f: &OrderFilters) -> bool {
         && !matches!(f.status.as_deref(), Some(s) if s != "open" && s != "transferred");
     let land_possible = match &f.contract_address {
         Some(c) => is_land_registry(state, c),
-        None => !registries(state).land.is_empty(),
+        None => !served(state).land.is_empty(),
     };
     open_possible && land_possible && f.network != Some(Network::Matic)
 }
@@ -605,26 +607,74 @@ pub async fn trades_leg(
     }
 }
 
-/// The Ethereum registries whose orders the book serves beside the
-/// collections', lowercase: LAND, Estate and the names registrar of the
-/// chain the node serves on Ethereum (`IndexSettings::chain_id`); empty
-/// where that chain has none, so no order of theirs is served.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct Registries {
+/// What the book serves, on the chains the node serves
+/// (`IndexSettings::chain_id`, the chains its readiness checks): the
+/// collections the nft index walks there ([`Served::catalogue_sql`]) and,
+/// on Ethereum, that chain's LAND, Estate and names registrar, lowercase;
+/// empty where the chain has none, so no order of theirs is served.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Served {
+    ethereum: i64,
+    matic: i64,
     land: String,
     estate: String,
     names: String,
 }
 
-fn registries(state: &MarketplaceState) -> Registries {
-    let chain = state.settings.market.indexes.chain_id(ChainNet::Ethereum);
-    let Some(deployments) =
-        super::nft_index::deployments::Deployments::for_chain(ChainNet::Ethereum, chain)
-    else {
-        return Registries::default();
-    };
+impl Served {
+    /// `c` (a `shop.collections` row) is in the catalogue the nft index
+    /// walks on its network's served chain: a row of that chain and, on a
+    /// testnet, verified there (`NftIndex::load`'s address set). The
+    /// marketplace log also holds orders for assets outside it; those are
+    /// not served.
+    fn catalogue_sql(&self) -> String {
+        let on = |net: ChainNet, chain: i64| {
+            format!(
+                "(c.network = '{}' AND c.chain_id = {chain}{})",
+                net.db_name(),
+                if chain == net.chain_id() {
+                    ""
+                } else {
+                    " AND c.testnet_verified"
+                }
+            )
+        };
+        format!(
+            "({} OR {})",
+            on(ChainNet::Ethereum, self.ethereum),
+            on(ChainNet::Matic, self.matic)
+        )
+    }
+
+    /// The wire `chainId` of a book row on `network`: the served chain.
+    fn chain_id(&self, network: Network) -> ChainId {
+        wire_chain(
+            match network {
+                Network::Ethereum => self.ethereum,
+                Network::Matic => self.matic,
+            },
+            network,
+        )
+    }
+}
+
+/// `chain` as the wire's `ChainId`. The index settings admit only the
+/// supported chains, so the network's default never stands in for a served one.
+fn wire_chain(chain: i64, network: Network) -> ChainId {
+    u64::try_from(chain)
+        .ok()
+        .and_then(|c| ChainId::try_from(c).ok())
+        .unwrap_or_else(|| network.chain_id())
+}
+
+fn served(state: &MarketplaceState) -> Served {
+    let indexes = &state.settings.market.indexes;
+    let ethereum = indexes.chain_id(ChainNet::Ethereum);
+    let deployments =
+        super::nft_index::deployments::Deployments::for_chain(ChainNet::Ethereum, ethereum);
     let (land, estate) = deployments
-        .land
+        .as_ref()
+        .and_then(|d| d.land.as_ref())
         .map(|n| {
             (
                 n.land_registry.to_lowercase(),
@@ -632,10 +682,15 @@ fn registries(state: &MarketplaceState) -> Registries {
             )
         })
         .unwrap_or_default();
-    Registries {
+    Served {
+        ethereum,
+        matic: indexes.chain_id(ChainNet::Matic),
         land,
         estate,
-        names: deployments.registrar().unwrap_or_default().to_lowercase(),
+        names: deployments
+            .and_then(|d| d.registrar())
+            .unwrap_or_default()
+            .to_lowercase(),
     }
 }
 
@@ -650,7 +705,7 @@ fn is_uint(s: &str) -> bool {
 /// decides `transferred` for LAND and estate orders; without it no open
 /// LAND or estate order may be read ([`reads_land`]).
 fn book_from(
-    registries: &Registries,
+    served: &Served,
     f: &OrderFilters,
     now_ms: i64,
     land: bool,
@@ -660,22 +715,18 @@ fn book_from(
         binds.push(v);
         format!("${}", binds.len())
     };
-    let Registries {
-        land: land_registry,
-        estate: estate_registry,
-        names: names_registry,
-    } = registries.clone();
-    let served = format!(
-        "(EXISTS (SELECT 1 FROM shop.collections c WHERE c.network = o.network AND c.contract_address = o.contract_address) \
+    let catalogue = served.catalogue_sql();
+    let listed = format!(
+        "(EXISTS (SELECT 1 FROM shop.collections c WHERE c.network = o.network AND c.contract_address = o.contract_address AND {catalogue}) \
           OR (o.network = 'ethereum' AND o.contract_address IN ({}, {}, {})))",
-        next(&mut binds, land_registry),
-        next(&mut binds, estate_registry),
-        next(&mut binds, names_registry),
+        next(&mut binds, served.land.clone()),
+        next(&mut binds, served.estate.clone()),
+        next(&mut binds, served.names.clone()),
     );
     let mut sql = format!(
         "FROM shop.legacy_order o \
          LEFT JOIN shop.nft n ON n.network = o.network AND n.contract_address = o.contract_address AND n.token_id = o.token_id{} \
-         WHERE {served}",
+         WHERE {listed}",
         if land {
             " LEFT JOIN land_authz.token_right tr ON o.network = 'ethereum' AND tr.token_address = o.contract_address AND tr.token_id = o.token_id"
         } else {
@@ -752,7 +803,7 @@ fn book_from(
                 OR (o.network = 'ethereum' AND EXISTS ( \
                     SELECT 1 FROM shop.collections c \
                     JOIN shop.items i ON i.network = c.network AND i.contract_address = c.contract_address AND i.urn = c.urn || ':' || n.wearable_id \
-                    WHERE c.network = 'ethereum' AND c.contract_address = o.contract_address AND i.item_id = {item}::numeric)))"
+                    WHERE c.network = 'ethereum' AND c.contract_address = o.contract_address AND {catalogue} AND i.item_id = {item}::numeric)))"
         ));
     }
     Some((sql, binds))
@@ -800,7 +851,8 @@ async fn book_rows(
     land: bool,
     now_ms: i64,
 ) -> Result<Vec<Keyed>, sqlx::Error> {
-    let Some((from, binds)) = book_from(&registries(state), f, now_ms, land) else {
+    let served = served(state);
+    let Some((from, binds)) = book_from(&served, f, now_ms, land) else {
         return Ok(Vec::new());
     };
     let sql = format!(
@@ -820,7 +872,7 @@ async fn book_rows(
     Ok(rows
         .iter()
         .map(|r| {
-            let (network, chain_id) = network_and_chain(&r.get::<String, _>("network"));
+            let (network, _) = network_and_chain(&r.get::<String, _>("network"));
             let order = Order {
                 id: r.get("order_id"),
                 marketplace_address: r.get("marketplace_address"),
@@ -834,7 +886,7 @@ async fn book_rows(
                 created_at: seconds_to_ms(r.get("created_at")),
                 updated_at: seconds_to_ms(r.get("updated_at")),
                 network,
-                chain_id,
+                chain_id: served.chain_id(network),
                 issued_id: r.get("issued_id"),
                 trade_id: Some(String::new()),
                 payee: None,
@@ -855,7 +907,7 @@ async fn book_total(
     land: bool,
     now_ms: i64,
 ) -> Result<i64, sqlx::Error> {
-    let Some((from, binds)) = book_from(&registries(state), f, now_ms, land) else {
+    let Some((from, binds)) = book_from(&served(state), f, now_ms, land) else {
         return Ok(0);
     };
     let mut total = 0;
@@ -1051,11 +1103,22 @@ pub async fn list_orders_checked(
     state: &MarketplaceState,
     f: &OrderFilters,
 ) -> Result<(Vec<Order>, i64, OwnerCheck), Response> {
+    list_orders_from(state, f, owned_items::walks_here(state)).await
+}
+
+/// [`list_orders_checked`] from the node's indexes (`book`: the legacy
+/// order book and the guarded listings on one [`book_snapshot`]) or from
+/// the subgraph reader and the listings.
+pub(super) async fn list_orders_from(
+    state: &MarketplaceState,
+    f: &OrderFilters,
+    book: bool,
+) -> Result<(Vec<Order>, i64, OwnerCheck), Response> {
     let limit = clamp_first(f.first, 1000).min(readers::READER_MAX_FIRST);
     let offset = clamp_skip(f.skip);
     readers::check_window(limit, offset)?;
     let window = offset + limit;
-    let (mut merged, legacy_total, trades, check) = if owned_items::walks_here(state) {
+    let (mut merged, legacy_total, trades, check) = if book {
         let land = reads_land(state, f);
         let (mut tx, now) = book_snapshot(state, nets_of(f.network), land, true).await?;
         let now_ms = now.timestamp_millis();
@@ -1385,7 +1448,9 @@ mod tests {
 
     #[test]
     fn the_book_reads_the_served_contracts_with_the_subgraph_status_rules() {
-        let registries = Registries {
+        let registries = Served {
+            ethereum: 1,
+            matic: 137,
             land: "0xland".to_string(),
             estate: "0xestate".to_string(),
             names: "0xnames".to_string(),
@@ -1399,7 +1464,7 @@ mod tests {
         let (sql, binds) = book_from(&registries, &open, 1_000, true).unwrap();
         assert!(
             sql.contains("FROM shop.legacy_order o")
-                && sql.contains("shop.collections c WHERE c.network = o.network")
+                && sql.contains("shop.collections c WHERE c.network = o.network AND c.contract_address = o.contract_address AND ((c.network = 'ethereum' AND c.chain_id = 1) OR (c.network = 'matic' AND c.chain_id = 137)))")
                 && sql.contains("o.contract_address IN ($1, $2, $3)")
                 && sql.contains("LEFT JOIN land_authz.token_right tr")
                 && sql.contains("o.seller = $4")
@@ -1440,6 +1505,10 @@ mod tests {
         let item = parse_filters(&pairs(&[("itemId", "0xC-3")])).unwrap();
         let (sql, binds) = book_from(&registries, &item, 0, false).unwrap();
         assert!(sql.contains("div(o.token_id"), "{sql}");
+        assert!(
+            sql.contains("c.contract_address = o.contract_address AND ((c.network = 'ethereum' AND c.chain_id = 1) OR (c.network = 'matic' AND c.chain_id = 137)) AND i.item_id = $6::numeric"),
+            "{sql}"
+        );
         assert!(binds.ends_with(&["0xc".to_string(), "3".to_string()]));
         let bare = parse_filters(&pairs(&[("contractAddress", "0xD"), ("itemId", "4")])).unwrap();
         let (_, binds) = book_from(&registries, &bare, 0, false).unwrap();
@@ -1453,7 +1522,9 @@ mod tests {
 
     /// The served-contracts filter names the registries of the chain the
     /// node serves on Ethereum, never mainnet's by default: on the
-    /// Sepolia/Amoy pair, Sepolia's LAND, Estate and names registrar.
+    /// Sepolia/Amoy pair, Sepolia's LAND, Estate and names registrar. Its
+    /// collections are those the nft index walks there, verified on a
+    /// testnet, and its rows carry the served chains.
     #[tokio::test]
     async fn the_served_registries_follow_the_served_ethereum_chain() {
         let pool = sqlx::postgres::PgPoolOptions::new()
@@ -1462,6 +1533,11 @@ mod tests {
         let state = |chain: i64| {
             let mut settings = super::super::Settings::for_tests();
             settings.market.indexes.chain_id_ethereum = chain;
+            settings.market.indexes.chain_id_matic = if chain == ChainNet::Ethereum.chain_id() {
+                ChainNet::Matic.chain_id()
+            } else {
+                ChainNet::Matic.testnet_chain_id()
+            };
             MarketplaceState::new(pool.clone(), crate::http::Outbound::for_tests(), settings)
         };
         let deployments = |chain| {
@@ -1473,19 +1549,49 @@ mod tests {
             ChainNet::Ethereum.testnet_chain_id(),
         ] {
             let land = deployments(chain).land.unwrap();
+            let served = served(&state(chain));
             assert_eq!(
-                registries(&state(chain)),
-                Registries {
-                    land: land.land_registry.to_lowercase(),
-                    estate: land.estate_registry.to_lowercase(),
-                    names: deployments(chain).registrar().unwrap().to_lowercase(),
-                },
+                (
+                    served.land.as_str(),
+                    served.estate.as_str(),
+                    served.names.as_str()
+                ),
+                (
+                    land.land_registry.to_lowercase().as_str(),
+                    land.estate_registry.to_lowercase().as_str(),
+                    deployments(chain)
+                        .registrar()
+                        .unwrap()
+                        .to_lowercase()
+                        .as_str(),
+                ),
                 "{chain}"
             );
         }
         assert_ne!(
-            registries(&state(ChainNet::Ethereum.testnet_chain_id())).land,
-            registries(&state(ChainNet::Ethereum.chain_id())).land
+            served(&state(ChainNet::Ethereum.testnet_chain_id())).land,
+            served(&state(ChainNet::Ethereum.chain_id())).land
+        );
+        let testnet = served(&state(ChainNet::Ethereum.testnet_chain_id()));
+        assert_eq!(
+            testnet.catalogue_sql(),
+            "((c.network = 'ethereum' AND c.chain_id = 11155111 AND c.testnet_verified) \
+             OR (c.network = 'matic' AND c.chain_id = 80002 AND c.testnet_verified))"
+        );
+        assert_eq!(
+            (
+                testnet.chain_id(Network::Ethereum),
+                testnet.chain_id(Network::Matic)
+            ),
+            (ChainId::EthereumSepolia, ChainId::MaticAmoy)
+        );
+        let mainnet = served(&state(ChainNet::Ethereum.chain_id()));
+        assert_eq!(
+            (
+                mainnet.chain_id(Network::Ethereum),
+                mainnet.chain_id(Network::Matic)
+            ),
+            (ChainId::EthereumMainnet, ChainId::MaticMainnet)
         );
     }
 

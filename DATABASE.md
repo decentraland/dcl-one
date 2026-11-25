@@ -4485,8 +4485,11 @@ Invariants:
   estates). An open order reads `open` only while that owner is its seller;
   another owner, none (burned, dissolved) or no row reads `transferred`,
   before the status filter, the total and the page. The reader serves only
-  the orders of a mirrored collection, the LAND and Estate registries and
-  the DCLRegistrar.
+  the orders of the catalogue the nft index walks on the served chain (a
+  `shop.collections` row of that `chain_id`, `testnet_verified` on a
+  testnet) and of that chain's LAND and Estate registries and DCLRegistrar,
+  in the page, the item filter and the total. Its rows carry the served
+  chain as `chainId`.
 - The book's marker per network (`shop.legacy_order_cursor`) is the nft
   walk's last block when the order fold last ran and that block's hash. The
   fold refolds the orders touched past the lower of the block and the nft
