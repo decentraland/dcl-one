@@ -4665,39 +4665,44 @@ CREATE INDEX CONCURRENTLY nft_ens_label_idx
 
 Its size and the lookup time on production data are unmeasured.
 
-## Polygon legacy bids
+## Legacy bids
 
 On a node that walks the nft and sales indexes, `/v1/bids` and the activity
-feed's bids legs read Polygon's legacy bids (ERC721BidV2) from
-`shop.nft_bid`, the sales fold's table, in
-`services/catalyst/shop/src/market/bids.rs`. Ethereum's legacy bids still
-come from the collections subgraph reader.
+feed's bids legs read the legacy bids of both networks (ERC721BidV2 on
+Polygon, ERC721Bid on Ethereum) from `shop.nft_bid`, the sales folds' table,
+in `services/catalyst/shop/src/market/bids.rs`. No legacy bid read asks the
+subgraph there.
 
 Each read runs on one `REPEATABLE READ, READ ONLY` snapshot, at one instant
 taken once the snapshot is established: the trades mirror's bids are read on
-it too, and the subgraph's Ethereum bids are filtered at that instant. Each
-statement is bounded by the `/v1/nfts` statement timeout. The snapshot
-checks:
+it too. A read that could include an Ethereum bid runs on the land-authz
+index's snapshot, which must be ready (otherwise the `land-authz-index`
+envelope). Each statement is bounded by the `/v1/nfts` statement timeout.
+For each network read, the snapshot checks:
 
 - the trades mirror and its trade-events verdicts are ready (otherwise their
   envelopes);
 
-- the Polygon `sales` cursor is published: its whole history, a fold
-  within 30 minutes, bound to the chain the node serves on Polygon
-  (`IndexSettings::chain_id`), out of quarantine. Otherwise the read answers
+- the network's `sales` cursor is published: its whole history, a fold
+  within 30 minutes, bound to the chain the node serves there
+  (`Settings::catalogue`), out of quarantine. Otherwise the read answers
   the `sales-index` envelope. `folded_block` is not compared with
   `last_block`, as for the nft index's readers: a pass advances the latter
   before it folds;
-- the nft index is fresh on Polygon, on that same chain (otherwise the
+- on Ethereum mainnet, the `ethereum_bid_history` repair complete and
+  explaining the cursor (otherwise the `sales-index` envelope);
+- the nft index is fresh on the network, on that same chain (otherwise the
   `nft-index` envelope);
 - every bid in the request's scope (its filters but the seller's) has a
   seller.
 
 The scope, the page and the total hold only bids on the catalogue the nft
 index walks on the served chain: a `shop.collections` row of that
-`chain_id`, `testnet_verified` on a testnet. The bid contract takes any
-ERC721, and the collections subgraph kept no bid on an asset it had not
-catalogued; the nft walk never reads such a token's transfers.
+`chain_id`, `testnet_verified` on a testnet, and on Ethereum that chain's
+LAND, Estate and names registrar. The bid contracts take any ERC721, and the
+subgraphs kept no bid on an asset they had not catalogued; the walks never
+read such a token's transfers. Each network's total is capped at the
+reader's cap, and the networks are summed.
 
 A bid's seller is the one the fold stored, unless an nft rewind the fold
 has not rechecked yet (`shop.bid_seller_recheck`) lies before the bid and
@@ -4706,9 +4711,17 @@ the bid in `shop.nft_event`, when the nft walk's log reaches the bid's block
 and no backfill of the contract below its walk is owed
 (`shop.nft_contract`, the fold's own rule): a transfer the backfill has yet
 to add may be the latest.
-A bid with neither fails the read closed with the `nft-index` envelope,
-rather than being served without its seller or left out of a `seller`
-filter. That happens while the sales walk is ahead of the nft walk.
+A LAND or estate bid's is the token's latest transfer before the bid in
+`land_authz.authz_event`, when the land index's published block reaches the
+bid's block (the nft walk does not read their transfers).
+A bid with neither fails the read closed with the envelope of the index it
+waits on (`nft-index` or `land-authz-index`), rather than being served
+without its seller or left out of a `seller` filter. That happens while the
+sales walk is ahead of the other walk.
+
+An Ethereum bid carries its creation's fingerprint as 0x-prefixed hex (`0x`
+when empty or not kept) and the chain's ERC721Bid as `bidAddress`; a Polygon
+bid an empty fingerprint, as the collections subgraph had none.
 
 Statuses are the subgraph's: an acceptance reads `sold`, and a bid the
 contract dropped when another bid on its token was accepted reads

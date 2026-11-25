@@ -5218,7 +5218,7 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
         return;
     };
     super::trade_events::tests::publish_cursors(&state.pool).await;
-    assert!(super::bids::polygon_book_here(&state));
+    assert!(super::bids::book_here(&state));
     let pool = state.pool.clone();
     let c = contract_of(&tag(), 5);
     const CARL: &str = "0xdddddddddddddddddddddddddddddddddddddddd";
@@ -5474,14 +5474,7 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
         .execute(&pool)
         .await
         .unwrap();
-    // Ethereum's legacy bids still read the collections subgraph.
-    let (status, body) = get(app(), "/v1/bids?network=ETHEREUM").await;
-    assert_eq!(
-        (status, body["data"]["total"].as_i64()),
-        (StatusCode::OK, Some(0)),
-        "{body}"
-    );
-    let (status, body) = get(app(), "/v1/bids").await;
+    let (status, body) = get(app(), "/v1/bids?network=MATIC").await;
     assert_eq!(
         (status, body["data"]["total"].as_i64()),
         (StatusCode::OK, Some(6)),
@@ -5581,7 +5574,7 @@ async fn amoy_bids_come_from_the_bid_book_of_the_served_catalogue() {
         settings,
     ));
     state.test_allow_loopback.store(true, Ordering::Relaxed);
-    assert!(super::bids::polygon_book_here(&state));
+    assert!(super::bids::book_here(&state));
     let pool = own.pool.clone();
     super::trade_events::tests::publish_cursors(&pool).await;
     let app = || market_router(state.clone());
@@ -5657,6 +5650,144 @@ async fn amoy_bids_come_from_the_bid_book_of_the_served_catalogue() {
     own.drop().await;
 }
 
+/// Ethereum's legacy bids on a walking node come from `shop.nft_bid` too,
+/// never from the subgraph, once the sales walk's bid history is complete:
+/// a v1 collection's and the registries' bids, with the subgraph's wire
+/// (fingerprint, bid contract, chain). A LAND or estate seller comes from
+/// the land-authz log; one past its published block fails the read closed
+/// with that index's envelope. A bid outside the catalogue is out of scope.
+#[tokio::test]
+async fn ethereum_bids_come_from_the_bid_book_with_land_sellers_from_the_land_index() {
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_with_the_bid_book(&url).await else {
+        return;
+    };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
+    assert!(super::bids::book_here(&state));
+    let pool = state.pool.clone();
+    let land = crate::land_authz::LAND_REGISTRY_MAINNET.to_lowercase();
+    let estate = crate::land_authz::ESTATE_REGISTRY_MAINNET.to_lowercase();
+    let t = tag();
+    let (wearables, stray) = (contract_of(&t, 1), contract_of(&t, 2));
+    const CARL: &str = "0xdddddddddddddddddddddddddddddddddddddddd";
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started)
+         VALUES ('ethereum-mainnet','{land}','{estate}',100,100,timezone('UTC',now()),true);
+         INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id)
+         VALUES ('sales', 'ethereum', 1, 200, '0x' || repeat('0', 64), 200, 200, timezone('UTC', now()), true, 1),
+                ('nft', 'ethereum', 1, 200, '0x' || repeat('0', 64), 200, 200, timezone('UTC', now()), true, 1);
+         INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at)
+         VALUES ('ethereum', '{wearables}', 1, 'Halloween', '{CREATOR}', '{CREATOR}', 'urn:decentraland:ethereum:collections-v1:halloween', true, true, false, 1, 1, 1, timezone('UTC', now()));
+         INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account)
+         VALUES (40, 0, 40, '{land}', 'transfer', 5, '{CARL}')"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let later = chrono::Utc::now().timestamp() + 86_400;
+    let bid = |contract: String,
+               token: i64,
+               seller: Option<&'static str>,
+               block: i64,
+               fingerprint: Option<&'static str>| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.nft_bid (network, contract_address, token_id, bidder, bid_id, seller, price, expires_at, status, \
+                     created_block, created_log_index, created_at, updated_block, updated_log_index, updated_at, fingerprint) \
+                 VALUES ('ethereum', $1, $2, $3, '0x' || lpad(to_hex($2 * 1000 + $5), 64, '0'), $4, 100, $6, 'open', $5, 0, $5, $5, 0, $5, $7)",
+            )
+            .bind(contract)
+            .bind(token)
+            .bind(WALLET_B)
+            .bind(seller)
+            .bind(block)
+            .bind(later)
+            .bind(fingerprint)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    bid(wearables.clone(), 1, Some(WALLET_A), 10, Some("0xabcd")).await;
+    bid(land.clone(), 5, None, 50, None).await;
+    bid(stray.clone(), 1, None, 60, Some("0x")).await;
+    let app = || market_router(state.clone());
+    let uri = "/v1/bids?network=ETHEREUM";
+    // The walk passed bids before it kept their lifecycle: not read yet.
+    let (status, body) = get(app(), uri).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("sales-index")),
+        "{body}"
+    );
+    sqlx::query(
+        "INSERT INTO shop.worker_progress (worker, scope, position, ceiling, key_position, key_ceiling) \
+         VALUES ('ethereum_bid_history', 1, 100, 100, ARRAY[NULL, '0'], ARRAY['200', '0x' || repeat('0', 64)])",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), uri).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    type Row = (String, String, String, Option<String>, Option<i64>);
+    let mut results: Vec<Row> = body["data"]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| {
+            (
+                b["contractAddress"].as_str().unwrap().to_string(),
+                b["seller"].as_str().unwrap().to_string(),
+                b["fingerprint"].as_str().unwrap().to_string(),
+                b["bidAddress"].as_str().map(str::to_string),
+                b["chainId"].as_i64(),
+            )
+        })
+        .collect();
+    results.sort();
+    let bid_contract = Some(super::ethereum_sales::ERC721_BID.to_string());
+    let mut expected = vec![
+        (
+            wearables.clone(),
+            WALLET_A.to_string(),
+            "0xabcd".to_string(),
+            bid_contract.clone(),
+            Some(1),
+        ),
+        (
+            land.clone(),
+            CARL.to_string(),
+            "0x".to_string(),
+            bid_contract.clone(),
+            Some(1),
+        ),
+    ];
+    expected.sort();
+    assert_eq!(results, expected, "{body}");
+    assert_eq!(
+        body["data"]["total"], 2,
+        "the stray bid is out of scope: {body}"
+    );
+    let (_, body) = get(app(), &format!("{uri}&seller={CARL}")).await;
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    // A parcel bid past the land index's published block.
+    bid(land.clone(), 7, None, 150, None).await;
+    let (status, body) = get(app(), uri).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
+        "{body}"
+    );
+    assert!(
+        !up.requests.lock().unwrap().iter().any(|e| e == "bids"),
+        "no Ethereum bid read asks the subgraph: {:?}",
+        up.requests.lock().unwrap()
+    );
+    own.drop().await;
+}
+
 /// The bids of a node that walks the indexes read one snapshot: the trades
 /// mirror's readiness and its bids are read on it, so a trade-events rewind
 /// that lands between them neither drops nor keeps a bid against what the
@@ -5687,11 +5818,11 @@ async fn the_bids_legs_read_the_snapshot_their_readiness_checked() {
     )
     .await;
     let f = super::bids::parse_filters(&[("network".to_string(), "MATIC".to_string())]).unwrap();
-    let (mut tx, bounds, now) = match super::bids::bids_snapshot(&state, false).await {
+    let (mut tx, bounds, now) = match super::bids::bids_snapshot(&state, &[]).await {
         Ok(snapshot) => snapshot,
         Err(r) => panic!("the trades mirror is ready: {}", r.status()),
     };
-    assert!(bounds.is_none());
+    assert!(bounds.is_empty());
     sqlx::query(
         "UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' \
          WHERE indexer = 'trade_events' AND network = 'matic'",
