@@ -189,14 +189,13 @@ pub(crate) fn soft_shadows_fragment() -> ShaderRef {
     )
 }
 
-/// A drawn instance of the layout: its parcel and its index among the parcel's instances.
+/// A drawn instance of the layout. Tests name it by its parcel and its index among the parcel's
+/// instances.
 #[derive(Component)]
-#[allow(
-    dead_code,
-    reason = "names the instance an entity draws, for tests and inspection"
-)]
 pub(crate) struct Tree {
+    #[cfg(test)]
     pub parcel: IVec2,
+    #[cfg(test)]
     pub index: u32,
 }
 

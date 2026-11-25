@@ -426,7 +426,9 @@ fn switch_lod(
             let mut root = commands.spawn((
                 Name::new(prototype.name),
                 Tree {
+                    #[cfg(test)]
                     parcel: instance.parcel,
+                    #[cfg(test)]
                     index: instance.index,
                 },
                 instance.transform,
