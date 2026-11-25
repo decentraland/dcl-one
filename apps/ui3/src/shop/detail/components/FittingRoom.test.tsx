@@ -48,5 +48,9 @@ test("the ticked items go on a default mannequin through Unity's builder mode, a
   });
   fireEvent.click(screen.getByRole("checkbox", { name: /Hat/ }));
   expect(frame().contentWindow).toBe(win);
-  expect(posted.mock.calls.at(-1)![0]).toMatchObject({ type: "update", payload: { options: { urns: [HOODIE] } } });
+  const update = posted.mock.calls.at(-1)![0] as { type: string; payload: { options: Record<string, unknown> } };
+  expect(update).toMatchObject({ type: "update", payload: { options: { urns: [HOODIE] } } });
+  // Unity applies no fade setting from an update, and logs one it is sent: it stays on the mount URL.
+  expect(params().get("disableFadeEffect")).toBe("true");
+  expect(Object.keys(update.payload.options)).not.toContain("disableFadeEffect");
 });

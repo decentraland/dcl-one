@@ -67,6 +67,30 @@ describe("updates", () => {
     expect("unityMode" in updates()[0]!.payload.options).toBe(false);
   });
 
+  test("under Unity an update carries only the options Unity applies from one; the rest stay on the mount URL", () => {
+    const { change } = mount({ urns: [HOODIE], profile: "default", disableFadeEffect: true, ...UNITY });
+    const { win, updates } = booted();
+
+    change({ urns: [HAT], profile: "default", disableFadeEffect: true, ...UNITY });
+    expect(frame().contentWindow).toBe(win);
+    expect(updates()).toHaveLength(1);
+    expect(updates()[0]!.payload.options).toMatchObject({ urns: [HAT], profile: "default" });
+    expect(Object.keys(updates()[0]!.payload.options)).not.toContain("disableFadeEffect");
+
+    // A change to such an option cannot go as an update: it mounts again.
+    change({ urns: [HAT], profile: "default", ...UNITY });
+    expect(updates()).toHaveLength(1);
+    expect(frame().contentWindow).not.toBe(win);
+    expect(params().has("disableFadeEffect")).toBe(false);
+  });
+
+  test("over Babylon the same option still goes in every update", () => {
+    const { change } = mount({ urns: [HOODIE], profile: "default", disableFadeEffect: true });
+    const { updates } = booted();
+    change({ urns: [HAT], profile: "default", disableFadeEffect: true });
+    expect(updates()[0]!.payload.options).toMatchObject({ urns: [HAT], disableFadeEffect: true });
+  });
+
   test("over Babylon an option left unset goes as an update, which Babylon takes whole", () => {
     const { change } = mount({ urns: [HOODIE], profile: "default", emote: "fashion", type: "avatar" });
     const { win, updates } = booted();

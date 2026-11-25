@@ -58,6 +58,25 @@ const COPY = {
   addCount: (n: number) => `Add ${n} ${n === 1 ? "item" : "items"} to cart`,
 };
 
+// The emote's definition is optional: past this the outfit draws with the emote's urn alone rather than wait on it.
+const EMOTE_DEFINITION_TIMEOUT_MS = 5_000;
+
+/** The emote's definition, or null when it cannot be read in time; the query's own signal still cancels it. */
+async function readEmoteDefinition(urn: string, signal: AbortSignal) {
+  const deadline = new AbortController();
+  const follow = () => deadline.abort();
+  if (signal.aborted) follow();
+  else signal.addEventListener("abort", follow, { once: true });
+  const timer = setTimeout(follow, EMOTE_DEFINITION_TIMEOUT_MS);
+  try {
+    // A read cut short, by the deadline or the query, comes back null (fetchEmoteBase64).
+    return await fetchEmoteBase64(urn, undefined, deadline.signal);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", follow);
+  }
+}
+
 function webglAvailable(): boolean {
   return typeof window !== "undefined" && typeof (window as { WebGLRenderingContext?: unknown }).WebGLRenderingContext !== "undefined";
 }
@@ -255,9 +274,9 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
   const emoteItem = useMemo(() => playingEmote(resolved), [resolved]);
   const emoteUrn = emoteItem ? (emoteItem.urn ?? itemUrn(emoteItem)) : null;
   // A published emote cannot be named to the preview: it goes as its own definition. Read before the preview mounts, so
-  // the iframe is built once with it instead of loading the avatar and reloading it. A read that fails leaves the emote's
-  // urn alone, where Babylon can still find it.
-  const playbackQ = useShopQuery(emoteUrn ? ["emote-base64", emoteUrn] : null, (signal) => fetchEmoteBase64(emoteUrn!, undefined, signal), { staleMs: 30 * 60_000 });
+  // the iframe is built once with it instead of loading the avatar and reloading it. A read that fails or runs out of
+  // time leaves the emote's urn alone, where Babylon can still find it.
+  const playbackQ = useShopQuery(emoteUrn ? ["emote-base64", emoteUrn] : null, (signal) => readEmoteDefinition(emoteUrn!, signal), { staleMs: 30 * 60_000 });
   const playback = playbackQ.data ?? null;
   const emotePending = !!emoteUrn && playbackQ.isLoading;
   const thumb = thumbnailUrl(outfit.thumbnailHash);

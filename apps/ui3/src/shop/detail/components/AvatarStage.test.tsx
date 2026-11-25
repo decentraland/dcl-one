@@ -115,6 +115,43 @@ describe("failures", () => {
   });
 });
 
+describe("coming back to options seen before", () => {
+  test("drawn, then away to options that failed: back again it is covered until the new iframe draws", () => {
+    primeRemoteFlags({ "dapps-unity-wearable-preview": false });
+    const { change } = stage(OUTFIT, { unavailable: <span data-testid="unavailable" /> });
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    expect(cover()).toBeNull();
+
+    change({ ...OUTFIT, urns: [HAT] });
+    fromPreview({ type: "error", payload: { message: "not found" } });
+    expect(frame()).toBeNull();
+
+    change(OUTFIT);
+    expect(frame()).not.toBeNull();
+    expect(cover()).not.toBeNull();
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    expect(cover()).toBeNull();
+  });
+
+  test("failed, then away to options that drew: back again it mounts and tries them once more", () => {
+    primeRemoteFlags({ "dapps-unity-wearable-preview": false });
+    const { change } = stage({ ...OUTFIT, urns: [HAT] }, { unavailable: <span data-testid="unavailable" /> });
+    fromPreview({ type: "error", payload: { message: "not found" } });
+    expect(frame()).toBeNull();
+
+    change(OUTFIT);
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    expect(cover()).toBeNull();
+
+    change({ ...OUTFIT, urns: [HAT] });
+    expect(frame()).not.toBeNull();
+    expect(screen.queryByTestId("unavailable")).toBeNull();
+    expect(cover()).not.toBeNull();
+  });
+});
+
 describe("changes", () => {
   test("new items reload the scene in the same iframe, covered again until it draws", () => {
     primeRemoteFlags({ "dapps-unity-wearable-preview": false });

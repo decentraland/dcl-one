@@ -21,11 +21,20 @@ const OUTFIT = {
   published: true,
 };
 
-const preview = vi.hoisted(() => ({ emote: null as null | ((playback: { base64: string; loop: boolean } | null) => void) }));
+const preview = vi.hoisted(() => ({
+  emote: null as null | ((playback: { base64: string; loop: boolean } | null) => void),
+  // A read that only ends when it is aborted, as fetchEmoteBase64 does then: with null.
+  stall: false,
+  aborted: false,
+}));
 vi.mock("../../detail/lib/pickRenderer", () => ({ pickRenderer: () => ({ renderer: "full", reason: "connection-ok" }) }));
 vi.mock("../../detail/lib/emoteBase64", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../detail/lib/emoteBase64")>()),
-  fetchEmoteBase64: () => new Promise((resolve) => (preview.emote = resolve)),
+  fetchEmoteBase64: (_urn: string, _peer: string | undefined, signal?: AbortSignal) =>
+    new Promise((resolve) => {
+      preview.emote = resolve;
+      if (preview.stall) signal?.addEventListener("abort", () => ((preview.aborted = true), resolve(null)));
+    }),
 }));
 vi.mock("../../../wearable-preview/WearablePreview", () => ({
   default: () => {
@@ -35,6 +44,8 @@ vi.mock("../../../wearable-preview/WearablePreview", () => ({
 
 beforeEach(() => {
   preview.emote = null;
+  preview.stall = false;
+  preview.aborted = false;
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
   shopCart.clear();
 });
@@ -122,5 +133,28 @@ describe("the outfit's 3D preview", () => {
     expect(params.has("emote")).toBe(false);
     expect(params.get("disableDefaultEmotes")).toBe("true");
     expect(params.get("profile")).toBe("default");
+  });
+
+  it("does not wait on an emote definition that never comes: past its deadline the outfit mounts with the emote's urn", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.stubGlobal("WebGLRenderingContext", class {});
+      preview.stall = true;
+      outfit();
+      await waitFor(() => expect(preview.emote).not.toBeNull());
+      expect(screen.queryByTitle("3D preview")).toBeNull();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+      expect(preview.aborted).toBe(true);
+      const frame = (await screen.findByTitle("3D preview")) as HTMLIFrameElement;
+      const params = new URL(frame.src).searchParams;
+      expect(params.getAll("urn")).toHaveLength(2);
+      expect(params.has("base64")).toBe(false);
+      expect(params.has("disableDefaultEmotes")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -28,19 +28,23 @@ export default function AvatarStage({ options, unityMode = "builder", cover = nu
     setDevice(decision.reason === "no-webgl" ? "none" : decision.renderer);
   }, []);
   const unityFlag = useRemoteFlagState(REMOTE_FLAG.unityWearablePreview, device === "full");
+  // Unity failing sends the stage to Babylon for the rest of its life.
   const [unityFailed, setUnityFailed] = useState(false);
-  // What the preview drew and what it failed on, each for the frame and options it was on.
-  const [drawn, setDrawn] = useState<string | null>(null);
-  const [failed, setFailed] = useState<string | null>(null);
 
   // A lighter device draws with Babylon whatever the flag says, so it does not wait for it.
   const settled = device === "lite" || (device === "full" && unityFlag !== null);
   const unity = !unityFailed && device === "full" && unityFlag === true;
   const frame = `${unity ? "unity" : "babylon"}|${previewBase(options.urns)}`;
   const scene = `${frame}|${JSON.stringify(options)}`;
-  // A Babylon failure keeps the stage down for those options only: the next change tries again.
-  const mounted = settled && failed !== scene;
-  const ready = mounted && drawn === scene;
+  // Whether the preview has drawn or failed belongs to this visit to these options: coming back to options drawn or
+  // failed before starts over, covered and mounted. Reset during render, so no frame shows the last visit's answer.
+  const [visit, setVisit] = useState({ scene, drawn: false, failed: false });
+  const current = visit.scene === scene ? visit : { scene, drawn: false, failed: false };
+  if (current !== visit) setVisit(current);
+  const answer = (change: { drawn: true } | { failed: true }) => setVisit((v) => (v.scene === scene ? { ...v, ...change } : v));
+  // A Babylon failure keeps the stage down for this visit only: the next change tries again.
+  const mounted = settled && !current.failed;
+  const ready = mounted && current.drawn;
 
   if (device === "none") return <>{unavailable ?? cover}</>;
   return (
@@ -50,8 +54,8 @@ export default function AvatarStage({ options, unityMode = "builder", cover = nu
           key={frame}
           options={{ ...options, unity: unity || undefined, unityMode: unity ? unityMode : undefined }}
           loadTimeoutMs={unity ? UNITY_LOAD_TIMEOUT_MS : undefined}
-          onLoad={() => setDrawn(scene)}
-          onError={() => (unity ? setUnityFailed(true) : setFailed(scene))}
+          onLoad={() => answer({ drawn: true })}
+          onError={() => (unity ? setUnityFailed(true) : answer({ failed: true }))}
         />
       ) : null}
       {ready ? null : settled && !mounted ? (unavailable ?? cover) : cover}

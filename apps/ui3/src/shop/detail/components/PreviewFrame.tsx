@@ -61,6 +61,11 @@ export function previewUrl(base: string, options: PreviewFrameOptions): string {
 // them: Unity has no mapping for `unity` there, and logs each one it is sent.
 const RENDERER_KEYS = ["unity", "unityMode"] as const;
 
+// The options Unity applies from an update (wearable-preview@6f1e470 src/lib/unity/messages.ts: PROPERTY_METHOD_MAP and
+// SPECIAL_PROPERTIES). Any other, `disableFadeEffect` among them, reaches Unity only through the mount URL: sent in an
+// update it is logged as unmapped, and a change to it mounts again.
+const UNITY_UPDATE_KEYS = new Set(["urns", "base64s", "profile", "bodyShape", "skin", "hair", "eyes", "type", "emote", "disableBackground", "disableDefaultEmotes", "wheelZoom", "wheelStart"]);
+
 type Mount = { n: number; base: string; src: string; options: PreviewFrameOptions; serialized: string };
 
 function mountWith(n: number, options: PreviewFrameOptions): Mount {
@@ -78,7 +83,11 @@ const isSet = (value: unknown) => value !== undefined && value !== null && value
 function needsMount(mount: Mount, held: ReadonlySet<string>, options: PreviewFrameOptions): boolean {
   if (previewBase(options.urns) !== mount.base) return true;
   if (RENDERER_KEYS.some((key) => options[key] !== mount.options[key])) return true;
-  return mount.options.unity === true && [...held].some((key) => !isSet(options[key as keyof PreviewFrameOptions]));
+  if (mount.options.unity !== true) return false;
+  const value = (from: PreviewFrameOptions, key: string) => (isSet(from[key as keyof PreviewFrameOptions]) ? JSON.stringify(from[key as keyof PreviewFrameOptions]) : undefined);
+  const mountOnly = new Set([...Object.keys(mount.options), ...Object.keys(options)].filter((key) => !UNITY_UPDATE_KEYS.has(key) && !(RENDERER_KEYS as readonly string[]).includes(key)));
+  if ([...mountOnly].some((key) => value(options, key) !== value(mount.options, key))) return true;
+  return [...held].some((key) => !isSet(options[key as keyof PreviewFrameOptions]));
 }
 
 function setKeys(options: PreviewFrameOptions): Set<string> {
@@ -95,6 +104,7 @@ function updateFor(mount: Mount, options: PreviewFrameOptions): Record<string, u
   for (const key of setKeys(mount.options)) update[key] = undefined;
   Object.assign(update, options);
   for (const key of RENDERER_KEYS) delete update[key];
+  if (mount.options.unity === true) for (const key of Object.keys(update)) if (!UNITY_UPDATE_KEYS.has(key)) delete update[key];
   return update;
 }
 
