@@ -36,7 +36,8 @@ class DevCiTest(unittest.TestCase):
                          'apps/ui3/src/a.ts'],
                         ['services/catalyst/db/src/lib.rs'], ['library/protocol/proto/a.proto'],
                         ['schemas/50_create.sql'], ['apps/creator-hub/packages/zip-extract/index.js'],
-                        ['.github/workflows/closed-pr-cache.yml']):
+                        ['.github/workflows/closed-pr-cache.yml'], ['.github/workflows/creator-hub-ci.yml'],
+                        ['.github/workflows/bevy-explorer-benchmark.yml']):
             with self.subTest(changed=changed):
                 self.assertFalse(self.macos(*changed))
 
