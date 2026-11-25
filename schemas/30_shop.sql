@@ -17114,12 +17114,13 @@ CREATE TABLE shop.collection_hint (
     idx integer NOT NULL,
     address varchar(42) NOT NULL,
     finalized boolean NOT NULL,
-    -- The finalized block a final row was read at, and its hash (both NULL
-    -- for a provisional row, and for a final row written before they were
-    -- recorded). The gate checks the hash at that height before each attempt
-    -- until the walk has passed it (`verified`); a different hash, a missing
-    -- one, or a rewind below the height makes the row provisional again, to
-    -- be read on the branch the chain took.
+    -- The finalized block a final row was read at (by its hash), and that
+    -- hash (both NULL for a provisional row, and for a final row written
+    -- before they were recorded). The gate checks the hash at that height
+    -- until it is proven on the walked branch (`verified`: the walk's
+    -- cursor at or past it, with both blocks canonical); a different hash, a
+    -- missing one, or a rewind below the height makes the row provisional
+    -- again, to be read on the branch the chain took.
     read_block bigint,
     read_hash text,
     verified boolean NOT NULL DEFAULT false,
@@ -17135,13 +17136,14 @@ CREATE UNIQUE INDEX collection_hint_final_idx ON shop.collection_hint (network, 
 
 -- What a collection's initialize set without an event (name, symbol,
 -- creator, approval, editability), read once by the collections index's
--- gate at Polygon's finalized block, kept with its height and hash
--- (`read_block`, `read_hash`). A projection takes a value from it only when
--- no walked event sets it and `read_block` is at or below the block it folds
--- to. The gate checks the hash at that height before each attempt until the
--- walk has passed it (`verified`); a different hash, a missing one, or a
--- rewind below the height deletes the row, to be read again on the branch
--- the chain took. One row per collection.
+-- gate at Polygon's finalized block (by its hash), kept with its height and
+-- hash (`read_block`, `read_hash`). The gate checks the hash at that height
+-- until it is proven on the walked branch (`verified`: the walk's cursor at
+-- or past it, with both blocks canonical); a different hash, a missing one,
+-- or a rewind below the height deletes the row, to be read again on the
+-- branch the chain took. A projection takes a value from it only once it is
+-- verified, when no walked event sets the value and `read_block` is at or
+-- below the block it folds to. One row per collection.
 CREATE TABLE shop.collection_seed (
     network text NOT NULL,
     contract_address varchar(42) NOT NULL,
@@ -17165,10 +17167,12 @@ CREATE TABLE shop.collection_seed (
 -- The gate's reads of the chain (factory lists, creation reads) are written
 -- only when the epoch, with the walk's owner generation, has not moved
 -- since they began, so no read of a branch the walk left is written after
--- it left it.
+-- it left it. `checked_through` is the last height the gate checked the
+-- reads at; the next check goes on past it (NULL: from the lowest).
 CREATE TABLE shop.collection_walk (
     network text PRIMARY KEY,
     epoch bigint NOT NULL DEFAULT 0,
+    checked_through bigint,
     CONSTRAINT collection_walk_network_known CHECK (network IN ('ethereum', 'matic'))
 );
 

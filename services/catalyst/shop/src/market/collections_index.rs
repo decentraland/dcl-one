@@ -84,6 +84,10 @@ pub const CALLS_PER_BATCH: usize = 100;
 /// for the next attempt, so a fresh node's first gates stay short.
 pub const SEEDS_PER_GATE: usize = 500;
 
+/// Heights of the gate's reads one gate checks at most against the chain
+/// ([`revalidate_reads`]); the rest wait for the next attempts, in turn.
+pub const HEIGHTS_PER_GATE: usize = 100;
+
 sol! {
     interface Factory {
         event ProxyCreated(address indexed _address, bytes32 _salt);
@@ -665,8 +669,16 @@ impl ChainIndex for CollectionsIndex {
     }
 }
 
-/// One `eth_call` of `data` to `to` at `block`, as a batch element.
-fn call_request(id: usize, to: &str, data: &[u8], block: &str) -> Value {
+/// The block parameter of a read of the state at `block` (EIP-1898): by its
+/// hash, so what is read and the hash it is stored with are one block's,
+/// and refused once that block is not canonical.
+pub fn at_block(block: &BlockHeader) -> Value {
+    json!({ "blockHash": block.hash, "requireCanonical": true })
+}
+
+/// One `eth_call` of `data` to `to` at `block` (`"latest"`, or
+/// [`at_block`]), as a batch element.
+fn call_request(id: usize, to: &str, data: &[u8], block: &Value) -> Value {
     json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -712,7 +724,7 @@ fn answer_of(envelope: &Value) -> Answer {
 pub async fn eth_calls(
     rpc: &Rpc<'_>,
     calls: &[(String, Vec<u8>)],
-    block: &str,
+    block: &Value,
 ) -> anyhow::Result<Vec<Answer>> {
     let mut out: Vec<Answer> = vec![Err(-1); calls.len()];
     let mut todo: Vec<(usize, usize)> = (0..calls.len())
@@ -784,8 +796,9 @@ fn refusals(answers: &[Answer]) -> Option<(usize, i64)> {
 }
 
 /// Reads the factories' lists into `shop.collection_hint`. Every index the
-/// list holds at the finalized block `finalized` is read there once, a row
-/// read at a finalized block being final; the indexes past it are read at
+/// list holds at the finalized block `finalized` is read there once, by its
+/// hash ([`at_block`]), a row read at a finalized block being final and
+/// keeping that height and hash; the indexes past it are read at
 /// the latest block at every refresh until the finalized block reaches
 /// them, so the filter already takes a collection the walk can reach before
 /// it is final. A provisional address a reorg replaced stays a hint the
@@ -812,7 +825,8 @@ pub async fn refresh_hints(
     let token = reads_token(pool, net).await?;
     let final_block = i64::try_from(finalized.number).context("finalized block out of range")?;
     let final_hash = finalized.hash.clone();
-    let at_final = format!("0x{:x}", finalized.number);
+    let at_final = at_block(finalized);
+    let latest = json!("latest");
     let size_calls: Vec<(String, Vec<u8>)> = FACTORIES
         .iter()
         .map(|(f, _)| (f.to_string(), Factory::collectionsSizeCall {}.abi_encode()))
@@ -831,7 +845,7 @@ pub async fn refresh_hints(
             })
     };
     let final_sizes = eth_calls(rpc, &size_calls, &at_final).await?;
-    let latest_sizes = eth_calls(rpc, &size_calls, "latest").await?;
+    let latest_sizes = eth_calls(rpc, &size_calls, &latest).await?;
     let mut lists = Vec::new();
     for (((factory, _), final_size), latest_size) in
         FACTORIES.iter().zip(final_sizes).zip(latest_sizes)
@@ -885,8 +899,8 @@ pub async fn refresh_hints(
         provisional_to_read.push((*factory, indexes));
     }
     for (reads, block, finalized) in [
-        (finals_to_read, at_final.as_str(), true),
-        (provisional_to_read, "latest", false),
+        (finals_to_read, &at_final, true),
+        (provisional_to_read, &latest, false),
     ] {
         for (factory, indexes) in reads {
             // Each chunk is kept as soon as it is read: an error later in
@@ -1011,8 +1025,9 @@ pub fn seed_of(contract: &str, answers: &[Answer], read_block: u64) -> Option<Se
 
 /// Reads the creation state of up to [`SEEDS_PER_GATE`] collections that
 /// have none, walked ones first, then the final hints (a provisional one
-/// may never exist), at the finalized block `finalized`, into
-/// `shop.collection_seed`. A collection not deployed at that block, or one
+/// may never exist), at the finalized block `finalized` by its hash
+/// ([`at_block`]), into `shop.collection_seed` with that height and hash
+/// (unverified: [`revalidate_reads`]). A collection not deployed at that block, or one
 /// a call was refused for, waits for the next gate. Returns the seeds added.
 pub async fn read_seeds(
     pool: &PgPool,
@@ -1049,7 +1064,7 @@ pub async fn read_seeds(
         .iter()
         .flat_map(|c| selectors.iter().map(move |s| (c.clone(), s.clone())))
         .collect();
-    let answers = eth_calls(rpc, &calls, &format!("0x{:x}", finalized.number)).await?;
+    let answers = eth_calls(rpc, &calls, &at_block(finalized)).await?;
     if let Some((count, first)) = refusals(&answers) {
         tracing::warn!(
             count,
@@ -1135,24 +1150,66 @@ pub async fn write_seeds(
     Ok(written)
 }
 
-/// Checks the gate's reads against the chain: for every height a final
-/// factory list row or a creation read was taken at and not yet verified,
-/// the hash at that height now.
-/// - A read whose height holds another hash (the chain left its branch, which
-///   the walk cannot see while its own cursor is below it), or that recorded
-///   none, is undone: its list row becomes provisional again and its
-///   creation read is deleted. This happens under the reads lock exclusive,
-///   with the walk's epoch raised (so a read in flight from that branch is
-///   not written either) and, when a creation read goes, the projection's
-///   block cleared (so the next fold rebuilds without it).
-/// - A read whose hash holds, at a height the walk has passed, is verified:
-///   from then a rewind below it undoes it ([`CollectionsIndex`]'s rewind).
-/// - A height whose header the endpoint does not serve fails the call (and
-///   the gate's attempt with it); nothing is undone or verified on a guess.
+/// The hashes of the blocks at `heights`, each checked to be that block's:
+/// in JSON-RPC batches, then one request each for what a batch did not
+/// answer whole, or for all of them when the endpoint refuses batches. A
+/// height the endpoint does not serve fails the read.
+async fn block_hashes(rpc: &Rpc<'_>, heights: &[u64]) -> anyhow::Result<HashMap<u64, String>> {
+    let hash_like = |h: &str| {
+        h.len() == 66 && h.starts_with("0x") && h[2..].bytes().all(|c| c.is_ascii_hexdigit())
+    };
+    let mut out = HashMap::new();
+    if let Ok((headers, _)) = rpc.block_headers(heights).await {
+        for (number, header) in headers {
+            if header.number == number && hash_like(&header.hash) {
+                out.insert(number, header.hash);
+            }
+        }
+    }
+    for number in heights {
+        if !out.contains_key(number) {
+            let header = rpc
+                .block_header(*number)
+                .await
+                .map_err(|e| anyhow::anyhow!("block header {number}: {e}"))?;
+            out.insert(*number, header.hash);
+        }
+    }
+    Ok(out)
+}
+
+/// Checks the gate's reads against the chain. Each final factory list row
+/// and creation read keeps the height and hash of the block it was read at
+/// ([`at_block`]); until it is `verified`:
+/// - one with no hash (written before hashes were kept) is undone without a
+///   read: its list row becomes provisional again, its creation read is
+///   deleted;
+/// - one whose height holds another hash now (the chain left its branch,
+///   which the walk cannot see while its own cursor is below it) is undone
+///   the same way;
+/// - one whose hash holds, at a height at or below the walk's cursor, while
+///   the cursor's own block is canonical too, is on the walked branch: it is
+///   verified. From then the walk's reorg check covers it (a rewind below it
+///   undoes it), and only then does a projection use a creation read.
+///
+/// At most `max_heights` heights are checked, in turn from where the last
+/// check stopped (`shop.collection_walk.checked_through`), so every height
+/// is checked within a few attempts however many there are. A header the
+/// endpoint does not serve fails the call, and nothing is undone or
+/// verified on a guess. The writes hold the reads lock (exclusive when
+/// anything is undone, raising the walk's epoch so a read in flight from a
+/// left branch is not written either, and clearing the projection's block
+/// when a creation read goes) and are dropped if a rewind or a new owner
+/// moved the walk since the check began.
 ///
 /// Returns the reads undone.
-pub async fn revalidate_reads(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<usize> {
+pub async fn revalidate_reads(
+    pool: &PgPool,
+    rpc: &Rpc<'_>,
+    max_heights: usize,
+) -> anyhow::Result<usize> {
     let net = ChainNet::Matic;
+    let token = reads_token(pool, net).await?;
     let reads: Vec<(Option<i64>, Option<String>)> = sqlx::query_as(
         "SELECT read_block, read_hash FROM shop.collection_hint WHERE network = $1 AND finalized AND NOT verified \
          UNION \
@@ -1164,64 +1221,110 @@ pub async fn revalidate_reads(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<us
     if reads.is_empty() {
         return Ok(0);
     }
-    let mut heights: Vec<u64> = reads
+    let (walk_at, checked_through): (Option<(i64, String)>, Option<i64>) = {
+        let cursor: Option<(i64, Option<String>)> = sqlx::query_as(
+            "SELECT last_block, last_block_hash FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
+        )
+        .bind(INDEXER_COLLECTIONS)
+        .bind(net.db_name())
+        .fetch_optional(pool)
+        .await?;
+        let through: Option<i64> = sqlx::query_scalar(
+            "SELECT checked_through FROM shop.collection_walk WHERE network = $1",
+        )
+        .bind(net.db_name())
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+        (
+            cursor.and_then(|(block, hash)| Some((block, hash?))),
+            through,
+        )
+    };
+    let mut heights: Vec<i64> = reads
         .iter()
-        .filter_map(|(block, _)| u64::try_from((*block)?).ok())
+        .filter_map(|(block, hash)| hash.as_ref().and(*block))
+        .filter(|b| *b >= 0)
         .collect();
     heights.sort_unstable();
     heights.dedup();
-    let headers = if heights.is_empty() {
+    let from = checked_through.unwrap_or(-1);
+    let turn: Vec<i64> = heights
+        .iter()
+        .filter(|h| **h > from)
+        .chain(heights.iter().filter(|h| **h <= from))
+        .take(max_heights)
+        .copied()
+        .collect();
+    let next_through = (heights.len() > turn.len())
+        .then(|| turn.last().copied())
+        .flatten();
+    let mut ask: Vec<u64> = turn.iter().map(|h| *h as u64).collect();
+    if let Some((block, _)) = &walk_at {
+        ask.push(*block as u64);
+    }
+    ask.sort_unstable();
+    ask.dedup();
+    let hashes = if ask.is_empty() {
         HashMap::new()
     } else {
-        rpc.block_headers(&heights)
-            .await
-            .map_err(|e| anyhow::anyhow!("block headers: {e}"))?
-            .0
+        block_hashes(rpc, &ask).await?
     };
-    let walked: Option<i64> = sqlx::query_scalar(
-        "SELECT last_block FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
-    )
-    .bind(INDEXER_COLLECTIONS)
-    .bind(net.db_name())
-    .fetch_optional(pool)
-    .await?;
-    let mut undo = Vec::new();
+    // The walk's cursor is on the endpoint's chain: what that chain holds
+    // at or below it is what the walk walked.
+    let walked = walk_at
+        .filter(|(block, hash)| hashes.get(&(*block as u64)) == Some(hash))
+        .map(|(block, _)| block);
+    let (mut verify, mut undo) = (Vec::new(), Vec::new());
     for (block, hash) in reads {
-        let now = block
-            .and_then(|b| u64::try_from(b).ok())
-            .and_then(|b| headers.get(&b))
-            .map(|h| h.hash.as_str());
-        match (block, hash.as_deref(), now) {
-            (Some(b), Some(read), Some(now)) if now == read => {
-                if walked.is_some_and(|w| w >= b) {
-                    for sql in [
-                        "UPDATE shop.collection_hint SET verified = true \
-                         WHERE network = $1 AND finalized AND read_block = $2 AND read_hash = $3",
-                        "UPDATE shop.collection_seed SET verified = true \
-                         WHERE network = $1 AND read_block = $2 AND read_hash = $3",
-                    ] {
-                        sqlx::query(sql)
-                            .bind(net.db_name())
-                            .bind(b)
-                            .bind(read)
-                            .execute(pool)
-                            .await?;
-                    }
+        match (block, hash) {
+            (Some(b), Some(read)) if turn.contains(&b) => {
+                let now = hashes
+                    .get(&(b as u64))
+                    .expect("every height asked is answered");
+                if *now != read {
+                    undo.push((Some(b), Some(read)));
+                } else if walked.is_some_and(|w| w >= b) {
+                    verify.push((b, read));
                 }
             }
-            (Some(_), Some(_), None) => {}
-            _ => undo.push((block, hash)),
+            (Some(_), Some(_)) => {}
+            (block, hash) => undo.push((block, hash)),
         }
     }
-    if undo.is_empty() {
-        return Ok(0);
-    }
     let mut tx = pool.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock($1, $2)")
+    let lock = if undo.is_empty() {
+        "SELECT pg_advisory_xact_lock_shared($1, $2)"
+    } else {
+        "SELECT pg_advisory_xact_lock($1, $2)"
+    };
+    sqlx::query(lock)
         .bind(READS_LOCK)
         .bind(net.chain_id() as i32)
         .execute(&mut *tx)
         .await?;
+    if reads_token(&mut *tx, net).await? != token {
+        tracing::info!(
+            network = net.db_name(),
+            "collections: the walk moved while the reads were checked; the next attempt checks them again"
+        );
+        return Ok(0);
+    }
+    for (block, hash) in &verify {
+        for sql in [
+            "UPDATE shop.collection_hint SET verified = true \
+             WHERE network = $1 AND finalized AND read_block = $2 AND read_hash = $3",
+            "UPDATE shop.collection_seed SET verified = true \
+             WHERE network = $1 AND read_block = $2 AND read_hash = $3",
+        ] {
+            sqlx::query(sql)
+                .bind(net.db_name())
+                .bind(block)
+                .bind(hash)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
     let (mut hints, mut seeds) = (0usize, 0usize);
     for (block, hash) in &undo {
         hints += sqlx::query(
@@ -1247,11 +1350,15 @@ pub async fn revalidate_reads(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<us
         .await?
         .rows_affected() as usize;
     }
+    let raise = i64::from(!undo.is_empty());
     sqlx::query(
-        "INSERT INTO shop.collection_walk (network, epoch) VALUES ($1, 1) \
-         ON CONFLICT (network) DO UPDATE SET epoch = shop.collection_walk.epoch + 1",
+        "INSERT INTO shop.collection_walk (network, epoch, checked_through) VALUES ($1, $2, $3) \
+         ON CONFLICT (network) DO UPDATE \
+         SET epoch = shop.collection_walk.epoch + $2, checked_through = EXCLUDED.checked_through",
     )
     .bind(net.db_name())
+    .bind(raise)
+    .bind(next_through)
     .execute(&mut *tx)
     .await?;
     // The projection folds the log and the creation reads, never the lists.
@@ -1285,7 +1392,7 @@ pub async fn gate(pool: &PgPool, rpc: &Rpc<'_>) -> anyhow::Result<Option<String>
         .finalized_header()
         .await
         .context("collections matic: the finalized block")?;
-    let undone = revalidate_reads(pool, rpc)
+    let undone = revalidate_reads(pool, rpc, HEIGHTS_PER_GATE)
         .await
         .context("collections matic: checking the reads ahead of the walk")?;
     if undone > 0 {
@@ -2546,25 +2653,364 @@ mod tests {
             vec![(OLDER.into(), true, true), (CREATED.into(), true, true)],
             "the list slot holds: only the creation read is taken again"
         );
-        chain_walk::run_pass(
-            &pool,
-            &chain(97_895_000),
-            &ix,
-            &settings,
-            &owner,
+        let head = chain(97_895_000);
+        let pass = || chain_walk::run_pass(&pool, &head, &ix, &settings, &owner, None, &|_| {});
+        pass().await.unwrap();
+        assert_eq!(
+            projected_name(&pool, CREATED).await,
             None,
-            &|_| {},
-        )
-        .await
-        .unwrap();
-        let name: String = sqlx::query_scalar(
+            "the new read waits for its proof"
+        );
+        assert_eq!(gate(&pool, &rpc).await.unwrap(), None);
+        pass().await.unwrap();
+        assert_eq!(
+            projected_name(&pool, CREATED).await.as_deref(),
+            Some("Kept"),
+            "the new branch's read, not the left one's"
+        );
+    }
+
+    /// The catalogue's name for `contract`, when it has a row.
+    async fn projected_name(pool: &PgPool, contract: &str) -> Option<String> {
+        sqlx::query_scalar(
             "SELECT name FROM shop.collections WHERE network = 'matic' AND contract_address = $1",
         )
-        .bind(CREATED)
+        .bind(contract)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+    }
+
+    /// `contract`'s five creation calls answering `name` at `block`.
+    fn creation_answers(
+        calls: &mut HashMap<(String, String, String), String>,
+        contract: &str,
+        block: &str,
+        name: &str,
+    ) {
+        for (call, answer) in [
+            (Collection::nameCall {}.abi_encode(), word(name.to_string())),
+            (
+                Collection::symbolCall {}.abi_encode(),
+                word("S".to_string()),
+            ),
+            (Collection::creatorCall {}.abi_encode(), addr(CREATOR)),
+            (Collection::isApprovedCall {}.abi_encode(), word(true)),
+            (Collection::isEditableCall {}.abi_encode(), word(true)),
+        ] {
+            calls.insert(call_key(contract, call, block), answer);
+        }
+    }
+
+    /// The final reads go by the finalized block's hash: a list slot and a
+    /// creation read stored with that hash are that block's, even when the
+    /// endpoint's block at that number is another branch's.
+    #[tokio::test]
+    async fn final_reads_are_pinned_to_the_finalized_hash() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let (on_a, on_b) = (
+            "0x00000000000000000000000000000000000000a1",
+            "0x00000000000000000000000000000000000000b2",
+        );
+        let a = left_branch();
+        let size = Factory::collectionsSizeCall {}.abi_encode();
+        let mut calls = HashMap::new();
+        calls.insert(
+            ("block".to_string(), "finalized".to_string(), String::new()),
+            format!("0x64 {a}"),
+        );
+        for block in [a.as_str(), "0x64", "latest"] {
+            calls.insert(
+                call_key(FACTORIES[0].0, size.clone(), block),
+                word(U256::ZERO),
+            );
+            calls.insert(call_key(V3, size.clone(), block), word(U256::from(1)));
+        }
+        calls.insert(call_key(V3, nth(0), &a), addr(on_a));
+        calls.insert(call_key(V3, nth(0), "0x64"), addr(on_b));
+        creation_answers(&mut calls, on_a, &a, "A");
+        creation_answers(&mut calls, on_a, "0x64", "B");
+        creation_answers(&mut calls, on_b, "0x64", "B");
+        let url = fake_rpc(
+            Arc::new(std::sync::Mutex::new(calls)),
+            Batches::Upto(100),
+            Arc::default(),
+        )
+        .await;
+        let http = crate::http::Outbound::for_tests();
+        assert_eq!(gate(&pool, &Rpc::at(&http, &url)).await.unwrap(), None);
+        let hints: Vec<(String, Option<i64>, Option<String>)> = sqlx::query_as(
+            "SELECT address, read_block, read_hash FROM shop.collection_hint WHERE finalized",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(hints, vec![(on_a.to_string(), Some(100), Some(a.clone()))]);
+        let seeds: Vec<(String, String, i64, Option<String>)> = sqlx::query_as(
+            "SELECT contract_address, name, read_block, read_hash FROM shop.collection_seed",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(seeds, vec![(on_a.to_string(), "A".into(), 100, Some(a))]);
+    }
+
+    /// A creation read correctly tagged with its branch's hash is still not
+    /// published when the walk takes another branch past it before the gate
+    /// checks it: the collection waits until a read of the walked branch is
+    /// proven.
+    #[tokio::test]
+    async fn a_creation_read_of_a_branch_the_walk_did_not_take_is_never_published() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let below = header(97_000_000).hash;
+        hint_read(&pool, 0, OLDER, 97_000_000, &below).await;
+        hint_read(&pool, 1, CREATED, 97_000_000, &below).await;
+        let settings = walk_settings();
+        let ix = CollectionsIndex::projecting(true);
+        let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
+        let pass = |finalized| {
+            let chain = Chain {
+                logs: fixture(),
+                finalized,
+            };
+            let (pool, ix, settings, owner) = (&pool, &ix, &settings, &owner);
+            async move {
+                chain_walk::run_pass(pool, &chain, ix, settings, owner, None, &|_| {})
+                    .await
+                    .unwrap()
+            }
+        };
+        pass(97_700_000).await;
+
+        // The endpoint's finalized block is branch A's; the walk takes B.
+        let a = left_branch();
+        let at = format!("0x{:x}", 97_895_000);
+        let mut calls = gate_calls(97_895_000);
+        calls.insert(
+            ("block".to_string(), "finalized".to_string(), String::new()),
+            format!("{at} {a}"),
+        );
+        let size = Factory::collectionsSizeCall {}.abi_encode();
+        calls.insert(call_key(FACTORIES[0].0, size.clone(), &a), word(U256::ZERO));
+        calls.insert(call_key(V3, size, &a), word(U256::from(2)));
+        creation_answers(&mut calls, CREATED, &a, "Left");
+        let calls = Arc::new(std::sync::Mutex::new(calls));
+        let url = fake_rpc(calls.clone(), Batches::Upto(100), Arc::default()).await;
+        let http = crate::http::Outbound::for_tests();
+        let rpc = Rpc::at(&http, &url);
+        assert_eq!(gate(&pool, &rpc).await.unwrap(), None);
+        pass(97_895_000).await;
+        let marker: (Option<i64>, i32) = sqlx::query_as(
+            "SELECT projected_through, pending FROM shop.collection_projection WHERE network = 'matic'",
+        )
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(name, "Kept", "the new branch's read, not the left one's");
+        assert_eq!(
+            (projected_name(&pool, CREATED).await, marker),
+            (None, (Some(97_895_000), 1)),
+            "branch A's read is not published on branch B: the collection waits"
+        );
+
+        // The endpoint follows B: A's read is undone, B's taken, proven,
+        // then published.
+        {
+            let mut calls = calls.lock().unwrap();
+            calls.remove(&("block".to_string(), "finalized".to_string(), String::new()));
+            calls.insert(
+                ("block".to_string(), "finalized".to_string(), String::new()),
+                format!("{at} {}", header(97_895_000).hash),
+            );
+            creation_answers(&mut calls, CREATED, &at, "Kept");
+        }
+        assert_eq!(gate(&pool, &rpc).await.unwrap(), None);
+        pass(97_895_000).await;
+        assert_eq!(projected_name(&pool, CREATED).await, None);
+        assert_eq!(gate(&pool, &rpc).await.unwrap(), None);
+        pass(97_895_000).await;
+        assert_eq!(
+            projected_name(&pool, CREATED).await.as_deref(),
+            Some("Kept")
+        );
+    }
+
+    /// A read is proven only while the walk's own cursor block is the
+    /// endpoint's too: a read whose hash holds on an endpoint that left the
+    /// walk's branch below the cursor stays unproven (the walk's next pass
+    /// rewinds first).
+    #[tokio::test]
+    async fn a_read_is_proven_only_while_the_walk_is_on_the_endpoints_chain() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let below = header(97_000_000).hash;
+        hint_read(&pool, 0, OLDER, 97_000_000, &below).await;
+        hint_read(&pool, 1, CREATED, 97_000_000, &below).await;
+        let settings = walk_settings();
+        let ix = CollectionsIndex::new();
+        let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
+        let chain = Chain {
+            logs: fixture(),
+            finalized: 97_895_000,
+        };
+        chain_walk::run_pass(&pool, &chain, &ix, &settings, &owner, None, &|_| {})
+            .await
+            .unwrap();
+        let (read_at, a) = (97_800_000u64, left_branch());
+        let read = Seed {
+            contract_address: CREATED.into(),
+            name: "A".into(),
+            symbol: "A".into(),
+            creator: CREATOR.into(),
+            is_approved: true,
+            is_editable: true,
+            read_block: read_at as i64,
+        };
+        let token = reads_token(&pool, ChainNet::Matic).await.unwrap();
+        write_seeds(&pool, ChainNet::Matic, &[read], Some(&a), token)
+            .await
+            .unwrap();
+        // The endpoint is on branch A from below the read up to the cursor.
+        let mut calls = gate_calls(100);
+        calls.insert(
+            ("block".to_string(), format!("0x{read_at:x}"), String::new()),
+            format!("0x{read_at:x} {a}"),
+        );
+        calls.insert(
+            (
+                "block".to_string(),
+                format!("0x{:x}", 97_895_000),
+                String::new(),
+            ),
+            format!("0x{:x} 0x{}", 97_895_000, "cd".repeat(32)),
+        );
+        let url = fake_rpc(
+            Arc::new(std::sync::Mutex::new(calls)),
+            Batches::Upto(100),
+            Arc::default(),
+        )
+        .await;
+        let http = crate::http::Outbound::for_tests();
+        assert_eq!(gate(&pool, &Rpc::at(&http, &url)).await.unwrap(), None);
+        let seeds: Vec<(String, bool)> =
+            sqlx::query_as("SELECT read_hash, verified FROM shop.collection_seed")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(seeds, vec![(a, false)], "kept, not proven");
+        let hints: Vec<bool> =
+            sqlx::query_scalar("SELECT verified FROM shop.collection_hint ORDER BY idx")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(hints, vec![false, false]);
+    }
+
+    /// An endpoint that takes no batches still has its headers read, one
+    /// request each, attempt after attempt; a read with no hash to check is
+    /// undone without asking for its block, even one the endpoint does not
+    /// serve.
+    #[tokio::test]
+    async fn the_gate_checks_reads_on_an_endpoint_without_batches() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let (a, b, c) = (
+            "0x00000000000000000000000000000000000000a1",
+            "0x00000000000000000000000000000000000000b2",
+            "0x00000000000000000000000000000000000000c3",
+        );
+        hint_read(&pool, 0, a, 100, &header(100).hash).await;
+        hint_read(&pool, 1, b, 100, &left_branch()).await;
+        sqlx::query(
+            "INSERT INTO shop.collection_seed (network, contract_address, name, symbol, creator, is_approved, is_editable, read_block) \
+             VALUES ('matic', $1, 'Legacy', 'L', $2, true, true, 7)",
+        )
+        .bind(a)
+        .bind(CREATOR)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut calls = gate_calls(100);
+        calls.insert(
+            ("block".to_string(), "0x7".to_string(), String::new()),
+            "null".into(),
+        );
+        calls.insert(call_key(V3, nth(1), "0x64"), addr(c));
+        creation_answers(&mut calls, a, "0x64", "Read");
+        let url = fake_rpc(
+            Arc::new(std::sync::Mutex::new(calls)),
+            Batches::BadRequest,
+            Arc::default(),
+        )
+        .await;
+        let http = crate::http::Outbound::for_tests();
+        let rpc = Rpc::at(&http, &url);
+        let state = || async {
+            let hints: Vec<(String, bool, Option<String>)> = sqlx::query_as(
+                "SELECT address, finalized, read_hash FROM shop.collection_hint ORDER BY idx, address",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+            let seeds: Vec<(String, String, i64)> = sqlx::query_as(
+                "SELECT contract_address, name, read_block FROM shop.collection_seed",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+            (hints, seeds)
+        };
+        let expected = (
+            vec![
+                (a.to_string(), true, Some(header(100).hash)),
+                (b.to_string(), false, None),
+                (c.to_string(), true, Some(header(100).hash)),
+            ],
+            vec![(a.to_string(), "Read".to_string(), 100)],
+        );
+        for attempt in 0..2 {
+            assert_eq!(gate(&pool, &rpc).await.unwrap(), None, "attempt {attempt}");
+            assert_eq!(state().await, expected, "attempt {attempt}");
+        }
+    }
+
+    /// The heights checked in one attempt are bounded, and the next attempt
+    /// goes on where the last stopped, so a changed block past the bound is
+    /// still found.
+    #[tokio::test]
+    async fn the_heights_checked_go_round_in_turn() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let addresses = [
+            "0x00000000000000000000000000000000000000a1",
+            "0x00000000000000000000000000000000000000b2",
+            "0x00000000000000000000000000000000000000c3",
+        ];
+        hint_read(&pool, 0, addresses[0], 10, &header(10).hash).await;
+        hint_read(&pool, 1, addresses[1], 20, &header(20).hash).await;
+        hint_read(&pool, 2, addresses[2], 30, &left_branch()).await;
+        let url = fake_rpc(Arc::default(), Batches::Upto(100), Arc::default()).await;
+        let http = crate::http::Outbound::for_tests();
+        let rpc = Rpc::at(&http, &url);
+        assert_eq!(revalidate_reads(&pool, &rpc, 2).await.unwrap(), 0);
+        assert_eq!(
+            revalidate_reads(&pool, &rpc, 2).await.unwrap(),
+            1,
+            "30, then 10 again"
+        );
+        let finals: Vec<String> = sqlx::query_scalar(
+            "SELECT address FROM shop.collection_hint WHERE finalized ORDER BY idx",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(finals, addresses[..2].to_vec());
     }
 
     /// How the fake endpoint takes a JSON-RPC batch.
@@ -2605,10 +3051,12 @@ mod tests {
             let id = req["id"].clone();
             let result = match req["method"].as_str().unwrap_or_default() {
                 "eth_chainId" => json!("0x89"),
-                // `("block", tag, "")` overrides a header: "<number hex> <hash>".
+                // `("block", tag, "")` overrides a header: "<number hex> <hash>",
+                // or "null" for a block the endpoint does not serve.
                 "eth_getBlockByNumber" => {
                     let tag = req["params"][0].as_str().unwrap_or_default().to_string();
                     match calls.get(&("block".to_string(), tag.clone(), String::new())) {
+                        Some(v) if v == "null" => Value::Null,
                         Some(v) => {
                             let (n, h) = v.split_once(' ').unwrap();
                             json!({ "number": n, "hash": h, "timestamp": "0x5f5e1000" })
@@ -2625,10 +3073,23 @@ mod tests {
                 "eth_call" => {
                     seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     let p = &req["params"];
+                    // A read pinned to the fake chain's own hash of block n
+                    // (0x{n:064x}) answers as a read at n; one pinned to any
+                    // other hash answers by that hash.
+                    let block = match &p[1] {
+                        Value::String(tag) => tag.clone(),
+                        pinned => {
+                            let hash = pinned["blockHash"].as_str().unwrap().to_string();
+                            u64::from_str_radix(hash.trim_start_matches("0x"), 16)
+                                .ok()
+                                .filter(|n| format!("0x{n:064x}") == hash)
+                                .map_or(hash, |n| format!("0x{n:x}"))
+                        }
+                    };
                     let key = (
                         p[0]["to"].as_str().unwrap().to_lowercase(),
                         p[0]["data"].as_str().unwrap().to_string(),
-                        p[1].as_str().unwrap().to_string(),
+                        block,
                     );
                     let found = calls.get(&key).cloned().unwrap_or_else(|| "0x".into());
                     if let Some(code) = found.strip_prefix("error:") {
@@ -3122,7 +3583,7 @@ mod tests {
         ] {
             let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let url = fake_rpc(answers.clone(), batches, seen.clone()).await;
-            let got = eth_calls(&Rpc::at(&http, &url), &calls, "latest")
+            let got = eth_calls(&Rpc::at(&http, &url), &calls, &json!("latest"))
                 .await
                 .unwrap();
             let alpha = Ok(Some("Alpha".to_string().abi_encode()));

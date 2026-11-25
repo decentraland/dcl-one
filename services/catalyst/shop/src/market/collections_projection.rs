@@ -358,9 +358,11 @@ async fn replay(
             },
         );
     }
+    // Only a creation read proven on the walked branch: one of a branch the
+    // chain left must not reach the catalogue before the gate undoes it.
     let seeds: HashMap<String, Seed> = sqlx::query(
         "SELECT contract_address, name, symbol, creator, is_approved, is_editable, read_block \
-         FROM shop.collection_seed WHERE network = $1 AND contract_address = ANY($2)",
+         FROM shop.collection_seed WHERE network = $1 AND contract_address = ANY($2) AND verified",
     )
     .bind(net.db_name())
     .bind(&scope)
@@ -720,6 +722,18 @@ mod tests {
         collections_index::reads_token(pool, NET).await.unwrap()
     }
 
+    /// Writes `seeds` as creation reads the gate has proven on the walked
+    /// branch (`verified`), the only ones a projection takes.
+    async fn proven(pool: &PgPool, seeds: &[Seed]) {
+        collections_index::write_seeds(pool, NET, seeds, None, seed_token(pool).await)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE shop.collection_seed SET verified = true WHERE network = 'matic'")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
     fn seed() -> Seed {
         Seed {
             contract_address: CREATED.into(),
@@ -743,9 +757,7 @@ mod tests {
             .unwrap();
         drop(conn);
         if seeded {
-            collections_index::write_seeds(&pool, NET, &[seed()], None, seed_token(&pool).await)
-                .await
-                .unwrap();
+            proven(&pool, &[seed()]).await;
         }
         mirrors::collections::upsert(
             &pool,
@@ -933,14 +945,24 @@ mod tests {
             .unwrap();
         let out = project(&pool, &owner, NET, 97_895_000).await.unwrap();
         assert_eq!(
+            (out.collections, out.waiting),
+            (0, 1),
+            "a read not yet proven on the walked branch is not taken"
+        );
+        sqlx::query("UPDATE shop.collection_seed SET verified = true")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let out = project(&pool, &owner, NET, 97_895_000).await.unwrap();
+        assert_eq!(
             (out.rebuilt, out.collections, out.replayed, out.waiting),
             (false, 1, 1, 0)
         );
         assert_eq!(catalogue(&pool).await.1.len(), 2);
         assert_eq!(
             completeness(&pool).await,
-            (0, 2),
-            "the late read at the same block completes it"
+            (0, 3),
+            "the late read, once proven, completes it at the same block"
         );
     }
 
@@ -989,15 +1011,7 @@ mod tests {
             read_block: 97_740_000,
             ..seed()
         };
-        collections_index::write_seeds(
-            &pool,
-            NET,
-            &[read_after_approval],
-            None,
-            seed_token(&pool).await,
-        )
-        .await
-        .unwrap();
+        proven(&pool, &[read_after_approval]).await;
         project(&pool, &owner, NET, 97_895_000).await.unwrap();
         assert!(approved(&pool).await);
         // The branch past 97,720,000, the approval at 97,732,808 with it, is gone.
@@ -1008,9 +1022,7 @@ mod tests {
             read_block: 97_721_000,
             ..seed()
         };
-        collections_index::write_seeds(&pool, NET, &[new_branch], None, seed_token(&pool).await)
-            .await
-            .unwrap();
+        proven(&pool, &[new_branch]).await;
         let out = project(&pool, &owner, NET, 97_721_000).await.unwrap();
         assert!(out.rebuilt);
         assert!(
