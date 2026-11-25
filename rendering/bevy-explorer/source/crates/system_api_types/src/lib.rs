@@ -664,6 +664,7 @@ pub struct AvatarModifierState {
     pub user_id: String,
     pub hide_avatar: bool,
     pub hide_profile: bool,
+    pub pulse_absent: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
