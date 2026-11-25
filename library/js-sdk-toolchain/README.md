@@ -106,12 +106,13 @@ A versioned release is a manual run from `main`:
 
 1. Run `SDK / Release` from `main` with the `version` to publish, following the
    [version guidelines](https://docs.decentraland.org/creator/releases/version-agreement/); a
-   `-rc.1`-style suffix makes a prerelease. The run refuses an existing `sdk-v<version>` tag.
+   `-rc.1`-style suffix makes a prerelease. The run refuses an existing `@dcl/sdk@<version>` tag, and a
+   version npm already serves from another build.
 2. The run builds, tests, stamps the version into `@dcl/sdk` (`make prepare` copies it to the
    others), packs, publishes to npm in dependency order (dist-tag `latest`, or `rc` for a
-   prerelease) and creates the `sdk-v<version>` release with the tarballs, the `library/protocol`
+   prerelease) and creates the `@dcl/sdk@<version>` release with the tarballs, the `library/protocol`
    commit the packages were generated from, and the SDK and protocol commits since the previous
-   `sdk-v*` tag. The `notes` input goes at the top of the body.
+   `@dcl/sdk@*` tag. The `notes` input goes at the top of the body.
 
 If a run stops midway (some packages published, or all of them but no release), rerun its failed
 jobs: packages already on npm are skipped and the release is created. A new run with the same

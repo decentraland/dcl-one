@@ -18,7 +18,8 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
   tests, publishes, then creates the tag and the release itself with `gh release create`; a tag
   push triggers nothing. A scope's version either lives in the tree or is a dispatch input, as
   the scope's packaging dictates; a rerun of a released version stops before any write.
-- Tags are `<scope>-v<version>`. Scope releases pass `--latest=false`; the "Latest" badge is kept
+- Tags are `<scope>-v<version>`; a scope that is an npm package tags as the package, `<package>@<version>`,
+  as `@dcl/inspector` and `@dcl/asset-packs` do. Scope releases pass `--latest=false`; the "Latest" badge is kept
   for a future release of every scope at once. Release notes range over the scope's paths since
   the previous tag with the same prefix, not over the repository.
 - One dispatcher can later release several scopes from a single run by starting each scope's
@@ -29,7 +30,7 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
   input, as upstream takes it from the release tag, and stamps it into the manifests before packing
   (the tree keeps a placeholder). It publishes `ecs`, `js-runtime`, `react-ecs`, `sdk-commands` and
   `sdk` in dependency order through npm trusted publishing (dist-tag `latest`, `rc` for a
-  prerelease version) and releases as `sdk-v<version>` with the tarballs attached;
+  prerelease version) and releases as `@dcl/sdk@<version>` with the tarballs attached;
   `playground-assets` is built and tested but not published. The SDK embeds the protocol at its
   commit ([SDK ADR](2026-10-26-sdk-in-dcl-one.md)), so it needs no protocol release; the notes
   name the `library/protocol` commit it was generated from.
