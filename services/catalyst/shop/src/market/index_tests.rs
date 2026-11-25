@@ -5717,11 +5717,25 @@ async fn sepolia_v1_upgrade_rebuilds_once_and_fences_the_old_trade_writer() {
         .unwrap();
     assert_eq!(rebound.chain_id, Some(ix.chain_id));
     assert!(rebound.rebuild_requested_at.is_none());
+    // An empty legacy pass can have checkpointed its fold at the old start - 1.
+    sqlx::raw_sql("ALTER TABLE shop.chain_cursor DROP CONSTRAINT chain_cursor_sepolia_trade_v1;
+        UPDATE shop.chain_cursor SET sepolia_trade_v1=false, start_block=9455328, last_block=9455327,
+            last_block_hash=NULL, fold_through=9455327, folded_block=NULL, folded_at=NULL
+        WHERE indexer='trade_events' AND network='ethereum'").execute(&db.pool).await.unwrap();
+    sqlx::raw_sql(MIGRATION).execute(&db.pool).await.unwrap();
+    let empty = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (empty.last_block, empty.fold_through),
+        (start as i64 - 1, None)
+    );
     // A pre-binding cursor is invisible to 0071 until a matching RPC proves
     // its history (here the legacy cursor is still at its start). Adoption fences the old owner and schedules replay.
     sqlx::query(
-        "UPDATE shop.chain_cursor SET chain_id=NULL, sepolia_trade_v1=false, start_block=9455328,
-        last_block=9455327, last_block_hash=NULL, folded_at=NULL, folded_block=NULL
+        "UPDATE shop.chain_cursor SET chain_id=NULL, sepolia_trade_v1=false, rebuild_requested_at=NULL, start_block=9455328,
+        last_block=9455327, last_block_hash=NULL, fold_through=9455327, folded_at=NULL, folded_block=NULL
         WHERE indexer='trade_events' AND network='ethereum'",
     )
     .execute(&db.pool)
