@@ -272,6 +272,15 @@ pub struct AvatarMovement {
     pub tilt_roll: f32,
 }
 
+impl AvatarMovement {
+    /// The velocity a movement step applies: the scene's, or zero when it is not finite.
+    fn requested_velocity(&self) -> Vec3 {
+        Some(self.velocity)
+            .filter(|velocity| velocity.is_finite())
+            .unwrap_or(Vec3::ZERO)
+    }
+}
+
 impl Default for AvatarMovement {
     fn default() -> Self {
         Self {
@@ -714,9 +723,7 @@ pub(crate) fn apply_movement(
         &mut last_clip,
         dynamic_state.velocity.y > 0.0,
     );
-    let requested = Some(movement.component.velocity)
-        .filter(|velocity| velocity.is_finite())
-        .unwrap_or(Vec3::ZERO);
+    let requested = movement.component.requested_velocity();
 
     info.0.step_time = time_res.delta_secs();
 
@@ -964,7 +971,7 @@ fn record_own_movement(
         .is_some_and(|v| v.world_vec_to_vec3().length() > NO_EXTERNAL_VELOCITY);
     // a zero request skips `apply_movement`'s solve, leaving `actual_velocity` stale
     let own = startup_controller
-        && movement.component.velocity != Vec3::ZERO
+        && movement.component.requested_velocity() != Vec3::ZERO
         && !movement_suppressed(&movement_control, movement.initiated_at)
         && !pushed
         && input_manager.get_analog(MOVE_SET, InputPriority::Scene) != Vec2::ZERO;
@@ -1418,6 +1425,12 @@ mod tests {
             Vec3::new(f32::INFINITY, 0.0, 0.0),
             Vec3::new(0.0, 0.0, f32::NEG_INFINITY),
         ] {
+            // `record_own_movement` counts no own movement either
+            let movement = AvatarMovement {
+                velocity,
+                ..default()
+            };
+            assert_eq!(movement.requested_velocity(), Vec3::ZERO, "{velocity}");
             let start = Vec3::new(8.0, 0.0, -8.0);
             let (mut app, player) = movement_app(start);
             app.update();
