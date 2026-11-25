@@ -1928,6 +1928,7 @@ async fn a_contract_wallet_picks_through_the_eip1654_validator() {
         &pool,
         super::graph::Network::Matic,
         137,
+        false,
         &[mirrors::items::fixture(
             &contract_of(&t, 7),
             "0",
@@ -2148,6 +2149,7 @@ async fn writes_ask_the_contract_and_optional_reads_fail_closed() {
         &pool,
         super::graph::Network::Matic,
         137,
+        false,
         &[mirrors::items::fixture(
             &contract_of(&t, 9),
             "0",
