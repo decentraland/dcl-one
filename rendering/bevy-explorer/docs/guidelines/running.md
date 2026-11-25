@@ -27,8 +27,9 @@ to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` 
 `CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
 For an isolated native session, set `DCL_PROFILE_DIR` to an absolute directory before launching.
-Config, logs, content cache and embedded-browser data use that directory instead of the OS
-profile. Relative or empty values fail before opening the profile. With the variable unset,
+Config, logs and content cache use that directory instead of the OS profile. Temporary
+embedded-browser data continues to use the process's temporary directory. Relative or empty
+values fail before opening the profile. With the variable unset,
 the client uses its normal OS profile. Automation runs should place the directory beneath
 their temporary workspace; this does not redirect explicit scene exports to local projects.
 
