@@ -2596,10 +2596,11 @@ hash against the chain-checked RPC. Both mirrors persist that hash with their
 keyset and read every page at that block. Collections supply contract addresses
 and items supply their metadata. A mirror writer can provide this proof even
 when the NFT walker runs on another node. A writer needs the catalogue RPC
-to resume a pinned pass. An unpinned mainnet graph-only mirror can keep
-serving its configured source. A missing or mismatched page hash restarts
+to resume an in-progress pinned pass. After a completed mainnet pass, a
+writer without the RPC can start a fresh graph-only pass from its configured
+source. A missing or mismatched page hash restarts
 the pass. An opaque transport or GraphQL error retries the same block. Two
-consecutive failures can restart a pin once the pass is an hour old. A pass
+consecutive page read failures can restart a pin once the pass is an hour old. A pass
 can keep a progressing pin for one day. Descriptive readers can use the last completed copy during retries.
 The NFT walk requires a complete collections pass for its chain. Mainnet
 accepts a completed legacy copy with neither a chain binding nor a pending

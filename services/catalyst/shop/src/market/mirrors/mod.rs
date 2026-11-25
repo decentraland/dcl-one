@@ -61,6 +61,7 @@ pub const PAGE_SIZE: i64 = 1000;
 /// been pruned or orphaned, so the next tick starts a new verified pass.
 const MAX_PIN_AGE: chrono::Duration = chrono::Duration::days(1);
 const MAX_FAILED_PIN_AGE: chrono::Duration = chrono::Duration::hours(1);
+const PAGE_FETCH_FAILURE: &str = "page fetch failed: ";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Mirror {
@@ -322,7 +323,9 @@ pub(super) async fn cursor_for(
     let Some(mut c) = load(pool, mirror, network).await? else {
         return Ok(fresh());
     };
-    if (chain_id.is_none() && c.chain_id.is_some()) || (!pin && c.pass_block_hash.is_some()) {
+    if (chain_id.is_none() && c.chain_id.is_some())
+        || (!pin && c.in_progress() && c.pass_block_hash.is_some())
+    {
         anyhow::bail!("a verified catalogue mirror requires its chain RPC to continue");
     }
     if c.chain_id
@@ -453,7 +456,14 @@ where
         {
             Ok(p) => p,
             Err(e) => {
-                let repeated_failure = c.last_error.replace(e.to_string()).is_some();
+                let repeated_failure = c
+                    .last_error
+                    .as_deref()
+                    .is_some_and(|previous| previous.starts_with(PAGE_FETCH_FAILURE));
+                c.last_error = Some(match &e {
+                    PageReadError::Fetch(error) => format!("{PAGE_FETCH_FAILURE}{error}"),
+                    _ => e.to_string(),
+                });
                 if c.pass_block_hash.is_some()
                     && (matches!(e, PageReadError::MissingHash | PageReadError::HashMismatch)
                         || (repeated_failure

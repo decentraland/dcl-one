@@ -221,6 +221,10 @@ async fn drain(
     let mut emitted = 0;
     loop {
         let mut txn = pool.begin().await?;
+        // The publication, event rows and short-page advance share a snapshot.
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            .execute(&mut *txn)
+            .await?;
         let (_, since_block, since_log) = notice_cursor::lock(&mut txn, producer).await?;
         let Some(current) =
             chain_walk::published_block(&mut *txn, venue.indexer(), NET, NET.chain_id(), now)
@@ -667,7 +671,7 @@ mod tests {
         bid_sale(&pool, 104, &token(3), seller, "4000000000000000000").await;
         // An item the mirror does not hold yet holds the cursor.
         bid_sale(&pool, 105, &token(7), seller, "4000000000000000000").await;
-        sqlx::query("UPDATE shop.chain_cursor SET last_block = 106, fold_through = 106, folded_block = 106 WHERE indexer = 'sales'")
+        sqlx::query("UPDATE shop.chain_cursor SET last_block = 110, fold_through = 106, folded_block = 106 WHERE indexer = 'sales'")
             .execute(&pool)
             .await
             .unwrap();
