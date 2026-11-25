@@ -3,7 +3,7 @@
 // fake wallet is one the guard let through.
 import { describe, expect, it, vi } from 'vitest'
 import type { Eip1193Provider } from '../../data/auth/wallet'
-import { collectionV2 } from '@shop/market/lib/contracts'
+import type { collectionV2 } from '@shop/market/lib/contracts'
 import { metaTransactionTypedData, MetaTransactionError } from '../../shop/market/lib/metaTx'
 import { signTypedData } from '../../shop/market/lib/tx'
 import type { StoredLogin } from '@explorer-core/features/auth/sso'

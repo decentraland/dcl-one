@@ -8,6 +8,10 @@ const SERVICE_FLAGS = { 'creatorhub-something': true };
 /** Stands in for localStorage so a test never depends on the real one. */
 const storageWith = (value: string | null) => ({ getItem: () => value });
 
+// A dev build with no AI sharing override, so a VITE_AI_SHARING_API_URL in the local .env never
+// reaches these tests.
+const DEV = { DEV: true };
+
 describe('applyFlagOverrides', () => {
   beforeEach(() => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -16,7 +20,7 @@ describe('applyFlagOverrides', () => {
 
   describe('when nothing is stored', () => {
     it('should return the service flags untouched', () => {
-      expect(applyFlagOverrides(SERVICE_FLAGS, storageWith(null))).toEqual(SERVICE_FLAGS);
+      expect(applyFlagOverrides(SERVICE_FLAGS, storageWith(null), DEV)).toEqual(SERVICE_FLAGS);
     });
   });
 
@@ -25,6 +29,7 @@ describe('applyFlagOverrides', () => {
       const flags = applyFlagOverrides(
         SERVICE_FLAGS,
         storageWith(JSON.stringify({ [FeatureFlag.ANALYTICS]: true })),
+        DEV,
       );
 
       expect(flags[FeatureFlag.ANALYTICS]).toBe(true);
@@ -35,6 +40,7 @@ describe('applyFlagOverrides', () => {
       const flags = applyFlagOverrides(
         { [FeatureFlag.ANALYTICS]: true },
         storageWith(JSON.stringify({ [FeatureFlag.ANALYTICS]: false })),
+        DEV,
       );
 
       expect(flags[FeatureFlag.ANALYTICS]).toBe(false);
@@ -47,13 +53,14 @@ describe('applyFlagOverrides', () => {
       ['an array', '["creatorhub-analytics"]'],
       ['a bare string', '"creatorhub-analytics"'],
     ])('should ignore %s and keep the service flags', (_case, stored) => {
-      expect(applyFlagOverrides(SERVICE_FLAGS, storageWith(stored))).toEqual(SERVICE_FLAGS);
+      expect(applyFlagOverrides(SERVICE_FLAGS, storageWith(stored), DEV)).toEqual(SERVICE_FLAGS);
     });
 
     it('should drop non-boolean entries, so a truthy string cannot switch a flag on', () => {
       const flags = applyFlagOverrides(
         SERVICE_FLAGS,
         storageWith(JSON.stringify({ [FeatureFlag.ANALYTICS]: 'true' })),
+        DEV,
       );
 
       expect(flags[FeatureFlag.ANALYTICS]).toBeUndefined();
@@ -68,7 +75,40 @@ describe('applyFlagOverrides', () => {
         },
       };
 
-      expect(applyFlagOverrides(SERVICE_FLAGS, storage)).toEqual(SERVICE_FLAGS);
+      expect(applyFlagOverrides(SERVICE_FLAGS, storage, DEV)).toEqual(SERVICE_FLAGS);
+    });
+  });
+
+  describe('when a dev build points AI sharing at a local service', () => {
+    const DEV_WITH_URL = { DEV: true, VITE_AI_SHARING_API_URL: 'http://localhost:3000' };
+
+    it('should turn AI prompt sharing on', () => {
+      const flags = applyFlagOverrides(SERVICE_FLAGS, storageWith(null), DEV_WITH_URL);
+
+      expect(flags[FeatureFlag.AI_PROMPT_SHARING]).toBe(true);
+      expect(flags['creatorhub-something']).toBe(true);
+    });
+
+    it('should still let a stored override switch it off', () => {
+      const flags = applyFlagOverrides(
+        SERVICE_FLAGS,
+        storageWith(JSON.stringify({ [FeatureFlag.AI_PROMPT_SHARING]: false })),
+        DEV_WITH_URL,
+      );
+
+      expect(flags[FeatureFlag.AI_PROMPT_SHARING]).toBe(false);
+    });
+  });
+
+  describe('when the build is packaged or a release', () => {
+    it('should ignore the URL variable and the stored overrides alike', () => {
+      const flags = applyFlagOverrides(
+        SERVICE_FLAGS,
+        storageWith(JSON.stringify({ [FeatureFlag.ANALYTICS]: true })),
+        { DEV: false, VITE_AI_SHARING_API_URL: 'http://localhost:3000' },
+      );
+
+      expect(flags).toEqual(SERVICE_FLAGS);
     });
   });
 

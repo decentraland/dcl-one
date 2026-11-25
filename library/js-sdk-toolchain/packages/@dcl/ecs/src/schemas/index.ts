@@ -1,4 +1,4 @@
-import { Entity } from '../engine'
+import type { Entity } from '../engine'
 import { IArray } from './Array'
 import { Bool } from './basic/Boolean'
 import { IntEnum as IntEnumSchema, StringEnum as StringEnumSchema } from './basic/Enum'

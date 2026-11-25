@@ -1,4 +1,4 @@
-import { Entity } from '../../packages/@dcl/ecs'
+import type { Entity } from '../../packages/@dcl/ecs'
 import { components, PointerEventType } from '../../packages/@dcl/ecs/src'
 import { ReactEcs, UiEntity } from '../../packages/@dcl/react-ecs/src'
 import { createTestPointerDownCommand } from '../ecs/events/utils'

@@ -279,7 +279,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let local: Vec<&str> = local_urls.iter().map(String::as_str).collect();
 
     // ONE EIP-1654 validator (contract-wallet signatures): explore, the
-    // social routes and the social socket share it.
+    // social routes and the social socket share it. Each check that reaches
+    // the RPC spends the client source's budget (`shared::eip1654_budget`,
+    // whose layer `serve_routes::build_routes` adds).
     let eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>> = config
         .content
         .eth_rpc_url()?
@@ -292,7 +294,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             }
             .build()
             .context("building the EIP-1654 RPC client")?;
-            anyhow::Ok(crate::auth::cached_rpc_validator(url, client))
+            anyhow::Ok(crate::shared::eip1654_budget::cached_budgeted_validator(
+                url, client,
+            ))
         })
         .transpose()?;
 
@@ -460,6 +464,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         explore::ExploreState::new(pool.clone(), explore_settings, eip1654.clone())
             .with_storage(storage.clone())
             .with_outbound(http_client.clone())
+            .with_read_through(read_through.clone())
             .with_cors(explore_cors),
     );
     explore.spawn_jobs(&jobs, http_client.clone());

@@ -1429,6 +1429,7 @@ dependencies = [
  "console 0.1.0",
  "dcl_component",
  "dcl_types",
+ "half",
  "input_manager",
  "ipfs",
  "naga_oil",

@@ -1,7 +1,8 @@
-import { Entity, IEngine } from '../../engine'
-import { LastWriteWinElementSetComponentDefinition } from '../../engine/component'
-import { AudioStream, PBAudioEvent, AudioEvent as defineAudioEventComponent } from '../generated/index.gen'
-import { PBAudioStream } from '../generated/pb/decentraland/sdk/components/audio_stream.gen'
+import type { Entity, IEngine } from '../../engine'
+import type { LastWriteWinElementSetComponentDefinition } from '../../engine/component'
+import type { PBAudioEvent } from '../generated/index.gen'
+import { AudioStream, AudioEvent as defineAudioEventComponent } from '../generated/index.gen'
+import type { PBAudioStream } from '../generated/pb/decentraland/sdk/components/audio_stream.gen'
 
 /**
  * @public
