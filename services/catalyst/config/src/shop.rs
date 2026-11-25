@@ -162,9 +162,14 @@ pub struct MarketplaceConfig {
     pub marketplace_third_party_registry_index_enabled: bool,
 
     /// Walk the Polygon collection factories and their collections' events into
-    /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry. Nothing reads it yet.
+    /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry for collection counts and sales analytics.
     #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_collections_index_enabled: bool,
+
+    /// The networks whose `shop.collections` and `shop.items` rows the collections index's fold
+    /// takes from the collections mirror and writes (`matic`); empty, it keeps its log alone.
+    #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_OWNS", default_value = "")]
+    pub marketplace_collections_index_owns: String,
 
     /// Pause between the end of one pass and the start of the next, for the nft, trade-events,
     /// MANA transfers, sales, committee, third-party registry, collections and rentals walks
@@ -562,10 +567,14 @@ pub struct ShopConfig {
     #[arg(long, env = "CREDITS_TRIAL_RELAY_ALL_WALLETS", default_value_t = false, action = clap::ArgAction::Set)]
     pub credits_trial_relay_all_wallets: bool,
 
+    /// The Shop's page a paid pack order returns to, with `order=<id>` appended.
     /// Empty: the Stripe Checkout order flow answers 503.
     #[arg(long, env = "CREDITS_CHECKOUT_SUCCESS_URL", default_value = "")]
     pub credits_checkout_success_url: String,
 
+    /// The Shop's page an abandoned pack order lands on, with
+    /// `order=<id>&canceled=1`: Stripe sends the buyer to the order's
+    /// cancel-return under `PUBLIC_URL` first, or straight here without one.
     #[arg(long, env = "CREDITS_CHECKOUT_CANCEL_URL", default_value = "")]
     pub credits_checkout_cancel_url: String,
 

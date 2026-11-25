@@ -1,6 +1,6 @@
 import { WebSocketServer } from 'ws'
-import { PreviewComponents } from '../types'
-import { IBaseComponent } from '@well-known-components/interfaces'
+import type { PreviewComponents } from '../types'
+import type { IBaseComponent } from '@well-known-components/interfaces'
 
 export type WebSocketComponent = IBaseComponent & {
   ws: WebSocketServer

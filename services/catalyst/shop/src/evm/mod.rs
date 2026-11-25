@@ -619,11 +619,19 @@ impl State {
 /// `DATA_WRITES_ENABLED` says. The relayer controls stay open on both gates.
 pub fn router(state: SharedState) -> Router {
     let settings = &state.settings;
-    let (trial, data_writes, ops_writes) = (
-        settings.trial_mode,
-        settings.data_writes_enabled,
-        settings.ops_writes_enabled,
-    );
+    let gate = crate::shared::writes::Gate {
+        enabled: if settings.trial_mode {
+            settings.ops_writes_enabled
+        } else {
+            settings.data_writes_enabled
+        },
+        open_while_disabled: RELAYER_CONTROLS,
+        refuse: if settings.trial_mode {
+            || writes_disabled(crate::shared::writes::WRITES_DISABLED_MESSAGE)
+        } else {
+            || writes_disabled(DataWrites::DISABLED_MESSAGE)
+        },
+    };
     let api = Router::new()
         .route(
             "/v1/transactions",
@@ -647,22 +655,26 @@ pub fn router(state: SharedState) -> Router {
             post(handlers::admin::relayer_signer),
         )
         .with_state(state);
-    let guarded = if trial {
-        crate::shared::writes::guard_with(
-            api,
-            crate::shared::writes::Gate {
-                enabled: ops_writes,
-                open_while_disabled: RELAYER_CONTROLS,
-                refuse: crate::credits::writes::disabled_response,
-            },
-        )
-    } else {
-        DataWrites::guard(api, data_writes)
-    };
     // Outside the gate, so a refused write still carries the CORS headers.
-    guarded.layer(axum::middleware::from_fn(
+    crate::shared::writes::guard_with(api, gate).layer(axum::middleware::from_fn(
         crate::shared::cors::decentraland_cors,
     ))
+}
+
+fn writes_disabled(message: &'static str) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    (
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        [(axum::http::header::RETRY_AFTER, "3600")],
+        axum::Json(serde_json::json!({
+            "ok": false,
+            "error": "Service Unavailable",
+            "message": message,
+            "code": errors::code::UNKNOWN,
+        })),
+    )
+        .into_response()
 }
 
 /// The relayer controls: process-local atomics behind the admin bearer, open

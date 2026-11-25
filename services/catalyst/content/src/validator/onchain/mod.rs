@@ -179,20 +179,13 @@ static CONTRACTS: LazyLock<VendoredContracts> =
 
 /// An `ETH_NETWORK` as a static label: `mainnet`, `sepolia`, else `unknown`.
 fn l1_network(eth_network: &str) -> &'static str {
-    match eth_network {
-        "mainnet" => "mainnet",
-        "sepolia" => "sepolia",
-        _ => "unknown",
-    }
+    crate::shared::network::ChainPair::from_eth_network(eth_network)
+        .map_or("unknown", |pair| pair.names().0)
 }
 
 /// The L2 network paired with an `ETH_NETWORK`.
 fn l2_network(eth_network: &str) -> Option<&'static str> {
-    match eth_network {
-        "mainnet" => Some("polygon"),
-        "sepolia" => Some("amoy"),
-        _ => None,
-    }
+    crate::shared::network::ChainPair::from_eth_network(eth_network).map(|pair| pair.names().1)
 }
 
 /// The `eth_chainId` each network's RPC answers.
@@ -677,7 +670,7 @@ impl OnChainAccess {
         l1_url: Option<String>,
         l2_url: Option<String>,
     ) -> Self {
-        let l1 = match (CONTRACTS.l1.get(eth_network), l1_url) {
+        let l1 = match (CONTRACTS.l1.get(l1_network(eth_network)), l1_url) {
             (None, _) => Err(format!(
                 "ETH_NETWORK {eth_network} has no checker contracts"
             )),

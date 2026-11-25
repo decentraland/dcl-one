@@ -1,6 +1,6 @@
 import { isListener } from '../components'
-import { EntityComponents } from '../react-ecs'
-import {
+import type { EntityComponents } from '../react-ecs'
+import type {
   Changes,
   Container,
   HostContext,

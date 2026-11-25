@@ -22,7 +22,7 @@ function checkout(name) {
   fs.writeFileSync(path.join(root, 'package.json'), '{}\n')
   fs.writeFileSync(path.join(root, 'tracked.txt'), 'original\n')
   git(root, 'add', '.')
-  git(root, '-c', 'user.name=Capture test', '-c', 'user.email=capture@example.invalid', 'commit', '--quiet', '-m', 'fixture')
+  git(root, '-c', 'user.name=Capture test', '-c', 'user.email=capture@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'fixture')
   const dependency = path.join(root, 'node_modules/ts-node')
   fs.mkdirSync(dependency, { recursive: true })
   fs.writeFileSync(path.join(dependency, 'index.js'), "require('node:fs').writeFileSync(process.env.CAPTURE_LOAD_MARKER, 'loaded'); throw Error('dependency sentinel reached')\n")

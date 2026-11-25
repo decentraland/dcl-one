@@ -28,6 +28,38 @@
 //! marker in the transaction that commits its rows.
 
 pub(crate) mod deployments;
+
+/// The paired Ethereum and Polygon catalogue served by this database.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Catalogue {
+    Mainnet,
+    Testnet,
+}
+
+impl Catalogue {
+    pub fn from_land(land: crate::land_authz::LandNetwork) -> Self {
+        if land == crate::land_authz::LAND_SEPOLIA {
+            Self::Testnet
+        } else {
+            Self::Mainnet
+        }
+    }
+
+    pub fn chain_id(self, net: ChainNet) -> i64 {
+        match self {
+            Self::Mainnet => net.chain_id(),
+            Self::Testnet => net.testnet_chain_id(),
+        }
+    }
+
+    pub fn registrar(self) -> &'static str {
+        match self {
+            Self::Mainnet => DCL_REGISTRAR,
+            Self::Testnet => deployments::REGISTRAR_SEPOLIA,
+        }
+    }
+}
+
 mod estate_repair;
 
 use deployments::Deployments;
@@ -113,8 +145,9 @@ pub struct NftEvent {
     pub amount: Option<String>,
     pub expires_at: Option<i64>,
     pub detail: Option<String>,
-    /// The transaction of an `order_successful` (NULL on other kinds and on
-    /// rows indexed before 0040).
+    /// The log's transaction: NULL on an `order_successful` indexed before
+    /// 0040 and on another kind's row indexed before the walk recorded it,
+    /// until a replay of the log fills it ([`insert_events`]).
     pub tx_hash: Option<String>,
 }
 
@@ -172,7 +205,11 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
         amount: None,
         expires_at: None,
         detail: None,
-        tx_hash: None,
+        tx_hash: log
+            .transaction_hash
+            .as_ref()
+            .filter(|h| !h.is_empty())
+            .map(|h| h.to_ascii_lowercase()),
     };
     let event = match topic0.as_str() {
         TOPIC_TRANSFER => {
@@ -255,10 +292,6 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
                 to_address: buyer,
                 amount: Some(price.to_string()),
                 detail: Some(format!("{id:#x}")),
-                tx_hash: log
-                    .transaction_hash
-                    .as_ref()
-                    .map(|h| h.to_ascii_lowercase()),
                 ..base(KIND_ORDER_SUCCESSFUL, format!("{nft:#x}"), token)
             }
         }
@@ -338,7 +371,9 @@ pub fn parse_land_data(raw: &str) -> Option<(Option<String>, Option<String>)> {
     Some((field(1), field(2)))
 }
 
-/// Replays fill missing transaction hashes and incomplete successful order details.
+/// Replays fill missing transaction hashes and incomplete successful order
+/// details. Another kind's row gains a hash only from the same log: the same
+/// emitter, token, parties and payload at its position.
 pub async fn insert_events(
     conn: &mut PgConnection,
     net: ChainNet,
@@ -358,7 +393,14 @@ pub async fn insert_events(
                  to_address = CASE WHEN EXCLUDED.kind = 'order_successful' THEN COALESCE(shop.nft_event.to_address, EXCLUDED.to_address) ELSE shop.nft_event.to_address END,
                  block_time = CASE WHEN EXCLUDED.kind = 'order_successful' AND shop.nft_event.block_time = 0 THEN EXCLUDED.block_time ELSE shop.nft_event.block_time END
              WHERE shop.nft_event.kind = EXCLUDED.kind AND EXCLUDED.tx_hash IS NOT NULL
-               AND ((EXCLUDED.kind <> 'order_successful' AND shop.nft_event.tx_hash IS NULL)
+               AND ((EXCLUDED.kind <> 'order_successful' AND shop.nft_event.tx_hash IS NULL
+                 AND (shop.nft_event.emitter, shop.nft_event.contract_address, shop.nft_event.token_id)
+                     = (EXCLUDED.emitter, EXCLUDED.contract_address, EXCLUDED.token_id)
+                 AND shop.nft_event.from_address IS NOT DISTINCT FROM EXCLUDED.from_address
+                 AND shop.nft_event.to_address IS NOT DISTINCT FROM EXCLUDED.to_address
+                 AND shop.nft_event.amount IS NOT DISTINCT FROM EXCLUDED.amount
+                 AND shop.nft_event.expires_at IS NOT DISTINCT FROM EXCLUDED.expires_at
+                 AND shop.nft_event.detail IS NOT DISTINCT FROM EXCLUDED.detail)
                  OR (EXCLUDED.kind = 'order_successful'
                AND (shop.nft_event.emitter,shop.nft_event.contract_address,shop.nft_event.token_id)
                    = (EXCLUDED.emitter,EXCLUDED.contract_address,EXCLUDED.token_id)
@@ -828,11 +870,13 @@ impl NftIndex {
 }
 
 /// Whether the collections mirror has completed a pass for `net`: the
-/// address set is only as complete as it.
+/// address set is only as complete as it. Legacy mainnet writers used the
+/// mainnet row tags even for custom URLs, before they recorded a chain here.
 pub async fn mirror_complete(pool: &PgPool, net: ChainNet, chain_id: i64) -> bool {
-    sqlx::query_scalar::<_, bool>("SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'collections' AND network = $1 AND chain_id = $2")
+    sqlx::query_scalar::<_, bool>("SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'collections' AND network = $1 AND (chain_id = $2 OR ($3 AND chain_id IS NULL AND pass_block_hash IS NULL))")
         .bind(net.db_name())
         .bind(chain_id)
+        .bind(chain_id == net.chain_id())
         .fetch_optional(pool)
         .await
         .ok()
@@ -1055,7 +1099,9 @@ impl ChainIndex for NftIndex {
             .await?;
         // The bids fold inferred sellers from these transfers: it infers
         // again the seller of every bid created past the rewind.
-        if self.net == ChainNet::Matic {
+        if self.net == ChainNet::Matic
+            || self.deployments.chain_id == ChainNet::Ethereum.testnet_chain_id()
+        {
             sqlx::query(
                 "INSERT INTO shop.bid_seller_recheck (network, from_block) VALUES ($1, $2)",
             )
@@ -1220,7 +1266,7 @@ impl ChainIndex for NftIndex {
 }
 
 /// The index's state for the operator status route and the tests.
-pub async fn status(pool: &PgPool) -> serde_json::Value {
+pub async fn status(pool: &PgPool, settings: &chain_walk::IndexSettings) -> serde_json::Value {
     let mut out = serde_json::Map::new();
     for net in ChainNet::ALL {
         let c = chain_walk::cursor(pool, INDEXER_NFT, net)
@@ -1237,7 +1283,7 @@ pub async fn status(pool: &PgPool) -> serde_json::Value {
         .unwrap_or(0);
         out.insert(net.db_name().to_string(), json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, chrono::Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,
+            "ready": chain_walk::fresh_fold_on(&c, settings.chain_id(net), chrono::Utc::now()).is_some(), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,
         }))));
     }
     serde_json::Value::Object(out)
@@ -1352,19 +1398,26 @@ pub(crate) mod tests {
     fn a_transfer_decodes_with_the_token_in_a_topic_or_in_the_data() {
         let c = "0x00000000000000000000000000000000000000c1";
         let a = "0x00000000000000000000000000000000000000a1";
-        let ev = decode_log(&transfer_log(c, ZERO_ADDRESS, a, U256::from(5u8), 10, 1), 7)
-            .unwrap()
-            .unwrap();
+        let mut minted = transfer_log(c, ZERO_ADDRESS, a, U256::from(5u8), 10, 1);
+        minted.transaction_hash = Some(format!("0x{}", "CD".repeat(32)));
+        let ev = decode_log(&minted, 7).unwrap().unwrap();
         assert_eq!(
             (
                 ev.kind,
                 ev.token_id.as_str(),
                 ev.to_address.as_deref(),
-                ev.from_address.as_deref()
+                ev.from_address.as_deref(),
+                ev.tx_hash
             ),
-            (KIND_TRANSFER, "5", Some(a), Some(ZERO_ADDRESS))
+            (
+                KIND_TRANSFER,
+                "5",
+                Some(a),
+                Some(ZERO_ADDRESS),
+                Some(format!("0x{}", "cd".repeat(32)))
+            )
         );
-        let legacy = log(
+        let mut legacy = log(
             c,
             vec![
                 TOPIC_TRANSFER.into(),
@@ -1375,7 +1428,13 @@ pub(crate) mod tests {
             11,
             0,
         );
-        assert_eq!(decode_log(&legacy, 7).unwrap().unwrap().token_id, "9");
+        legacy.transaction_hash = Some(String::new());
+        let ev = decode_log(&legacy, 7).unwrap().unwrap();
+        assert_eq!(
+            (ev.token_id.as_str(), ev.tx_hash),
+            ("9", None),
+            "an empty hash is none"
+        );
     }
 
     #[test]

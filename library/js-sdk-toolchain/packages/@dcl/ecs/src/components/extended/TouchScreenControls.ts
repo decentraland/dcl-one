@@ -1,5 +1,6 @@
-import { Entity, IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
-import { TouchScreenControls, PBTouchScreenControls, PBTouchScreenControls_TouchInput } from '../generated/index.gen'
+import type { Entity, IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
+import type { PBTouchScreenControls, PBTouchScreenControls_TouchInput } from '../generated/index.gen'
+import { TouchScreenControls } from '../generated/index.gen'
 import { InputAction } from '../generated/pb/decentraland/sdk/components/common/input_action.gen'
 
 const ROOT_ENTITY = 0 as Entity

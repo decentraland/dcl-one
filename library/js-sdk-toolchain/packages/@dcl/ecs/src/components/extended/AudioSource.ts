@@ -1,7 +1,7 @@
-import { Entity, IEngine } from '../../engine'
-import { LastWriteWinElementSetComponentDefinition } from '../../engine/component'
+import type { Entity, IEngine } from '../../engine'
+import type { LastWriteWinElementSetComponentDefinition } from '../../engine/component'
 import { AudioSource } from '../generated/index.gen'
-import { PBAudioSource } from '../generated/pb/decentraland/sdk/components/audio_source.gen'
+import type { PBAudioSource } from '../generated/pb/decentraland/sdk/components/audio_source.gen'
 
 /**
  * @public

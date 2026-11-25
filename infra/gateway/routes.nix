@@ -10,6 +10,11 @@
   ];
   node = [
     {
+      path = "/health";
+      probe = "/health";
+      exact = true;
+    }
+    {
       path = "/admin/api";
       probe = "/admin/api/jobs";
     }

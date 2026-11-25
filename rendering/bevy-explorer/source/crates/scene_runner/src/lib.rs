@@ -27,8 +27,8 @@ use common::{
     rpc::{RpcCall, RpcCallEvent, RpcOrigin},
     sets::{SceneLoopSets, SceneSets},
     structs::{
-        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, MicState, NearbyVoiceDisabled,
-        NoRenderApp, PreviewMode, PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
+        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, NoRenderApp, PreviewMode,
+        PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
     },
     util::{dcl_assert, TryPushChildrenEx},
 };
@@ -79,6 +79,7 @@ pub mod asset_preload;
 pub mod automatic_testing;
 mod loop_pacing;
 pub mod visible_content_bytes;
+mod voice_block;
 /// Region decomposition, in `common` so `comms` can reach it too; re-exported here because this is
 /// where it has always lived for callers.
 pub use common::bounds_calc;
@@ -485,7 +486,7 @@ impl Plugin for SceneRunnerPlugin {
             Update,
             (
                 update_scene_room,
-                update_scene_voice_block,
+                voice_block::update_scene_voice_block,
                 permissions::publish_permissions_in_force
                     .after(update_world::camera_mode_area::update_camera_mode_area)
                     .after(update_world::avatar_modifier_area::update_avatar_modifier_area),
@@ -2143,26 +2144,6 @@ fn update_scene_room(
     *last = Some(ev.clone());
     debug!("set scene room {ev:?}");
     writer.write(ev);
-}
-
-/// Only the parcel scene under the player counts: a portable experience never blocks.
-fn update_scene_voice_block(
-    mic_state: Option<ResMut<MicState>>,
-    containing_scene: ContainingScene,
-    player: Query<Entity, With<PrimaryUser>>,
-    disabling_scenes: Query<(), With<NearbyVoiceDisabled>>,
-) {
-    let Some(mut mic_state) = mic_state else {
-        return;
-    };
-    let disabled = player
-        .single()
-        .ok()
-        .and_then(|player| containing_scene.get_parcel(player))
-        .is_some_and(|scene| disabling_scenes.contains(scene));
-    if mic_state.scene_disabled() != disabled {
-        mic_state.set_scene_disabled(disabled);
-    }
 }
 
 fn log_app_errors(mut toaster: Toaster, mut errors: EventReader<AppError>, frame: Res<FrameCount>) {

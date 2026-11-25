@@ -4,7 +4,8 @@
 // that file creates five entities. one with a MeshRenderer and four with GltfContainer
 // all of them have a Transform component
 
-import { engine, MeshRenderer, GltfContainer, Entity } from '@dcl/sdk/ecs'
+import type { Entity } from '@dcl/sdk/ecs'
+import { engine, MeshRenderer, GltfContainer } from '@dcl/sdk/ecs'
 import { test } from '@dcl/sdk/src/testing'
 import { assertComponentValue, assertEquals } from '@dcl/sdk/src/testing/assert'
 import * as _components from '@dcl/ecs/dist/components'
