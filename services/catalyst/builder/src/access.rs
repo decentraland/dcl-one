@@ -954,6 +954,31 @@ pub async fn known_committee_member(state: &SharedState, signer: &Signer) -> Opt
         })
 }
 
+/// How `s` reads the collection `c`: in full with a role on it; a
+/// published one as any signer, in full for a minter and a known committee
+/// member; an unpublished one only on the committee. `None` when refused.
+async fn collection_read(
+    state: &State,
+    c: &Collection,
+    id: Uuid,
+    s: &str,
+) -> Result<Option<CollectionRead>, ApiError> {
+    let full = if c.role(s) {
+        true
+    } else if c.published {
+        c.minter(s) || known_committee(state, Since::read(), s).await
+    } else if on_committee(state, Since::read(), s).await? {
+        true
+    } else {
+        return Ok(None);
+    };
+    Ok(Some(CollectionRead {
+        id,
+        full,
+        programmatic: c.programmatic,
+    }))
+}
+
 /// `GET /v1/collections/:id`: any signer reads a published collection's
 /// public detail, and its minters and the committee (when the committee
 /// can tell) its full body; the owner, an on-chain manager, the
@@ -984,29 +1009,9 @@ pub async fn read_collection(
         .ok_or_else(|| not_found(id, COLLECTIONS))?;
     drop(conn);
     let s = signer.as_str();
-    if c.role(s) {
-        return Ok(CollectionRead {
-            id,
-            full: true,
-            programmatic: c.programmatic,
-        });
-    }
-    if c.published {
-        let full = c.minter(s) || known_committee(state, Since::read(), s).await;
-        return Ok(CollectionRead {
-            id,
-            full,
-            programmatic: c.programmatic,
-        });
-    }
-    if on_committee(state, Since::read(), s).await? {
-        return Ok(CollectionRead {
-            id,
-            full: true,
-            programmatic: c.programmatic,
-        });
-    }
-    Err(ApiError::unauthorized("Unauthorized").with_data(json!({ "id": raw, "eth_address": s })))
+    collection_read(state, &c, id, s).await?.ok_or_else(|| {
+        ApiError::unauthorized("Unauthorized").with_data(json!({ "id": raw, "eth_address": s }))
+    })
 }
 
 /// `GET /v1/collections/:idOrContractAddress/items`: any signer lists a
@@ -1056,29 +1061,9 @@ pub async fn collection_items(
             .with_data(json!({ "id": raw, "status": status })));
     }
     let s = signer.as_str();
-    if c.role(s) {
-        return Ok(CollectionRead {
-            id,
-            full: true,
-            programmatic: c.programmatic,
-        });
-    }
-    if c.published {
-        let full = c.minter(s) || known_committee(state, Since::read(), s).await;
-        return Ok(CollectionRead {
-            id,
-            full,
-            programmatic: c.programmatic,
-        });
-    }
-    if on_committee(state, Since::read(), s).await? {
-        return Ok(CollectionRead {
-            id,
-            full: true,
-            programmatic: c.programmatic,
-        });
-    }
-    Err(ApiError::unauthorized("Unauthorized").with_data(json!({ "eth_address": s })))
+    collection_read(state, &c, id, s).await?.ok_or_else(|| {
+        ApiError::unauthorized("Unauthorized").with_data(json!({ "eth_address": s }))
+    })
 }
 
 /// `GET /v1/items/:id`: any signer reads a minted item of a published

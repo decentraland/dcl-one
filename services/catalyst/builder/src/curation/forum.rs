@@ -276,40 +276,34 @@ impl Forum {
         }))
     }
 
+    /// The post `post` as the forum answers it.
+    async fn post(&self, client: &dcl_http::Outbound, post: i32) -> Result<Value, Failure> {
+        let request = self.request(
+            client,
+            reqwest::Method::GET,
+            &format!("/posts/{post}.json"),
+            true,
+        );
+        let (status, body) = self.send(request, "read post").await?;
+        if !status.is_success() {
+            return Err(Failure::Refused(status));
+        }
+        body.ok_or(Failure::Invalid)
+    }
+
     /// The topic of the post `post`; `None` when the forum names none.
     pub async fn topic_of(
         &self,
         client: &dcl_http::Outbound,
         post: i32,
     ) -> Result<Option<i64>, Failure> {
-        let request = self.request(
-            client,
-            reqwest::Method::GET,
-            &format!("/posts/{post}.json"),
-            true,
-        );
-        let (status, body) = self.send(request, "read post").await?;
-        if !status.is_success() {
-            return Err(Failure::Refused(status));
-        }
-        let body = body.ok_or(Failure::Invalid)?;
-        Ok(positive(&body["topic_id"]))
+        Ok(positive(&self.post(client, post).await?["topic_id"]))
     }
 
     /// The text of the post `post`.
     pub async fn raw_of(&self, client: &dcl_http::Outbound, post: i32) -> Result<String, Failure> {
-        let request = self.request(
-            client,
-            reqwest::Method::GET,
-            &format!("/posts/{post}.json"),
-            true,
-        );
-        let (status, body) = self.send(request, "read post").await?;
-        if !status.is_success() {
-            return Err(Failure::Refused(status));
-        }
-        body.as_ref()
-            .and_then(|b| b["raw"].as_str())
+        self.post(client, post).await?["raw"]
+            .as_str()
             .map(str::to_string)
             .ok_or(Failure::Invalid)
     }
