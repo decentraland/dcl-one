@@ -879,8 +879,8 @@ impl AppConfig {
     /// so every saved config lands on Medium.
     /// gen 5: Render Resolution moves in 10% steps; move a value saved between steps to its
     /// nearest step.
-    /// gen 6: new defaults for the player speeds and jump heights, which now measure a tapped
-    /// jump. A value still on its old default moves to the new default.
+    /// gen 6: new defaults for the player speeds and jump heights, which now measure a jump
+    /// released at once. A value still on its old default moves to the new default.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;

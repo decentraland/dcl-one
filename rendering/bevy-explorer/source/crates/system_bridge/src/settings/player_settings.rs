@@ -129,7 +129,7 @@ player_setting!(
 player_setting!(
     JumpSetting,
     "Jump Height",
-    "Height of a tapped jump, in m. Holding the jump key goes about twice as high.\nDefault 1",
+    "Height of a jump released at once, in m. Holding the jump key goes about twice as high.\nDefault 1",
     |cfg: &mut PrimaryUser, val: f32| cfg.jump_height = val,
     |cfg: &PrimaryUser| cfg.jump_height,
     0.05,
@@ -140,7 +140,7 @@ player_setting!(
 player_setting!(
     RunJumpSetting,
     "Running Jump Height",
-    "Height of a tapped jump at full running speed, in m. Holding the jump key goes about twice as high.\nDefault 1.5",
+    "Height of a jump released at once at full running speed, in m. Holding the jump key goes about twice as high.\nDefault 1.5",
     |cfg: &mut PrimaryUser, val: f32| cfg.run_jump_height = val,
     |cfg: &PrimaryUser| cfg.run_jump_height,
     0.05,

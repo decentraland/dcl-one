@@ -80,7 +80,7 @@ function leaveEdge() {
 // ---------------------------------------------------------------- jump and gravity
 // Timers are in seconds of model time. An event happens on the first step that starts at or after its time.
 
-// Height the current (or next) jump was launched for (a tapped jump's apex).
+// Height the current (or next) jump was launched for (the apex of a jump released at once).
 var currentJumpHeight = 0;
 // Feet height at launch while the jump rises, else undefined.
 export var jumpStartHeight: number | undefined = undefined;

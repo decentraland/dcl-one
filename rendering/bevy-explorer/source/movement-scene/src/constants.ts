@@ -44,7 +44,7 @@ export const VERTICAL_STOP_DECEL = 5;
 // can't produce absurd speeds.
 export const MAX_SPEED = 30;
 
-// Apex (m) of a tapped jump, standing and at full sprint speed. AvatarLocomotionSettings overrides both.
+// Apex (m) of a jump released at once, standing and at full sprint speed. AvatarLocomotionSettings overrides both.
 export const JUMP_HEIGHT = 1;
 export const JUMP_HEIGHT_SPRINT = 1.5;
 export const JUMP_RISE_DECEL = 40; // m/s^2, the jump's own slowdown up to the apex
