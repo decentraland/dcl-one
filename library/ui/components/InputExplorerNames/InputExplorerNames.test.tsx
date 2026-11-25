@@ -107,3 +107,38 @@ describe('when InputExplorerNames names the default appearance', () => {
     expect(screen.getByRole('textbox', { name: 'Name' })).not.toHaveAttribute('appearance')
   })
 })
+
+describe('when the hud InputExplorerNames is multiline', () => {
+  it('should render a textarea alone, four rows tall by default, with its variant and class', () => {
+    const { container } = render(
+      <InputExplorerNames appearance="hud" multiline label="About me" variant="light" className="mine" />
+    )
+    const area = screen.getByRole('textbox', { name: 'About me' })
+    expect(area.tagName).toBe('TEXTAREA')
+    expect(container.firstElementChild).toBe(area)
+    expect(area).toHaveAttribute('rows', '4')
+    expect(area.className).toMatch(/hudArea/)
+    expect(area.className).toMatch(/hudLight/)
+    expect(area).toHaveClass('mine')
+    expect(area).not.toHaveAttribute('multiline')
+  })
+
+  it('should pass native textarea props and its ref', async () => {
+    const ref = createRef<HTMLTextAreaElement>()
+    const onChange = vi.fn()
+    render(
+      <InputExplorerNames appearance="hud" multiline label="About me" rows={2} maxLength={3} ref={ref} onChange={onChange} />
+    )
+    const area = screen.getByRole('textbox', { name: 'About me' })
+    expect(ref.current).toBe(area)
+    expect(area).toHaveAttribute('rows', '2')
+    await userEvent.type(area, 'abcd')
+    expect(area).toHaveValue('abc')
+    expect(onChange).toHaveBeenCalledTimes(3)
+  })
+
+  it('should stay a single-line input when multiline is false', () => {
+    render(<InputExplorerNames appearance="hud" multiline={false} label="Name" />)
+    expect(screen.getByRole('textbox', { name: 'Name' }).tagName).toBe('INPUT')
+  })
+})

@@ -669,7 +669,7 @@
   },
   "library/ui/components/InputExplorerNames/InputExplorerNames.module.css": {
     "primitives": 0,
-    "tokens": 5
+    "tokens": 7
   },
   "library/ui/components/InputField/InputField.module.css": {
     "primitives": 0,

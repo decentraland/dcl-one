@@ -1,4 +1,11 @@
-import type { CSSProperties, InputHTMLAttributes, ReactNode, Ref } from 'react'
+import type {
+  CSSProperties,
+  InputHTMLAttributes,
+  ReactElement,
+  ReactNode,
+  Ref,
+  TextareaHTMLAttributes
+} from 'react'
 import { InputField, type InputFieldProps } from '../InputField/InputField'
 import styles from './InputExplorerNames.module.css'
 
@@ -13,6 +20,7 @@ type HudProps = Omit<
   'size' | 'children' | 'dangerouslySetInnerHTML'
 > & {
   appearance: 'hud'
+  multiline?: false
   ref?: Ref<HTMLInputElement>
   /** The field's accessible name, when no label element gives it one. */
   label?: string
@@ -35,7 +43,20 @@ type HudProps = Omit<
   }
 }
 
-export type InputExplorerNamesProps = FigmaProps | HudProps
+/** The `hud` field over several lines: a textarea the reader can resize downwards. */
+type HudMultilineProps = Omit<
+  TextareaHTMLAttributes<HTMLTextAreaElement>,
+  'children' | 'dangerouslySetInnerHTML'
+> & {
+  appearance: 'hud'
+  multiline: true
+  ref?: Ref<HTMLTextAreaElement>
+  /** The field's accessible name, when no label element gives it one. */
+  label?: string
+  variant?: 'dark' | 'light'
+}
+
+export type InputExplorerNamesProps = FigmaProps | HudProps | HudMultilineProps
 
 function HudInput({
   label,
@@ -45,7 +66,7 @@ function HudInput({
   fieldAction,
   className,
   ...input
-}: Omit<HudProps, 'appearance'>) {
+}: Omit<HudProps, 'appearance' | 'multiline'>) {
   const field = (
     <input
       aria-label={label || undefined}
@@ -82,7 +103,34 @@ function HudInput({
   )
 }
 
+function HudTextArea({
+  label,
+  variant = 'dark',
+  rows = 4,
+  className,
+  ...textarea
+}: Omit<HudMultilineProps, 'appearance' | 'multiline'>) {
+  return (
+    <textarea
+      aria-label={label || undefined}
+      {...textarea}
+      rows={rows}
+      className={[styles.hudArea, variant === 'light' ? styles.hudLight : styles.hudDark, className]
+        .filter(Boolean)
+        .join(' ')}
+    />
+  )
+}
+
+export function InputExplorerNames(props: HudMultilineProps): ReactElement
+export function InputExplorerNames(props: HudProps): ReactElement
+export function InputExplorerNames(props: FigmaProps): ReactElement
 export function InputExplorerNames({ appearance = 'default', ...props }: InputExplorerNamesProps) {
-  if (appearance === 'hud') return <HudInput {...(props as Omit<HudProps, 'appearance'>)} />
+  if (appearance === 'hud') {
+    const { multiline = false, ...field } = props as Omit<HudProps | HudMultilineProps, 'appearance'>
+    if (multiline)
+      return <HudTextArea {...(field as Omit<HudMultilineProps, 'appearance' | 'multiline'>)} />
+    return <HudInput {...(field as Omit<HudProps, 'appearance' | 'multiline'>)} />
+  }
   return <InputField {...(props as Omit<FigmaProps, 'appearance'>)} surface="explorer" />
 }

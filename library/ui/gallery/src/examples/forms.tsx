@@ -318,7 +318,7 @@ export const formEntries: GalleryEntry[] = [
       {
         id: 'hud',
         title:
-          'Explorer HUD: the dark field, the light field, an invalid value, an action and the large field',
+          'Explorer HUD: the dark field, the light field, an invalid value, an action, the large field and a multi-line one',
         render: () => (
           <div className={`${layout.stack} ${layout.field}`}>
             <InputExplorerNames appearance="hud" label="Name" defaultValue="robtfm" />
@@ -344,6 +344,12 @@ export const formEntries: GalleryEntry[] = [
               fieldSize="lg"
               label="Name"
               defaultValue="robtfm"
+            />
+            <InputExplorerNames
+              appearance="hud"
+              multiline
+              label="About me"
+              placeholder="Tell people about yourself"
             />
           </div>
         )

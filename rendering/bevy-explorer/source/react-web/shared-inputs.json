@@ -5259,6 +5259,10 @@
           "kind": "regular"
         },
         {
+          "name": "textArea.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "textInput.test.tsx",
           "kind": "regular"
         },
@@ -12410,11 +12414,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/TextArea.module.css",
-      "sha256": "a69bb9a55df60c169d384aa8b5c3681fabc1494f129f7fa653ee11de2a6b54b9"
+      "sha256": "e317f079f8a13a973cc8743bf70ba4a604b64e9ef042467305f504001d926a8c"
     },
     {
       "path": "library/ui/apps/hud/design/TextArea.tsx",
-      "sha256": "6bbeb208b06c6dc8ad46c38d640a95964ce0a0143ba0e911634f044c817d7a3a"
+      "sha256": "22d938c64b191aafbb19535705f9fc8c605b73a582631247a0540444a3a4dc9b"
     },
     {
       "path": "library/ui/apps/hud/design/TextInput.tsx",
@@ -14397,6 +14401,10 @@
       "sha256": "73563cfc7b7e1c0dcc210360e9377b9f699caa4aef902198e46d1e9e88245871"
     },
     {
+      "path": "library/ui/apps/hud/test/textArea.test.tsx",
+      "sha256": "7c26289eef77e6456650c78c5158a96a303b2c40a2543792638bd07be67d750e"
+    },
+    {
       "path": "library/ui/apps/hud/test/textInput.test.tsx",
       "sha256": "e1d93be882595e8997918e1060e7eef2bda170a6bb748e8da0542c0d497657ce"
     },
@@ -16214,11 +16222,11 @@
     },
     {
       "path": "library/ui/components/InputExplorerNames/InputExplorerNames.module.css",
-      "sha256": "4740aa4f62ffd23e81b5936af1aa3607bf4ca4fa17a83a42266a582960110f5b"
+      "sha256": "ebd668693be26150b2797297e5f07b2aace779bb156e294186419d676e7d56ef"
     },
     {
       "path": "library/ui/components/InputExplorerNames/InputExplorerNames.tsx",
-      "sha256": "1719b27a342e6da2c48909ec174e3b2ee2cbdaff2fd0494d832f863b4ddba89c"
+      "sha256": "ec9dfba55234e4490768b5ab0e860fa88098d5a2d5b269798d4cfa75662d299e"
     },
     {
       "path": "library/ui/components/InputField/InputField.icons.tsx",
@@ -21903,6 +21911,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/design/TextArea.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/TextArea.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/TextArea.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/design/TextInput.tsx",
       "to": "library/ui/apps/hud/design/icons.tsx",
       "kind": "native:runtime"
@@ -51780,6 +51803,21 @@
     {
       "from": "library/ui/apps/hud/test/surfaceBoundary.test.tsx",
       "to": "library/ui/apps/hud/features/error/SurfaceBoundary.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/textArea.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/textArea.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/textArea.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -68085,6 +68123,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/surfaceBoundary.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/textArea.test.tsx",
       "kind": "type"
     },
     {

@@ -26,6 +26,35 @@
     cursor: not-allowed;
   }
 
+  /* The field over several lines. */
+  .hudArea {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    padding: 10px var(--dcl-space-12);
+    border-radius: 10px;
+    outline: none;
+    font-family: inherit;
+    font-size: 0.82rem;
+    font-weight: 500;
+    line-height: 1.45;
+    resize: vertical;
+    transition: border-color 140ms ease;
+  }
+
+  .hudArea::placeholder {
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .hudArea:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .hudArea:focus {
+    border-color: var(--dcl-brand-ruby);
+  }
+
   .hudDark {
     border: 1px solid var(--dcl-transparencies-white-10);
     background: rgba(255, 255, 255, 0.06);
