@@ -55,6 +55,8 @@ export default function PreviewFrame({ options, replay = 0, onLoad, onError }: P
   const serialized = JSON.stringify(options);
   // The iframe keeps the URL it mounted with: a new `src` would reload the whole preview, not only its scene.
   const src = useRef(previewUrl(base, options)).current;
+  // What a preview that has just booted holds: the mount URL's options, however many updates went before it.
+  const mountedWith = useRef(serialized).current;
   const ready = useRef(false);
   const delivered = useRef(serialized);
   const callbacks = useRef({ onLoad, onError });
@@ -74,7 +76,9 @@ export default function PreviewFrame({ options, replay = 0, onLoad, onError }: P
       if (event.source !== frame.current?.contentWindow || event.origin !== origin) return;
       const { type, payload } = (event.data ?? {}) as { type?: string; payload?: { renderer?: string; message?: string } };
       if (type === "ready") {
+        // Every boot, the first or a reload of the frame, starts again from the URL: what it has lost goes again.
         ready.current = true;
+        delivered.current = mountedWith;
         push.current();
       } else if (type === "load") {
         const renderer = payload?.renderer;

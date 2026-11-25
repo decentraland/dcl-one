@@ -135,6 +135,30 @@ describe("what the iframe mounts with", () => {
 });
 
 describe("talking to the iframe", () => {
+  test("a frame that boots again after a view switch is told the current view again, not left on its mount URL's", () => {
+    flag(false);
+    render(<ItemPreview item={item()} renderer="full" />);
+    const posted = vi.spyOn(frame()!.contentWindow!, "postMessage");
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    fireEvent.click(screen.getByRole("button", { name: "Item" }));
+    const updates = () => posted.mock.calls.filter(([message]) => (message as { type?: string }).type === "update");
+    expect(updates()).toHaveLength(1);
+
+    // The frame reloads itself: it boots from its mount URL, the avatar view.
+    fromPreview({ type: "ready" });
+    expect(updates()).toHaveLength(2);
+    expect(updates().at(-1)![0]).toMatchObject({ type: "update", payload: { options: { type: "wearable" } } });
+  });
+
+  test("a frame that boots again with nothing changed since its mount is not sent an update", () => {
+    render(<ItemPreview item={item()} renderer="full" />);
+    const posted = vi.spyOn(frame()!.contentWindow!, "postMessage");
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "ready" });
+    expect(posted).not.toHaveBeenCalled();
+  });
+
   test("over Babylon the page's view switch reloads the scene in place, as the item alone", () => {
     flag(false);
     render(<ItemPreview item={item()} renderer="full" />);
