@@ -156,3 +156,15 @@
 .hudHost {
   max-width: 100%;
 }
+
+/* A column of fields that each take the column's width, with room for a ring drawn 6px outside a field. The
+   column is `minmax(0, 1fr)`, so a field narrower than its input's own width shrinks to the column. */
+.ringRoom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 360px;
+  padding: 10px;
+}
