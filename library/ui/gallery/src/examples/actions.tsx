@@ -1,5 +1,6 @@
 import {
   Button,
+  BarButton,
   CardActionButton,
   CloseButton,
   CopyFeedback,
@@ -150,6 +151,39 @@ export const actionEntries: GalleryEntry[] = [
                 Fill layout
               </Button>
             </div>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'BarButton',
+    group: 'Actions',
+    summary: 'A button of the Explorer HUD top bar, over a scene or a backdrop.',
+    components: ['BarButton'],
+    examples: [
+      {
+        id: 'shapes',
+        title: 'Pill, round, open with a badge, large round and disabled',
+        render: () => (
+          <div className={layout.row}>
+            <BarButton>Map</BarButton>
+            <BarButton shape="round" aria-label="Share">
+              <MenusShare size={24} />
+            </BarButton>
+            <BarButton
+              shape="round"
+              open
+              badge={3}
+              aria-label="Notifications, 3 unread"
+              aria-expanded
+            >
+              <MenusShare size={24} />
+            </BarButton>
+            <BarButton shape="round" size="lg" aria-label="Close">
+              <MenusShare size={24} />
+            </BarButton>
+            <BarButton disabled>Places</BarButton>
           </div>
         )
       }

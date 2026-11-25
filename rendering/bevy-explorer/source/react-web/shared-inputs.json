@@ -7670,6 +7670,10 @@
           "kind": "directory"
         },
         {
+          "name": "BarButton",
+          "kind": "directory"
+        },
+        {
           "name": "BlogBanner",
           "kind": "directory"
         },
@@ -7909,6 +7913,23 @@
         },
         {
           "name": "thumbnail-public-base.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/BarButton",
+      "entries": [
+        {
+          "name": "BarButton.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "BarButton.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "BarButton.tsx",
           "kind": "regular"
         }
       ]
@@ -13128,11 +13149,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.module.css",
-      "sha256": "1e7fbb30d7ad846226b103292a9e354b60660e26302edc376f042d6e4132a4d2"
+      "sha256": "775af4f4367fcc64b67524583f300b96f300f5d05d4c4ec81b944c85236fab54"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "sha256": "2e7ced71be47565c0c51f44a5eec4eb332fee273f0f5848aaa0844f8866e9581"
+      "sha256": "69f14a94072aa11f9b58de48f23cd0cc322e90786c0388c9243d93203c33a80b"
     },
     {
       "path": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.module.css",
@@ -16139,6 +16160,14 @@
       "sha256": "9542f8b13ed17256eda5dd4e95aefa8ad2d31cd4919a563a68738e8e75081a33"
     },
     {
+      "path": "library/ui/components/BarButton/BarButton.module.css",
+      "sha256": "f93d2860e49e60d1c9e578b8da73d59b37a6a935716a9ffca86ad2a5ecb008b2"
+    },
+    {
+      "path": "library/ui/components/BarButton/BarButton.tsx",
+      "sha256": "e6c04cc00db1503a40b268493cd5131e0fc8be6f9358413860654ed72de686cc"
+    },
+    {
       "path": "library/ui/components/BlogBanner/BlogBanner.module.css",
       "sha256": "af80145f6decbcef82b51f94bda2daeedd4380ec98e906d4c5cbfcb251bd0ebd"
     },
@@ -16616,7 +16645,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "e49aca3ae3c1de5c824da2ed0616aa3dfe8dbb93b359ffdc6b66dfd2708f90a6"
+      "sha256": "4b17d7b577de1dca7541b160e3ee81890499181c923749a633bb8143a3d4ad8d"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -32208,6 +32237,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/lobby/LobbyProfileMenu.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
@@ -60645,6 +60689,21 @@
     {
       "from": "library/ui/components/AppChrome/SiteLayout.tsx",
       "to": "library/ui/components/AppChrome/chrome-nav.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/BarButton/BarButton.tsx",
+      "to": "library/ui/components/BarButton/BarButton.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/BarButton/BarButton.tsx",
+      "to": "library/ui/components/BarButton/BarButton.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/BarButton/BarButton.tsx",
+      "to": "library/ui/components/BarButton/BarButton.module.css",
       "kind": "test:runtime"
     },
     {
@@ -62680,6 +62739,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/AppChrome/thumbnail-public-base.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/BarButton/BarButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/BarButton/BarButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/BarButton/BarButton.tsx",
       "kind": "test:runtime"
     },
     {
@@ -67855,6 +67929,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/AppChrome/thumbnail-public-base.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/BarButton/BarButton.tsx",
       "kind": "type"
     },
     {

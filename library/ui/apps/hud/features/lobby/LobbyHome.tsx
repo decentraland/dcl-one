@@ -12,6 +12,7 @@ import mouseLeft from '../../assets/lobby/icon-mouse-left.png'
 import notificationsOff from '../../assets/lobby/notifications-off.png'
 import notificationsOn from '../../assets/lobby/notifications-on.png'
 import placesIcon from '../../assets/lobby/places-off.png'
+import { BarButton } from '@dcl/one-ui'
 import { ContextMenu, MaskIcon, showToast } from '../../design'
 import { isNativeHud, serviceUrl } from '@hud-host'
 import { exitApplication } from '../gate/exitApplication'
@@ -581,15 +582,15 @@ export function LobbyHome({
         <img className={styles.logo} src={logo} alt="Decentraland" />
         <span className={styles.headerTitle}>Lobby</span>
         {editing ? (
-          <button type="button" className={cx(styles.barButton, styles.backButton)} onClick={() => setEditing(false)}>
+          <BarButton className={styles.backButton} onClick={() => setEditing(false)}>
             <MaskIcon src={arrowLeft} width={9} height={14} />
             <span className={styles.backText}>Back</span>
             <span className={styles.backKey}>[Esc]</span>
-          </button>
+          </BarButton>
         ) : (
-          <button
-            type="button"
-            className={cx(styles.barButton, styles.roundButton, styles.editButton)}
+          <BarButton
+            shape="round"
+            className={styles.editButton}
             aria-label="Customize lobby layout"
             onClick={() => {
               moveOn()
@@ -597,26 +598,27 @@ export function LobbyHome({
             }}
           >
             <img src={editIcon} alt="" width={24} height={24} />
-          </button>
+          </BarButton>
         )}
       </header>
 
       <nav className={styles.topBar} aria-label="Lobby">
-        <button type="button" className={cx(styles.barButton, styles.pill)} onClick={() => openSection('map')}>
+        <BarButton onClick={() => openSection('map')}>
           <img src={mapIcon} alt="" width={32} height={32} />
           <span className={styles.pillLabel}>Map</span>
-        </button>
-        <button type="button" className={cx(styles.barButton, styles.pill)} onClick={() => openSection('places')}>
+        </BarButton>
+        <BarButton onClick={() => openSection('places')}>
           <img src={placesIcon} alt="" width={32} height={32} />
           <span className={styles.pillLabel}>Places</span>
-        </button>
-        <button type="button" className={cx(styles.barButton, styles.pill)} onClick={() => openSection('events')}>
+        </BarButton>
+        <BarButton onClick={() => openSection('events')}>
           <img src={eventsIcon} alt="" width={32} height={32} />
           <span className={styles.pillLabel}>Events</span>
-        </button>
-        <button
-          type="button"
-          className={cx(styles.barButton, styles.roundButton, session.notifications.open && styles.barButtonOpen)}
+        </BarButton>
+        <BarButton
+          shape="round"
+          open={session.notifications.open}
+          badge={unread > 0 ? unread : undefined}
           aria-label={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
           aria-expanded={session.notifications.open}
           onClick={() => {
@@ -626,16 +628,15 @@ export function LobbyHome({
           }}
         >
           <img src={session.notifications.open ? notificationsOn : notificationsOff} alt="" width={32} height={32} />
-          {unread > 0 && <span className={styles.badge}>{unread}</span>}
-        </button>
-        <button type="button" className={cx(styles.barButton, styles.profile)} aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
+        </BarButton>
+        <BarButton className={styles.profile} aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
           <span className={styles.profilePicture} style={profilePictureStyle(nameColor, profile?.picture)} />
           <span className={styles.profileName}>{profile?.name || 'Guest'}</span>
-        </button>
+        </BarButton>
         {onClose && (
-          <button
-            type="button"
-            className={cx(styles.barButton, styles.closeButton)}
+          <BarButton
+            shape="round"
+            size="lg"
             aria-label="Close"
             onClick={() => {
               clickButton('CLOSE', 'LOBBY')
@@ -643,7 +644,7 @@ export function LobbyHome({
             }}
           >
             <MaskIcon src={closeIcon} size={12} />
-          </button>
+          </BarButton>
         )}
       </nav>
 
