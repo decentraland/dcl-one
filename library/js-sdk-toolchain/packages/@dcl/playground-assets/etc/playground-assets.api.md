@@ -193,25 +193,6 @@ export const enum AvatarAnchorPointType {
 }
 
 // @public (undocumented)
-export interface AvatarAnimationState {
-    duration: number;
-    idle: boolean;
-    loop: boolean;
-    loopCount: number;
-    playbackTime: number;
-    speed: number;
-    src: string;
-}
-
-// @public (undocumented)
-export namespace AvatarAnimationState {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): AvatarAnimationState;
-    // (undocumented)
-    export function encode(message: AvatarAnimationState, writer?: _m0.Writer): _m0.Writer;
-}
-
-// @public (undocumented)
 export const AvatarAttach: LastWriteWinElementSetComponentDefinition<PBAvatarAttach>;
 
 // @public (undocumented)
@@ -258,12 +239,6 @@ export const enum AvatarModifierType {
     AMT_HIDE_AVATARS = 0,
     AMT_HIDE_NAMETAGS = 2
 }
-
-// @public (undocumented)
-export const AvatarMovement: LastWriteWinElementSetComponentDefinition<PBAvatarMovement>;
-
-// @public (undocumented)
-export const AvatarMovementInfo: LastWriteWinElementSetComponentDefinition<PBAvatarMovementInfo>;
 
 // @public (undocumented)
 export interface AvatarMovementSettings {
@@ -852,8 +827,6 @@ export const componentDefinitionByName: {
     "core::AvatarEquippedData": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBAvatarEquippedData>>;
     "core::AvatarLocomotionSettings": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBAvatarLocomotionSettings>>;
     "core::AvatarModifierArea": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBAvatarModifierArea>>;
-    "core::AvatarMovement": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBAvatarMovement>>;
-    "core::AvatarMovementInfo": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBAvatarMovementInfo>>;
     "core::AvatarNametag": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBAvatarNametag>>;
     "core::AvatarShape": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBAvatarShape>>;
     "core::Billboard": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBBillboard>>;
@@ -863,15 +836,11 @@ export const componentDefinitionByName: {
     "core::CameraModeArea": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBCameraModeArea>>;
     "core::EngineInfo": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBEngineInfo>>;
     "core::EnvironmentFog": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBEnvironmentFog>>;
-    "core::ExplorerConfiguration": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBExplorerConfiguration>>;
     "core::ExplorerItemPurchaseResult": GSetComponentGetter<GrowOnlyValueSetComponentDefinition<PBExplorerItemPurchaseResult>>;
     "core::ExplorerUiEventsResult": GSetComponentGetter<GrowOnlyValueSetComponentDefinition<PBExplorerUiEventsResult>>;
-    "core::GlobalLight": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBGlobalLight>>;
     "core::GltfContainer": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBGltfContainer>>;
     "core::GltfContainerLoadingState": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBGltfContainerLoadingState>>;
-    "core::GltfNode": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBGltfNode>>;
     "core::GltfNodeModifiers": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBGltfNodeModifiers>>;
-    "core::GltfNodeState": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBGltfNodeState>>;
     "core::InputModifier": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBInputModifier>>;
     "core::LightSource": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBLightSource>>;
     "core::MainCamera": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBMainCamera>>;
@@ -902,15 +871,12 @@ export const componentDefinitionByName: {
     "core::TweenSequence": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBTweenSequence>>;
     "core::TweenState": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBTweenState>>;
     "core::UiBackground": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBUiBackground>>;
-    "core::UiCanvas": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBUiCanvas>>;
     "core::UiCanvasInformation": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBUiCanvasInformation>>;
     "core::UiDropdown": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBUiDropdown>>;
     "core::UiDropdownResult": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBUiDropdownResult>>;
     "core::UiInput": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBUiInput>>;
     "core::UiInputBinding": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBUiInputBinding>>;
     "core::UiInputResult": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBUiInputResult>>;
-    "core::UiLayoutFeedback": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBUiLayoutFeedback>>;
-    "core::UiScrollResult": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBUiScrollResult>>;
     "core::UiText": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBUiText>>;
     "core::UiTransform": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBUiTransform>>;
     "core::VideoEvent": GSetComponentGetter<GrowOnlyValueSetComponentDefinition<PBVideoEvent>>;
@@ -1435,9 +1401,6 @@ export type ExcludeUndefined<T> = {
 export const executeTask: (task: Task<unknown>) => void;
 
 // @public (undocumented)
-export const ExplorerConfiguration: LastWriteWinElementSetComponentDefinition<PBExplorerConfiguration>;
-
-// @public (undocumented)
 export const ExplorerItemPurchaseResult: GrowOnlyValueSetComponentDefinition<PBExplorerItemPurchaseResult>;
 
 // @public (undocumented)
@@ -1564,9 +1527,6 @@ export type GlobalDirectionRaycastSystemOptions = {
     direction?: PBVector3;
 };
 
-// @public (undocumented)
-export const GlobalLight: LastWriteWinElementSetComponentDefinition<PBGlobalLight>;
-
 // Warning: (ae-missing-release-tag) "GlobalTargetRaycastOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -1586,23 +1546,7 @@ export const GltfContainer: LastWriteWinElementSetComponentDefinition<PBGltfCont
 export const GltfContainerLoadingState: LastWriteWinElementSetComponentDefinition<PBGltfContainerLoadingState>;
 
 // @public (undocumented)
-export const GltfNode: LastWriteWinElementSetComponentDefinition<PBGltfNode>;
-
-// @public (undocumented)
 export const GltfNodeModifiers: LastWriteWinElementSetComponentDefinition<PBGltfNodeModifiers>;
-
-// @public (undocumented)
-export const GltfNodeState: LastWriteWinElementSetComponentDefinition<PBGltfNodeState>;
-
-// @public (undocumented)
-export const enum GltfNodeStateValue {
-    // (undocumented)
-    GNSV_FAILED = 1,
-    // (undocumented)
-    GNSV_PENDING = 0,
-    // (undocumented)
-    GNSV_READY = 2
-}
 
 // @public (undocumented)
 export interface GrowOnlyValueSetComponentDefinition<T> extends BaseComponent<T> {
@@ -2312,25 +2256,6 @@ export namespace MoveContinuous {
 }
 
 // @public (undocumented)
-export interface MovementAnimation {
-    idle: boolean;
-    loop: boolean;
-    playbackTime?: number | undefined;
-    sounds: string[];
-    speed: number;
-    src: string;
-    transitionSeconds?: number | undefined;
-}
-
-// @public (undocumented)
-export namespace MovementAnimation {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): MovementAnimation;
-    // (undocumented)
-    export function encode(message: MovementAnimation, writer?: _m0.Writer): _m0.Writer;
-}
-
-// @public (undocumented)
 export interface MoveRotateScale {
     // (undocumented)
     positionEnd: PBVector3 | undefined;
@@ -2892,51 +2817,6 @@ export namespace PBAvatarModifierArea {
 }
 
 // @public (undocumented)
-export interface PBAvatarMovement {
-    animation?: MovementAnimation | undefined;
-    // (undocumented)
-    groundDirection?: PBVector3 | undefined;
-    orientation: number;
-    tiltPitch?: number | undefined;
-    tiltRoll?: number | undefined;
-    // (undocumented)
-    velocity: PBVector3 | undefined;
-    walkSuccess?: boolean | undefined;
-}
-
-// @public (undocumented)
-export namespace PBAvatarMovement {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarMovement;
-    // (undocumented)
-    export function encode(message: PBAvatarMovement, writer?: _m0.Writer): _m0.Writer;
-}
-
-// @public (undocumented)
-export interface PBAvatarMovementInfo {
-    activeAnimationState?: AvatarAnimationState | undefined;
-    // (undocumented)
-    activeAvatarLocomotionSettings: PBAvatarLocomotionSettings | undefined;
-    // (undocumented)
-    activeInputModifier: PBInputModifier | undefined;
-    actualVelocity: PBVector3 | undefined;
-    externalVelocity: PBVector3 | undefined;
-    previousStepTime: number;
-    requestedVelocity: PBVector3 | undefined;
-    stepTime: number;
-    walkTarget?: PBVector3 | undefined;
-    walkThreshold?: number | undefined;
-}
-
-// @public (undocumented)
-export namespace PBAvatarMovementInfo {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBAvatarMovementInfo;
-    // (undocumented)
-    export function encode(message: PBAvatarMovementInfo, writer?: _m0.Writer): _m0.Writer;
-}
-
-// @public (undocumented)
 export interface PBAvatarNametag {
     backgroundColor?: PBColor3 | undefined;
     borderColor?: PBColor3 | undefined;
@@ -3128,19 +3008,6 @@ export namespace PBEnvironmentFog {
 }
 
 // @public (undocumented)
-export interface PBExplorerConfiguration {
-    locale?: string | undefined;
-}
-
-// @public (undocumented)
-export namespace PBExplorerConfiguration {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerConfiguration;
-    // (undocumented)
-    export function encode(message: PBExplorerConfiguration, writer?: _m0.Writer): _m0.Writer;
-}
-
-// @public (undocumented)
 export interface PBExplorerItemPurchaseResult {
     requestId: number;
     // (undocumented)
@@ -3251,21 +3118,6 @@ export namespace PBExplorerUiEventsResult_UiOpened {
 }
 
 // @public (undocumented)
-export interface PBGlobalLight {
-    ambientBrightness?: number | undefined;
-    ambientColor?: PBColor3 | undefined;
-    direction?: PBVector3 | undefined;
-}
-
-// @public (undocumented)
-export namespace PBGlobalLight {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBGlobalLight;
-    // (undocumented)
-    export function encode(message: PBGlobalLight, writer?: _m0.Writer): _m0.Writer;
-}
-
-// @public (undocumented)
 export interface PBGltfContainer {
     invisibleMeshesCollisionMask?: number | undefined;
     src: string;
@@ -3300,19 +3152,6 @@ export namespace PBGltfContainerLoadingState {
 }
 
 // @public (undocumented)
-export interface PBGltfNode {
-    path: string;
-}
-
-// @public (undocumented)
-export namespace PBGltfNode {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfNode;
-    // (undocumented)
-    export function encode(message: PBGltfNode, writer?: _m0.Writer): _m0.Writer;
-}
-
-// @public (undocumented)
 export interface PBGltfNodeModifiers {
     // (undocumented)
     modifiers: PBGltfNodeModifiers_GltfNodeModifier[];
@@ -3339,22 +3178,6 @@ export namespace PBGltfNodeModifiers_GltfNodeModifier {
     export function decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfNodeModifiers_GltfNodeModifier;
     // (undocumented)
     export function encode(message: PBGltfNodeModifiers_GltfNodeModifier, writer?: _m0.Writer): _m0.Writer;
-}
-
-// @public (undocumented)
-export interface PBGltfNodeState {
-    // (undocumented)
-    error?: string | undefined;
-    // (undocumented)
-    state: GltfNodeStateValue;
-}
-
-// @public (undocumented)
-export namespace PBGltfNodeState {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBGltfNodeState;
-    // (undocumented)
-    export function encode(message: PBGltfNodeState, writer?: _m0.Writer): _m0.Writer;
 }
 
 // @public (undocumented)
@@ -4520,23 +4343,6 @@ export namespace PBUiBackground {
 }
 
 // @public (undocumented)
-export interface PBUiCanvas {
-    color?: PBColor4 | undefined;
-    // (undocumented)
-    height: number;
-    // (undocumented)
-    width: number;
-}
-
-// @public (undocumented)
-export namespace PBUiCanvas {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiCanvas;
-    // (undocumented)
-    export function encode(message: PBUiCanvas, writer?: _m0.Writer): _m0.Writer;
-}
-
-// @public (undocumented)
 export interface PBUiCanvasInformation {
     devicePixelRatio: number;
     height: number;
@@ -4645,37 +4451,6 @@ export namespace PBUiInputResult {
     export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiInputResult;
     // (undocumented)
     export function encode(message: PBUiInputResult, writer?: _m0.Writer): _m0.Writer;
-}
-
-// @public (undocumented)
-export interface PBUiLayoutFeedback {
-    drawOrder: number;
-    // (undocumented)
-    rect: UiLayoutRect | undefined;
-    visible: boolean;
-    visibleRect?: UiLayoutRect | undefined;
-}
-
-// @public (undocumented)
-export namespace PBUiLayoutFeedback {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiLayoutFeedback;
-    // (undocumented)
-    export function encode(message: PBUiLayoutFeedback, writer?: _m0.Writer): _m0.Writer;
-}
-
-// @public (undocumented)
-export interface PBUiScrollResult {
-    // (undocumented)
-    value: PBVector2 | undefined;
-}
-
-// @public (undocumented)
-export namespace PBUiScrollResult {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBUiScrollResult;
-    // (undocumented)
-    export function encode(message: PBUiScrollResult, writer?: _m0.Writer): _m0.Writer;
 }
 
 // @public (undocumented)
@@ -6217,9 +5992,6 @@ export interface UiButtonProps extends UiLabelProps, EntityPropTypes {
 }
 
 // @public (undocumented)
-export const UiCanvas: LastWriteWinElementSetComponentDefinition<PBUiCanvas>;
-
-// @public (undocumented)
 export const UiCanvasInformation: LastWriteWinElementSetComponentDefinition<PBUiCanvasInformation>;
 
 // @public (undocumented)
@@ -6306,29 +6078,6 @@ export interface UiLabelProps {
     value: string;
 }
 
-// @public (undocumented)
-export const UiLayoutFeedback: LastWriteWinElementSetComponentDefinition<PBUiLayoutFeedback>;
-
-// @public (undocumented)
-export interface UiLayoutRect {
-    // (undocumented)
-    height: number;
-    // (undocumented)
-    width: number;
-    // (undocumented)
-    x: number;
-    // (undocumented)
-    y: number;
-}
-
-// @public (undocumented)
-export namespace UiLayoutRect {
-    // (undocumented)
-    export function decode(input: _m0.Reader | Uint8Array, length?: number): UiLayoutRect;
-    // (undocumented)
-    export function encode(message: UiLayoutRect, writer?: _m0.Writer): _m0.Writer;
-}
-
 // @public
 export type uint32 = number;
 
@@ -6347,9 +6096,6 @@ export type UiScreenInset = 'device' | 'interactable' | 'none';
 export type UiScreenInsetAreaProps = Omit<EntityPropTypes, 'uiTransform'> & {
     uiTransform?: Omit<NonNullable<EntityPropTypes['uiTransform']>, 'positionType' | 'position'>;
 };
-
-// @public (undocumented)
-export const UiScrollResult: LastWriteWinElementSetComponentDefinition<PBUiScrollResult>;
 
 // @public (undocumented)
 export const UiText: LastWriteWinElementSetComponentDefinition<PBUiText>;

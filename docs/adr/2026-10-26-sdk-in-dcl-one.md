@@ -50,6 +50,11 @@ It installs with pnpm as one workspace with a single lockfile
   on a UI background and `getPlayer().forceRender`, each documented as supported only by the Bevy
   Explorer. The rest of that layer (react-ecs scroll and render-to-texture, `setGltfMesh`, shaped
   raycasts) has no helper here; its fields stay in `library/protocol` and the generated components.
+- Nine components only the Bevy Explorer implements are not exported by the SDK: `GltfNode`,
+  `GltfNodeState`, `UiScrollResult`, `UiCanvas`, `GlobalLight`, `AvatarMovement`,
+  `AvatarMovementInfo`, `UiLayoutFeedback` and `ExplorerConfiguration`. Their ids are in
+  `NON_EXPOSED_LIST` (`scripts/protocol-buffer-generation/index.ts`), beside `MapPin`; the
+  protocol still defines them. A scene that needs one builds with the `experimental-bevy` SDK.
 - `protoc` comes from `SDK_PROTOC` when set: a name on `PATH` (`SDK_PROTOC=protoc` in the Nix
   shell, or brew's on a Mac without Rosetta) or a path, resolved to an absolute path. It is not
   `PROTOC`, which prost reads for the Rust crates. CI leaves it unset and uses the SDK's download
