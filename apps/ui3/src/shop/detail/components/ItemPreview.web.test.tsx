@@ -170,6 +170,8 @@ describe("talking to the iframe", () => {
   });
 
   test("a frame that boots again with nothing changed since its mount is not sent an update", () => {
+    // Babylon: a Unity frame that boots again is replaced instead (PreviewFrame).
+    flag(false);
     render(<ItemPreview item={item()} renderer="full" />);
     const posted = vi.spyOn(frame()!.contentWindow!, "postMessage");
     fromPreview({ type: "ready" });
@@ -337,6 +339,21 @@ describe("talking to the iframe", () => {
     expect(frame()).toBeNull();
     expect(thumb()).not.toBeNull();
     expect(screen.getByRole("status")).toBeTruthy();
+  });
+
+  test("under Unity a drawn frame that boots again shows the thumbnail until its replacement draws", () => {
+    render(<ItemPreview item={item()} renderer="full" />);
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(thumb()).toBeNull();
+    const first = frame()!.contentWindow;
+
+    fromPreview({ type: "ready" });
+    expect(frame()!.contentWindow).not.toBe(first);
+    expect(thumb()).not.toBeNull();
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(thumb()).toBeNull();
   });
 
   test("messages from another window or origin are ignored", () => {

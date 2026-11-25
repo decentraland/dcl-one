@@ -1,18 +1,17 @@
 // from: shop@94584a5c:app/src/components/FittingRoom/FittingRoom.tsx
 // Try the item on together with the wearables already in the cart: one per slot (equipping one swaps
 // out what held its slot), emotes never worn, the body chosen so nothing renders invisible. The 3D
-// preview loads lazily; the list works without it.
+// preview is the wearable-preview iframe; the list works without it.
 
-import { lazy, Suspense, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import Modal from "../../../components/Modal";
 import { t } from "@shop/discovery/intl";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { conflictingIds, defaultWorn, isWearable, toggleWorn, wornUrns } from "@shop/discovery/lib/outfit";
 import { BASE_MALE, dominantShape, isCompatible, itemShapes, requiredShape, shapeLabel } from "@shop/detail/lib/bodyShape";
+import AvatarStage from "./AvatarStage";
 import "./fittingroom.css";
-
-const WearablePreview = lazy(() => import("../../../wearable-preview/WearablePreview"));
 
 export default function FittingRoom({ items, onClose, portal = true }: { items: CatalogItem[]; onClose: () => void; portal?: boolean }) {
   const target = useMemo(() => requiredShape(items) ?? dominantShape(items), [items]);
@@ -31,9 +30,16 @@ export default function FittingRoom({ items, onClose, portal = true }: { items: 
               <span>{t("fittingRoom.emptyStageBody")}</span>
             </div>
           ) : (
-            <Suspense fallback={<div className="shop-fitting__empty">{t("itemDetail.previewLoading")}</div>}>
-              <WearablePreview urns={urns} body={body} spin={false} zoom={1} background="#161318" />
-            </Suspense>
+            // A default mannequin of the chosen body in the ticked items; toggling one reloads the scene in place.
+            <AvatarStage
+              options={{ urns, profile: "default", bodyShape: body, type: "avatar", emote: "fashion", disableBackground: true, disableFadeEffect: true }}
+              cover={
+                <div className="shop-fitting__empty" role="status">
+                  {t("itemDetail.previewLoading")}
+                </div>
+              }
+              unavailable={false}
+            />
           )}
         </div>
         <div className="shop-fitting__list">

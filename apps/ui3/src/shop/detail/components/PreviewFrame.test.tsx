@@ -34,10 +34,12 @@ function mount(options: PreviewFrameOptions, loadTimeoutMs?: number) {
   return { onLoad, onError, change };
 }
 
-function booted() {
+/** The preview boots and, given a renderer, draws its first scene: Unity takes no update before that. */
+function booted(drew?: "unity" | "babylon") {
   const win = frame().contentWindow!;
   const posted = vi.spyOn(win, "postMessage");
   fromPreview({ type: "ready" });
+  if (drew) fromPreview({ type: "load", payload: { renderer: drew } });
   const updates = () => posted.mock.calls.filter(([message]) => (message as { type?: string }).type === "update").map(([message]) => message as { payload: { options: Record<string, unknown> } });
   return { win, updates };
 }
@@ -75,7 +77,7 @@ describe("updates", () => {
     const { change } = mount({ urns: [HOODIE], profile: "default", ...UNITY });
     expect(params().get("unity")).toBe("true");
     expect(params().get("mode")).toBe("marketplace");
-    const { win, updates } = booted();
+    const { win, updates } = booted("unity");
 
     change({ urns: [HAT], profile: "default", ...UNITY });
     expect(frame().contentWindow).toBe(win);
@@ -83,6 +85,125 @@ describe("updates", () => {
     expect(updates()[0]!.payload.options).toMatchObject({ urns: [HAT], profile: "default" });
     expect("unity" in updates()[0]!.payload.options).toBe(false);
     expect("unityMode" in updates()[0]!.payload.options).toBe(false);
+  });
+
+  test("under Unity an update carries only the options Unity applies from one; the rest stay on the mount URL", () => {
+    const { change } = mount({ urns: [HOODIE], profile: "default", disableFadeEffect: true, ...UNITY });
+    const { win, updates } = booted("unity");
+
+    change({ urns: [HAT], profile: "default", disableFadeEffect: true, ...UNITY });
+    expect(frame().contentWindow).toBe(win);
+    expect(updates()).toHaveLength(1);
+    expect(updates()[0]!.payload.options).toMatchObject({ urns: [HAT], profile: "default" });
+    expect(Object.keys(updates()[0]!.payload.options)).not.toContain("disableFadeEffect");
+
+    // A change to such an option cannot go as an update: it mounts again.
+    change({ urns: [HAT], profile: "default", ...UNITY });
+    expect(updates()).toHaveLength(1);
+    expect(frame().contentWindow).not.toBe(win);
+    expect(params().has("disableFadeEffect")).toBe(false);
+  });
+
+  test("under Unity the next update waits for the answer to the last, and an answer for a scene the page left is not passed on", () => {
+    const { change, onLoad, onError } = mount({ urns: [HOODIE], profile: "default", ...UNITY });
+    const { updates } = booted("unity");
+    expect(onLoad).toHaveBeenCalledTimes(1);
+
+    change({ urns: [HAT], profile: "default", ...UNITY });
+    change({ urns: [HOODIE, HAT], profile: "default", ...UNITY });
+    expect(updates()).toHaveLength(1);
+
+    // The answer for the scene before: not the page's, and the next scene goes now.
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(onLoad).toHaveBeenCalledTimes(1);
+    expect(updates()).toHaveLength(2);
+    expect(updates()[1]!.payload.options.urns).toEqual([HOODIE, HAT]);
+
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(onLoad).toHaveBeenCalledTimes(2);
+
+    // An error for a scene the page has left takes nothing down either.
+    change({ urns: [HAT], profile: "default", ...UNITY });
+    change({ urns: [HOODIE], profile: "default", ...UNITY });
+    fromPreview({ type: "error", payload: { message: "not found" } });
+    expect(onError).not.toHaveBeenCalled();
+    expect(updates().at(-1)!.payload.options.urns).toEqual([HOODIE]);
+  });
+
+  test("under Unity a scene that never answers holds the next one only for a while, which then gets a fresh iframe", () => {
+    vi.useFakeTimers();
+    const { change, onLoad, onError } = mount({ urns: [HOODIE], profile: "default", ...UNITY });
+    const { win, updates } = booted("unity");
+    onLoad.mockClear();
+    change({ urns: [HAT], profile: "default", ...UNITY });
+    change({ urns: [HOODIE, HAT], profile: "default", ...UNITY });
+    expect(updates()).toHaveLength(1);
+    act(() => vi.advanceTimersByTime(2_999));
+    expect(updates()).toHaveLength(1);
+    expect(frame().contentWindow).toBe(win);
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(updates()).toHaveLength(1);
+    expect(frame().contentWindow).not.toBe(win);
+    expect(params().getAll("urn")).toEqual([HOODIE, HAT]);
+
+    // The retired iframe's late answers, for the scene before, count for nothing.
+    for (const data of [{ type: "load", payload: { renderer: "unity" } }, { type: "error", payload: { message: "late" } }]) {
+      act(() => {
+        window.dispatchEvent(new MessageEvent("message", { data, source: win, origin: MAINNET }));
+      });
+    }
+    expect(onLoad).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(onLoad).toHaveBeenCalledTimes(1);
+  });
+
+  test("under Unity a frame that boots again is replaced by a fresh one, whose start failing is reported", () => {
+    const { change, onLoad, onError } = mount({ urns: [HOODIE], profile: "default", ...UNITY }, 45_000);
+    const { win, updates } = booted("unity");
+    change({ urns: [HAT], profile: "default", ...UNITY });
+    expect(updates()).toHaveLength(1);
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(onLoad).toHaveBeenCalledTimes(2);
+
+    // The same iframe boots again: it has lost its scene, and the next one is drawn in a fresh iframe.
+    fromPreview({ type: "ready" });
+    expect(frame().contentWindow).not.toBe(win);
+    expect(params().getAll("urn")).toEqual([HAT]);
+
+    change({ urns: [HOODIE, HAT], profile: "default", ...UNITY });
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "error", payload: { message: "unity could not start" } });
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  test("under Unity the fresh frame after a second boot has a load deadline of its own", () => {
+    vi.useFakeTimers();
+    const { onError } = mount({ urns: [HOODIE], profile: "default", ...UNITY }, 45_000);
+    booted("unity");
+    act(() => vi.advanceTimersByTime(30_000));
+    fromPreview({ type: "ready" });
+    act(() => vi.advanceTimersByTime(44_999));
+    expect(onError).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  test("over Babylon an update goes at once: Babylon drops the answer for a scene it was sent past", () => {
+    const { change } = mount({ urns: [HOODIE], profile: "default" });
+    const { updates } = booted("babylon");
+    change({ urns: [HAT], profile: "default" });
+    change({ urns: [HOODIE, HAT], profile: "default" });
+    expect(updates()).toHaveLength(2);
+  });
+
+  test("over Babylon the same option still goes in every update", () => {
+    const { change } = mount({ urns: [HOODIE], profile: "default", disableFadeEffect: true });
+    const { updates } = booted();
+    change({ urns: [HAT], profile: "default", disableFadeEffect: true });
+    expect(updates()[0]!.payload.options).toMatchObject({ urns: [HAT], disableFadeEffect: true });
   });
 
   test("over Babylon an option left unset goes as an update, which Babylon takes whole", () => {
@@ -135,7 +256,7 @@ describe("a new mount", () => {
 
   test("under Unity, leaving unset an option an earlier update set mounts again too", () => {
     const { change } = mount({ urns: [HOODIE], profile: "default", ...UNITY });
-    const first = booted();
+    const first = booted("unity");
 
     change({ urns: [HOODIE], profile: "default", emote: "fashion", ...UNITY });
     expect(first.updates()).toHaveLength(1);
@@ -147,7 +268,7 @@ describe("a new mount", () => {
     expect(params().has("emote")).toBe(false);
 
     // The new mount holds only its URL's options: a later change it can carry goes as an update again.
-    const second = booted();
+    const second = booted("unity");
     change({ urns: [HOODIE], profile: "default", ...UNITY });
     expect(second.updates()).toHaveLength(1);
     expect(frame().contentWindow).toBe(second.win);
@@ -202,16 +323,31 @@ describe("a new mount", () => {
   });
 
   test("a change made before the preview boots waits for it, unless it needs a new mount", () => {
-    const { change } = mount({ urns: [HOODIE], profile: "default", ...UNITY });
+    const { change } = mount({ urns: [HOODIE], profile: "default" });
     const win = frame().contentWindow!;
     const posted = vi.spyOn(win, "postMessage");
-    change({ urns: [HAT], profile: "default", ...UNITY });
+    change({ urns: [HAT], profile: "default" });
     expect(posted).not.toHaveBeenCalled();
     fromPreview({ type: "ready" });
     expect(posted.mock.calls.at(-1)![0]).toMatchObject({ type: "update", payload: { options: { urns: [HAT] } } });
 
     change({ urns: [HAT], ...UNITY });
     expect(frame().contentWindow).not.toBe(win);
+  });
+
+  test("under Unity a change made before the first scene waits for that scene's answer, which is not the change's", () => {
+    const { change, onLoad } = mount({ urns: [HOODIE], profile: "default", ...UNITY });
+    const posted = vi.spyOn(frame().contentWindow!, "postMessage");
+    change({ urns: [HAT], profile: "default", ...UNITY });
+    fromPreview({ type: "ready" });
+    // Unity applies no update before its first scene has loaded.
+    expect(posted).not.toHaveBeenCalled();
+
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(onLoad).not.toHaveBeenCalled();
+    expect(posted.mock.calls.at(-1)![0]).toMatchObject({ type: "update", payload: { options: { urns: [HAT] } } });
+    fromPreview({ type: "load", payload: { renderer: "unity" } });
+    expect(onLoad).toHaveBeenCalledTimes(1);
   });
 });
 
