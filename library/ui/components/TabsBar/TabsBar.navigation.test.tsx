@@ -4,7 +4,7 @@ import { hydrateRoot, type Root } from 'react-dom/client'
 import { render, screen, fireEvent, type RenderResult } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
-import { TabsBar } from './TabsBar'
+import { TabsBar, type TabsBarLinkProps } from './TabsBar'
 
 const items = [
   { id: 'news', label: 'News', href: '#news' },
@@ -35,6 +35,70 @@ describe('when sections are routes', () => {
       expect(screen.getByRole('link', { name: 'News' })).toHaveAttribute('aria-current', 'page')
       expect(screen.getByRole('link', { name: 'Guides' })).not.toHaveAttribute('aria-current')
       expect(screen.queryByRole('tablist')).toBeNull()
+    })
+  })
+
+  describe.each(['native', 'adapter'] as const)('and category links use %s routing', (routing) => {
+    function Adapter({ prefetch, ...props }: TabsBarLinkProps) {
+      return <a {...props} data-prefetch={prefetch} />
+    }
+
+    describe('when an article belongs to the current category', () => {
+      beforeEach(() => {
+        render(
+          <TabsBar
+            mode="navigation"
+            items={items}
+            current="true"
+            activeId="news"
+            LinkComponent={routing === 'adapter' ? Adapter : undefined}
+          />
+        )
+      })
+
+      it('should mark the category as current without calling it the current page', () => {
+        expect(screen.getByRole('link', { name: 'News', current: true })).toBeInTheDocument()
+      })
+    })
+
+    describe('when no category is active', () => {
+      beforeEach(() => {
+        render(
+          <TabsBar
+            mode="navigation"
+            items={items}
+            current="true"
+            activeId={null}
+            LinkComponent={routing === 'adapter' ? Adapter : undefined}
+          />
+        )
+      })
+
+      it('should leave every category unmarked', () => {
+        expect(screen.queryByRole('link', { current: true })).not.toBeInTheDocument()
+        expect(screen.queryByRole('link', { current: 'page' })).not.toBeInTheDocument()
+      })
+    })
+  })
+
+  describe('and the current category link starts outside the visible list', () => {
+    beforeEach(() => {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement
+      ) {
+        if (this.tagName === 'UL') return new DOMRect(0, 0, 100, 40)
+        if (this.getAttribute('href') === '#guides') return new DOMRect(100, 0, 44, 40)
+        return new DOMRect(0, 0, 44, 40)
+      })
+      render(<TabsBar mode="navigation" items={items} activeId="guides" current="true" />)
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('should scroll the selected category into view', () => {
+      expect(screen.getByRole('list').scrollLeft).toBe(44)
     })
   })
 

@@ -1,4 +1,5 @@
 import type { MouseEvent } from 'react'
+import type { EventCardTime } from '../../../components/EventCard/EventCard'
 
 /**
  * The data the /events page hands its sections. `cards.tsx` maps it onto the public cards: PlaceCard
@@ -33,9 +34,6 @@ type RemindControl = {
   pending: boolean
   onToggle: () => void
 }
-
-/** A start time already formatted for the viewer, and its machine-readable instant. */
-type EventCardTime = { label: string; dateTime?: string }
 
 type JumpIn = {
   href: string

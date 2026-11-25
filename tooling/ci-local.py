@@ -125,6 +125,15 @@ STRUCTURE = [Step('ownership catalogue', 'python3 tooling/owners.py --check', to
 TOOLING_TESTS = Step('tooling tests', 'python3 -m unittest discover -s tooling/tests', tools=('python3',))
 
 
+# What ui3 builds from. Its `@dcl/one-ui` root import reaches every shared component and foundation, and
+# its Sites chrome imports reach the rest of library/ui/apps/sites; tooling/tests/test_ci_local.py checks that
+# every library/ui module ui3 imports falls under one of these.
+UI3_SOURCES = ('apps/ui3/*', 'library/catalyst-api/*', 'library/shop/*', 'library/web-core/*', 'library/explorer-core/*',
+               'library/ui/index.ts', 'library/ui/components/*', 'library/ui/foundations/*',
+               'library/ui/apps/hud/*', 'library/ui/apps/shop/*', 'library/ui/apps/sites/*',
+               'library/ui/figma/review/scripts/*')
+
+
 def pre_commit_steps(changed):
     steps = list(STRUCTURE)
     if touches(changed, 'tooling/*', 'flake.*', 'infra/dev/*'):
@@ -138,8 +147,7 @@ def pre_commit_steps(changed):
     if touches(changed, 'apps/dcl-scene-cli/*', 'library/*', '.cargo/*'):
         steps.append(Step('cargo check (sdk)', 'cd services/catalyst && cargo check --locked -p dcl-scene-cli --all-targets',
                           tools=('cargo',)))
-    if touches(changed, 'apps/ui3/*', 'library/catalyst-api/*', 'library/shop/*', 'library/web-core/*', 'library/ui/apps/hud/*', 'library/ui/apps/shop/*',
-               'library/ui/components/AppChrome/*', 'library/ui/apps/sites/chrome/*', 'library/explorer-core/*'):
+    if touches(changed, *UI3_SOURCES):
         steps += web_steps()
     elif touches(changed, 'apps/sites/*', 'library/ui/*'):
         steps += web_steps(changed_ui3=False)
@@ -182,7 +190,7 @@ def pre_push_steps(changed):
                 steps.append(Step('gateway smoke', 'docker load --input .cache/gateway-image && '
                                   'python3 infra/gateway/smoke.py --revision "$(git rev-parse HEAD)" '
                                   f'--arch {arch}', tools=('docker',)))
-    bevy = triggered('bevy-explorer-ci.yml', changed)
+    bevy = triggered('bevy-explorer-ci.yml', changed, event='push')
     if bevy:
         steps.append(Step('bevy-explorer formatting', 'cd rendering/bevy-explorer/source && cargo fmt --all -- --check', tools=('cargo',)))
     if development or images or bevy:

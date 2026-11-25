@@ -131,6 +131,10 @@ pub struct WindowReport {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Totals {
+    /// The RPC's logs in the compared prefixes.
+    pub rpc_logs: usize,
+    /// The portal's logs in the compared prefixes that the exact filters keep.
+    pub portal_logs: usize,
     pub missing: usize,
     pub extra: usize,
     pub mismatch: usize,
@@ -240,13 +244,22 @@ impl Report {
 pub fn index_for(indexer: &str, net: ChainNet) -> anyhow::Result<Box<dyn ChainIndex>> {
     Ok(match (indexer, net) {
         (chain_walk::INDEXER_NFT, _) => Box::new(super::nft_index::NftIndex::new(net)),
-        (chain_walk::INDEXER_SALES, ChainNet::Matic) => Box::new(super::sales_index::SalesIndex),
+        (chain_walk::INDEXER_SALES, ChainNet::Ethereum) => {
+            Box::new(super::ethereum_sales::EthereumSalesIndex)
+        }
+        (chain_walk::INDEXER_SALES, ChainNet::Matic) => Box::new(super::sales_index::POLYGON),
         (chain_walk::INDEXER_TRADE_EVENTS, _) => Box::new(super::trade_events::TradeEventsIndex {
             net,
-            chain_id: chain_walk::mainnet_chain(net),
+            chain_id: net.chain_id(),
         }),
         (chain_walk::INDEXER_COMMITTEE, ChainNet::Matic) => {
             Box::new(super::committee_index::CommitteeIndex)
+        }
+        (chain_walk::INDEXER_COLLECTIONS, ChainNet::Matic) => {
+            Box::new(super::collections_index::CollectionsIndex::new())
+        }
+        (chain_walk::INDEXER_THIRD_PARTY_REGISTRY, ChainNet::Matic) => {
+            Box::new(super::third_party_registry::ThirdPartyRegistryIndex)
         }
         (chain_walk::INDEXER_MANA, _) => {
             Box::new(super::mana_transfers::ManaTransfersIndex { net })
@@ -403,7 +416,7 @@ async fn measure(
     // The projection, the dataset, the database's cursor and the RPC must
     // name one chain before any window is read; the dataset is known
     // before any read.
-    let projection = chain_walk::mainnet_chain(req.net) as u64;
+    let projection = req.net.chain_id() as u64;
     if req.reader.chain() != projection {
         out.refused = Some(format!(
             "the dataset {} serves chain {}, the {} {} projection reads chain {projection}",
@@ -637,6 +650,8 @@ async fn compare_range(
             return Ok(());
         };
         let t = &mut out.totals;
+        t.rpc_logs += outcome.rpc_logs;
+        t.portal_logs += outcome.portal_logs;
         t.missing += outcome.missing;
         t.extra += outcome.extra;
         t.mismatch += outcome.mismatch;

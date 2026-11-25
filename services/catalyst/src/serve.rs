@@ -15,6 +15,8 @@ use crate::{
 
 #[path = "serve_adapters.rs"]
 mod adapters;
+#[path = "serve_health.rs"]
+mod health;
 #[path = "serve_lifecycle.rs"]
 mod lifecycle;
 #[path = "serve_routes.rs"]
@@ -97,10 +99,11 @@ mod metrics_tests {
         let bind = reserved.local_addr().unwrap();
         drop(reserved);
         super::install_metrics(&bind.to_string()).unwrap();
-        let response = reqwest::Client::builder()
+        let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(2))
             .build()
-            .unwrap()
+            .unwrap();
+        let response = client
             .get(format!("http://{bind}/metrics"))
             .send()
             .await
@@ -110,6 +113,23 @@ mod metrics_tests {
         for sample in ["comms_nats_connected 0", "comms_cluster_work_running 0"] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
+        for path in ["/", "/metrics/", "/social-rpc/metrics", "/custom"] {
+            let response = client
+                .get(format!("http://{bind}{path}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND, "{path}");
+        }
+        assert_eq!(
+            client
+                .post(format!("http://{bind}/metrics"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::METHOD_NOT_ALLOWED
+        );
         let reserved = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let failed_bind = reserved.local_addr().unwrap();
         drop(reserved);
@@ -125,7 +145,7 @@ mod metrics_tests {
             .unwrap()
             .build_recorder();
         let handle = recorder.handle();
-        metrics::with_local_recorder(&recorder, super::register_metrics);
+        dcl_metrics::with_local_recorder(&recorder, super::register_metrics);
         let rendered = handle.render();
         for sample in [
             "comms_nats_connected 0",
@@ -133,23 +153,23 @@ mod metrics_tests {
             "comms_cluster_work_running 0",
             "comms_cluster_work_queued 0",
             "comms_cluster_work_rejected_total{reason=\"wallet_full\"} 0",
+            "worlds_allowance_read_failures_total 0",
+            "dcl_content_server_sync_state 0",
         ] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
     }
 }
 
-/// Run with Stats prepared before creating workers. The unsafe preparation
-/// contract applies through every route clone, canceled blocking operation and
-/// final isolate teardown; an arbitrary preexisting runtime is not supported.
-pub async fn serve(
-    mut config: Config,
-    mut prepared: crate::metrics_matcher::PreparedStats,
-) -> anyhow::Result<()> {
+pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     config.node.init_tracing();
-    let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
+    install_metrics(&config.node.serve_metrics_bind)?;
+    shop::market::lambdas_metrics::record_build_info(&config.commit_hash().unwrap_or_default());
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     if let Ok(Some(warning)) = catalyst_config::posture::worlds_names_reader(&config) {
+        tracing::warn!("{warning}");
+    }
+    if let Some(warning) = catalyst_config::posture::unchecked_profile_items(&config) {
         tracing::warn!("{warning}");
     }
     config.resolve_secret_files()?;
@@ -165,9 +185,14 @@ pub async fn serve(
     .await
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
+    let self_hosts = content::own_hosts(&config);
+    let market_settings = crate::settings::market_settings(&config, &self_hosts)?;
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
     worlds::rooms::ensure_scene_admin_place_release(&pool).await?;
     worlds::rooms::ensure_genesis_scene_ban_release(&pool).await?;
+    if config.writes.social_writes_enabled {
+        comms::gatekeeper::streaming::backfill_admin_place_keys(&pool).await?;
+    }
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -189,11 +214,13 @@ pub async fn serve(
         storage.clone(),
         sync_status.clone(),
     ));
-    prepared.settings.commit_hash = Some(config.commit_hash().unwrap_or_default());
-    prepared.settings.content_url = stats_content_url(
-        config.node.content_url.as_deref(),
-        &content.settings.content_public_url,
-    );
+    let statistics_settings = comms::stats::http::Settings {
+        commit_hash: Some(config.commit_hash().unwrap_or_default()),
+        content_url: stats_content_url(
+            config.node.content_url.as_deref(),
+            &content.settings.content_public_url,
+        ),
+    };
 
     // ONE outbound client: every mirror and upstream reader goes through the
     // guard; peer sync (`content::sync::sync_http_client`) and the RPC
@@ -252,7 +279,9 @@ pub async fn serve(
     let local: Vec<&str> = local_urls.iter().map(String::as_str).collect();
 
     // ONE EIP-1654 validator (contract-wallet signatures): explore, the
-    // social routes and the social socket share it.
+    // social routes and the social socket share it. Each check that reaches
+    // the RPC spends the client source's budget (`shared::eip1654_budget`,
+    // whose layer `serve_routes::build_routes` adds).
     let eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>> = config
         .content
         .eth_rpc_url()?
@@ -265,7 +294,9 @@ pub async fn serve(
             }
             .build()
             .context("building the EIP-1654 RPC client")?;
-            anyhow::Ok(crate::auth::cached_rpc_validator(url, client))
+            anyhow::Ok(crate::shared::eip1654_budget::cached_budgeted_validator(
+                url, client,
+            ))
         })
         .transpose()?;
 
@@ -433,6 +464,7 @@ pub async fn serve(
         explore::ExploreState::new(pool.clone(), explore_settings, eip1654.clone())
             .with_storage(storage.clone())
             .with_outbound(http_client.clone())
+            .with_read_through(read_through.clone())
             .with_cors(explore_cors),
     );
     explore.spawn_jobs(&jobs, http_client.clone());
@@ -466,7 +498,6 @@ pub async fn serve(
     .await
     .context("starting the explorer-api readers and mirrors")?;
     explorer_api.attach_eip1654(eip1654.clone());
-    explorer_api.spawn_jobs(&jobs);
     // An island's /about advertises its own minimap once the grid it draws is loaded.
     let grid = Arc::downgrade(&explorer_api);
     content.attach_parcel_grid(Arc::new(move || {
@@ -539,8 +570,6 @@ pub async fn serve(
     // archive, every one over the same pool, client and job lifecycle. The
     // local writes among them sit behind DATA_WRITES_ENABLED
     // (`shop::market::DataWrites`, the social switch's twin).
-    let self_hosts = content::own_hosts(&config);
-    let market_settings = crate::settings::market_settings(&config, &self_hosts)?;
     shop::market::catalog::install_served_chains(&market_settings.market.indexes);
     let market = Arc::new(
         shop::market::MarketplaceState::new(
@@ -578,10 +607,13 @@ pub async fn serve(
         pool.clone(),
         http_client.clone(),
         land_settings,
-        Some(market.index.clone()),
     ));
     explore.places.set_land_authz(land.clone());
     explorer_api.attach_land_authz(land.clone());
+    explorer_api.attach_land_market(Arc::new(adapters::ShopLandMarket(market.clone())));
+    // Its jobs start once the tile grid's sources are attached, so the first
+    // build does not record them as missing.
+    explorer_api.spawn_jobs(&jobs);
 
     // The content server's local write path (src/content/{create_entity,
     // unpublish_scene,land_publish}): the write deployer over the ONE pool
@@ -620,7 +652,7 @@ pub async fn serve(
             config.worlds.deployment_processing_timeout_ms,
         );
         tokio::spawn(async move {
-            catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
+            content::create_entity::reclaim_stale_spool(&spool_root, stale_after).await;
         });
     }
     // Expired partial uploads (content::partial_deployments) are reclaimed
@@ -866,7 +898,6 @@ pub async fn serve(
             max_images_per_user: config.create.camera_reel_max_images_per_user,
             admin_token: Config::non_empty(&config.create.catalyrst_camera_reel_admin_token),
             writes_enabled: config.create.create_writes_enabled,
-            metrics_bearer_token: config.create.camera_reel_metrics_bearer_token.clone(),
             places_cache_ttl_seconds: config.create.camera_reel_places_cache_ttl_seconds,
             places_cache_max_size: config.create.camera_reel_places_cache_max_size,
         },
@@ -923,6 +954,19 @@ pub async fn serve(
         worlds::policy::MAX_SCENE_SIZE_BYTES,
     )
     .context("WORLDS_PERSONAL_WORLDS_MAX / WORLDS_PERSONAL_WORLD_MAX_SIZE_BYTES")?;
+    // The permission core below always attaches the land-authz index, whose
+    // published fold is then the only LAND authority: neither variable is
+    // read any more, so a deployment still setting one is told so.
+    if comms_settings.land_operators_url.is_some() {
+        tracing::warn!(
+            "COMMS_LAND_OPERATORS_URL is set but not read: LAND rights come from the land-authz index alone"
+        );
+    }
+    if std::env::var_os("LAND_SUBGRAPH_URL").is_some() {
+        tracing::warn!(
+            "LAND_SUBGRAPH_URL is set but not read: LAND rights come from the land-authz index alone"
+        );
+    }
     let land_operators = comms_settings
         .land_operators_url
         .as_deref()
@@ -946,7 +990,8 @@ pub async fn serve(
             .with_land_authz(Some(land.clone()))
             .with_max_parcels(config.worlds.max_parcels)
             .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024)
-            .with_name_deny_list(worlds.names.clone()),
+            .with_name_deny_list(worlds.names.clone())
+            .with_name_authority(market.authorizing_names.clone()),
     );
     worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
@@ -1114,7 +1159,6 @@ pub async fn serve(
         eip1654,
         &explore,
         explorer_api.onboarding.clone(),
-        metrics_handle,
     )?;
     social
         .rpc
@@ -1146,7 +1190,11 @@ pub async fn serve(
     social
         .communities
         .set_voice_eviction(comms_stage.gatekeeper.clone());
-    social.communities.set_chain_index(market.index.clone());
+    // The shop selected the node's DCL NAME source once; without one that
+    // may authorize, a community creation or ownership transfer answers 503.
+    if let Some(names) = market.authorizing_names.clone() {
+        social.communities.set_name_authority(names);
+    }
     social
         .communities
         .set_explorer_flags(explorer_api.flags.clone());
@@ -1201,7 +1249,7 @@ pub async fn serve(
                 pool: pool.clone(),
                 denylist: content.denylist.clone(),
             }),
-            prepared.settings.content_url.clone(),
+            statistics_settings.content_url.clone(),
             comms_stage.gatekeeper.clone(),
             stage5.core.clone(),
         ),
@@ -1427,7 +1475,7 @@ pub async fn serve(
     let connector_lifecycle = comms_stage.archipelago.clone();
     let app = build_routes(
         &config,
-        prepared,
+        statistics_settings,
         primary,
         Routes {
             content,
@@ -1463,15 +1511,21 @@ pub async fn serve(
 }
 
 /// The base of `/hot-scenes` thumbnails, the server the scenes are read from, as
-/// upstream Stats uses one URL for both. An operator's `CONTENT_URL` is kept as
-/// written, since upstream concatenates `${url}/contents/` literally. This node's
-/// own `/content/` loses its trailing slash, so `{base}/contents/{hash}` is a
-/// route the node serves (the nested `/content` route does not match `//`).
+/// upstream Stats uses one URL for both. Trailing slashes are stripped from
+/// `CONTENT_URL` and this node's own `/content/` alike, as upstream does since
+/// archipelago-workers#141, so `{base}/contents/{hash}` never holds `//` (the nested
+/// `/content` route does not match it). Unlike upstream, whitespace is trimmed and
+/// an all-slash `CONTENT_URL` falls back to this node's `/content`.
 fn stats_content_url(configured: Option<&str>, content_public_url: &str) -> String {
-    match configured.map(str::trim).filter(|url| !url.is_empty()) {
-        Some(url) => url.to_string(),
-        None => content_public_url.trim_end_matches('/').to_string(),
-    }
+    let strip = |url: &str| {
+        url.trim()
+            .trim_end_matches(|c: char| c == '/' || c.is_whitespace())
+            .to_string()
+    };
+    configured
+        .map(strip)
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| strip(content_public_url))
 }
 
 #[cfg(test)]
@@ -1479,7 +1533,7 @@ mod stats_content_url_tests {
     use super::stats_content_url;
 
     #[test]
-    fn the_node_default_names_a_served_route_and_an_operator_value_is_kept() {
+    fn trailing_slashes_are_stripped_from_the_node_default_and_the_operator_value() {
         assert_eq!(
             stats_content_url(None, "https://node.example/content/"),
             "https://node.example/content"
@@ -1489,11 +1543,36 @@ mod stats_content_url_tests {
             "https://node.example/content"
         );
         assert_eq!(
+            stats_content_url(Some("/"), "https://node.example/content/"),
+            "https://node.example/content"
+        );
+        assert_eq!(
             stats_content_url(
                 Some("https://cdn.example/content/"),
-                "https://cdn.example/content/"
+                "https://node.example/content/"
             ),
-            "https://cdn.example/content/"
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content/// "),
+                "https://node.example/content/"
+            ),
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content/ /"),
+                "https://node.example/"
+            ),
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content"),
+                "https://node.example/content/"
+            ),
+            "https://cdn.example/content"
         );
     }
 }
@@ -2014,5 +2093,97 @@ mod referral_settings_tests {
             trusted.iter().map(ToString::to_string).collect::<Vec<_>>(),
             ["10.0.0.0/8", "2001:db8::/32"]
         );
+    }
+}
+
+#[cfg(test)]
+mod name_source_wiring_tests {
+    use crate::config::Config;
+    use crate::worlds::policy::{PersonalWorldsPolicy, Policy};
+
+    /// A `serve` that neither walks the nft index nor reads the subgraph,
+    /// with chain checks skipped so it starts (personal worlds only), over a
+    /// database another process published a NAME into: the Admin Toolkit's
+    /// lookup reads that publication, and the worlds policy, built from the
+    /// source `serve` hands it, owns no DCL NAME world with it.
+    #[tokio::test]
+    async fn a_shared_database_reader_serves_lookups_and_authorizes_no_world() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let config = Config::parse_env_for_tests([
+            ("DATABASE_URL", "postgres:///catalyst"),
+            ("WORLDS_WRITES_ENABLED", "true"),
+            ("MARKETPLACE_NFT_INDEX_ENABLED", "false"),
+            ("MARKETPLACE_SUBGRAPH_URL", ""),
+            ("IGNORE_BLOCKCHAIN_ACCESS_CHECKS", "true"),
+        ])
+        .unwrap();
+        assert!(
+            catalyst_config::posture::worlds_names_reader(&config)
+                .unwrap()
+                .is_some(),
+            "starts with the personal-worlds warning"
+        );
+        let label = format!("w{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+        let holder = crate::shared::identity::Address::parse(&format!(
+            "0x{}",
+            &uuid::Uuid::new_v4().simple().to_string().repeat(2)[..40]
+        ))
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('nft', 'ethereum', 1, 100, 100, timezone('UTC', now()), true, 1) \
+             ON CONFLICT (indexer, network) DO UPDATE SET last_block = 100, folded_block = 100, \
+                 folded_at = EXCLUDED.folded_at, full_history = true, chain_id = 1, quarantined_at = NULL",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let token =
+            i64::from_str_radix(&uuid::Uuid::new_v4().simple().to_string()[..12], 16).unwrap();
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, ens_subdomain, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             VALUES ('ethereum', $1, $2, $3, $4, 1, 1, 1, 0, 1)",
+        )
+        .bind(crate::shop::market::nft_index::DCL_REGISTRAR)
+        .bind(token)
+        .bind(holder.as_str())
+        .bind(&label)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let market = crate::shop::market::MarketplaceState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::settings::market_settings(&config, &[]).unwrap(),
+        );
+        assert_eq!(
+            market.name_owner(&label).await.unwrap(),
+            Some(holder.clone())
+        );
+        assert!(market.authorizing_names.is_none());
+        // As `serve` builds it.
+        let policy = Policy::new(
+            pool.clone(),
+            PersonalWorldsPolicy::disabled(),
+            Some(market.index.clone()),
+        )
+        .with_name_authority(market.authorizing_names.clone());
+        let world =
+            crate::comms::world_identity::WorldName::parse(&format!("{label}.dcl.eth")).unwrap();
+        let refused = policy
+            .is_owner(&world, &holder)
+            .await
+            .into_result()
+            .unwrap_err();
+        assert_eq!(refused.http_status(), 403, "{refused}");
+        sqlx::query("DELETE FROM shop.nft WHERE contract_address = $1 AND token_id = $2")
+            .bind(crate::shop::market::nft_index::DCL_REGISTRAR)
+            .bind(token)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

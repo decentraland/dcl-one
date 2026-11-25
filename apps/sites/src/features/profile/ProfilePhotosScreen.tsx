@@ -1,9 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router";
-
-import { Button, JumpInCTA } from "@dcl/one-ui";
-import { GeneralGallery, GeneralImage, GeneralLock, GeneralPublic } from "@dcl/one-ui/foundations/icons";
+import { useRouteLoaderData, useSearchParams } from "react-router";
 
 import {
   CollectiblesItem,
@@ -12,22 +9,31 @@ import {
   useFocusNewRows,
   type CategoryOption,
   type CollectiblesState,
-} from "@dcl/one-ui/apps/sites/profile/collectibles";
-import { EmptyMessage } from "@dcl/one-ui/apps/sites/profile/EmptyMessage";
-import { PhotoViewer, type PhotoViewerDetails } from "@dcl/one-ui/apps/sites/profile/PhotoViewer";
-import { PhotoTile, PrivatePhotosNotice } from "@dcl/one-ui/apps/sites/profile/PhotoTile";
+  EmptyMessage,
+  PhotoViewer,
+  PhotoTile,
+  PrivatePhotosNotice,
+  GeneralGallery,
+  GeneralImage,
+  GeneralLock,
+  GeneralPublic,
+  Button,
+  JumpInCTA,
+} from "@dcl/one-ui";
+
 
 import { useAuth } from "@/data/lib/auth/index";
 import { playUrl } from "@/data/lib/catalyst/bases";
-import { shortAddress } from "@/data/lib/catalyst/format/address";
-import { formatPhotoDate, isPhotoId, type ProfilePhoto } from "@/data/lib/catalyst/social/photos";
+import { isPhotoId, type ProfilePhoto } from "@/data/lib/catalyst/social/photos";
 import { normalizeAddress, type ProfileVM } from "@/data/lib/catalyst/social/profile";
 import { canReadProfile, photosQuery, signsFor } from "@/data/lib/profile/queries";
+
+import { downloadName, photoDetails, photoLabel } from "../photos/photo-view";
+import { usePhotoActions } from "../photos/usePhotoActions";
 
 import { CollectibleLink, catalogueTotal, loadedRows, loadMore } from "./collectibles";
 import { usePlaceOwners, useProfilePhoto, useProfilePhotos } from "./hooks";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
-import { profileHref } from "./tabs";
 
 /** The search parameter that holds the open photo, so the viewer can be linked to. */
 const PHOTO_PARAM = "photo";
@@ -55,65 +61,6 @@ function countLabel(shown: number, total: number): string {
   return total > shown ? `Showing ${shown} of ${photoCount(total)}` : photoCount(shown);
 }
 
-/** "Photo at Genesis Plaza, November 08, 2026": what each tile is called. */
-function photoLabel(photo: ProfilePhoto): string {
-  const date = formatPhotoDate(photo.dateTime);
-  return date ? `Photo at ${photo.scene.name}, ${date}` : `Photo at ${photo.scene.name}`;
-}
-
-const PARCEL = /^-?\d+$/;
-
-/** A world NAME, the only realm Jump In forwards: the photo's realm is whatever its uploader wrote. */
-const WORLD_REALM = /^[a-z0-9-]+\.dcl\.eth$/;
-
-/**
- * Jump In to the parcel it was taken on, in its world when the realm is one; Genesis City for any
- * other realm, since an uploaded realm URL could send the Explorer to a server of the uploader's
- * choosing. None without coordinates.
- */
-function jumpInHref(photo: ProfilePhoto): string | undefined {
-  const { x, y } = photo.scene;
-  if (!PARCEL.test(x.trim()) || !PARCEL.test(y.trim())) return undefined;
-  const raw = photo.realm.trim().toLowerCase();
-  return playUrl({ position: `${x.trim()},${y.trim()}`, realm: WORLD_REALM.test(raw) ? raw : undefined });
-}
-
-/** "Genesis Plaza 0,1": the scene, and its parcel when the photo has one. */
-function placeLabel(photo: ProfilePhoto): string {
-  const { name, x, y } = photo.scene;
-  return PARCEL.test(x.trim()) && PARCEL.test(y.trim()) ? `${name} ${x.trim()},${y.trim()}` : name;
-}
-
-/** "kurd-2026-11-10.jpg": who took it and the day, as a file name. */
-function downloadName(photo: ProfilePhoto): string {
-  const name = photo.author.name.replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || "photo";
-  const seconds = Number(photo.dateTime.trim());
-  const date = new Date(Number.isFinite(seconds) && photo.dateTime.trim() !== "" ? seconds * 1000 : photo.dateTime);
-  return Number.isNaN(date.getTime()) ? `${name}.jpg` : `${name}-${date.toISOString().slice(0, 10)}.jpg`;
-}
-
-function personHref(address: string): string | undefined {
-  return canReadProfile(address) ? profileHref(address) : undefined;
-}
-
-function viewerDetails(
-  photo: ProfilePhoto,
-  faces: Record<string, { picture?: string | null } | undefined>,
-): PhotoViewerDetails {
-  const takenByHref = personHref(photo.author.address);
-  return {
-    date: formatPhotoDate(photo.dateTime) || undefined,
-    takenBy: photo.author.name && takenByHref ? { name: photo.author.name, href: takenByHref } : undefined,
-    place: { label: placeLabel(photo), jumpInHref: jumpInHref(photo) },
-    people: photo.people.map((person) => ({
-      name: person.name || shortAddress(person.address),
-      href: personHref(person.address),
-      faceUrl: faces[person.address]?.picture ?? undefined,
-      isGuest: person.isGuest,
-    })),
-  };
-}
-
 /** The open photo with its neighbours in the grid, and the people in it with their faces. */
 function OpenPhoto({
   photos,
@@ -129,6 +76,8 @@ function OpenPhoto({
   const photo = photos[index]!;
   const people = photo.people.flatMap((person) => (canReadProfile(person.address) ? [person.address] : []));
   const faces = usePlaceOwners(people);
+  const root = useRouteLoaderData("root") as { publicPageBase?: string } | undefined;
+  const actions = usePhotoActions(photo, false, root?.publicPageBase);
   const previous = photos[index - 1];
   const next = photos[index + 1];
   return (
@@ -137,8 +86,10 @@ function OpenPhoto({
       alt={photo.scene.name}
       // Counted against the photos loaded, the ones Previous and Next can reach.
       label={`${photoLabel(photo)}, ${index + 1} of ${photos.length}`}
-      details={viewerDetails(photo, faces.data ?? {})}
-      download={{ href: photo.url, fileName: downloadName(photo) }}
+      details={photoDetails(photo, faces.data ?? {})}
+      variant="dialog"
+      actions={photo.isPublic ? actions : undefined}
+      download={{ href: photo.url, fileName: downloadName(photo, "image/jpeg") }}
       onPrevious={previous ? () => onOpen(previous.id) : undefined}
       onNext={next ? () => onOpen(next.id) : undefined}
       onClose={onClose}

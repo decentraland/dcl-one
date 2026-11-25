@@ -10,7 +10,7 @@ use reqwest::blocking::Client;
 use reqwest::redirect::Policy;
 use reqwest::Url;
 use tokio_util::sync::CancellationToken;
-use zip06::ZipArchive;
+use zip::ZipArchive;
 
 use crate::failure::Failure;
 use crate::out;
@@ -46,6 +46,7 @@ pub fn provision(
     destination: &Path,
     cancel: &CancellationToken,
 ) -> Result<PathBuf, Failure> {
+    check_source(source)?;
     if let Some(url) = web_address(source) {
         let mut zip = destination.as_os_str().to_owned();
         zip.push(".zip");
@@ -54,18 +55,28 @@ pub fn provision(
         let unpacked = download(&url, &zip, cancel).and_then(|()| extract(&zip, destination));
         let _ = fs::remove_file(&zip);
         unpacked?;
-    } else if Path::new(source).is_file() && source.to_ascii_lowercase().ends_with(".zip") {
+    } else if is_zip(source) {
         extract(Path::new(source), destination)?;
-    } else if Path::new(source).is_dir() {
-        return find_app_root(&std::path::absolute(source)?);
     } else {
-        return Err(Failure::usage(format!(
-            "'{}' is not a web app folder, a .zip or a URL",
-            out::safe(source)
-        )));
+        return find_app_root(&std::path::absolute(source)?);
     }
 
     find_app_root(&std::path::absolute(destination)?)
+}
+
+/// Refuses a source that is not a web app folder, a `.zip` on this machine or a URL.
+pub fn check_source(source: &str) -> Result<(), Failure> {
+    if web_address(source).is_some() || is_zip(source) || Path::new(source).is_dir() {
+        return Ok(());
+    }
+    Err(Failure::usage(format!(
+        "'{}' is not a web app folder, a .zip or a URL",
+        out::safe(source)
+    )))
+}
+
+fn is_zip(source: &str) -> bool {
+    Path::new(source).is_file() && source.to_ascii_lowercase().ends_with(".zip")
 }
 
 fn web_address(source: &str) -> Option<Url> {
@@ -167,6 +178,10 @@ fn check_archive<R: Read + io::Seek>(archive: &mut ZipArchive<R>) -> Result<(), 
             archive.len()
         )));
     }
+    // The reader keeps one entry of each name, so a name held twice is refused here.
+    if archive.has_duplicate_names() {
+        return Err(Failure::usage("the archive holds one name twice"));
+    }
 
     let mut declared = 0u64;
     for index in 0..archive.len() {
@@ -190,7 +205,7 @@ fn unpack<R: Read + io::Seek>(
 
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
-        let name = entry.name().to_string();
+        let name = entry.name()?.into_owned();
         let link = entry
             .unix_mode()
             .is_some_and(|mode| mode & 0xF000 == 0xA000);

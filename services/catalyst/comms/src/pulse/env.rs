@@ -24,7 +24,10 @@ use super::hardening::{
     HandshakeReplayPolicy, IpWhitelist,
 };
 use super::interest::{SpatialAreaOfInterest, SpatialAreaOfInterestOptions};
-use super::server::{ENET_CAPACITY, WT_CAPACITY};
+use super::server::{
+    DEFAULT_MAX_PEERS, DEFAULT_RING_CAPACITY, DEFAULT_SIMULATION_STEPS, ENET_CAPACITY,
+    PEER_SLOT_CAPACITY, WT_CAPACITY,
+};
 use super::transport::webtransport::WtConfig;
 use super::transport::webtransport::config::{
     DEFAULT_MAX_DATAGRAM_BYTES, DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_SERVICE_TIMEOUT_MS,
@@ -34,6 +37,10 @@ const DEFAULT_BIND: &str = "0.0.0.0:9000";
 const DEFAULT_WT_BIND: &str = "0.0.0.0:7743";
 pub const DEFAULT_LOG_FILTER: &str = "catalyst=info";
 const DEFAULT_REPLAY_STATE_PATH: &str = "data/pulse-replay.tsv";
+// Every transport slot has a preallocated snapshot ring.
+const MAX_SNAPSHOT_HISTORY_CAPACITY: usize = 256;
+// The simulation ticker also polls pending connection timeouts.
+const MAX_SIMULATION_BASE_TICK_MS: u32 = 1_000;
 
 const BOOL_TRUE: &[&str] = &["1", "true", "yes", "on"];
 const BOOL_FALSE: &[&str] = &["0", "false", "no", "off"];
@@ -67,6 +74,22 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
         "positive ban poll interval (default 30)",
     ),
     ("PULSE_BIND", "ENet/UDP bind address (default 0.0.0.0:9000)"),
+    (
+        "PULSE_MAX_PEERS",
+        "admitted connections across ENet and WebTransport, including pending authentication and closing connections, in 1..=4095 (default 4095)",
+    ),
+    (
+        "PULSE_SIMULATION_STEPS_MS",
+        "three comma-separated tier intervals in milliseconds, positive and nondecreasing whole multiples of the first interval, which drives the simulation ticker and can be at most 1000 ms (default 50,100,200)",
+    ),
+    (
+        "PULSE_SNAPSHOT_HISTORY_CAPACITY",
+        "retained snapshots per peer slot in 1..=256 (default 20)",
+    ),
+    (
+        "PULSE_RESYNC_WITH_DELTA",
+        "try a targeted delta on resync when the requested baseline is retained; otherwise send full state, with 1/true/yes/on or 0/false/no/off, case-insensitive (default false)",
+    ),
     (
         "PULSE_METRICS_BIND",
         "prometheus /metrics bind address (default 127.0.0.1:5005)",
@@ -290,16 +313,18 @@ pub fn validate_auth_requests(
 /// `catalyst pulse`: tracing, the Prometheus exporter, and the server assembled from the
 /// environment; returns when the loop ends.
 pub async fn run_from_env() -> anyhow::Result<()> {
-    run_from_env_with_generation(None).await
+    run_from_env_with_generation_until(None, std::future::pending()).await
 }
 
-pub async fn run_from_env_with_generation(
+pub async fn run_from_env_with_generation_until(
     generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
+    shutdown: impl std::future::Future<Output = ()>,
 ) -> anyhow::Result<()> {
     validate_auth_requests(
         std::env::var("PULSE_LEGACY_HANDSHAKE"),
         std::env::var("PULSE_V4_ENABLED"),
     )?;
+    let options = StartupOptions::from_lookup(&|key| std::env::var(key))?;
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER));
     tracing_subscriber::fmt()
@@ -325,7 +350,14 @@ pub async fn run_from_env_with_generation(
         max = aoi.max_radius,
         "player AoI radii"
     );
-    let mut server = PulseServer::new();
+    let mut server = PulseServer::with_config(
+        PEER_SLOT_CAPACITY,
+        options.snapshot_history_capacity,
+        &options.simulation_steps_ms,
+        options.resync_with_delta,
+    );
+    server.max_admitted_connections = options.max_peers;
+    let tick_ms = u64::from(server.simulation.base_tick_ms);
     server.ban_snapshots = Some(ban_poller.spawn());
     let replay_state_path = std::env::var("PULSE_REPLAY_STATE_PATH")
         .unwrap_or_else(|_| DEFAULT_REPLAY_STATE_PATH.to_string());
@@ -393,13 +425,15 @@ pub async fn run_from_env_with_generation(
         .clusters
         .as_ref()
         .map(|clusters| clusters.publisher());
+    let run = server.run_with_webtransport_until(bind, tick_ms, wt, shutdown);
     let result = if let Some(authority) = &generation {
         tokio::select! {
-            result = server.run_with_webtransport(bind, 50, wt) => result,
+            biased;
             _ = authority.lost().cancelled() => Err(anyhow::anyhow!("Pulse deployment generation was revoked")),
+            result = run => result,
         }
     } else {
-        server.run_with_webtransport(bind, 50, wt).await
+        run.await
     };
     if let Some(authority) = &generation {
         authority.lost().cancel();
@@ -408,6 +442,80 @@ pub async fn run_from_env_with_generation(
         publisher.shutdown().await;
     }
     result
+}
+
+struct StartupOptions {
+    max_peers: usize,
+    snapshot_history_capacity: usize,
+    simulation_steps_ms: [u32; 3],
+    resync_with_delta: bool,
+}
+
+impl StartupOptions {
+    fn from_lookup(lookup: &impl Fn(&str) -> Result<String, VarError>) -> anyhow::Result<Self> {
+        let read = |key| env_value(key, lookup(key));
+        let max_peers = parse_or(
+            "PULSE_MAX_PEERS",
+            read("PULSE_MAX_PEERS")?,
+            DEFAULT_MAX_PEERS,
+        )?;
+        anyhow::ensure!(
+            (1..=ENET_CAPACITY).contains(&max_peers),
+            "PULSE_MAX_PEERS must be in 1..={ENET_CAPACITY}"
+        );
+
+        let history_key = "PULSE_SNAPSHOT_HISTORY_CAPACITY";
+        let snapshot_history_capacity =
+            parse_or(history_key, read(history_key)?, DEFAULT_RING_CAPACITY)?;
+        anyhow::ensure!(
+            (1..=MAX_SNAPSHOT_HISTORY_CAPACITY).contains(&snapshot_history_capacity),
+            "{history_key} must be in 1..={MAX_SNAPSHOT_HISTORY_CAPACITY}"
+        );
+
+        let resync_key = "PULSE_RESYNC_WITH_DELTA";
+        Ok(Self {
+            max_peers,
+            snapshot_history_capacity,
+            simulation_steps_ms: simulation_steps_from(read("PULSE_SIMULATION_STEPS_MS")?)?,
+            resync_with_delta: parse_bool(resync_key, read(resync_key)?)?,
+        })
+    }
+}
+
+fn simulation_steps_from(raw: Option<String>) -> anyhow::Result<[u32; 3]> {
+    let Some(value) = raw
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(DEFAULT_SIMULATION_STEPS);
+    };
+    let parse_error = || {
+        anyhow::anyhow!(
+            "PULSE_SIMULATION_STEPS_MS: expected three positive, nondecreasing, comma-separated whole multiples of tier 0"
+        )
+    };
+    let intervals = value
+        .splitn(4, ',')
+        .map(|part| part.trim().parse::<u32>())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| parse_error())?;
+    let [tier0, tier1, tier2] = intervals.as_slice() else {
+        return Err(parse_error());
+    };
+    if *tier0 == 0
+        || tier1 < tier0
+        || tier2 < tier1
+        || !tier1.is_multiple_of(*tier0)
+        || !tier2.is_multiple_of(*tier0)
+    {
+        return Err(parse_error());
+    }
+    anyhow::ensure!(
+        *tier0 <= MAX_SIMULATION_BASE_TICK_MS,
+        "PULSE_SIMULATION_STEPS_MS: tier 0 must be at most {MAX_SIMULATION_BASE_TICK_MS} ms"
+    );
+    Ok([*tier0, *tier1, *tier2])
 }
 
 fn limiter_options_from_lookup(
@@ -1076,6 +1184,18 @@ mod tests {
                 DEFAULT_AOI_TIER1_RADIUS.to_string(),
             ),
             ("PULSE_AOI_MAX_RADIUS", DEFAULT_AOI_MAX_RADIUS.to_string()),
+            ("PULSE_MAX_PEERS", DEFAULT_MAX_PEERS.to_string()),
+            (
+                "PULSE_SIMULATION_STEPS_MS",
+                DEFAULT_SIMULATION_STEPS
+                    .map(|value| value.to_string())
+                    .join(","),
+            ),
+            (
+                "PULSE_SNAPSHOT_HISTORY_CAPACITY",
+                DEFAULT_RING_CAPACITY.to_string(),
+            ),
+            ("PULSE_RESYNC_WITH_DELTA", false.to_string()),
             ("PULSE_WT_BIND", DEFAULT_WT_BIND.to_string()),
             (
                 "PULSE_CLUSTERS_ENABLED",
@@ -1280,6 +1400,54 @@ mod tests {
         let before = keys.len();
         keys.dedup();
         assert_eq!(before, keys.len(), "duplicate ENV_DOCS key");
+    }
+
+    #[test]
+    fn pulse_startup_options_use_documented_defaults_and_explicit_overrides() {
+        let defaults = StartupOptions::from_lookup(&|_| Err(VarError::NotPresent)).unwrap();
+        assert_eq!(defaults.max_peers, DEFAULT_MAX_PEERS);
+        assert_eq!(defaults.snapshot_history_capacity, DEFAULT_RING_CAPACITY);
+        assert_eq!(defaults.simulation_steps_ms, DEFAULT_SIMULATION_STEPS);
+        assert!(!defaults.resync_with_delta);
+
+        let settings = lookup(&[
+            ("PULSE_MAX_PEERS", " 128 "),
+            ("PULSE_SNAPSHOT_HISTORY_CAPACITY", "50"),
+            ("PULSE_SIMULATION_STEPS_MS", " 25, 75, 150 "),
+            ("PULSE_RESYNC_WITH_DELTA", "YeS"),
+        ]);
+        let overrides =
+            StartupOptions::from_lookup(&|key| settings(key).ok_or(VarError::NotPresent)).unwrap();
+        assert_eq!(overrides.max_peers, 128);
+        assert_eq!(overrides.snapshot_history_capacity, 50);
+        assert_eq!(overrides.simulation_steps_ms, [25, 75, 150]);
+        assert!(overrides.resync_with_delta);
+    }
+
+    #[test]
+    fn pulse_startup_options_reject_invalid_operator_settings() {
+        for (key, value) in [
+            ("PULSE_MAX_PEERS", "0"),
+            ("PULSE_MAX_PEERS", "4096"),
+            ("PULSE_SNAPSHOT_HISTORY_CAPACITY", "0"),
+            ("PULSE_SNAPSHOT_HISTORY_CAPACITY", "257"),
+            ("PULSE_SIMULATION_STEPS_MS", "0,100,200"),
+            ("PULSE_SIMULATION_STEPS_MS", "1001,2002,4004"),
+            ("PULSE_SIMULATION_STEPS_MS", "50,100"),
+            ("PULSE_SIMULATION_STEPS_MS", "50,100,200,400"),
+            ("PULSE_SIMULATION_STEPS_MS", "50,75,200"),
+            ("PULSE_SIMULATION_STEPS_MS", "50,200,100"),
+            ("PULSE_SIMULATION_STEPS_MS", "50,100,fast"),
+            ("PULSE_RESYNC_WITH_DELTA", "sometimes"),
+        ] {
+            let options = StartupOptions::from_lookup(&|candidate| {
+                (candidate == key)
+                    .then(|| value.to_owned())
+                    .ok_or(VarError::NotPresent)
+            });
+            let err = options.err().expect("invalid Pulse startup option");
+            assert!(err.to_string().starts_with(key), "{err}");
+        }
     }
 
     #[test]

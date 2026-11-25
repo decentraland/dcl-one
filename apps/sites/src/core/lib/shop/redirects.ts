@@ -6,6 +6,7 @@
 // and the hash. Only GET pages redirect: a write is never redirected and a signed API request never
 // reaches these routes. Pure, so the SSR loaders and the Explorer's native runtime share it.
 
+import { sitePath } from "../router/site-path";
 import { landAliasOptions, landIdentity, landRedirectTarget } from "./land-redirects";
 import { isNameRegistrar, landCategoryOf } from "@shop/land/contracts";
 import { aliasTarget, resolveShopAlias, SHOP_BASE } from "@shop/route-aliases";
@@ -257,9 +258,9 @@ function contractsPath(segments: string[], q: URLSearchParams, hash: string): st
 }
 
 /** A same-site return path, or null (never another origin: `//host` and `/\host` are refused). */
+/** A sign-in return path on this site only; resolved against a placeholder origin, so absolute URLs never qualify. */
 function safeReturn(raw: string | null): string | null {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) return null;
-  return raw;
+  return sitePath(raw, "https://shop.invalid");
 }
 
 /**

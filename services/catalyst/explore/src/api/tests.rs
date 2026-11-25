@@ -7,7 +7,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -37,9 +37,6 @@ struct Mock {
     events_flags: Mutex<Value>,
     entities: Mutex<Vec<Value>>,
     profiles: Mutex<Vec<Value>>,
-    tiles: Mutex<Value>,
-    tiles_etag: Mutex<String>,
-    tiles_last_updated: AtomicI64,
     hits: Mutex<HashMap<String, usize>>,
     bodies: Mutex<Vec<Value>>,
 }
@@ -61,28 +58,6 @@ fn entity(id: &str, pointers: &[&str]) -> Value {
         "bundles": {"assets": {"mac": "complete", "windows": "complete", "webgl": "pending"}},
         "versions": {"assets": {"mac": {"version": "v49", "buildDate": "2026-09-16T17:14:28.886Z"}}}
     })
-}
-
-fn tile(x: i32, y: i32, kind: &str, estate: Option<&str>) -> Value {
-    let mut t = json!({"id": format!("{x},{y}"), "x": x, "y": y, "type": kind, "top": false, "left": false, "topLeft": false, "updatedAt": 1});
-    if let Some(e) = estate {
-        t["estateId"] = json!(e);
-        t["owner"] = json!("0xowner");
-    }
-    t
-}
-
-fn tiles_doc(stamp: i64) -> Value {
-    let mut data = serde_json::Map::new();
-    for t in [
-        tile(0, 0, "plaza", Some("1164")),
-        tile(1, 0, "road", None),
-        tile(1, 1, "owned", Some("77")),
-        tile(2, 1, "district", None),
-    ] {
-        data.insert(t["id"].as_str().unwrap().to_string(), t);
-    }
-    json!({"ok": true, "data": data, "stamp": stamp})
 }
 
 fn mock() -> Arc<Mock> {
@@ -111,9 +86,6 @@ fn mock() -> Arc<Mock> {
         profiles: Mutex::new(vec![
             json!({"timestamp": "1790276949479", "avatars": [{"name": "Ryumi", "ethAddress": "0xC9C29AB98E6BC42015985165A11153F564E9F8C2", "userId": "0xc9c29ab98e6bc42015985165a11153f564e9f8c2"}]}),
         ]),
-        tiles: Mutex::new(tiles_doc(1000)),
-        tiles_etag: Mutex::new("\"grid-1\"".into()),
-        tiles_last_updated: AtomicI64::new(1000),
         hits: Mutex::new(HashMap::new()),
         bodies: Mutex::new(Vec::new()),
     })
@@ -256,28 +228,6 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
             .collect();
         Json(Value::Array(docs))
     }
-    async fn tiles_info(AxState(m): AxState<Arc<Mock>>) -> Json<Value> {
-        m.hit("tiles/info");
-        Json(json!({"lastUpdatedAt": m.tiles_last_updated.load(Ordering::SeqCst)}))
-    }
-    async fn tiles(AxState(m): AxState<Arc<Mock>>, headers: HeaderMap) -> Response {
-        m.hit("tiles");
-        let etag = m.tiles_etag.lock().clone();
-        if headers
-            .get(header::IF_NONE_MATCH)
-            .and_then(|v| v.to_str().ok())
-            == Some(etag.as_str())
-        {
-            m.hit("tiles-304");
-            return StatusCode::NOT_MODIFIED.into_response();
-        }
-        (
-            StatusCode::OK,
-            [(header::ETAG, etag)],
-            Json(m.tiles.lock().clone()),
-        )
-            .into_response()
-    }
     async fn ab_object(
         AxState(m): AxState<Arc<Mock>>,
         axum::extract::Path(path): axum::extract::Path<String>,
@@ -305,8 +255,6 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
         .route("/entities/versions", post(versions))
         .route("/profiles", post(profiles))
         .route("/profiles/metadata", post(profiles_metadata))
-        .route("/v2/tiles/info", get(tiles_info))
-        .route("/v2/tiles", get(tiles))
         .with_state(mock);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -321,7 +269,6 @@ fn sources_at(addr: SocketAddr) -> Sources {
         denylist: format!("{base}/denylist.json"),
         feature_flags: format!("{base}/explorer.json"),
         registry: base.clone(),
-        map: base.clone(),
         ab_cdn: base,
     }
 }
@@ -394,7 +341,9 @@ async fn node_on_pool(settings: Settings, pool: PgPool) -> Node {
         registry_denylist: Default::default(),
         eip1654: std::sync::OnceLock::new(),
         contract_checks: Default::default(),
+        auth_sockets: Default::default(),
         land_authz: std::sync::OnceLock::new(),
+        land_market: std::sync::OnceLock::new(),
     });
     Node { state, _tmp: tmp }
 }
@@ -716,7 +665,7 @@ fn sources_must_be_public_and_not_this_node() {
         assert!(err.contains("EXPLORER_LISTS_SOURCE_URL"), "{url}: {err}");
     }
     let mut s = settings.clone();
-    s.sources.map = "https://gateway.example.org/api".into();
+    s.sources.feature_flags = "https://gateway.example.org/api/explorer.json".into();
     let err = s.validate().unwrap_err().to_string();
     assert!(err.contains("own host gateway.example.org"), "{err}");
     assert!(s.guarded_url("https://api.decentraland.org").is_ok());
@@ -736,7 +685,7 @@ fn sources_must_be_public_and_not_this_node() {
 #[test]
 fn sources_from_env_strip_trailing_slashes() {
     let d = Sources::defaults();
-    assert_eq!(d.all().len(), 6);
+    assert_eq!(d.all().len(), 5);
     assert!(d.all().iter().all(|(_, u)| !u.ends_with('/')));
 }
 
@@ -1885,181 +1834,498 @@ async fn dapps_flags_refresh_preserves_the_audience_and_last_good_document() {
     db.teardown().await;
 }
 
+/// Shop's side of the map build as `serve` hands it over: a fixed snapshot,
+/// or the source it is waiting for.
+struct FixedLandMarket(Mutex<Result<map::LandMarketSnapshot, crate::chain_index::source::Source>>);
+
+impl map::LandMarket for FixedLandMarket {
+    fn snapshot<'a>(
+        &'a self,
+        conn: &'a mut sqlx::PgConnection,
+        chain_id: i64,
+        _land: &'a str,
+        _estate: &'a str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> futures::future::BoxFuture<'a, Result<map::LandMarketSnapshot, map::LandMarketError>> {
+        assert_eq!(chain_id, 1, "the test LAND index is mainnet's");
+        let answer = match &*self.0.lock() {
+            Ok(snapshot) => Ok(snapshot.clone()),
+            Err(source) => Err(map::LandMarketError::Unready(
+                *source,
+                "fixture not published".into(),
+            )),
+        };
+        Box::pin(async move {
+            // The build's clock is the snapshot's own, never the process's.
+            let on_snapshot_clock: bool = sqlx::query_scalar("SELECT now() = $1")
+                .bind(now)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+            assert!(on_snapshot_clock, "the build's now is the snapshot's now()");
+            answer
+        })
+    }
+
+    fn marks<'a>(
+        &'a self,
+        _conn: &'a mut sqlx::PgConnection,
+        _chain_id: i64,
+        _land: &'a str,
+        _estate: &'a str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> futures::future::BoxFuture<'a, Result<map::build::Marks, map::LandMarketError>> {
+        let answer = self.0.lock().clone();
+        Box::pin(async move {
+            Ok(map::build::Marks {
+                ready: answer.is_ok(),
+                marks: format!("{answer:?}"),
+            })
+        })
+    }
+}
+
+/// A Shop side that, once called on the build's snapshot, commits a rewind
+/// of the LAND index on another connection (its publication withdrawn, the
+/// estate links deleted), then counts the estate links on the snapshot.
+struct RewindingLandMarket {
+    pool: PgPool,
+    links_seen: Mutex<Option<i64>>,
+}
+
+impl map::LandMarket for RewindingLandMarket {
+    fn snapshot<'a>(
+        &'a self,
+        conn: &'a mut sqlx::PgConnection,
+        _chain_id: i64,
+        _land: &'a str,
+        _estate: &'a str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> futures::future::BoxFuture<'a, Result<map::LandMarketSnapshot, map::LandMarketError>> {
+        Box::pin(async move {
+            sqlx::query("UPDATE land_authz.index_cursor SET folded_block = NULL, folded_at = NULL")
+                .execute(&self.pool)
+                .await
+                .unwrap();
+            sqlx::query("DELETE FROM land_authz.estate_land")
+                .execute(&self.pool)
+                .await
+                .unwrap();
+            let links: i64 = sqlx::query_scalar("SELECT count(*) FROM land_authz.estate_land")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+            *self.links_seen.lock() = Some(links);
+            Ok(map::LandMarketSnapshot::default())
+        })
+    }
+
+    fn marks<'a>(
+        &'a self,
+        _conn: &'a mut sqlx::PgConnection,
+        _chain_id: i64,
+        _land: &'a str,
+        _estate: &'a str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> futures::future::BoxFuture<'a, Result<map::build::Marks, map::LandMarketError>> {
+        Box::pin(async move {
+            Ok(map::build::Marks {
+                ready: true,
+                marks: "fixture".into(),
+            })
+        })
+    }
+}
+
+/// A Shop side whose next call, once armed, signals `pinned` on the build's
+/// snapshot and holds the build there until `release`.
+/// Shop's side for the build job's scheduling: its marks can fail to read
+/// (`marks_fail`, or `snapshot_marks_fail` only in the build's snapshot) or
+/// move on every read (`churning`). A `rental` listing shows in the build and
+/// in the marks; `rental_after_next_marks` is listed right after the next
+/// marks read, between the read before a pass and the pass's snapshot.
+/// `answer` makes a source unready for both reads; `build_unready` only for
+/// the build (a source that went unready between the marks and the pass).
+/// `overtake_in_build` stores another revision of the grid on that pool
+/// while the next build reads its marks, as another publisher would.
+#[derive(Default)]
+struct ScriptedLandMarket {
+    answer: Mutex<Option<crate::chain_index::source::Source>>,
+    build_unready: Mutex<Option<crate::chain_index::source::Source>>,
+    overtake_in_build: Mutex<Option<PgPool>>,
+    marks_fail: std::sync::atomic::AtomicBool,
+    snapshot_marks_fail: std::sync::atomic::AtomicBool,
+    churning: std::sync::atomic::AtomicBool,
+    reads: std::sync::atomic::AtomicUsize,
+    rental: Mutex<Option<map::build::LandRental>>,
+    rental_after_next_marks: Mutex<Option<map::build::LandRental>>,
+    /// The next marks read is the build's, in its snapshot.
+    in_build: std::sync::atomic::AtomicBool,
+}
+
+impl map::LandMarket for ScriptedLandMarket {
+    fn snapshot<'a>(
+        &'a self,
+        _conn: &'a mut sqlx::PgConnection,
+        _chain_id: i64,
+        _land: &'a str,
+        _estate: &'a str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> futures::future::BoxFuture<'a, Result<map::LandMarketSnapshot, map::LandMarketError>> {
+        let unready = (*self.answer.lock()).or(*self.build_unready.lock());
+        let answer = match unready {
+            None => {
+                self.in_build
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(map::LandMarketSnapshot {
+                    rentals: self.rental.lock().clone().into_iter().collect(),
+                    ..Default::default()
+                })
+            }
+            Some(source) => Err(map::LandMarketError::Unready(
+                source,
+                "fixture not published".into(),
+            )),
+        };
+        Box::pin(async move { answer })
+    }
+
+    fn marks<'a>(
+        &'a self,
+        _conn: &'a mut sqlx::PgConnection,
+        _chain_id: i64,
+        _land: &'a str,
+        _estate: &'a str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> futures::future::BoxFuture<'a, Result<map::build::Marks, map::LandMarketError>> {
+        use std::sync::atomic::Ordering::SeqCst;
+        let unready = *self.answer.lock();
+        let read = self.reads.fetch_add(1, SeqCst);
+        let in_build = self.in_build.swap(false, SeqCst);
+        let result = if self.marks_fail.load(SeqCst)
+            || (in_build && self.snapshot_marks_fail.load(SeqCst))
+        {
+            Err(map::LandMarketError::Failed(anyhow::anyhow!(
+                "canceling statement due to statement timeout"
+            )))
+        } else {
+            let turn = if self.churning.load(SeqCst) { read } else { 0 };
+            let listed = self.rental.lock().is_some();
+            Ok(map::build::Marks {
+                ready: unready.is_none(),
+                marks: format!("{unready:?}|{turn}|{listed}"),
+            })
+        };
+        if let Some(rental) = self.rental_after_next_marks.lock().take() {
+            *self.rental.lock() = Some(rental);
+        }
+        let overtake = if in_build {
+            self.overtake_in_build.lock().take()
+        } else {
+            None
+        };
+        Box::pin(async move {
+            if let Some(pool) = overtake {
+                sqlx::query(
+                    "UPDATE explore_api.map_grid SET last_updated_at = last_updated_at + 1000, etag = 'another' WHERE id = 1",
+                )
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+            result
+        })
+    }
+}
+
+struct GatedLandMarket {
+    answer: Mutex<map::LandMarketSnapshot>,
+    gate: Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
+}
+
+impl map::LandMarket for GatedLandMarket {
+    fn snapshot<'a>(
+        &'a self,
+        _conn: &'a mut sqlx::PgConnection,
+        _chain_id: i64,
+        _land: &'a str,
+        _estate: &'a str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> futures::future::BoxFuture<'a, Result<map::LandMarketSnapshot, map::LandMarketError>> {
+        let answer = self.answer.lock().clone();
+        let gate = self.gate.lock().take();
+        Box::pin(async move {
+            if let Some((pinned, release)) = gate {
+                pinned.notify_one();
+                release.notified().await;
+            }
+            Ok(answer)
+        })
+    }
+
+    fn marks<'a>(
+        &'a self,
+        _conn: &'a mut sqlx::PgConnection,
+        _chain_id: i64,
+        _land: &'a str,
+        _estate: &'a str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> futures::future::BoxFuture<'a, Result<map::build::Marks, map::LandMarketError>> {
+        Box::pin(async move {
+            Ok(map::build::Marks {
+                ready: true,
+                marks: "fixture".into(),
+            })
+        })
+    }
+}
+
+fn land_authz_on(pool: &PgPool) -> Arc<crate::land_authz::LandAuthzState> {
+    Arc::new(crate::land_authz::LandAuthzState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        crate::land_authz::Settings::for_tests(),
+    ))
+}
+
+/// The LAND fixture: estate 7 (two parcels at 10,13 and 11,13, owned by
+/// `0xbb..`, named "Seven"), a lone parcel at 10,14 owned by `0xaa..`; all
+/// off the roads and plazas.
+async fn seed_land(pool: &PgPool, settings: &crate::land_authz::Settings) {
+    let owner_a = format!("0x{}", "a".repeat(40));
+    let owner_b = format!("0x{}", "b".repeat(40));
+    let token = |x: i32, y: i32| map::meta::encode_land_token_id(x, y);
+    for (x, y, owner) in [
+        (10, 13, settings.estate_registry.clone()),
+        (11, 13, settings.estate_registry.clone()),
+        (10, 14, owner_a.clone()),
+    ] {
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) \
+             VALUES ($1, $2::numeric, $3, $4, $5, 90, 0)",
+        )
+        .bind(&settings.land_registry)
+        .bind(token(x, y))
+        .bind(x)
+        .bind(y)
+        .bind(owner)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
+         VALUES (90, 0, 1700000000, $1, 'transfer', $2::numeric, $3)",
+    )
+    .bind(&settings.land_registry)
+    .bind(token(10, 14))
+    .bind(&owner_a)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) \
+         VALUES ($1, 7, $2, 91, 0)",
+    )
+    .bind(&settings.estate_registry)
+    .bind(&owner_b)
+    .execute(pool)
+    .await
+    .unwrap();
+    for (x, y) in [(10, 13), (11, 13)] {
+        sqlx::query(
+            "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
+             VALUES ($1::numeric, 7, 91, 1)",
+        )
+        .bind(token(x, y))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO land_authz.estate_data_event (block_number, log_index, token_address, estate_id, name) \
+         VALUES (91, 2, $1, 7, 'Seven')",
+    )
+    .bind(&settings.estate_registry)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn publish_land(pool: &PgPool, settings: &crate::land_authz::Settings) {
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at) \
+         VALUES ($1, $2, $3, 100, 100, timezone('UTC', now())) \
+         ON CONFLICT (network) DO UPDATE SET folded_block = 100, last_block = 100, folded_at = EXCLUDED.folded_at",
+    )
+    .bind(&settings.network)
+    .bind(&settings.land_registry)
+    .bind(&settings.estate_registry)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+fn estate_order(settings: &crate::land_authz::Settings, mana: u64) -> map::build::LandOrder {
+    map::build::LandOrder {
+        contract_address: settings.estate_registry.clone(),
+        token_id: "7".into(),
+        open: true,
+        seller: format!("0x{}", "b".repeat(40)),
+        price: format!("{mana}000000000000000000"),
+        expires_at_ms: 4_102_444_800_000,
+        created_at: 1_700_000_100,
+        updated_at: 1_700_000_100,
+    }
+}
+
+async fn stored_grid(pool: &PgPool) -> Option<(i64, i32, chrono::NaiveDateTime)> {
+    sqlx::query_as(
+        "SELECT last_updated_at, tile_count, fetched_at FROM explore_api.map_grid WHERE id = 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
+/// No grid is held or stored, and every map route answers the unavailable
+/// envelope naming `source` (and the variable `configure`, when one is
+/// named), uncached and without a grid's validators: never an empty or
+/// partial map.
+async fn assert_no_map(app: &Router, pool: &PgPool, source: &str, configure: Option<&str>) {
+    for path in [
+        "/api/v2/tiles",
+        "/api/v2/tiles?x1=10&x2=11&y1=13&y2=14",
+        "/api/v1/tiles",
+        "/api/v2/tiles/info",
+        "/api/v2/parcels/10/14",
+        "/api/v2/estates/7",
+        "/api/ready",
+        "/api/v1/map.png?width=64&height=64&center=0,0&size=5",
+        "/api/v1/minimap.png",
+    ] {
+        let (status, headers, body) = call(app, "GET", path, None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+        assert_eq!(headers["retry-after"], "60", "{path}");
+        assert_eq!(headers["cache-control"], "no-store", "{path}");
+        assert!(
+            !headers.contains_key("etag") && !headers.contains_key("last-modified"),
+            "{path}: no grid validators"
+        );
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"], "Service Unavailable", "{path}: {body}");
+        assert_eq!(body["source"], source, "{path}: {body}");
+        assert_eq!(
+            body.get("configure").and_then(Value::as_str),
+            configure,
+            "{path}: {body}"
+        );
+    }
+    // A conditional request gets the envelope too, never a 304.
+    for path in [
+        "/api/v2/tiles",
+        "/api/v2/parcels/10/14",
+        "/api/v1/minimap.png",
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("if-none-match", "*")
+                    .header("if-modified-since", "Thu, 01 Jan 2099 00:00:00 GMT")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
+        assert_eq!(resp.headers()["cache-control"], "no-store", "{path}");
+        assert!(
+            !resp.headers().contains_key("etag") && !resp.headers().contains_key("last-modified"),
+            "{path}"
+        );
+    }
+    assert_eq!(
+        stored_grid(pool).await,
+        None,
+        "nothing stored while {source} waits"
+    );
+}
+
 #[tokio::test]
-async fn map_grid_mirror_persists_the_grid_resumes_after_restart_and_gates_downloads() {
+async fn map_grid_is_built_from_the_land_index_and_shop_and_waits_for_unpublished_sources() {
     let Some(db) = scratch_database().await else {
         return;
     };
-    let mock = mock();
-    let addr = serve_mock(mock.clone()).await;
-    let node = node_with_db(Settings::for_tests(sources_at(addr)), db.pool.clone()).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
     let app = router(node.state.clone());
     let (jobs, ctx) = job_ctx().await;
 
-    let (status, _, _) = call(
-        &app,
-        "GET",
-        "/api/v1/map.png?width=64&height=64&center=0,0&size=5",
-        None,
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::SERVICE_UNAVAILABLE,
-        "no grid before the first pass"
-    );
-    let (status, _) = call_json(&app, "GET", "/api/v2/tiles/info", None).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    // No grid yet and no build has recorded what it waits for: every map
+    // route answers the envelope naming the grid itself, never an empty map.
+    assert_no_map(&app, &db.pool, "map-grid", None).await;
 
-    map::run_pass(&node.state, &ctx).await.unwrap();
-    assert_eq!((mock.hits("tiles/info"), mock.hits("tiles")), (1, 1));
-    let (status, info) = call_json(&app, "GET", "/api/v2/tiles/info", None).await;
-    assert_eq!(
-        (status, info),
-        (StatusCode::OK, json!({"lastUpdatedAt": 1000}))
-    );
-
-    let (status, headers, png) = call(
-        &app,
-        "GET",
-        "/api/v1/map.png?width=64&height=64&center=0,0&size=5",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(headers["content-type"], "image/png");
-    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    // Nothing attached, then an index that has not published: no grid.
+    assert!(map::run_pass(&node.state, &ctx).await.is_err());
+    let settings = crate::land_authz::Settings::for_tests();
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(FixedLandMarket(Mutex::new(Err(
+        crate::chain_index::source::Source::NftIndex,
+    ))));
+    node.state.attach_land_market(market.clone());
+    seed_land(&db.pool, &settings).await;
+    let err = map::run_pass(&node.state, &ctx).await.unwrap_err();
     assert!(
-        headers["cache-control"]
-            .to_str()
-            .unwrap()
-            .contains("max-age=120")
+        err.to_string().contains("land-authz-index not ready"),
+        "{err}"
     );
-    let etag = headers["etag"].to_str().unwrap().to_string();
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/v2/map.png?width=64&height=64&center=0,0&size=5")
-                .header("if-none-match", &etag)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
-    for path in [
-        "/api/v1/minimap.png",
-        "/api/v1/estatemap.png",
-        "/api/v2/parcels/1/1/map.png",
-        "/api/v1/estates/77/map.png",
-    ] {
-        let (status, headers, _) = call(&app, "GET", path, None).await;
-        assert_eq!((path, status), (path, StatusCode::OK));
-        assert_eq!(headers["content-type"], "image/png");
-    }
-    // an estate the grid holds no parcel of redirects, as the atlas does
-    let (status, headers, _) = call(&app, "GET", "/api/v1/estates/404/map.png", None).await;
-    assert_eq!(status, StatusCode::FOUND);
-    assert_eq!(headers["location"], "http://localhost/dissolved_estate.png");
-
-    let (status, tiles) = call_json(
+    assert_no_map(
         &app,
-        "GET",
-        "/api/v2/tiles?x1=0&x2=1&y1=0&y2=1&include=x,y,type",
-        None,
+        &db.pool,
+        "land-authz-index",
+        Some("LAND_AUTHZ_INDEX_ENABLED"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(tiles["ok"], true);
-    assert_eq!(
-        key_set(&tiles["data"]),
-        ["0,0", "1,0", "1,1"]
-            .into_iter()
-            .map(String::from)
-            .collect()
-    );
-    assert_eq!(
-        tiles["data"]["0,0"],
-        json!({"x": 0, "y": 0, "type": "plaza"})
-    );
-    let (_, legacy) = call_json(&app, "GET", "/api/v1/tiles?x1=1&x2=1&y1=1&y2=1", None).await;
-    assert_eq!(legacy["data"]["1,1"]["type"], 9);
 
-    let (stored_stamp, count): (i64, i32) =
-        sqlx::query_as("SELECT last_updated_at, tile_count FROM explore_api.map_grid WHERE id = 1")
-            .fetch_one(&db.pool)
-            .await
-            .unwrap();
-    assert_eq!((stored_stamp, count), (1000, 4));
-
-    let restarted = node_with_db(Settings::for_tests(sources_at(addr)), db.pool.clone()).await;
-    assert!(
-        restarted.state.map.is_ready(),
-        "the persisted grid is loaded at startup"
-    );
-    assert_eq!(restarted.state.map.last_updated_at(), 1000);
-    assert_eq!(mock.hits("tiles"), 1, "no download at startup");
-    let app2 = router(restarted.state.clone());
-    let (status, _, _) = call(
-        &app2,
-        "GET",
-        "/api/v1/map.png?width=64&height=64&center=0,0&size=5",
-        None,
+    // The LAND index published, Shop's order or trade tables not yet: still
+    // no grid (not one without prices), and the envelope names what the pass
+    // waits for.
+    publish_land(&db.pool, &settings).await;
+    *market.0.lock() = Err(crate::chain_index::source::Source::TradesMirror);
+    let err = map::run_pass(&node.state, &ctx).await.unwrap_err();
+    assert!(err.to_string().contains("trades-mirror not ready"), "{err}");
+    assert_no_map(
+        &app,
+        &db.pool,
+        "trades-mirror",
+        Some("TRADES_SYNC_UPSTREAM_URL"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-
-    map::run_pass(&restarted.state, &ctx).await.unwrap();
-    assert_eq!(
-        mock.hits("tiles"),
-        1,
-        "an unchanged upstream stamp downloads nothing"
-    );
-
-    mock.tiles_last_updated.store(2000, Ordering::SeqCst);
-    map::run_pass(&restarted.state, &ctx).await.unwrap();
-    assert_eq!(
-        mock.hits("tiles"),
-        1,
-        "a fresh grid is not re-downloaded inside the refresh floor"
-    );
-    assert_eq!(restarted.state.map.last_updated_at(), 1000);
-
-    let mut eager = Settings::for_tests(sources_at(addr));
-    eager.map_min_refresh = Duration::ZERO;
-    let eager = node_with_db(eager, db.pool.clone()).await;
-    map::run_pass(&eager.state, &ctx).await.unwrap();
-    assert_eq!(
-        (mock.hits("tiles"), mock.hits("tiles-304")),
-        (2, 1),
-        "past the floor the stored etag makes it a 304"
-    );
-    assert_eq!(
-        eager.state.map.last_updated_at(),
-        2000,
-        "the held grid is restamped"
-    );
-    let (stored_stamp,): (i64,) =
-        sqlx::query_as("SELECT last_updated_at FROM explore_api.map_grid WHERE id = 1")
-            .fetch_one(&db.pool)
-            .await
-            .unwrap();
-    assert_eq!(stored_stamp, 2000);
-
-    *mock.tiles.lock() = {
-        let mut doc = tiles_doc(3000);
-        doc["data"]["9,9"] = tile(9, 9, "owned", None);
-        doc
-    };
-    *mock.tiles_etag.lock() = "\"grid-2\"".into();
-    mock.tiles_last_updated.store(3000, Ordering::SeqCst);
-    map::run_pass(&eager.state, &ctx).await.unwrap();
-    assert_eq!(mock.hits("tiles"), 3);
-    let app3 = router(eager.state.clone());
-    let (_, tiles) = call_json(&app3, "GET", "/api/v2/tiles?include=x", None).await;
-    assert_eq!(tiles["data"].as_object().unwrap().len(), 5);
-    let (_, report) = call_json(&app3, "GET", "/mirrors", None).await;
+    *market.0.lock() = Err(crate::chain_index::source::Source::NftIndex);
+    let err = map::run_pass(&node.state, &ctx).await.unwrap_err();
+    assert!(err.to_string().contains("nft-index not ready"), "{err}");
+    assert_no_map(
+        &app,
+        &db.pool,
+        "nft-index",
+        Some("MARKETPLACE_NFT_INDEX_ENABLED"),
+    )
+    .await;
+    // A process that does not run the build names the source the build
+    // recorded once it follows the pass marker.
+    let follower = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    let follower_app = router(follower.state.clone());
+    assert_no_map(&follower_app, &db.pool, "map-grid", None).await;
+    map::follow(&follower.state).await.unwrap();
+    assert_no_map(
+        &follower_app,
+        &db.pool,
+        "nft-index",
+        Some("MARKETPLACE_NFT_INDEX_ENABLED"),
+    )
+    .await;
+    let (_, report) = call_json(&app, "GET", "/mirrors", None).await;
     let row = report["mirrors"]
         .as_array()
         .unwrap()
@@ -2067,18 +2333,1651 @@ async fn map_grid_mirror_persists_the_grid_resumes_after_restart_and_gates_downl
         .find(|m| m["mirror"] == "map-grid")
         .unwrap()
         .clone();
-    assert_eq!(row["cursor"], "3000");
-    assert_eq!(row["items"], 5);
+    assert_eq!(row["complete"], false);
+    assert!(row["lastError"].as_str().unwrap().contains("nft-index"));
+
+    // Every source published: the grid is built, stored and served.
+    *market.0.lock() = Ok(map::LandMarketSnapshot {
+        orders: vec![estate_order(&settings, 1500)],
+        ..Default::default()
+    });
+    map::run_pass(&node.state, &ctx).await.unwrap();
+    let stamp = node.state.map.last_updated_at();
+    assert!(stamp > 0);
+    let before = chrono::Utc::now().timestamp_millis();
+    let (status, mut info) = call_json(&app, "GET", "/api/v2/tiles/info", None).await;
+    let server_now = info["serverNow"].take().as_i64().expect("serverNow");
+    assert!(
+        (before..=chrono::Utc::now().timestamp_millis()).contains(&server_now),
+        "serverNow is the server's clock when it answers"
+    );
+    assert_eq!(
+        (status, info),
+        (
+            StatusCode::OK,
+            json!({"lastUpdatedAt": stamp, "checkedAt": stamp, "serverNow": null}),
+        ),
+        "a build finds the grid it stores current"
+    );
+    let (status, tiles) =
+        call_json(&app, "GET", "/api/v2/tiles?x1=10&x2=11&y1=13&y2=14", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        key_set(&tiles["data"]),
+        ["10,13", "10,14", "11,13"]
+            .into_iter()
+            .map(String::from)
+            .collect()
+    );
+    let estate_tile = &tiles["data"]["11,13"];
+    assert_eq!(estate_tile["type"], "owned");
+    assert_eq!(estate_tile["owner"], format!("0x{}", "b".repeat(40)));
+    assert_eq!(estate_tile["estateId"], "7");
+    assert_eq!(estate_tile["name"], "Seven");
+    assert_eq!(estate_tile["left"], true, "joined to 10,13");
+    assert_eq!(estate_tile["price"], 1500.0);
+    assert_eq!(estate_tile["expiresAt"], 4_102_444_800_i64);
+    let lone = &tiles["data"]["10,14"];
+    assert_eq!(lone["owner"], format!("0x{}", "a".repeat(40)));
+    assert_eq!(lone["tokenId"], map::meta::encode_land_token_id(10, 14));
+    assert_eq!(
+        lone["updatedAt"], 1_700_000_000_000_i64,
+        "its last rights event"
+    );
+    assert!(lone.get("price").is_none());
+    let (status, plaza) = call_json(&app, "GET", "/api/v2/tiles?x1=0&x2=0&y1=0&y2=0", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        plaza["data"]["0,0"]["type"], "plaza",
+        "the roads and plazas are on the grid"
+    );
+    let (status, legacy) =
+        call_json(&app, "GET", "/api/v1/tiles?x1=11&x2=11&y1=13&y2=13", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(legacy["data"]["11,13"]["type"], 10, "a priced tile");
+    let (status, headers, png) = call(
+        &app,
+        "GET",
+        "/api/v1/map.png?width=64&height=64&center=10,13&size=5",
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, &headers["content-type"]),
+        (
+            StatusCode::OK,
+            &"image/png".parse::<axum::http::HeaderValue>().unwrap()
+        )
+    );
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    let (status, estate) = call_json(&app, "GET", "/api/v2/estates/7", None).await;
+    assert_eq!((status, &estate["name"]), (StatusCode::OK, &json!("Seven")));
+    let (stored_stamp, count, built_at) = stored_grid(&db.pool).await.unwrap();
+    assert_eq!(stored_stamp, stamp);
+    assert_eq!(
+        count as usize,
+        node.state.map.snapshot().unwrap().tiles.len()
+    );
+    let (_, report) = call_json(&app, "GET", "/mirrors", None).await;
+    let row = report["mirrors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["mirror"] == "map-grid")
+        .unwrap()
+        .clone();
     assert_eq!(row["complete"], true);
-    assert_eq!(report["mapGridLastUpdatedAt"], 3000);
+    assert_eq!(row["cursor"], stamp.to_string());
+    assert_eq!(report["mapGridLastUpdatedAt"], stamp);
+    map::follow(&follower.state).await.unwrap();
+    assert_eq!(
+        follower.state.map.last_updated_at(),
+        stamp,
+        "the follower serves it"
+    );
+
+    // Unchanged sources: nothing is written and the stamp stays.
+    map::run_pass(&node.state, &ctx).await.unwrap();
+    assert_eq!(node.state.map.last_updated_at(), stamp);
+    assert_eq!(
+        stored_grid(&db.pool).await.unwrap().2,
+        built_at,
+        "no rewrite"
+    );
+
+    // A restart serves the stored grid before its first pass, and that pass
+    // finds it unchanged.
+    let restarted = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    assert!(restarted.state.map.is_ready());
+    assert_eq!(restarted.state.map.last_updated_at(), stamp);
+    restarted
+        .state
+        .attach_land_authz(node.state.land_authz.get().unwrap().clone());
+    restarted.state.attach_land_market(market.clone());
+    map::run_pass(&restarted.state, &ctx).await.unwrap();
+    assert_eq!(restarted.state.map.last_updated_at(), stamp);
+    assert_eq!(stored_grid(&db.pool).await.unwrap().2, built_at);
+
+    // A changed listing moves the stamp at least a second forward, and a
+    // process that did not build it reloads it.
+    *market.0.lock() = Ok(map::LandMarketSnapshot::default());
+    map::run_pass(&node.state, &ctx).await.unwrap();
+    let moved = node.state.map.last_updated_at();
+    assert!(moved >= stamp + 1000, "{moved} after {stamp}");
+    let replica = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    assert!(
+        !map::reload_if_newer(&replica.state).await.unwrap(),
+        "already current"
+    );
+    assert!(map::reload_if_newer(&restarted.state).await.unwrap());
+    assert_eq!(restarted.state.map.last_updated_at(), moved);
+    assert!(!map::reload_if_newer(&restarted.state).await.unwrap());
+    let (_, tiles) = call_json(&app, "GET", "/api/v2/tiles?x1=11&x2=11&y1=13&y2=13", None).await;
+    assert!(tiles["data"]["11,13"].get("price").is_none());
+    assert_eq!(stored_grid(&db.pool).await.unwrap().0, moved);
+
+    // A source that stops publishing keeps the held grid served; the pass
+    // fails naming it.
+    *market.0.lock() = Err(crate::chain_index::source::Source::TradesMirror);
+    let err = map::run_pass(&node.state, &ctx).await.unwrap_err();
+    assert!(err.to_string().contains("trades-mirror not ready"), "{err}");
+    let (status, _) = call_json(&app, "GET", "/api/v2/tiles?x1=11&x2=11&y1=13&y2=13", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(node.state.map.last_updated_at(), moved);
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// The stored row is the grid's revision, not what a process holds: a lease
+/// successor holding an older grid compares with the row, a slow reload of
+/// an older revision never replaces a newer one, and a build overtaken by
+/// another publisher's write stores nothing.
+#[tokio::test]
+async fn map_grid_revisions_follow_the_stored_row_not_the_process() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let priced = map::LandMarketSnapshot {
+        orders: vec![estate_order(&settings, 1500)],
+        ..Default::default()
+    };
+    let node = |market: map::LandMarketSnapshot| {
+        let pool = db.pool.clone();
+        async move {
+            let n = node_with_db(Settings::for_tests(Sources::defaults()), pool.clone()).await;
+            n.state.attach_land_authz(land_authz_on(&pool));
+            let market = Arc::new(FixedLandMarket(Mutex::new(Ok(market))));
+            n.state.attach_land_market(market.clone());
+            (n, market)
+        }
+    };
+    let digest = |stored: &map::Grid| hex::encode(stored.digest);
+    let stored_etag = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT etag FROM explore_api.map_grid WHERE id = 1",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap()
+    };
+
+    // A builds X; C starts holding X; B then builds Y.
+    let (a, _) = node(priced.clone()).await;
+    map::run_pass(&a.state, &ctx).await.unwrap();
+    let x = a.state.map.snapshot().unwrap();
+    assert_eq!(
+        stored_etag().await,
+        Some(digest(&x)),
+        "the row's etag is its body's digest"
+    );
+    let (c, c_market) = node(priced.clone()).await;
+    assert_eq!(c.state.map.last_updated_at(), x.last_updated_at);
+    let (b, b_market) = node(map::LandMarketSnapshot::default()).await;
+    map::run_pass(&b.state, &ctx).await.unwrap();
+    let y = b.state.map.snapshot().unwrap();
+    assert!(y.last_updated_at > x.last_updated_at);
+    assert_ne!(digest(&y), digest(&x));
+
+    // A reload that fetched X before Y was installed never puts X back.
+    let slow = map::fetch_stored(&db.pool).await.unwrap().unwrap();
+    assert!(map::reload_if_newer(&a.state).await.unwrap());
+    assert_eq!(a.state.map.last_updated_at(), y.last_updated_at);
+    let stale = map::Grid::from_tiles(x.tiles.clone(), x.last_updated_at, x.fetched_at);
+    assert!(
+        !a.state.map.install_newer(stale),
+        "an older revision is refused"
+    );
+    assert!(
+        !a.state.map.install_newer(slow),
+        "the same revision is not reinstalled"
+    );
+    assert_eq!(a.state.map.last_updated_at(), y.last_updated_at);
+
+    // C, still holding X, builds X again: the row holds Y, so X is stored
+    // as a new revision rather than reported unchanged.
+    map::run_pass(&c.state, &ctx).await.unwrap();
+    let x_again = c.state.map.snapshot().unwrap();
+    assert!(x_again.last_updated_at >= y.last_updated_at + 1000);
+    assert_eq!(digest(&x_again), digest(&x));
+    assert_eq!(
+        stored_grid(&db.pool).await.unwrap().0,
+        x_again.last_updated_at
+    );
+    assert_eq!(stored_etag().await, Some(digest(&x)));
+
+    // B, holding Y, builds X too: unchanged against the row, nothing is
+    // written, and B serves the stored revision.
+    *b_market.0.lock() = Ok(priced.clone());
+    let written_at = stored_grid(&db.pool).await.unwrap().2;
+    map::run_pass(&b.state, &ctx).await.unwrap();
+    assert_eq!(b.state.map.last_updated_at(), x_again.last_updated_at);
+    assert_eq!(
+        stored_grid(&db.pool).await.unwrap().2,
+        written_at,
+        "no rewrite"
+    );
+
+    // A write guarded on a revision another publisher replaced stores nothing.
+    let stored = map::stored_revision(&db.pool).await.unwrap().unwrap();
+    let stale_rev = map::Revision {
+        stamp: y.last_updated_at,
+        etag: Some(digest(&y)),
+        built_at: stored.built_at,
+    };
+    assert!(
+        !map::store_guarded(
+            &db.pool,
+            Some(&stale_rev),
+            stored.stamp + 5000,
+            "overtaken",
+            1,
+            b"",
+            chrono::Utc::now().naive_utc(),
+        )
+        .await
+        .unwrap()
+    );
+    assert_eq!(
+        map::stored_revision(&db.pool).await.unwrap().unwrap(),
+        stored
+    );
+    assert!(
+        !map::store_guarded(
+            &db.pool,
+            None,
+            1,
+            "overtaken",
+            1,
+            b"",
+            chrono::Utc::now().naive_utc()
+        )
+        .await
+        .unwrap(),
+        "a first write loses to a row stored meanwhile"
+    );
+    *c_market.0.lock() = Ok(map::LandMarketSnapshot::default());
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A build that read its inputs before another publisher stored a newer
+/// grid never replaces it: A pins its snapshot (the stored revision R0, an
+/// estate priced 1500) and pauses; B sees the sale and publishes Y; A,
+/// released, finds R0 replaced and discards its build. A fresh build whose
+/// inputs really return to the old price publishes it again.
+#[tokio::test]
+async fn an_older_build_never_replaces_a_newer_publication() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let priced = |mana| map::LandMarketSnapshot {
+        orders: vec![estate_order(&settings, mana)],
+        ..Default::default()
+    };
+    let a = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    a.state.attach_land_authz(land_authz_on(&db.pool));
+    let a_market = Arc::new(GatedLandMarket {
+        answer: Mutex::new(priced(1000)),
+        gate: Mutex::new(None),
+    });
+    a.state.attach_land_market(a_market.clone());
+    let b = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    b.state.attach_land_authz(land_authz_on(&db.pool));
+    b.state
+        .attach_land_market(Arc::new(FixedLandMarket(Mutex::new(
+            Ok(Default::default()),
+        ))));
+    let row = || async {
+        sqlx::query_as::<_, (i64, Option<String>)>(
+            "SELECT last_updated_at, etag FROM explore_api.map_grid WHERE id = 1",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap()
+    };
+
+    // R0: the estate at 1000.
+    map::run_pass(&a.state, &ctx).await.unwrap();
+    let r0 = row().await;
+
+    // A reads R0 and the estate at 1500 in its snapshot, then pauses.
+    *a_market.answer.lock() = priced(1500);
+    let (pinned, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    *a_market.gate.lock() = Some((pinned.clone(), release.clone()));
+    let paused = {
+        let (state, ctx) = (a.state.clone(), ctx.clone());
+        tokio::spawn(async move { map::run_pass(&state, &ctx).await })
+    };
+    pinned.notified().await;
+
+    // B sees the sale (no order) and publishes Y.
+    map::run_pass(&b.state, &ctx).await.unwrap();
+    let y = row().await;
+    assert!(y.0 > r0.0 && y.1 != r0.1);
+    let y_grid = b.state.map.snapshot().unwrap();
+    assert_eq!(y_grid.tiles["11,13"].price, None);
+
+    // A resumes: its build from the older snapshot is discarded.
+    release.notify_one();
+    paused.await.unwrap().unwrap();
+    assert_eq!(row().await, y, "Y's stamp and digest survive");
+    let stored = map::fetch_stored(&db.pool).await.unwrap().unwrap();
+    assert_eq!(stored.digest, y_grid.digest, "Y's body survives");
+    assert_eq!(stored.tiles["11,13"].price, None);
+    let served = a.state.map.snapshot().unwrap();
+    assert_eq!(
+        (served.last_updated_at, served.digest),
+        (y.0, y_grid.digest),
+        "A serves Y"
+    );
+    let marker: (i64, Option<String>) = sqlx::query_as(
+        "SELECT items, cursor FROM explore_api.mirror_passes WHERE mirror = 'map-grid'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        marker,
+        (served.tiles.len() as i64, Some(y.0.to_string())),
+        "the pass reports the revision it serves"
+    );
+
+    // A fresh build whose inputs really are 1500 publishes them past Y.
+    map::run_pass(&a.state, &ctx).await.unwrap();
+    let x = row().await;
+    assert!(x.0 >= y.0 + 1000, "{} after {}", x.0, y.0);
+    assert_ne!(x.1, y.1);
+    assert_eq!(
+        a.state.map.snapshot().unwrap().tiles["11,13"].price,
+        Some(1500.0)
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A builder whose lease goes while it reads stores nothing, and a changed
+/// grid waits until the stored revision is the publication floor old.
+#[tokio::test]
+async fn a_cancelled_or_too_early_build_stores_nothing() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let priced = |mana| map::LandMarketSnapshot {
+        orders: vec![estate_order(&settings, mana)],
+        ..Default::default()
+    };
+    let mut floored = Settings::for_tests(Sources::defaults());
+    floored.map_min_publish_interval = Duration::from_secs(3600);
+    let a = node_with_db(floored, db.pool.clone()).await;
+    a.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(GatedLandMarket {
+        answer: Mutex::new(priced(1000)),
+        gate: Mutex::new(None),
+    });
+    a.state.attach_land_market(market.clone());
+    let row = || async { stored_grid(&db.pool).await.unwrap() };
+
+    // The first grid has no revision to wait for.
+    map::run_pass(&a.state, &ctx).await.unwrap();
+    let first = row().await;
+
+    // A changed grid inside the floor is held back; the stored one stays.
+    *market.answer.lock() = priced(1500);
+    map::run_pass(&a.state, &ctx).await.unwrap();
+    assert_eq!(row().await, first, "held back by the floor");
+    assert_eq!(a.state.map.last_updated_at(), first.0);
+    assert_eq!(
+        a.state.map.snapshot().unwrap().tiles["11,13"].price,
+        Some(1000.0)
+    );
+
+    // Without the floor, a builder that loses its lease mid-read stores
+    // nothing; the next one publishes.
+    let b = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    b.state.attach_land_authz(land_authz_on(&db.pool));
+    b.state.attach_land_market(market.clone());
+    let (pinned, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    *market.gate.lock() = Some((pinned.clone(), release.clone()));
+    let (lease_jobs, lease) = job_ctx().await;
+    let paused = {
+        let (state, lease) = (b.state.clone(), lease.clone());
+        tokio::spawn(async move { map::run_pass(&state, &lease).await })
+    };
+    pinned.notified().await;
+    lease.cancel.cancel();
+    release.notify_one();
+    let err = paused.await.unwrap().unwrap_err();
+    assert!(err.to_string().contains("cancelled"), "{err}");
+    assert_eq!(row().await, first, "a cancelled build stores nothing");
+    map::run_pass(&b.state, &ctx).await.unwrap();
+    assert!(row().await.0 > first.0);
+    assert_eq!(
+        b.state.map.snapshot().unwrap().tiles["11,13"].price,
+        Some(1500.0)
+    );
+
+    lease_jobs.shutdown(Duration::from_secs(1)).await;
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A leased build stores on its lease's own session. With the stored row
+/// locked by another session, the guarded write waits on that session; the
+/// lease is lost there (its backend ends) with no other revision stored in
+/// between, and the write goes with it: the row keeps the earlier revision.
+#[tokio::test]
+async fn a_lease_lost_while_the_write_waits_leaves_the_row_unchanged() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let priced = |mana| map::LandMarketSnapshot {
+        orders: vec![estate_order(&settings, mana)],
+        ..Default::default()
+    };
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(FixedLandMarket(Mutex::new(Ok(priced(1000)))));
+    node.state.attach_land_market(market.clone());
+    map::run_pass(&node.state, &ctx).await.unwrap();
+    let revision = || async {
+        sqlx::query_as::<_, (i64, Option<String>)>(
+            "SELECT last_updated_at, etag FROM explore_api.map_grid WHERE id = 1",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap()
+    };
+    let r0 = revision().await;
+
+    // Another session holds the row, so the next guarded write waits.
+    *market.0.lock() = Ok(priced(1500));
+    let mut locker = db.pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM explore_api.map_grid WHERE id = 1 FOR UPDATE")
+        .execute(&mut *locker)
+        .await
+        .unwrap();
+
+    // One leased build; after a lost lease it does not run again.
+    let leased = Jobs::with_leases(
+        db.pool.clone(),
+        crate::jobs::LeaseSettings {
+            namespace: format!("map-grid-lease-{}", std::process::id()),
+            poll: Duration::from_secs(60),
+            keepalive: Duration::from_secs(30),
+        },
+    );
+    let (done, outcome) = tokio::sync::oneshot::channel::<Result<(), String>>();
+    let done = Arc::new(Mutex::new(Some(done)));
+    let state = node.state.clone();
+    leased.spawn_leased("map-grid-lease-test", move |lease_ctx| {
+        let (state, done) = (state.clone(), done.lock().take());
+        async move {
+            if let Some(done) = done {
+                let result = map::run_pass(&state, &lease_ctx).await;
+                let _ = done.send(result.map_err(|e| format!("{e:#}")));
+            }
+            Ok(())
+        }
+    });
+
+    // The write waits on the row lock, on the session holding the lease.
+    let mut waiting_pid = None;
+    for _ in 0..600 {
+        waiting_pid = sqlx::query_scalar::<_, i32>(
+            "SELECT pid FROM pg_stat_activity \
+             WHERE datname = current_database() AND wait_event_type = 'Lock' \
+               AND query LIKE 'UPDATE explore_api.map_grid%'",
+        )
+        .fetch_optional(&db.pool)
+        .await
+        .unwrap();
+        if waiting_pid.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let waiting_pid = waiting_pid.expect("the guarded write waits on the row lock");
+    let lease_pid: i32 = sqlx::query_scalar(
+        "SELECT pid FROM pg_locks \
+         WHERE locktype = 'advisory' AND granted \
+           AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        waiting_pid, lease_pid,
+        "the write runs on the lease's session"
+    );
+
+    // The lease is lost while the statement waits; no other revision is
+    // stored in between. Then the row is released.
+    let ended: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+        .bind(lease_pid)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert!(ended);
+    locker.rollback().await.unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(30), outcome)
+        .await
+        .expect("the leased build ends")
+        .unwrap();
+    assert!(
+        result.is_err(),
+        "the build fails with its lease: {result:?}"
+    );
+    assert_eq!(
+        revision().await,
+        r0,
+        "the old publication leaves the row unchanged"
+    );
+
+    leased.shutdown(Duration::from_secs(5)).await;
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+async fn map_marker(pool: &PgPool) -> (i64, Option<chrono::NaiveDateTime>, Option<String>) {
+    sqlx::query_as("SELECT passes, completed_at, last_error FROM explore_api.mirror_passes WHERE mirror = 'map-grid'")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// The stored revision's stamp, build time and check time.
+async fn grid_checked(
+    pool: &PgPool,
+) -> (i64, chrono::NaiveDateTime, Option<chrono::NaiveDateTime>) {
+    sqlx::query_as(
+        "SELECT last_updated_at, fetched_at, checked_at FROM explore_api.map_grid WHERE id = 1",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// The build job builds when its inputs move, not on a timer: a listing or
+/// a published LAND event triggers a pass, an unpublished event does not;
+/// with nothing moving it records the stored revision checked current (its
+/// `checked_at`, at most once a minute, leaving `/mirrors`' pass marker
+/// alone), which `/v2/tiles/info` reports as `checkedAt` in every process; a
+/// source that stops publishing is retried on the backoff, not every tick;
+/// and a pass runs anyway once the safety interval passes.
+#[tokio::test]
+async fn the_map_grid_builds_when_its_inputs_move_and_records_checks() {
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let priced = |mana| map::LandMarketSnapshot {
+        orders: vec![estate_order(&settings, mana)],
+        ..Default::default()
+    };
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(FixedLandMarket(Mutex::new(Ok(priced(1000)))));
+    node.state.attach_land_market(market.clone());
+    let app = router(node.state.clone());
+    let secs = Duration::from_secs;
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+    let first = node.state.map.last_updated_at();
+    assert!(first > 0);
+    let (_, built_at, built_checked) = grid_checked(&db.pool).await;
+    assert_eq!(
+        built_checked,
+        Some(built_at),
+        "a build finds its grid current"
+    );
+
+    // Nothing moved: idle, then one check a minute after the build.
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(5)).await,
+        map::Tick::Idle
+    );
+    let marker = map_marker(&db.pool).await;
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(61)).await,
+        map::Tick::Checked
+    );
+    let (stamp, _, checked_at) = grid_checked(&db.pool).await;
+    assert_eq!(stamp, first);
+    assert!(checked_at > Some(built_at));
+    assert_eq!(
+        map_marker(&db.pool).await,
+        marker,
+        "a check is no pass: /mirrors is unchanged"
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(66)).await,
+        map::Tick::Idle
+    );
+    assert_eq!(
+        node.state.map.last_updated_at(),
+        first,
+        "a check writes no revision"
+    );
+    let checked_ms = checked_at.unwrap().and_utc().timestamp_millis();
+    let follower = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    map::follow(&follower.state).await.unwrap();
+    assert_eq!(
+        follower.state.map.checked_at(),
+        checked_ms,
+        "every process reads the check"
+    );
+    let (_, mut info) = call_json(
+        &router(follower.state.clone()),
+        "GET",
+        "/api/v2/tiles/info",
+        None,
+    )
+    .await;
+    assert!(info["serverNow"].take().as_i64().is_some());
+    assert_eq!(
+        info,
+        json!({"lastUpdatedAt": first, "checkedAt": checked_ms, "serverNow": null})
+    );
+    let (_, info) = call_json(&app, "GET", "/api/v2/tiles/info", None).await;
+    assert!(info["checkedAt"].as_i64().unwrap() >= checked_ms);
+
+    // A listing changes: a pass and a new revision.
+    *market.0.lock() = Ok(priced(1500));
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(70)).await,
+        map::Tick::Built
+    );
+    let second = node.state.map.last_updated_at();
+    assert!(second > first);
+
+    // A LAND transfer the index has published: a pass.
+    let new_owner = format!("0x{}", "c".repeat(40));
+    let token = map::meta::encode_land_token_id(10, 14);
+    sqlx::query(
+        "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
+         VALUES (99, 0, 1700000500, $1, 'transfer', $2::numeric, $3)",
+    )
+    .bind(&settings.land_registry)
+    .bind(&token)
+    .bind(&new_owner)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE land_authz.token_right SET owner = $3, updated_block = 99 WHERE token_address = $1 AND token_id = $2::numeric")
+        .bind(&settings.land_registry)
+        .bind(&token)
+        .bind(&new_owner)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(75)).await,
+        map::Tick::Built
+    );
+    assert_eq!(
+        node.state.map.snapshot().unwrap().tiles["10,14"]
+            .owner
+            .as_deref(),
+        Some(new_owner.as_str())
+    );
+
+    // An event past the published block is not an input yet.
+    sqlx::query(
+        "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
+         VALUES (150, 0, 1700000900, $1, 'transfer', $2::numeric, $3)",
+    )
+    .bind(&settings.land_registry)
+    .bind(&token)
+    .bind(format!("0x{}", "d".repeat(40)))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (before, _, _) = map_marker(&db.pool).await;
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(80)).await,
+        map::Tick::Idle
+    );
+    assert_eq!(map_marker(&db.pool).await.0, before, "no pass");
+
+    // A source stops publishing: the marks move, but no pass runs while it
+    // cannot build, so none fails.
+    *market.0.lock() = Err(crate::chain_index::source::Source::NftIndex);
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(85)).await,
+        map::Tick::Idle
+    );
+    assert_eq!(
+        map_marker(&db.pool).await.0,
+        before,
+        "no pass while unready"
+    );
+    // The safety pass runs anyway: it fails naming the source, then retries
+    // on the wait.
+    let t1 = t0 + secs(75) + map::SAFETY_INTERVAL;
+    assert_eq!(w.tick(&node.state, &ctx, t1).await, map::Tick::Failed);
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(5)).await,
+        map::Tick::Idle,
+        "not every tick"
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(61)).await,
+        map::Tick::Failed,
+        "after the retry wait"
+    );
+    assert_eq!(
+        map_marker(&db.pool)
+            .await
+            .2
+            .as_deref()
+            .map(|e| e.starts_with("nft-index not ready")),
+        Some(true)
+    );
+
+    // It publishes again: a pass at once; then nothing moves for the safety
+    // interval.
+    *market.0.lock() = Ok(priced(1500));
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(65)).await,
+        map::Tick::Built
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(70)).await,
+        map::Tick::Idle
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(65) + map::SAFETY_INTERVAL)
+            .await,
+        map::Tick::Built,
+        "the safety pass"
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A land-authz reorg whose refold ends at the same newest events, with
+/// other facts at those positions, still moves the marks: the rewind counts
+/// the log's rewrite in the cursor, in its own statement. Nothing else in
+/// the marks would tell.
+#[tokio::test]
+async fn a_land_rewrite_to_the_same_positions_moves_the_marks() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    node.state
+        .attach_land_market(Arc::new(FixedLandMarket(Mutex::new(Ok(
+            map::LandMarketSnapshot::default(),
+        )))));
+    let before = map::watch_marks(&node.state).await.unwrap().unwrap();
+    assert!(before.ready);
+
+    // The chain replaced blocks 90 and 91: the same positions hold a transfer
+    // of 10,14 to another account and the same estate name.
+    assert!(
+        crate::land_authz::indexer::rewind_reorg(&db.pool, &settings, 100, 89, None)
+            .await
+            .unwrap()
+    );
+    let other = format!("0x{}", "e".repeat(40));
+    let token = map::meta::encode_land_token_id(10, 14);
+    sqlx::query(
+        "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
+         VALUES (90, 0, 1700000000, $1, 'transfer', $2::numeric, $3)",
+    )
+    .bind(&settings.land_registry)
+    .bind(&token)
+    .bind(&other)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_data_event (block_number, log_index, token_address, estate_id, name) \
+         VALUES (91, 2, $1, 7, 'Seven') ON CONFLICT DO NOTHING",
+    )
+    .bind(&settings.estate_registry)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) \
+         VALUES ($1, $2::numeric, 10, 14, $3, 90, 0) \
+         ON CONFLICT (token_address, token_id) DO UPDATE SET owner = EXCLUDED.owner",
+    )
+    .bind(&settings.land_registry)
+    .bind(&token)
+    .bind(&other)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    publish_land(&db.pool, &settings).await;
+
+    let after = map::watch_marks(&node.state).await.unwrap().unwrap();
+    assert!(after.ready);
+    assert_ne!(after.marks, before.marks, "the rewrite moves the marks");
+    let parts = |m: &str| m.split('|').map(str::to_owned).collect::<Vec<_>>();
+    let (b, a) = (parts(&before.marks), parts(&after.marks));
+    assert_eq!(
+        (&b[..1], &b[2..]),
+        (&a[..1], &a[2..]),
+        "only the rewrite count tells: the newest positions are the same"
+    );
+    db.teardown().await;
+}
+
+/// A check vouches only for the revision the last pass compared: once
+/// another revision is stored, it records nothing on it, and the next tick
+/// compares the inputs with that revision.
+#[tokio::test]
+async fn a_check_vouches_only_for_the_revision_it_compared() {
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    node.state
+        .attach_land_market(Arc::new(FixedLandMarket(Mutex::new(Ok(
+            map::LandMarketSnapshot::default(),
+        )))));
+    let secs = Duration::from_secs;
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+
+    // Another publisher stores a revision: same body, another etag.
+    sqlx::query(
+        "UPDATE explore_api.map_grid SET last_updated_at = last_updated_at + 1000, etag = 'another', \
+             checked_at = timezone('UTC', now()) - interval '1 hour' WHERE id = 1",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (stamp, _, other_checked) = grid_checked(&db.pool).await;
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(61)).await,
+        map::Tick::Idle,
+        "no check of a revision it did not compare"
+    );
+    assert_eq!(grid_checked(&db.pool).await.2, other_checked);
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(66)).await,
+        map::Tick::Built,
+        "it compares with the stored revision at once"
+    );
+    let (restored, _, checked) = grid_checked(&db.pool).await;
+    assert!(restored > stamp, "its own body, against the other etag");
+    assert!(checked > other_checked);
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// Marks that cannot be read move nothing, and a failed pass waits for its
+/// retry while the marks keep moving: the job backs off instead of building
+/// every tick. A source that publishes again is read at once.
+#[tokio::test]
+async fn a_failing_marks_read_or_pass_waits_for_its_retry() {
+    use std::sync::atomic::Ordering::SeqCst;
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(ScriptedLandMarket::default());
+    market.marks_fail.store(true, SeqCst);
+    node.state.attach_land_market(market.clone());
+    let secs = Duration::from_secs;
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+
+    // The marks cannot be read: the first pass is due, then none until the
+    // safety interval.
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+    let passes = map_marker(&db.pool).await.0;
+    for s in [5, 10, 15, 20] {
+        assert_eq!(
+            w.tick(&node.state, &ctx, t0 + secs(s)).await,
+            map::Tick::Idle,
+            "an unreadable read is no move"
+        );
+    }
+    assert_eq!(map_marker(&db.pool).await.0, passes);
+
+    // Readable again and moving on every read, while the build fails on a
+    // source the marks still see ready (it went unready between the two
+    // reads): one failed pass, then the retry wait.
+    market.marks_fail.store(false, SeqCst);
+    market.churning.store(true, SeqCst);
+    *market.build_unready.lock() = Some(crate::chain_index::source::Source::NftIndex);
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(25)).await,
+        map::Tick::Failed
+    );
+    for s in [30, 35, 40, 80] {
+        assert_eq!(
+            w.tick(&node.state, &ctx, t0 + secs(s)).await,
+            map::Tick::Idle,
+            "moving marks wait for the retry"
+        );
+    }
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(85)).await,
+        map::Tick::Failed,
+        "the retry"
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(150)).await,
+        map::Tick::Idle,
+        "the next retry waits twice as long"
+    );
+
+    // The marks see the source unready (a move that runs no pass), then
+    // ready again: a pass at once, before the retry.
+    *market.answer.lock() = Some(crate::chain_index::source::Source::NftIndex);
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(155)).await,
+        map::Tick::Idle,
+        "a move to unready runs no pass"
+    );
+    *market.answer.lock() = None;
+    *market.build_unready.lock() = None;
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(160)).await,
+        map::Tick::Built
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// The stored revision's etag.
+async fn grid_etag(pool: &PgPool) -> Option<String> {
+    sqlx::query_scalar("SELECT etag FROM explore_api.map_grid WHERE id = 1")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// An open rental listing of the seeded parcel 10,14.
+fn rental_of_10_14(settings: &crate::land_authz::Settings) -> map::build::LandRental {
+    map::build::LandRental {
+        contract_address: settings.land_registry.to_ascii_lowercase(),
+        token_id: map::meta::encode_land_token_id(10, 14),
+        expiration_ms: 4_000_000_000_000,
+        updated_at_ms: 1_750_000_000_000,
+        periods: vec![(1, 7, "500".into())],
+    }
+}
+
+/// The marks a pass compares later ones with are those of the snapshot it
+/// built from. A rental listed in a pass's snapshot and closed before the
+/// next readable marks reads as no move against marks read before that
+/// pass; against the pass's own it moves them, so the grid is rebuilt
+/// without the rental, and never recorded checked current with it.
+#[tokio::test]
+async fn a_change_reverted_after_a_pass_rebuilds_the_grid_it_listed() {
+    use std::sync::atomic::Ordering::SeqCst;
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(ScriptedLandMarket::default());
+    node.state.attach_land_market(market.clone());
+    let secs = Duration::from_secs;
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+    let unlisted = grid_etag(&db.pool).await;
+
+    // The safety pass cannot read the marks, before or in its snapshot, and
+    // lists the rental.
+    market.marks_fail.store(true, SeqCst);
+    *market.rental.lock() = Some(rental_of_10_14(&settings));
+    let t1 = t0 + map::SAFETY_INTERVAL;
+    assert_eq!(w.tick(&node.state, &ctx, t1).await, map::Tick::Built);
+    let listed = grid_etag(&db.pool).await;
+    assert_ne!(listed, unlisted, "the grid lists the rental");
+    // The rental closes before the marks read again: they read as they did
+    // before that pass, and the grid is rebuilt without it.
+    market.marks_fail.store(false, SeqCst);
+    *market.rental.lock() = None;
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(5)).await,
+        map::Tick::Built,
+        "a pass without marks of its own vouches for nothing"
+    );
+    assert_eq!(grid_etag(&db.pool).await, unlisted);
+
+    // A rental listed between the marks read before the safety pass and its
+    // snapshot, then closed.
+    *market.rental_after_next_marks.lock() = Some(rental_of_10_14(&settings));
+    let t2 = t1 + secs(5) + map::SAFETY_INTERVAL;
+    assert_eq!(w.tick(&node.state, &ctx, t2).await, map::Tick::Built);
+    assert_eq!(grid_etag(&db.pool).await, listed, "the snapshot saw it");
+    *market.rental.lock() = None;
+    assert_eq!(
+        w.tick(&node.state, &ctx, t2 + secs(5)).await,
+        map::Tick::Built,
+        "the marks moved against the snapshot's"
+    );
+    assert_eq!(grid_etag(&db.pool).await, unlisted);
+
+    // Nothing moves: the revision is recorded checked current again.
+    assert_eq!(
+        w.tick(&node.state, &ctx, t2 + secs(10)).await,
+        map::Tick::Idle
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t2 + secs(65)).await,
+        map::Tick::Checked
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A pass that cannot read its marks in its snapshot vouches for nothing:
+/// readable marks then run a pass at once, before any check. When its own
+/// marks keep failing, the passes back off as failed ones do, instead of
+/// building on every tick.
+#[tokio::test]
+async fn a_pass_without_its_own_marks_runs_again_and_backs_off() {
+    use std::sync::atomic::Ordering::SeqCst;
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(ScriptedLandMarket::default());
+    market.snapshot_marks_fail.store(true, SeqCst);
+    node.state.attach_land_market(market.clone());
+    let secs = Duration::from_secs;
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(5)).await,
+        map::Tick::Built,
+        "readable marks run a pass before any check"
+    );
+    // Two passes in a row without their marks: the retry wait, then twice it.
+    for s in [10, 15, 30, 60] {
+        assert_eq!(
+            w.tick(&node.state, &ctx, t0 + secs(s)).await,
+            map::Tick::Idle
+        );
+    }
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(65)).await,
+        map::Tick::Built
+    );
+    for s in [70, 125, 180] {
+        assert_eq!(
+            w.tick(&node.state, &ctx, t0 + secs(s)).await,
+            map::Tick::Idle,
+            "never checked current without its own marks"
+        );
+    }
+
+    // The snapshot reads its marks again: the next pass vouches for its
+    // revision, and the checks resume.
+    market.snapshot_marks_fail.store(false, SeqCst);
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(185)).await,
+        map::Tick::Built
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(190)).await,
+        map::Tick::Idle
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(245)).await,
+        map::Tick::Checked
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// One quiet observation reads the land-authz cursor, the clock and every
+/// mark in one snapshot. A cursor advance (block 101 indexed with a transfer,
+/// not folded, so the fold is no longer current) committed right after the
+/// observation read the cursor at block 100 is
+/// invisible to it, and its clock predates the advance: a check records the
+/// grid of block 100 current only at a time it was. The next observation
+/// sees the advance and checks nothing.
+#[tokio::test]
+async fn a_check_never_confirms_land_at_a_clock_after_it_stopped_publishing() {
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    node.state
+        .attach_land_market(Arc::new(ScriptedLandMarket::default()));
+    let secs = Duration::from_secs;
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+
+    // Block 101 is indexed with a transfer but not folded, committed between
+    // the observation's cursor read and its clock.
+    let advanced_at = Arc::new(Mutex::new(None::<chrono::NaiveDateTime>));
+    let (pool, settings_at, at) = (db.pool.clone(), settings.clone(), advanced_at.clone());
+    *node.state.map.observation_hook.lock() = Some(Box::pin(async move {
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query(
+            "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
+             VALUES (101, 0, 1700000100, $1, 'transfer', $2::numeric, $3)",
+        )
+        .bind(&settings_at.land_registry)
+        .bind(map::meta::encode_land_token_id(10, 14))
+        .bind(format!("0x{}", "c".repeat(40)))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let when: chrono::NaiveDateTime = sqlx::query_scalar(
+            "UPDATE land_authz.index_cursor SET last_block = 101 WHERE network = $1 \
+             RETURNING timezone('UTC', clock_timestamp())",
+        )
+        .bind(&settings_at.network)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        *at.lock() = Some(when);
+    }));
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(65)).await,
+        map::Tick::Checked,
+        "the observation saw block 100 published"
+    );
+    let advanced_at = advanced_at.lock().expect("the advance ran mid-observation");
+    let checked = grid_checked(&db.pool).await.2.unwrap();
+    assert!(
+        checked < advanced_at,
+        "checked at {checked}, not before the cursor advanced at {advanced_at}"
+    );
+
+    // The next observation sees block 101 unfolded: nothing is checked, and
+    // no pass runs while the index cannot build.
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(130)).await,
+        map::Tick::Idle
+    );
+    assert_eq!(grid_checked(&db.pool).await.2, Some(checked));
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// An Estate name the walk committed past the published fold (an index
+/// that stays ready: no authorization event past it) is not built, as the
+/// marks do not see it either: a pass then builds the same grid. Once the
+/// fold reaches it, the marks move and the grid shows it.
+#[tokio::test]
+async fn an_estate_name_past_the_fold_waits_for_the_fold() {
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    node.state
+        .attach_land_market(Arc::new(ScriptedLandMarket::default()));
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+    let folded = grid_etag(&db.pool).await;
+
+    sqlx::query(
+        "INSERT INTO land_authz.estate_data_event (block_number, log_index, token_address, estate_id, name) \
+         VALUES (101, 0, $1, 7, 'Renamed')",
+    )
+    .bind(&settings.estate_registry)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE land_authz.index_cursor SET last_block = 101 WHERE network = $1")
+        .bind(&settings.network)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let watched = map::watch_marks(&node.state).await.unwrap().unwrap();
+    assert!(watched.ready, "no authorization event past the fold");
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + Duration::from_secs(5)).await,
+        map::Tick::Idle,
+        "the marks do not see it"
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + map::SAFETY_INTERVAL).await,
+        map::Tick::Built
+    );
+    assert_eq!(grid_etag(&db.pool).await, folded, "nor does the build");
+
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_block = 101, folded_at = timezone('UTC', now()) WHERE network = $1")
+        .bind(&settings.network)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        w.tick(
+            &node.state,
+            &ctx,
+            t0 + map::SAFETY_INTERVAL + Duration::from_secs(5)
+        )
+        .await,
+        map::Tick::Built,
+        "folding it moves the marks"
+    );
+    assert_ne!(grid_etag(&db.pool).await, folded, "and the grid shows it");
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A pass that finds its body current but cannot record the check (the
+/// `checked_at` UPDATE fails) is not a failed pass, but it is not an
+/// overtaken one either: the next pass waits for the retry, doubling, instead
+/// of running on the next tick.
+#[tokio::test]
+async fn a_check_that_cannot_be_recorded_backs_off() {
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    node.state
+        .attach_land_market(Arc::new(ScriptedLandMarket::default()));
+    let secs = Duration::from_secs;
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+    let (_, _, checked) = grid_checked(&db.pool).await;
+
+    sqlx::raw_sql(
+        "CREATE FUNCTION explore_api.refuse_check() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN RAISE EXCEPTION 'check refused'; END $$; \
+         CREATE TRIGGER refuse_check BEFORE UPDATE OF checked_at ON explore_api.map_grid \
+         FOR EACH ROW EXECUTE FUNCTION explore_api.refuse_check();",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    // The safety pass finds the same body and cannot record the check.
+    let t1 = t0 + map::SAFETY_INTERVAL;
+    let (passes, _, _) = map_marker(&db.pool).await;
+    assert_eq!(w.tick(&node.state, &ctx, t1).await, map::Tick::Built);
+    assert_eq!(map_marker(&db.pool).await.0, passes + 1);
+    for s in [5, 30, 55] {
+        assert_eq!(
+            w.tick(&node.state, &ctx, t1 + secs(s)).await,
+            map::Tick::Idle,
+            "not a pass every tick"
+        );
+    }
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(60)).await,
+        map::Tick::Built,
+        "the retry"
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(170)).await,
+        map::Tick::Idle,
+        "the next retry waits twice as long"
+    );
+    assert_eq!(grid_checked(&db.pool).await.2, checked);
+
+    // The write works again: the retry records the check.
+    sqlx::raw_sql("DROP TRIGGER refuse_check ON explore_api.map_grid")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(180)).await,
+        map::Tick::Built
+    );
+    assert!(grid_checked(&db.pool).await.2 > checked);
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(185)).await,
+        map::Tick::Idle
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A second pass in a row without its own marks backs off even when it
+/// leaves nothing due: here another publisher overtook it (`due` would be
+/// right away), and it still waits for the retry.
+#[tokio::test]
+async fn a_second_pass_without_its_marks_backs_off_even_when_overtaken() {
+    use std::sync::atomic::Ordering::SeqCst;
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(ScriptedLandMarket::default());
+    node.state.attach_land_market(market.clone());
+    let secs = Duration::from_secs;
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+
+    // The safety pass cannot read its marks in its snapshot.
+    market.snapshot_marks_fail.store(true, SeqCst);
+    let t1 = t0 + map::SAFETY_INTERVAL;
+    assert_eq!(w.tick(&node.state, &ctx, t1).await, map::Tick::Built);
+    // The next readable marks run a pass at once; it cannot read its marks
+    // either, and another publisher stores a revision meanwhile.
+    *market.overtake_in_build.lock() = Some(db.pool.clone());
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(5)).await,
+        map::Tick::Built
+    );
+    assert!(
+        market.overtake_in_build.lock().is_none(),
+        "it overtook that pass"
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(10)).await,
+        map::Tick::Idle,
+        "the retry wait, not a pass right away"
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t1 + secs(65)).await,
+        map::Tick::Built,
+        "the retry"
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A pass that another publisher overtakes (a revision stored after its
+/// snapshot began) leaves nothing current, and the next tick compares the
+/// inputs with the stored revision at once, not after the safety interval.
+#[tokio::test]
+async fn a_pass_overtaken_by_another_publisher_compares_again_at_once() {
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(GatedLandMarket {
+        answer: Mutex::new(map::LandMarketSnapshot::default()),
+        gate: Mutex::new(None),
+    });
+    node.state.attach_land_market(market.clone());
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+
+    // The safety pass is held in its snapshot while another publisher stores
+    // a revision; its body equals the one its snapshot saw.
+    let (pinned, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    *market.gate.lock() = Some((pinned.clone(), release.clone()));
+    let overtake = async {
+        pinned.notified().await;
+        sqlx::query(
+            "UPDATE explore_api.map_grid SET last_updated_at = last_updated_at + 1000, etag = 'another' WHERE id = 1",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        release.notify_one();
+    };
+    let (tick, ()) = tokio::join!(
+        w.tick(&node.state, &ctx, t0 + map::SAFETY_INTERVAL),
+        overtake
+    );
+    assert_eq!(tick, map::Tick::Built);
+    let (another, _, _) = grid_checked(&db.pool).await;
+    assert_eq!(
+        w.tick(
+            &node.state,
+            &ctx,
+            t0 + map::SAFETY_INTERVAL + Duration::from_secs(5)
+        )
+        .await,
+        map::Tick::Built,
+        "compared again at once"
+    );
+    assert!(
+        grid_checked(&db.pool).await.0 > another,
+        "its own body, against the other etag"
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// A change the publication floor holds back is published by the pass the
+/// build job runs once the floor has passed, with no other change.
+#[tokio::test]
+async fn a_held_back_change_publishes_when_the_floor_passes() {
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let priced = |mana| map::LandMarketSnapshot {
+        orders: vec![estate_order(&settings, mana)],
+        ..Default::default()
+    };
+    let mut floored = Settings::for_tests(Sources::defaults());
+    floored.map_min_publish_interval = Duration::from_secs(2);
+    let node = node_with_db(floored, db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(FixedLandMarket(Mutex::new(Ok(priced(1000)))));
+    node.state.attach_land_market(market.clone());
+    let mut w = map::Watcher::default();
+
+    assert_eq!(
+        w.tick(&node.state, &ctx, Instant::now()).await,
+        map::Tick::Built
+    );
+    let first = stored_grid(&db.pool).await.unwrap();
+    *market.0.lock() = Ok(priced(1500));
+    assert_eq!(
+        w.tick(&node.state, &ctx, Instant::now()).await,
+        map::Tick::Built
+    );
+    assert_eq!(stored_grid(&db.pool).await.unwrap(), first, "held back");
+    assert_eq!(
+        w.tick(&node.state, &ctx, Instant::now()).await,
+        map::Tick::Idle,
+        "no check while a change waits"
+    );
+    *market.0.lock() = Ok(priced(1700));
+    assert_eq!(
+        w.tick(&node.state, &ctx, Instant::now()).await,
+        map::Tick::Idle,
+        "another change waits for the floor too, without a build"
+    );
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+    assert_eq!(
+        w.tick(&node.state, &ctx, Instant::now()).await,
+        map::Tick::Built
+    );
+    assert!(
+        stored_grid(&db.pool).await.unwrap().0 > first.0,
+        "published"
+    );
+    assert_eq!(
+        node.state.map.snapshot().unwrap().tiles["11,13"].price,
+        Some(1700.0),
+        "the pass at the end of the floor reads every input"
+    );
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// The build reads Shop's side on the snapshot its LAND rows came from: a
+/// rewind committed in between is invisible to it, so the grid it stores is
+/// the coherent earlier state, and the next pass finds the index withdrawn,
+/// fails and keeps that grid.
+#[tokio::test]
+async fn a_land_rewind_committed_during_the_build_does_not_mix_into_the_grid() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    let market = Arc::new(RewindingLandMarket {
+        pool: db.pool.clone(),
+        links_seen: Mutex::new(None),
+    });
+    node.state.attach_land_market(market.clone());
+
+    map::run_pass(&node.state, &ctx).await.unwrap();
+    assert_eq!(
+        *market.links_seen.lock(),
+        Some(2),
+        "Shop's side reads the build's snapshot"
+    );
+    let grid = node.state.map.snapshot().unwrap();
+    assert_eq!(grid.tiles["11,13"].estate_id.as_deref(), Some("7"));
+    assert!(
+        grid.tiles["11,13"].left,
+        "the estate as it was when the snapshot began"
+    );
+    let stamp = grid.last_updated_at;
+
+    let err = map::run_pass(&node.state, &ctx).await.unwrap_err();
+    assert!(
+        err.to_string().contains("land-authz-index not ready"),
+        "{err}"
+    );
+    assert_eq!(
+        node.state.map.last_updated_at(),
+        stamp,
+        "the held grid stays"
+    );
+    assert_eq!(stored_grid(&db.pool).await.unwrap().0, stamp);
 
     jobs.shutdown(Duration::from_secs(1)).await;
     db.teardown().await;
 }
 
 /// One bounded run of every mirror pass and reader against the real upstreams
-/// (`cargo test --lib live_upstream -- --ignored --nocapture`): one 38 MB grid
-/// download and three small documents. Registry uses the local runtime. Prints the `/mirrors`
+/// (`cargo test --lib live_upstream -- --ignored --nocapture`): three small
+/// documents. Registry uses the local runtime. Prints the `/mirrors`
 /// report; the freshness evidence in tests/README.md comes from here.
 #[tokio::test]
 #[ignore]
@@ -2096,7 +3995,6 @@ async fn live_upstream_passes_complete_and_the_boot_routes_answer() {
     lists::run_pass(&node.state, &ctx).await.unwrap();
     denylist::run_pass(&node.state, &ctx).await.unwrap();
     feature_flags::run_pass(&node.state, &ctx).await.unwrap();
-    map::run_pass(&node.state, &ctx).await.unwrap();
 
     let (status, pois) = call_json(&app, "POST", "/dcl-lists/pois", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -2111,36 +4009,20 @@ async fn live_upstream_passes_complete_and_the_boot_routes_answer() {
         flags["flags"]["explorer-alfa-minimum-requirements"], true,
         "the referer-gated flag reached the mirror"
     );
-    let (status, headers, png) = call(
-        &app,
-        "GET",
-        "/api/v1/map.png?width=64&height=64&center=0,0&size=5",
-        None,
-    )
-    .await;
-    assert_eq!(
-        (status, headers["content-type"].to_str().unwrap()),
-        (StatusCode::OK, "image/png")
-    );
-    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
-    let (_, tiles) = call_json(&app, "GET", "/api/v2/tiles?x1=0&x2=0&y1=0&y2=0", None).await;
-    assert_eq!(tiles["data"]["0,0"]["name"], "Genesis Plaza");
     let (_, report) = call_json(&app, "GET", "/mirrors", None).await;
     println!("{}", serde_json::to_string_pretty(&report).unwrap());
     println!(
-        "pois={} denylist={} flags={} variants={} tiles={}",
+        "pois={} denylist={} flags={} variants={}",
         pois["data"].as_array().unwrap().len(),
         deny["users"].as_array().unwrap().len(),
         flags["flags"].as_object().unwrap().len(),
         flags["variants"].as_object().unwrap().len(),
-        node.state.map.snapshot().unwrap().tiles.len()
     );
     for m in report["mirrors"].as_array().unwrap() {
         assert_eq!(m["complete"], true, "{m}");
     }
 
     let restarted = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
-    assert!(restarted.state.map.is_ready());
     assert!(restarted.state.denylist.list().users.len() > 100);
     jobs.shutdown(Duration::from_secs(1)).await;
     db.teardown().await;
@@ -2162,11 +4044,13 @@ async fn spawn_jobs_registers_every_explorer_job_and_stops_with_the_registry() {
         [
             "ab-cdn-maintenance",
             "auth-api-identity-sweep",
+            "auth-api-socket-push",
             "explorer-denylist-mirror",
             "explorer-denylist-reload",
             "explorer-flags-mirror",
             "explorer-lists-mirror",
-            "explorer-map-mirror",
+            "explorer-map-grid",
+            "explorer-map-grid-reload",
             "explorer-satellite-mirror",
             "explorer-world-manifest-mirror",
             "opensea-cache-expiry",
@@ -2443,7 +4327,14 @@ async fn registry_native_failures_are_preserved_without_following_redirects() {
     // must explicitly suppress them for this request only.
     Arc::get_mut(&mut node.state).unwrap().http =
         crate::http::Outbound::new(crate::http::HttpClientCfg::serve(4)).unwrap();
-    let app = router(node.state);
+    let recorder = dcl_metrics::Registry::new(&[registry::FAMILIES])
+        .unwrap()
+        .builder(dcl_metrics::PrometheusBuilder::new())
+        .unwrap()
+        .build_recorder();
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+    use dcl_metrics::http::{component, instrument};
+    let app = instrument(component(router(node.state), "explore"), "serve");
     for status in [307, 400, 401, 403, 404, 429, 500, 503] {
         let (actual, headers, body) = call(
             &app,
@@ -2456,6 +4347,33 @@ async fn registry_native_failures_are_preserved_without_following_redirects() {
         assert_eq!(headers["content-type"], "application/problem+json");
         assert_eq!(body, br#"{"error":"native failure"}"#);
     }
+
+    let scrape = recorder.handle().render();
+    for (outcome, count) in [
+        ("other_response", 1),
+        ("client_error", 5),
+        ("server_error", 2),
+    ] {
+        assert!(
+            scrape.lines().any(|line| {
+                line.starts_with("dcl_registry_backend_requests_total{")
+                    && line.contains("backend=\"native\"")
+                    && line.contains(&format!("outcome=\"{outcome}\""))
+                    && line.ends_with(&format!(" {count}"))
+            }),
+            "{scrape}"
+        );
+    }
+    assert!(
+        scrape.lines().any(|line| {
+            line.starts_with("dcl_http_requests_total{")
+                && line.contains("component=\"explore\"")
+                && line.contains("route=\"/asset-bundle-registry/entities/active\"")
+                && line.contains("status_code=\"500\"")
+                && line.ends_with(" 1")
+        }),
+        "{scrape}"
+    );
     server.abort();
 }
 

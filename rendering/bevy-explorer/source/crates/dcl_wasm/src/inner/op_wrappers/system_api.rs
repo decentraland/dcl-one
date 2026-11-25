@@ -187,6 +187,11 @@ pub async fn op_get_service_urls(state: &WorkerContext) -> Result<JsValue, WasmE
 }
 
 #[wasm_bindgen]
+pub async fn op_get_official_wallets(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_official_wallets(state.rc()).await)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_welcome(state: &WorkerContext) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::system_api::op_get_welcome(state.rc()).await)
 }
@@ -232,6 +237,11 @@ pub fn op_set_lobby_stage(state: &WorkerContext, stage: JsValue) -> Result<(), W
 pub fn op_set_home_scene(state: &WorkerContext, realm: String, parcel: JsValue) {
     serde_parse!(parcel);
     dcl_js::system_api::op_set_home_scene(state.rc(), realm, parcel);
+}
+
+#[wasm_bindgen]
+pub fn op_clear_home_scene(state: &WorkerContext) {
+    dcl_js::system_api::op_clear_home_scene(state.rc());
 }
 
 #[wasm_bindgen]

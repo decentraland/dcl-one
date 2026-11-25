@@ -7,7 +7,8 @@
 //! the one module `service` registers; every procedure is answered from
 //! `social.*` over the ONE pool (`db`) and fans its events out in-process
 //! (`pubsub`; local delivery). Online status is reconstructed independently on
-//! every replica from the complete Pulse topology over the existing comms NATS link.
+//! every replica from Pulse islands, verified World room events over NATS, and
+//! complete LiveKit occupancy reads.
 //!
 //! Voice needs LiveKit: call persistence and media operations use the gatekeeper's
 //! `VoiceRooms` seam (`comms::gatekeeper::voice::rooms`), which its state
@@ -29,10 +30,8 @@
 //! method on `/social-rpc/health/live`,
 //! `GET /social-rpc/v1/users/{address}/privacy-settings` and a 404
 //! `{"error":"Not Found"}` for every other `/social-rpc/*` path or method,
-//! those wrapped routes carry `Access-Control-Allow-Origin: *`. The configured
-//! GET metrics path reads a filtered view of the existing recorder without CORS;
-//! then the bearer-gated
-//! `/admin/social/*` (`admin`). The procedures' HTTP twins on the social-api
+//! those wrapped routes carry `Access-Control-Allow-Origin: *`. The admin router
+//! serves the bearer-gated `/admin/social/*` endpoints. The procedures' HTTP twins on the social-api
 //! host are `http::router`, which `social::router` mounts beside the
 //! communities routes.
 
@@ -43,8 +42,14 @@ pub mod db;
 mod fanout;
 pub mod http;
 pub use crate::shared::rpc::{drpc, handshake};
+mod declarations;
 pub mod limits;
+pub use declarations::FAMILIES;
 mod metrics;
+#[cfg(test)]
+pub(crate) fn metrics_builder() -> anyhow::Result<dcl_metrics::PrometheusBuilder> {
+    dcl_metrics::Registry::new(&[FAMILIES])?.builder(dcl_metrics::PrometheusBuilder::new())
+}
 pub mod profiles;
 pub mod proto;
 pub mod pubsub;
@@ -124,11 +129,6 @@ pub struct Settings {
     /// Source COMMIT_HASH string; absent returns empty, without build fallback.
     pub commit_hash: Option<String>,
     pub current_version: Option<String>,
-    pub metrics_path: Option<String>,
-    pub metrics_bearer_token: Option<String>,
-    pub metrics_reset_at_night: bool,
-    /// Existing process recorder; this route installs no exporter or listener.
-    pub metrics_handle: Option<crate::comms::metrics::PrometheusHandle>,
     pub profile_source: Option<Arc<crate::communities::profiles::RegistryReader>>,
 }
 
@@ -154,10 +154,6 @@ impl Default for Settings {
             writes_enabled: true,
             commit_hash: None,
             current_version: None,
-            metrics_path: None,
-            metrics_bearer_token: None,
-            metrics_reset_at_night: false,
-            metrics_handle: None,
             profile_source: None,
         }
     }
@@ -236,11 +232,6 @@ impl State {
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
         metrics::register();
-        if settings.metrics_reset_at_night {
-            tracing::warn!(
-                "WKC_METRICS_RESET_AT_NIGHT is configured; social-view reset remains unsupported; the shared recorder is preserved"
-            );
-        }
         ctx.admission().configure(settings.admission);
         ctx.friendship_limiter()
             .configure(settings.friendship_limits);
@@ -257,7 +248,8 @@ impl State {
         }
     }
 
-    pub(crate) fn initial_fanout_ready(&self) -> bool {
+    /// Whether Social RPC can admit sockets after initial fanout setup.
+    pub fn initial_fanout_ready(&self) -> bool {
         self.fanout_ready
             .lock()
             .as_ref()
@@ -419,10 +411,7 @@ pub fn router(state: Arc<State>) -> Router {
         .route("/social-rpc/{*rest}", any(not_found))
         .layer(axum::middleware::map_response(allow_any_origin))
         .nest("/admin/social", admin::router())
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            metrics::serve_if_requested,
-        ))
+        .layer(axum::middleware::from_fn(metrics::record_request))
         .with_state(state)
 }
 

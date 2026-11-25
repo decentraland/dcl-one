@@ -3,7 +3,7 @@ import { useState } from "react";
 import { type ShouldRevalidateFunctionArgs } from "react-router";
 import { HydrationBoundary } from "@tanstack/react-query";
 import SitesLayout from "@/features/components/chrome/SitesLayout";
-import type { SitesLocaleHandle } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
+import type { SitesLocaleHandle } from "@dcl/one-ui";
 
 import { detectPlatform } from "@/features/download/options";
 import { EventsLocaleProvider, useEventsFooterCopy } from "@/features/events/locale";
@@ -123,6 +123,9 @@ function EventsRoute({ loaderData }: Route.ComponentProps) {
     origin:
       loaderData?.origin ??
       (typeof window === "undefined" ? "" : window.location.origin),
+    pageOrigin:
+      loaderData?.pageOrigin ??
+      (typeof window === "undefined" ? "" : window.location.origin),
     initial: loaderData
       ? { now: loaderData.now, unavailable: loaderData.unavailable }
       : null,
@@ -136,6 +139,7 @@ function EventsRoute({ loaderData }: Route.ComponentProps) {
           sid={first.sid}
           platform={first.platform}
           origin={first.origin}
+          pageOrigin={first.pageOrigin}
           initial={first.initial}
         />
       </SitesLayout>

@@ -130,6 +130,7 @@
         "title": "Historial de chats",
         "empty": "Aún no hay chats guardados.",
         "delete": "Eliminar chat",
+        "shared_stays": "Eliminar un chat aquí no borra lo que compartiste. Hazlo en Configuración → IA.",
         "now": "ahora mismo",
         "minutes": "hace {n} min",
         "hours": "hace {n} h",
@@ -195,11 +196,11 @@
         "card_body": "Comparte tus conversaciones con Decentraland para ayudar a mejorar el asistente. Un modelo de IA las lee para encontrar qué funciona y qué no. Antes de enviar nada, tu computadora quita claves, frases semilla, correos y otros datos personales comunes.",
         "signin_body": "Inicia sesión para compartir tus conversaciones y ayudar a mejorar el asistente.",
         "details_toggle": "Qué se comparte y qué no",
-        "details_shared": "Se comparte: lo que escribes, las respuestas del asistente, las herramientas que usó con sus nombres de archivo y comandos, el agente y el modelo, y cuánto tardó cada respuesta.",
+        "details_shared": "Se comparte: lo que escribes, las respuestas del asistente, las herramientas que usó con sus nombres de archivo y comandos, el agente y el modelo, cuánto tardó cada respuesta, tus valoraciones, y tu versión de Creator Hub y sistema operativo.",
         "details_not_shared": "No se comparte: imágenes, contenido de archivos, el nombre de tu escena ni las conversaciones que marques como no compartidas.",
-        "details_analysis": "Cómo se usan: un modelo de IA de un proveedor que trabaja para Decentraland resume cada conversación. El proveedor no guarda ninguna copia ni entrena con ellas. Guardamos los patrones que vemos entre muchos creadores para mejorar el asistente.",
+        "details_analysis": "Cómo se usan: un modelo de IA de un proveedor que trabaja para Decentraland resume cada conversación, bajo un acuerdo por el que el proveedor no guarda ninguna copia ni entrena con ellas. Guardamos los patrones que vemos entre muchos creadores para mejorar el asistente.",
         "details_publish": "El equipo comenta esos patrones. Los cambios que salgan de ellos pueden publicarse en las instrucciones, habilidades y documentación públicas del asistente, y en las descripciones de esos cambios. Una vez publicados, siguen siendo públicos aunque borres lo que compartiste.",
-        "details_control": "Puedes dejar de compartir o borrar todo lo compartido en cualquier momento desde Configuración. Dejar de compartir también detiene el análisis, y borrar también borra los resúmenes. Las conversaciones compartidas y sus resúmenes se guardan hasta 180 días.",
+        "details_control": "Puedes dejar de compartir o borrar todo lo compartido en cualquier momento desde Configuración. Dejar de compartir detiene el análisis y borra los resúmenes, pero conserva lo que ya compartiste hasta que caduque; borrar también lo elimina. Las conversaciones compartidas se guardan hasta 180 días, y los datos borrados pueden permanecer en copias de seguridad cifradas hasta 35 días.",
         "accept": "Compartir para ayudar",
         "decline": "No, gracias",
         "not_now": "Ahora no",
@@ -210,7 +211,10 @@
         "rate_down": "Mala respuesta",
         "menu_share_chat": "Compartir este chat",
         "menu_share_all": "Compartir todos los chats",
-        "menu_chat_erased": "Lo que este chat compartió se borró."
+        "menu_chat_erased": "Lo que este chat compartió se borró.",
+        "menu_chat_confirm": "¿Dejar de compartir este chat? Se borrará lo que ya compartió.",
+        "menu_chat_confirm_yes": "Dejar y borrar",
+        "menu_chat_confirm_no": "Seguir compartiendo"
       }
     },
     "publish": {
@@ -394,6 +398,7 @@
       "more": "Más"
     },
     "earn_not_joined": "EARN, aún no te uniste",
+    "earn_payout_pending": "EARN, configuración de pagos sin terminar",
     "feedback": "Darnos feedback",
     "user_menu": {
       "sign_in": "Iniciar Sesión",
@@ -1866,7 +1871,8 @@
         "my_places": "Mis lugares",
         "leaderboard": "Clasificación",
         "payouts": "Pagos",
-        "home": "Inicio"
+        "home": "Inicio",
+        "payouts_pending": "PAGOS, configuración sin terminar"
       },
       "title_prefix": "Ganar",
       "title": "Creator Fund",
@@ -1879,6 +1885,12 @@
       "contact_support": "Contactar con soporte",
       "banner": {
         "region": "Anuncio"
+      },
+      "setup_banner": {
+        "wallet": {
+          "title": "Configura tu billetera de pagos",
+          "description": "Agrega una billetera para recibir tus pagos del Creator Fund en USDC."
+        }
       },
       "filter": {
         "cycle": "Ciclo",
@@ -1973,17 +1985,22 @@
           "title": "Billetera de pagos",
           "info_label": "Acerca de las billeteras de pagos",
           "info": "Una billetera digital es donde guardas y gestionas tus activos digitales. Puedes usarla para enviar, recibir y seguir tus fondos de forma segura, incluidas tus recompensas en USDC del Creator Fund.",
+          "payout_info": "Tu billetera de pagos es donde el Creator Fund envía tus recompensas, en USDC en Ethereum (ERC-20), dentro de los 14 días posteriores al cierre de cada ciclo. Puede ser cualquier billetera o cuenta de exchange que controles.",
           "learn_more": "Más información",
           "copy": "Copiar la dirección de la billetera",
           "edit": "Editar",
-          "add": "Agregar billetera"
+          "add": "Agregar billetera",
+          "unavailable": "Verifica tu correo para configurar tu billetera.",
+          "no_active_place": "Necesitas tener una escena publicada para configurar tu billetera.",
+          "notify_failed": "No pudimos enviarte un correo sobre este cambio, así que no guardamos tu billetera. Vuelve a intentarlo."
         },
         "contact": {
           "title": "Información de contacto",
           "full_name": "Nombre completo",
           "email": "Correo electrónico",
           "unverified": "Sin verificar",
-          "verify": "Verificar correo"
+          "verify": "Verificar correo",
+          "unavailable": "Necesitas tener una escena publicada para verificar tu correo"
         },
         "table": {
           "label": "Pagos",
@@ -2020,13 +2037,20 @@
         },
         "erc20": "Asegúrate de que esta billetera pueda recibir USDC en Ethereum (ERC-20). Los fondos enviados a una billetera que no lo admite no se pueden recuperar.",
         "verify": {
-          "title": "Verifica tu correo",
+          "confirm_title": "1. Confirma tu correo",
+          "confirm_body": "Asegúrate de que tu correo sea correcto. Enviaremos un código de verificación a esta dirección.",
+          "edit_email": "Editar correo",
+          "daily_limit": "Solicitaste demasiados códigos hoy. Inténtalo de nuevo mañana.",
+          "send_soon": "Podrás enviar un código a esta dirección en un momento.",
+          "continue": "Continuar",
+          "title": "2. Introduce el código de verificación",
           "body_sent": "Enviamos un código de 6 dígitos a <b>{email}</b>.",
           "body_instruction": "Introduce el código a continuación para completar la verificación.",
           "digit": "Dígito {n} de 6",
           "resend": "Reenviar código",
           "incorrect": "Código incorrecto. Revisa el correo e inténtalo de nuevo.",
           "expired": "Este código caducó. Reenvía uno nuevo.",
+          "back": "Atrás",
           "submit": "Verificar"
         },
         "snackbar": {

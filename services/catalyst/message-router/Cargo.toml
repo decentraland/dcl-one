@@ -48,8 +48,7 @@ prost.workspace = true
 getrandom.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
-metrics.workspace = true
-metrics-exporter-prometheus.workspace = true
+dcl-metrics.workspace = true
 
 [build-dependencies]
 prost-build.workspace = true

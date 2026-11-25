@@ -157,3 +157,42 @@ fn defines(production: bool) -> FxIndexMap<String, String> {
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A save with a syntax error must not cost the preview its scene: the bundle of the last
+    /// build that passed stays on disk, byte for byte, until a build passes again.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn failed_build_keeps_the_last_bundle() {
+        let t = crate::scene::Tmp::new("rolldown-failed-build");
+        t.write("tsconfig.json", "{}");
+        t.write("src/index.ts", "export const scene = 'first'\n");
+        let project = Project {
+            root: t.0.clone(),
+            scene_json: serde_json::json!({}),
+        };
+        let opts = EsbuildOptions {
+            production: false,
+            entrypoint: t.0.join("src/index.ts"),
+            outfile: t.0.join("bin/index.js"),
+            tsconfig: t.0.join("tsconfig.json"),
+            aliases: Vec::new(),
+            externals: Vec::new(),
+        };
+        let bundle = || std::fs::read_to_string(&opts.outfile).unwrap();
+
+        run(&project, &opts).await.unwrap();
+        let last_good = bundle();
+        assert!(last_good.contains("first"), "{last_good}");
+
+        t.write("src/index.ts", "export const scene = (\n");
+        assert!(run(&project, &opts).await.is_err());
+        assert_eq!(bundle(), last_good);
+
+        t.write("src/index.ts", "export const scene = 'second'\n");
+        run(&project, &opts).await.unwrap();
+        assert!(bundle().contains("second"));
+    }
+}

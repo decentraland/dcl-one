@@ -72,6 +72,39 @@ describe('applyFlagOverrides', () => {
     });
   });
 
+  describe('when a dev build points AI sharing at a local service', () => {
+    const DEV_WITH_URL = { DEV: true, VITE_AI_SHARING_API_URL: 'http://localhost:3000' };
+
+    it('should turn AI prompt sharing on', () => {
+      const flags = applyFlagOverrides(SERVICE_FLAGS, storageWith(null), DEV_WITH_URL);
+
+      expect(flags[FeatureFlag.AI_PROMPT_SHARING]).toBe(true);
+      expect(flags['creatorhub-something']).toBe(true);
+    });
+
+    it('should still let a stored override switch it off', () => {
+      const flags = applyFlagOverrides(
+        SERVICE_FLAGS,
+        storageWith(JSON.stringify({ [FeatureFlag.AI_PROMPT_SHARING]: false })),
+        DEV_WITH_URL,
+      );
+
+      expect(flags[FeatureFlag.AI_PROMPT_SHARING]).toBe(false);
+    });
+  });
+
+  describe('when the build is packaged or a release', () => {
+    it('should ignore the URL variable and the stored overrides alike', () => {
+      const flags = applyFlagOverrides(
+        SERVICE_FLAGS,
+        storageWith(JSON.stringify({ [FeatureFlag.ANALYTICS]: true })),
+        { DEV: false, VITE_AI_SHARING_API_URL: 'http://localhost:3000' },
+      );
+
+      expect(flags).toEqual(SERVICE_FLAGS);
+    });
+  });
+
   it('should expose the key the console command uses', () => {
     expect(FLAG_OVERRIDES_KEY).toBe('creator-hub:feature-flags');
   });

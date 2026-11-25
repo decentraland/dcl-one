@@ -188,6 +188,11 @@ export interface NametagTag {
   player: string | null
   /** The tag is over an avatar a scene made (`AvatarShape`): its suffix is the end of the avatar's id. */
   sceneAvatar: boolean
+  /** False for a tag that is its plate alone: the avatar has no name, or a scene's area hides it. */
+  nameShown: boolean
+  /** The plate a scene put over the name with `AvatarNametag`; its colours are `#RRGGBB`. */
+  plate: { label: string; labelColor: string; backgroundColor: string; borderColor: string } | null
+  /** Empty, as `suffix` is, for an avatar with no name. */
   name: string
   suffix: string
   verified: boolean
@@ -209,6 +214,8 @@ export interface NametagState {
   shown: number
   /** Of those shown, the tags over a scene's avatars. */
   sceneAvatars: number
+  /** Of those shown, the tags with a scene's plate. */
+  plates: number
   /** Tags whose names don't show: out of range, blocked, or hidden by the scene or a setting. */
   hidden: number
   /** The glyph atlas' distance-field and colour page sizes, in pixels. */
@@ -331,6 +338,8 @@ export interface BanBlockState {
     scope: 'platform' | 'world' | 'scene' | null
     message: string | null
     sceneId: string | null
+    /** Known refusals in this wallet/realm session; retryDue is elapsed engine seconds. */
+    retainedRefusals: { sceneId: string; scope: 'world' | 'scene'; retryDue: number }[]
   }
   sceneRoom: {
     state: 'not_connected' | 'connected'
@@ -926,6 +935,13 @@ export class Explorer {
   /** The engine's frame as PNG bytes (the canvas on the web, the HUD included natively). */
   async screenshot(): Promise<Buffer> {
     return Buffer.from(await this.run('/screenshot'), 'base64')
+  }
+
+  /** Lay the HUD out at `[width, height]` CSS px, or at the window's size again with `null`, and
+   *  resolve once it has drawn at that size. Throws on a transport without `resizeView`. */
+  async resizeView(size: [number, number] | null): Promise<void> {
+    if (!this.console.resizeView) throw new Error(`the ${this.console.kind} transport cannot resize the view`)
+    await this.console.resizeView(size)
   }
 
   // --- input --------------------------------------------------------------------------------

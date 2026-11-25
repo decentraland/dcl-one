@@ -9,9 +9,9 @@ import styles from './BackpackModal.module.css'
 
 export function BackpackModal({ onClose, children }: { onClose: () => void; children: React.ReactNode }): React.JSX.Element {
   const frameRef = useRef<HTMLDivElement>(null)
-  const preview = useSession().avatarPreviewRect
+  const { avatarPreviewRect: preview, avatarPreviewReady } = useSession()
   // the dim must not cover the engine's avatar, which shows through the frame's hole
-  const hole = preview != null && frameRef.current != null ? modalHole(preview, frameRef.current) : null
+  const hole = avatarPreviewReady && preview != null && frameRef.current != null ? modalHole(preview, frameRef.current) : null
   return (
     <div className={styles.root}>
       <div

@@ -70,10 +70,27 @@ export function createSid(): string {
   return sid;
 }
 
+/** The anonymous id the legacy sites and shop (analytics.js) kept for a visitor. */
+const LEGACY_ANONYMOUS_ID_COOKIE = "ajs_anonymous_id";
+/** A UUID or another plain id: anything else in the cookie is not adopted. */
+const LEGACY_ANONYMOUS_ID = /^[A-Za-z0-9-]{8,64}$/;
+
+/** The legacy anonymous id, URI-decoded and without the JSON quotes analytics.js may store it with. */
+export function readLegacyAnonymousId(request: Request): string | null {
+  let id = parseCookies(request.headers.get("cookie"))[LEGACY_ANONYMOUS_ID_COOKIE]?.trim();
+  if (!id) return null;
+  if (id.length >= 2 && id.startsWith('"') && id.endsWith('"')) id = id.slice(1, -1);
+  return LEGACY_ANONYMOUS_ID.test(id) ? id : null;
+}
+
+/**
+ * The request's sid, or a new one: a visitor the legacy apps tracked keeps their anonymous id, so
+ * Segment sees one user across the move. An existing sid always wins.
+ */
 export function ensureSid(request: Request): { sid: string; created: boolean } {
   const existing = readSid(request);
   if (existing) return { sid: existing, created: false };
-  return { sid: createSid(), created: true };
+  return { sid: readLegacyAnonymousId(request) ?? createSid(), created: true };
 }
 
 export function serializeSidCookie(
@@ -160,12 +177,24 @@ function withCookies(response: Response, cookies: string[]): Response {
 export const publicResponseContext = createContext<boolean>(false);
 
 /**
- * Called from the middleware of a route served with a public `Cache-Control` (the docs), before its
- * loaders run: such a response is stored once and served to everyone, so it must carry neither a
- * visitor's session id nor a session cookie.
+ * Called from the middleware of a route served with a public `Cache-Control` (the docs, the cart's
+ * shared document), before its loaders run: such a response is stored once and served to everyone, so
+ * it must carry no session cookie and nothing of the visitor in root data (session id, wallet, language).
  */
 export function markPublicResponse(context: Readonly<RouterContextProvider>): void {
   context.set(publicResponseContext, true);
+}
+
+/**
+ * The paths whose route calls `markPublicResponse` for every response (`routes/docs.$.tsx`, mounted at
+ * `/docs/*`), matched case-insensitively as React Router matches routes: root's data for them carries no
+ * session. The cart calls it only for its shared document (`routes/shop/shared-cart.ts`), so root's
+ * `shouldRevalidate` knows that page by its data (`noteRootSid`), not by its path.
+ */
+const PUBLIC_RESPONSE_PATH = /^\/docs(\/|$)/i;
+
+export function isPublicResponsePath(pathname: string): boolean {
+  return PUBLIC_RESPONSE_PATH.test(pathname);
 }
 
 /** `public` or `s-maxage`: either lets a shared cache store the response. */

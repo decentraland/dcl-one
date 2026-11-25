@@ -14,6 +14,7 @@ import {
   resolveOutfit,
 } from "./outfit";
 import type { Entity, HidingRules, OutfitData, ResolvedOutfit } from "./outfit";
+import { shareSkeleton } from "./skeleton";
 
 type AvatarColors = { skin: THREE.Color | null; hair: THREE.Color | null; eyes: THREE.Color | null };
 
@@ -480,6 +481,7 @@ export function createAvatarScene(
     });
     try {
       const gltf = await new GLTFLoader(manager).loadAsync(mainUrl);
+      shareSkeleton(gltf.scene);
       return gltf.scene;
     } finally {
       for (const url of held.values()) URL.revokeObjectURL(url);
@@ -864,7 +866,7 @@ export function createAvatarScene(
     const bodyLc = bodyShape.toLowerCase();
     const byPointer = await fetchEntities(base, [bodyShape, ...wearables]);
     if (stale(gen)) return null;
-    const rules = computeHiding(wearables, byPointer);
+    const rules = computeHiding(wearables, byPointer, bodyShape, target.forceRender);
 
     const wantParts: { key: string; urn: string; isBody: boolean; entity: Entity }[] = [];
     const wantFeatures: { key: string; cat: string; entity: Entity }[] = [];

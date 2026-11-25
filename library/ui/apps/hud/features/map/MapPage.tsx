@@ -2,7 +2,7 @@
 // and Layers panel, and the panel of search results, places and events on the right.
 
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
-import { DEFAULT_REALM } from '@hud-host'
+import { DEFAULT_REALM, serviceUrl } from '@hud-host'
 import { isGenesisSatelliteView } from '@explorer-core/features/map/atlas'
 import { homeOf, isPlacePanelHome, placeHomeTarget } from '@explorer-core/features/map/home'
 import { isRoad, isWorldPlace, type PlacePhoto } from '@explorer-core/features/map/mapApi'
@@ -14,8 +14,12 @@ import type { EventMarker, PlaceMarker } from '@explorer-core/features/map/mapMa
 import { CAMERA_CENTER_SECONDS, CAMERA_MOVE_SECONDS } from '@explorer-core/features/map/mapZoom'
 import { isRouteTo, navigation } from '@explorer-core/features/map/navigation'
 import { Navmap } from '@explorer-core/features/map/navmap'
+import timeIcon from '../../assets/events/time-icn.png'
 import { showToast } from '../../design'
-import { PhotoDetail } from '../gallery/PhotoDetail'
+import { MaskIcon } from '../../design/MaskIcon'
+import { usePhotoViewer } from '../gallery/usePhotoViewer'
+import { travelToPhoto } from '../gallery/reelActions'
+import { openPassport } from '../profile/Passport'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { useOptionalSession } from '../session/SessionContext'
 import type { GalleryState, MapState, MinimapState, ProfileState, TravelOutcome } from '../session/useEngineSession'
@@ -33,6 +37,7 @@ import { SearchBar } from './panel/SearchBar'
 import { SearchResults } from './panel/SearchResults'
 import { useMapCamera } from './useMapCamera'
 import { useMapLayerData } from './useMapLayerData'
+import { useMapGridAge } from './useMapGridAge'
 import noticeStyles from './MapNotices.module.css'
 import styles from './MapPage.module.css'
 
@@ -74,6 +79,8 @@ export function MapPage({
   const address = profile.data?.address
   const { pose } = minimap
   const data = useMapLayerData(open, layers, address)
+  // The parcels map is drawn from the map API's grid; the satellite map is not.
+  const gridAge = useMapGridAge(serviceUrl('mapApi'), open && layers.has('parcels'))
 
   const { translateTo, setPosition, resetZoom } = camera
   useEffect(() => {
@@ -148,6 +155,31 @@ export function MapPage({
     void nav.selectParcelAsHome(parcel)
   }, [home, nav])
 
+  const openPhoto = open && photo != null ? photo.photos[photo.index] : undefined
+  usePhotoViewer(
+    photo != null && openPhoto != null
+      ? {
+          photos: photo.photos.map((ph) => ({ id: ph.id, url: ph.url, thumbnailUrl: ph.thumbnailUrl, dateTime: ph.dateTime ?? '' })),
+          index: photo.index,
+          meta: gallery.metas[openPhoto.id],
+          canEdit: false,
+          onIndex: (index) => setPhoto({ photos: photo.photos, index }),
+          onLoadMeta: gallery.loadPhoto,
+          loadWearables: gallery.loadWearables,
+          onClose: () => setPhoto(null),
+          onViewPerson: (u) => openPassport(u.address),
+          onJumpIn: (place) =>
+            go(
+              () => travelToPhoto(place, map),
+              () => {
+                setPhoto(null)
+                nav.clearInput()
+              }
+            )
+        }
+      : null
+  )
+
   if (!open) return null
 
   const jumpInPlace = (): void => {
@@ -177,16 +209,14 @@ export function MapPage({
     if (view == null) return
     go(() => map.teleportToPlace(view.event.x, view.event.y), () => nav.clearInput())
   }
-  // Home can be set, not cleared: the engine keeps one home, the default until one is set.
-  const setHome = (place: DiscoverPlace, origin: Vec2 | null): void => {
+  const placeIsHome = (place: DiscoverPlace, origin: Vec2 | null): boolean => isPlacePanelHome(home, place, origin)
+  const toggleHome = (place: DiscoverPlace, origin: Vec2 | null): void => {
+    if (placeIsHome(place, origin)) return map.clearHome()
     const target = placeHomeTarget(place, origin)
     if (target != null) map.setHome(target.realm ?? DEFAULT_REALM, target.parcel)
   }
 
-  const placeIsHome = (place: DiscoverPlace, origin: Vec2 | null): boolean => isPlacePanelHome(home, place, origin)
-
   const p = profile.data
-  const openPhoto = photo != null ? photo.photos[photo.index] : undefined
   const body = (
     <>
       <div className={compact != null ? `${styles.wrap} ${styles.compact}` : styles.wrap}>
@@ -218,7 +248,7 @@ export function MapPage({
           <RouteLayer destination={destination} pose={pose} active={open} />
         </MapCanvas>
 
-        <CategoryStrip selected={snap.chip} onSelect={(key) => nav.selectCategory(key)} />
+        <CategoryStrip selected={snap.chip} wrap={compact != null} onSelect={(key) => nav.selectCategory(key)} />
         {warning && (
           <WorldWarning
             onClose={() => {
@@ -236,6 +266,12 @@ export function MapPage({
           onCenterHome={showHome}
           onToggleLayers={() => setLayersOpen((v) => !v)}
         />
+        {gridAge != null && (
+          <div className={noticeStyles.age}>
+            <MaskIcon src={timeIcon} size={14} />
+            {gridAge}
+          </div>
+        )}
         {layersOpen && <LayersPanel />}
         <div className={noticeStyles.credits}>Powered by the Decentraland Foundation</div>
 
@@ -272,7 +308,7 @@ export function MapPage({
               isHome={placeIsHome(snap.place.place, snap.place.origin)}
               navigating={isRouteTo(destination, snap.place.place)}
               onPlaceChange={(place) => nav.updatePlace(place)}
-              onHome={() => snap.place != null && setHome(snap.place.place, snap.place.origin)}
+              onHome={map.canPinHome ? () => snap.place != null && toggleHome(snap.place.place, snap.place.origin) : undefined}
               onStartNavigation={() => navigation.start(snap.place?.place ?? null)}
               onStopNavigation={navigation.stop}
               onJumpIn={jumpInPlace}
@@ -286,26 +322,6 @@ export function MapPage({
         </RightPanel>
       </div>
 
-      {photo != null && openPhoto != null && (
-        <PhotoDetail
-          photos={photo.photos.map((ph) => ({ id: ph.id, url: ph.url, thumbnailUrl: ph.thumbnailUrl, dateTime: ph.dateTime ?? '' }))}
-          index={photo.index}
-          meta={gallery.metas[openPhoto.id]}
-          isSelf={false}
-          onIndex={(index) => setPhoto({ photos: photo.photos, index })}
-          onLoadMeta={gallery.loadPhoto}
-          onClose={() => setPhoto(null)}
-          onTeleport={(x, y) =>
-            go(
-              () => map.teleportToPlace(x, y),
-              () => {
-                setPhoto(null)
-                nav.clearInput()
-              }
-            )
-          }
-        />
-      )}
     </>
   )
   if (compact != null) return body

@@ -442,7 +442,8 @@ fn update_pointer_target(
         .fold(
             None,
             |maybe_prior_nearest, (scene_entity, _, mut collider_data)| {
-                let maybe_nearest = collider_data.cast_ray_nearest(
+                collider_data.update_bvh();
+                let maybe_nearest = collider_data.cast_ray_nearest_in_scene_flushed(
                     ray.origin,
                     ray.direction.into(),
                     f32::MAX,
@@ -2167,5 +2168,131 @@ mod pan_tests {
         app.update();
         let target = app.world().resource::<PointerTarget>().0.clone();
         assert_eq!(target.map(|t| t.ty), Some(PointerTargetType::Ui));
+    }
+}
+
+#[cfg(test)]
+mod pointer_target_tests {
+    use super::*;
+    use crate::{
+        initialize_scene::{LiveScenes, PointerResult, PortableScenes, ScenePointers},
+        update_scene::synthetic_pointer::{Anchor, Hold, SyntheticAim},
+        update_world::mesh_collider::regions_of_parcels,
+    };
+    use bevy::ecs::system::RunSystemOnce;
+    use dcl_types::SceneId;
+    use rapier3d_f64::prelude::{ColliderBuilder, Group, InteractionGroups, InteractionTestMode};
+    use scene_material::SceneBounds;
+
+    #[test]
+    fn the_pointer_passes_a_scenes_collider_over_another_scenes_parcel() {
+        // A scene around a notch: parcels (0, 0) and (2, 0), joined by the row (0, 1), (1, 1),
+        // (2, 1). The notch at (1, 0), which is not the scene's, spans world x 16 to 32 and z
+        // -16 to 0; the scene's row behind it spans z -32 to -16.
+        let parcels = [(0, 0), (2, 0), (0, 1), (1, 1), (2, 1)];
+        let regions = regions_of_parcels(&parcels);
+        let parcels = parcels.map(|(x, y)| IVec2::new(x, y));
+
+        let mut world = World::new();
+        let mut context = RendererSceneContext::new(
+            SceneId::DUMMY,
+            "scene".to_owned(),
+            "storage_root".to_owned(),
+            false,
+            0,
+            "title".to_owned(),
+            IVec2::ZERO,
+            parcels.into_iter().collect(),
+            regions.clone(),
+            SceneBounds::default(),
+            vec![],
+            Entity::PLACEHOLDER,
+            0.,
+            false,
+            "sdk7",
+            false,
+            false,
+        );
+        let mut colliders = SceneColliderData::for_regions(&regions, parcels.len());
+
+        // two posts of the scene on the line x = 24: one over the notch, one in the row behind
+        let [_in_the_notch, behind_the_notch] = [(1, -8.0), (2, -24.0)].map(|(index, z)| {
+            let entity = world.spawn_empty().id();
+            let scene_entity = SceneEntityId {
+                id: 512 + index,
+                generation: 0,
+            };
+            context.associate_bevy_entity(scene_entity, entity);
+            let id = ColliderId::new(scene_entity, None, 0);
+            let layers = Group::from_bits_truncate(ColliderLayer::ClPointer as u32);
+            let collider = ColliderBuilder::cuboid(0.5, 0.5, 0.5)
+                .collision_groups(InteractionGroups::new(
+                    layers,
+                    layers,
+                    InteractionTestMode::And,
+                ))
+                .build();
+            colliders.set_collider(&id, collider, Some(entity));
+            colliders.update_collider_transform(
+                &id,
+                &GlobalTransform::from(
+                    Transform::from_xyz(24.0, 2.0, z).with_scale(Vec3::new(1.0, 4.0, 1.0)),
+                ),
+            );
+            entity
+        });
+        let scene = world.spawn((context, colliders)).id();
+
+        let mut pointers = ScenePointers::default();
+        for parcel in parcels {
+            pointers.insert(
+                parcel,
+                PointerResult::Exists {
+                    hash: "scene".to_owned(),
+                    urn: None,
+                },
+            );
+        }
+        let mut live = LiveScenes::default();
+        live.scenes.insert("scene".to_owned(), scene);
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.init_resource::<PortableScenes>();
+        world.init_resource::<AvatarColliders>();
+        world.init_resource::<WorldPointerTarget>();
+        world.init_resource::<PointerRay>();
+        world.init_resource::<LeftDragPan>();
+        world.init_resource::<PanHoldsPointer>();
+
+        // the player stands in the notch and aims along -z at the post behind it
+        world.spawn((
+            PrimaryUser::default(),
+            GlobalTransform::from_xyz(24.0, 0.0, -2.0),
+        ));
+        world.spawn((
+            Camera::default(),
+            PrimaryCamera::default(),
+            GlobalTransform::from_xyz(24.0, 2.0, -2.0),
+        ));
+        let target = world
+            .spawn(GlobalTransform::from_xyz(24.0, 2.0, -24.0))
+            .id();
+        world.insert_resource(SyntheticPointer(Some(SyntheticAim {
+            scene,
+            entity: SceneEntityId {
+                id: 514,
+                generation: 0,
+            },
+            target,
+            anchor: Anchor::Origin,
+            hold: Hold::Open,
+            started_frame: 0,
+        })));
+
+        world.run_system_once(update_pointer_target).unwrap();
+
+        let hit = world.resource::<WorldPointerTarget>().0.clone().unwrap();
+        assert_eq!(hit.container, behind_the_notch);
+        assert!((hit.camera_distance.0 - 21.5).abs() < 1e-3);
     }
 }

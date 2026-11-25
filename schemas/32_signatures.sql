@@ -6,10 +6,12 @@
 -- `metadata` becomes `rental_assets` keyed by (contract, token) with the
 -- wire's `nft_id` as a UNIQUE, uuids come from gen_random_uuid (no uuid-ossp),
 -- every timestamp is `timestamp without time zone` UTC. The asset's owner and
--- LAND columns come from the marketplace subgraph reader at create/refresh
--- time (the old squid.nft probe); `fetched_at` is their freshness. The
--- rentals-subgraph status sync had no job in the old crate and is deferred,
--- so no sync row exists. Writes are local authority behind DATA_WRITES_ENABLED.
+-- LAND columns come from the published chain indexes on walking nodes and the
+-- configured marketplace subgraph on non-walking nodes at create/refresh time.
+-- `metadata_block` versions that source; `fetched_at` records the refresh.
+-- Status comes from the `rentals` chain index (shop.rental_event) and from the
+-- `rental-listing-status` pass (transfer, dissolution, expiry); no sync row
+-- exists. Writes are local authority behind DATA_WRITES_ENABLED.
 
 CREATE SCHEMA signatures;
 
@@ -29,6 +31,10 @@ CREATE TABLE signatures.rental_assets (
     nft_created_at timestamp without time zone NOT NULL,
     nft_updated_at timestamp without time zone NOT NULL,
     fetched_at timestamp without time zone NOT NULL,
+    -- Published LAND block for estate membership, zero on imported rows and parcels.
+    membership_block bigint NOT NULL DEFAULT 0,
+    -- Source block for the latest metadata snapshot; imported rows start at zero.
+    metadata_block bigint NOT NULL DEFAULT 0,
     PRIMARY KEY (contract_address, token_id),
     CONSTRAINT rental_assets_contract_lowercase CHECK (contract_address = lower(contract_address)),
     CONSTRAINT rental_assets_category_known CHECK (category IN ('parcel', 'estate'))
@@ -51,8 +57,17 @@ CREATE TABLE signatures.rentals (
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     started_at timestamp without time zone,
+    -- Why a cancelled listing closed: `nonce` (the rentals index saw a signed
+    -- nonce move), `transferred` (the lessor no longer holds the asset),
+    -- `dissolved` (an estate without parcels), `expired`. NULL on every other
+    -- status, and on a cancellation with no recorded cause (an imported row).
+    -- Only a `nonce` cancellation may reopen, when a rebuild of the index no
+    -- longer sees the nonce move; a rent of the listing overrides any reason.
+    cancel_reason text,
     FOREIGN KEY (contract_address, token_id) REFERENCES signatures.rental_assets(contract_address, token_id) ON DELETE CASCADE,
-    CONSTRAINT rentals_nonces_three CHECK (array_length(nonces, 1) = 3)
+    CONSTRAINT rentals_nonces_three CHECK (array_length(nonces, 1) = 3),
+    CONSTRAINT rentals_cancel_reason_known CHECK (cancel_reason IN ('nonce', 'transferred', 'dissolved', 'expired')),
+    CONSTRAINT rentals_cancel_reason_cancelled CHECK (cancel_reason IS NULL OR status = 'cancelled')
 );
 
 -- One open listing per asset: the 409 of the create route.

@@ -55,14 +55,26 @@ use tokio_util::sync::CancellationToken;
 use super::MarketplaceState;
 use super::chain_group::{self, Checkpoint, Member, MemberEnd};
 use super::chain_walk::{self, Budget, ChainIndex, ChainNet, Holdings, IndexSettings, PassOutcome};
+use crate::chain_index::portal::admit::{Admission, AdmittedPortal};
 use crate::chain_index::portal::shadow::{self, Shadow, Shadowed};
 use crate::chain_index::portal::{AddressHistory, PortalReader, Secret};
 use crate::jobs::{JobContext, JobState, Jobs, LeaseGuard, Leases, PeriodicCfg};
 
-/// `CHAIN_LOGS_SOURCE=shadow`: the portal the accepted windows are compared
-/// with. `None` (`rpc`) compares nothing.
+/// How the walks use the portal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PortalMode {
+    /// `CHAIN_LOGS_SOURCE=shadow`: accepted windows are compared with it.
+    Shadow,
+    /// `CHAIN_LOGS_SOURCE=portal`: windows it admits are read from it
+    /// ([`Admission`]), each admission and portal phase within `deadline`.
+    Source { deadline: Duration },
+}
+
+/// `CHAIN_LOGS_SOURCE=shadow|portal`: the portal and how the walks use it.
+/// `None` (`rpc`) reads everything from the RPC.
 #[derive(Clone, Debug)]
-pub struct ShadowSettings {
+pub struct PortalSettings {
+    pub mode: PortalMode,
     pub origin: String,
     pub dataset_ethereum: String,
     pub dataset_matic: String,
@@ -71,10 +83,10 @@ pub struct ShadowSettings {
     pub history: AddressHistory,
 }
 
-impl ShadowSettings {
+impl PortalSettings {
     /// The settings as the environment spells them: `None` for `rpc`; for
-    /// `shadow`, a portal origin and two known datasets, refused at startup
-    /// otherwise.
+    /// `shadow` or `portal`, a portal origin and two known datasets, refused
+    /// at startup otherwise.
     #[allow(
         clippy::too_many_arguments,
         reason = "one argument per environment variable it validates"
@@ -87,20 +99,31 @@ impl ShadowSettings {
         key: Option<String>,
         max_rps: f64,
         assert_full_history: bool,
+        deadline_secs: u64,
     ) -> anyhow::Result<Option<Self>> {
-        match source {
+        let mode = match source {
             "rpc" => return Ok(None),
-            "shadow" => {}
-            other => anyhow::bail!("CHAIN_LOGS_SOURCE={other}: rpc or shadow"),
-        }
+            "shadow" => PortalMode::Shadow,
+            "portal" => {
+                anyhow::ensure!(
+                    (1..=600).contains(&deadline_secs),
+                    "CHAIN_LOGS_PORTAL_DEADLINE_SECS must be between 1 and 600"
+                );
+                PortalMode::Source {
+                    deadline: Duration::from_secs(deadline_secs),
+                }
+            }
+            other => anyhow::bail!("CHAIN_LOGS_SOURCE={other}: rpc, shadow or portal"),
+        };
         let Some(origin) = origin.map(str::trim).filter(|o| !o.is_empty()) else {
-            anyhow::bail!("CHAIN_LOGS_SOURCE=shadow needs CHAIN_LOGS_PORTAL_URL");
+            anyhow::bail!("CHAIN_LOGS_SOURCE={source} needs CHAIN_LOGS_PORTAL_URL");
         };
         anyhow::ensure!(
             max_rps.is_finite() && max_rps > 0.0,
             "CHAIN_LOGS_PORTAL_MAX_RPS must be above 0"
         );
         let settings = Self {
+            mode,
             origin: origin.to_string(),
             dataset_ethereum: dataset_ethereum.trim().to_string(),
             dataset_matic: dataset_matic.trim().to_string(),
@@ -115,7 +138,7 @@ impl ShadowSettings {
         for net in ChainNet::ALL {
             let reader = settings.reader(net).map_err(anyhow::Error::msg)?;
             anyhow::ensure!(
-                reader.chain() == chain_walk::mainnet_chain(net) as u64,
+                reader.chain() == net.chain_id() as u64,
                 "the {} portal dataset {:?} is not {} mainnet",
                 net.db_name(),
                 reader.dataset(),
@@ -170,6 +193,9 @@ pub struct Supervisor {
     pub stats: Arc<SharedStats>,
     /// Where accepted windows are compared (`CHAIN_LOGS_SOURCE=shadow`).
     pub shadow: Option<Arc<Shadow>>,
+    /// The portal windows are read from where it admits them
+    /// (`CHAIN_LOGS_SOURCE=portal`).
+    pub portal: Option<Arc<Admission>>,
 }
 
 /// The shared walks of a supervisor, summed: how many ran, the requests they
@@ -641,6 +667,7 @@ fn dispatch_group(
             sup.member_deadline,
             &counted,
             sup.shadow.as_deref(),
+            sup.portal.as_deref(),
         );
         tokio::select! {
             biased;
@@ -674,7 +701,7 @@ fn dispatch_close(
     i: usize,
     slot: &mut Slot,
     out: PassOutcome,
-    fold_since: Option<i64>,
+    close_options: chain_walk::Close,
     tasks: &mut JoinSet<Done>,
     running: &mut HashMap<tokio::task::Id, Running>,
 ) {
@@ -691,10 +718,16 @@ fn dispatch_close(
     let handle = tasks.spawn(async move {
         let close = async {
             let projection = &sup.projections[i];
-            let source = chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
-                &sup.http,
-                &projection.url,
-            ));
+            let source = Shadowed::new(
+                AdmittedPortal::new(
+                    chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
+                        &sup.http,
+                        &projection.url,
+                    )),
+                    sup.portal.as_deref(),
+                ),
+                sup.shadow.as_deref(),
+            );
             let owner = holdings
                 .owner(&sup.pool, lease.as_ref(), index.as_ref(), &sup.settings)
                 .await?;
@@ -705,7 +738,7 @@ fn dispatch_close(
                 index.as_ref(),
                 &sup.settings,
                 &owner,
-                fold_since,
+                close_options,
                 &mut out,
             )
             .await;
@@ -1304,10 +1337,13 @@ async fn attempt(
             }
         }
         let source = Shadowed::new(
-            chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
-                &supervisor.http,
-                &projection.url,
-            )),
+            AdmittedPortal::new(
+                chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
+                    &supervisor.http,
+                    &projection.url,
+                )),
+                supervisor.portal.as_deref(),
+            ),
             supervisor.shadow.as_deref(),
         );
         let progress = |m: String| ctx.progress(format!("{}: {m}", projection.lease));
@@ -1365,31 +1401,54 @@ pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 
 /// The projections `state` enables on `net`, each with its endpoint, as the
 /// switches and endpoints configure them; `rentals` is the rentals index's
-/// switch (`None`: on wherever a chain-1 endpoint is configured).
+/// switch (`None`: on for each configured Ethereum endpoint).
 pub fn projections(
     state: &Arc<MarketplaceState>,
     net: ChainNet,
     rentals: Option<bool>,
 ) -> Vec<Projection> {
+    let mut out = Vec::new();
+    visit_projections(state, net, rentals, |job, url, make, gate, cfg| {
+        if let Some(url) = url {
+            out.push(Projection {
+                lease: lease_name(job, net),
+                url,
+                cfg,
+                make,
+                gate,
+            });
+        }
+    });
+    out
+}
+
+/// Includes explicitly enabled projections even when their RPC is missing.
+pub fn expected_cursors(
+    state: &Arc<MarketplaceState>,
+    net: ChainNet,
+    rentals: Option<bool>,
+) -> Vec<(Arc<dyn ChainIndex>, Option<String>)> {
+    let mut out = Vec::new();
+    visit_projections(state, net, rentals, |_, url, make, _, _| {
+        out.push((make(), url))
+    });
+    out
+}
+
+fn visit_projections(
+    state: &Arc<MarketplaceState>,
+    net: ChainNet,
+    rentals: Option<bool>,
+    mut add: impl FnMut(&str, Option<String>, MakeIndex, Option<Gate>, PeriodicCfg),
+) {
     let settings = &state.settings.market.indexes;
     let market_cfg = || {
         PeriodicCfg::every(settings.interval)
             .with_jitter(Duration::from_secs(1))
             .with_error_backoff(Duration::from_secs(30))
     };
-    let mut out = Vec::new();
-    let mut add =
-        |job: &str, url: Option<String>, make: MakeIndex, gate: Option<Gate>, cfg: PeriodicCfg| {
-            if let Some(url) = url {
-                out.push(Projection {
-                    lease: lease_name(job, net),
-                    url,
-                    cfg,
-                    make,
-                    gate,
-                });
-            }
-        };
+    let chain_id = settings.chain_id(net);
+    let mainnet = chain_id == net.chain_id();
     if settings.nft_enabled {
         let gate: Gate = {
             let state = state.clone();
@@ -1397,7 +1456,7 @@ pub fn projections(
                 let state = state.clone();
                 async move {
                     Ok(
-                        (!super::nft_index::mirror_complete(&state.pool, net).await).then(|| {
+                        (!super::nft_index::mirror_complete(&state.pool, net, chain_id).await).then(|| {
                             format!(
                                 "nft {}: waiting for the collections mirror's first complete pass",
                                 net.db_name()
@@ -1410,14 +1469,32 @@ pub fn projections(
         };
         add(
             "nft-index",
-            state.chain_rpc_url(net),
-            Arc::new(move || Arc::new(super::nft_index::NftIndex::new(net))),
+            state.catalogue_rpc_url(net),
+            Arc::new(move || {
+                Arc::new(
+                    super::nft_index::NftIndex::for_chain(net, chain_id)
+                        .expect("validated NFT index chain"),
+                )
+            }),
             Some(gate),
             market_cfg(),
         );
     }
-    if settings.sales_enabled && net == ChainNet::Matic {
-        let url = state.chain_rpc_url(net);
+    if settings.sales_enabled && net == ChainNet::Ethereum && mainnet {
+        add(
+            "sales-index",
+            state.chain_rpc_url(net),
+            Arc::new(|| Arc::new(super::ethereum_sales::EthereumSalesIndex)),
+            None,
+            market_cfg(),
+        );
+    }
+    if settings.sales_enabled
+        && (net == ChainNet::Matic || chain_id == ChainNet::Ethereum.testnet_chain_id())
+    {
+        let index = super::sales_index::SalesIndex::for_chain(chain_id)
+            .expect("validated sales index chain");
+        let url = state.catalogue_rpc_url(net);
         let gate: Gate = {
             let (state, url) = (state.clone(), url.clone().unwrap_or_default());
             let venues_checked = Arc::new(AtomicBool::new(false));
@@ -1427,10 +1504,10 @@ pub fn projections(
                 async move {
                     if !venues_checked.load(Ordering::SeqCst) {
                         let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &url);
-                        super::sales_index::check_venues(&rpc, &state.pool).await?;
+                        super::sales_index::check_venues(&rpc, &state.pool, index).await?;
                         venues_checked.store(true, Ordering::SeqCst);
                     }
-                    Ok((!super::nft_index::mirror_complete(&state.pool, net).await).then(|| {
+                    Ok((!super::nft_index::mirror_complete(&state.pool, net, chain_id).await).then(|| {
                         "sales matic: waiting for the collections mirror's first complete pass".to_string()
                     }))
                 }
@@ -1440,8 +1517,8 @@ pub fn projections(
         add(
             "sales-index",
             url,
-            Arc::new(|| Arc::new(super::sales_index::SalesIndex)),
-            Some(gate),
+            Arc::new(move || Arc::new(index)),
+            (net == ChainNet::Matic).then_some(gate),
             market_cfg(),
         );
     }
@@ -1455,16 +1532,57 @@ pub fn projections(
             market_cfg(),
         );
     }
-    if settings.committee_enabled {
+    if settings.committee_enabled && net == ChainNet::Matic && mainnet {
         add(
             "committee-index",
-            state.committee_rpc_url(net),
+            state.polygon_mainnet_rpc_url(),
             Arc::new(|| Arc::new(super::committee_index::CommitteeIndex)),
             None,
             market_cfg(),
         );
     }
-    if settings.mana_transfers_enabled {
+    if settings.collections_enabled && net == ChainNet::Matic && mainnet {
+        let url = state.chain_rpc_url(net);
+        // The factories' lists (the walk's filter) and the collections'
+        // creation state, read before each attempt.
+        let gate: Gate = {
+            let (state, url) = (state.clone(), url.clone().unwrap_or_default());
+            Arc::new(move || {
+                let (state, url) = (state.clone(), url.clone());
+                async move {
+                    let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &url);
+                    super::collections_index::gate(&state.pool, &rpc).await
+                }
+                .boxed()
+            })
+        };
+        add(
+            "collections-index",
+            url,
+            {
+                // Only a network the operator hands it is projected: the
+                // mirror and the fold never both write a network's rows.
+                let project = settings.collections_owned.contains(&ChainNet::Matic);
+                Arc::new(move || {
+                    Arc::new(super::collections_index::CollectionsIndex::projecting(
+                        project,
+                    ))
+                })
+            },
+            Some(gate),
+            market_cfg(),
+        );
+    }
+    if settings.third_party_registry_enabled && net == ChainNet::Matic && mainnet {
+        add(
+            "third-party-registry-index",
+            state.polygon_mainnet_rpc_url(),
+            Arc::new(|| Arc::new(super::third_party_registry::ThirdPartyRegistryIndex)),
+            None,
+            market_cfg(),
+        );
+    }
+    if settings.mana_transfers_enabled && mainnet {
         add(
             "mana-transfers-index",
             state.chain_rpc_url(net),
@@ -1473,19 +1591,37 @@ pub fn projections(
             market_cfg(),
         );
     }
-    // The rentals venue is mainnet's: off mainnet ETH_RPC_URL serves another chain.
     if net == ChainNet::Ethereum && rentals != Some(false) {
-        add(
-            "rentals-index",
-            state.venue_rpc_url(1),
-            Arc::new(|| Arc::new(crate::rentals::index::RentalsIndex::mainnet())),
-            None,
-            PeriodicCfg::every(settings.interval)
-                .with_jitter(Duration::from_secs(20))
-                .with_error_backoff(Duration::from_secs(1800)),
-        );
+        use crate::rentals::index::RentalsIndex;
+        let mainnet_url = state.venue_rpc_url(1);
+        if rentals.unwrap_or(mainnet_url.is_some()) {
+            add(
+                "rentals-index",
+                mainnet_url,
+                Arc::new(|| Arc::new(RentalsIndex::mainnet())),
+                None,
+                // LAND owner pages require a fresh mainnet Rentals publication.
+                market_cfg().with_jitter(Duration::from_secs(20)),
+            );
+        }
+        // A Sepolia endpoint opts the worker into the separate testnet history.
+        if let Some(url) = state.sepolia_rentals_rpc_url() {
+            let fold_listings = settings.chain_id_ethereum == ChainNet::Ethereum.testnet_chain_id();
+            add(
+                "rentals-index-sepolia",
+                Some(url),
+                Arc::new(move || Arc::new(RentalsIndex::sepolia(fold_listings))),
+                None,
+                if fold_listings {
+                    market_cfg().with_jitter(Duration::from_secs(20))
+                } else {
+                    PeriodicCfg::every(settings.interval)
+                        .with_jitter(Duration::from_secs(20))
+                        .with_error_backoff(Duration::from_secs(1800))
+                },
+            );
+        }
     }
-    out
 }
 
 /// Spawns `chain-walk-ethereum` and `chain-walk-matic` for the projections
@@ -1493,6 +1629,25 @@ pub fn projections(
 pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs, rentals: Option<bool>) {
     log_switches(state, rentals);
     for net in ChainNet::ALL {
+        if state.settings.market.indexes.sales_enabled
+            && state.settings.market.indexes.chain_id(net) == net.chain_id()
+            && let Some(url) = state.chain_rpc_url(net)
+        {
+            let state = state.clone();
+            let cfg = PeriodicCfg::every(state.settings.market.indexes.interval)
+                .with_error_backoff(Duration::from_secs(60));
+            jobs.spawn_periodic_leased(
+                format!("sales-accounting-{}", net.db_name()),
+                cfg,
+                move |_| {
+                    let (state, url) = (state.clone(), url.clone());
+                    async move {
+                        let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &url);
+                        super::sale_fold::pass(&state.pool, &rpc, net).await
+                    }
+                },
+            );
+        }
         let projections = projections(state, net, rentals);
         if projections.is_empty() {
             continue;
@@ -1502,12 +1657,14 @@ pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs, rentals: Option<bo
             leases = ?projections.iter().map(|p| p.lease.as_str()).collect::<Vec<_>>(),
             "marketplace chain index supervisor"
         );
-        let shadow = state
-            .settings
-            .market
-            .shadow
-            .as_ref()
-            .and_then(|s| spawn_shadow(jobs, s, net));
+        let portal = state.settings.market.portal.as_ref();
+        let shadow = portal
+            .filter(|p| p.mode == PortalMode::Shadow)
+            .and_then(|p| spawn_shadow(jobs, p, net));
+        let admission = portal.and_then(|p| match p.mode {
+            PortalMode::Source { deadline } => admission(p, net, deadline),
+            PortalMode::Shadow => None,
+        });
         spawn(
             jobs,
             Supervisor {
@@ -1519,14 +1676,38 @@ pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs, rentals: Option<bo
                 member_deadline: Duration::from_secs(60),
                 stats: Arc::default(),
                 shadow,
+                portal: admission,
             },
         );
     }
 }
 
+/// `net`'s portal as a source; `None` when its reader cannot be built
+/// (startup already checked it).
+fn admission(
+    settings: &PortalSettings,
+    net: ChainNet,
+    deadline: Duration,
+) -> Option<Arc<Admission>> {
+    let reader = match settings.reader(net) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(network = net.db_name(), error = %e, "chain logs portal off for this network");
+            return None;
+        }
+    };
+    tracing::info!(
+        network = net.db_name(),
+        dataset = reader.dataset(),
+        deadline_secs = deadline.as_secs(),
+        "chain logs portal: windows its coverage admits are read from the portal"
+    );
+    Some(Arc::new(Admission::new(reader, net.db_name(), deadline)))
+}
+
 /// `net`'s shadow worker, as a job of its own that ends with the process;
 /// `None` when its reader cannot be built (startup already checked it).
-fn spawn_shadow(jobs: &Jobs, settings: &ShadowSettings, net: ChainNet) -> Option<Arc<Shadow>> {
+fn spawn_shadow(jobs: &Jobs, settings: &PortalSettings, net: ChainNet) -> Option<Arc<Shadow>> {
     let reader = match settings.reader(net) {
         Ok(r) => r,
         Err(e) => {
@@ -1556,22 +1737,44 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
     let settings = &state.settings.market.indexes;
     let any_url =
         |f: &dyn Fn(ChainNet) -> Option<String>| ChainNet::ALL.into_iter().any(|n| f(n).is_some());
+    let polygon_mainnet = settings.chain_id(ChainNet::Matic) == ChainNet::Matic.chain_id();
+    if !polygon_mainnet {
+        tracing::info!(
+            chain_id = settings.chain_id(ChainNet::Matic),
+            "mainnet-only committee, collections and third-party registry walks are off for this catalogue"
+        );
+    }
+    for net in ChainNet::ALL {
+        if settings.mana_transfers_enabled && settings.chain_id(net) != net.chain_id() {
+            tracing::info!(
+                network = net.db_name(),
+                "mainnet-only MANA transfer walk is off for this catalogue"
+            );
+        }
+    }
     if !settings.sales_enabled {
         tracing::info!(
             job = "sales-index",
             "marketplace chain index off: its routes answer the unavailable envelope"
         );
-    } else if state.chain_rpc_url(ChainNet::Matic).is_none() {
-        tracing::warn!(
-            job = "sales-index",
-            "marketplace chain index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
-        );
+    } else {
+        for net in ChainNet::ALL {
+            if (net == ChainNet::Matic || settings.chain_id(net) == net.chain_id())
+                && state.catalogue_rpc_url(net).is_none()
+            {
+                tracing::warn!(
+                    job = "sales-index",
+                    network = net.db_name(),
+                    "sales index enabled without an RPC endpoint for this network"
+                );
+            }
+        }
     }
     for (enabled, job, has_url) in [
         (
             settings.nft_enabled,
             "nft-index",
-            any_url(&|n| state.chain_rpc_url(n)),
+            any_url(&|n| state.catalogue_rpc_url(n)),
         ),
         (
             settings.trade_events_enabled,
@@ -1592,7 +1795,7 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
         } else if !has_url {
             tracing::warn!(
                 job,
-                "marketplace chain index enabled but no JSON-RPC endpoint is configured (TRADE_RPC_URLS 1= / 137=, or ETH_RPC_URL): it stays off"
+                "marketplace chain index enabled but no JSON-RPC endpoint is configured for its chain: it stays off"
             );
         }
     }
@@ -1601,15 +1804,33 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
             job = "committee-index",
             "committee index off: builder's committee routes admit only BUILDER_ADMIN_ADDRESSES"
         );
-    } else if state.committee_rpc_url(ChainNet::Matic).is_none() {
+    } else if polygon_mainnet && state.polygon_mainnet_rpc_url().is_none() {
         tracing::warn!(
             job = "committee-index",
             "committee index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
         );
     }
+    if settings.collections_enabled
+        && polygon_mainnet
+        && state.chain_rpc_url(ChainNet::Matic).is_none()
+    {
+        tracing::warn!(
+            job = "collections-index",
+            "collections index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
+        );
+    }
+    if settings.third_party_registry_enabled
+        && polygon_mainnet
+        && state.polygon_mainnet_rpc_url().is_none()
+    {
+        tracing::warn!(
+            job = "third-party-registry-index",
+            "third-party registry index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
+        );
+    }
     if rentals == Some(false) {
         tracing::info!(
-            "rentals index off (SHOP_RENTALS_INDEX_ENABLED=false): rental listings keep the status they were posted with"
+            "rentals index off (SHOP_RENTALS_INDEX_ENABLED=false): on NFT walkers, owner pages that include LAND return 503 rentals-index while the Rentals publication is unavailable"
         );
     } else if state.venue_rpc_url(1).is_none() {
         let why = "no chain-1 JSON-RPC endpoint is configured (TRADE_RPC_URLS 1=, or ETH_RPC_URL on mainnet)";
@@ -1624,6 +1845,43 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_portal_settings_are_read_as_the_environment_spells_them() {
+        let parse = |source: &str, origin: Option<&str>, deadline: u64| {
+            PortalSettings::parse(
+                source,
+                origin,
+                "ethereum-mainnet",
+                "polygon-mainnet",
+                None,
+                1.0,
+                false,
+                deadline,
+            )
+        };
+        let portal = Some("https://portal.example");
+        assert!(
+            parse("rpc", portal, 0).unwrap().is_none(),
+            "rpc reads nothing"
+        );
+        assert_eq!(
+            parse("portal", portal, 20).unwrap().unwrap().mode,
+            PortalMode::Source {
+                deadline: Duration::from_secs(20)
+            }
+        );
+        for deadline in [0, 601] {
+            assert!(parse("portal", portal, deadline).is_err(), "{deadline}");
+        }
+        // The deadline is only the portal mode's.
+        assert_eq!(
+            parse("shadow", portal, 0).unwrap().unwrap().mode,
+            PortalMode::Shadow
+        );
+        assert!(parse("portal", None, 20).is_err(), "portal needs a URL");
+        assert!(parse("lake", portal, 20).is_err());
+    }
 
     fn checkpoint(block: i64) -> Checkpoint {
         Checkpoint {
@@ -1674,6 +1932,7 @@ mod tests {
             member_deadline: Duration::from_secs(60),
             stats: Arc::default(),
             shadow: None,
+            portal: None,
         }
     }
 

@@ -4,10 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { type ReactNode, StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, type Mock, type MockInstance, vi } from "vitest";
 
-import { JumpCard, type JumpCardProps } from "@dcl/one-ui/apps/sites/jump/JumpCard";
-import { JumpEventActions } from "@dcl/one-ui/apps/sites/jump/JumpEventActions";
-import { JumpInvalid } from "@dcl/one-ui/apps/sites/jump/JumpInvalid";
-import { JumpPage } from "@dcl/one-ui/apps/sites/jump/JumpPage";
+import { JumpCard, type JumpCardProps, JumpEventActions, JumpInvalid, JumpPage } from "@dcl/one-ui";
 
 vi.hoisted(() =>
   Object.assign(window, {
