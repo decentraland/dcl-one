@@ -18,9 +18,10 @@
 //! whole history. The scope is the catalogue the nft index walks, as the
 //! collections subgraph only kept bids on assets it catalogued. A bid
 //! neither proves fails the read closed rather than being served without
-//! its seller or left out of a `seller` filter. Its statuses are the subgraph's (`open`, `sold`,
-//! `cancelled`); a bid the contract dropped when another bid on its token
-//! was accepted reads `cancelled`, since it can no longer be accepted.
+//! its seller or left out of a `seller` filter. Its statuses are the
+//! subgraph's (`open`, `sold`, `cancelled`); a bid the contract dropped when
+//! another bid on its token was accepted reads `cancelled`, since it can no
+//! longer be accepted.
 //! Ethereum's legacy bids, and every legacy bid on a node that does not walk
 //! the indexes, come from the collections subgraph reader (first ≤ 100,
 //! 30 s; a window past the graph's 5,000 skip is read by keyset up to
@@ -720,6 +721,9 @@ async fn polygon_rows(
     now_ms: i64,
 ) -> Result<Option<(Vec<Bid>, i64)>, sqlx::Error> {
     let chain = state.settings.market.indexes.chain_id(ChainNet::Matic);
+    // The bid contract the sales walk reads on that chain.
+    let bid_contract = super::sales_index::SalesIndex::for_chain(chain)
+        .map_or(super::sales_index::BID_V2_MATIC, |i| i.bid_contract());
     let mut binds = Vec::new();
     let Some(scope) = polygon_scope(f, now_ms, chain, &mut binds) else {
         return Ok(Some((Vec::new(), 0)));
@@ -810,7 +814,7 @@ async fn polygon_rows(
                 item_id: None,
                 trade_id: None,
                 trade_contract_address: None,
-                bid_address: Some(super::sales_index::BID_V2_MATIC.to_string()),
+                bid_address: Some(bid_contract.to_string()),
                 blockchain_id: Some(r.get("bid_id")),
                 block_number: Some(r.get::<i64, _>("updated_block").to_string()),
             }
@@ -1171,5 +1175,10 @@ mod tests {
         );
         assert_eq!(wire_chain(80_002, Network::Matic), ChainId::MaticAmoy);
         assert_eq!(wire_chain(137, Network::Matic), ChainId::MaticMainnet);
+        assert_eq!(
+            super::super::sales_index::SalesIndex::for_chain(80_002).map(|i| i.bid_contract()),
+            Some("0x4b66eab79cc03a96fb6275cfcdf23c0db431606d"),
+            "an Amoy bid names Amoy's bid contract"
+        );
     }
 }

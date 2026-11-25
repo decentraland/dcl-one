@@ -5272,7 +5272,8 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
     .execute(&pool)
     .await
     .unwrap();
-    let of_late = |seller: &str| format!("/v1/bids?network=MATIC&contractAddress={late}&seller={seller}");
+    let of_late =
+        |seller: &str| format!("/v1/bids?network=MATIC&contractAddress={late}&seller={seller}");
     let (status, body) = get(app(), &of_late(WALLET_A)).await;
     assert_eq!(
         (status, body["source"].as_str()),
