@@ -310,6 +310,11 @@ pub struct MapState {
     tiles_flights: parking_lot::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     #[cfg(test)]
     tiles_builds: std::sync::atomic::AtomicUsize,
+    /// Awaited by the next [`watch_marks`] right after it reads the cursor:
+    /// a test commits a write there, between the reads of one observation.
+    #[cfg(test)]
+    pub(crate) observation_hook:
+        parking_lot::Mutex<Option<futures::future::BoxFuture<'static, ()>>>,
 }
 
 impl Default for MapState {
@@ -336,6 +341,8 @@ impl MapState {
             tiles_flights: Default::default(),
             #[cfg(test)]
             tiles_builds: Default::default(),
+            #[cfg(test)]
+            observation_hook: Default::default(),
         }
     }
 
@@ -996,31 +1003,49 @@ pub struct Watched {
     pub at: chrono::DateTime<chrono::Utc>,
 }
 
-/// The marks of every input of a build, read on a pooled connection at its
-/// clock ([`read_marks`]) after the land-authz index's readiness. `None`
-/// while the land-authz index or Shop's reader is not attached.
+/// One observation of every input of a build: the land-authz index's
+/// readiness, the clock and every mark ([`read_marks`]), read in one
+/// REPEATABLE READ, READ ONLY transaction, as a pass reads its inputs. A
+/// cursor that moves meanwhile is seen by all of them or by none, and the
+/// clock (`now()`, the transaction's start) never postdates what they saw:
+/// an observation that found the index published cannot carry a clock
+/// taken after it stopped being. `None` while the land-authz index or
+/// Shop's reader is not attached.
 pub async fn watch_marks(state: &Shared) -> anyhow::Result<Option<Watched>> {
     let (Some(land), Some(market)) = (state.land_authz.get(), state.land_market.get()) else {
         return Ok(None);
     };
-    let land_ready = crate::land_authz::indexer::ready_cursor(
-        &land.pool,
-        &land.settings.network,
-        &land.settings.land_registry,
-        &land.settings.estate_registry,
-    )
-    .await
-    .is_some();
-    let mut conn = state
+    let mut tx = land
         .pool
-        .acquire()
+        .begin()
         .await
-        .context("a connection for the marks")?;
+        .context("a transaction for the marks")?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await
+        .context("opening the marks' snapshot")?;
+    let observation = crate::land_authz::indexer::cursor_observed(&mut *tx, &land.settings.network)
+        .await
+        .context("reading the land-authz cursor")?;
+    #[cfg(test)]
+    let hook = state.map.observation_hook.lock().take();
+    #[cfg(test)]
+    if let Some(hook) = hook {
+        hook.await;
+    }
+    let land_ready = observation.as_ref().is_some_and(|o| {
+        crate::land_authz::indexer::observation_ready(
+            o,
+            &land.settings.land_registry,
+            &land.settings.estate_registry,
+        )
+    });
     let now: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT now()")
-        .fetch_one(&mut *conn)
+        .fetch_one(&mut *tx)
         .await
         .context("reading the database clock")?;
-    read_marks(&mut conn, land, market.as_ref(), land_ready, now)
+    // A read-only snapshot: dropping it rolls it back.
+    read_marks(&mut tx, land, market.as_ref(), land_ready, now)
         .await
         .map(Some)
 }

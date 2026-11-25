@@ -143,8 +143,8 @@ pub trait LandMarket: Send + Sync {
     /// cheap enough to read every few seconds, moving whenever a row it
     /// reads changes (an expiry at `now` included) or a source's readiness
     /// does, and equal for equal rows at equal clocks. The build job reads
-    /// them on a pooled connection every few seconds and once in each
-    /// build's snapshot, and rebuilds when the former differ from the
+    /// them in a read-only snapshot of their own every few seconds and in
+    /// each build's snapshot, and rebuilds when the former differ from the
     /// latter ([`super::Watcher`]).
     fn marks<'a>(
         &'a self,
@@ -873,6 +873,20 @@ mod tests {
             "a never-expiring order is live"
         );
         assert_eq!(tiles["10,14"].expires_at, Some(i64::MAX / 1000 + 1));
+    }
+
+    /// The order is live until its expiry second, rounded half up, is no
+    /// longer after the clock rounded half up: half a second before the raw
+    /// expiry. Shop's marks count live orders on the same boundary.
+    #[test]
+    fn an_order_expires_on_the_rounded_half_second() {
+        let market = LandMarketSnapshot {
+            orders: vec![order(LAND, "103", "0xaaa", 7, 101_000)],
+            ..Default::default()
+        };
+        let price = |now_ms| compose(LAND, ESTATE, &land(), &market, now_ms)["10,14"].price;
+        assert_eq!(price(100_499), Some(7.0));
+        assert_eq!(price(100_500), None);
     }
 
     #[test]

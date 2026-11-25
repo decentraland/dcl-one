@@ -177,7 +177,8 @@ pub struct LandMarketMarks {
     pub marks: String,
 }
 
-/// [`land_market_marks`]' one statement: `$1` now, `$2` now in ms, `$3` the
+/// [`land_market_marks`]' one statement: `$1` now, `$2` now in seconds rounded
+/// half up (as the map build rounds it), `$3` the
 /// two registries, `$4` the trades floor, `$5` the MANA token, `$6` the
 /// chain, `$7` its Rentals contract. The nft index's orders and names are
 /// marked by the cursor's rewrite counts (`reorg_rewinds`, `rebuilds`, each
@@ -185,8 +186,10 @@ pub struct LandMarketMarks {
 /// rebuild, the estate repair's refold) and their newest
 /// positions and counts: between two rewrites the walk only appends events
 /// and the fold stamps each row with the event it applies, so a change moves
-/// a position or a count. The open orders are counted at `$1`, so one that
-/// expires moves them. The trades and rentals are small sets, marked by a
+/// a position or a count. The live orders are counted with the build's
+/// expiry rule, `round(expires_at / 1000) > round(now / 1000)` in seconds
+/// rounded half up (saturated expiries included), so the count moves at the
+/// very instant the build drops an expired order. The trades and rentals are small sets, marked by a
 /// digest of the very rows [`land_market`] reads at `$1` (the trades after
 /// the trade-events verdicts the CTE applies).
 fn marks_sql() -> String {
@@ -196,7 +199,7 @@ fn marks_sql() -> String {
            concat_ws('|', \
              EXISTS (SELECT 1 FROM shop.chain_cursor c WHERE c.indexer = 'trade_events' AND c.network = 'ethereum' AND {verdicts_ready}), \
              coalesce((SELECT c.reorg_rewinds || '.' || c.rebuilds FROM shop.chain_cursor c WHERE c.indexer = 'nft' AND c.network = 'ethereum'), '-'), \
-             (SELECT count(*) FILTER (WHERE status = 'open' AND expires_at > $2) FROM shop.nft_order WHERE network = 'ethereum' AND contract_address = ANY($3)), \
+             (SELECT count(*) FILTER (WHERE status = 'open' AND floor((expires_at::numeric + 500) / 1000) > $2) FROM shop.nft_order WHERE network = 'ethereum' AND contract_address = ANY($3)), \
              coalesce((SELECT updated_block || '.' || updated_log FROM shop.nft_order WHERE network = 'ethereum' AND contract_address = ANY($3) \
                        ORDER BY updated_block DESC, updated_log DESC LIMIT 1), '-'), \
              (SELECT count(*) FROM shop.land_data WHERE token_address = ANY($3)), \
@@ -246,7 +249,7 @@ pub async fn land_market_marks(
     let naive_now = now.naive_utc();
     let (nft_ready, marks): (bool, String) = sqlx::query_as(sqlx::AssertSqlSafe(marks_sql()))
         .bind(naive_now)
-        .bind(now.timestamp_millis())
+        .bind((now.timestamp_millis() + 500).div_euclid(1000))
         .bind(&contracts)
         .bind(super::trades::mirrored_since(&state.settings, naive_now))
         .bind(mana)
@@ -1112,9 +1115,36 @@ mod tests {
             "an expiry at the clock moves them"
         );
 
-        // The map's build job reads them both on a pooled connection and in
-        // its snapshot, and compares the two: equal rows at an equal clock
-        // read the same.
+        // An order expires on the build's rounded second: live until half a
+        // second before its expiry second, as `build::compose` reads it.
+        let expiry_s = later.timestamp() + 3600;
+        sqlx::query(
+            "INSERT INTO shop.nft_order (network, contract_address, token_id, order_id, marketplace_address, status, seller, price, expires_at, created_at, updated_at, updated_block, updated_log) \
+             VALUES ('ethereum', $1, 77, '0x77', $1, 'open', $1, 1, $2, 1, 1, 998, 0)",
+        )
+        .bind(LAND)
+        .bind(expiry_s * 1000)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let at_ms = |ms: i64| marks_at(&state, DateTime::from_timestamp_millis(ms).unwrap());
+        let (before, half, at_expiry) = (
+            at_ms(expiry_s * 1000 - 501).await,
+            at_ms(expiry_s * 1000 - 500).await,
+            at_ms(expiry_s * 1000).await,
+        );
+        assert_ne!(
+            before.marks, half.marks,
+            "the half second before its expiry drops it"
+        );
+        assert_eq!(
+            half.marks, at_expiry.marks,
+            "and nothing moves at the raw expiry"
+        );
+
+        // The map's build job reads them in snapshots of its own and in the
+        // build's, and compares the two: equal rows at an equal clock read
+        // the same on any connection.
         let mut pooled = db.pool.acquire().await.unwrap();
         let outside = land_market_marks(&state, &mut pooled, 1, LAND, ESTATE, later)
             .await

@@ -150,6 +150,17 @@ describe('the parcel map age', () => {
     expect(result.current).toBe('Updated 31 min ago')
   })
 
+  it('keeps ageing the label at every poll while later reads never settle', async () => {
+    answer = { checkedAt: NOW - 30 * MINUTE }
+    const { result } = renderHook(() => useMapGridAge(BASE, true))
+    await advance(0)
+    expect(result.current).toBe('Updated 30 min ago')
+    fetch.mockImplementation(() => new Promise<Response>(() => {}))
+    await advance(5 * MINUTE)
+    expect(fetch).toHaveBeenCalledTimes(6)
+    expect(result.current).toBe('Updated 35 min ago')
+  })
+
   it('reads nothing while the page is hidden, and reads at once when it is shown again', async () => {
     answer = { checkedAt: NOW - 30 * MINUTE }
     const { result } = renderHook(() => useMapGridAge(BASE, true))

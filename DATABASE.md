@@ -3111,11 +3111,13 @@ builds it from its own indexes.
 - **Job:** `explorer-map-grid` (`explore/src/api/map/mod.rs`, `watch`),
   leased, started once the land-authz index and Shop's reader are attached,
   whatever `EXPLORER_MIRRORS_ENABLED` says. It builds when its inputs
-  change, not on a timer: every 5 s it reads their marks (`Watcher`), and a
-  pass (`run_pass`) runs when they moved since the ones the last pass read
-  in its own snapshot, at its clock, when a change held back by the
-  publication floor may publish,
-  when a failed pass's retry is due (1 minute, doubling to 5), when another
+  change, not on a timer: every 5 s it reads their marks (`Watcher`), with
+  the land-authz readiness and the clock, in one REPEATABLE READ, READ ONLY
+  transaction, so an observation that found the index published never
+  carries a clock from after it stopped being. A pass (`run_pass`) runs
+  when they moved since the ones the last pass read in its own snapshot,
+  at its clock, when a change held back by the publication floor may
+  publish, when a failed pass's retry is due (1 minute, doubling to 5), when another
   publisher stored a revision during the last pass, or after 10 minutes
   without one (a safety net). Moved marks wait while a change is held back
   (the pass at the floor's end reads every input) and while a failed pass
@@ -3146,7 +3148,8 @@ builds it from its own indexes.
     readiness; the Ethereum nft cursor's `reorg_rewinds` and `rebuilds`
     (`shop.chain_cursor`, raised in the transaction of a rewind, of the
     rebuild that clears the projection and of the estate repair's refold);
-    the two registries' live orders at that clock and their newest order
+    the two registries' live orders at that clock (expiry compared in
+    seconds rounded half up, as the build compares it) and their newest order
     event; their names' count and newest document; and the SHA-256 of the
     open MANA trades and of the open rental listings exactly as the build
     reads them at the clock (the trades after the trade-events verdicts).

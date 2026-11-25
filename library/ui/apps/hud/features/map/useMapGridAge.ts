@@ -16,8 +16,9 @@ const pageVisible = (): boolean => document.visibilityState !== 'hidden'
  * minutes ago; null while it is fresher, while its age is unknown and while the map is not shown
  * (`shown` false, or the page hidden). It reads the age when the map is shown and every minute
  * while it stays shown, giving up a read still pending when the next starts, so an older answer
- * never lands after a newer one. A read that fails keeps the last answer and its label goes on
- * ageing. The age is measured on the server's clock (`MapGridAge.skew`).
+ * never lands after a newer one. A read that fails, or is still pending at the next poll, keeps the
+ * last answer, and its label goes on ageing at every poll. The age is measured on the server's
+ * clock (`MapGridAge.skew`).
  */
 export function useMapGridAge(base: string, shown: boolean): string | null {
   const visible = useSyncExternalStore(subscribeVisibility, pageVisible, () => true)
@@ -31,6 +32,8 @@ export function useMapGridAge(base: string, shown: boolean): string | null {
       pending?.abort()
       const controller = new AbortController()
       pending = controller
+      // The label ages on every poll, whether or not this read settles.
+      setNow(Date.now())
       fetchMapGridAge(base, controller.signal).then(
         (answer) => {
           if (controller.signal.aborted) return

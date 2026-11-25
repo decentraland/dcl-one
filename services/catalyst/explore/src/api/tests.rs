@@ -3469,6 +3469,73 @@ async fn a_pass_without_its_own_marks_runs_again_and_backs_off() {
     db.teardown().await;
 }
 
+/// One quiet observation reads the land-authz cursor, the clock and every
+/// mark in one snapshot. A cursor advance (block 101 indexed, not folded)
+/// committed right after the observation read the cursor at block 100 is
+/// invisible to it, and its clock predates the advance: a check records the
+/// grid of block 100 current only at a time it was. The next observation
+/// sees the advance and checks nothing.
+#[tokio::test]
+async fn a_check_never_confirms_land_at_a_clock_after_it_stopped_publishing() {
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    node.state
+        .attach_land_market(Arc::new(ScriptedLandMarket::default()));
+    let secs = Duration::from_secs;
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+
+    // Block 101 is indexed but not folded, committed between the
+    // observation's cursor read and its clock.
+    let advanced_at = Arc::new(Mutex::new(None::<chrono::NaiveDateTime>));
+    let (pool, network, at) = (
+        db.pool.clone(),
+        settings.network.clone(),
+        advanced_at.clone(),
+    );
+    *node.state.map.observation_hook.lock() = Some(Box::pin(async move {
+        let when: chrono::NaiveDateTime = sqlx::query_scalar(
+            "UPDATE land_authz.index_cursor SET last_block = 101 WHERE network = $1 \
+             RETURNING timezone('UTC', clock_timestamp())",
+        )
+        .bind(&network)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        *at.lock() = Some(when);
+    }));
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + secs(65)).await,
+        map::Tick::Checked,
+        "the observation saw block 100 published"
+    );
+    let advanced_at = advanced_at.lock().expect("the advance ran mid-observation");
+    let checked = grid_checked(&db.pool).await.2.unwrap();
+    assert!(
+        checked < advanced_at,
+        "checked at {checked}, not before the cursor advanced at {advanced_at}"
+    );
+
+    // The next observation sees block 101 unfolded: nothing is checked.
+    assert_ne!(
+        w.tick(&node.state, &ctx, t0 + secs(130)).await,
+        map::Tick::Checked
+    );
+    assert_eq!(grid_checked(&db.pool).await.2, Some(checked));
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
 /// A pass that another publisher overtakes (a revision stored after its
 /// snapshot began) leaves nothing current, and the next tick compares the
 /// inputs with the stored revision at once, not after the safety interval.
