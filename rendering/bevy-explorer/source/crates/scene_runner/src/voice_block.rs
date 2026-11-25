@@ -11,8 +11,9 @@ use common::structs::{MicState, NearbyVoiceDisabled, PermissionType, PrimaryUser
 use crate::{permissions::Permission, ContainingScene};
 
 /// Only the parcel scene under the player counts: a portable experience never blocks. The
-/// permission is asked once per visit, so leaving and returning asks again. `request` is the scene
-/// asked for and the answer, once there is one.
+/// permission is asked once per visit, so leaving and returning asks again; a teleport that
+/// lands in the same scene is the same visit. `request` is the scene asked for and the answer,
+/// once there is one.
 pub(crate) fn update_scene_voice_block(
     mic_state: Option<ResMut<MicState>>,
     containing_scene: ContainingScene,
@@ -24,18 +25,21 @@ pub(crate) fn update_scene_voice_block(
     let Some(mut mic_state) = mic_state else {
         return;
     };
+    let player = player.single().ok();
+    let visited = request.map(|(scene, _)| scene);
     let asking = player
-        .single()
-        .ok()
         .and_then(|player| containing_scene.get_parcel(player))
-        .filter(|scene| disabling_scenes.contains(*scene));
+        .filter(|scene| disabling_scenes.contains(*scene))
+        .or_else(|| {
+            // out of world on the way to a place in the scene being visited: the visit goes on
+            let over = player.and_then(|player| containing_scene.get_parcel_oow(player));
+            visited.filter(|scene| over == Some(*scene))
+        });
 
-    if asking != request.map(|(scene, _)| scene) {
-        // a question about a scene the player has left is withdrawn: dropping it closes the
-        // prompt, and no use is recorded for a visit where nothing was turned off
-        perms
-            .pending
-            .retain(|(_, ty, ..)| *ty != PermissionType::DisableVoice);
+    if asking != visited {
+        // a question about a scene the player has left is withdrawn, so that no use is recorded
+        // for a visit where nothing was turned off
+        perms.withdraw_all(PermissionType::DisableVoice);
         *request = asking.map(|scene| (scene, None));
         if let Some(scene) = asking {
             perms.check_unique(PermissionType::DisableVoice, scene, scene, None, false);
@@ -252,15 +256,67 @@ mod tests {
     }
 
     #[test]
-    fn a_ban_from_the_voice_room_blocks_whatever_the_permission_says() {
-        let (mut app, _) = app();
+    fn a_ban_from_the_voice_room_and_the_scenes_request_block_apart() {
+        // allowed and banned: walking out ends the scene's block and leaves the ban's
+        let (mut app, player) = app();
+        app.update();
+        app.world_mut()
+            .resource_mut::<MicState>()
+            .set_scene_banned(true);
+        stand(&mut app, player, false);
+        app.update();
+        assert!(!mic(&app).scene_disabled());
+        assert!(mic(&app).scene_blocked());
+
+        // refused and banned: the unban leaves nothing blocked, and the refusal stays read
+        let (mut app, _) = self::app();
         rule(&mut app, PermissionValue::Deny);
         app.world_mut()
             .resource_mut::<MicState>()
             .set_scene_banned(true);
         app.update();
+        assert!(mic(&app).scene_blocked());
+        assert!(mic(&app).scene_disable_refused());
+        app.world_mut()
+            .resource_mut::<MicState>()
+            .set_scene_banned(false);
+        app.update();
+        assert!(!mic(&app).scene_blocked());
+        assert!(mic(&app).scene_disable_refused());
+    }
+
+    #[test]
+    fn a_teleport_inside_the_scene_is_the_same_visit() {
+        let (mut app, player) = app();
+        app.update();
+        assert_eq!(uses(&mut app), [true]);
+
+        // out of world, over the same scene, then placed in it again
+        app.world_mut()
+            .entity_mut(player)
+            .insert(crate::OutOfWorld::default());
         app.update();
         assert!(mic(&app).scene_blocked());
+        app.world_mut()
+            .entity_mut(player)
+            .remove::<crate::OutOfWorld>();
+        app.update();
+        assert!(mic(&app).scene_blocked());
+        assert!(uses(&mut app).is_empty(), "not asked again");
+
+        // and with a question open, the prompt stays the one
+        let (mut app, player) = self::app();
+        rule(&mut app, PermissionValue::Ask);
+        app.update();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(crate::OutOfWorld::default());
+        app.update();
+        app.world_mut()
+            .entity_mut(player)
+            .remove::<crate::OutOfWorld>();
+        app.update();
+        assert_eq!(prompts(&mut app), 1);
     }
 
     #[test]

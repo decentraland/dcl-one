@@ -308,7 +308,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     The permission allows by default; a player who refuses it for the scene, the realm or
     everywhere keeps nearby voice there, and the use shows in the HUD's permissions popover
     like any other. Nothing is turned off while the player has not answered. A question the
-    player leaves the scene without answering is withdrawn, and records no use.
+    player leaves the scene without answering is withdrawn, and records no use. A teleport
+    that lands in the same scene is the same visit.
   - Don't leave the mic open: entering closes it, the `Microphone` key and the HUD cannot open it,
     and leaving does not reopen it. Each refused open counts in `MicState.refusals`, and the HUD
     toasts "Nearby voice chat unavailable in this scene." when the count goes up.

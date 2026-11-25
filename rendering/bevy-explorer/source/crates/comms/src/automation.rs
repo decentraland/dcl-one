@@ -50,6 +50,7 @@ impl Plugin for CommsAutomationPlugin {
             fields: &[
                 ("Microphone available", "mic.available"),
                 ("Microphone enabled", "mic.enabled"),
+                ("Turned off by the scene", "mic.sceneBlocked"),
                 ("Scene's voice-off refused", "mic.sceneRefused"),
                 ("LiveKit available", "livekit"),
             ],
