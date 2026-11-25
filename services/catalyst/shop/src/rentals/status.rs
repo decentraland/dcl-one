@@ -691,11 +691,19 @@ mod tests {
         .await
         .unwrap();
 
+        publish_rentals_index(pool).await;
         let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
             .await
             .unwrap();
         assert_eq!(pass.moved, None, "no published land-authz cursor");
         assert_eq!(state_of(pool, transferred).await, open());
+        assert_eq!(state_of(pool, dissolved).await, open());
+        assert_eq!(state_of(pool, custody).await, open());
+
+        sqlx::query("UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals'")
+            .execute(pool)
+            .await
+            .unwrap();
 
         sqlx::query(
             "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \

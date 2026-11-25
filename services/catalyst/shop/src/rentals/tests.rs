@@ -1681,6 +1681,56 @@ async fn patch_discards_the_observed_transfer_when_land_rewinds_before_cancellat
 }
 
 #[tokio::test]
+async fn indexed_post_decides_direct_ownership_during_a_rentals_outage() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    publish_land(&pool).await;
+    let signer = wallet();
+    let path = "/v1/rentals-listings";
+    let mut listing = creation("42", "");
+    listing.signature = sign_listing(&signer, &listing).await;
+    let state = state_over(pool.clone(), Some(market()), true);
+    let post = || async {
+        send(
+            router(state.clone()),
+            "POST",
+            path,
+            signed_headers(&signer, "post", path).await,
+            Some(creation_json(&listing)),
+        )
+        .await
+    };
+
+    transfer(&pool, LAND, "42", LESSOR, 1, 1_700_000_000).await;
+    let (status, _, body) = post().await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(counts(&pool, "42").await, (0, 0, 0, 0));
+
+    transfer(&pool, LAND, "42", RENTALS, 2, 1_700_000_010).await;
+    let (status, _, body) = post().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "rentals-index");
+    assert_eq!(counts(&pool, "42").await, (0, 0, 0, 0));
+
+    transfer(&pool, LAND, "42", &signer.address, 3, 1_700_000_020).await;
+    let (status, _, body) = post().await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, _, body) = post().await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+
+    transfer(&pool, LAND, "42", LESSOR, 4, 1_700_000_030).await;
+    let (status, _, body) = post().await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"], super::db::Conflict::Signature.message());
+
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id) VALUES ('rentals','ethereum',0,100,100,timezone('UTC',now()),true,1)")
+        .execute(&pool).await.unwrap();
+    let (status, _, body) = post().await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+}
+
+#[tokio::test]
 async fn post_rejects_custody_from_a_replaced_rentals_publication() {
     let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;

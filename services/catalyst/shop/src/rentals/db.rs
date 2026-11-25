@@ -229,6 +229,28 @@ impl Database {
         Ok(row_to_listing(&row))
     }
 
+    pub(super) async fn open_listing_conflict(
+        &self,
+        listing: &RentalListingCreation,
+    ) -> Result<Option<Conflict>, sqlx::Error> {
+        let signature: Option<String> = sqlx::query_scalar(
+            "SELECT signature FROM signatures.rentals WHERE contract_address=lower($1) \
+             AND token_id=$2::numeric AND chain_id=$3 AND status='open'",
+        )
+        .bind(&listing.contract_address)
+        .bind(&listing.token_id)
+        .bind(listing.chain_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(signature.map(|existing| {
+            if existing.eq_ignore_ascii_case(&listing.signature) {
+                Conflict::Signature
+            } else {
+                Conflict::OpenListing
+            }
+        }))
+    }
+
     /// The 409s of the create route: `rentals_open_asset_key` (a second open
     /// listing of the asset) and `rentals_signature_key` (the same signed
     /// offer posted twice; the contract would refuse its nonces anyway).
