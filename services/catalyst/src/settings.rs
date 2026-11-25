@@ -229,7 +229,11 @@ mod tests {
                     index.indexer()
                 })
                 .collect();
-            assert_eq!(names, ["nft", "trade_events"]);
+            let expected: &[&str] = match net {
+                ChainNet::Ethereum => &["nft", "trade_events"],
+                ChainNet::Matic => &["nft", "sales", "trade_events"],
+            };
+            assert_eq!(names, expected);
         }
     }
 
@@ -238,6 +242,7 @@ mod tests {
         for switch in [
             "MARKETPLACE_NFT_INDEX_ENABLED",
             "MARKETPLACE_MIRRORS_ENABLED",
+            "MARKETPLACE_SALES_INDEX_ENABLED",
         ] {
             for (network, ethereum, matic) in [
                 ("sepolia", "1", "137"),

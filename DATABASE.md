@@ -2599,8 +2599,7 @@ completed copy during this retry. The NFT walk requires a complete collections
 pass for its chain. On testnet it selects addresses from rows the verified
 pass actually fetched. Rows retained from a graph-only source carry no proof.
 An empty verified pass covers the chain's
-fixed contracts. The Sepolia/Amoy pair omits the mainnet-only sales,
-committee, collections, third-party registry and MANA transfer walks, even
+fixed contracts. The Sepolia/Amoy pair omits the mainnet-only committee, collections, third-party registry and MANA transfer walks, even
 when the mirror posture enables them and mainnet RPCs are available. The
 separately keyed Ethereum Rentals histories keep their own endpoints.
 
@@ -2619,6 +2618,24 @@ On Sepolia the NFT and LAND authorization walks start at LAND proxy
 deployment block 3,831,219. On Amoy the NFT walk starts at marketplace V2
 block 5,706,656, before the collection factory. The historical estate
 repair below runs only on Ethereum mainnet.
+
+On Amoy the sales projection reads BidV2 and prices CollectionStore mints
+against Bought logs from the same store and transaction. Its venue check
+seeds missing Amoy fees on an upgraded database. The Amoy publication covers
+raw mint and bid events. Historical fee terms, Store settlement lines and
+sales accounting publications belong to the mainnet pair. Step
+`0071_shop_testnet_sale_and_trade_venues` withdraws
+the old Sepolia trade publication once. Its worker rebuilds from the V1
+deployment at block 6,770,056. V2 and V3 trade verdicts share the same
+publication and answer the trade-events-index unavailable envelope during
+catch-up. The migration fences the old owner. A quarantined legacy cursor
+keeps its start and stays unpublished. After Revalidate, the walker proves
+its stored checkpoint and schedules the V1 replay. Binaries without the V1
+filter cannot claim this cursor after a rollback. Restart a V1-capable writer
+to resume the Sepolia trade walk. A partial replay with a custom start keeps that
+start and needs the matching configured override. A revalidation of V1 history
+reuses its canonical checkpoint. Mainnet and Amoy trade histories keep
+their existing publication.
 
 `shop.land_data` stores the latest parcel Update and the latest valid estate
 document. A malformed parcel Update clears the fields at its log position.

@@ -1489,8 +1489,10 @@ fn visit_projections(
             market_cfg(),
         );
     }
-    if settings.sales_enabled && net == ChainNet::Matic && mainnet {
-        let url = state.chain_rpc_url(net);
+    if settings.sales_enabled && net == ChainNet::Matic {
+        let index = super::sales_index::SalesIndex::for_chain(chain_id)
+            .expect("validated sales index chain");
+        let url = state.catalogue_rpc_url(net);
         let gate: Gate = {
             let (state, url) = (state.clone(), url.clone().unwrap_or_default());
             let venues_checked = Arc::new(AtomicBool::new(false));
@@ -1500,10 +1502,10 @@ fn visit_projections(
                 async move {
                     if !venues_checked.load(Ordering::SeqCst) {
                         let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &url);
-                        super::sales_index::check_venues(&rpc, &state.pool).await?;
+                        super::sales_index::check_venues(&rpc, &state.pool, index).await?;
                         venues_checked.store(true, Ordering::SeqCst);
                     }
-                    Ok((!super::nft_index::mirror_complete(&state.pool, net, net.chain_id()).await).then(|| {
+                    Ok((!super::nft_index::mirror_complete(&state.pool, net, chain_id).await).then(|| {
                         "sales matic: waiting for the collections mirror's first complete pass".to_string()
                     }))
                 }
@@ -1513,7 +1515,7 @@ fn visit_projections(
         add(
             "sales-index",
             url,
-            Arc::new(|| Arc::new(super::sales_index::SalesIndex)),
+            Arc::new(move || Arc::new(index)),
             Some(gate),
             market_cfg(),
         );
@@ -1723,7 +1725,7 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
     if !polygon_mainnet {
         tracing::info!(
             chain_id = settings.chain_id(ChainNet::Matic),
-            "mainnet-only sales, committee, collections and third-party registry walks are off for this catalogue"
+            "mainnet-only committee, collections and third-party registry walks are off for this catalogue"
         );
     }
     for net in ChainNet::ALL {
@@ -1741,7 +1743,9 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
         );
     } else {
         for net in ChainNet::ALL {
-            if settings.chain_id(net) == net.chain_id() && state.chain_rpc_url(net).is_none() {
+            if (net == ChainNet::Matic || settings.chain_id(net) == net.chain_id())
+                && state.catalogue_rpc_url(net).is_none()
+            {
                 tracing::warn!(
                     job = "sales-index",
                     network = net.db_name(),

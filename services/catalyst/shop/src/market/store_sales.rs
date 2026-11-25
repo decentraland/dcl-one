@@ -7,7 +7,7 @@ use anyhow::Context;
 use sqlx::PgConnection;
 
 use super::chain_walk::log_position;
-use super::sales_index::{KIND_MINT, SaleEvent, decode_bought};
+use super::sales_index::{KIND_MINT, SaleEvent, bought_at};
 use crate::chain_index::rpc::RpcLog;
 
 #[derive(Debug)]
@@ -23,14 +23,18 @@ pub(super) struct StoreLine {
     issue: Option<i32>,
 }
 
-pub(super) fn pair(rows: &mut [SaleEvent], logs: &[RpcLog]) -> anyhow::Result<Vec<StoreLine>> {
+pub(super) fn pair(
+    store: &str,
+    rows: &mut [SaleEvent],
+    logs: &[RpcLog],
+) -> anyhow::Result<Vec<StoreLine>> {
     let mut issues = HashMap::<&str, Vec<usize>>::new();
     for (i, row) in rows.iter().enumerate().filter(|(_, r)| r.kind == KIND_MINT) {
         issues.entry(&row.tx_hash).or_default().push(i);
     }
     let mut bought = Vec::new();
     for log in logs {
-        match decode_bought(log) {
+        match bought_at(store, log) {
             Ok(Some((hash, lines))) => bought.push((log_position(log), hash, lines)),
             Ok(None) => {}
             Err(error) => {
@@ -157,7 +161,12 @@ mod tests {
             })
             .collect();
         let line = (issuer, 7, 50, recipient);
-        let result = pair(&mut rows, &[bought_log(&[line, line], &hash, 100, 4)]).unwrap();
+        let result = pair(
+            sales_index::STORE_MATIC,
+            &mut rows,
+            &[bought_log(&[line, line], &hash, 100, 4)],
+        )
+        .unwrap();
         assert_eq!(
             result
                 .iter()
