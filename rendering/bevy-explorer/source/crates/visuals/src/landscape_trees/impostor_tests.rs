@@ -745,7 +745,9 @@ fn bake_landscape_impostors() {
     std::fs::create_dir_all(&out_dir).unwrap();
 
     let mut app = gpu_app();
-    app.init_asset::<TreeLayout>()
+    // `setup` makes the stones' materials too
+    app.add_plugins(MaterialPlugin::<StoneMaterial>::default())
+        .init_asset::<TreeLayout>()
         .init_asset::<TreeLayouts>()
         .init_asset_loader::<TreeLayoutLoader>()
         .init_resource::<TreeWind>()
@@ -825,7 +827,8 @@ fn bake_landscape_impostors() {
 /// edge with every parcel of the layout counted as empty land (more than the client ever has in
 /// range): the first pass, which works out every class and spawns the nearest `SPAWN_BUDGET`
 /// instances that draw, the frames until the rest have spawned, a pass after each one-step move,
-/// and a frame with the camera still. Timings in this build's profile; run in release for the client's figures:
+/// and a frame with the camera still. Timings in this build's profile; run in release for the
+/// client's figures:
 ///
 /// ```text
 /// cargo test -p visuals lod_pass_cost -- --ignored --nocapture
