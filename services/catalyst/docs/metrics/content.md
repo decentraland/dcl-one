@@ -99,6 +99,17 @@ command outside `serve` and exports nothing.
 | `dcl_content_server_snapshot_entities` | gauge `type` | not applicable | | Declared but never set by the content server, so no dashboard reads a value from it. |
 | `dcl_deployed_entities_bloom_filter_checks_total` | counter `hit` = `true`, `false` | emitted | `content/src/batch_deployer.rs` `schedule_entity_deployment`, `retain_undeployed` | Already-deployed probes of synced entities: `true` when the entity is deployed, `false` for a filter miss and for a false positive the database refuted. |
 
+## Upstream forwarding
+
+No legacy series counted these; they are declared in `content/src/metrics.rs` and observed by the
+forwarding engine of both lanes (`lane` = `content-forward`, `worlds-forward`).
+
+| Series | Type and labels | Status | Observed at | Notes |
+|---|---|---|---|---|
+| `upstream_forward_sends_total` | counter `lane`, `outcome` = `accepted`, `rejected`, `retried`, `failed`, `superseded` | emitted | `content/src/forward.rs` `Forwarder::run_pass`, `Forwarder::close_foreign` | One per recorded send. `retried` is a send queued again; `failed` includes spent attempts, an entity past the upstream's age window and rows closed for another target. Alert on `rejected` or `failed` increasing. |
+| `upstream_forward_open_rows` | gauge `lane` | emitted | `content/src/forward.rs` `Forwarder::observe_open` | Queued or sending rows for the current upstream, read once per worker loop (every 5 s and on each deploy) by the replica holding the lane's lease, which sets 0 when it stops. |
+| `upstream_forward_oldest_open_age_seconds` | gauge `lane` | emitted | `content/src/forward.rs` `Forwarder::observe_open` | Seconds since `created_at` of the oldest open row; 0 when none. The upstream refuses an entity past its age window (5 minutes for worlds, 20 for content), so alert well below it. |
+
 ## Not applicable
 
 | Legacy series | Type and labels | Status | Notes |

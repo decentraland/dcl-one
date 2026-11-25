@@ -36,6 +36,17 @@
 //! window ([`Forwarder::close_foreign`]). The operator requeues a `rejected`,
 //! `failed` or stranded record for the current target while its entity is
 //! inside the window ([`Forwarder::requeue`], the lanes' `.../retry` routes).
+//!
+//! Metrics (declared in [`crate::metrics`], label `lane` = [`Lane::job`]):
+//! `upstream_forward_sends_total{lane,outcome}` counts each recorded send
+//! (`accepted`, `rejected`, `retried`, `failed`, `superseded`; rows
+//! [`Forwarder::close_foreign`] closes count as `failed`);
+//! `upstream_forward_open_rows{lane}` and
+//! `upstream_forward_oldest_open_age_seconds{lane}` (from `created_at`, 0
+//! when none) read the queued and sending rows of the current target once per
+//! worker loop. Only the lease holder reports them and it zeroes the gauges
+//! when it stops. Alert on `rejected` or `failed` increasing, and on the age
+//! nearing [`Lane::max_age_ms`].
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -59,6 +70,7 @@ use super::SharedState;
 use super::errors::json_error;
 use crate::http::{HttpClientCfg, Outbound, read_body_capped};
 use crate::jobs::Jobs;
+use crate::metrics::{FORWARD_OLDEST_OPEN_AGE, FORWARD_OPEN_ROWS, FORWARD_SENDS};
 use crate::storage::Storage;
 
 /// The longest one send may take, upload and answer included.
@@ -179,6 +191,9 @@ impl Retry {
     }
 }
 
+/// The `outcome` label values of `upstream_forward_sends_total`.
+const SEND_OUTCOMES: [&str; 5] = ["accepted", "rejected", "retried", "failed", "superseded"];
+
 /// One lane's sender: the deploy path queues rows for [`Forwarder::target`]
 /// and calls [`Forwarder::kick`]; [`Forwarder::spawn`] runs the worker.
 pub struct Forwarder {
@@ -297,9 +312,17 @@ impl Forwarder {
                 let mut ticker = tokio::time::interval(TICK);
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 let mut swept: Option<Instant> = None;
+                for outcome in SEND_OUTCOMES {
+                    FORWARD_SENDS.handle([this.lane.job, outcome]).increment(0);
+                }
                 loop {
                     tokio::select! {
-                        _ = ctx.cancel.cancelled() => return Ok(()),
+                        _ = ctx.cancel.cancelled() => {
+                            // Only the lease holder reports; a stopped holder must not leave a stale value.
+                            FORWARD_OPEN_ROWS.handle([this.lane.job]).set(0.0);
+                            FORWARD_OLDEST_OPEN_AGE.handle([this.lane.job]).set(0.0);
+                            return Ok(());
+                        }
                         _ = ticker.tick() => {}
                         _ = this.kick.notified() => {}
                     }
@@ -328,9 +351,35 @@ impl Forwarder {
                             ctx.error("pass: panic");
                         }
                     }
+                    this.observe_open().await;
                 }
             }
         });
+    }
+
+    /// Sets the open-row gauges for this target: one aggregate over the
+    /// lane's due index (`target`, `status IN ('queued', 'sending')`). A
+    /// failed read is logged and leaves the previous values.
+    async fn observe_open(&self) {
+        let sql = format!(
+            "SELECT count(*), \
+                    GREATEST(0, EXTRACT(EPOCH FROM (timezone('UTC', now()) - min(created_at))))::float8 \
+             FROM {} WHERE target = $1 AND status IN ('queued', 'sending')",
+            self.lane.table
+        );
+        let row: sqlx::Result<(i64, f64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+            .bind(&self.target)
+            .fetch_one(&self.pool)
+            .await;
+        match row {
+            Ok((open, age)) => {
+                FORWARD_OPEN_ROWS.handle([self.lane.job]).set(open as f64);
+                FORWARD_OLDEST_OPEN_AGE.handle([self.lane.job]).set(age);
+            }
+            Err(e) => {
+                tracing::warn!(job = self.lane.job, error = %e, "reading the open forwarding rows failed")
+            }
+        }
     }
 
     /// Claims and sends due rows one at a time, at most [`PASS_LIMIT`], until
@@ -374,6 +423,12 @@ impl Forwarder {
                 "superseded" => report.superseded += 1,
                 _ => report.failed += 1,
             }
+            let label = match state {
+                "queued" => "retried",
+                "accepted" | "rejected" | "superseded" => state,
+                _ => "failed",
+            };
+            FORWARD_SENDS.handle([self.lane.job, label]).increment(1);
             tracing::info!(job = self.lane.job, entity_id = %row.entity_id, attempts = row.attempts, state, ?outcome, "forwarded deployment");
         }
         Ok(report)
@@ -639,7 +694,7 @@ impl Forwarder {
             t = self.lane.table
         );
         let (sql, pool, target) = (sql.as_str(), &self.pool, self.target.as_str());
-        in_batches(cancel, move || {
+        let closed = in_batches(cancel, move || {
             sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(now)
                 .bind(target)
@@ -648,7 +703,11 @@ impl Forwarder {
                 .bind(SWEEP_BATCH)
                 .execute(pool)
         })
-        .await
+        .await?;
+        FORWARD_SENDS
+            .handle([self.lane.job, "failed"])
+            .increment(closed);
+        Ok(closed)
     }
 
     /// Deletes terminal rows last updated before `cutoff`, [`in_batches`].
