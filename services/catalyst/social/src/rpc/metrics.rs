@@ -118,7 +118,9 @@ pub(crate) fn json_bytes(value: &serde_json::Value) -> usize {
             if let Some(value) = value.as_u64() {
                 return value.to_string().len();
             }
-            let value = value.as_f64().unwrap();
+            let value = value
+                .as_f64()
+                .expect("serde_json numbers are f64 without arbitrary_precision");
             if value == 0.0 {
                 1
             } else if value.abs() >= 1e21 || value.abs() < 1e-6 {

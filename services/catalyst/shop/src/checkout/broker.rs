@@ -231,18 +231,18 @@ pub async fn buy(
             })?;
             build_primary(&contracts, collection, item_id, price_wei, relayer)
         }
-        PurchaseMode::Trade => {
-            let trade = validated_trade.as_ref().ok_or_else(|| {
-                ApiError::InvalidTransaction("trade buy requires a validated trade".into())
-            })?;
-            build_trade_accept(trade, relayer)
-        }
-        _ => {
-            let token_id = token_id_for_secondary.ok_or_else(|| {
-                ApiError::InvalidTransaction("secondary buy requires `tokenId`".into())
-            })?;
-            build_secondary(&contracts, collection, token_id, price_wei)
-        }
+        PurchaseMode::Trade => build_trade_accept(
+            validated_trade
+                .as_ref()
+                .expect("trade mode always sets validated_trade or returns early"),
+            relayer,
+        ),
+        _ => build_secondary(
+            &contracts,
+            collection,
+            token_id_for_secondary.expect("secondary mode always parses tokenId or returns early"),
+            price_wei,
+        ),
     };
 
     let Some(key) = idempotency_key(&headers, body.idempotency_key.as_deref()) else {

@@ -7,6 +7,7 @@
 //! [`Admission`] holds the per-address socket limits the RPC socket and
 //! `/v1/stream` share (upstream #503).
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
@@ -330,16 +331,16 @@ impl Admission {
         let now = Instant::now();
         let mut inner = self.inner.lock();
         let limits = inner.limits;
-        let Some(state) = inner.connected.get_mut(&address) else {
+        let Entry::Occupied(mut slot) = inner.connected.entry(address) else {
             return;
         };
+        let state = slot.get_mut();
         state.sockets.retain(|(s, _)| !Arc::ptr_eq(s, handle));
         if !state.sockets.is_empty() {
             return;
         }
-        let Some(mut budget) = inner.connected.remove(&address).map(|s| s.budget) else {
-            return;
-        };
+        let (address, state) = slot.remove_entry();
+        let mut budget = state.budget;
         budget.replenish(&limits, now);
         if budget.tokens >= limits.subscription_burst as f64 {
             return;

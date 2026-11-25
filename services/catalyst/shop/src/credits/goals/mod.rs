@@ -320,9 +320,13 @@ async fn process_event(state: &SharedState, id: i64, now: NaiveDateTime) -> Resu
     let mut ordinal = None;
     let season_id = season.as_ref().map(|s| s.id);
     let week = season.as_ref().map(|s| s.week(occurred_at).0);
-    if outcome.is_none()
-        && let (Some(season), Some(week)) = (season.as_ref(), week)
-    {
+    if outcome.is_none() {
+        // Roll back rather than write a "counted" receipt without progress.
+        let (Some(season), Some(week)) = (season.as_ref(), week) else {
+            return Err(ApiError::Internal(
+                "a photo goal passed the policy without a season".into(),
+            ));
+        };
         initialize(&mut tx, &address, season.id, week).await?;
         let progress = sqlx::query("SELECT completed_steps,total_steps,reward_wei::text AS reward_wei FROM credits.goal_progress WHERE address=$1 AND season_id=$2 AND week_id=$3 AND goal_id=$4 FOR UPDATE")
             .bind(&address).bind(season.id).bind(week).bind(GOAL).fetch_optional(&mut *tx).await?;
@@ -432,7 +436,7 @@ async fn grant(
     // cannot strand an in-flight goal or change its promised payout.
     let expires = (season.end_date + TimeDelta::days(i64::from(season.grace_days)))
         .with_nanosecond(0)
-        .unwrap();
+        .expect("0 is a valid nanosecond");
     let expires_seconds = u64::try_from(expires.and_utc().timestamp())
         .map_err(|_| ApiError::Internal("invalid goal expiry".into()))?;
     if expires <= now {
