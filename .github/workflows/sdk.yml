@@ -145,7 +145,12 @@ jobs:
         run: |
           rm -rf .packed && mkdir .packed
           for tgz in packages/@dcl/*/*.tgz; do mkdir -p ".packed/$(basename "$tgz" .tgz)" && tar -xzf "$tgz" -C ".packed/$(basename "$tgz" .tgz)"; done
-          node scripts/check-no-local-packages.cjs .packed
+          # only a PR's packages may alias, and only their preview siblings
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            node scripts/check-no-local-packages.cjs .packed --preview-scope "$PREVIEW_SCOPE"
+          else
+            node scripts/check-no-local-packages.cjs .packed
+          fi
           rm -rf dist && mkdir dist
           for name in $SDK_PACKAGES; do mv packages/@dcl/"$name"/*.tgz dist/; done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -24,16 +24,20 @@ const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies'
 
 // Only what the registry resolves: a version, a range or a dist-tag. Anything else (a path, a
 // tarball, a link, a workspace, a URL, a git or `user/repo` source) names something unpublished.
-// An `npm:` alias is a PR preview's sibling: the same package name under the preview's own scope,
-// at the preview's exact version. A release never carries one.
+// An `npm:` alias is a PR preview's sibling: the same package name under the scope passed as
+// `--preview-scope`, at the checked package's exact version. Without that argument, a release
+// build, no alias passes.
 const PUBLISHED_TYPES = ['version', 'range', 'tag']
 
+const previewScopeArg = process.argv.indexOf('--preview-scope')
+const PREVIEW_SCOPE = previewScopeArg === -1 ? null : process.argv[previewScopeArg + 1]
+
 function aliasReason(name, parsed, owner) {
-  const [ownerScope] = owner.name.split('/')
-  const sibling = `${ownerScope}/${name.split('/').pop()}`
   const target = parsed.subSpec
-  if (ownerScope === '@dcl' || target.name !== sibling || target.type !== 'version' || target.fetchSpec !== owner.version) {
-    return `aliases ${target.raw}; only a preview may alias, and only ${sibling}@${owner.version}`
+  if (!PREVIEW_SCOPE) return `aliases ${target.raw}; a release may not alias a dependency`
+  const sibling = `${PREVIEW_SCOPE}/${name.split('/').pop()}`
+  if (target.name !== sibling || target.type !== 'version' || target.fetchSpec !== owner.version) {
+    return `aliases ${target.raw}; a preview may alias only ${sibling}@${owner.version}`
   }
   return null
 }
