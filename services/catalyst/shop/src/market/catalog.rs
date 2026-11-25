@@ -561,8 +561,10 @@ pub fn uint_or_null(expr: &str) -> String {
 /// one row per trade with its sent asset resolved to `(contract, item_id,
 /// token_id)` and its received amount, asset type and token contract. Open = effective, not expired at
 /// `now_p` (a bound timestamp, never `now()`), not in `trade_cancellations`,
-/// and not closed on chain (`trade_events`: sold or cancelled there) while
-/// that network's trade-events index is published; and counted at
+/// and listable on chain (`trade_events::listable_on_chain_sql`: its
+/// network's trade-events index is current and no verdict sold, cancelled
+/// or left it unverifiable; a trade of a network whose index is behind is
+/// left out, never listed on a stale verdict); and counted at
 /// `since_p` (a bound nullable timestamp, `trades::mirrored_since`). An item
 /// order also needs its creator's signature and its marketplace among the
 /// collection's minters, as no other contract can mint the item.
@@ -596,7 +598,7 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
            WHERE t.type IN ('public_item_order', 'public_nft_order') \
              AND t.expires_at > {now_p} AND t.effective_since <= {now_p} \
              AND NOT EXISTS (SELECT 1 FROM shop.trade_cancellations c WHERE c.target_hashed_signature = t.hashed_signature) \
-             AND NOT {closed} \
+             AND {listable} \
              AND {counted} \
              AND {served} \
              AND (sent_item.asset_id IS NULL OR {item_num} IS NOT NULL) \
@@ -614,7 +616,7 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
         item_num = uint_or_null("sent_item.item_id"),
         token_num = uint_or_null("sent_erc721.token_id"),
         shift = ITEM_ID_SHIFT,
-        closed = super::trade_events::closed_on_chain_sql("t", now_p),
+        listable = super::trade_events::listable_on_chain_sql("t", now_p),
         counted = super::trades::counted_sql("t.", since_p)
     )
 }
@@ -1601,6 +1603,7 @@ mod tests {
             return;
         };
         let pool = &state.pool;
+        crate::market::trade_events::tests::publish_cursors(pool).await;
         let contract = format!("0xc0ffee00{}", uuid::Uuid::new_v4().simple());
         let signer = test_support::signer().address().to_checksum(None);
         sqlx::query(

@@ -122,7 +122,8 @@ Status values:
 | Asset-bundle registry `asset-bundle-registry` (`/entities/{active,versions,status}`, `/worlds/{name}/manifest`, `/queues/status`). `EXPLORER_REGISTRY_SOURCE_URL`. Status: mirror | `explore/src/api/registry.rs` | `@decentraland/apis` | The local abgen runtime with native Registry state ([registry ADR](adr/2026-11-09-registry-local-catalyst.md)) |
 | Asset-bundle CDN `ab-cdn` (`/{key}`). `ABGEN_UPSTREAM_AB_CDN`. Status: mirror | `explore/src/api/ab_cdn.rs` | `@decentraland/apis` | Empty: every object comes from this node's cache and abgen (`config/src/explore.rs`) |
 | Imposter CDN `bevy-imposters.dclregenesislabs.xyz` (`/imposters/realms/{realm}/{level}/{x},{y}.{crc}.zip`). `BVIMPOSTERS_UPSTREAM_URL`, `BVIMPOSTERS_UPSTREAM_REALM`. Status: mirror | `explore/src/imposters/mod.rs` | `@decentraland/apis` | Temporary. Removed once bake-on-miss (`BVIMPOSTERS_BAKE_ENABLED`) runs with the `impost` renderer shipped in the node (#1711) |
-| Marketplace trades `marketplace-api` (`/v1/trades`, `/v1/trades/{id}`). `TRADES_SYNC_UPSTREAM_URL`. Status: mirror | `services/catalyst/shop/src/market/trades.rs` | `@decentraland/apis` | No target yet |
+| Marketplace trades `marketplace-api` (`/v1/trades`, `/v1/trades/{id}`). `TRADES_SYNC_UPSTREAM_URL`. Status: mirror | `services/catalyst/shop/src/market/trades.rs` | `@decentraland/apis` | The node becomes the system of record for trades and `TRADES_SYNC_UPSTREAM_URL` is blanked ([trades and relay cutover](#trades-and-relay-cutover)) |
+| Meta-transaction relay forward `transactions-api` (`/v1/transactions`), used when the relay has no signer of its own. `TRANSACTIONS_UPSTREAM_URL`; a Polygon mainnet relay (`COLLECTIONS_CHAIN_ID=137`) refuses to start with it. The `testnet` dev profile sets it. Status: testnet only | `services/catalyst/shop/src/evm/` | `@decentraland/apis` | Mainnet relays sign with their own relayer ([trades and relay cutover](#trades-and-relay-cutover)); the testnet profile forwards until the testnet API retires |
 | Subgraphs `subgraph` (`collections-ethereum-mainnet`, `collections-matic-mainnet`, `marketplace`). `ETH_COLLECTIONS_SUBGRAPH_URL`, `MATIC_COLLECTIONS_SUBGRAPH_URL`, `MARKETPLACE_SUBGRAPH_URL` (not set in dev). Status: mirror | `chain-index/src/graph.rs`, `builder/src/onchain.rs` | `@decentraland/apis` | LAND permissions read the land-authz index alone (no land-manager subgraph); LAND listings read the marketplace indexes once they are published (`config/src/shop.rs`); DCL NAMEs read the nft index on a node that walks it (`chain-index/src/names.rs`); collections still use the subgraphs |
 | Third Party Registry (Polygon mainnet). `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED` is on under the mirror posture. | `shop/src/market/third_party_registry.rs`, `shop/src/market/third_party.rs` | `@decentraland/apis`, `/create` | The local index supplies approved providers and on-chain slot counts. When indexed reads are unavailable, the existing provider routes can use `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`. Testnet mirrors supply the Polygon registry subgraph by default. Builder still accounts for pending item reservations. |
 | NFT worker `nfts` (`/wallets/{owner}/networks/{network}/nfts`). `NFT_WORKER_BASE_URL`; mirror refuses to start without it. Status: mirror | `shop/src/market/third_party.rs` | `@decentraland/apis` | No target yet. When it is unset, holdings are read over JSON-RPC |
@@ -144,6 +145,55 @@ Status values:
 | Shop parity and trade journey harnesses: they record live traffic to the Shop's services and use `rpc` (`/mainnet`, `/amoy`, `/sepolia`). Run by hand; CI runs only their offline tests. Status: dev-only | `tooling/shop-parity/lib/services.mts`, `lib/session.mts`, `tooling/shop-trade-journey/lib/wallet.mts` | `@decentraland/web-applications` | No target yet |
 
 Not listed: human links, canonical and sitemap URLs, URLs written into responses that the node does not fetch, mocks and fixtures, and third-party services (CoinGecko, publicnode, thirdweb, Segment and others).
+
+### Trades and relay cutover
+
+This is the order in which a production node stops relaying through transactions-server and stops reading trades from
+marketplace-server. Step 1 is a precondition of step 2's deploy, and it must land before transactions-server retires.
+
+1. Before deploying any build that carries the relay check, on a Polygon mainnet node (`COLLECTIONS_CHAIN_ID=137`):
+   - provision the relay's own signer: `OZ_RELAYER_URL`, `OZ_RELAYER_ID` and `OZ_RELAYER_API_KEY`, or
+     `META_TX_BROADCAST_ENABLED=true` with `RELAYER_PRIVATE_KEY_FILE` and `RPC_ENDPOINT_POLYGON`;
+   - unset `TRANSACTIONS_UPSTREAM_URL`.
+
+   The check runs at every start, whether or not the relay is used: a build that carries it refuses to start the
+   whole node while the variable is set. From here on, the node pays the relayed gas. Set `RELAYER_MAX_FEE_PER_GAS_WEI`
+   and `MAX_GAS_PRICE_ALLOWED_IN_WEI`, without which the direct signer is uncapped, and alert on the relayer
+   account's balance.
+2. Deploy a build that stores each V3 trade's digest (`shop.trades.trade_digest`) and run `catalyst schema migrate`.
+   Every route that lists, prices or reports trade status waits for the trade-events index to be current on both
+   networks (`MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED`).
+3. Open local writes (`DATA_WRITES_ENABLED=true`). This is the node's data-plane write switch, not a trades switch.
+   Besides the trades and coupons signed into the node, it opens the relay (`POST /v1/transactions`), broker, escrow
+   and checkout, rentals listings, the presence archive, lists and picks, cancellations, moderation, outfits and
+   subscriptions. The trades mirror keeps copying marketplace-server's trades meanwhile, and a trade signed into
+   either side is served.
+4. Freeze marketplace-server's trade writes and record the moment as T (UTC). Point every client's `POST /v1/trades`
+   at the node and stop marketplace-server from accepting new trades.
+5. Run the final marketplace-server import (`tooling/migration`, step `trades`) after T. It promotes the mirrored
+   copies to local authority and carries upstream's digests. Check T against it: `migrate.py status` shows a
+   completed `trades` walk that started after T, and marketplace-server holds no trade created after T.
+6. Blank `TRADES_SYNC_UPSTREAM_URL`. The node then reads its own trades only (local authority). A mirrored row the
+   import did not promote counts only within the trades freshness budget.
+7. Check the result:
+   - `/v1/trades-mirror` records no new pass.
+   - The trade-events index is current on both networks.
+   - Digest coverage: count the V3 trades that still have no digest their signature recovers the signer over
+     (`shop.trade_chain_state.digest_failed_at` set). These are left out of the listings. Compare the node's open
+     listings with marketplace-server's at T. Those trades are the expected difference; they must be few and each
+     one accounted for.
+
+Rollback:
+
+- **Before step 6:** set `DATA_WRITES_ENABLED=false`, which closes the relay and every other data-plane write too.
+  Re-enable marketplace-server's trade writes, and point clients' `POST /v1/trades` back at it. The mirror never
+  stopped, so every trade marketplace-server holds is still on the node. The reverse does not hold: trades signed
+  into the node since step 3 exist only on the node, and their signatures stay valid on chain. List the node's own
+  trades created since step 3 that marketplace-server does not hold (compare `hashed_signature`), then import them
+  into marketplace-server or have their sellers cancel them.
+- **After step 6:** do the same, and restore `TRADES_SYNC_UPSTREAM_URL`.
+- **Step 1, on a Polygon mainnet node:** there is no rollback by environment variable. Restoring the forward means
+  redeploying a build from before the relay check. A testnet relay can forward again by setting the variable.
 
 ## The web Explorer (`/play`)
 

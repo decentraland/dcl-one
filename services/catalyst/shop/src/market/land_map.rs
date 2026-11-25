@@ -20,10 +20,11 @@
 //! Ethereum mainnet (the nft index walks only it), the nft index published
 //! on Ethereum (it folds the orders and the names; `chain_walk::ready_sql`,
 //! the cursor bound to chain 1) and `shop.trades` readable
-//! ([`super::trades::readiness_on`]); otherwise [`LandMarketError::Unready`]
-//! names the source and the grid is not built. The trades' chain verdicts
-//! (`shop.trade_chain_state`) close sold and cancelled listings while the
-//! trade-events index is published on Ethereum, as they do for the Shop.
+//! ([`super::trades::readiness_on`]), and the trade-events index current on
+//! Ethereum (`trade_events::stale_networks_on`); otherwise
+//! [`LandMarketError::Unready`] names the source and the grid is not built.
+//! The trades' chain verdicts (`shop.trade_chain_state`) close sold and
+//! cancelled listings, as they do for the Shop (`unified_trades`).
 //! Trades count only when priced in MANA: an ERC-20 (received asset type 1)
 //! whose token is the chain's MANA (`listings::mana_token`); another token,
 //! or a price in USD-pegged MANA, is not a MANA amount. Rental listings are the ones
@@ -335,12 +336,20 @@ async fn check_ready(
         ));
     }
     match super::trades::readiness_on(state, conn, now).await {
-        Ok(_) => Ok(()),
+        Ok(_) => {}
         Err(super::trades::NotReady::Refused(why)) => {
-            Err(LandMarketError::Unready(Source::TradesMirror, why))
+            return Err(LandMarketError::Unready(Source::TradesMirror, why));
         }
-        Err(super::trades::NotReady::Database(e)) => Err(e.into()),
+        Err(super::trades::NotReady::Database(e)) => return Err(e.into()),
     }
+    let stale = super::trade_events::stale_networks_on(conn, &[ChainNet::Ethereum], now).await?;
+    if !stale.is_empty() {
+        return Err(LandMarketError::Unready(
+            Source::TradeEventsIndex,
+            super::trade_events::stale_message(&stale),
+        ));
+    }
+    Ok(())
 }
 
 /// The rows of [`land_market`], on `conn`, once `check_ready` passed there.
@@ -752,6 +761,18 @@ mod tests {
         .await;
         rental(&db.pool, LAND, 8, 1, &addr('4'), "1 day").await;
 
+        // The trades' chain verdicts are not current on Ethereum: no
+        // answer, rather than sold or cancelled trades read as open. The
+        // map reads Ethereum only, so Polygon's cursor is not asked for.
+        assert_eq!(unready(market(&state, 1).await), Source::TradeEventsIndex);
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('trade_events', 'ethereum', 1, 10, 10, 10, timezone('UTC', now()), true, 1)",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
         let m = market(&state, 1).await.unwrap();
         let mut orders = m.orders.clone();
         orders.sort_by(|a, b| a.token_id.cmp(&b.token_id));
@@ -849,7 +870,7 @@ mod tests {
         );
         assert!(rental.expiration_ms > Utc::now().timestamp_millis());
 
-        // A sold trade closes once the trade-events index has published it.
+        // A sold trade closes as soon as the trade-events index folds it.
         let estate_trade: uuid::Uuid =
             sqlx::query_scalar("SELECT id FROM shop.trades WHERE signature = 'sig-estate'")
                 .fetch_one(&db.pool)
@@ -859,18 +880,6 @@ mod tests {
             "INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1, 'ethereum', 1, 'sold', 10)",
         )
         .bind(estate_trade)
-        .execute(&db.pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            market(&state, 1).await.unwrap().trades.len(),
-            2,
-            "an unpublished verdict is not read, as in the Shop"
-        );
-        sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
-             VALUES ('trade_events', 'ethereum', 1, 10, 10, 10, timezone('UTC', now()), true, 1)",
-        )
         .execute(&db.pool)
         .await
         .unwrap();
@@ -885,6 +894,13 @@ mod tests {
             ["5"],
             "the sold estate trade is closed"
         );
+        // A stale publish is not trusted: no answer, never the sold trade
+        // read as open again.
+        sqlx::query("UPDATE shop.chain_cursor SET folded_at = folded_at - interval '31 minutes' WHERE indexer = 'trade_events'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(unready(market(&state, 1).await), Source::TradeEventsIndex);
         db.drop().await;
     }
 
@@ -1204,6 +1220,7 @@ mod tests {
         };
         let state = state_over(&db.pool, local_trades());
         publish_nft(&db.pool).await;
+        crate::market::trade_events::tests::publish_cursors(&db.pool).await;
         insert_orders(&db.pool).await;
 
         let mut tx = snapshot(&db.pool).await;
