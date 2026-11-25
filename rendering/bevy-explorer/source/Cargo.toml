@@ -163,6 +163,7 @@ livestream_manager = { path = "crates/livestream_manager" }
 media = { path = "crates/media" }
 perf_output = { path = "crates/perf_output" }
 pipeline_test = { path = "crates/pipeline_test" }
+test_logging = { path = "crates/test_logging" }
 
 bevy = { version = "0.16.1", default-features = false, features = [
   "animation",

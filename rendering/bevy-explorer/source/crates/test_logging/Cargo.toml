@@ -1,0 +1,12 @@
+[package]
+name = "test_logging"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[lib]
+
+[dependencies]
+bevy = { workspace = true }

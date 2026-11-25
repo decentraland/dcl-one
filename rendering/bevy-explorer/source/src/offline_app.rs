@@ -74,7 +74,6 @@ pub fn offline_app(config: AppConfig, realm: &str, content_server: String) -> Ap
                 preview: false,
                 starting_realm: Some(map_realm_name(realm)),
                 content_server_override: Some(content_server),
-                assets_root: Default::default(),
                 num_slots: config.max_concurrent_remotes,
             })
             .add_before::<IpfsIoPlugin>(NftReaderPlugin),

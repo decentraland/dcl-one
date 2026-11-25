@@ -564,6 +564,12 @@ of the contract.
 - `cargo test --all`, not `cargo test -p <crate>`. The full workspace unifies `serde_json` with
   `preserve_order` from `deno_core`, so a per-crate run can pass on map ordering that the
   workspace run breaks. Parse JSON in tests; never compare serialised strings.
+- A passing test logs no `ERROR`, so one in the output means a failure. An ECS fixture builds
+  only the resources and entities its systems use, and calls `test_logging::init()` (a
+  dev-dependency) instead of adding `LogPlugin`: the harness captures the logs and prints them
+  when the test fails. `RUST_LOG` and `--nocapture` show them for a passing test.
+- `av::test::test_ffmpeg` needs network access: it fetches an HTTPS video to check the decoder
+  in the binary that also links libwebrtc. The other AV tests read a local source.
 - `react-web`: `pnpm test` runs the checked-in Vitest suite. The Playwright visual/engine
   gate specs and configs are absent from this public checkout; the corresponding package
   scripts do not establish suite availability. See `react-web/review.md` for the optional

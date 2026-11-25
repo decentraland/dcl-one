@@ -607,7 +607,6 @@ impl ManifestNumber {
 
 pub struct IpfsIoPlugin {
     pub preview: bool,
-    pub assets_root: Option<String>,
     pub starting_realm: Option<String>,
     pub content_server_override: Option<String>,
     pub num_slots: usize,
@@ -617,24 +616,19 @@ impl Plugin for IpfsIoPlugin {
     fn build(&self, app: &mut App) {
         info!("remote server: {:?}", self.starting_realm);
 
-        let file_path = self.assets_root.clone().unwrap_or("assets".to_owned());
+        let file_path = "assets".to_owned();
         #[cfg(not(target_arch = "wasm32"))]
         let default_reader = FileAssetReader::new(file_path.clone());
         #[cfg(target_arch = "wasm32")]
         let default_reader = HttpWasmAssetReader::new(file_path.clone());
 
         #[cfg(not(target_arch = "wasm32"))]
-        let cache_root = if self.assets_root.is_some() {
-            // use app folder for unit tests
-            Some(default_reader.root_path().join("cache"))
-        } else {
-            Some(
-                project_directories()
-                    .unwrap()
-                    .data_local_dir()
-                    .join("cache"),
-            )
-        };
+        let cache_root = Some(
+            project_directories()
+                .unwrap()
+                .data_local_dir()
+                .join("cache"),
+        );
         #[cfg(target_arch = "wasm32")]
         let cache_root = None;
         info!("cache folder {cache_root:?}");

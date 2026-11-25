@@ -41,13 +41,22 @@ pub struct AVPlayerPlugin;
 
 impl Plugin for AVPlayerPlugin {
     fn build(&self, app: &mut App) {
-        #[cfg(any(feature = "ffmpeg", feature = "html"))]
-        app.add_plugins(VideoPlayerPlugin);
+        app.add_plugins(AVPlayerCorePlugin);
         #[cfg(all(not(test), feature = "ffmpeg"))]
         app.add_plugins(AudioSinkPlugin);
-        app.add_plugins(crate::debug_panel::MediaDebugPanelPlugin);
         app.add_plugins(AudioSourcePlugin);
         app.add_plugins(AudioSourcePluginImpl);
+    }
+}
+
+/// `AudioStream` and `VideoPlayer`, without audio output or scene audio sources.
+pub(crate) struct AVPlayerCorePlugin;
+
+impl Plugin for AVPlayerCorePlugin {
+    fn build(&self, app: &mut App) {
+        #[cfg(any(feature = "ffmpeg", feature = "html"))]
+        app.add_plugins(VideoPlayerPlugin);
+        app.add_plugins(crate::debug_panel::MediaDebugPanelPlugin);
         app.init_resource::<MonotonicTimestamp<PbAudioEvent>>();
         app.init_resource::<MonotonicTimestamp<PbVideoEvent>>();
 

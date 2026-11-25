@@ -231,15 +231,17 @@ fn av_sink_waiting_sound_data<T: AVPlayer>(
     mut audio_manager: NonSendMut<bevy_kira_audio::audio_output::AudioOutput<DefaultBackend>>,
 ) {
     for (entity, mut av_sink) in av_sinks.into_inner() {
-        if let Some(audio_sink) = av_sink.audio_sink_mut() {
-            match audio_sink.sound_data.try_recv() {
-                Ok(sound_data) => start_sound(entity, audio_sink, &mut audio_manager, sound_data),
-                Err(TryRecvError::Disconnected) => {
-                    debug!("Sound data receiver is disconnected.");
-                    commands.entity(entity).try_remove::<WaitingSoundData>();
-                }
-                Err(TryRecvError::Empty) => {}
+        let Some(audio_sink) = av_sink.audio_sink_mut() else {
+            commands.entity(entity).try_remove::<WaitingSoundData>();
+            continue;
+        };
+        match audio_sink.sound_data.try_recv() {
+            Ok(sound_data) => start_sound(entity, audio_sink, &mut audio_manager, sound_data),
+            Err(TryRecvError::Disconnected) => {
+                debug!("Sound data receiver is disconnected.");
+                commands.entity(entity).try_remove::<WaitingSoundData>();
             }
+            Err(TryRecvError::Empty) => {}
         }
     }
 }
