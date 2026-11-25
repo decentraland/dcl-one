@@ -735,8 +735,11 @@ pub async fn list_nfts(
     if let Some((conn, _)) = snapshot.as_mut()
         && let Some(owner) = &f.owner
     {
+        let super::nft_reads::ReadConn::Land(land) = conn else {
+            return Err(super::nft_reads::land_unavailable());
+        };
         owner_filters = NftFilters {
-            unclaimed_land: super::rentals::unclaimed_land(conn, owner).await?,
+            unclaimed_land: super::rentals::unclaimed_land(land, owner).await?,
             ..f.clone()
         };
         f = &owner_filters;

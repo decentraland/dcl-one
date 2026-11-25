@@ -18,7 +18,7 @@ use crate::rentals::types::RentalListing;
 /// wallet, including one with no previous rent. Wait for that arrival before
 /// returning an owner page. The caller supplies the catalogue's LAND snapshot.
 pub(super) async fn unclaimed_land(
-    conn: &mut sqlx::PgConnection,
+    land: &mut crate::land_authz::indexer::ReadySnapshot,
     owner: &str,
 ) -> Result<Vec<String>, axum::response::Response> {
     use super::chain_walk::{self, ChainNet};
@@ -26,12 +26,15 @@ pub(super) async fn unclaimed_land(
     use crate::land_authz::LAND_MAINNET;
     use crate::rentals::index::{INDEXER_RENTALS, RENTALS_MAINNET};
 
+    let land_head = land
+        .cursor
+        .folded_block
+        .ok_or_else(super::nft_reads::land_unavailable)?;
+    let conn = &mut *land.tx;
     let cursor = chain_walk::cursor(&mut *conn, INDEXER_RENTALS, ChainNet::Ethereum)
         .await
         .map_err(super::nft_reads::read_error)?;
-    let Some(head) = cursor
-        .filter(|c| chain_walk::is_ready_on(c, 1, chrono::Utc::now()))
-        .and_then(|c| c.folded_block)
+    let Some(head) = cursor.and_then(|c| chain_walk::fresh_fold_on(&c, 1, chrono::Utc::now()))
     else {
         return Err(unavailable(
             Source::RentalsIndex,
@@ -43,13 +46,14 @@ pub(super) async fn unclaimed_land(
         "SELECT EXISTS (
             SELECT 1 FROM land_authz.authz_event e
             JOIN land_authz.token_right t USING (token_address,token_id)
-            WHERE e.block_number > $1 AND e.kind='transfer'
+            WHERE e.block_number > $1 AND e.block_number <= $4 AND e.kind='transfer'
               AND e.token_address=ANY($2) AND t.owner=$3
         )",
     )
     .bind(head)
     .bind(registries.as_slice())
     .bind(RENTALS_MAINNET)
+    .bind(land_head)
     .fetch_one(&mut *conn)
     .await
     .map_err(super::nft_reads::read_error)?;
@@ -80,13 +84,13 @@ pub(super) async fn unclaimed_land(
         ) latest
         CROSS JOIN LATERAL (
             SELECT e.block_number,e.log_index FROM land_authz.authz_event e
-            WHERE (e.token_address,e.token_id)=(c.contract_address,c.token_id) AND e.kind='transfer'
+            WHERE (e.token_address,e.token_id)=(c.contract_address,c.token_id) AND e.kind='transfer' AND e.block_number <= $5
             ORDER BY e.block_number DESC,e.log_index DESC LIMIT 1
         ) arrival
         WHERE t.owner=$1 AND latest.kind='rented' AND latest.signer=$2
           AND (latest.block_number,latest.log_index) >= (arrival.block_number,arrival.log_index)",
     )
-    .bind(RENTALS_MAINNET).bind(owner.to_ascii_lowercase()).bind(head).bind(registries.as_slice())
+    .bind(RENTALS_MAINNET).bind(owner.to_ascii_lowercase()).bind(head).bind(registries.as_slice()).bind(land_head)
         .fetch_all(conn).await.map_err(super::nft_reads::read_error)
 }
 

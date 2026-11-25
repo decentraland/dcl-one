@@ -4085,7 +4085,7 @@ async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
          INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
          VALUES ('nft','ethereum',0,40,40,timezone('UTC',now()),true,1),
                 ('nft','matic',0,40,40,timezone('UTC',now()),true,137),
-                ('rentals','ethereum',0,30,30,timezone('UTC',now()),true,1);
+                ('rentals','ethereum',0,38,30,timezone('UTC',now()),true,1);
          INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
          VALUES ('items','ethereum','test',now()),('items','matic','test',now());
          INSERT INTO land_authz.token_right(token_address,token_id,owner,x,y,updated_block,updated_log)
@@ -4104,7 +4104,8 @@ async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
     run(rent(land, 2, 12, 1, WALLET_A, false)).await;
     run(rent(land, 2, 14, 0, WALLET_A, true)).await;
     run(rent(estate, 3, 15, 2, WALLET_A, false)).await;
-    // An event above publication cannot affect the result.
+    // Rentals has walked to 38 but published through 30. The owner page
+    // stays available and the event at 35 cannot change its published answer.
     run(rent(land, 2, 35, 0, WALLET_B, false)).await;
     let mut tokens = std::collections::BTreeMap::new();
     for skip in 0..3 {
@@ -4207,6 +4208,11 @@ async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
     let (code, result) = get(app.clone(), &url_b).await;
     assert_eq!(code, StatusCode::OK, "{result}");
     assert_eq!(result["total"], 1);
+    run(format!("INSERT INTO shop.rental_event(network,rentals_address,kind,contract_address,token_id,block_number,log_index,block_time,tx_hash)
+        VALUES ('ethereum','{VENUE}','claimed','{estate}',3,38,1,380,'0x04')")).await;
+    let (code, result) = get(app.clone(), &format!("{owner_url}&category=estate")).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 0);
     run("UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals'".into()).await;
     let (code, result) = get(app.clone(), &owner_url).await;
     assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");

@@ -3987,7 +3987,13 @@ An owner filter that includes LAND also reads the mainnet Rentals publication.
 It finds the wallet's candidate rents with `rental_event_lessor_idx` and the
 latest published rent or claim per asset with `rental_event_asset_idx`.
 An unclaimed rent counts past expiry while the venue owns the token and the
-rent covers its latest transfer into custody. If Rentals has yet to publish
+rent covers its latest transfer into custody. Each event query stops at its
+source's published height. Owner pages can use the last fresh Rentals fold
+while the walker processes a newer window. A published claim ends the rental
+match immediately. Direct ownership becomes visible when LAND publishes the
+transfer back. Before routing owner inventory to a mainnet walker, check
+`ethereum.fullHistory` and `ethereum.ready` at
+`GET /signatures-api/v1/rentals-index` on that node. If Rentals has yet to publish
 through a transfer into the venue, the owner page returns the `rentals-index`
 503. Both page and count include these assets, and the NFT still reports its
 on-chain owner.

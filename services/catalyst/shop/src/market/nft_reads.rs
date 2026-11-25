@@ -2038,13 +2038,14 @@ mod tests {
              INSERT INTO shop.trade_assets_erc20 (asset_id, amount) \
              SELECT md5('received' || v.n)::uuid, v.price FROM (VALUES (1, 7), (2, 9), (3, 3), (4, 5)) v(n, price); \
              INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) \
-             SELECT '{LAND_REGISTRY_MAINNET}', g, g, 0, '{a}', g, 0 FROM generate_series(1, 5) g; \
+             SELECT '{LAND_REGISTRY_MAINNET}', g, g, 0, CASE WHEN g=5 THEN '{venue}' ELSE '{a}' END, g, 0 FROM generate_series(1, 5) g; \
              INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) \
              SELECT '{ESTATE_REGISTRY_MAINNET}', g, '{b}', g, 1 FROM generate_series(3, 4) g; \
              INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) VALUES (4, 3, 9, 0), (5, 4, 9, 1); \
              INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) \
              SELECT g, 0, 102 + g / 2, '{LAND_REGISTRY_MAINNET}', 'transfer', g, '{a}' FROM generate_series(1, 4) g; \
-             UPDATE shop.items SET emote_outcome_type = 'so' WHERE contract_address = '{c}' AND item_id = 1"
+             UPDATE shop.items SET emote_outcome_type = 'so' WHERE contract_address = '{c}' AND item_id = 1",
+            venue = crate::rentals::index::RENTALS_MAINNET
         )))
         .execute(&pool)
         .await
@@ -2076,7 +2077,10 @@ mod tests {
             ] {
                 let mut q = filters.clone();
                 q.push(("sortBy", sort));
-                let f = parse_filters(&pairs(&q)).unwrap();
+                let mut f = parse_filters(&pairs(&q)).unwrap();
+                if f.owner.is_some() {
+                    f.unclaimed_land = vec![format!("{LAND_REGISTRY_MAINNET}-5")];
+                }
                 let mut s = sources_for(&f);
                 if crate::market::nfts::merges_land(&f) {
                     s.names = true;
