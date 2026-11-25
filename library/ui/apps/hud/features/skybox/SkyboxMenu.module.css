@@ -34,7 +34,7 @@
   height: 50px;
   padding: 0 20px 0 16px;
 }
-/* a 32x18 switch with a 16px knob (design/Toggle reads these) */
+/* a 32x18 switch with a 16px knob (the shared Switch reads these) */
 .row {
   --toggle-w: 32px;
   --toggle-h: 18px;

@@ -187,7 +187,7 @@ div.config {
   height: 36px;
   padding: 0 13px 0 12px;
   white-space: nowrap;
-  /* the 39x24 switch with a 19px knob (design/Toggle reads these) */
+  /* the 39x24 switch with a 19px knob (the shared Switch reads these) */
   --toggle-pad: 2.5px;
   --toggle-off: var(--switch-off-rail);
   --toggle-knob: var(--text);

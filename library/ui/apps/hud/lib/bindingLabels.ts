@@ -134,9 +134,12 @@ export function cancelKeyCodes(): string[] {
   return bindingsForAction(snapshot, { System: 'Cancel' }).filter(isKeyWire)
 }
 
-/** Is this a text-entry element (keystrokes there are typing, not hotkeys/cancel)? */
+/** Is this a text-entry element (keystrokes there are typing, not hotkeys/cancel)? A checkbox or a radio is
+ *  an input that takes no text: the HUD's switches are native checkboxes, and focusing one leaves the keys to
+ *  the engine. */
 export const isEditableTarget = (t: EventTarget | null | undefined): boolean =>
-  t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+  t instanceof HTMLElement &&
+  ((t.tagName === 'INPUT' && !['checkbox', 'radio'].includes((t as HTMLInputElement).type)) || t.tagName === 'TEXTAREA' || t.isContentEditable === true)
 
 /** Does this keydown mean cancel? Matches the physical `code`; the `key` fallback keeps
  *  synthetic events that only set `key` (tests) working while Escape is the cancel key. */

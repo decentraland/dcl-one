@@ -200,7 +200,8 @@
   }
 
   .hud.onLight .track::after,
-  .hud.onLight .input:checked + .track::after {
+  .hud.onLight .input:checked + .track::after,
+  .hud.onLight .input:disabled + .track::after {
     background: var(--dcl-neutrals-snow);
   }
 
