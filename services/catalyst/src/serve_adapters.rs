@@ -1,13 +1,13 @@
-//! What `serve` hands Shop from Social, Shop's answer Comms asks for, the
-//! live participants Comms gives Explore, and Shop's LAND listings Explore's
-//! map grid reads: those crates build without each other, so these wrappers
-//! connect them here.
+//! What `serve` hands Shop from Social and from Builder, Shop's answer Comms
+//! asks for, the live participants Comms gives Explore, and Shop's LAND
+//! listings Explore's map grid reads: those crates build without each other,
+//! so these wrappers connect them here.
 
 use std::sync::Arc;
 
 use crate::shared::identity::Address;
 use crate::shared::notifications::SendFailure;
-use crate::{comms, explore, shop, social};
+use crate::{builder, comms, explore, shop, social};
 
 /// Fan out durable room input. Both receivers deduplicate the webhook ID,
 /// so a failed second write is safe to retry after the first has committed.
@@ -279,6 +279,40 @@ impl comms::interfaces::NameOwnerReader for ShopNameOwners {
     }
 }
 
+/// Builder's publication fee as what a publication paid with Shop credits
+/// costs and whose it is.
+pub(super) struct BuilderPublications(pub(super) builder::SharedState);
+
+#[async_trait::async_trait]
+impl shop::credits::publication::Publications for BuilderPublications {
+    async fn quote(
+        &self,
+        signer: &crate::shared::signed_fetch::Signer,
+        data: &[u8],
+    ) -> Result<shop::credits::publication::PublicationQuote, shop::credits::errors::ApiError> {
+        use shop::credits::errors::ApiError;
+        let fee = builder::publication_fee::for_call(&self.0, signer, data)
+            .await
+            .map_err(|refusal| {
+                let message = refusal.to_string();
+                match refusal.status() {
+                    400 => ApiError::bad_request(message),
+                    401 | 403 => ApiError::forbidden(message),
+                    404 => ApiError::not_found(message),
+                    409 | 423 => ApiError::conflict(message),
+                    429 | 503 => ApiError::service_unavailable(message),
+                    _ => ApiError::Internal(message),
+                }
+            })?;
+        let contract = shop::EvmAddress::parse(&fee.contract)
+            .map_err(|e| ApiError::Internal(format!("the collection's contract: {e}")))?;
+        Ok(shop::credits::publication::PublicationQuote {
+            contract,
+            usd_cents: fee.usd_cents,
+        })
+    }
+}
+
 #[cfg(test)]
 mod credits_revenue_events_tests {
     use super::*;
@@ -350,6 +384,85 @@ mod credits_revenue_events_tests {
             )
         );
         assert_eq!(posted[1]["body"]["orderId"], "ord_1");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use alloy_sol_types::SolCall;
+
+    use super::BuilderPublications;
+    use crate::shared::signed_fetch::test_support::signer;
+    use crate::shop::credits::errors::ApiError;
+    use crate::shop::credits::publication::{Publications, createCollectionCall};
+    use crate::{builder, http, storage};
+
+    const CREATOR: &str = "0x00000000000000000000000000000000000000c1";
+
+    async fn publications(pool: sqlx::PgPool) -> BuilderPublications {
+        let dir = std::env::temp_dir().join(format!(
+            "catalyst-publication-fee-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = Arc::new(storage::Storage::from_config(&dir).await.unwrap());
+        BuilderPublications(Arc::new(
+            builder::State::new(
+                pool,
+                storage.clone(),
+                storage.denylist().clone(),
+                http::Outbound::for_tests(),
+                None,
+                None,
+                builder::Settings::default(),
+            )
+            .unwrap(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn shop_is_refused_a_publication_the_builder_refuses_with_the_builders_reason() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let builder = publications(pool).await;
+
+        let refused = builder
+            .quote(&signer(CREATOR), &[0u8; 7])
+            .await
+            .expect_err("bytes that are no createCollection arguments");
+        assert!(matches!(refused, ApiError::BadRequest(_)), "{refused:?}");
+
+        let network = builder::network::POLYGON;
+        let unknown = createCollectionCall {
+            forwarder: network.forwarder.parse().unwrap(),
+            factory: network.collection_factory.parse().unwrap(),
+            salt: Default::default(),
+            name: "No such draft".into(),
+            symbol: "DCL-NSCHDRFT".into(),
+            baseURI: network.base_uri.into(),
+            creator: CREATOR.parse().unwrap(),
+            items: Vec::new(),
+        };
+        let refused = builder
+            .quote(&signer(CREATOR), &unknown.abi_encode()[4..])
+            .await
+            .expect_err("a publication without items");
+        assert!(matches!(refused, ApiError::BadRequest(_)), "{refused:?}");
+
+        let mut one_item = unknown.clone();
+        one_item.items = vec![crate::shop::credits::publication::PublicationItem {
+            rarity: "common".into(),
+            price: Default::default(),
+            beneficiary: Default::default(),
+            metadata: "1:w:Hat::hat:BaseMale".into(),
+        }];
+        let refused = builder
+            .quote(&signer(CREATOR), &one_item.abi_encode()[4..])
+            .await
+            .expect_err("a publication of no stored draft");
+        assert!(matches!(refused, ApiError::NotFound(_)), "{refused:?}");
     }
 }
 

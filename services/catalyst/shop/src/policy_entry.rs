@@ -18,8 +18,10 @@
 //! (`CreditsManagerPolygon._handlePreExecution` at the pin): the legacy
 //! marketplace takes `executeOrder`, an allowed marketplace `accept` or
 //! `acceptWithCoupon`, the CollectionStore `buy`, anything else is a custom
-//! call whose `data` the contract never decodes, and neither do we
-//! ([`CustomEffect::Opaque`]).
+//! call whose `data` the contract never decodes. Of those we decode one, the
+//! CollectionManager's `createCollection`
+//! ([`CustomEffect::CollectionPublication`]); every other is
+//! [`CustomEffect::Opaque`].
 
 use std::sync::LazyLock;
 
@@ -122,6 +124,9 @@ pub struct ManagerRoutes {
     pub collection_store: Address,
     pub marketplaces: &'static [Address],
     pub mana: Address,
+    /// The chain's CollectionManager, whose `createCollection` a manager
+    /// reaches as a custom external call.
+    pub collection_manager: Address,
 }
 
 pub fn manager_routes(chain_id: ChainId) -> Option<ManagerRoutes> {
@@ -142,6 +147,7 @@ pub fn manager_routes(chain_id: ChainId) -> Option<ManagerRoutes> {
             collection_store: address!("0x214ffc0f0103735728dc66b61a22e4f163e275ae"),
             marketplaces: &POLYGON_MARKETPLACES,
             mana: address!("0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4"),
+            collection_manager: address!("0x9d32aac179153a991e832550d9f96441ea27763a"),
         }),
         ChainId::AMOY => Some(ManagerRoutes {
             chain_id,
@@ -149,6 +155,7 @@ pub fn manager_routes(chain_id: ChainId) -> Option<ManagerRoutes> {
             collection_store: address!("0xe36abc9ec616c83caaa386541380829106149d68"),
             marketplaces: &AMOY_MARKETPLACES,
             mana: address!("0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0"),
+            collection_manager: address!("0x5309ae874fc4eb21adcd63f8b6c3f766cc3b1849"),
         }),
         _ => None,
     }
@@ -536,7 +543,7 @@ fn coupon_from_offchain(coupon: &offchain::Coupon) -> Result<TradeCoupon, Decode
     })
 }
 
-mod credits_abi {
+pub(crate) mod credits_abi {
     alloy_sol_types::sol! {
         struct Credit {
             uint256 value;
@@ -573,12 +580,24 @@ pub struct CreditRef {
     pub salt: [u8; 32],
 }
 
-/// A decoded `useCredits`: the credits it spends, the call it executes and
-/// the caller's two bounds.
+/// The external call of a `useCredits` as it was sent: what the
+/// co-signature of a custom call covers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentCall {
+    pub target: Address,
+    pub selector: [u8; 4],
+    pub data: Vec<u8>,
+    pub expires_at: U256,
+    pub salt: [u8; 32],
+}
+
+/// A decoded `useCredits`: the credits it spends, the call it executes, as
+/// decoded and as sent, and the caller's two bounds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UseCreditsCall {
     pub credits: Vec<CreditRef>,
     pub call: ExternalCall,
+    pub sent: SentCall,
     pub max_uncredited: ManaWei,
     pub max_credited: ManaWei,
 }
@@ -662,10 +681,32 @@ pub fn decode_use_credits(
         } else {
             opaque()
         }
+    } else if target == routes.collection_manager {
+        if selector == crate::credits::publication::createCollectionCall::SELECTOR {
+            let publication =
+                crate::credits::publication::createCollectionCall::abi_decode_raw(data)
+                    .map_err(|e| DecodeError::Args(format!("createCollection: {e}")))?;
+            ExternalCall::Custom {
+                venue,
+                selector,
+                effect: CustomEffect::CollectionPublication {
+                    creator: EvmAddress::new(publication.creator),
+                },
+            }
+        } else {
+            opaque()
+        }
     } else {
         opaque()
     };
     Ok(UseCreditsCall {
+        sent: SentCall {
+            target,
+            selector,
+            data: data.to_vec(),
+            expires_at: external.expiresAt,
+            salt: external.salt.0,
+        },
         credits: args
             .credits
             .iter()

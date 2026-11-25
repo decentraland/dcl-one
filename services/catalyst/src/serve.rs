@@ -957,6 +957,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         },
     )
     .await?;
+    stage5_ops
+        .credits
+        .attach_publications(Arc::new(adapters::BuilderPublications(builder.clone())));
 
     // The worlds permission core: ONE instance for the worlds product
     // surface, the storage routes, the scene host, archipelago's ban check
