@@ -2158,12 +2158,6 @@ pub struct SceneTime {
     pub time: f32,
 }
 
-/// The time of day as the HUD's Skybox menu shows it, kept by the day/night systems and sent on
-/// `SystemApi::GetSkyTimeStream`.
-#[derive(Resource, Default, Clone, Copy, PartialEq, Debug)]
-pub struct SkyTime(pub SkyTimeState);
-pub use system_api_types::SkyTimeState;
-
 // porting aid, used to be one component
 pub type TextStyle = (TextFont, TextColor);
 

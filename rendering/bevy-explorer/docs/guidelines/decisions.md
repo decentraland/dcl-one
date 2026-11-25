@@ -49,8 +49,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   scene editor lights a stopped scene with it. A portable's time comes after the scene's, wins
   only over a running clock and never locks the menu: a portable follows the player
   everywhere, so the player's own stopped time beats it. One system moves the sky whenever
-  what holds it changes, a source going away included; what it last saw is kept on the time
-  keeper entity.
+  what holds it changes, a source going away included; what it last saw, with what the
+  menu is told, is kept on the time keeper entity.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
   direction; SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
 - **Scene environment components.** Skybox cloud speed accepts finite negative values for

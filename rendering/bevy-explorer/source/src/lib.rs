@@ -12,7 +12,6 @@ mod memory;
 #[cfg(test)]
 mod memory_tests;
 pub mod perf;
-mod sky_time;
 #[cfg(target_arch = "wasm32")]
 mod web;
 pub mod world_state;
@@ -738,7 +737,6 @@ impl DecentralandApp {
             .add_plugins(CameraReelPlugin)
             .add_plugins(SystemBridgePlugin { bare: false })
             .add_plugins(world_state::WorldStatePlugin)
-            .add_plugins(sky_time::SkyTimePlugin)
             .add_plugins(deep_link::DeepLinkPlugin)
             .add_plugins(SceneInspectorPlugin)
             .add_plugins(EmbedAssetsPlugin)

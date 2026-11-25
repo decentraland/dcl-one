@@ -120,14 +120,40 @@ describe('skybox', () => {
     expect(h.session().skybox.progressing).toBe(false)
   })
 
-  it("keeps the slider where the player drags it when the stopped clock's own report comes back", async () => {
+  it("keeps the slider where the player drags it when the stopped clock's own reports come back", async () => {
     const h = renderSession()
     await enterAsGuest(h)
     h.driver.emit({ kind: 'skyTime', state: { locked: false, speed: 0, fixedHours: 6 } })
     expect(h.session().skybox.hours).toBe(6)
+    act(() => h.session().skybox.setHours(8))
     act(() => h.session().skybox.setHours(9))
+    // the engine reports the first value after the slider has moved on
     h.driver.emit({ kind: 'skyTime', state: { locked: false, speed: 0, fixedHours: 8 } })
     expect(h.session().skybox.hours).toBe(9)
+    h.driver.emit({ kind: 'skyTime', state: { locked: false, speed: 0, fixedHours: 9 } })
+    expect(h.session().skybox.hours).toBe(9)
+  })
+
+  it('shows an hour it did not send, with the clock stopped and nothing locked', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'skyTime', state: { locked: false, speed: 0, fixedHours: 10 } })
+    act(() => h.session().skybox.setHours(10))
+    h.driver.emit({ kind: 'skyTime', state: { locked: false, speed: 0, fixedHours: 10 } })
+    // overriding is allowed and the player walks into a scene at 22:00, or types `/time 22 0`
+    h.driver.emit({ kind: 'skyTime', state: { locked: false, speed: 0, fixedHours: 22 } })
+    expect(h.session().skybox.hours).toBe(22)
+  })
+
+  it('does not let the read on open overwrite an hour the engine pushed', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'skyTime', state: { locked: true, speed: 12, fixedHours: 22 } })
+    h.driver.commandReply = () => 'time 10:0 -> 10:0, speed 12 (elapsed: 36000), locked: false'
+    act(() => h.session().skybox.toggle())
+    await waitFor(() => expect(h.driver.commands).toContain('/time'))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(h.session().skybox.hours).toBe(22)
   })
 
   it('formats hours as HH:MM', () => {

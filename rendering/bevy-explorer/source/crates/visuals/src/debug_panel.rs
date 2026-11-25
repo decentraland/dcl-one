@@ -481,7 +481,7 @@ fn sky_state(
     config: Res<AppConfig>,
 ) {
     if let Some(Ok(_)) = cmd.take() {
-        cmd.reply_ok(json!({"hour":time.time / 3600., "timeSource":hold.source.name(), "sceneLocked":hold.locked,
+        cmd.reply_ok(json!({"hour":time.time / 3600., "timeSource":hold.source.name(), "sceneLocked":hold.state.locked,
             "overrideAllowed":config.allow_scene_control_override,
             "cover":user_cover(clouds.cover), "density":clouds.density_cap,
             "shadow":clouds.shadow, "scale":clouds.scale, "steps":clouds.steps, "lacunarity":clouds.lacunarity, "sharpness":clouds.sharpness}).to_string());

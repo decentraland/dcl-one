@@ -3,7 +3,10 @@ use bevy::{
     prelude::*,
 };
 use bevy_console::{AddConsoleCommand, ConsoleCommand};
-use common::structs::{AppConfig, PrimaryPlayerRes, SceneTime, SkyTime, SkyTimeState, TimeOfDay};
+use common::{
+    rpc::RpcStreamSender,
+    structs::{AppConfig, PrimaryPlayerRes, SceneTime, TimeOfDay},
+};
 use dcl_component::{
     proto_components::sdk::components::{PbSkyboxTime, TransitionMode},
     SceneComponentId,
@@ -13,6 +16,7 @@ use scene_runner::{
     initialize_scene::TestingData, renderer_context::RendererSceneContext,
     update_world::AddCrdtInterfaceExt, ContainingScene,
 };
+use system_bridge::{SkyTimeState, SystemApi};
 
 /// One hour in seconds
 const ONE_HOUR: f32 = 60. * 60.;
@@ -47,8 +51,8 @@ struct RunningClock {
 #[derive(Component, Default)]
 pub(crate) struct SkyHold {
     pub(crate) source: SkySource,
-    /// The scene the player stands in holds the sky and the player may not take it.
-    pub(crate) locked: bool,
+    /// What the HUD's Skybox menu is told, sent on `SystemApi::GetSkyTimeStream`.
+    pub(crate) state: SkyTimeState,
     target: Option<SkyTarget>,
 }
 
@@ -175,7 +179,6 @@ impl Plugin for DayNightPlugin {
             ComponentPosition::RootOnly,
         );
 
-        app.init_resource::<SkyTime>();
         app.add_systems(Startup, start_clock);
         app.add_systems(
             First,
@@ -191,6 +194,8 @@ impl Plugin for DayNightPlugin {
                 .chain()
                 .after(bevy::time::TimeSystem),
         );
+
+        app.add_systems(Update, pipe_sky_time);
 
         app.add_console_command::<TimeOfDayConsoleCommand, _>(timeofday_console_command);
     }
@@ -374,7 +379,6 @@ fn follow_sky_source(
     >,
     config: Res<AppConfig>,
     mut time_of_day: ResMut<TimeOfDay>,
-    mut sky_time: ResMut<SkyTime>,
 ) {
     let (mut clock, mut hold, skybox_time, skybox, scene_time, scene) = time_keeper.into_inner();
     let allow_override = config.allow_scene_control_override;
@@ -395,17 +399,18 @@ fn follow_sky_source(
         },
         _ => SkyTarget::Clock,
     };
-    sky_time.set_if_neq(SkyTime(SkyTimeState {
+    let state = SkyTimeState {
         locked,
         speed: clock.speed,
         fixed_hours: match target {
-            SkyTarget::Skybox { time, .. } | SkyTarget::Scene { time } => Some(time / ONE_HOUR),
-            SkyTarget::Clock => (clock.speed == 0.0).then_some(clock.time / ONE_HOUR),
-        },
-    }));
-    if hold.source != source || hold.locked != locked {
+            SkyTarget::Skybox { time, .. } | SkyTarget::Scene { time } => Some(time),
+            SkyTarget::Clock => (clock.speed == 0.0).then_some(clock.time),
+        }
+        .map(|time| time.rem_euclid(TWENTY_FOUR_HOURS) / ONE_HOUR),
+    };
+    if hold.source != source || hold.state != state {
         hold.source = source;
-        hold.locked = locked;
+        hold.state = state;
     }
     if hold.target == Some(target) {
         return;
@@ -520,6 +525,37 @@ fn push_time_of_day_from_running_clock(
     }
 }
 
+/// Sends the Skybox menu's state on `SystemApi::GetSkyTimeStream`: as it is to a new
+/// subscriber, then on every change.
+fn pipe_sky_time(
+    mut requests: EventReader<SystemApi>,
+    mut senders: Local<Vec<RpcStreamSender<SkyTimeState>>>,
+    mut sent: Local<Option<SkyTimeState>>,
+    hold: Single<&SkyHold>,
+) {
+    let new_senders = requests
+        .read()
+        .filter_map(|ev| {
+            if let SystemApi::GetSkyTimeStream(sender) = ev {
+                Some(sender.clone())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    for sender in &new_senders {
+        let _ = sender.send(hold.state);
+    }
+    senders.retain(|sender| !sender.is_closed());
+    if *sent != Some(hold.state) {
+        *sent = Some(hold.state);
+        for sender in senders.iter() {
+            let _ = sender.send(hold.state);
+        }
+    }
+    senders.extend(new_senders);
+}
+
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/time")]
 pub struct TimeOfDayConsoleCommand {
@@ -550,6 +586,11 @@ fn timeofday_console_command(
     config: Res<AppConfig>,
 ) {
     if let Some(Ok(command)) = input.take() {
+        let finite = |value: Option<f32>| value.is_none_or(f32::is_finite);
+        if !finite(command.time) || !finite(command.speed) {
+            input.reply_failed("the time and the speed must be finite numbers");
+            return;
+        }
         let (mut running_clock, scene_time, scene_source, skybox_time, skybox_source) =
             time_keeper.into_inner();
         let allow_override = config.allow_scene_control_override;
@@ -567,7 +608,7 @@ fn timeofday_console_command(
         };
         let old_time = effective_time(&running_clock);
         if let Some(hours) = command.time {
-            running_clock.time = (hours * ONE_HOUR) % TWENTY_FOUR_HOURS;
+            running_clock.time = (hours * ONE_HOUR).rem_euclid(TWENTY_FOUR_HOURS);
         }
         if command.resume {
             running_clock.speed = DEFAULT_CLOCK_SPEED;
@@ -631,7 +672,6 @@ mod tests {
         app.init_resource::<ScenePointers>()
             .init_resource::<LiveScenes>()
             .init_resource::<PortableScenes>()
-            .init_resource::<SkyTime>()
             .init_resource::<AppConfig>()
             .init_resource::<TestingData>()
             .init_resource::<Time>()
@@ -768,12 +808,28 @@ mod tests {
         app.world().resource::<TimeOfDay>().time
     }
 
-    fn locked(app: &App) -> bool {
-        app.world().resource::<SkyTime>().0.locked
+    fn locked(app: &mut App) -> bool {
+        pushed(app).locked
     }
 
-    fn pushed(app: &App) -> SkyTimeState {
-        app.world().resource::<SkyTime>().0
+    /// What the Skybox menu is told.
+    fn pushed(app: &mut App) -> SkyTimeState {
+        let world = app.world_mut();
+        world.query::<&SkyHold>().single(world).unwrap().state
+    }
+
+    fn skipping(app: &App) -> bool {
+        app.world().contains_resource::<TimeSkip>()
+    }
+
+    /// The parcel scene with a time of night, a frame into the skip toward it.
+    fn skipping_to_night(app: &mut App, time: impl Bundle) -> Entity {
+        let scene = parcel_scene(app);
+        app.world_mut().entity_mut(scene).insert(time);
+        slow_frames(app);
+        app.update();
+        assert!(skipping(app));
+        scene
     }
 
     fn elapsed(reply: &str) -> f32 {
@@ -805,12 +861,11 @@ mod tests {
     #[test]
     fn with_no_scene_the_clock_sets_the_sky_and_nothing_is_locked() {
         let mut app = app();
-        assert!(!locked(&app));
+        assert!(!locked(&mut app));
         let reply = time(&mut app, "");
         assert_eq!(elapsed(&reply), NOON);
-        assert!(reply.ends_with(", locked: false"));
         assert_eq!(
-            pushed(&app),
+            pushed(&mut app),
             SkyTimeState {
                 locked: false,
                 speed: 0.,
@@ -820,7 +875,7 @@ mod tests {
         // the running clock's hour is not pushed: it changes every frame
         time(&mut app, "12 12");
         assert_eq!(
-            pushed(&app),
+            pushed(&mut app),
             SkyTimeState {
                 locked: false,
                 speed: 12.,
@@ -838,7 +893,7 @@ mod tests {
             .insert(SceneTime { time: NIGHT });
         settle(&mut app);
         assert_eq!(sky(&app), NIGHT);
-        assert!(locked(&app));
+        assert!(locked(&mut app));
 
         // stopped at another hour
         let reply = time(&mut app, "6 0");
@@ -849,9 +904,10 @@ mod tests {
             NIGHT,
             "/time reports the time the sky shows"
         );
+        // the reply's last field is what the E2E driver reads
         assert!(reply.ends_with(", locked: true"));
         assert_eq!(
-            pushed(&app),
+            pushed(&mut app),
             SkyTimeState {
                 locked: true,
                 speed: 0.,
@@ -863,7 +919,7 @@ mod tests {
         time(&mut app, "6 12");
         settle(&mut app);
         assert_eq!(sky(&app), NIGHT);
-        assert!(locked(&app));
+        assert!(locked(&mut app));
     }
 
     #[test]
@@ -873,7 +929,7 @@ mod tests {
         app.world_mut().entity_mut(scene).insert(skybox_time(NIGHT));
         settle(&mut app);
         assert_eq!(sky(&app), NIGHT);
-        assert!(locked(&app));
+        assert!(locked(&mut app));
         time(&mut app, "6 0");
         settle(&mut app);
         assert_eq!(sky(&app), NIGHT);
@@ -905,18 +961,18 @@ mod tests {
         settle(&mut app);
         time(&mut app, "6 0");
         settle(&mut app);
-        assert!(locked(&app));
+        assert!(locked(&mut app));
 
         stand(&mut app, false);
         settle(&mut app);
         assert_eq!(sky(&app), 6. * ONE_HOUR);
-        assert!(!locked(&app));
+        assert!(!locked(&mut app));
 
         // and back in
         stand(&mut app, true);
         settle(&mut app);
         assert_eq!(sky(&app), NIGHT);
-        assert!(locked(&app));
+        assert!(locked(&mut app));
     }
 
     #[test]
@@ -932,7 +988,7 @@ mod tests {
         settle(&mut app);
         assert_eq!(sky(&app), NOON);
         assert_eq!(elapsed(&reply), NOON);
-        assert!(!locked(&app));
+        assert!(!locked(&mut app));
 
         // reading the time leaves it forced
         assert_eq!(elapsed(&time(&mut app, "")), NOON);
@@ -943,7 +999,7 @@ mod tests {
         time(&mut app, "6 0");
         settle(&mut app);
         assert_eq!(sky(&app), NIGHT);
-        assert!(locked(&app));
+        assert!(locked(&mut app));
 
         time(&mut app, "12 0 --force");
         settle(&mut app);
@@ -951,7 +1007,7 @@ mod tests {
         time(&mut app, "--resume");
         settle(&mut app);
         assert_eq!(sky(&app), NIGHT);
-        assert!(locked(&app));
+        assert!(locked(&mut app));
     }
 
     #[test]
@@ -990,13 +1046,13 @@ mod tests {
         app.world_mut().entity_mut(scene).insert(skybox_time(NIGHT));
         settle(&mut app);
         assert_eq!(sky(&app), NIGHT);
-        assert!(!locked(&app));
+        assert!(!locked(&mut app));
 
         // a time the player sets by hand beats it
         time(&mut app, "6 0");
         settle(&mut app);
         assert_eq!(sky(&app), 6. * ONE_HOUR);
-        assert!(!locked(&app));
+        assert!(!locked(&mut app));
 
         // and the running clock hands the sky back to it
         time(&mut app, "6 12");
@@ -1018,13 +1074,13 @@ mod tests {
             .insert(SceneTime { time: NIGHT });
         settle(&mut app);
         assert_eq!(sky(&app), NIGHT);
-        assert!(locked(&app));
+        assert!(locked(&mut app));
 
         // stopping the clock changes nothing: the scene held the sky already
         time(&mut app, "6 0");
         settle(&mut app);
         assert_eq!(sky(&app), NIGHT);
-        assert!(locked(&app));
+        assert!(locked(&mut app));
     }
 
     #[test]
@@ -1054,7 +1110,7 @@ mod tests {
         settle(&mut app);
         // the clock is stopped, so the portable's time is out and the scene's stays
         assert_eq!(sky(&app), NIGHT);
-        assert!(locked(&app));
+        assert!(locked(&mut app));
     }
 
     #[test]
@@ -1075,7 +1131,7 @@ mod tests {
         app.world_mut().entity_mut(scene).remove::<SceneTime>();
         settle(&mut app);
         assert_eq!(sky(&app), 18. * ONE_HOUR);
-        assert!(!locked(&app));
+        assert!(!locked(&mut app));
     }
 
     #[test]
@@ -1090,16 +1146,15 @@ mod tests {
             .insert(SceneTime { time: NIGHT });
         settle(&mut app);
         assert_eq!(sky(&app), NIGHT);
-        assert!(!locked(&app), "the menu stays usable");
+        assert!(!locked(&mut app), "the menu stays usable");
 
         let reply = time(&mut app, "3 0");
         settle(&mut app);
         assert_eq!(sky(&app), 3. * ONE_HOUR);
         assert_eq!(elapsed(&reply), 3. * ONE_HOUR);
-        assert!(reply.ends_with(", locked: false"));
 
         assert_eq!(
-            pushed(&app),
+            pushed(&mut app),
             SkyTimeState {
                 locked: false,
                 speed: 0.,
@@ -1175,11 +1230,133 @@ mod tests {
         allow_override(&mut app, false);
         settle(&mut app);
         assert_eq!(sky(&app), NIGHT);
-        assert!(locked(&app));
+        assert!(locked(&mut app));
 
         allow_override(&mut app, true);
         settle(&mut app);
         assert_eq!(sky(&app), NIGHT);
-        assert!(!locked(&app));
+        assert!(!locked(&mut app));
+    }
+
+    #[test]
+    fn leaving_the_scene_during_the_skip_to_its_time_goes_back_to_the_clock() {
+        let mut app = app();
+        skipping_to_night(&mut app, SceneTime { time: NIGHT });
+        stand(&mut app, false);
+        settle(&mut app);
+        assert_eq!(sky(&app), NOON);
+        assert!(!skipping(&app));
+        assert!(!locked(&mut app));
+    }
+
+    #[test]
+    fn a_new_skybox_time_during_the_skip_ends_at_the_new_time() {
+        let mut app = app();
+        let scene = skipping_to_night(&mut app, skybox_time(NIGHT));
+        app.world_mut()
+            .entity_mut(scene)
+            .insert(skybox_time(18. * ONE_HOUR));
+        app.update();
+        assert!(skipping(&app));
+        settle(&mut app);
+        assert_eq!(sky(&app), 18. * ONE_HOUR);
+        assert!(!skipping(&app));
+    }
+
+    #[test]
+    fn turning_the_setting_off_during_the_skip_to_the_players_time_ends_at_the_scenes() {
+        let mut app = app();
+        allow_override(&mut app, true);
+        let scene = parcel_scene(&mut app);
+        app.world_mut()
+            .entity_mut(scene)
+            .insert(SceneTime { time: NIGHT });
+        settle(&mut app);
+        slow_frames(&mut app);
+        time(&mut app, "3 0");
+        assert!(skipping(&app), "toward the player's three o'clock");
+        allow_override(&mut app, false);
+        settle(&mut app);
+        assert_eq!(sky(&app), NIGHT);
+        assert!(!skipping(&app));
+        assert!(locked(&mut app));
+    }
+
+    #[test]
+    fn a_portable_takes_over_during_the_skip_to_the_parcel_scenes_time() {
+        let mut app = app();
+        time(&mut app, "12 0.001");
+        let follower = portable(&mut app);
+        app.world_mut()
+            .entity_mut(follower)
+            .insert(skybox_time(18. * ONE_HOUR));
+        settle(&mut app);
+        assert_eq!(sky(&app), 18. * ONE_HOUR);
+        let scene = skipping_to_night(&mut app, SceneTime { time: NIGHT });
+        app.world_mut().entity_mut(scene).remove::<SceneTime>();
+        settle(&mut app);
+        assert_eq!(sky(&app), 18. * ONE_HOUR);
+        assert!(!skipping(&app));
+    }
+
+    #[test]
+    fn the_hour_pushed_is_within_the_day_and_a_time_that_is_no_number_is_refused() {
+        let mut app = app();
+        let scene = parcel_scene(&mut app);
+        app.world_mut()
+            .entity_mut(scene)
+            .insert(skybox_time(TWENTY_FOUR_HOURS + NIGHT));
+        settle(&mut app);
+        assert_eq!(pushed(&mut app).fixed_hours, Some(22.));
+
+        for args in ["NaN 0", "12 inf"] {
+            let (tx, rx) = mpsc::channel();
+            app.world_mut().send_event(ConsoleCommandEntered {
+                command_name: "/time".into(),
+                args: args.split_whitespace().map(str::to_owned).collect(),
+                responder: Some(Arc::new(move |result| tx.send(result).unwrap())),
+            });
+            app.update();
+            assert!(rx.try_recv().unwrap().is_err(), "{args}");
+        }
+    }
+
+    #[test]
+    fn a_subscriber_gets_the_state_first_and_then_each_change() {
+        let mut app = app();
+        app.add_event::<SystemApi>()
+            .add_systems(Update, pipe_sky_time.after(follow_sky_source));
+        // a frame with nobody listening
+        app.update();
+
+        let (sender, mut receiver) = RpcStreamSender::channel();
+        app.world_mut()
+            .send_event(SystemApi::GetSkyTimeStream(sender));
+        let mut received = |app: &mut App| {
+            app.update();
+            std::iter::from_fn(|| receiver.try_recv().ok()).collect::<Vec<_>>()
+        };
+        let stopped_at_noon = SkyTimeState {
+            locked: false,
+            speed: 0.,
+            fixed_hours: Some(12.),
+        };
+        assert_eq!(received(&mut app), [stopped_at_noon]);
+        // nothing changed: nothing sent
+        assert_eq!(received(&mut app), []);
+
+        let scene = parcel_scene(&mut app);
+        app.world_mut()
+            .entity_mut(scene)
+            .insert(SceneTime { time: NIGHT });
+        assert_eq!(
+            received(&mut app),
+            [SkyTimeState {
+                locked: true,
+                speed: 0.,
+                fixed_hours: Some(22.),
+            }]
+        );
+        assert_eq!(received(&mut app), []);
     }
 }

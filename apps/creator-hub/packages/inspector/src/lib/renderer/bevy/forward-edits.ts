@@ -655,7 +655,8 @@ export function createForwardEditBridge(options: ForwardEditBridgeOptions): Forw
   };
   // Pause: stop the day cycle where the sky is. `/time` with no arguments replies
   // with the current time in seconds (`elapsed: <s>`), and speed 0 holds it there.
-  // A scene's own fixed time stays in charge of the sky, at that same value.
+  // A scene's own fixed time keeps the sky, at that same value, unless the player's "Allow
+  // overriding scene controls" setting is on: the stopped clock then holds it, at that value too.
   const holdSceneClock = () => {
     enqueue(ROOT_ENTITY, async () => {
       try {

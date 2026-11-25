@@ -1813,8 +1813,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const chatAccountRef = useRef<string | null>(null)
   // The speed to restore when Time progression is turned back on (the last running speed seen).
   const skyboxDaySpeed = useRef(SKYBOX_DAY_SPEED)
-  // the engine's last report of the time of day
+  // the engine's last report of the time of day, and the hours this menu stopped the clock at
+  // that it has not reported back yet
   const skyTime = useRef<SkyTimeState | null>(null)
+  const skyboxSent = useRef<number[]>([])
   // Catalog fetches done once per session (cache; relays re-emit on change).
   const fetchedRef = useRef<Set<string>>(new Set())
 
@@ -2285,16 +2287,18 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           setEmotes(msg.emotes)
           break
         case 'skyTime': {
-          const before = skyTime.current
           skyTime.current = msg.state
           setSkyboxSceneLocked(msg.state.locked)
+          setSkyboxProgressingState(msg.state.speed !== 0)
           if (msg.state.speed !== 0) skyboxDaySpeed.current = msg.state.speed
-          // A stopped clock's own echo is skipped while the player drags the slider, so that an
-          // older value cannot pull it back.
-          if (msg.state.locked || before == null || before.locked !== msg.state.locked || before.speed !== msg.state.speed) {
-            setSkyboxProgressingState(msg.state.speed !== 0)
-            if (msg.state.fixedHours != null) setSkyboxHoursState(msg.state.fixedHours)
-          }
+          const hours = msg.state.fixedHours
+          if (hours == null) break
+          // An hour this menu sent comes back as the slider's echo: skipped, with the ones sent
+          // before it, so that an older value cannot pull a slider being dragged back. Any other
+          // hour is news: a scene's time, or a `/time` typed in the console.
+          const echo = skyboxSent.current.findIndex((sent) => Math.abs((sent % 24) - (hours % 24)) < 0.01)
+          if (echo >= 0) skyboxSent.current.splice(0, echo + 1)
+          else setSkyboxHoursState(hours)
           break
         }
         case 'mic':
@@ -3484,6 +3488,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     return clock
   }, [])
   const setClock = useCallback((hours: number, speed: number) => {
+    if (speed === 0) skyboxSent.current = [...skyboxSent.current.slice(-31), hours]
     driverRef.current
       ?.command?.(`/time ${hours.toFixed(2)} ${speed}`)
       .catch((e: unknown) => console.warn('[hud] /time failed:', e))
@@ -3495,7 +3500,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         // the running clock's hour is not pushed: read it, and drop the answer of an earlier open
         const read = ++skyboxRead.current
         void readClock().then((clock) => {
-          if (clock == null || read !== skyboxRead.current) return
+          // a fixed hour is pushed, and the push may be newer than this answer
+          if (clock == null || read !== skyboxRead.current || skyTime.current?.fixedHours != null) return
           setSkyboxHoursState(clock.hours)
           setSkyboxProgressingState(clock.speed !== 0)
         })

@@ -13734,6 +13734,7 @@ dependencies = [
  "scene_material",
  "scene_runner",
  "serde_json",
+ "system_bridge",
  "web-time",
 ]
 

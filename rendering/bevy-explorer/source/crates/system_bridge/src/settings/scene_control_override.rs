@@ -38,7 +38,7 @@ impl AppSetting for SceneControlOverrideSetting {
             "Whether you can change what the scene you stand in controls, such as the time of day.\n\n{}",
             match self {
                 Self::Off => "Off\nThe scene's time of day stays, and the Skybox menu is locked there.",
-                Self::On => "On\nA time you stop the clock at wins over the scene's until a scene's time arrives again: on return, in another scene, or when the scene changes it.",
+                Self::On => "On\nA time you stop the clock at wins over the scene's until a scene's time arrives again (on return, in another scene, or when the scene changes it) or the clock runs again.",
             }
         )
     }
