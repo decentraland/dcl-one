@@ -572,7 +572,13 @@ fn body_shapes(genders: &[String]) -> Option<Vec<String>> {
 fn push_filters(b: &mut Builder, f: &NftFilters, wheres: &mut Vec<String>) {
     if let Some(o) = &f.owner {
         let p = b.bind_string(o.to_ascii_lowercase());
-        wheres.push(format!("c.owner = {p}"));
+        if f.unclaimed_land.is_empty() {
+            wheres.push(format!("c.owner = {p}"));
+        } else {
+            let ids = b.bind_strings(&f.unclaimed_land);
+            let venue = crate::rentals::index::RENTALS_MAINNET;
+            wheres.push(format!("(c.owner = {p} OR (c.network = 'ethereum' AND c.owner = '{venue}' AND c.category IN ('parcel','estate') AND (c.contract_address || '-' || c.token_id::text) = ANY({ids})))"));
+        }
     }
     match f.category {
         // The item's type, a plain column the planner has statistics for:

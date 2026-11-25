@@ -13,6 +13,79 @@ use sqlx::PgPool;
 use crate::rentals::db::{STATUS_VALUES, row_to_listing};
 use crate::rentals::types::RentalListing;
 
+/// Supplemental owner matches for a LAND page. Only the published Rentals log
+/// can identify a lessor. A later transfer into the venue can belong to any
+/// wallet, including one with no previous rent. Wait for that arrival before
+/// returning an owner page. The caller supplies the catalogue's LAND snapshot.
+pub(super) async fn unclaimed_land(
+    conn: &mut sqlx::PgConnection,
+    owner: &str,
+) -> Result<Vec<String>, axum::response::Response> {
+    use super::chain_walk::{self, ChainNet};
+    use super::{Source, unavailable};
+    use crate::land_authz::LAND_MAINNET;
+    use crate::rentals::index::{INDEXER_RENTALS, RENTALS_MAINNET};
+
+    let cursor = chain_walk::cursor(&mut *conn, INDEXER_RENTALS, ChainNet::Ethereum)
+        .await
+        .map_err(super::nft_reads::read_error)?;
+    let Some(head) = cursor
+        .filter(|c| chain_walk::is_ready_on(c, 1, chrono::Utc::now()))
+        .and_then(|c| c.folded_block)
+    else {
+        return Err(unavailable(
+            Source::RentalsIndex,
+            "The rentals index is not ready",
+        ));
+    };
+    let registries = [LAND_MAINNET.land_registry, LAND_MAINNET.estate_registry];
+    let behind: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM land_authz.authz_event e
+            JOIN land_authz.token_right t USING (token_address,token_id)
+            WHERE e.block_number > $1 AND e.kind='transfer'
+              AND e.token_address=ANY($2) AND t.owner=$3
+        )",
+    )
+    .bind(head)
+    .bind(registries.as_slice())
+    .bind(RENTALS_MAINNET)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(super::nft_reads::read_error)?;
+    if behind {
+        return Err(unavailable(
+            Source::RentalsIndex,
+            "The rentals index has not reached the transfer into custody",
+        ));
+    }
+    sqlx::query_scalar(
+        "WITH candidates AS (
+            SELECT DISTINCT e.contract_address,e.token_id FROM shop.rental_event e
+            WHERE e.network='ethereum' AND e.rentals_address=$1 AND e.signer=$2
+              AND e.kind='rented' AND e.block_number <= $3 AND e.contract_address=ANY($4)
+        )
+        SELECT c.contract_address || '-' || c.token_id::text FROM candidates c
+        JOIN land_authz.token_right t ON (t.token_address,t.token_id)=(c.contract_address,c.token_id)
+        CROSS JOIN LATERAL (
+            SELECT e.kind,e.signer,e.block_number,e.log_index FROM shop.rental_event e
+            WHERE e.network='ethereum' AND e.rentals_address=$1 AND e.block_number <= $3
+              AND (e.contract_address,e.token_id)=(c.contract_address,c.token_id)
+              AND e.kind IN ('rented','claimed')
+            ORDER BY e.block_number DESC,e.log_index DESC LIMIT 1
+        ) latest
+        CROSS JOIN LATERAL (
+            SELECT e.block_number,e.log_index FROM land_authz.authz_event e
+            WHERE (e.token_address,e.token_id)=(c.contract_address,c.token_id) AND e.kind='transfer'
+            ORDER BY e.block_number DESC,e.log_index DESC LIMIT 1
+        ) arrival
+        WHERE t.owner=$1 AND latest.kind='rented' AND latest.signer=$2
+          AND (latest.block_number,latest.log_index) >= (arrival.block_number,arrival.log_index)",
+    )
+    .bind(RENTALS_MAINNET).bind(owner.to_ascii_lowercase()).bind(head).bind(registries.as_slice())
+        .fetch_all(conn).await.map_err(super::nft_reads::read_error)
+}
+
 /// The old `get_open_rentals` bound.
 pub const NEWEST_LISTINGS: i64 = 1000;
 

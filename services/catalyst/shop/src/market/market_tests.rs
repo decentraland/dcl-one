@@ -3868,7 +3868,7 @@ async fn land_pages_read_the_published_catalogue_and_enrich_the_same_snapshot() 
         "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started)
          VALUES ('ethereum-mainnet','{land}','{estate}',20,20,timezone('UTC',now()),true);
          INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
-         VALUES ('nft','ethereum',0,20,20,timezone('UTC',now()),true,1), ('nft','matic',0,20,20,timezone('UTC',now()),true,137);
+         VALUES ('nft','ethereum',0,20,20,timezone('UTC',now()),true,1), ('nft','matic',0,20,20,timezone('UTC',now()),true,137), ('rentals','ethereum',0,20,20,timezone('UTC',now()),true,1);
          INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
          VALUES ('items','ethereum','test',now()),('items','matic','test',now());
          INSERT INTO land_authz.token_right(token_address,token_id,owner,x,y,updated_block,updated_log)
@@ -4050,5 +4050,132 @@ async fn land_pages_read_the_published_catalogue_and_enrich_the_same_snapshot() 
         assert!(!std::mem::take(&mut *graph.requests.lock().unwrap()).is_empty());
     }
     drop(walker);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
+    use crate::land_authz::LAND_MAINNET;
+    use crate::rentals::index::RENTALS_MAINNET as VENUE;
+
+    let Some(db) = super::tests::support::OwnDb::create("owner_rented_land").await else {
+        return;
+    };
+    let mut settings = Settings::for_tests();
+    settings.eth_network = "mainnet".into();
+    settings.market.indexes.nft_enabled = true;
+    let app = market_router(Arc::new(super::MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    )));
+    let run = |sql: String| async {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+    };
+    let land = LAND_MAINNET.land_registry;
+    let estate = LAND_MAINNET.estate_registry;
+    let owner_url = format!("/v1/nfts?owner={WALLET_A}");
+    run(format!(
+        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started)
+         VALUES ('ethereum-mainnet','{land}','{estate}',40,40,timezone('UTC',now()),true);
+         INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+         VALUES ('nft','ethereum',0,40,40,timezone('UTC',now()),true,1),
+                ('nft','matic',0,40,40,timezone('UTC',now()),true,137),
+                ('rentals','ethereum',0,30,30,timezone('UTC',now()),true,1);
+         INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
+         VALUES ('items','ethereum','test',now()),('items','matic','test',now());
+         INSERT INTO land_authz.token_right(token_address,token_id,owner,x,y,updated_block,updated_log)
+         VALUES ('{land}',1,'{WALLET_A}',0,1,10,0),('{land}',2,'{VENUE}',0,2,12,0),('{estate}',3,'{VENUE}',NULL,NULL,15,1);
+         INSERT INTO land_authz.estate_land VALUES (801,3,14,1);
+         INSERT INTO land_authz.authz_event(token_address,token_id,kind,block_number,log_index,block_time,account)
+         VALUES ('{land}',1,'transfer',10,0,100,'{WALLET_A}'),('{land}',2,'transfer',12,0,120,'{VENUE}'),
+                ('{estate}',3,'transfer',15,1,150,'{VENUE}');"
+    )).await;
+    let rent = |contract: &str, id: i32, block: i64, log: i32, signer: &str, extension: bool| {
+        format!(
+        "INSERT INTO shop.rental_event(network,rentals_address,kind,contract_address,token_id,block_number,log_index,block_time,signer,tenant,rental_days,price_per_day,is_extension,signature,tx_hash)
+         VALUES ('ethereum','{VENUE}','rented','{contract}',{id},{block},{log},100,'{signer}','{WALLET_B}',1,1,{extension},'0x01','0x02')"
+    )
+    };
+    run(rent(land, 2, 12, 1, WALLET_A, false)).await;
+    run(rent(land, 2, 14, 0, WALLET_A, true)).await;
+    run(rent(estate, 3, 15, 2, WALLET_A, false)).await;
+    // An event above publication cannot affect the result.
+    run(rent(land, 2, 35, 0, WALLET_B, false)).await;
+    let mut tokens = std::collections::BTreeMap::new();
+    for skip in 0..3 {
+        let (code, result) = get(app.clone(), &format!("{owner_url}&first=1&skip={skip}")).await;
+        assert_eq!(code, StatusCode::OK, "{result}");
+        assert_eq!(result["total"], 3);
+        let nft = &result["data"][0]["nft"];
+        tokens.insert(
+            nft["tokenId"].as_str().unwrap().to_owned(),
+            nft["owner"].clone(),
+        );
+    }
+    assert_eq!(tokens.len(), 3);
+    assert_eq!(tokens["1"], WALLET_A);
+    assert_eq!(tokens["2"], VENUE);
+    assert_eq!(tokens["3"], VENUE);
+    let claim = |block: i64, log: i32| {
+        format!(
+        "INSERT INTO shop.rental_event(network,rentals_address,kind,contract_address,token_id,block_number,log_index,block_time,tx_hash)
+         VALUES ('ethereum','{VENUE}','claimed','{land}',2,{block},{log},200,'0x03')"
+    )
+    };
+    run(claim(20, 0)).await;
+    let (code, result) = get(app.clone(), &owner_url).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 2, "a claim removes the parcel");
+    run(rent(land, 2, 20, 1, WALLET_B, false)).await;
+    let (code, result) = get(
+        app.clone(),
+        &format!("/v1/nfts?owner={WALLET_B}&category=parcel"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 1);
+    assert_eq!(result["data"][0]["nft"]["tokenId"], "2");
+
+    // The new arrival has no published lessor yet. An owner with no rent
+    // history cannot safely be answered either.
+    run(format!(
+        "INSERT INTO land_authz.authz_event(token_address,token_id,kind,block_number,log_index,block_time,account)
+         VALUES ('{land}',2,'transfer',36,1,360,'{VENUE}');
+         UPDATE land_authz.token_right SET updated_block=36,updated_log=1 WHERE token_address='{land}' AND token_id=2"
+    )).await;
+    for owner in [
+        WALLET_A,
+        WALLET_B,
+        "0xcccccccccccccccccccccccccccccccccccccccc",
+    ] {
+        let (code, result) = get(app.clone(), &format!("/v1/nfts?owner={owner}")).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+        assert_eq!(result["source"], "rentals-index");
+    }
+    run(
+        "UPDATE shop.chain_cursor SET last_block=40,folded_block=40 WHERE indexer='rentals'".into(),
+    )
+    .await;
+    // The latest rent for B preceded the new arrival, even with a rent
+    // earlier in the same block. A later log reestablishes custody.
+    run(rent(land, 2, 36, 0, WALLET_B, false)).await;
+    let url_b = format!("/v1/nfts?owner={WALLET_B}&category=parcel");
+    let (code, result) = get(app.clone(), &url_b).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 0);
+    run(rent(land, 2, 36, 2, WALLET_B, false)).await;
+    let (code, result) = get(app.clone(), &url_b).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 1);
+    run("UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals'".into()).await;
+    let (code, result) = get(app.clone(), &owner_url).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+    assert_eq!(result["source"], "rentals-index");
+    let (code, result) = get(app.clone(), "/v1/nfts?category=parcel").await;
+    assert_eq!(code, StatusCode::OK, "{result}");
     db.drop().await;
 }

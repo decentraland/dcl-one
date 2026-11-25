@@ -3454,6 +3454,10 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
         (wearable.as_deref(), issued.as_deref()),
         (Some("jester_feet"), Some("1"))
     );
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+        SELECT 'rentals',network,start_block,last_block,folded_block,folded_at,true,chain_id
+        FROM shop.chain_cursor WHERE indexer='nft' AND network='ethereum'")
+        .execute(&db.pool).await.unwrap();
     // A read naming no category also answers the owner's names and LAND,
     // their indexes being published.
     let (code, body) = get_json(&app, &format!("/v1/nfts?owner={ALICE}&network=ETHEREUM")).await;
