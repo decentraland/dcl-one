@@ -1070,12 +1070,39 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     let (code, incomplete) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
     assert_eq!(code, StatusCode::OK, "{incomplete}");
     assert_eq!(incomplete["data"]["royalties"]["royaltiesWei"], Value::Null);
-    // The open pass is abandoned. A replacement finishes without reading
-    // this collection, so the row still cannot prove its URN.
+    // An older writer starts a replacement before the object pass installs
+    // the attribution tables. Installing them cannot certify the abandoned row.
+    sqlx::raw_sql(
+        "DROP TRIGGER publish_v1_royalties_on_completion ON shop.mirror_state;
+         DROP TABLE shop.v1_royalty_collection, shop.v1_royalty_item;",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
     sqlx::query(begin_ethereum_collections)
         .execute(&db.pool)
         .await
         .unwrap();
+    let upgrade = crate::db::schema_migrate::migrate(
+        &db.pool,
+        crate::db::SCHEMA_SQL,
+        crate::db::MIGRATIONS_SQL,
+    )
+    .await
+    .unwrap();
+    assert!(upgrade.steps.is_empty(), "{upgrade:?}");
+    assert!(
+        upgrade
+            .created
+            .iter()
+            .any(|object| format!("{object:?}").contains("v1_royalty_collection")),
+        "{upgrade:?}"
+    );
+    sqlx::query(complete_ethereum_items)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    // The old writer finishes without reading this collection.
     sqlx::query(complete_ethereum_collections)
         .execute(&db.pool)
         .await
@@ -1221,6 +1248,44 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     assert_eq!(code, StatusCode::OK, "{creator_summary}");
     assert_eq!(creator_summary["data"]["royalties"]["royaltiesWei"], "5");
     assert_eq!(creator_summary["data"]["royalties"]["resales"], 1);
+    for mirror in ["collections", "items"] {
+        sqlx::query("DELETE FROM shop.mirror_state WHERE network='ethereum' AND mirror=$1")
+            .bind(mirror)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let proof_rows: i64 = sqlx::query_scalar(
+            "SELECT CASE $1 WHEN 'items' THEN (SELECT count(*) FROM shop.v1_royalty_item)
+             ELSE (SELECT count(*) FROM shop.v1_royalty_collection) END",
+        )
+        .bind(mirror)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(proof_rows, 0, "{mirror}");
+        let (code, withdrawn) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+        if mirror == "items" {
+            // Items readiness also gates the existing sales summary.
+            assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{withdrawn}");
+        } else {
+            assert_eq!(code, StatusCode::OK, "{withdrawn}");
+            assert_eq!(withdrawn["data"]["royalties"]["royaltiesWei"], Value::Null);
+        }
+        sqlx::query(
+            "INSERT INTO shop.mirror_state(mirror,network,source_url,chain_id,pass_started_at,last_complete_pass_at)
+             SELECT $1,'ethereum','https://copy.example',1,
+               CASE $1 WHEN 'items' THEN (SELECT min(mirrored_at) FROM shop.items WHERE network='ethereum')
+               ELSE (SELECT min(mirrored_at) FROM shop.collections WHERE network='ethereum') END,
+               timezone('UTC',now())",
+        )
+        .bind(mirror)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let (code, restored) = get_json(&app, &format!("/v1/sales/summary?seller={CARL}")).await;
+        assert_eq!(code, StatusCode::OK, "{restored}");
+        assert_eq!(restored["data"]["royalties"]["royaltiesWei"], "5");
+    }
     let set_seller = "UPDATE shop.sale_asset SET seller=$2 WHERE
         network='ethereum' AND block_number=$1 AND log_index=1";
     sqlx::query(set_seller)
@@ -1278,6 +1343,10 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         .unwrap();
     sqlx::query("UPDATE shop.items SET chain_id=11155111 WHERE network='ethereum' AND contract_address=$1 AND item_id=9")
         .bind(CARL).execute(&db.pool).await.unwrap();
+    sqlx::query(complete_ethereum_items)
+        .execute(&db.pool)
+        .await
+        .unwrap();
     seed_item(
         &db.pool,
         "matic",
@@ -1307,6 +1376,10 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     assert_eq!(foreign["data"]["royalties"]["resales"], 0);
     sqlx::query("UPDATE shop.items SET chain_id=1 WHERE network='ethereum' AND contract_address=$1 AND item_id=9")
         .bind(CARL).execute(&db.pool).await.unwrap();
+    sqlx::query(complete_ethereum_items)
+        .execute(&db.pool)
+        .await
+        .unwrap();
     sqlx::query(
         "UPDATE shop.sale_payment SET settled=false WHERE network='ethereum' AND block_number=$1 AND log_index=1",
     )

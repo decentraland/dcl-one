@@ -32,6 +32,7 @@ pub const PREFIX: &str = "/shop-api";
 /// web `PackOut` shape), `GET /credits/wallet/{address}/balance` and
 /// `POST /v1/payments/verify`.
 pub const ALIASES: &[&str] = &[
+    "GET /shop-api/v1/rates/mana-usd /marketplace-api/v1/rates/mana-usd",
     "POST /shop-api/v1/users /credits/users",
     "DELETE /shop-api/v1/users/{address} /credits/users/{address}",
     "GET /shop-api/v1/users/{address}/status /credits/users/{address}/status",

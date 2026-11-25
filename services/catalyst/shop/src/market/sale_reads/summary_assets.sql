@@ -1,6 +1,11 @@
 -- Ethereum v1 sales have token IDs in the ledger. The latest Issue at
 -- the sale position must resolve against rows from completed mirror copies.
-, v1_contracts AS (
+, v1_markers AS (
+    SELECT mirror
+    FROM shop.mirror_state
+    WHERE network='ethereum' AND last_complete_pass_at IS NOT NULL
+      AND (chain_id=1 OR (chain_id IS NULL AND pass_block_hash IS NULL))
+), v1_contracts AS (
     SELECT contract_address FROM candidate_collections WHERE network='ethereum'
     UNION
     SELECT i.contract_address FROM shop.items i,requested_wallet w
@@ -12,7 +17,8 @@
 ), v1_collections AS (
     SELECT 'ethereum'::text AS network,candidate.contract_address,c.urn
     FROM v1_contracts candidate
-    LEFT JOIN shop.v1_royalty_collection c USING(contract_address)
+    LEFT JOIN shop.v1_royalty_collection c ON c.contract_address=candidate.contract_address
+      AND EXISTS (SELECT FROM v1_markers WHERE mirror='collections')
     WHERE 'ethereum'=ANY($1)
 ), v1_resales AS MATERIALIZED (
     SELECT a.network,a.block_number,a.log_index,a.ordinal,i.creator
@@ -29,6 +35,7 @@
     ) issue ON true
     LEFT JOIN shop.v1_royalty_item i ON i.urn=c.urn || ':' || issue.detail
       AND i.contract_address=c.contract_address
+      AND EXISTS (SELECT FROM v1_markers WHERE mirror='items')
     WHERE a.price>0 AND a.kind IN ('order','bid') AND a.item_id IS NULL AND a.token_id IS NOT NULL
       AND ($8::bigint IS NULL OR execution.block_time*1000 >= $8)
       AND ($9::bigint IS NULL OR execution.block_time*1000 <= $9)

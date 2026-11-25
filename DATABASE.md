@@ -1816,9 +1816,11 @@ returns null when creator attribution or a required payment split lacks
 proof. Ethereum v1 attribution reads the item and collection fields saved by
 their respective last completed Ethereum mirror passes. The database refreshes
 each small attribution table with the pass marker in one transaction, keeping
-proven values available during a new catalogue sweep. The resale count and
-volume describe sales attributed to the creator, including their own. The
-sales publication and all these inputs are read in the same transaction.
+proven values available during a new catalogue sweep. The first completed pass
+after the schema object pass installs these tables seeds each copy. The
+resale count and volume describe sales attributed to the creator, including
+their own. The sales publication and all these inputs are read in the same
+transaction.
 
 ## Shop open-trades reads that name a contract
 

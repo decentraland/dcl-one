@@ -52,6 +52,7 @@ export const ENDPOINTS = {
   owners: mk("GET", "/v1/owners"),
   sales: mk("GET", "/v1/sales"),
   salesSummary: mk("GET", "/v1/sales/summary"),
+  manaUsdRates: mk("GET", "/v1/rates/mana-usd"),
   activity: mk("GET", "/v1/activity", "signed"),
   prices: mk("GET", "/v1/prices"),
   trendings: mk("GET", "/v1/trendings"),

@@ -318,6 +318,13 @@ $$;
 CREATE OR REPLACE FUNCTION shop.publish_v1_royalties_on_completion() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.network = 'ethereum' THEN
+            PERFORM shop.publish_v1_royalty_catalogue(OLD.mirror, NULL, NULL);
+        END IF;
+        RETURN OLD;
+    END IF;
+
     IF NEW.network = 'ethereum'
        AND (TG_OP = 'INSERT' OR NEW.last_complete_pass_at IS DISTINCT FROM OLD.last_complete_pass_at) THEN
         PERFORM shop.publish_v1_royalty_catalogue(
@@ -332,7 +339,7 @@ END;
 $$;
 
 CREATE TRIGGER publish_v1_royalties_on_completion
-AFTER INSERT OR UPDATE OF last_complete_pass_at ON shop.mirror_state
+AFTER INSERT OR UPDATE OF last_complete_pass_at OR DELETE ON shop.mirror_state
 FOR EACH ROW EXECUTE FUNCTION shop.publish_v1_royalties_on_completion();
 
 -- ── Stage 5: local authority (behind DATA_WRITES_ENABLED) ───────────────────
