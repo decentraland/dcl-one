@@ -94,6 +94,7 @@ pub(super) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
         credit_cap_headroom_pct: config.shop.credits_cap_headroom_pct,
         credit_buffer_bps: config.shop.credits_oracle_buffer_bps,
         credits_revoker_key: non_empty(&config.shop.credits_revoker_key),
+        credits_external_call_signer_key: non_empty(&config.shop.credits_external_call_signer_key),
         trial_mode: config.shop.credits_trial_mode,
         trial_buyers: non_empty(&config.shop.credits_trial_buyers),
         shop_base_url: config.shop.shop_base_url.clone(),
