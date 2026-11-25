@@ -1,5 +1,6 @@
 // Skybox menu — the sidebar's NIGHT/DAY panel: "Auto" lets the engine's day cycle
-// run; the "Custom" time-of-day slider is locked meanwhile.
+// run; the "Custom" time-of-day slider is locked meanwhile. Where the scene sets the time of day
+// both are off and a line says which setting gives them back.
 
 import { useEffect } from 'react'
 import { Panel, Slider, Toggle, hasOpenPopup } from '../../design'
@@ -31,16 +32,21 @@ export function SkyboxMenu({ skybox }: { skybox: SkyboxState }): React.JSX.Eleme
       <div className={styles.divider} />
       <label className={styles.row}>
         <span>Auto</span>
-        <Toggle size="sm" checked={skybox.progressing} onChange={skybox.setProgressing} />
+        <Toggle size="sm" checked={skybox.progressing} onChange={skybox.setProgressing} disabled={skybox.sceneLocked} />
       </label>
       <div className={styles.divider} />
-      <div className={styles.custom} data-locked={skybox.progressing}>
+      <div className={styles.custom} data-locked={skybox.progressing || skybox.sceneLocked}>
         <div className={styles.head}>
           <span>Custom</span>
           <span className={styles.time}>{formatHours(skybox.hours)}</span>
         </div>
-        <Slider variant="thick" arrows value={skybox.hours} min={0} max={24} step={0.25} onChange={skybox.setHours} disabled={skybox.progressing} />
+        <Slider variant="thick" arrows value={skybox.hours} min={0} max={24} step={0.25} onChange={skybox.setHours} disabled={skybox.progressing || skybox.sceneLocked} />
       </div>
+      {skybox.sceneLocked && (
+        <p className={styles.locked} role="note">
+          This scene sets the time of day. To change it, turn on “Allow overriding scene controls” in Settings.
+        </p>
+      )}
     </Panel>
   )
 }

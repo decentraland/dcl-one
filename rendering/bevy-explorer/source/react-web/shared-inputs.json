@@ -10329,7 +10329,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "ff9d93ca8c1a591cb4a907c5751979fddb501df3ec67cf79bf6b9f85894e9710"
+      "sha256": "4b5cdb0e376ae636091c15e80738f1a822ceaa058e2e496fb347794b85ceb55b"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10425,11 +10425,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.module.css",
-      "sha256": "dca6cbcfc2cacbd8747a86eea95202d53f117bb6b55bc9246760d18dec54332b"
+      "sha256": "7bcf0cd03ab4cd2fd3a23ac7a90ff045b579df0de3e791fe71b11fd6aa9fe854"
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.tsx",
-      "sha256": "ebf3a64b2ec6b28cb2035aa5b960a655e4044868fdbcf0a1f22b37785c1660a1"
+      "sha256": "29a99ef6f73de6707d88cc9f985b825d3ed6b4f29820825a0d1a2ac4d3bba869"
     },
     {
       "path": "library/ui/apps/hud/features/startup/GuestOrSignUp.module.css",
@@ -10677,7 +10677,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "0153777d12b2e7dbc1a32a95a67b58000c397da07745dda02d1219c65f56a200"
+      "sha256": "2d4ac47f2ece8949c0ef905cd9a1ca6735490ef32ed2848e1b6b8aae58738c51"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -11101,7 +11101,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/skybox.test.tsx",
-      "sha256": "38db3d4beec64802b3263c1a9fa03709cbd52efe4e337cff463a111f2d55292d"
+      "sha256": "7769613bee64e5e9410b395037dfabb3ba8aa60f7592b8aa480a0766b4b0a51d"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",

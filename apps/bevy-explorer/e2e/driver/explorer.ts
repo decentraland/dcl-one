@@ -924,12 +924,14 @@ export class Explorer {
     await this.run(`/nearby_mute ${muted ? 'on' : 'off'} ${address}`)
   }
 
-  /** The sky time: `/time` reports; with `hours` (and `speed`, 0 stops the clock) it sets. */
-  async time(hours?: number, speed?: number): Promise<{ before: string; after: string; speed: number }> {
+  /** The sky time: `/time` reports; with `hours` (and `speed`, 0 stops the clock) it sets.
+   *  `locked` is true where the scene the player stands in holds the time of day, so that the
+   *  Skybox panel is off and a `/time` without `--force` does not move the sky. */
+  async time(hours?: number, speed?: number): Promise<{ before: string; after: string; speed: number; locked: boolean }> {
     const reply = await this.run(['/time', hours === undefined ? '' : String(hours), speed === undefined ? '' : String(speed)].join(' '))
-    const match = /^time (\d+:\d+) -> (\d+:\d+), speed ([\d.-]+)/.exec(reply)
+    const match = /^time (\d+:\d+) -> (\d+:\d+), speed ([\d.-]+) \(elapsed: [\d.]+\), locked: (true|false)$/.exec(reply)
     if (!match) throw new Error(`unparseable time: ${reply}`)
-    return { before: match[1]!, after: match[2]!, speed: Number(match[3]) }
+    return { before: match[1]!, after: match[2]!, speed: Number(match[3]), locked: match[4] === 'true' }
   }
 
   /** The engine's frame as PNG bytes (the canvas on the web, the HUD included natively). */

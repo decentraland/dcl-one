@@ -85,6 +85,7 @@ pub mod player_settings;
 pub mod point_at_marker_visibility;
 pub mod render_scale_setting;
 mod rings;
+pub mod scene_control_override;
 pub mod scene_threads;
 pub mod sensitivity;
 pub mod shadow_settings;
@@ -253,6 +254,12 @@ impl Plugin for SettingBridgePlugin {
         add_enum_setting::<LanguageSetting>(app, &mut settings, &mut schedule, &config);
 
         add_enum_setting::<ConstrainUiSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<scene_control_override::SceneControlOverrideSetting>(
+            app,
+            &mut settings,
+            &mut schedule,
+            &config,
+        );
         add_int_setting::<WalkSpeedSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<JogSpeedSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<RunSpeedSetting>(app, &mut settings, &mut schedule, &config);

@@ -692,6 +692,9 @@ pub struct AppConfig {
     pub scene_log_to_console: bool,
     pub max_avatars: usize,
     pub constrain_scene_ui: bool,
+    /// "Allow overriding scene controls": the player may change what the scene they stand in
+    /// controls, today the time of day.
+    pub allow_scene_control_override: bool,
     pub player_settings: PrimaryUser,
     pub max_videos: usize,
     pub max_concurrent_remotes: usize,
@@ -768,6 +771,7 @@ impl Default for AppConfig {
             scene_log_to_console: false,
             max_avatars: 20,
             constrain_scene_ui: false,
+            allow_scene_control_override: false,
             player_settings: Default::default(),
             max_videos: 1,
             max_concurrent_remotes: 32,
@@ -2153,6 +2157,13 @@ pub struct SceneTime {
     /// secs since midnight
     pub time: f32,
 }
+
+/// Whether the scene the player stands in holds the time of day (`scene.json` `skyboxConfig` or
+/// the SDK's `SkyboxTime`) and the player may not change it: the "Allow overriding scene
+/// controls" setting is off. A portable's time does not count, and neither does a scene's while
+/// `/time --force` holds the sky.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SceneTimeLock(pub bool);
 
 // porting aid, used to be one component
 pub type TextStyle = (TextFont, TextColor);

@@ -75,8 +75,8 @@ impl Plugin for SceneEnvironmentPlugin {
                 ("Star brightness", "starsBrightness"),
             ],
             actions: &[
-                ("Midnight", "/time 0 0"),
-                ("Noon", "/time 12 0"),
+                ("Midnight", "/time 0 0 --force"),
+                ("Noon", "/time 12 0 --force"),
                 ("Resume scene time", "/time --resume"),
             ],
             inputs: &[],

@@ -213,10 +213,21 @@ impl Plugin for VisualsDebugPanelPlugin {
         .add_debug_section(DebugSection {
             title: "Skybox",
             query: "/sky_state",
-            fields: &[],
+            fields: &[
+                ("Time set by", "timeSource"),
+                ("Held by the scene (menu locked)", "sceneLocked"),
+                ("Allow overriding scene controls", "overrideAllowed"),
+            ],
             actions: &[("Resume sky clock", "/time --resume")],
             inputs: &[
-                slider("Fixed hour", "hour", "/time {value} 0", 0.0, 23.99, 0.01),
+                slider(
+                    "Fixed hour",
+                    "hour",
+                    "/time {value} 0 --force",
+                    0.0,
+                    23.99,
+                    0.01,
+                ),
                 slider("Cloud cover", "cover", "/cloud {value}", 0.0, 1.0, 0.01),
                 slider(
                     "Cloud density",
@@ -462,9 +473,18 @@ fn apply_landscape_visibility(
 #[command(name = "/sky_state")]
 struct SkyState;
 
-fn sky_state(mut cmd: ConsoleCommand<SkyState>, time: Res<TimeOfDay>, clouds: Res<CloudCover>) {
+fn sky_state(
+    mut cmd: ConsoleCommand<SkyState>,
+    time: Res<TimeOfDay>,
+    clouds: Res<CloudCover>,
+    source: Res<crate::day_night::SkySource>,
+    lock: Res<common::structs::SceneTimeLock>,
+    config: Res<AppConfig>,
+) {
     if let Some(Ok(_)) = cmd.take() {
-        cmd.reply_ok(json!({"hour":time.time / 3600., "cover":user_cover(clouds.cover), "density":clouds.density_cap,
+        cmd.reply_ok(json!({"hour":time.time / 3600., "timeSource":source.name(), "sceneLocked":lock.0,
+            "overrideAllowed":config.allow_scene_control_override,
+            "cover":user_cover(clouds.cover), "density":clouds.density_cap,
             "shadow":clouds.shadow, "scale":clouds.scale, "steps":clouds.steps, "lacunarity":clouds.lacunarity, "sharpness":clouds.sharpness}).to_string());
     }
 }

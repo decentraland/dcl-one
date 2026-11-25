@@ -70,12 +70,40 @@ describe('skybox', () => {
     h.driver.commandReply = () => 'time 0:15 -> 0:15, speed 12 (elapsed: 900)'
     await waitFor(() => expect(h.session().skybox.hours).toBe(0.25), { timeout: 2000 })
 
-    // Frozen: the menu stops reading the clock.
+    // Frozen: the menu still reads `/time` for the lock, and the slider stops following it.
     act(() => h.session().skybox.setProgressing(false))
     await waitFor(() => expect(h.driver.commands).toContain('/time 0.25 0'))
-    const reads = h.driver.commands.filter(command => command.startsWith('/time')).length
+    h.driver.commandReply = () => 'time 5:0 -> 5:0, speed 0 (elapsed: 18000), locked: false'
     await new Promise((r) => setTimeout(r, 1200))
-    expect(h.driver.commands.filter(command => command.startsWith('/time'))).toHaveLength(reads)
+    expect(h.session().skybox.hours).toBe(0.25)
+  })
+
+  it('is off, with the reason, where the scene holds the time of day', () => {
+    const skybox = { ...fakeSession().skybox, open: true, progressing: false, sceneLocked: true }
+    render(<SkyboxMenu skybox={skybox} />)
+    expect(screen.getByRole('switch')).toBeDisabled()
+    expect(screen.getByRole('slider')).toBeDisabled()
+    expect(screen.getByRole('note')).toHaveTextContent('Allow overriding scene controls')
+  })
+
+  it('says nothing about scenes where the player holds the time of day', () => {
+    render(<SkyboxMenu skybox={{ ...fakeSession().skybox, open: true }} />)
+    expect(screen.queryByRole('note')).toBeNull()
+  })
+
+  it('takes the lock from /time, and reads the stopped clock again when the lock ends', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.commandReply = () => 'time 22:0 -> 22:0, speed 0 (elapsed: 79200), locked: true'
+    act(() => h.session().skybox.toggle())
+    await waitFor(() => expect(h.session().skybox.sceneLocked).toBe(true))
+    expect(h.session().skybox.hours).toBe(22)
+
+    // The player walks out: the reply is the stopped clock's time again.
+    h.driver.commandReply = () => 'time 6:0 -> 6:0, speed 0 (elapsed: 21600), locked: false'
+    await waitFor(() => expect(h.session().skybox.sceneLocked).toBe(false), { timeout: 2000 })
+    expect(h.session().skybox.hours).toBe(6)
+    expect(h.session().skybox.progressing).toBe(false)
   })
 
   it('formats hours as HH:MM', () => {

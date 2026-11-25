@@ -200,10 +200,16 @@ const SKYBOX_DAY_SPEED = 12
 const NEARBY_VOICE_RESTRICTION = 'Nearby voice disabled'
 
 // The engine's `/time` reply (day_night.rs timeofday_console_command) ends with
-// "speed <S> (elapsed: <seconds since midnight>)".
-function parseTimeReply(reply: string): { hours: number; speed: number } | null {
-  const m = /speed (-?[\d.]+) \(elapsed: ([\d.]+)\)/.exec(reply)
-  return m ? { hours: Number(m[2]) / 3600, speed: Number(m[1]) } : null
+// "speed <S> (elapsed: <seconds since midnight>), locked: <true|false>". The time is the one the
+// sky shows, and `locked` says the scene the player stands in holds it.
+interface EngineClock {
+  hours: number
+  speed: number
+  locked: boolean
+}
+function parseTimeReply(reply: string): EngineClock | null {
+  const m = /speed (-?[\d.]+) \(elapsed: ([\d.]+)\)(?:, locked: (true|false))?/.exec(reply)
+  return m ? { hours: Number(m[2]) / 3600, speed: Number(m[1]), locked: m[3] === 'true' } : null
 }
 
 // Unity's wording (BackpackEquipStatusController's in-world warning) when a profile deploy fails.
@@ -579,6 +585,8 @@ export interface SkyboxState {
   hours: number
   /** The sky follows the engine's day cycle; the slider is locked while on. */
   progressing: boolean
+  /** The scene the player stands in holds the time of day: the menu shows it and changes nothing. */
+  sceneLocked: boolean
   setHours: (hours: number) => void
   setProgressing: (on: boolean) => void
 }
@@ -1641,6 +1649,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [skyboxOpen, setSkyboxOpen] = useState(false)
   const [skyboxHours, setSkyboxHoursState] = useState(SKYBOX_START_HOURS)
   const [skyboxProgressing, setSkyboxProgressingState] = useState(true)
+  const [skyboxSceneLocked, setSkyboxSceneLocked] = useState(false)
   const [emotes, setEmotes] = useState<Emote[]>([])
   const [emotesOpen, setEmotesOpen] = useState(false)
   const [mic, setMic] = useState({ enabled: false, available: false, sceneBlocked: false, refusals: 0 })
@@ -3459,7 +3468,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     driverRef.current?.command?.(line) ?? Promise.reject(new Error('Engine console unavailable')), [])
 
   // The engine clock as `/time` (no args) reports it; null when there is no engine console.
-  const readClock = useCallback(async (): Promise<{ hours: number; speed: number } | null> => {
+  const readClock = useCallback(async (): Promise<EngineClock | null> => {
     const reply = await driverRef.current?.command?.('/time').catch(() => undefined)
     const clock = reply != null ? parseTimeReply(reply) : null
     if (clock != null && clock.speed !== 0) skyboxDaySpeed.current = clock.speed
@@ -3477,6 +3486,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           if (clock == null) return
           setSkyboxHoursState(clock.hours)
           setSkyboxProgressingState(clock.speed !== 0)
+          setSkyboxSceneLocked(clock.locked)
         })
       }),
     [exclusive, readClock]
@@ -3504,20 +3514,29 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     },
     [skyboxHours, readClock, setClock]
   )
-  // While the day cycle runs, the open menu follows the engine clock (Unity's slider tracks it too).
+  // The open menu follows the engine: the running clock, so the slider tracks it, and the
+  // lock, which comes and goes as the player walks between scenes. A stopped clock is read again
+  // only when the lock changes, since the time reported under it is the scene's.
   useEffect(() => {
-    if (!skyboxOpen || !skyboxProgressing) return
+    if (!skyboxOpen) return
     let live = true
     const id = setInterval(() => {
       void readClock().then((clock) => {
-        if (live && clock != null && clock.speed !== 0) setSkyboxHoursState(clock.hours)
+        if (!live || clock == null) return
+        if (clock.locked !== skyboxSceneLocked) {
+          setSkyboxSceneLocked(clock.locked)
+          setSkyboxProgressingState(clock.speed !== 0)
+          setSkyboxHoursState(clock.hours)
+        } else if (clock.locked || (skyboxProgressing && clock.speed !== 0)) {
+          setSkyboxHoursState(clock.hours)
+        }
       })
     }, 1000)
     return () => {
       live = false
       clearInterval(id)
     }
-  }, [skyboxOpen, skyboxProgressing, readClock])
+  }, [skyboxOpen, skyboxProgressing, skyboxSceneLocked, readClock])
   const toggleGallery = useCallback(() => exclusive(setGalleryOpen), [exclusive])
   const setPhotoModeEnabled = useCallback((enable: boolean, source: PhotoModeSource) => {
     driverRef.current?.send({ kind: 'setPhotoMode', enable, source })
@@ -5542,6 +5561,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       toggle: toggleSkybox,
       hours: skyboxHours,
       progressing: skyboxProgressing,
+      sceneLocked: skyboxSceneLocked,
       setHours: setSkyboxHours,
       setProgressing: setSkyboxProgressing
     },

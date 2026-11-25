@@ -265,6 +265,15 @@ State, in every build:
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
+- `/time [hours] [speed] [--force] [--resume]`: the time of day. Bare, it reports
+  `time H:M -> H:M, speed S (elapsed: <seconds since midnight>), locked: <true|false>`: the time
+  the sky shows, and `locked` while the scene the player stands in holds it (the Skybox menu is
+  off and a `/time` without `--force` moves the clock, not the sky). With the "Allow overriding
+  scene controls" setting on nothing is locked and a time set here wins until a scene's time
+  arrives again. `--force` (with a time) beats a scene's time whatever the setting, until the next
+  `/time` that sets a time or a speed; `--resume` runs the clock again and hands the sky back.
+  `/sky_state` adds `timeSource` (`skybox`, `scene` or `clock`), `sceneLocked` and
+  `overrideAllowed`, the Skybox debug section's readings.
 - `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
   stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.

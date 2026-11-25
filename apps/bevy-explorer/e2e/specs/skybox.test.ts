@@ -18,6 +18,9 @@
 //   assertions are Unity's: the label is an HH:mm time within 17:50 to 18:10, and the Auto
 //   switch reaches the state asked of it at each change. Added: the slider reads about
 //   18 and is enabled. Unity restores the switch only; here the clock is put back as found too.
+//   Where the scene sets the time of day the switch and the slider are disabled and `/time` does
+//   not move the sky, so both scenarios first check that the place they run in does not hold it
+//   (`locked` in the `/time` reply) and fail with that reason otherwise.
 import assert from 'node:assert/strict'
 import { spec, until, type Explorer, type Selector } from '../driver/index.ts'
 
@@ -79,7 +82,15 @@ async function waitClock(explorer: Explorer, running: boolean): Promise<void> {
   })
 }
 
+/** These scenarios move the sky with the panel and `/time`, which a scene that holds the time of
+ *  day does not allow. */
+async function requirePlayersSky(explorer: Explorer): Promise<void> {
+  const { locked } = await explorer.time()
+  assert.equal(locked, false, 'the scene here holds the time of day: run the Skybox scenarios where no scene does')
+}
+
 scenario('the Skybox panel shows its title, the switch, the slider and a time', async ({ explorer }) => {
+  await requirePlayersSky(explorer)
   await openSkybox(explorer)
   const panel = await explorer.hud.get(PANEL)
   assert.ok(panel.text.startsWith('NIGHT/DAY'), `the panel should be titled NIGHT/DAY: ${panel.text}`)
@@ -90,6 +101,7 @@ scenario('the Skybox panel shows its title, the switch, the slider and a time', 
 })
 
 scenario('with the day cycle off, the Skybox panel shows the time the clock was set to', async ({ explorer }) => {
+  await requirePlayersSky(explorer)
   const original = await readClock(explorer)
   const autoWasOn = original.speed !== 0
   try {
