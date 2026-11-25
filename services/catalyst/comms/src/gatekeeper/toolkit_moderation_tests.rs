@@ -1535,3 +1535,64 @@ fn past_gate_store_fault(method: &str, path: &str, rooms_unlisted: bool) -> (Sta
         ),
     }
 }
+
+/// While the attached land-authz index is not published, a Genesis scene's
+/// admin listing cannot tell which admins LAND protects: it answers the
+/// index's 503 instead of a list that marks every admin removable, and the
+/// removal of that admin names the same source.
+#[tokio::test]
+async fn genesis_admin_listing_and_removal_name_the_unready_land_index() {
+    let Some(pool) = scratch().await else {
+        return;
+    };
+    let target = Address::parse(&address_of(&random_key())).unwrap();
+    let mut state = comms_state(pool.clone(), Settings::for_tests());
+    state.scenes = Arc::new(ToolkitScenes);
+    state.policy = Arc::new(ActorPolicy {
+        pool: Some(pool.clone()),
+        unavailable: false,
+        protected: BTreeSet::new(),
+    });
+    let writable = super::super::router(Arc::new(state));
+    let genesis = metadata("main", "GenesisA", "42,42");
+    let (status, value) = call(
+        &writable,
+        "POST",
+        "/scene-admin",
+        &genesis,
+        json!({"admin":target.as_str()}),
+        KEY,
+    )
+    .await;
+    assert!(status.is_success(), "{status}: {value}");
+
+    let mut state = comms_state(pool.clone(), Settings::for_tests());
+    state.scenes = Arc::new(ToolkitScenes);
+    state.policy = Arc::new(crate::interfaces::test_support::StubPolicy {
+        admin: PermissionDecision::Allowed,
+        land: Err(AuthorityNotEstablished::land_index_not_ready()),
+        ..Default::default()
+    });
+    let unready = super::super::router(Arc::new(state));
+    let expected = json!({"error": scene::LAND_INDEX_UNREADY_MSG});
+    let (status, value) = call(&unready, "GET", "/scene-admin", &genesis, Value::Null, KEY).await;
+    assert_eq!(
+        (status, value),
+        (StatusCode::SERVICE_UNAVAILABLE, expected.clone()),
+        "the listing"
+    );
+    let (status, value) = call(
+        &unready,
+        "DELETE",
+        "/scene-admin",
+        &genesis,
+        json!({"admin":target.as_str()}),
+        KEY,
+    )
+    .await;
+    assert_eq!(
+        (status, value),
+        (StatusCode::SERVICE_UNAVAILABLE, expected),
+        "the removal"
+    );
+}

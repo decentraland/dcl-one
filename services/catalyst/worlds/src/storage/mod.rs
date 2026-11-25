@@ -819,6 +819,8 @@ async fn authorize(
         match has_scene_permission(state, target, deployment, signer).await {
             Ok(true) => return Ok(()),
             Ok(false) => {}
+            // The land-authz index not being published is no failed lookup.
+            Err(e @ ApiError::Unavailable(_)) => return Err(e),
             Err(e) => {
                 tracing::warn!(world = target.realm.storage_realm(), error = %e, "world storage: unable to verify world permissions");
                 return Err(ApiError::not_authorized(FAILED_TO_VERIFY_MSG));

@@ -38,7 +38,6 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
         pool.clone(),
         http,
         land_settings(&config)?,
-        Some(market.index.clone()),
     ));
     land.spawn_jobs(&jobs);
     metrics::spawn(
