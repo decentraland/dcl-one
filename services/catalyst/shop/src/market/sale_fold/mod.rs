@@ -238,6 +238,7 @@ pub struct SalesSnapshot {
     pub expires_at: DateTime<Utc>,
     /// Identity of the published history, stable across append-only advances.
     pub generations: Vec<(ChainNet, Uuid)>,
+    pub(crate) published_through: Vec<i64>,
 }
 
 /// Readiness and subsequent queries share this read-only transaction. The
@@ -261,6 +262,7 @@ pub async fn snapshot(
         .await?;
     let mut deadline = now + chain_walk::READY_WINDOW;
     let mut generations = Vec::with_capacity(nets.len());
+    let mut published_through = Vec::with_capacity(nets.len());
     for &net in nets {
         let Some(marker) = marker(&mut tx, net).await? else {
             return Ok(None);
@@ -279,6 +281,7 @@ pub async fn snapshot(
             return Ok(None);
         }
         generations.push((net, marker.generation));
+        published_through.push(marker.block_number);
         let earliest = inputs
             .rows
             .iter()
@@ -290,6 +293,7 @@ pub async fn snapshot(
         transaction: tx,
         expires_at: deadline,
         generations,
+        published_through,
     }))
 }
 

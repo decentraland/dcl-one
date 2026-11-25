@@ -17,7 +17,8 @@ catalyst-land-authz = { path = "../land-authz" }
 catalyst-content = { path = "../content" }
 catalyst-explore = { path = "../explore" }
 catalyst-comms = { path = "../comms" }
-alloy-primitives.workspace = true
+# `k256`: storage delegations recover through alloy's `Signature`, accepting high-s like Node.
+alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-sol-types.workspace = true
 tokio.workspace = true
 axum.workspace = true

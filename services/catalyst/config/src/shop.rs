@@ -574,10 +574,14 @@ pub struct ShopConfig {
     #[arg(long, env = "CREDITS_TRIAL_RELAY_ALL_WALLETS", default_value_t = false, action = clap::ArgAction::Set)]
     pub credits_trial_relay_all_wallets: bool,
 
+    /// The Shop's page a paid pack order returns to, with `order=<id>` appended.
     /// Empty: the Stripe Checkout order flow answers 503.
     #[arg(long, env = "CREDITS_CHECKOUT_SUCCESS_URL", default_value = "")]
     pub credits_checkout_success_url: String,
 
+    /// The Shop's page an abandoned pack order lands on, with
+    /// `order=<id>&canceled=1`: Stripe sends the buyer to the order's
+    /// cancel-return under `PUBLIC_URL` first, or straight here without one.
     #[arg(long, env = "CREDITS_CHECKOUT_CANCEL_URL", default_value = "")]
     pub credits_checkout_cancel_url: String,
 

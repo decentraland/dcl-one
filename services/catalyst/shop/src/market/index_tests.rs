@@ -165,6 +165,8 @@ struct FakeChain {
     strip_block_hash: std::sync::atomic::AtomicBool,
     /// `eth_chainId` answers an error.
     fail_chain_id: std::sync::atomic::AtomicBool,
+    /// Refuse every call with HTTP 401/403 or answer HTTP 200 with HTML.
+    invalid_http_response: AtomicUsize,
     /// Text the failing reads echo in their error message (a gateway that
     /// repeats the request it got).
     echo: Mutex<String>,
@@ -262,6 +264,7 @@ impl FakeChain {
             strip_timestamps: std::sync::atomic::AtomicBool::new(false),
             strip_block_hash: std::sync::atomic::AtomicBool::new(false),
             fail_chain_id: std::sync::atomic::AtomicBool::new(false),
+            invalid_http_response: AtomicUsize::new(0),
             echo: Mutex::new(String::new()),
             batches: AtomicUsize::new(0),
             drop_in_batch: Mutex::new(Vec::new()),
@@ -361,6 +364,13 @@ async fn rpc(
     axum::Json(body): axum::Json<Value>,
 ) -> axum::response::Response {
     chain.requests.fetch_add(1, Ordering::SeqCst);
+    match chain.invalid_http_response.load(Ordering::SeqCst) {
+        status @ (401 | 403) => return (StatusCode::from_u16(status as u16).unwrap(), axum::Json(json!({
+            "jsonrpc":"2.0", "id":body["id"], "error":{"code":-32000,"message":"authentication failed"}
+        }))).into_response(),
+        200 => return axum::response::Html("<html>gateway response</html>").into_response(),
+        _ => {}
+    }
     if headers.contains_key("x-api-key") {
         chain.api_keys.fetch_add(1, Ordering::SeqCst);
     }
@@ -1997,7 +2007,7 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
     chain.chain_id.store(80_002, Ordering::SeqCst);
     let rpc = serve(chain.clone()).await;
     let good = chain.hash_of(90);
-    let meta = Arc::new(Mutex::new(json!({"number":90,"hash":"wrong"})));
+    let meta = Arc::new(Mutex::new(json!({"number":90,"hash":chain.hash_of(89)})));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let graph = format!("http://{}/", listener.local_addr().unwrap());
     let app = Router::new().route("/", post(|State(meta): State<Arc<Mutex<Value>>>, axum::Json(body): axum::Json<Value>| async move {
@@ -2023,12 +2033,25 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
         prove()
             .await
             .unwrap_err()
+            .to_string()
             .contains("differs from the configured chain")
     );
     *meta.lock() = Value::Null;
-    assert!(prove().await.unwrap_err().contains("no block number"));
+    assert!(
+        prove()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no block number")
+    );
     *meta.lock() = json!({"number":90});
-    assert!(prove().await.unwrap_err().contains("no block hash"));
+    assert!(
+        prove()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no block hash")
+    );
     *meta.lock() = json!({"number":90,"hash":good});
     chain.fail_chain_id.store(true, Ordering::SeqCst);
     assert!(prove().await.is_err());
@@ -2069,11 +2092,17 @@ async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
     }
     *meta.lock() = json!({"number":90,"hash":good});
     chain.chain_id.store(137, Ordering::SeqCst);
-    assert!(prove().await.unwrap_err().contains("serves chain 137"));
+    assert!(
+        prove()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("serves chain 137")
+    );
 }
 
 #[tokio::test]
-async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read() {
+async fn a_lagging_mainnet_rpc_pins_a_matching_confirmed_block() {
     use super::{
         graph::Network,
         mirrors::{self, Mirror},
@@ -2081,13 +2110,137 @@ async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read(
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let net = ChainNet::Matic;
-    let chain = FakeChain::new(200, vec![], 100, 100);
-    chain
-        .chain_id
-        .store(net.testnet_chain_id() as u64, Ordering::SeqCst);
-    let rpc = serve(chain.clone()).await;
-    let hash = chain.hash_of(100);
+    for (net, network) in [
+        (ChainNet::Ethereum, Network::Ethereum),
+        (ChainNet::Matic, Network::Matic),
+    ] {
+        let chain = FakeChain::new(100 + net.confirmations(), vec![], 100, 100);
+        chain
+            .chain_id
+            .store(net.chain_id() as u64, Ordering::SeqCst);
+        let rpc = serve(chain.clone()).await;
+        let published_hash = Arc::new(Mutex::new(Some(chain.hash_of(99))));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let graph = format!("http://{}/", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route(
+                "/",
+                post(
+                    |State((net, hash)): State<(ChainNet, Arc<Mutex<Option<String>>>)>,
+                     axum::Json(body): axum::Json<Value>| async move {
+                        let hash = hash.lock().clone();
+                        let vars = &body["variables"];
+                        let block = if vars["number"] == 100 || vars["block"].is_object() {
+                            json!({"number":100,"hash":hash})
+                        } else {
+                            json!({"number":200+net.confirmations()})
+                        };
+                        axum::Json(json!({"data":{"collections":[],"_meta":{"block":block}}}))
+                    },
+                ),
+            )
+            .with_state((net, published_hash.clone()));
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut settings = Settings::for_tests();
+        match net {
+            ChainNet::Ethereum => {
+                settings.eth_collections_subgraph_url = Some(graph);
+                settings.eth_rpc_url = Some(rpc);
+            }
+            ChainNet::Matic => {
+                settings.matic_collections_subgraph_url = Some(graph);
+                settings.polygon_rpc_url = Some(rpc);
+            }
+        }
+        let mut state = MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        );
+        state.index.allow_loopback_for_tests();
+        let jobs = crate::jobs::Jobs::new();
+        let ctx = super::market_tests::job_ctx(&jobs).await;
+        let err = mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("differs from the configured chain"));
+        assert_eq!(*chain.calls.lock(), ["chain id", "head", "header 100"]);
+        assert!(!nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+        let hash = chain.hash_of(100);
+        *published_hash.lock() = Some(hash.clone());
+        mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap();
+        let copy = mirrors::load(&db.pool, Mirror::Collections, network)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(copy.pass_block_hash.as_deref(), Some(hash.as_str()));
+        assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+
+        // Starting a replacement pass during an RPC failure keeps the last
+        // completed publication and retries the proof on the next tick.
+        chain.fail_headers.store(true, Ordering::SeqCst);
+        let err = mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("RPC unavailable"));
+        let pending = mirrors::load(&db.pool, Mirror::Collections, network)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(pending.pass_block_hash.is_none());
+        assert_eq!(pending.last_complete_pass_at, copy.last_complete_pass_at);
+        assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+        chain.fail_headers.store(false, Ordering::SeqCst);
+        mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap();
+        let copy = mirrors::load(&db.pool, Mirror::Collections, network)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(copy.pass_block_hash.as_deref(), Some(hash.as_str()));
+        assert!(!copy.in_progress());
+
+        // The next pass had been paged at that hash. Losing its proof clears
+        // its keyset, and leaves the prior completed copy available.
+        sqlx::query("UPDATE shop.mirror_state SET pass_started_at=last_complete_pass_at+interval '1 second',
+                    cursor_id='next-page' WHERE network=$1 AND mirror='collections'")
+            .bind(net.db_name()).execute(&db.pool).await.unwrap();
+        *published_hash.lock() = None;
+        let err = mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("no block hash"));
+        let failed = mirrors::load(&db.pool, Mirror::Collections, network)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(failed.pass_block_hash.is_none() && failed.cursor_id.is_none());
+        assert_eq!(failed.last_complete_pass_at, copy.last_complete_pass_at);
+
+        *published_hash.lock() = Some(hash);
+        mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap();
+        state.settings.eth_rpc_url = None;
+        state.settings.polygon_rpc_url = None;
+        mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap();
+        let graph_only = mirrors::load(&db.pool, Mirror::Collections, network)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(graph_only.pass_block_hash.is_none());
+        assert!(!graph_only.in_progress());
+        assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+    }
+    db.drop().await;
+}
+
+async fn serve_split_collections_graph(hash: String) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let graph = format!("http://{}/", listener.local_addr().unwrap());
     let app = Router::new()
@@ -2106,7 +2259,7 @@ async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read(
                         }
                         assert!(doc.contains("collections(block: $block"));
                         let rows = if vars["idFrom"] == "" {
-                            (1..=mirrors::PAGE_SIZE)
+                            (1..=super::mirrors::PAGE_SIZE)
                                 .map(|i| json!({"id":format!("0x{i:040x}")}))
                                 .collect::<Vec<_>>()
                         } else {
@@ -2122,8 +2275,291 @@ async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read(
                 },
             ),
         )
-        .with_state(hash.clone());
+        .with_state(hash);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    graph
+}
+
+#[tokio::test]
+async fn a_mainnet_mirror_keeps_serving_and_finishes_a_pinned_pass_during_an_rpc_failure() {
+    use super::{
+        graph::Network,
+        mirrors::{self, Mirror},
+    };
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Matic;
+    let chain = FakeChain::new(200, vec![], 100, 100);
+    let hash = chain.hash_of(100);
+    let mut config = Settings::for_tests();
+    config.matic_collections_subgraph_url = Some(serve_split_collections_graph(hash.clone()).await);
+    config.polygon_rpc_url = Some(serve(chain.clone()).await);
+    config.market.mirror_pages_per_tick = 2;
+    let mut state =
+        MarketplaceState::new(db.pool.clone(), crate::http::Outbound::for_tests(), config);
+    state.index.allow_loopback_for_tests();
+    let jobs = crate::jobs::Jobs::new();
+    let ctx = super::market_tests::job_ctx(&jobs).await;
+    let read = || mirrors::load(&db.pool, Mirror::Collections, Network::Matic);
+
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let completed = read().await.unwrap().unwrap();
+    assert!(!completed.in_progress());
+
+    state.settings.market.mirror_pages_per_tick = 1;
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let first_page = read().await.unwrap().unwrap();
+    assert!(first_page.in_progress() && first_page.cursor_id.is_some());
+    assert_eq!(first_page.pass_block_hash.as_deref(), Some(hash.as_str()));
+    assert_eq!(
+        first_page.last_complete_pass_at,
+        completed.last_complete_pass_at
+    );
+
+    chain.fail_chain_id.store(true, Ordering::SeqCst);
+    chain.fail_headers.store(true, Ordering::SeqCst);
+    chain.head_reads_left.store(0, Ordering::SeqCst);
+    let calls = chain.requests.load(Ordering::SeqCst);
+    assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    assert_eq!(chain.requests.load(Ordering::SeqCst), calls);
+    let resumed = read().await.unwrap().unwrap();
+    assert_eq!(resumed.pass_started_at, first_page.pass_started_at);
+    assert_eq!(resumed.pass_block_hash, first_page.pass_block_hash);
+    assert!(!resumed.in_progress());
+    assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+
+    chain.fail_chain_id.store(false, Ordering::SeqCst);
+    chain.fail_headers.store(false, Ordering::SeqCst);
+    chain.head_reads_left.store(1, Ordering::SeqCst);
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let first_page = read().await.unwrap().unwrap();
+    assert!(first_page.in_progress());
+    state.settings.polygon_rpc_url = None;
+    let calls = chain.requests.load(Ordering::SeqCst);
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let resumed = read().await.unwrap().unwrap();
+    assert_eq!(chain.requests.load(Ordering::SeqCst), calls);
+    assert_eq!(resumed.pass_started_at, first_page.pass_started_at);
+    assert_eq!(resumed.pass_block_hash, first_page.pass_block_hash);
+    assert!(!resumed.in_progress());
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage() {
+    use super::{
+        graph::Network,
+        mirrors::{self, Mirror},
+    };
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let chain = FakeChain::new(200, vec![], 100, 100);
+    let hash = chain.hash_of(100);
+    let price = Arc::new(AtomicUsize::new(100));
+    let graph_failure = Arc::new(AtomicUsize::new(0));
+    #[derive(Clone)]
+    struct GraphFixture {
+        hash: String,
+        price: Arc<AtomicUsize>,
+        graph_failure: Arc<AtomicUsize>,
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let graph = format!("http://{}/", listener.local_addr().unwrap());
+    let app = Router::new().route("/", post(
+        |State(graph): State<GraphFixture>, axum::Json(body): axum::Json<Value>| async move {
+            let vars = &body["variables"];
+            let failure = graph.graph_failure.load(Ordering::SeqCst);
+            if failure == 502 {
+                return StatusCode::BAD_GATEWAY.into_response();
+            }
+            let block = if failure == 1 {
+                Value::Null
+            } else if vars["number"] == 100 || vars["block"].is_object() {
+                json!({"number":100,"hash":graph.hash})
+            } else {
+                json!({"number":100+ChainNet::Matic.confirmations()})
+            };
+            let items = if vars["idFrom"] == "" {
+                (1..=mirrors::PAGE_SIZE).map(|id| json!({
+                    "id":format!("item-{id:04}"), "blockchainId":id.to_string(), "itemType":"wearable_v2",
+                    "collection":{"id":format!("0x{:040x}", 1)},
+                    "price":graph.price.load(Ordering::SeqCst).to_string(),
+                })).collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            axum::Json(json!({"data":{"items":items,"_meta":{"block":block}}})).into_response()
+        }
+    )).with_state(GraphFixture { hash, price: price.clone(), graph_failure: graph_failure.clone() });
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut config = Settings::for_tests();
+    config.matic_collections_subgraph_url = Some(graph);
+    config.polygon_rpc_url = Some(serve(chain.clone()).await);
+    config.market.mirror_pages_per_tick = 1;
+    let state = MarketplaceState::new(db.pool.clone(), crate::http::Outbound::for_tests(), config);
+    state.index.allow_loopback_for_tests();
+    let jobs = crate::jobs::Jobs::new();
+    let ctx = super::market_tests::job_ctx(&jobs).await;
+    let tick = || mirrors::run_tick(&state, Mirror::Items, &ctx);
+    let read = || mirrors::load(&db.pool, Mirror::Items, Network::Matic);
+    let stored_price = || {
+        sqlx::query_scalar::<_, String>(
+            "SELECT price::text FROM shop.items WHERE network='matic' AND item_id=1",
+        )
+        .fetch_one(&db.pool)
+    };
+    let recorder = dcl_metrics::Registry::new(&[mirrors::FAMILIES])
+        .unwrap()
+        .builder(dcl_metrics::PrometheusBuilder::new())
+        .unwrap()
+        .build_recorder();
+    let metric_handle = recorder.handle();
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+
+    let age_proof = || {
+        sqlx::query(
+            "UPDATE shop.mirror_state SET
+        pass_started_at=timezone('UTC',now())-interval '11 minutes',
+        last_complete_pass_at=timezone('UTC',now())-interval '29 minutes'
+        WHERE mirror='items' AND network='matic'",
+        )
+        .execute(&db.pool)
+    };
+    tick().await.unwrap();
+    tick().await.unwrap();
+    assert_eq!(stored_price().await.unwrap(), "100");
+
+    // An older graph failure does not count toward the RPC-only window.
+    price.store(200, Ordering::SeqCst);
+    graph_failure.store(1, Ordering::SeqCst);
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no block number")
+    );
+    age_proof().await.unwrap();
+    let earlier = read().await.unwrap().unwrap();
+    graph_failure.store(0, Ordering::SeqCst);
+    chain.invalid_http_response.store(401, Ordering::SeqCst);
+    assert!(tick().await.unwrap_err().to_string().contains("status 401"));
+    let pending = read().await.unwrap().unwrap();
+    assert!(pending.pass_started_at > earlier.pass_started_at);
+    chain.invalid_http_response.store(403, Ordering::SeqCst);
+    assert!(tick().await.unwrap_err().to_string().contains("status 403"));
+    let retried = read().await.unwrap().unwrap();
+    assert_eq!(retried.pass_started_at, pending.pass_started_at);
+    assert_eq!(retried.last_complete_pass_at, earlier.last_complete_pass_at);
+    assert_eq!(stored_price().await.unwrap(), "100");
+    assert!(mirrors::require_priced(&state).await.is_ok());
+
+    // Advance the persisted RPC outage clock without a wall-clock wait.
+    age_proof().await.unwrap();
+    let aged = read().await.unwrap().unwrap();
+    graph_failure.store(502, Ordering::SeqCst);
+    assert!(tick().await.is_err());
+    let after_graph_error = read().await.unwrap().unwrap();
+    assert_eq!(after_graph_error.pass_started_at, aged.pass_started_at);
+    assert_eq!(after_graph_error.last_error, aged.last_error);
+    graph_failure.store(0, Ordering::SeqCst);
+    tick().await.unwrap();
+    let partial = read().await.unwrap().unwrap();
+    assert!(partial.in_progress() && partial.pass_block_hash.is_none());
+    let calls = chain.requests.load(Ordering::SeqCst);
+    tick().await.unwrap();
+    assert_eq!(chain.requests.load(Ordering::SeqCst), calls);
+    let fallback = read().await.unwrap().unwrap();
+    assert!(!fallback.in_progress() && fallback.pass_block_hash.is_none());
+    assert_eq!(stored_price().await.unwrap(), "200");
+    assert!(
+        mirrors::price_verdict(
+            fallback.last_complete_pass_at.unwrap(),
+            chrono::Utc::now(),
+            mirrors::price_max_age(&state.settings)
+        )
+        .is_ok()
+    );
+    assert!(metric_handle.render().lines().any(|line| {
+        line.starts_with("catalyst_catalogue_mirror_proof_outcomes_total{")
+            && line.contains("outcome=\"rpc_auth_failed\"")
+            && line.ends_with(" 3")
+    }));
+
+    price.store(300, Ordering::SeqCst);
+    chain.invalid_http_response.store(200, Ordering::SeqCst);
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("RPC unavailable")
+    );
+    assert_eq!(stored_price().await.unwrap(), "200");
+    age_proof().await.unwrap();
+    tick().await.unwrap();
+    tick().await.unwrap();
+    assert_eq!(stored_price().await.unwrap(), "300");
+
+    price.store(400, Ordering::SeqCst);
+    chain.invalid_http_response.store(0, Ordering::SeqCst);
+    chain.chain_id.store(80_002, Ordering::SeqCst);
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("serves chain 80002")
+    );
+    age_proof().await.unwrap();
+    let rejected = read().await.unwrap().unwrap();
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("serves chain 80002")
+    );
+    chain.fail_chain_id.store(true, Ordering::SeqCst);
+    assert!(tick().await.is_err());
+    assert_eq!(
+        read().await.unwrap().unwrap().last_complete_pass_at,
+        rejected.last_complete_pass_at
+    );
+    assert_eq!(stored_price().await.unwrap(), "300");
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read() {
+    use super::{
+        graph::Network,
+        mirrors::{self, Mirror},
+    };
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Matic;
+    let chain = FakeChain::new(200, vec![], 100, 100);
+    chain
+        .chain_id
+        .store(net.testnet_chain_id() as u64, Ordering::SeqCst);
+    let rpc = serve(chain.clone()).await;
+    let hash = chain.hash_of(100);
+    let graph = serve_split_collections_graph(hash.clone()).await;
     let state = || {
         let mut config = Settings::for_tests();
         config.matic_collections_subgraph_url = Some(graph.clone());
@@ -2171,11 +2607,15 @@ async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read(
             .is_err()
     );
     assert!(nft_index::mirror_complete(&db.pool, net, net.testnet_chain_id()).await);
-    // Missing proof restarts immediately. An opaque graph error keeps its
-    // keyset for a young pass and restarts once the failed pin is old.
+    // A missing hash restarts immediately. Even an old pin survives the
+    // first opaque error after a successful page, but two failures restart it.
+    sqlx::query("UPDATE shop.mirror_state SET last_error=NULL")
+        .execute(&db.pool)
+        .await
+        .unwrap();
     for (pin, age_hours, reset) in [
         ("orphan", 0, true),
-        ("opaque", 0, false),
+        ("opaque", 2, false),
         ("opaque", 2, true),
     ] {
         sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())-interval '3 days',
@@ -2193,6 +2633,28 @@ async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read(
         assert_eq!(row.pass_block_hash.as_deref(), (!reset).then_some(pin));
         assert_eq!(row.cursor_id.as_deref(), (!reset).then_some("old"));
         assert!(row.last_complete_pass_at.is_some());
+        if pin == "orphan" {
+            // A successful read of the old pin followed by a real write
+            // failure leaves the first opaque read retry available.
+            sqlx::query("UPDATE shop.mirror_state SET pass_started_at=timezone('UTC',now())-interval '2 hours',
+                         pass_block_hash=$1, cursor_id=NULL")
+                .bind(&hash).execute(&db.pool).await.unwrap();
+            sqlx::query("ALTER TABLE shop.collections ADD CONSTRAINT reject_test_upsert CHECK (false) NOT VALID")
+                .execute(&db.pool).await.unwrap();
+            let error = mirrors::run_tick(&state(), Mirror::Collections, &ctx)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("upsert"));
+            let failed = mirrors::load(&db.pool, Mirror::Collections, Network::Matic)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(failed.last_error.unwrap().contains("reject_test_upsert"));
+            sqlx::query("ALTER TABLE shop.collections DROP CONSTRAINT reject_test_upsert")
+                .execute(&db.pool)
+                .await
+                .unwrap();
+        }
     }
     chain.fail_chain_id.store(false, Ordering::SeqCst);
     mirrors::run_tick(&state(), Mirror::Collections, &ctx)
@@ -2298,8 +2760,16 @@ async fn an_unbound_mirror_keyset_is_adopted_only_for_the_same_mainnet_source() 
     };
     sqlx::query("INSERT INTO shop.mirror_state (mirror,network,source_url,pass_started_at,cursor_id) VALUES ('items','matic','source',timezone('UTC',now()),'next')")
         .execute(&db.pool).await.unwrap();
-    let read =
-        |url, chain| mirrors::cursor_for(&db.pool, Mirror::Items, Network::Matic, url, chain);
+    let read = |url, chain| {
+        mirrors::cursor_for(
+            &db.pool,
+            Mirror::Items,
+            Network::Matic,
+            url,
+            chain,
+            chain == Some(80002),
+        )
+    };
     assert_eq!(
         read("source", Some(137))
             .await
@@ -2341,6 +2811,41 @@ async fn an_unbound_mirror_keyset_is_adopted_only_for_the_same_mainnet_source() 
         .unwrap();
     assert!(read("source", Some(137)).await.is_err());
     assert!(read("source", None).await.is_err());
+    // Once RPC proof is configured, a legacy mainnet keyset cannot be
+    // spliced onto a pinned pass.
+    sqlx::query("UPDATE shop.mirror_state SET chain_id=137,pass_block_hash=NULL")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let pinned = mirrors::cursor_for(
+        &db.pool,
+        Mirror::Items,
+        Network::Matic,
+        "source",
+        Some(137),
+        true,
+    )
+    .await
+    .unwrap();
+    assert!(pinned.cursor_id.is_none());
+    sqlx::query("UPDATE shop.mirror_state SET pass_block_hash='mainnet-pin'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let without_rpc = read("source", Some(137)).await.unwrap();
+    assert_eq!(without_rpc.pass_block_hash.as_deref(), Some("mainnet-pin"));
+    assert_eq!(without_rpc.cursor_id.as_deref(), Some("next"));
+    let pinned = mirrors::cursor_for(
+        &db.pool,
+        Mirror::Items,
+        Network::Matic,
+        "source",
+        Some(137),
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(pinned.cursor_id.as_deref(), Some("next"));
     db.drop().await;
 }
 
@@ -2572,6 +3077,22 @@ async fn a_legacy_unbound_collection_copy_can_supply_mainnet_but_not_testnet() {
         .unwrap();
     assert!(!nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
     db.drop().await;
+}
+
+#[tokio::test]
+async fn the_sepolia_rentals_rpc_fallback_matches_the_catalogue_network() {
+    let mut state = super::tests::support::state_without_db();
+    let settings = &mut Arc::get_mut(&mut state).unwrap().settings;
+    settings.eth_rpc_url = Some("https://ethereum.example".into());
+    settings.market.trade_rpc_urls = RpcEndpoints::from_env(None);
+    for (network, expected) in [
+        ("sepolia", Some("https://ethereum.example")),
+        (" Ethereum-Sepolia ", Some("https://ethereum.example")),
+        ("mainnet", None),
+    ] {
+        Arc::get_mut(&mut state).unwrap().settings.eth_network = network.into();
+        assert_eq!(state.sepolia_rentals_rpc_url().as_deref(), expected);
+    }
 }
 
 #[tokio::test]
@@ -4602,6 +5123,62 @@ async fn a_reindexed_order_only_gains_its_missing_transaction_hash() {
     db.drop().await;
 }
 
+/// A transfer indexed before the walk recorded transfers' transactions
+/// gains its hash when the same log is read again, and keeps it after; a
+/// different log at its position never supplies one.
+#[tokio::test]
+async fn a_reindexed_transfer_gains_its_missing_transaction_hash() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let transfer = |token: &str, tx_hash: Option<&str>| nft_index::NftEvent {
+        block_number: 100,
+        log_index: 0,
+        block_time: 1,
+        kind: nft_index::KIND_TRANSFER,
+        emitter: "0xnft".into(),
+        contract_address: "0xnft".into(),
+        token_id: token.into(),
+        from_address: Some("0xseller".into()),
+        to_address: Some("0xbuyer".into()),
+        amount: None,
+        expires_at: None,
+        detail: None,
+        tx_hash: tx_hash.map(str::to_string),
+    };
+    let (a, b) = (
+        format!("0x{}", "a".repeat(64)),
+        format!("0x{}", "b".repeat(64)),
+    );
+    let mut conn = db.pool.acquire().await.unwrap();
+    let mut write = async |row| {
+        nft_index::insert_events(&mut conn, ChainNet::Matic, &[row])
+            .await
+            .unwrap()
+    };
+    assert_eq!(write(transfer("7", None)).await, 1);
+    assert_eq!(
+        write(transfer("8", Some(&b))).await,
+        0,
+        "another token's log at the position"
+    );
+    assert_eq!(
+        write(transfer("7", Some(&a))).await,
+        1,
+        "the hash is filled"
+    );
+    assert_eq!(write(transfer("7", Some(&b))).await, 0, "a kept hash stays");
+    drop(conn);
+    let kept: Option<String> = sqlx::query_scalar(
+        "SELECT tx_hash FROM shop.nft_event WHERE network = 'matic' AND block_number = 100",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, Some(a));
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
     let Some(db) = ScratchDb::create().await else {
@@ -5904,6 +6481,132 @@ async fn revalidating_quarantined_sepolia_trades_replays_v1() {
             .await
             .unwrap();
     assert_eq!(events, [(v1.to_owned(), start as i64 + 1)]);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn an_operator_can_rebuild_quarantined_legacy_sepolia_trades_with_an_unprovable_hash() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let eth = ChainNet::Ethereum;
+    let ix = TradeEventsIndex {
+        net: eth,
+        chain_id: eth.testnet_chain_id(),
+    };
+    let start = ix.start_block();
+    let v1 = trade_events::deployments(ix.chain_id)[0].0;
+    let chain = FakeChain::new(
+        start + 50,
+        vec![trade_events::tests::traded_log(
+            start + 1,
+            0,
+            v1,
+            ALICE,
+            BOB,
+            "0xabcd",
+            1,
+            false,
+        )],
+        1000,
+        100,
+    );
+    chain.chain_id.store(ix.chain_id as u64, Ordering::SeqCst);
+    let url = serve(chain).await;
+    let state = state_over(db.pool.clone(), &url, index_settings(100, 1000), false);
+    // Revalidate left the old chain unknown and the old checkpoint unproven.
+    sqlx::query("INSERT INTO shop.chain_cursor (indexer,network,start_block,last_block,full_history,
+           last_block_hash,quarantined_at,quarantine_reason)
+        VALUES ('trade_events','ethereum',9455328,9455330,true,$1,timezone('UTC',now()),'unproven history')")
+        .bind(format!("0x{:064x}",42)).execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.chain_cursor (indexer,network,start_block,last_block,full_history,chain_id)
+        VALUES ('trade_events','matic',10,20,true,137)").execute(&db.pool).await.unwrap();
+    const REBUILD: &str = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/tooling/migration/rebuild-quarantined-legacy-sepolia-trades.sql"
+    ));
+    use sqlx::Connection;
+    let mut conn = db.pool.acquire().await.unwrap();
+    let error = sqlx::raw_sql(REBUILD)
+        .execute(&mut *conn)
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("rebuild.confirm_sepolia=yes"),
+        "{error}"
+    );
+    sqlx::query("SET rebuild.confirm_sepolia='yes'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let error = sqlx::raw_sql(REBUILD)
+        .execute(&mut *conn)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("missing Sepolia LAND cursor"));
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block)
+        VALUES ('ethereum-sepolia',$1,$2,3831219)",
+    )
+    .bind(crate::land_authz::LAND_REGISTRY_SEPOLIA)
+    .bind(crate::land_authz::ESTATE_REGISTRY_SEPOLIA)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    sqlx::query(
+        "INSERT INTO shop.worker_progress(worker,scope,key_position)
+        VALUES ('nft_catalogue_pair',0,ARRAY['1','137'])",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    let error = sqlx::raw_sql(REBUILD).execute(&mut *tx).await.unwrap_err();
+    assert!(error.to_string().contains("bound to another chain pair"));
+    tx.rollback().await.unwrap();
+    for change in [
+        "chain_id=1",
+        "sepolia_trade_v1=true",
+        "quarantined_at=NULL, quarantine_reason=NULL",
+        "start_block=9455329",
+    ] {
+        let mut tx = conn.begin().await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE shop.chain_cursor SET {change} WHERE indexer='trade_events' AND network='ethereum'")))
+            .execute(&mut *tx).await.unwrap();
+        let error = sqlx::raw_sql(REBUILD).execute(&mut *tx).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("expected a quarantined Sepolia trade cursor"),
+            "{error}"
+        );
+        tx.rollback().await.unwrap();
+    }
+    sqlx::raw_sql(REBUILD).execute(&mut *conn).await.unwrap();
+    drop(conn);
+    let scheduled = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(scheduled.start_block, start as i64);
+    assert_eq!(scheduled.owner_generation, 1);
+    assert!(scheduled.rebuild_requested_at.is_some() && scheduled.quarantined_at.is_some());
+    assert!(pass(&state, &url, &ix).await.rebuilt);
+    assert!(pass(&state, &url, &ix).await.published);
+    let events: Vec<(String, i64)> =
+        sqlx::query_as("SELECT marketplace_address,block_number FROM shop.trade_event")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(events, [(v1.to_owned(), start as i64 + 1)]);
+    let matic = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, ChainNet::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (matic.start_block, matic.last_block, matic.owner_generation),
+        (10, 20, 0)
+    );
     db.drop().await;
 }
 

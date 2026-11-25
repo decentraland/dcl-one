@@ -14,7 +14,17 @@ async fn sales_replay_backfills_only_the_transaction_hash_on_a_transfer() {
         .unwrap();
     row.tx_hash = Some(format!("0x{:064x}", 2));
     row.block_time = 200;
-    row.to_address = Some(DAVE.into());
+    // Another receiver is another log: it never supplies the hash.
+    let other = nft_index::NftEvent {
+        to_address: Some(DAVE.into()),
+        ..row.clone()
+    };
+    assert_eq!(
+        nft_index::insert_events(&mut conn, ChainNet::Matic, std::slice::from_ref(&other))
+            .await
+            .unwrap(),
+        0
+    );
     for count in [1, 0] {
         assert_eq!(
             nft_index::insert_events(&mut conn, ChainNet::Matic, std::slice::from_ref(&row))
