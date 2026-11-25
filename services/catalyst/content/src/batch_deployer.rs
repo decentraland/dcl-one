@@ -17,6 +17,7 @@ use tracing::{debug, error, info, warn};
 use super::bloom_filter::BloomFilter;
 use super::deploy_remote_entity::{CurrentDownloadPeers, DownloadPeers};
 use super::failed_deployments_store::LiveFailedDeploymentsStore;
+use super::sync::metrics::{self, Skip, SyncSource};
 use super::sync_deployer::{LiveSyncDeployer, deployed_entity_ids, is_entity_deployed};
 use super::sync_types::{
     DeploymentContext, FailedDeployment, SyncDeployment, SyncError, Timestamp,
@@ -36,9 +37,32 @@ pub struct DeploymentReport {
     scheduled: std::sync::atomic::AtomicU64,
     acknowledged: std::sync::atomic::AtomicU64,
     lost: std::sync::atomic::AtomicU64,
+    /// The `remote_server` and `source` its entities are counted under; none in tests.
+    source: Option<SyncSource>,
 }
 
 impl DeploymentReport {
+    pub fn new(source: SyncSource) -> Self {
+        Self {
+            source: Some(source),
+            ..Self::default()
+        }
+    }
+
+    /// An entity read from the source and handed to the deployer.
+    pub fn record_streamed(&self, entity_type: &str) {
+        if let Some(source) = &self.source {
+            source.streamed(entity_type);
+        }
+    }
+
+    /// An entity the deployer skipped: accounted for without a deployment.
+    pub fn record_skipped(&self) {
+        if let Some(source) = &self.source {
+            source.processed();
+        }
+    }
+
     pub fn scheduled(&self) -> u64 {
         self.scheduled.load(std::sync::atomic::Ordering::SeqCst)
     }
@@ -72,6 +96,9 @@ impl DeploymentReport {
     pub fn record_acknowledged(&self) {
         self.acknowledged
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Some(source) = &self.source {
+            source.processed();
+        }
     }
 
     /// Only meaningful after the deployer has drained (`on_idle`), like upstream's post-drain
@@ -276,10 +303,16 @@ impl BatchDeployer {
     }
 
     /// Ignored types and profiles older than `profile_max_age_ms` are never deployed.
-    fn out_of_scope(&self, entity: &SyncDeployment, now_ms: i64) -> bool {
-        self.config.ignored_types.contains(&entity.entity_type)
-            || (entity.entity_type == "profile"
-                && entity.entity_timestamp < now_ms - self.config.profile_max_age_ms)
+    fn out_of_scope(&self, entity: &SyncDeployment, now_ms: i64) -> Option<Skip> {
+        if self.config.ignored_types.contains(&entity.entity_type) {
+            Some(Skip::IgnoredType)
+        } else if entity.entity_type == "profile"
+            && entity.entity_timestamp < now_ms - self.config.profile_max_age_ms
+        {
+            Some(Skip::OldProfile)
+        } else {
+            None
+        }
     }
 
     pub async fn schedule_entity_deployment(
@@ -288,13 +321,15 @@ impl BatchDeployer {
         advertising_peers: &[String],
         report: Option<&Arc<DeploymentReport>>,
     ) -> Result<(), SyncError> {
-        if self.out_of_scope(&entity, chrono::Utc::now().timestamp_millis()) {
+        if let Some(skip) = self.out_of_scope(&entity, chrono::Utc::now().timestamp_millis()) {
+            skipped(&entity, skip, report);
             return Ok(());
         }
         let deployed = self.deployed_bloom.read().maybe_contains(&entity.entity_id)
             && is_entity_deployed(&self.pool, &entity.entity_id, entity.entity_timestamp).await?;
         crate::series::bloom_filter_checked(deployed, 1);
         if deployed {
+            skipped(&entity, Skip::AlreadyDeployed, report);
             return Ok(());
         }
         self.schedule_undeployed(entity, advertising_peers, report)
@@ -308,9 +343,16 @@ impl BatchDeployer {
     pub async fn retain_undeployed(
         &self,
         records: &mut Vec<SyncDeployment>,
+        report: Option<&Arc<DeploymentReport>>,
     ) -> Result<(), SyncError> {
         let now_ms = chrono::Utc::now().timestamp_millis();
-        records.retain(|entity| !self.out_of_scope(entity, now_ms));
+        records.retain(|entity| match self.out_of_scope(entity, now_ms) {
+            Some(skip) => {
+                skipped(entity, skip, report);
+                false
+            }
+            None => true,
+        });
         let hits: Vec<(&str, Timestamp)> = {
             let bloom = self.deployed_bloom.read();
             records
@@ -325,7 +367,13 @@ impl BatchDeployer {
         }
         let deployed = deployed_entity_ids(&self.pool, &hits).await?;
         let checked = records.len();
-        records.retain(|e| !deployed.contains(&e.entity_id));
+        records.retain(|e| {
+            let known = deployed.contains(&e.entity_id);
+            if known {
+                skipped(e, Skip::AlreadyDeployed, report);
+            }
+            !known
+        });
         crate::series::bloom_filter_checked(true, checked - records.len());
         crate::series::bloom_filter_checked(false, records.len());
         Ok(())
@@ -364,6 +412,7 @@ impl BatchDeployer {
             report.record_scheduled();
         }
 
+        let pending = metrics::InFlight::deployment(&entity.entity_type);
         let mut slot = InFlight {
             permit: Some(slot),
             idle_notify,
@@ -382,6 +431,7 @@ impl BatchDeployer {
                 deployer.as_ref(),
                 super::deploy_remote_entity::RemoteDeployment {
                     entity_id: &entity.entity_id,
+                    entity_type: &entity.entity_type,
                     auth_chain: &entity.auth_chain,
                     context: DeploymentContext::Synced,
                     report: report.as_ref(),
@@ -443,7 +493,7 @@ impl BatchDeployer {
             }
 
             slot.acknowledged = acknowledged;
-            drop(slot);
+            drop((slot, pending));
             progress.maybe_summarize(
                 queue_depth - queue.available_permits(),
                 lost.load(Ordering::SeqCst) + deployer.lost_count(),
@@ -474,6 +524,14 @@ impl BatchDeployer {
         _time_ranges: &[TimeRange],
     ) -> Result<(), SyncError> {
         Ok(())
+    }
+}
+
+/// A skipped entity counts as processed, as upstream acknowledged an ignored one at once.
+fn skipped(entity: &SyncDeployment, skip: Skip, report: Option<&Arc<DeploymentReport>>) {
+    metrics::skipped(&entity.entity_type, skip);
+    if let Some(report) = report {
+        report.record_skipped();
     }
 }
 
@@ -577,7 +635,10 @@ mod tests {
             BloomFilter::with_capacity(100),
         );
         batch.set_peers(vec![base.clone()]).await;
-        let report = Arc::new(DeploymentReport::default());
+        let (_metrics, handle) = crate::sync::metrics::local_recorder();
+        let report = Arc::new(DeploymentReport::new(
+            crate::sync::metrics::SyncSource::pointer_changes(&base),
+        ));
         let announce = |id: String, entity_type: String, chain_for: String| async move {
             SyncDeployment {
                 entity_id: id,
@@ -655,8 +716,6 @@ mod tests {
         assert!(is_entity_deployed(&pool, &entity_id, 1_000).await.unwrap());
         assert!(recorded().await.is_empty(), "the write cleared the record");
 
-        let recorder = crate::series::test_support::recorder();
-        let metrics_guard = dcl_metrics::set_default_local_recorder(&recorder);
         batch
             .schedule_entity_deployment(
                 announce(entity_id.clone(), "scene".into(), entity_id.clone()).await,
@@ -670,26 +729,73 @@ mod tests {
             2,
             "a deployed entity is skipped by the bloom+db probe"
         );
+        // Processed: the recorded failure, the ignored type, the deployment and the skip.
+        let origin = crate::sync::metrics::remote_server(&base);
+        let rendered = handle.render();
+        for (series, value) in [
+            (
+                format!(
+                    "dcl_entities_deployments_processed_total{{remote_server=\"{origin}\",source=\"pointer-changes\"}}"
+                ),
+                4.0,
+            ),
+            ("dcl_ignored_sync_deployments".into(), 2.0),
+            ("entity_already_stored{entityType=\"scene\"}".into(), 1.0),
+            ("entity_download_success{entityType=\"scene\"}".into(), 2.0),
+            (
+                "entity_deployment_success{entityType=\"scene\"}".into(),
+                1.0,
+            ),
+            (
+                "entity_deployment_failure{entityType=\"scene\",retryable=\"true\"}".into(),
+                1.0,
+            ),
+            (
+                "dcl_deployment_time_count{entity_type=\"scene\",failed=\"true\"}".into(),
+                1.0,
+            ),
+            (
+                "dcl_pending_deployment_gauge{entity_type=\"scene\"}".into(),
+                0.0,
+            ),
+            (
+                "dcl_pending_download_gauge{entity_type=\"scene\"}".into(),
+                0.0,
+            ),
+            ("download_queue_pending".into(), 0.0),
+        ] {
+            let got = crate::sync::metrics::sample(&rendered, &series);
+            assert_eq!(got, Some(value), "{series}:\n{rendered}");
+        }
+        let bytes = format!("dcl_content_download_bytes_total{{remote_server=\"{origin}\"}}");
+        assert!(
+            crate::sync::metrics::sample(&rendered, &bytes).is_some_and(|b| b > 0.0),
+            "{bytes}:\n{rendered}"
+        );
+
+        // One bloom probe per record of a batch: the deployed one hits, the others miss.
+        let bloom = |rendered: &str, hit| {
+            crate::series::test_support::sample(
+                rendered,
+                crate::series::BLOOM_FILTER_CHECKS.descriptor.name,
+                &[("hit", hit)],
+            )
+            .unwrap_or(0.0)
+        };
+        let before = [bloom(&rendered, "true"), bloom(&rendered, "false")];
         let mut records = vec![
             announce(entity_id.clone(), "scene".into(), entity_id.clone()).await,
             announce(format!("{prefix}-new"), "scene".into(), entity_id.clone()).await,
             announce(format!("{prefix}-other"), "scene".into(), entity_id.clone()).await,
         ];
-        batch.retain_undeployed(&mut records).await.unwrap();
+        batch.retain_undeployed(&mut records, None).await.unwrap();
         assert_eq!(records.len(), 2, "the deployed record is dropped");
-        drop(metrics_guard);
-        let rendered = recorder.handle().render();
-        for (hit, n) in [("true", 2.0), ("false", 2.0)] {
-            assert_eq!(
-                crate::series::test_support::sample(
-                    &rendered,
-                    crate::series::BLOOM_FILTER_CHECKS.descriptor.name,
-                    &[("hit", hit)]
-                ),
-                Some(n),
-                "hit={hit}: {rendered}"
-            );
-        }
+        let rendered = handle.render();
+        assert_eq!(
+            [bloom(&rendered, "true"), bloom(&rendered, "false")],
+            [before[0] + 1.0, before[1] + 2.0],
+            "{rendered}"
+        );
 
         server.abort();
         sqlx::query("DELETE FROM content.failed_deployments WHERE entity_id = $1")
