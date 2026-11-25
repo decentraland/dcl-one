@@ -48,9 +48,10 @@ and own the rest. Scenes keep the behaviour they had on 0.307 wherever the new c
   prototype, so `String(result)` would throw.
 - **Clock:** `performance.now()` and deno_core's timer clock (`op_timer_now`, which timers store
   on objects a prototype setter can read) keep a 2 ms resolution on one clock (`clock.rs`).
-  deno_core still hands its timer callback the raw clock, and re-arming a timer list writes it
-  to `expiry`, so a setter on `Object.prototype` can still read it there; closing that needs a
-  change in deno_core.
+  deno_core still fires timers on its own raw clock and writes it into its timer lists'
+  `expiry`; a setter on `Object.prototype` (for example on `msecs`) captures a list, and the
+  scene reads `expiry` from it. `Date` is not coarsened either. Closing both needs a change in
+  deno_core or scene timers of our own.
 - **V8 platform:** `JsRuntime::init_platform` on the sidecar's main thread; only `dcl_deno`'s own
   tests use the unprotected platform, under `cfg(test)`, never through a Cargo feature that
   could unify into a shipped binary. Each scene thread enters its tokio runtime before it creates
