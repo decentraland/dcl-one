@@ -687,6 +687,10 @@
     "primitives": 0,
     "tokens": 27
   },
+  "library/ui/components/ModalCard/ModalCard.module.css": {
+    "primitives": 0,
+    "tokens": 3
+  },
   "library/ui/components/NavBar/NavBar.module.css": {
     "primitives": 0,
     "tokens": 142

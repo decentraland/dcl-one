@@ -109,6 +109,7 @@ export { CloseButton } from './components/CloseButton/CloseButton'
 export type { CloseButtonProps, CloseButtonVariant } from './components/CloseButton/CloseButton'
 export { Modal } from './components/Modal/Modal'
 export type { ModalProps } from './components/Modal/Modal'
+export * from './components/ModalCard/ModalCard'
 
 export { Toast } from './components/Toast/Toast'
 export type { ToastProps, ToastVariant } from './components/Toast/Toast'

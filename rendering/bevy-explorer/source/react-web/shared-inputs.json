@@ -3217,10 +3217,6 @@
           "kind": "regular"
         },
         {
-          "name": "Modal.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "Modal.tsx",
           "kind": "regular"
         },
@@ -7690,6 +7686,10 @@
           "kind": "directory"
         },
         {
+          "name": "ModalCard",
+          "kind": "directory"
+        },
+        {
           "name": "NavBar",
           "kind": "directory"
         },
@@ -8341,6 +8341,23 @@
         },
         {
           "name": "ModalSingleCTA.figma.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/ModalCard",
+      "entries": [
+        {
+          "name": "ModalCard.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "ModalCard.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ModalCard.tsx",
           "kind": "regular"
         }
       ]
@@ -12284,12 +12301,8 @@
       "sha256": "195d59f294091e12fd0278c4953b365a1fefc0a12ba0bb3cd5f3cf3667757f48"
     },
     {
-      "path": "library/ui/apps/hud/design/Modal.module.css",
-      "sha256": "cf4254e7070767f5322627fc6f1b1810a6e299594250024ec20269570060e66e"
-    },
-    {
       "path": "library/ui/apps/hud/design/Modal.tsx",
-      "sha256": "21900a6889385e0530b8190dbf032ebd242bd5b0783965bc6d1a439bb423b0c2"
+      "sha256": "da49b763ba49acfc8d0ea1207308a623d9f0189ab66ebc3402a2bad5651310cf"
     },
     {
       "path": "library/ui/apps/hud/design/OptionMenu.module.css",
@@ -13721,7 +13734,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "4d277c7a48a3d35f0949b8b7e4b5f9c7232256466f0f18032b320190153a4a05"
+      "sha256": "67eedff4ab08fbf974e045f11e0b747eb074732a89afbdec6104ac6b6b61125b"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -16248,6 +16261,14 @@
       "sha256": "d6a246f557cb0cb70c38192ad1b7cc61b54e0c7842212e5fe14dfafac9fc3250"
     },
     {
+      "path": "library/ui/components/ModalCard/ModalCard.module.css",
+      "sha256": "178483733a7052479f0ae4488d03d0ec9f3ab2c4c8279e70cf2be0dcde407995"
+    },
+    {
+      "path": "library/ui/components/ModalCard/ModalCard.tsx",
+      "sha256": "ccdfd4075b5091b94799a5723620f0d865ac69be58e4487ee0a0f35bc54d7a55"
+    },
+    {
       "path": "library/ui/components/NavBar/NavBar.module.css",
       "sha256": "45a42971816ffb28e544951884fdec2c94c2a5aee202d9a0d3bcd20002d6a101"
     },
@@ -16557,7 +16578,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "4b17d7b577de1dca7541b160e3ee81890499181c923749a633bb8143a3d4ad8d"
+      "sha256": "fc01d347510aa3bf87210f79adc4afdee7daf3a3b53cadb197a53ef9fd159bed"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -21215,17 +21236,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/Modal.tsx",
-      "to": "library/ui/apps/hud/design/Modal.module.css",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Modal.tsx",
-      "to": "library/ui/apps/hud/design/Modal.module.css",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Modal.tsx",
-      "to": "library/ui/apps/hud/design/Modal.module.css",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -62326,6 +62347,21 @@
     {
       "from": "library/ui/components/Modal/Modal.tsx",
       "to": "library/ui/components/Modal/Modal.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/ModalCard/ModalCard.tsx",
+      "to": "library/ui/components/ModalCard/ModalCard.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/ModalCard/ModalCard.tsx",
+      "to": "library/ui/components/ModalCard/ModalCard.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/ModalCard/ModalCard.tsx",
+      "to": "library/ui/components/ModalCard/ModalCard.module.css",
       "kind": "test:runtime"
     },
     {
@@ -63836,6 +63872,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/Modal/Modal.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ModalCard/ModalCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ModalCard/ModalCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ModalCard/ModalCard.tsx",
       "kind": "test:runtime"
     },
     {
@@ -68851,6 +68902,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/Modal/Modal.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/ModalCard/ModalCard.tsx",
       "kind": "type"
     },
     {
