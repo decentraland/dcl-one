@@ -8,9 +8,10 @@
 //! returns, and a task of its own drains it. A stalled broker therefore costs pending messages,
 //! never a slowed pass.
 
+use parking_lot::Mutex;
 use std::future::Future;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_nats::PublishErrorKind;
@@ -79,7 +80,7 @@ struct Shared {
     pending: Notify,
     user_count: AtomicU32,
     current: Arc<CurrentAssignments>,
-    control: Mutex<ControlPositions>,
+    control: std::sync::Mutex<ControlPositions>,
     control_enabled: Notify,
     statistics: Mutex<crate::pulse::statistics::Statistics>,
     statistics_epoch: uuid::Uuid,
@@ -96,7 +97,7 @@ pub struct NatsClusterFeed {
 
 impl Drop for NatsClusterFeed {
     fn drop(&mut self) {
-        if let Some(drain) = self.drain.get_mut().unwrap().take() {
+        if let Some(drain) = self.drain.get_mut().take() {
             drain.abort();
         }
     }
@@ -125,7 +126,7 @@ impl NatsClusterFeed {
             pending: Notify::new(),
             user_count: AtomicU32::new(0),
             current,
-            control: Mutex::new(ControlPositions::default()),
+            control: std::sync::Mutex::new(ControlPositions::default()),
             control_enabled: Notify::new(),
             statistics: Mutex::new(crate::pulse::statistics::Statistics::with_incarnation(
                 statistics_epoch,
@@ -142,11 +143,15 @@ impl NatsClusterFeed {
     }
 
     pub fn pending_changes(&self) -> usize {
-        self.shared.outbox.lock().unwrap().pending_changes()
+        self.shared.outbox.lock().pending_changes()
     }
 
     pub fn enable_control_positions(&self, audience: &str) -> Result<(), &'static str> {
-        self.shared.control.lock().unwrap().enable(audience)?;
+        self.shared
+            .control
+            .lock()
+            .map_err(|_| "control positions lock poisoned")?
+            .enable(audience)?;
         self.shared.control_enabled.notify_waiters();
         Ok(())
     }
@@ -162,7 +167,7 @@ fn record(outcome: QueueOutcome) {
 
 impl ClusterFeedPublisher for NatsClusterFeed {
     fn shutdown(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
-        let drain = self.drain.lock().unwrap().take();
+        let drain = self.drain.lock().take();
         Box::pin(async move {
             if let Some(drain) = drain {
                 drain.abort();
@@ -174,7 +179,11 @@ impl ClusterFeedPublisher for NatsClusterFeed {
         Some(self.shared.current.clone())
     }
     fn control_snapshot(&self) -> ControlSnapshot {
-        self.shared.control.lock().unwrap().snapshot()
+        self.shared
+            .control
+            .lock()
+            .expect("control lock poisoned")
+            .snapshot()
     }
 
     fn replace_assignments(
@@ -218,11 +227,7 @@ impl ClusterFeedPublisher for NatsClusterFeed {
             .user_count
             .store(active_peers, Ordering::Relaxed);
         let payload = topology_message(pass).encode_to_vec();
-        self.shared
-            .statistics
-            .lock()
-            .unwrap()
-            .topology(payload.clone());
+        self.shared.statistics.lock().topology(payload.clone());
         self.shared.statistics_pending.notify_one();
         if payload.len() > crate::protocol::bus::topology::MAX_ISLANDS_BYTES {
             crate::pulse::metrics::nats_publish_failed();
@@ -231,7 +236,7 @@ impl ClusterFeedPublisher for NatsClusterFeed {
             );
             return;
         }
-        record(self.shared.outbox.lock().unwrap().queue_topology(payload));
+        record(self.shared.outbox.lock().queue_topology(payload));
         self.shared.pending.notify_one();
     }
 }
@@ -395,7 +400,7 @@ async fn serve_statistics(shared: &Shared, client: &async_nats::Client) {
                 let Some(request) = ProducerRequest::decode(&message.payload) else {
                     continue;
                 };
-                let response = shared.statistics.lock().unwrap().control(request).encode();
+                let response = shared.statistics.lock().control(request).encode();
                 if let Some(response) = response {
                     let _ = tokio::time::timeout(
                         REQUEST_DEADLINE,
@@ -412,7 +417,6 @@ async fn serve_statistics(shared: &Shared, client: &async_nats::Client) {
             shared
                 .statistics
                 .lock()
-                .unwrap()
                 .observe(observation, chrono::Utc::now().timestamp_millis());
             shared.statistics_pending.notify_one();
         }
@@ -478,7 +482,7 @@ async fn publish_statistics_with<F: Future<Output = bool>>(
             continue;
         };
         let update = {
-            let mut statistics = shared.statistics.lock().unwrap();
+            let mut statistics = shared.statistics.lock();
             if recovery {
                 statistics.require_recovery();
             }
@@ -525,7 +529,12 @@ async fn serve_control_positions(shared: &Shared, client: &async_nats::Client) {
         let enabled = shared.control_enabled.notified();
         tokio::pin!(enabled);
         enabled.as_mut().enable();
-        if shared.control.lock().unwrap().is_enabled() {
+        if shared
+            .control
+            .lock()
+            .expect("control lock poisoned")
+            .is_enabled()
+        {
             break;
         }
         enabled.await;
@@ -548,12 +557,20 @@ async fn serve_control_positions(shared: &Shared, client: &async_nats::Client) {
         match message.subject.as_str() {
             crate::protocol::bus::control_position::SUBJECT => {
                 if let Some(update) = ControlPosition::decode(&message.payload) {
-                    shared.control.lock().unwrap().ingest(update);
+                    shared
+                        .control
+                        .lock()
+                        .expect("control lock poisoned")
+                        .ingest(update);
                 }
             }
             LegacyRoomIntent::SUBJECT => {
                 if let Some(update) = LegacyRoomIntent::decode(&message.payload) {
-                    shared.control.lock().unwrap().ingest_intent(update);
+                    shared
+                        .control
+                        .lock()
+                        .expect("control lock poisoned")
+                        .ingest_intent(update);
                 }
             }
             _ => {}
@@ -594,7 +611,6 @@ fn queue_snapshot(
         shared
             .outbox
             .lock()
-            .unwrap()
             .queue_change(change.subject(), change.encode()),
     );
     shared.pending.notify_one();
@@ -617,10 +633,10 @@ async fn serve_completions(shared: &Shared, client: &async_nats::Client) {
                 }
             }
             _ = retry.tick() => {
-                let budget = shared.outbox.lock().unwrap().capacity();
+                let budget = shared.outbox.lock().capacity();
                 for snapshot in shared.current.retained_hints_checked(budget, Some(&shared.control)) {
                     let change = snapshot_change(snapshot);
-                    let admitted = shared.outbox.lock().unwrap()
+                    let admitted = shared.outbox.lock()
                         .try_queue_retry(change.subject(), change.encode());
                     if let Some(outcome) = admitted {
                         record(outcome);
@@ -848,7 +864,7 @@ async fn drain<S: FeedSink + Sync>(shared: &Arc<Shared>, options: &NatsFeedOptio
                     chrono::Utc::now().timestamp_millis().max(0) as u64,
                     shared.user_count.load(Ordering::Relaxed),
                 );
-                shared.statistics.lock().unwrap().discovery(payload.clone());
+                shared.statistics.lock().discovery(payload.clone());
                 shared.statistics_pending.notify_one();
                 let error = match tokio::time::timeout(
                     crate::topology::TOPOLOGY_RECEIPT_TTL, sink.send(DISCOVERY_SUBJECT.to_string(), payload)
@@ -877,7 +893,7 @@ async fn next_heartbeat(timer: Option<&mut tokio::time::Interval>) {
 
 /// The lock is taken and released inside this call so no guard is ever held across an await.
 fn next(shared: &Arc<Shared>) -> Option<(String, Vec<u8>, tokio::time::Instant)> {
-    shared.outbox.lock().unwrap().try_dequeue_next_timed()
+    shared.outbox.lock().try_dequeue_next_timed()
 }
 
 #[cfg(test)]
@@ -994,7 +1010,7 @@ mod tests {
 
     impl FeedSink for FlakySink {
         async fn send(&self, subject: String, _: Vec<u8>) -> Option<PublishErrorKind> {
-            self.sent.lock().unwrap().push(subject);
+            self.sent.lock().push(subject);
             self.reject
         }
     }
@@ -1006,7 +1022,7 @@ mod tests {
             pending: Notify::new(),
             user_count: AtomicU32::new(0),
             current: Arc::new(CurrentAssignments::default()),
-            control: Mutex::new(ControlPositions::default()),
+            control: std::sync::Mutex::new(ControlPositions::default()),
             control_enabled: Notify::new(),
             statistics: Mutex::new(crate::pulse::statistics::Statistics::default()),
             statistics_epoch: uuid::Uuid::nil(),
@@ -1025,7 +1041,7 @@ mod tests {
         };
         let shared = feed_shared(8);
         {
-            let mut outbox = shared.outbox.lock().unwrap();
+            let mut outbox = shared.outbox.lock();
             outbox.queue_topology(vec![9]);
             for peer in 0..3u32 {
                 outbox.queue_change(format!("peer.0x{peer}.cluster_change"), vec![1, 2, 3]);
@@ -1042,7 +1058,7 @@ mod tests {
                 .is_err();
         assert!(survived, "a rejected payload must not end the drain loop");
         assert_eq!(
-            sink.sent.lock().unwrap().len(),
+            sink.sent.lock().len(),
             4,
             "every queued message is attempted despite the first one failing"
         );
@@ -1051,7 +1067,6 @@ mod tests {
         shared
             .outbox
             .lock()
-            .unwrap()
             .queue_change("peer.0xa.cluster_change".to_string(), vec![1]);
         shared.pending.notify_one();
         let sink = FlakySink {

@@ -80,7 +80,7 @@ mod tests {
     use super::test_support::StubBanStatus;
     use super::*;
     use crate::interfaces::test_support::StubPolicy;
-    use std::sync::Mutex;
+    use parking_lot::Mutex;
 
     fn wallet() -> Address {
         Address::parse("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap()
@@ -166,7 +166,7 @@ mod tests {
             device: Option<&str>,
             now: NaiveDateTime,
         ) -> Result<Option<Ban>, AuthorityNotEstablished> {
-            self.0.lock().unwrap().push((
+            self.0.lock().push((
                 actor.clone(),
                 scene.cloned(),
                 device.map(str::to_owned),
@@ -196,7 +196,7 @@ mod tests {
             None
         );
         assert_eq!(
-            *probe.0.lock().unwrap(),
+            *probe.0.lock(),
             vec![(actor, Some(scene), Some("device".into()), now)]
         );
     }

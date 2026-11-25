@@ -297,7 +297,11 @@ mod tests {
                     for before_native in [false, true] {
                         let now = Instant::now();
                         let controls = Mutex::new(ControlPositions::default());
-                        controls.lock().unwrap().enable("realm-a").unwrap();
+                        controls
+                            .lock()
+                            .expect("controls lock poisoned")
+                            .enable("realm-a")
+                            .unwrap();
                         let current = Arc::new(CurrentAssignments::default());
                         let mut identity = IdentityBoard::new(1);
                         identity.attach_assignments(current.clone());
@@ -313,11 +317,12 @@ mod tests {
                             owner_peer: 0,
                             registration: None,
                         };
-                        assert!(controls.lock().unwrap().ingest_version_at(
-                            input.clone(),
-                            version,
-                            now
-                        ));
+                        assert!(
+                            controls
+                                .lock()
+                                .expect("controls lock poisoned")
+                                .ingest_version_at(input.clone(), version, now)
+                        );
                         current.replace_checked(
                             1,
                             Duration::from_secs(30),
@@ -326,11 +331,12 @@ mod tests {
                         );
                         input.epoch = 9;
                         input.session = format!("0x{:040x}", 99);
-                        assert!(controls.lock().unwrap().ingest_version_at(
-                            input.clone(),
-                            version,
-                            now
-                        ));
+                        assert!(
+                            controls
+                                .lock()
+                                .expect("controls lock poisoned")
+                                .ingest_version_at(input.clone(), version, now)
+                        );
                         current.replace_checked(
                             2,
                             Duration::from_secs(30),
@@ -342,7 +348,7 @@ mod tests {
                             .unwrap();
                         assert_eq!(before.pending_takeovers.len(), 1);
                         let invalidate_control = || {
-                            let mut controls = controls.lock().unwrap();
+                            let mut controls = controls.lock().expect("controls lock poisoned");
                             if terminal {
                                 let mut withdrawal = input.clone();
                                 withdrawal.sequence = 2;
@@ -393,18 +399,28 @@ mod tests {
                         );
                         input.sequence = 3;
                         if terminal {
-                            assert!(!controls.lock().unwrap().ingest_version_at(
-                                input.clone(),
-                                version,
-                                now + CONTROL_POSITION_TTL
-                            ));
+                            assert!(
+                                !controls
+                                    .lock()
+                                    .expect("controls lock poisoned")
+                                    .ingest_version_at(
+                                        input.clone(),
+                                        version,
+                                        now + CONTROL_POSITION_TTL
+                                    )
+                            );
                             input.epoch += 1;
                         }
-                        assert!(controls.lock().unwrap().ingest_version_at(
-                            input.clone(),
-                            version,
-                            now + CONTROL_POSITION_TTL
-                        ));
+                        assert!(
+                            controls
+                                .lock()
+                                .expect("controls lock poisoned")
+                                .ingest_version_at(
+                                    input.clone(),
+                                    version,
+                                    now + CONTROL_POSITION_TTL
+                                )
+                        );
                         assert!(
                             current
                                 .lookup_checked(&input.wallet, &input.session, Some(&controls))

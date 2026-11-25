@@ -420,11 +420,11 @@ async fn refresh(state: &CommsState) -> Result<(), ApiError> {
         .list_rooms()
         .await
         .map_err(|_| ApiError::http(503, "LiveKit room listing failed"))?;
-    let after = state.metadata_cursor.lock().unwrap().clone();
+    let after = state.metadata_cursor.lock().clone();
     let (rooms, next) = metadata_batch(rooms, after.as_deref());
     // Advance even across an unavailable room, so one room cannot starve later
     // rooms. A new process starts a fresh bounded pass over this derived state.
-    *state.metadata_cursor.lock().unwrap() = next;
+    *state.metadata_cursor.lock() = next;
     for room in rooms {
         let result = refresh_room(state, &room).await;
         if let Err(error) = result {
@@ -1024,7 +1024,7 @@ mod tests {
             room: Ok(resolved),
             ..Default::default()
         });
-        let writes = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let writes = Arc::new(parking_lot::Mutex::new(Vec::<Value>::new()));
         let captured = writes.clone();
         let api = axum::Router::new().route(
             "/twirp/livekit.RoomService/{method}",
@@ -1036,7 +1036,7 @@ mod tests {
                         if method == "ListRooms" {
                             return axum::Json(json!({"rooms":[{"name":body["names"][0],"sid":"RM_fixture","metadata":"{}"}]}));
                         }
-                        captured.lock().unwrap().push(body);
+                        captured.lock().push(body);
                         axum::Json(json!({}))
                     }
                 },
@@ -1048,12 +1048,12 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, api).await.unwrap() });
         refresh_room(&state, &room).await.unwrap();
         assert_eq!(
-            writes.lock().unwrap().len(),
+            writes.lock().len(),
             1,
             "missing competitor Place cannot affect exact scene identity"
         );
         let metadata: Value =
-            serde_json::from_str(writes.lock().unwrap()[0]["metadata"].as_str().unwrap()).unwrap();
+            serde_json::from_str(writes.lock()[0]["metadata"].as_str().unwrap()).unwrap();
         assert_eq!(
             metadata["sceneAdmins"],
             json!([by.as_str(), "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"])
@@ -1070,24 +1070,18 @@ mod tests {
         sqlx::query("INSERT INTO explore.place (id, base_position, raw) VALUES ($1, '7,8', $2)").bind(second.key()).bind(json!({"world":true,"world_name":second.key(),"owner":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","positions":["7,8"]})).execute(&pool).await.unwrap();
         refresh_room(&state, &room).await.unwrap();
         assert_eq!(
-            writes.lock().unwrap().len(),
+            writes.lock().len(),
             2,
             "malformed competitor footprint cannot change the exact-world enrichment"
         );
-        assert!(
-            writes
-                .lock()
-                .unwrap()
-                .iter()
-                .all(|body| body["room"] == room)
-        );
+        assert!(writes.lock().iter().all(|body| body["room"] == room));
         state.scenes = Arc::new(StubScenes {
             room: Err(crate::rooms::ResolveError::UnresolvedRoom(room.clone())),
             ..Default::default()
         });
         refresh_room(&state, &room).await.unwrap();
         assert_eq!(
-            writes.lock().unwrap().len(),
+            writes.lock().len(),
             2,
             "deleted scene receives no guessed historical parcel roles"
         );
@@ -1159,7 +1153,7 @@ mod tests {
         #[derive(Clone)]
         struct Mock {
             names: Vec<String>,
-            updates: Arc<std::sync::Mutex<Vec<Value>>>,
+            updates: Arc<parking_lot::Mutex<Vec<Value>>>,
         }
         async fn api(
             State(mock): State<Mock>,
@@ -1180,10 +1174,10 @@ mod tests {
                     "metadata": json!({"presenters":["retained"]}).to_string()
                 }]}));
             }
-            mock.updates.lock().unwrap().push(body);
+            mock.updates.lock().push(body);
             Json(json!({}))
         }
-        let updates = Arc::new(std::sync::Mutex::new(vec![]));
+        let updates = Arc::new(parking_lot::Mutex::new(vec![]));
         let app = Router::new()
             .route("/twirp/livekit.RoomService/{method}", post(api))
             .with_state(Mock {
@@ -1198,7 +1192,7 @@ mod tests {
         });
         refresh(&state).await.unwrap();
         server.abort();
-        let updates = updates.lock().unwrap();
+        let updates = updates.lock();
         assert_eq!(
             updates.len(),
             1,
@@ -1288,7 +1282,7 @@ mod tests {
             .bind(event.event_id).fetch_one(&pool).await.unwrap();
         assert!(saved.cleaned_at.is_some());
         cleanup(&state, &feed, &saved).await.unwrap();
-        let notices = directory.stub.streaming_notifications.lock().unwrap();
+        let notices = directory.stub.streaming_notifications.lock();
         let actual: std::collections::BTreeSet<_> =
             notices.iter().map(|n| n.recipient.as_str()).collect();
         assert_eq!(
@@ -1390,7 +1384,7 @@ mod tests {
                 .await
                 .unwrap();
             {
-                let notices = directory.stub.streaming_notifications.lock().unwrap();
+                let notices = directory.stub.streaming_notifications.lock();
                 assert_eq!(
                     notices.len(),
                     2,
@@ -1496,7 +1490,6 @@ mod tests {
             .stub
             .streaming_notifications
             .lock()
-            .unwrap()
             .iter()
             .map(|notice| notice.recipient.as_str().to_owned())
             .collect();
@@ -1531,20 +1524,17 @@ mod tests {
             sqlx::query("INSERT INTO social.scene_admins (place_id,admin_address,added_by,added_at,active,removed_at) VALUES ('0,0',$1,$1,$2,$3,CASE WHEN $3 THEN NULL ELSE $2 END)")
                 .bind(admin).bind(event.removed_at-chrono::Duration::seconds(1)).bind(active).execute(&pool).await.unwrap();
         }
-        *directory.stub.fail_streaming_recipient.lock().unwrap() = Some(wallet(2));
+        *directory.stub.fail_streaming_recipient.lock() = Some(wallet(2));
         let feed = RemovedPlaces::new(pool.clone());
         let mut state = Arc::new(state);
         assert!(
             cleanup(&state, &feed, &event).await.is_err(),
             "second-recipient failure must keep the remaining fanout pending"
         );
-        assert_eq!(
-            directory.stub.streaming_notifications.lock().unwrap().len(),
-            1
-        );
+        assert_eq!(directory.stub.streaming_notifications.lock().len(), 1);
         Arc::get_mut(&mut state).unwrap().policy = Arc::new(StubPolicy::default());
         cleanup(&state, &feed, &event).await.unwrap();
-        let notices = directory.stub.streaming_notifications.lock().unwrap();
+        let notices = directory.stub.streaming_notifications.lock();
         assert_eq!(notices.len(), 6);
         assert_eq!(
             notices
@@ -1560,7 +1550,7 @@ mod tests {
                     && n.metadata["address"] == n.recipient.as_str())
         );
         assert_eq!(
-            *directory.stub.streaming_attempts.lock().unwrap(),
+            *directory.stub.streaming_attempts.lock(),
             [1, 2, 2, 3, 4, 5, 6].map(wallet)
         );
     }
@@ -1777,7 +1767,7 @@ mod tests {
             cleanup(&state, &feed, &event).await.unwrap();
         }
         {
-            let notices = directory.stub.streaming_notifications.lock().unwrap();
+            let notices = directory.stub.streaming_notifications.lock();
             assert_eq!(notices.len(), 4);
             for key in notices
                 .iter()
@@ -1841,7 +1831,7 @@ mod tests {
                 .await
                 .unwrap();
         assert!(active);
-        let notices = directory.stub.streaming_notifications.lock().unwrap();
+        let notices = directory.stub.streaming_notifications.lock();
         assert_eq!(notices.len(), 2);
         assert!(
             notices
@@ -1934,14 +1924,7 @@ mod tests {
         cleanup(&Arc::new(state), &RemovedPlaces::new(pool.clone()), &event)
             .await
             .unwrap();
-        assert!(
-            directory
-                .stub
-                .streaming_notifications
-                .lock()
-                .unwrap()
-                .is_empty()
-        );
+        assert!(directory.stub.streaming_notifications.lock().is_empty());
         let active: bool =
             sqlx::query_scalar("SELECT active FROM social.scene_admins WHERE place_id='0,0'")
                 .fetch_one(&pool)
@@ -2001,14 +1984,7 @@ mod tests {
         cleanup(&state, &feed, &event)
             .await
             .expect("historical cleanup must not need notification authority");
-        assert!(
-            directory
-                .stub
-                .streaming_notifications
-                .lock()
-                .unwrap()
-                .is_empty()
-        );
+        assert!(directory.stub.streaming_notifications.lock().is_empty());
         let active: bool =
             sqlx::query_scalar("SELECT active FROM social.scene_admins WHERE place_id='0,0'")
                 .fetch_one(&pool)
@@ -2050,7 +2026,7 @@ mod tests {
             ..Default::default()
         });
         cleanup(&state, &feed, &later).await.unwrap();
-        let notices = directory.stub.streaming_notifications.lock().unwrap();
+        let notices = directory.stub.streaming_notifications.lock();
         assert_eq!(
             notices.len(),
             1,
@@ -2123,7 +2099,7 @@ mod tests {
         .await
         .unwrap();
         assert!(!active, "the first pass revoked the grant");
-        let notifications = directory.stub.streaming_notifications.lock().unwrap();
+        let notifications = directory.stub.streaming_notifications.lock();
         let mut told: Vec<&str> = notifications.iter().map(|n| n.recipient.as_str()).collect();
         told.sort();
         assert_eq!(
@@ -2169,7 +2145,7 @@ mod tests {
         cleanup(&state, &RemovedPlaces::new(pool.clone()), &event)
             .await
             .unwrap();
-        let notifications = directory.stub.streaming_notifications.lock().unwrap();
+        let notifications = directory.stub.streaming_notifications.lock();
         let mut told: Vec<&str> = notifications.iter().map(|n| n.recipient.as_str()).collect();
         told.sort();
         assert_eq!(told, [owner, admin, operator], "once each");
@@ -2215,14 +2191,7 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(count, 0);
-        assert!(
-            directory
-                .stub
-                .streaming_notifications
-                .lock()
-                .unwrap()
-                .is_empty()
-        );
+        assert!(directory.stub.streaming_notifications.lock().is_empty());
     }
 
     /// The place of a world published here has the world name as its id; the
@@ -2440,7 +2409,7 @@ mod tests {
             .bind(identity).execute(&pool).await.unwrap();
         directory.fail.store(false, Ordering::SeqCst);
         cleanup(&state, &feed, &saved).await.unwrap();
-        let notifications = directory.stub.streaming_notifications.lock().unwrap();
+        let notifications = directory.stub.streaming_notifications.lock();
         let told: std::collections::BTreeSet<&str> =
             notifications.iter().map(|n| n.recipient.as_str()).collect();
         assert_eq!(
@@ -2472,13 +2441,6 @@ mod tests {
         .await
         .unwrap();
         assert!(pending);
-        assert!(
-            directory
-                .stub
-                .streaming_notifications
-                .lock()
-                .unwrap()
-                .is_empty()
-        );
+        assert!(directory.stub.streaming_notifications.lock().is_empty());
     }
 }
