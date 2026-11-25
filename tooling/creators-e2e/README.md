@@ -21,8 +21,9 @@ else playwright-core's own download.
 ## How it works
 
 - `helpers/app.ts` opens a page on the dev server with a restored session for a deterministic test wallet
-  (`signedOut: true` for a visitor) and answers every request through `helpers/route.ts`, matched by the hosts the
-  creators config names for the development environment.
+  (`signedOut: true` for a visitor) and answers every request through `helpers/route.ts`: the builder, the
+  marketplace, the relay, credits, content and lambdas by their path on the node serving the page, everything else
+  by the host the creators config names for the development environment.
 - builder-server (`helpers/builderServer.ts`) and the marketplace (`helpers/market.ts`) are in-memory stores seeded
   from the `fixtures.ts` factories. Writes change them, so a spec asserts what the page shows after a save.
 - One fake chain (`helpers/rpc.ts`) backs the read node and the wallet. Signatures are real (the test key, which holds

@@ -36,7 +36,7 @@ describe('transfer ownership', () => {
     expect(String(sent?.args?.creator).toLowerCase()).toBe(BOB)
     await app.waitForEvent('bd_collection_ownership_transferred', { collection_id: live.id })
     // The server learns the new owner from the chain.
-    expect(app.writes).toContain(`POST /v1/collections/${live.id}/owner/sync`)
+    expect(app.writes).toContain(`POST /builder-api/v1/collections/${live.id}/owner/sync`)
 
     // Back on the list, the collection belongs to someone else now.
     await clickTestId(page, 'success-modal-done')

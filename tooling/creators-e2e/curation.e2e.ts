@@ -38,6 +38,8 @@ const reviewPath = `/collections/editor?collection=${submitted.id}&reviewing=tru
 const curationState = (a: App) =>
   a.page.$eval('[data-testid="review-bar"] [data-testid="curation-state"]', el => el.getAttribute('data-state'))
 
+const curationTab = (page: App['page']) => page.getByRole('link', { name: 'Curation', exact: true })
+
 describe('curation', () => {
   it('offers no auto-reviewing filter while the automated review is off', async () => {
     app = await launchApp({ path: '/curation?status=auto_reviewing', builder })
@@ -53,7 +55,7 @@ describe('curation', () => {
   it('lists a submission, assigns it and approves it from the editor', async () => {
     app = await launchApp({ path: '/curation', builder })
     const { page } = app
-    await waitForTestId(page, 'nav-curation')
+    await curationTab(page).waitFor({ timeout: 20_000 })
     await waitForTestId(page, 'curation-row')
 
     await clickTestId(page, 'curation-row-assign-me')
@@ -117,7 +119,7 @@ describe('curation', () => {
   it('is not there for anyone off the committee', async () => {
     app = await launchApp({ path: '/curation', builder: { ...builder, committee: [] } })
     await app.page.waitForSelector('main[data-status="404"]', { state: 'attached' })
-    expect(await app.page.$('[data-testid="nav-curation"]')).toBeNull()
+    expect(await curationTab(app.page).count()).toBe(0)
   })
 })
 
