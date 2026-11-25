@@ -417,7 +417,23 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                 .and_then(|track| Reflect::get(&track, &"videoElement".into()).ok())
                 .and_then(|element| element.dyn_into::<HtmlVideoElement>().ok());
             match element {
-                Some(element) => media::host::adopt_video_element(media_id, element),
+                Some(element) => {
+                    // Each output owns its element: disposing a selected screen must not
+                    // pause the automatic showcase or another screen using this track.
+                    let copy = element
+                        .clone_node()
+                        .ok()
+                        .and_then(|node| node.dyn_into::<HtmlVideoElement>().ok());
+                    if let Some(copy) = copy {
+                        if let Ok(stream) = Reflect::get(&element, &"srcObject".into()) {
+                            if Reflect::set(&copy, &"srcObject".into(), &stream).is_ok() {
+                                copy.set_autoplay(true);
+                                copy.set_muted(true);
+                                media::host::adopt_video_element(media_id, copy);
+                            }
+                        }
+                    }
+                }
                 None => error!("remote video track {track} has no video element to attach"),
             }
         }
