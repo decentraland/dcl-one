@@ -1,28 +1,11 @@
 // Smoke test for the design primitives ported from eordano/dcl-react-ui: each must
 // mount and render without throwing. Behaviour lives with its consumers; this just
 // guards the port (compiles AND renders).
-import { CharCounter, FieldLabel, Spinner } from '@dcl/one-ui'
+import { CharCounter, EmptyState, FieldLabel, Spinner } from '@dcl/one-ui'
 import { act, render, screen } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
 import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
-import {
-  Modal,
-  ModalTitle,
-  ModalActions,
-  ModalShell,
-  SearchField,
-  ContextMenu,
-  Dropdown,
-  EmptyState,
-  Coin,
-  ManaIcon,
-  Search,
-  Close,
-  SocialIcon,
-  StarWalletIcon,
-  DclLogomark,
-  ManaMark
-} from '../design'
+import { Modal, ModalTitle, ModalActions, ModalShell, SearchField, ContextMenu, Dropdown, Coin, ManaIcon, Search, Close, SocialIcon, StarWalletIcon, DclLogomark, ManaMark } from '../design'
 
 describe('ported design primitives', () => {
   it('render without throwing', () => {

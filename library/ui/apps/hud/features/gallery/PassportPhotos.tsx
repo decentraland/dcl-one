@@ -1,8 +1,7 @@
 // The reel is read unsigned, so even your own passport lists only PUBLIC photos.
 
-import { Spinner } from '@dcl/one-ui'
+import { EmptyState, Spinner } from '@dcl/one-ui'
 import { useCallback, useState } from 'react'
-import { EmptyState } from '../../design'
 import type { GalleryPhotoMeta, Wearable } from '@explorer-core/engine/protocol'
 import type { ReelWrite } from '../session/useEngineSession'
 import type { ChatUser } from '../chat/ProfileCardPresentation'

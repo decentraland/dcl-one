@@ -7,9 +7,9 @@
 // NOTE: backend follow-up for OTHER users — the bridge must fetch their rich profile
 // (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
-import { Button, Spinner, Tooltip } from '@dcl/one-ui'
+import { Button, EmptyState, Spinner, Tooltip } from '@dcl/one-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, Close, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, MaskIcon, Pencil, ReportFlag, ScrollThumb, Search, Tabs, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem, NameSeal } from '../../design'
+import { Avatar, BlockUserIcon, Close, ColorPicker, ContextMenu, ControlButton, EquippedItemCard, Icon, Kebab, MaskIcon, Pencil, ReportFlag, ScrollThumb, Search, Tabs, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem, NameSeal } from '../../design'
 import giftIcon from '../../assets/gifting/gift.png'
 import jumpInIcon from '../../assets/friends/jump-in.png'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'

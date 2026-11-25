@@ -6,7 +6,7 @@
 // features import them: that test watches the entry. Sections use local data only: no network,
 // wallet or engine call.
 
-import { Button, CharCounter, CodeInput, CountBadge, FieldLabel, Slider, Spinner, Switch } from '@dcl/one-ui'
+import { Button, CharCounter, CodeInput, CountBadge, EmptyState, FieldLabel, Panel, Slider, Spinner, Switch } from '@dcl/one-ui'
 import { useId, useRef, useState, useSyncExternalStore } from 'react'
 import { getHudScale, subscribeHudScale } from '@explorer-core/lib/hudScale'
 import {
@@ -27,7 +27,6 @@ import {
   DateField,
   DclLogo,
   Dropdown,
-  EmptyState,
   EquippedItemCard,
   HeaderButton,
   HintsButton,
@@ -47,13 +46,11 @@ import {
   ModalTitle,
   OptionMenu,
   Pager,
-  Panel,
   People,
   Pin,
   PopupHost,
   Rail,
   ScrollThumb,
-  Search,
   SearchField,
   Select,
   showConfirm,
@@ -61,13 +58,11 @@ import {
   showToast,
   Submenu,
   SubmitField,
-  SwapLabel,
   Tabs,
   TextArea,
   TextInput,
   ToastHost,
   VerifiedBadge,
-  VoiceBars,
   WearableCard,
   type IconName,
   type Rarity
@@ -401,8 +396,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
     </Panel>
   ),
 
-  VoiceBars: () => <VoiceBars />,
-
   Chip: () => (
     <>
       <div style={{ ...row, gap: 20 }}>
@@ -465,12 +458,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
     </div>
   ),
 
-  SwapLabel: () => (
-    <Button appearance="hud" size="sm" variant="ghost" aria-label="Cancel join request">
-      <SwapLabel idle="Request Sent" hover="Cancel Request" />
-    </Button>
-  ),
-
   KebabMenu: () => (
     <div style={{ display: 'flex', gap: 16, paddingBottom: 120 }}>
       <KebabMenu label="Conversation options" items={(close) => [{ label: 'View Community', onClick: close }, { label: 'Delete chat history', danger: true, onClick: close }]} />
@@ -521,24 +508,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
 
   BrowsePage: () => <BrowsePageShowcase />,
 
-  EmptyState: () => (
-    <div style={{ ...column, maxWidth: 560 }}>
-      <EmptyState variant="inline" icon={<Search size={32} />} title="Nothing matched your search" subtitle="Try another name or clear the filters." />
-      <EmptyState variant="inline" tone="error" title="Couldn't load the shop" subtitle="The request timed out." actions={[{ label: 'Retry', onClick: () => undefined }]} />
-      <EmptyState
-        variant="card"
-        iconWash
-        icon={<People size={32} />}
-        title="No friends yet"
-        subtitle="Add the people you meet in-world."
-        actions={[
-          { label: 'Find people', onClick: () => undefined },
-          { label: 'Later', variant: 'ghost', onClick: () => undefined }
-        ]}
-      />
-    </div>
-  ),
-
   ColorPicker: () => (
     <div style={{ maxWidth: 320 }}>
       <ColorPicker label="Hair color" value="#5b310f" presets={['#1c1c1c', '#3c210b', '#5b310f', '#7b4818', '#985f37', '#8c2014', '#e98234', '#ffbe28', '#fad281', '#d4d4d4']} onChange={() => undefined} />
@@ -547,13 +516,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
 
   NameColorPicker: () => (
     <ColorPicker label="Name color" value="#40eaff" presets={['#a140ff', '#ff40ad', '#ff9840', '#ffe340', '#40ff45', '#40eaff']} hueOnly swatch onChange={() => undefined} />
-  ),
-
-  Panel: () => (
-    <Panel style={{ padding: 18, maxWidth: 360 }}>
-      <div style={{ fontWeight: 700, marginBottom: 6 }}>Genesis Plaza</div>
-      <div style={{ color: 'var(--ink-7)', fontSize: 'var(--fs-sm)' }}>A surface for HUD widgets and menus.</div>
-    </Panel>
   ),
 
   Brand: () => (

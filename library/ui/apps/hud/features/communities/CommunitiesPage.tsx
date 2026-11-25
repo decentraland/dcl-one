@@ -7,9 +7,9 @@
 // it, and its description on hover. The sidebar's Invites & Requests opens the user's invites, the
 // join requests their communities received and their own requests.
 
-import { Button, CountBadge, Spinner, Tooltip } from '@dcl/one-ui'
+import { Button, CountBadge, EmptyState, Spinner, SwapLabel, Tooltip } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Chip, EmptyState, SearchField, SwapLabel } from '../../design'
+import { Avatar, Chip, SearchField } from '../../design'
 import { nameColor } from '@explorer-core/lib/identity'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { MenuBackdrop } from '../menu/MenuBackdrop'

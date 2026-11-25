@@ -4,14 +4,14 @@
 // `onPick(place)` action.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { BrowseLoading, CheckBold, ChevronDown, EmptyState, Heart, Pin, Search } from '../../design'
+import { BrowseLoading, CheckBold, ChevronDown, Heart, Pin, Search } from '../../design'
 import { PlaceCard } from './PlaceCard'
 import { usePlaces, type PlacesSection, type PlacesSort } from './usePlaces'
 import { isHiddenPlace, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { CAT_ICONS } from '../map/mapArt'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import styles from './PlacesPage.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, EmptyState } from '@dcl/one-ui'
 
 type Pill = 'explore' | 'recent' | 'favourites' | 'my'
 // Recent is the public feed, newest first: the HUD keeps no visit history.

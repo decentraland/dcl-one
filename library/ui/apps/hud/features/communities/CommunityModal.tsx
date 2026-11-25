@@ -5,7 +5,7 @@
 // read a page at a time (Announcements.tsx).
 
 import { useEffect, useState } from 'react'
-import { Avatar, BanIcon, ControlButton, EmptyState, SwapLabel, DemoteModeratorIcon, Kebab, MaskIcon, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
+import { Avatar, BanIcon, ControlButton, DemoteModeratorIcon, Kebab, MaskIcon, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
 import joinStreamIcon from '../../assets/voice/join-stream.png'
 import streamIcon from '../../assets/voice/stream-small.png'
 import endStreamIcon from '../../assets/voice/end-stream.png'
@@ -43,7 +43,7 @@ import styles from './CommunityModal.module.css'
 import { getHudScale } from '@explorer-core/lib/hudScale'
 import { siteUrl } from '@hud-host'
 import { Mark } from '../../design/Glyphs'
-import { Button } from '@dcl/one-ui'
+import { Button, EmptyState, SwapLabel } from '@dcl/one-ui'
 
 type Tab = 'announcements' | 'members' | 'places' | 'photos'
 const TABS: TabItem<Tab>[] = [

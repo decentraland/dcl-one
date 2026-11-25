@@ -2,9 +2,9 @@
 // the Trending and New rows, each with a way to the full catalogue. What it shows comes in as props; the
 // page reads it (homeQuery) and draws each row's card.
 
-import { ChevronRight, EmptyState, Rail } from '@hud/design'
+import { ChevronRight, Rail } from '@hud/design'
 import { pressedWith, type PressedWith } from './pressedWith'
-import { Button, ShopCardSkeleton } from '@dcl/one-ui'
+import { Button, EmptyState, ShopCardSkeleton } from '@dcl/one-ui'
 import styles from './ShopHome.module.css'
 
 /** A row shows five whole cards and the sixth's edge, so it pages five at a time. */

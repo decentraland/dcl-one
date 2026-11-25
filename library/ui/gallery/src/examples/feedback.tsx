@@ -19,7 +19,11 @@ import {
   type ModalProps,
   type ProfilePicSize,
   type TagVariant,
-  type ToastVariant
+  type ToastVariant,
+  EmptyState,
+  Panel,
+  SwapLabel,
+  VoiceBars
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
 import { covers, people } from './data'
@@ -436,6 +440,101 @@ export const feedbackEntries: GalleryEntry[] = [
             <CountBadge count={5} size="sm" />
             <CountBadge count={5} size="xs" />
             <CountBadge count={140} max={99} />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'EmptyState',
+    group: 'Feedback',
+    summary:
+      'A centred icon, title and subtitle with optional actions, for an empty or failed surface.',
+    components: ['EmptyState'],
+    examples: [
+      {
+        id: 'variants',
+        title: 'Inline, an error with an action, and a card with two actions',
+        render: () => (
+          <div className={layout.stack}>
+            <EmptyState
+              variant="inline"
+              title="Nothing matched your search"
+              subtitle="Try another name or clear the filters."
+            />
+            <EmptyState
+              variant="inline"
+              tone="error"
+              title="Couldn't load the shop"
+              subtitle="The request timed out."
+              actions={[{ label: 'Retry', onClick: () => {} }]}
+            />
+            <EmptyState
+              variant="card"
+              iconWash
+              icon={<span aria-hidden="true">☺</span>}
+              title="No friends yet"
+              subtitle="Add the people you meet in-world."
+              actions={[
+                { label: 'Find people', onClick: () => {} },
+                { label: 'Later', variant: 'ghost', onClick: () => {} },
+                { label: 'Invite', variant: 'outline', onClick: () => {} }
+              ]}
+            />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'Panel',
+    group: 'Feedback',
+    summary: 'The dark surface of a HUD widget or menu.',
+    components: ['Panel'],
+    examples: [
+      {
+        id: 'surfaces',
+        title: 'Solid and frosted',
+        render: () => (
+          <div className={layout.row}>
+            <Panel style={{ padding: 18, width: 220 }}>A surface for widgets and menus.</Panel>
+            <Panel blur style={{ padding: 18, width: 220 }}>
+              A frosted surface over the world.
+            </Panel>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'SwapLabel',
+    group: 'Feedback',
+    summary: 'A button label that swaps while its button is hovered or focused.',
+    components: ['SwapLabel'],
+    examples: [
+      {
+        id: 'button',
+        title: 'Hover or focus the button',
+        render: () => (
+          <Button variant="secondary" size="md" aria-label="Cancel request">
+            <SwapLabel idle="Request Sent" hover="Cancel Request" />
+          </Button>
+        )
+      }
+    ]
+  },
+  {
+    name: 'VoiceBars',
+    group: 'Feedback',
+    summary: 'The speaking badge of a nametag.',
+    components: ['VoiceBars'],
+    examples: [
+      {
+        id: 'badge',
+        title: 'Speaking',
+        render: () => (
+          <div className={layout.row}>
+            <VoiceBars />
           </div>
         )
       }

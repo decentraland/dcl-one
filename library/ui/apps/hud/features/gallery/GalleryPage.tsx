@@ -1,6 +1,6 @@
-import { Spinner } from '@dcl/one-ui'
+import { EmptyState, Spinner } from '@dcl/one-ui'
 import { useState } from 'react'
-import { EmptyState, Icon } from '../../design'
+import { Icon } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { MenuBackdrop } from '../menu/MenuBackdrop'
 import { usePhotoViewer, type PhotoViewerProps } from './usePhotoViewer'

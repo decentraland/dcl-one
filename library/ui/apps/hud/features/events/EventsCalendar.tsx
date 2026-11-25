@@ -2,7 +2,7 @@
 // events' carousel in place of the last day when there are any.
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { EmptyState, MaskIcon, ScrollThumb } from '../../design'
+import { MaskIcon, ScrollThumb } from '../../design'
 import type { EventData, Friend } from '@explorer-core/engine/protocol'
 import type { EventCommunity } from '../session/useEngineSession'
 import arrowDownIcon from '../../assets/events/arrow-down.png'
@@ -13,7 +13,7 @@ import { EventCardBanner, EventCardBig, EventCardEmptySlot, EventCardSkeleton, E
 import { SCROLL_ARROWS_OCCUPANCY, addDays, columnOccupancy, dayLabel, emptySlotCount, eventCardSize, sameDay, startOfDay } from './eventFormat'
 import type { EventActions } from './useEventActions'
 import styles from './EventsCalendar.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, EmptyState } from '@dcl/one-ui'
 
 const SCROLL_STEP_PX = 300
 export const CAROUSEL_DELAY_MS = 10_000

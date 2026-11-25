@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { ModalShell, Panel, openPopup } from '../../design'
+import { ModalShell, openPopup } from '../../design'
 import type { ConnectivityState } from '../session/useConnectivity'
 import connectionLostIcon from './connection-lost.png'
 import floorLight from './modal-light.png'
 import styles from './ConnectivityFeedback.module.css'
-import { Button } from '@dcl/one-ui'
+import { Button, Panel } from '@dcl/one-ui'
 
 const SCOPES: Record<string, string> = { realm: 'Realm room', scene: 'Scene room', private_chat: 'Private chat' }
 const STATES: Record<string, string> = {

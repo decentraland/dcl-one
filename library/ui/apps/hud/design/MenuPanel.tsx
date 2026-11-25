@@ -3,8 +3,8 @@
 // an optional trailing mark (a count, a live badge).
 
 import type { ReactNode } from 'react'
-import { Panel } from './Panel'
 import styles from './MenuPanel.module.css'
+import { Panel } from '@dcl/one-ui'
 
 interface MenuPanelProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'title'> {
   /** The accessible name of the panel. */
