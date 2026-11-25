@@ -87,7 +87,7 @@ The window:
 3. Catch up: `run events --since last`. `attendance_reconcile` runs after `attendance` and refuses an empty upstream set while imported attendance exists; pass `--allow-empty events/attendance_reconcile` only after confirming the legacy database holds no RSVPs.
 4. Copy the posters added since the last copy: `blobs events --to "$STORAGE_ROOT_FOLDER"`. A poster the bucket does not hold fails the run, since a wrong `--from-url` looks the same; review the listed ones, then re-run with `--allow-missing`. `blobs events --verify` then lists as not indexed only those reviewed posters.
 5. Check keys against legacy (below).
-6. Follow [Activation with imported event history](#activation-with-imported-event-history), then enable event writes and jobs and switch the events API traffic to the node.
+6. Follow [Activation with imported event history](#activation-with-imported-event-history) and seed the [events moderators](#events-moderators), then enable event writes and jobs and switch the events API traffic to the node.
 
 Until traffic switches, unfreezing the legacy service aborts the cutover; the imported rows stay local and the next catch-up refreshes them.
 
@@ -121,6 +121,19 @@ psql "$TARGET_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
 ```
 
 Every `_missing` count must be 0. An `_extra` row exists on the target but not in the frozen legacy database: either it was created on this node, or legacy deleted it after an earlier import, which the import does not propagate (only `attendance_reconcile` removes RSVPs, so `rsvps_extra` is 0 after it unless the node changed them since). Review each extra row before switching. `events_mirrored` counts mirror-written events the import did not take over, all of which legacy no longer holds; delete them, or adopt them as local with `EVENTS_MIRROR_ADOPT=true` (above; adoption runs as the `events-mirror` job, so once jobs are enabled).
+
+### Events moderators
+
+The old service's admins were its `ADMIN_ADDRESSES` setting, not a table, so neither the mirror nor the import (`tooling/migration`) brings them. Until `explore.moderators` holds them, they answer 403 on schedules and other profiles' settings and see no pending events. Seed it at the cut-over, before the node takes the events traffic, with the old service's value as it was:
+
+```sh
+catalyst explore moderators-add --addresses "<old ADMIN_ADDRESSES value>" --added-by 0x<operator wallet>
+catalyst explore moderators-list
+```
+
+Take the value from the old events service's configuration, not from the node's environment: the node's own `ADMIN_ADDRESSES` lists the operator console's wallets, which is a different list. The command needs `DATABASE_URL` and works while `serve` is stopped. `--addresses` is comma-separated, as upstream read it: empty entries are skipped, and an entry that is not exactly a wallet address (`0x` and 40 hex digits, no surrounding spaces) refuses the whole list and writes nothing, naming the entries, where upstream ignored them. Addresses are stored lowercase. A wallet already listed keeps its row, so a re-run adds nothing. It prints `requested`, `changed` (the wallets added) and `unchanged`, and each added wallet gets an `explore`/`events.moderator.add` audit row by `cli:<operator wallet>`. `catalyst explore moderators-remove --addresses ... --actor 0x<operator wallet>` removes moderators the same way.
+
+Later changes go through the operator console ("Explorer overlays" card, "Events moderator" form): `/admin/api/events/moderator-add` and `/admin/api/events/moderator-remove` take `{address}` and need `OPS_WRITES_ENABLED`; `/admin/api/events/moderators-list` is open with writes off. Each call is audited as the signed-in wallet, which is also the row's `added_by`. The gate reads the table on every request, so a change applies on the next request.
 
 ## Background jobs and notifications
 
