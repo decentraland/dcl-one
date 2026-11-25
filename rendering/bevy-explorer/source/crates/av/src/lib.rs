@@ -48,7 +48,7 @@ use crate::video_stream::VideoSink;
 
 const LIVEKIT_VIDEO_STREAM: &str = "livekit-video://current-stream";
 
-pub trait AVPlayer: Component {
+pub trait AVPlayer: Component + Clone + PartialEq {
     type Source: Component + Deref<Target = str> + PartialEq;
     type Config: Component + AVPlayerConfig + PartialEq;
     type Position: Component + Deref<Target = f32> + PartialEq;
@@ -60,8 +60,8 @@ pub trait AVPlayer: Component {
     fn source(&self) -> Self::Source;
     fn config(&self) -> Self::Config;
     fn position(&self) -> Self::Position;
-    fn seek_requested(&self) -> bool {
-        false
+    fn requested_position(&self) -> Option<f32> {
+        None
     }
 }
 
@@ -134,7 +134,7 @@ impl<T: AVPlayer> AVPlayerSinks for AVSinks<T> {
     }
 }
 
-#[derive(Component, Deref)]
+#[derive(Component, Deref, Clone, PartialEq)]
 #[component(immutable)]
 pub struct AudioStream(PbAudioStream);
 
@@ -172,7 +172,7 @@ impl AVPlayer for AudioStream {
     }
 }
 
-#[derive(Component, Deref)]
+#[derive(Component, Deref, Clone, PartialEq)]
 #[component(immutable)]
 pub struct VideoPlayer(PbVideoPlayer);
 
@@ -207,8 +207,8 @@ impl AVPlayer for VideoPlayer {
         }
     }
 
-    fn seek_requested(&self) -> bool {
-        self.position.is_some()
+    fn requested_position(&self) -> Option<f32> {
+        self.position
     }
 
     fn position(&self) -> Self::Position {
