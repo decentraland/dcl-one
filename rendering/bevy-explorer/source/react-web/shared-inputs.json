@@ -3121,10 +3121,6 @@
           "kind": "regular"
         },
         {
-          "name": "Dropdown.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "Dropdown.tsx",
           "kind": "regular"
         },
@@ -8142,6 +8138,10 @@
         {
           "name": "HudDropdown.tsx",
           "kind": "regular"
+        },
+        {
+          "name": "HudSortDropdown.test.tsx",
+          "kind": "regular"
         }
       ]
     },
@@ -12213,12 +12213,8 @@
       "sha256": "2f8cde2c75181d71d79c39b125f161c08455194964bb8524c2433185085d4fd4"
     },
     {
-      "path": "library/ui/apps/hud/design/Dropdown.module.css",
-      "sha256": "aecbac6a5f3db1028ce3bec42a92cd9ac98e7a32cb84d36674b0e8f9ae33ea39"
-    },
-    {
       "path": "library/ui/apps/hud/design/Dropdown.tsx",
-      "sha256": "7df5a15aebf23b6a0837390ad55a30ba9f83b7561bf58c3719a2aecd77eb1414"
+      "sha256": "29068b4d1444369e159b99c8510ce4714ff04df342d8c40db9b8491c48ef7390"
     },
     {
       "path": "library/ui/apps/hud/design/EmptyState.module.css",
@@ -16194,15 +16190,15 @@
     },
     {
       "path": "library/ui/components/Dropdown/Dropdown.module.css",
-      "sha256": "2bedf1da075ca9b657bc94d90dfeb2cb6af4993072a9054326b91829832c5de0"
+      "sha256": "71a053e1889e1ee4ea0fcea4fb065f2ff99615c625adcdc179307d38d64cee72"
     },
     {
       "path": "library/ui/components/Dropdown/Dropdown.tsx",
-      "sha256": "8f48ba65bb6f7cf15dd679128d872a29bad21fc2a2da4fb6fd76760123f4425e"
+      "sha256": "4dc838bee31e1d8b06cf897c7ed31241c83a72c6aba947e6369e0f1568fa350b"
     },
     {
       "path": "library/ui/components/Dropdown/HudDropdown.tsx",
-      "sha256": "497cf05a79d44e74a10b3de2de6c6059fab48171d084e1fadf479dc41afea49d"
+      "sha256": "4f2aa6b09969995db9a7a72fbf727c8b705dc2c313beb4a8804803e795074444"
     },
     {
       "path": "library/ui/components/EventCard/EventCard.module.css",
@@ -16594,7 +16590,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "6a2554d84e097b9112b0772d792eb999e1fb5e566deceac6aeba55524b50c8e1"
+      "sha256": "97143615f37b250f08f942b626b6e24262415827c7005fb5429e6a875d74889c"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -20877,17 +20873,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/Dropdown.tsx",
-      "to": "library/ui/apps/hud/design/Dropdown.module.css",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Dropdown.tsx",
-      "to": "library/ui/apps/hud/design/Dropdown.module.css",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Dropdown.tsx",
-      "to": "library/ui/apps/hud/design/Dropdown.module.css",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {

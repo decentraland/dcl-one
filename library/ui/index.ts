@@ -120,7 +120,11 @@ export { ProgressBar } from './components/ProgressBar/ProgressBar'
 export type { ProgressBarProps } from './components/ProgressBar/ProgressBar'
 
 export { Dropdown } from './components/Dropdown/Dropdown'
-export type { HudDropdownOption, HudDropdownProps } from './components/Dropdown/HudDropdown'
+export type {
+  HudDropdownOption,
+  HudDropdownProps,
+  HudSortDropdownProps
+} from './components/Dropdown/HudDropdown'
 export type {
   DropdownMultipleProps,
   DropdownOption,

@@ -656,8 +656,8 @@
     "tokens": 10
   },
   "library/ui/components/Dropdown/Dropdown.module.css": {
-    "primitives": 1,
-    "tokens": 52
+    "primitives": 2,
+    "tokens": 68
   },
   "library/ui/components/EventCard/EventCard.module.css": {
     "primitives": 0,

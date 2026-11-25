@@ -1,7 +1,12 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { HTMLAttributes, KeyboardEvent, ReactElement, RefObject } from 'react'
 import { GeneralInfoButton } from '../../foundations/icons/general'
-import { HudDropdown, type HudDropdownProps } from './HudDropdown'
+import {
+  HudDropdown,
+  HudSortDropdown,
+  type HudDropdownProps,
+  type HudSortDropdownProps
+} from './HudDropdown'
 import styles from './Dropdown.module.css'
 
 export type DropdownOption<T extends string = string> = {
@@ -152,15 +157,22 @@ function Help({ id, text, label, onActivate }: { id: string; text: string; label
  * through the options; Enter or Space chooses; Escape, Tab and a press outside close the list.
  *
  * With `appearance="hud"` it is the Explorer HUD's select instead (`HudDropdownProps`): a field that opens a
- * list of option buttons.
+ * list of option buttons. With `kind="sort"` too, it is the HUD's sort list (`HudSortDropdownProps`): a compact
+ * field over plain text options, with keyboard navigation.
  */
+export function Dropdown(props: HudSortDropdownProps): ReactElement
 export function Dropdown(props: HudDropdownProps): ReactElement
 export function Dropdown<T extends string = string>(props: DropdownProps<T>): ReactElement
 export function Dropdown<T extends string = string>({
   appearance = 'default',
   ...props
-}: DropdownProps<T> | HudDropdownProps) {
-  if (appearance === 'hud') return <HudDropdown {...(props as Omit<HudDropdownProps, 'appearance'>)} />
+}: DropdownProps<T> | HudDropdownProps | HudSortDropdownProps) {
+  if (appearance === 'hud') {
+    const { kind = 'field', ...hud } = props as Omit<HudDropdownProps | HudSortDropdownProps, 'appearance'>
+    if (kind === 'sort')
+      return <HudSortDropdown {...(hud as Omit<HudSortDropdownProps, 'appearance' | 'kind'>)} />
+    return <HudDropdown {...(hud as Omit<HudDropdownProps, 'appearance' | 'kind'>)} />
+  }
   return <FigmaDropdown {...(props as WithoutAppearance<DropdownProps<T>>)} />
 }
 

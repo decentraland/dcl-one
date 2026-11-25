@@ -444,7 +444,7 @@ export const formEntries: GalleryEntry[] = [
       },
       {
         id: 'hud',
-        title: 'Explorer HUD: the dark field, the light field and a disabled one',
+        title: 'Explorer HUD: the dark field, the light field, a disabled one and the sort list',
         render: () => (
           <div className={`${layout.row} ${layout.selectRoom}`}>
             <HudDropdownDemo variant="dark" />
@@ -457,6 +457,13 @@ export const formEntries: GalleryEntry[] = [
               onChange={() => {}}
               disabled
             />
+            <div className={layout.narrow}>
+              <Dropdown
+                appearance="hud"
+                kind="sort"
+                options={['Recently listed', 'Cheapest', 'Newest']}
+              />
+            </div>
           </div>
         )
       }
