@@ -4,7 +4,7 @@ import { GeneralCheck, GeneralRemove } from '../../foundations/icons/general'
 import styles from './Checkbox.module.css'
 
 export type CheckboxSize = 'sm' | 'md' | 'lg'
-export type CheckboxVariant = 'outline' | 'filled'
+export type CheckboxVariant = 'outline' | 'filled' | 'hud'
 
 type NativeCheckboxProps = Omit<
   InputHTMLAttributes<HTMLInputElement>,
@@ -14,7 +14,10 @@ type NativeCheckboxProps = Omit<
 export type CheckboxControlProps = NativeCheckboxProps & {
   /** Box size: 16, 20 or 24px. The target is 28, 32 or 36px, and 44px on a coarse pointer. */
   size?: CheckboxSize
-  /** `outline`: a bordered box that fills with the primary action colour. `filled`: a snow box. */
+  /**
+   * `outline`: a bordered box that fills with the primary action colour. `filled`: a snow box. `hud`: the
+   * Explorer HUD's box on its sign-in screens, a 20px white square with an orange tick and no halo.
+   */
   variant?: CheckboxVariant
   /** Shows a dash and reports the mixed state. Clicking it hands the next state to the caller. */
   indeterminate?: boolean
@@ -74,7 +77,13 @@ export function CheckboxControl({
       />
       <span className={styles.halo} aria-hidden="true" />
       <span className={styles.box} aria-hidden="true">
-        <GeneralCheck className={styles.check} />
+        {variant === 'hud' ? (
+          <svg className={styles.check} viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : (
+          <GeneralCheck className={styles.check} />
+        )}
         <GeneralRemove className={styles.dash} />
       </span>
     </span>

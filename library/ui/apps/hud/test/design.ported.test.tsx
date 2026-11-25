@@ -10,7 +10,6 @@ import {
   ModalTitle,
   ModalActions,
   ModalShell,
-  Checkbox,
   SearchField,
   FieldLabel,
   CharCounter,
@@ -38,7 +37,6 @@ describe('ported design primitives', () => {
         <ModalActions>
           <button>ok</button>
         </ModalActions>
-        <Checkbox checked onChange={() => {}}>label</Checkbox>
         <Spinner variant="thin" />
         <SearchField value="" onChange={() => {}} />
         <FieldLabel htmlFor="x">Field</FieldLabel>

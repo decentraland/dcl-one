@@ -3065,14 +3065,6 @@
           "kind": "regular"
         },
         {
-          "name": "Checkbox.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "Checkbox.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "Chip.module.css",
           "kind": "regular"
         },
@@ -12148,14 +12140,6 @@
       "sha256": "75c5a48abeabfaa3a7a3a189d43d0e731a7998663587dd6bcd13a0a00d176b9c"
     },
     {
-      "path": "library/ui/apps/hud/design/Checkbox.module.css",
-      "sha256": "c4c2ac68b010820b233bce4188fd47e370f95e8f602b19d1d8fa6836301af219"
-    },
-    {
-      "path": "library/ui/apps/hud/design/Checkbox.tsx",
-      "sha256": "1ebfa460cc1d570fad1ccf414931be3b1de033dd77ec87829d4e8e99d56c7d0a"
-    },
-    {
       "path": "library/ui/apps/hud/design/Chip.module.css",
       "sha256": "fd4bdc096c3066762c15689743fbfd2fb1dd4fb286d7dd10d1da1dcb7d54bb7a"
     },
@@ -12393,11 +12377,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "0e36afe163fd76a29343acaad5286c24118cfd5b8eb0a0edd228f2c6c71e4674"
+      "sha256": "299b01162fe7ca51d1ac6e43383777debd22149b440a993668bbf2202b17623f"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "16f1d855151b32a5eca6951e3ec082bd0e33dd3f05618a46c8c462cd624f0c11"
+      "sha256": "75249770eb670d467a20570646cb8db557f8ea648c4c33bb99eb52eb1b5cd5ee"
     },
     {
       "path": "library/ui/apps/hud/design/Slider.module.css",
@@ -12493,7 +12477,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "1fb1e08490a55444d3a84ba8479ecf233fd4b9885bdd9976bc59063de983a7d0"
+      "sha256": "37f14e85eb989a087746d3443b344d250b89d4705d3ac11040af6eb0d5c84364"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -13637,7 +13621,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountName.tsx",
-      "sha256": "c1f74daf9a3232d986b10be78073377fdc79950f704a16ed6a3d403b1a313226"
+      "sha256": "45317127041c8b9cfc953f4a45c63a68293bfdebfe86f1357199b4d10061d52f"
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupBack.module.css",
@@ -13821,7 +13805,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/design.ported.test.tsx",
-      "sha256": "73d59ee0c4725530995bf5effd53e9458733c5e14b979f521484f83a301ecf38"
+      "sha256": "90a5d22b5a6963235a92fdec700966c3e14aa7ebd0c8841e96cdcc003d34166e"
     },
     {
       "path": "library/ui/apps/hud/test/donate.test.tsx",
@@ -16177,11 +16161,11 @@
     },
     {
       "path": "library/ui/components/Checkbox/Checkbox.module.css",
-      "sha256": "6c5e05d1ec1b62b3f0ffc80855e859a040bc937787d1a4a8955b5f34163ac9b5"
+      "sha256": "aabcd67ae6acbd6386fc81fd771c531351b132460eaaa5501bad1fe5e13230be"
     },
     {
       "path": "library/ui/components/Checkbox/Checkbox.tsx",
-      "sha256": "548208a402ec51a3894d3142dfd04d3afc2abb4305f4134fef8f815ee61d0338"
+      "sha256": "955c1fe96a409727e20e8a88e301987c118c0b20fdc22af7c293eb88c252fd5c"
     },
     {
       "path": "library/ui/components/CheckboxLabel/CheckboxLabel.module.css",
@@ -20628,21 +20612,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/design/Checkbox.tsx",
-      "to": "library/ui/apps/hud/design/Checkbox.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Checkbox.tsx",
-      "to": "library/ui/apps/hud/design/Checkbox.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Checkbox.tsx",
-      "to": "library/ui/apps/hud/design/Checkbox.module.css",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/design/Chip.tsx",
       "to": "library/ui/apps/hud/assets/backpack/icon-close.webp",
       "kind": "native:runtime"
@@ -22470,21 +22439,6 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/CharCounter.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Checkbox.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Checkbox.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/Checkbox.tsx",
       "kind": "test:runtime"
     },
     {
@@ -65385,11 +65339,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/CharCounter.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/Checkbox.tsx",
       "kind": "type"
     },
     {

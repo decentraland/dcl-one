@@ -26,7 +26,6 @@ export { Icon, type IconName } from './icons'
 
 // Ported from eordano/dcl-react-ui (reimplemented in TS + CSS Modules + our tokens).
 export { Modal, ModalTitle, ModalActions, ModalShell } from './Modal'
-export { Checkbox } from './Checkbox'
 export { SearchField } from './SearchField'
 export { TextInput, type TextInputProps } from './TextInput'
 export { DateField, type DateFieldProps } from './DateField'

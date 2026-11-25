@@ -130,6 +130,29 @@ describe('Checkbox', () => {
       })
     })
 
+    describe('and the variant is hud', () => {
+      let container: HTMLElement
+      let onCheckedChange: Mock<(checked: boolean) => void>
+
+      beforeEach(() => {
+        onCheckedChange = vi.fn()
+        container = render(
+          <Checkbox aria-label="I agree" variant="hud" id="terms" checked={false} onCheckedChange={onCheckedChange} />
+        ).container
+      })
+
+      it('should render the hud variant with its own tick and keep the id a label can point at', () => {
+        expect(container.firstElementChild).toHaveAttribute('data-variant', 'hud')
+        expect(container.querySelector('path')).toHaveAttribute('d', 'M3 8.5l3 3 7-7')
+        expect(screen.getByRole('checkbox', { name: 'I agree' })).toHaveAttribute('id', 'terms')
+      })
+
+      it('should report the next state to the caller', async () => {
+        await userEvent.click(screen.getByRole('checkbox', { name: 'I agree' }))
+        expect(onCheckedChange).toHaveBeenCalledWith(true)
+      })
+    })
+
     describe('and it is checked', () => {
       let container: HTMLElement
 

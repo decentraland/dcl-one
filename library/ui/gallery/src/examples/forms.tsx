@@ -166,6 +166,10 @@ export const formEntries: GalleryEntry[] = [
                 ))}
               </div>
             ))}
+            <div className={layout.row}>
+              <Checkbox aria-label="hud" variant="hud" defaultChecked />
+              <Checkbox aria-label="hud off" variant="hud" />
+            </div>
           </div>
         )
       },

@@ -192,6 +192,36 @@
     --checkbox-border: var(--dcl-neutrals-gray);
   }
 
+  /* Not in Figma: the Explorer HUD's box on its sign-in screens. It is always white; the tick is the only change.
+     Its target is the box, on a coarse pointer too: the screens size the row around it. Its orange and its
+     4.8px radius have no token. */
+  .root[data-variant='hud'],
+  .root[data-variant='hud'][data-size] {
+    --checkbox-target: 20px;
+    --checkbox-halo-size: 20px;
+    --checkbox-box: 20px;
+    --checkbox-glyph: 12px;
+    --checkbox-radius: 4.8px;
+    --checkbox-mark: #ff743a;
+  }
+
+  .root[data-variant='hud'] .halo {
+    display: none;
+  }
+
+  .root[data-variant='hud'] .box,
+  .root[data-variant='hud'] .input ~ .box,
+  .root[data-variant='hud']:hover .input ~ .box,
+  .root[data-variant='hud'] .input:active ~ .box,
+  .root[data-variant='hud'] .input:disabled ~ .box {
+    --checkbox-fill: var(--dcl-neutrals-white);
+    --checkbox-border: transparent;
+  }
+
+  .root[data-variant='hud'] .input:focus-visible ~ .box {
+    outline-color: rgba(255, 255, 255, 0.5);
+  }
+
   /* Not in the design: a keyboard focus ring, the same as Switch's. */
   .input:focus-visible ~ .box {
     outline: 2px solid var(--dcl-neutrals-snow);

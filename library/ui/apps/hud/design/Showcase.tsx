@@ -21,7 +21,6 @@ import {
   BrowseToolbar,
   Button,
   CharCounter,
-  Checkbox,
   Chip,
   Close,
   CodeInput,
@@ -1125,10 +1124,6 @@ function SignInShowcase(): React.JSX.Element {
       <CodeInput value="123456" onChange={() => {}} state="success" disabled />
       <CodeInput value="123456" onChange={() => {}} state="error" disabled />
       <Spinner size={40} variant="chase" />
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-        <Checkbox variant="light" defaultChecked aria-label="light checkbox" />
-        <span>light checkbox (the sign-in screens')</span>
-      </div>
     </div>
   )
 }
