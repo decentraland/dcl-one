@@ -3976,8 +3976,9 @@ skewed popularity, 300,000 owners of whom 20 hold about 30,000 tokens each,
 
 On a mainnet NFT walker, a LAND or estate `/v1/nfts` page reads the LAND
 publication and the required NFT publications in one repeatable-read snapshot.
-A mixed owner page reads the collections, NAME and LAND sources that its
-filters can include. A missing required publication returns its source's 503
+Both owner searches and ownerless catalogue pages read the collections, NAME
+and LAND sources that their filters can include. This includes unfiltered
+browsing, search, sale filters and sorting. A missing required publication returns its source's 503
 for the whole page. The rental-status filter, page, count, estate members,
 rental listings and open order enrichment all use the same snapshot. An empty
 rental filter result is returned only after the publication checks.

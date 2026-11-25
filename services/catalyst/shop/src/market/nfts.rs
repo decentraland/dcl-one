@@ -822,12 +822,15 @@ pub async fn list_nfts(
     } else {
         let read = async {
             if let Some((conn, _)) = snapshot.as_mut() {
-                super::trades::readiness_on(state, conn, chrono::Utc::now())
-                    .await
-                    .map_err(super::trades::not_ready_response)?;
+                // A price/order filter already checked this snapshot before reading the page.
+                if !super::nft_reads::needs_orders(f) {
+                    super::trades::readiness_on(state, conn, chrono::Utc::now())
+                        .await
+                        .map_err(super::trades::not_ready_response)?;
+                }
                 return super::orders::open_trade_orders_on(state, &mut **conn, &unlisted)
                     .await
-                    .map_err(IntoResponse::into_response);
+                    .map_err(super::nft_reads::read_error);
             }
             super::trades::require_ready(state).await?;
             super::orders::open_trade_orders(state, &unlisted)

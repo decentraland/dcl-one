@@ -3845,10 +3845,11 @@ async fn land_pages_read_the_published_catalogue_and_enrich_the_same_snapshot() 
     let names = super::nft_index::DCL_REGISTRAR;
     let graph = FakeGraph::new();
     let url = serve_graph(graph.clone()).await;
-    let app = |network: &str, walker: bool| {
+    let app = |network: &str, walker: bool, trades_upstream: Option<String>| {
         let mut settings = Settings::for_tests();
         settings.eth_network = network.into();
         settings.market.indexes.nft_enabled = walker;
+        settings.trades_sync_upstream_url = trades_upstream;
         settings.marketplace_subgraph_url = Some(url.clone());
         let state = super::MarketplaceState::new(
             db.pool.clone(),
@@ -3858,7 +3859,7 @@ async fn land_pages_read_the_published_catalogue_and_enrich_the_same_snapshot() 
         state.test_allow_loopback.store(true, Ordering::Relaxed);
         market_router(Arc::new(state))
     };
-    let walker = app("mainnet", true);
+    let walker = app("mainnet", true, None);
     let land = LAND_MAINNET.land_registry;
     let estate = LAND_MAINNET.estate_registry;
     let parcel = (alloy_primitives::U256::from((-102_i128) as u128) << 128_usize)
@@ -3946,6 +3947,48 @@ async fn land_pages_read_the_published_catalogue_and_enrich_the_same_snapshot() 
         );
     }
 
+    let unavailable_trades = app("mainnet", true, Some(url.clone()));
+    for query in [
+        "isOnSale=true".to_owned(),
+        format!("contractAddress={land}&tokenId={parcel}"),
+    ] {
+        let (code, result) = get(unavailable_trades.clone(), &format!("/v1/nfts?{query}")).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+        assert_eq!(result["source"], "trades-mirror");
+    }
+    let (code, result) = get(unavailable_trades, "/v1/nfts?first=24").await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 3);
+    let mixed_contracts = format!("/v1/nfts?contractAddress={estate}&contractAddress={WALLET_B}");
+    let (code, result) = get(walker.clone(), &mixed_contracts).await;
+    assert_eq!(code, StatusCode::OK, "{result}");
+    assert_eq!(result["total"], 1);
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=NULL WHERE network='matic'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, result) = get(walker.clone(), &mixed_contracts).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+    assert_eq!(result["source"], "nft-index");
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=last_block WHERE network='matic'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    // A missing rental table must not manufacture an empty rental result.
+    sqlx::query("ALTER TABLE signatures.rental_periods RENAME TO held_periods")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    for query in ["category=estate", "category=estate&isOnRent=true"] {
+        let (code, _) = get(walker.clone(), &format!("/v1/nfts?{query}")).await;
+        assert_eq!(code, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    sqlx::query("ALTER TABLE signatures.held_periods RENAME TO rental_periods")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
     // Hold the final rental lookup after the LAND/NFT snapshot is established.
     let mut writer = db.pool.begin().await.unwrap();
     sqlx::query("LOCK TABLE signatures.rentals IN ACCESS EXCLUSIVE MODE")
@@ -3980,6 +4023,7 @@ async fn land_pages_read_the_published_catalogue_and_enrich_the_same_snapshot() 
     assert_eq!(result["data"][0]["rental"]["id"], rental.to_string());
     for query in [
         format!("owner={WALLET_A}"),
+        "first=24".into(),
         "category=estate&isOnRent=true".into(),
     ] {
         let (code, result) = get(walker.clone(), &format!("/v1/nfts?{query}")).await;
@@ -4000,7 +4044,7 @@ async fn land_pages_read_the_published_catalogue_and_enrich_the_same_snapshot() 
     assert!(graph.requests.lock().unwrap().is_empty());
 
     for (network, enabled) in [("mainnet", false), ("sepolia", true)] {
-        let (code, result) = get(app(network, enabled), "/v1/nfts?category=parcel").await;
+        let (code, result) = get(app(network, enabled, None), "/v1/nfts?category=parcel").await;
         assert_eq!(code, StatusCode::OK, "{result}");
         assert_eq!(result["total"], 0);
         assert!(!std::mem::take(&mut *graph.requests.lock().unwrap()).is_empty());

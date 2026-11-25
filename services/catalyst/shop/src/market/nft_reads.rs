@@ -215,10 +215,10 @@ impl std::ops::DerefMut for ReadConn {
 
 /// How long one statement of a `/v1/nfts`, prices or estate-size read may
 /// run before Postgres cancels it (the pool's own bound is 60 s per
-/// statement), answering [`read_error`]'s 503 past it. It bounds each
-/// statement, not the read: a `/v1/nfts` page runs at most four heavy ones
-/// (the owner's count, the page, the capped total, the estates' parcels),
-/// so it holds its connection up to four times this. Above the slowest
+/// statement), answering [`read_error`]'s 503 past it. Each statement has its
+/// own bound. A walking node holds the connection across publication checks,
+/// the owner's count, page, capped total, estate members, rental reads and
+/// order enrichment. Above the slowest
 /// statements measured on the seeded index (DATABASE.md): 7 to 8 s for a
 /// 32,000-token owner's capped total naming no category, 8.1 s for the
 /// deepest page sorted by price naming no category.
@@ -545,7 +545,7 @@ fn filters_on_orders(f: &NftFilters) -> bool {
 }
 
 /// Whether the filter set reads the order legs (a filter or sort on them).
-fn needs_orders(f: &NftFilters) -> bool {
+pub(super) fn needs_orders(f: &NftFilters) -> bool {
     filters_on_orders(f)
         || matches!(
             f.sort_by,
@@ -1317,10 +1317,9 @@ pub async fn list_nfts(
     }
     let mut sources = sources_for(f);
     if super::nfts::merges_land(f) {
-        // A read that names no category answers every category, as
-        // upstream's does: the names and LAND legs join whenever their
-        // indexes are published, and a read without them still answers the
-        // wearables and emotes.
+        // On the compatibility route, include the NAME and LAND legs when
+        // available. Walking nodes take the strict catalogue snapshot before
+        // reaching this path for a mixed page.
         let names = Sources {
             names: true,
             ..Default::default()
