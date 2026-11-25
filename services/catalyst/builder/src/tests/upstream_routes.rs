@@ -161,10 +161,7 @@ async fn app() -> Router {
         )
         .unwrap(),
     );
-    Router::new()
-        .merge(crate::root_router(state.clone()))
-        .nest("/builder-api", crate::router(state))
-        .fallback(|| async { StatusCode::IM_A_TEAPOT })
+    super::support::mounted(&state).fallback(|| async { StatusCode::IM_A_TEAPOT })
 }
 
 async fn answers(app: &Router, method: &str, path: &str) -> (bool, StatusCode) {

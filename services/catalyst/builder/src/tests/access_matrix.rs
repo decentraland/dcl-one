@@ -30,9 +30,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::support::{
-    FakeCommittee, FakeOracle, address, committee_index, fresh_pass, request, temp_storage,
-};
+use super::support::{FakeCommittee, FakeOracle, address, committee_index, fresh_pass, request};
 use super::upstream_routes::{Route, UPSTREAM};
 use crate::shared::validator_signature::{SIGNATURE_HEADER, TIMESTAMP_HEADER};
 
@@ -1698,13 +1696,9 @@ async fn matrix_with(committee: &FakeCommittee, connections: u32, rpc: bool) -> 
     committee.set_rarities(Some(&[("common", "10000000000000000000", "100000")]));
     let oracle = FakeOracle::with(&[("common", "4000000000000000000")]);
     let forum = crate::curation::forum::fake::FakeForum::default();
-    let mut state = crate::State::new(
+    let mut state = super::support::state(
         pool.clone(),
-        temp_storage().await,
-        Arc::default(),
-        dcl_http::Outbound::for_tests(),
         Some(committee_index(committee).await),
-        None,
         crate::Settings {
             writes_enabled: true,
             polygon_rpc_url: if rpc { Some(oracle.url().await) } else { None },
@@ -1716,15 +1710,13 @@ async fn matrix_with(committee: &FakeCommittee, connections: u32, rpc: bool) -> 
             ..crate::Settings::default()
         },
     )
-    .unwrap();
+    .await;
     state.guarded = dcl_http::Outbound::for_tests();
     state.validator_calls =
         crate::shared::limits::RateLimiter::new(1_000_000, std::time::Duration::from_secs(60));
     state.limits = crate::limits::Limits::unbounded();
     let shared = Arc::new(state);
-    let app = Router::new()
-        .merge(crate::root_router(shared.clone()))
-        .nest("/builder-api", crate::router(shared.clone()));
+    let app = super::support::mounted(&shared);
     sqlx::query(
         "INSERT INTO builder.virtual_third_parties (id, managers, raw_metadata) VALUES ($1, $2, 'tp:1:Matrix:')",
     )

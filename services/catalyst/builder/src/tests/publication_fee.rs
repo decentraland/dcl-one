@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use super::support::{
     FakeCommittee, FakeOracle, OWNER_KEY, address, committee_index, contents_of, save_collection,
-    saved_item, scratch_pool, temp_storage, unique, upload,
+    saved_item, scratch_pool, unique, upload,
 };
 use crate::collections::contract::{self, InitializeItem, initializeCall};
 use crate::network::POLYGON;
@@ -39,19 +39,15 @@ async fn node() -> Option<Node> {
     ]));
     let oracle = FakeOracle::with(&[("common", "4000000000000000000"), ("rare", "5")]);
     let state = Arc::new(
-        crate::State::new(
+        super::support::state(
             pool.clone(),
-            temp_storage().await,
-            Arc::default(),
-            dcl_http::Outbound::for_tests(),
             Some(committee_index(&subgraph).await),
-            None,
             crate::Settings {
                 polygon_rpc_url: Some(oracle.url().await),
                 ..crate::Settings::default()
             },
         )
-        .unwrap(),
+        .await,
     );
     Some(Node {
         pool,

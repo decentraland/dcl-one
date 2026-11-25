@@ -205,12 +205,9 @@ pub(super) async fn node_over(pool: PgPool, options: Options) -> Node {
     }
     (options.tune)(&mut state);
     let state = Arc::new(state);
-    let app = options.registry.published(
-        &pool,
-        Router::new()
-            .merge(crate::root_router(state.clone()))
-            .nest("/builder-api", crate::router(state.clone())),
-    );
+    let app = options
+        .registry
+        .published(&pool, super::support::mounted(&state));
     Node {
         pool,
         storage,

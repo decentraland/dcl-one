@@ -15,7 +15,6 @@ use uuid::Uuid;
 
 use super::support::{
     FakeCommittee, FakeRegistry, OWNER_KEY, address, call, on_chain, own_pool, registry_index,
-    temp_storage,
 };
 use crate::curation::transitions::{
     self, Actor, Change, Curation, Refusal, Request as Asked, Status,
@@ -132,13 +131,9 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
     .execute(&pool)
     .await
     .unwrap();
-    let mut state = crate::State::new(
+    let mut state = super::support::state(
         pool.clone(),
-        temp_storage().await,
-        Arc::default(),
-        dcl_http::Outbound::for_tests(),
         Some(registry_index(&options.committee, &options.registry).await),
-        None,
         crate::Settings {
             writes_enabled: true,
             admin_addresses: vec![address(ADMIN_KEY)],
@@ -154,15 +149,12 @@ async fn node_over(pool: PgPool, options: Options) -> Node {
             ..crate::Settings::default()
         },
     )
-    .unwrap();
+    .await;
     state.guarded = dcl_http::Outbound::for_tests();
     let state = Arc::new(state);
-    let app = options.registry.published(
-        &pool,
-        Router::new()
-            .merge(crate::root_router(state.clone()))
-            .nest("/builder-api", crate::router(state.clone())),
-    );
+    let app = options
+        .registry
+        .published(&pool, super::support::mounted(&state));
     Node { pool, app, state }
 }
 

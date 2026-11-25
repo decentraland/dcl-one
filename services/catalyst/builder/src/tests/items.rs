@@ -168,6 +168,20 @@ async fn uploaders(pool: &PgPool, hash: &str) -> Vec<String> {
     .unwrap()
 }
 
+/// An item of the owner's, saved, whose `model.glb` is `hash`.
+async fn model_item(app: &App, hash: &str) -> Uuid {
+    let id = Uuid::new_v4();
+    let saved = put(
+        app,
+        OWNER_KEY,
+        &format!("/v1/items/{id}"),
+        &item(id, OWNER_KEY, None, &[("model.glb", hash)], None),
+    )
+    .await;
+    assert_eq!(saved.0, 200, "{saved:?}");
+    id
+}
+
 #[tokio::test]
 async fn an_upload_past_a_bound_or_unlike_its_item_stores_nothing() {
     let Some(app) = app().await else {
@@ -175,15 +189,7 @@ async fn an_upload_past_a_bound_or_unlike_its_item_stores_nothing() {
     };
     let model = b"items test model".to_vec();
     let hash = dcl_auth::hash_bytes_v1(&model);
-    let id = Uuid::new_v4();
-    let saved = put(
-        &app,
-        OWNER_KEY,
-        &format!("/v1/items/{id}"),
-        &item(id, OWNER_KEY, None, &[("model.glb", &hash)], None),
-    )
-    .await;
-    assert_eq!(saved.0, 200, "{saved:?}");
+    let id = model_item(&app, &hash).await;
     let (status, body) = send(
         &app,
         OWNER_KEY,
@@ -272,15 +278,7 @@ async fn a_draft_file_is_not_served_or_announced_by_the_content_server() {
     };
     let model = format!("a draft model {}", Uuid::new_v4()).into_bytes();
     let hash = dcl_auth::hash_bytes_v1(&model);
-    let id = Uuid::new_v4();
-    let saved = put(
-        &app,
-        OWNER_KEY,
-        &format!("/v1/items/{id}"),
-        &item(id, OWNER_KEY, None, &[("model.glb", &hash)], None),
-    )
-    .await;
-    assert_eq!(saved.0, 200, "{saved:?}");
+    let id = model_item(&app, &hash).await;
     assert_eq!(upload(&app, OWNER_KEY, id, &[(&hash, &model)]).await.0, 200);
 
     let ask = async |method: &str, path: String| {
@@ -335,15 +333,7 @@ async fn a_forgotten_file_the_collector_unlinks_during_its_upload_is_refused_unt
     };
     let model = format!("a model forgotten then sent again {}", Uuid::new_v4()).into_bytes();
     let hash = dcl_auth::hash_bytes_v1(&model);
-    let id = Uuid::new_v4();
-    let saved = put(
-        &app,
-        OWNER_KEY,
-        &format!("/v1/items/{id}"),
-        &item(id, OWNER_KEY, None, &[("model.glb", &hash)], None),
-    )
-    .await;
-    assert_eq!(saved.0, 200, "{saved:?}");
+    let id = model_item(&app, &hash).await;
     assert_eq!(upload(&app, OWNER_KEY, id, &[(&hash, &model)]).await.0, 200);
     sqlx::query("DELETE FROM builder.uploaded_contents WHERE hash = $1")
         .bind(&hash)
@@ -405,15 +395,7 @@ async fn an_uploads_bytes_are_stored_before_it_takes_the_items_lock() {
     };
     let model = format!("a model stored before its lock {}", Uuid::new_v4()).into_bytes();
     let hash = dcl_auth::hash_bytes_v1(&model);
-    let id = Uuid::new_v4();
-    let saved = put(
-        &app,
-        OWNER_KEY,
-        &format!("/v1/items/{id}"),
-        &item(id, OWNER_KEY, None, &[("model.glb", &hash)], None),
-    )
-    .await;
-    assert_eq!(saved.0, 200, "{saved:?}");
+    let id = model_item(&app, &hash).await;
     let mut holder = app.pool.begin().await.unwrap();
     let holder_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *holder)
@@ -472,15 +454,7 @@ async fn item_files_behind_a_long_unlink_batch_answer_503() {
     };
     let model = format!("a model behind a long unlink batch {}", Uuid::new_v4()).into_bytes();
     let hash = dcl_auth::hash_bytes_v1(&model);
-    let id = Uuid::new_v4();
-    let saved = put(
-        &app,
-        OWNER_KEY,
-        &format!("/v1/items/{id}"),
-        &item(id, OWNER_KEY, None, &[("model.glb", &hash)], None),
-    )
-    .await;
-    assert_eq!(saved.0, 200, "{saved:?}");
+    let id = model_item(&app, &hash).await;
 
     let batch = crate::storage::gc::lock_store_exclusive(&app.pool)
         .await

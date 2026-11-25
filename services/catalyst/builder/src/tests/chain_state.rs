@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::chain_state::{self, CollectionFacts, STALE_AFTER};
 
-use super::support::{OWNER_KEY, address, temp_storage};
+use super::support::{OWNER_KEY, address};
 
 fn random_address() -> String {
     format!("0x{}", Uuid::new_v4().simple().to_string()[..20].repeat(2))
@@ -458,19 +458,15 @@ async fn no_route_reads_or_writes_derived_state_while_the_copy_cannot_tell() {
     .await
     .unwrap();
     let state = std::sync::Arc::new(
-        crate::State::new(
+        super::support::state(
             pool.clone(),
-            temp_storage().await,
-            std::sync::Arc::default(),
-            dcl_http::Outbound::for_tests(),
             Some(super::support::registry_only_index().await),
-            None,
             crate::Settings {
                 writes_enabled: true,
                 ..crate::Settings::default()
             },
         )
-        .unwrap(),
+        .await,
     );
     let app = crate::router(state);
     let reads = [
