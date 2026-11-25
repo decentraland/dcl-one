@@ -14,6 +14,10 @@ import {
   type ShopScreen, type ShopSectionState,
 } from "./shop";
 
+/** The catalog's `minPrice` is MANA (the legacy marketplace API's unit): its smallest positive
+ * amount keeps free items out of the rails. */
+const PRICED_ONLY = "0.000000000000000001";
+
 export const SHOP_CATALOG_TIMEOUT_MS = 3_000;
 export const SHOP_RAIL_TIMEOUT_MS = 1_000;
 export const SHOP_QUOTES_TIMEOUT_MS = 1_000;
@@ -59,17 +63,17 @@ export async function loadShopScreen(params: URLSearchParams, signal?: AbortSign
         category: filters.category || undefined,
         rarity: filters.rarity || undefined,
         isOnSale: true,
-        minPrice: "1",
+        minPrice: PRICED_ONLY,
         sortBy: filters.sortBy,
         search: filters.search || undefined,
       };
       return loadCatalogRail(query);
     }),
     section("top", overview, 6, SHOP_RAIL_TIMEOUT_MS, () =>
-      loadCatalogRail({ first: 6, isOnSale: true, minPrice: "1", sortBy: "most_expensive" }),
+      loadCatalogRail({ first: 6, isOnSale: true, minPrice: PRICED_ONLY, sortBy: "most_expensive" }),
     ),
     section("trending", overview, 8, SHOP_RAIL_TIMEOUT_MS, () =>
-      loadCatalogRail({ first: 8, isOnSale: true, minPrice: "1", sortBy: "cheapest" }),
+      loadCatalogRail({ first: 8, isOnSale: true, minPrice: PRICED_ONLY, sortBy: "cheapest" }),
     ),
   ]);
   signal?.throwIfAborted();

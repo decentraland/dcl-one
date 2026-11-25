@@ -39,6 +39,26 @@ describe('when the gallery is built for the hosted pull request preview', () => 
   })
 })
 
+describe('when the package root re-exports application UI', () => {
+  async function resolveApp(source: string, importer: string) {
+    const { withoutAppBarrels } = await import('../vite.config')
+    const resolve = withoutAppBarrels().resolveId as (
+      source: string,
+      importer: string
+    ) => string | null
+    return resolve(source, path.join(library, importer))
+  }
+
+  it.each(['./apps/sites', './apps/shop'])('should omit the root %s barrel', async (source) => {
+    expect(await resolveApp(source, 'index.ts')).toBe('\0gallery:app-ui')
+  })
+
+  it('should preserve direct imports from the gallery and HUD submodules', async () => {
+    expect(await resolveApp('./apps/shop', 'gallery/src/app.tsx')).toBeNull()
+    expect(await resolveApp('./apps/hud/design', 'index.ts')).toBeNull()
+  })
+})
+
 describe('when the gallery compiles the Explorer HUD for its HUD canvas', () => {
   const config = (command: 'serve' | 'build', mode?: string) =>
     resolveConfig(

@@ -152,6 +152,7 @@ mod metrics_tests {
             "comms_cluster_work_queued 0",
             "comms_cluster_work_rejected_total{reason=\"wallet_full\"} 0",
             "worlds_allowance_read_failures_total 0",
+            "dcl_content_server_sync_state 0",
         ] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
@@ -161,6 +162,7 @@ mod metrics_tests {
 pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     config.node.init_tracing();
     install_metrics(&config.node.serve_metrics_bind)?;
+    shop::market::lambdas_metrics::record_build_info(&config.commit_hash().unwrap_or_default());
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     if let Ok(Some(warning)) = catalyst_config::posture::worlds_names_reader(&config) {
         tracing::warn!("{warning}");
@@ -181,6 +183,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     .await
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
+    let self_hosts = content::own_hosts(&config);
+    let market_settings = crate::settings::market_settings(&config, &self_hosts)?;
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
     worlds::rooms::ensure_scene_admin_place_release(&pool).await?;
     worlds::rooms::ensure_genesis_scene_ban_release(&pool).await?;
@@ -559,8 +563,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     // archive, every one over the same pool, client and job lifecycle. The
     // local writes among them sit behind DATA_WRITES_ENABLED
     // (`shop::market::DataWrites`, the social switch's twin).
-    let self_hosts = content::own_hosts(&config);
-    let market_settings = crate::settings::market_settings(&config, &self_hosts)?;
     shop::market::catalog::install_served_chains(&market_settings.market.indexes);
     let market = Arc::new(
         shop::market::MarketplaceState::new(
@@ -598,7 +600,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         pool.clone(),
         http_client.clone(),
         land_settings,
-        Some(market.index.clone()),
     ));
     explore.places.set_land_authz(land.clone());
     explorer_api.attach_land_authz(land.clone());
@@ -644,7 +645,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             config.worlds.deployment_processing_timeout_ms,
         );
         tokio::spawn(async move {
-            catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
+            content::create_entity::reclaim_stale_spool(&spool_root, stale_after).await;
         });
     }
     // Expired partial uploads (content::partial_deployments) are reclaimed
@@ -946,6 +947,19 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         worlds::policy::MAX_SCENE_SIZE_BYTES,
     )
     .context("WORLDS_PERSONAL_WORLDS_MAX / WORLDS_PERSONAL_WORLD_MAX_SIZE_BYTES")?;
+    // The permission core below always attaches the land-authz index, whose
+    // published fold is then the only LAND authority: neither variable is
+    // read any more, so a deployment still setting one is told so.
+    if comms_settings.land_operators_url.is_some() {
+        tracing::warn!(
+            "COMMS_LAND_OPERATORS_URL is set but not read: LAND rights come from the land-authz index alone"
+        );
+    }
+    if std::env::var_os("LAND_SUBGRAPH_URL").is_some() {
+        tracing::warn!(
+            "LAND_SUBGRAPH_URL is set but not read: LAND rights come from the land-authz index alone"
+        );
+    }
     let land_operators = comms_settings
         .land_operators_url
         .as_deref()
