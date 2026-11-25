@@ -197,6 +197,9 @@ export type BevyApiInterface = {
   sendChatReaction: (channel: string, messageId: string, emoji: string, remove: boolean) => void
   /** Every reaction to a chat message, the local user's included. */
   getChatReactionStream: () => Promise<AsyncIterable<ChatReactionData>>
+  /** React with an emoji, shown over the local user's avatar; an emoji the wire does not carry
+   *  does nothing. Optional: absent on runtimes whose SystemApi predates it. */
+  sendReaction?: (emoji: string) => void
   getVoiceStream: () => Promise<AsyncIterable<VoiceMessage>>
   getSystemActionStream: () => Promise<AsyncIterable<SystemActionEvent>>
   getSceneLoadingUIStream: () => Promise<AsyncIterable<SceneLoadingState>>

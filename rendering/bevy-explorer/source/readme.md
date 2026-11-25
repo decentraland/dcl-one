@@ -282,8 +282,7 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   those `dropped` by cause),
   `/reaction_simulate <local|nearest|address> <emoji> [count]` (takes a message of reactions as if
   that player had sent it, on this client only; replies with the `target` taken and the emoji's
-  wire `index`), `/reaction_send <emoji>` (reacts as the local user, the way the system API's
-  `sendReaction` does; replies with nothing),
+  wire `index`),
   `/voice_state` (the nearby mic, with `sceneBlocked` while the scene the player stands in turns
   nearby voice off or its room refused the player as banned, asking again every 15 seconds; the
   nearby voice rooms and, as `call`, the private call or community stream the player is in:
@@ -307,10 +306,11 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   and the scene commands.
 - Social: `/block_user <address>` and `/unblock_user <address>` block and unblock through the
   social service, as the passport does.
-- Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`
-  and `/react <channel> <message id> <emoji>` send as the HUD does; `/community_channels [add
-  <id>|remove <id>|clear]` lists or edits the community channels the engine listens to, which
-  the HUD sets from the user's communities (the engine drops community messages on any other).
+- Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`,
+  `/react <channel> <message id> <emoji>` and `/reaction_send <emoji>` send as the HUD does;
+  `/community_channels [add <id>|remove <id>|clear]` lists or edits the community channels the
+  engine listens to, which the HUD sets from the user's communities (the engine drops community
+  messages on any other).
 - Voice chat, as the HUD's buttons do it and through the same refusals: `/voice call <address>`
   rings a user, `/voice accept` and `/voice reject` answer a ringing call, `/voice end` hangs up
   or leaves a stream, `/voice start|join <community id>` opens or joins a stream, `/voice close`

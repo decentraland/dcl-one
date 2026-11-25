@@ -712,6 +712,12 @@ button.translationMark {
   border-radius: var(--r-md);
   background: var(--panel);
 }
+/* The reactions button's bar: 4px above the button and ending where it does. */
+.reactionBarAnchored {
+  left: auto;
+  right: 5px;
+  bottom: 47px;
+}
 .barEmoji,
 .barMore {
   display: flex;
@@ -929,22 +935,19 @@ button.translationMark {
   opacity: 1;
 }
 
-/* The heart: a 34px disc in the strip, level with the input and tinted as it is. */
+/* The reactions button: a 34px disc in the strip, level with the input and tinted as it is. */
 .heart {
   position: absolute;
   right: 5px;
   bottom: 9px;
   display: flex;
-  align-items: center;
-  justify-content: center;
+}
+.heartBtn {
   width: 34px;
   height: 34px;
   padding: 0;
-  border: none;
-  border-radius: var(--r-pill);
   background: var(--chat-input);
-  color: #f00;
-  cursor: pointer;
+  color: var(--red);
   transition: background-color var(--chat-dur-chrome) var(--ease-outquad);
 }
 .membersOpen .heart,

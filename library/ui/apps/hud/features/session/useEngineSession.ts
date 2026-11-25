@@ -913,6 +913,8 @@ export interface ChatState {
   playSound: (sound: UiSound) => void
   /** Adds or removes the local user's reaction to a message on the channel shown. */
   react: (messageId: string, emoji: string, remove: boolean) => void
+  /** Reacts with an emoji, shown over the local user's avatar. An emoji the wire does not carry does nothing. */
+  sendReaction: (emoji: string) => void
   /** The Nearby lines, whichever channel is shown. */
   nearby: ChatLine[]
   /** Redraws the bubble over a Nearby sender's head with other words, while it is still that message's. */
@@ -3351,6 +3353,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const reactInChat = useCallback((messageId: string, emoji: string, remove: boolean) => {
     driverRef.current?.send({ kind: 'sendChatReaction', channel: channelRef.current, messageId, emoji, remove })
   }, [])
+  const sendReaction = useCallback((emoji: string) => {
+    driverRef.current?.send({ kind: 'sendReaction', emoji })
+  }, [])
   const bubbleText = useCallback((sender: string, messageId: string, message: string) => {
     driverRef.current?.send({ kind: 'chatBubbleText', sender, messageId, message })
   }, [])
@@ -5482,6 +5487,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       send: sendChat,
       playSound: playUiSound,
       react: reactInChat,
+      sendReaction,
       nearby: messages,
       bubbleText,
       channel,
