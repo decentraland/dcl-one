@@ -397,7 +397,7 @@ export interface FocusChatMessage {
   kind: 'focusChat'
 }
 
-/** A nearby player (from the scene's PlayerIdentityData set). */
+/** A player from the scene's PlayerIdentityData set. The roster filters remote players by last known Pulse membership. */
 export interface NearbyMember {
   address: string
   name: string
@@ -2097,7 +2097,7 @@ export interface WatchMapPlayersRequest {
   on: boolean
 }
 
-/** The players near enough for the engine to hold (scene → page), while the page watches. */
+/** Nearby scene players filtered by last known Pulse membership, while the page watches. */
 export interface MapPlayersMessage {
   kind: 'mapPlayers'
   players: MapPlayer[]
