@@ -69,6 +69,10 @@ async fn world_with(settings: crate::Settings) -> Option<World> {
     let app = Router::new()
         .merge(crate::root_router(state.clone()))
         .nest("/builder-api", crate::router(state.clone()));
+    let app = match state.registry_indexed() {
+        true => registry.published(&pool, app),
+        false => app,
+    };
     Some(World {
         pool,
         app,
@@ -134,12 +138,17 @@ fn salt() -> String {
 
 /// The cheque `key` signs for `qty` slots of `provider` under `salt`.
 fn cheque(key: &str, provider: &str, qty: i32, salt: &str) -> Value {
-    let digest = crate::cheques::digest(
-        &crate::network::POLYGON,
-        provider,
-        qty,
-        salt.parse().unwrap(),
-    );
+    cheque_on(&crate::network::POLYGON, key, provider, qty, salt)
+}
+
+fn cheque_on(
+    network: &crate::network::Network,
+    key: &str,
+    provider: &str,
+    qty: i32,
+    salt: &str,
+) -> Value {
+    let digest = crate::cheques::digest(network, provider, qty, salt.parse().unwrap());
     let signature = wallet(key)
         .sign_hash_sync(&alloy_primitives::B256::from(digest))
         .unwrap();
@@ -1086,7 +1095,8 @@ async fn the_committee_reads_what_its_registry_transaction_needs() {
         2,
         first["salt"].as_str().unwrap().parse().unwrap(),
     );
-    w.registry.consume(&format!("0x{}", hex::encode(digest)));
+    w.registry
+        .consume(&provider, &format!("0x{}", hex::encode(digest)));
     let (_, body) = get(
         &w.app,
         Some(COMMITTEE_KEY),
@@ -1189,10 +1199,6 @@ async fn approval_data_is_the_committee_s_and_needs_its_sources() {
         assert_eq!(answer.1["data"], data, "{path}");
     }
     assert_eq!(get(&w.app, None, approval(id)).await.0, 401);
-    w.registry.fail_receipts(true);
-    assert_eq!(get(&w.app, Some(COMMITTEE_KEY), approval(id)).await.0, 503);
-    w.registry.fail_receipts(false);
-    assert_eq!(get(&w.app, Some(COMMITTEE_KEY), approval(id)).await.0, 200);
     w.registry.fail(true);
     assert_eq!(get(&w.app, Some(COMMITTEE_KEY), approval(id)).await.0, 503);
     w.registry.fail(false);
@@ -1820,4 +1826,305 @@ async fn every_write_to_a_collection_waits_for_the_one_holding_it() {
         ran.is_empty(),
         "{ran:?} ran while another write held the collection"
     );
+}
+
+fn receipt_of(network: &crate::network::Network, provider: &str, cheque: &Value) -> String {
+    let digest = crate::cheques::digest(
+        network,
+        provider,
+        cheque["qty"].as_i64().unwrap() as i32,
+        cheque["salt"].as_str().unwrap().parse().unwrap(),
+    );
+    format!("0x{}", hex::encode(digest))
+}
+
+/// Ends the kept "can't tell" of an earlier registry read.
+fn forget_the_last_read(w: &World) {
+    for _ in 0..7 {
+        w.state.third_parties.outdate();
+    }
+}
+
+#[tokio::test]
+async fn on_polygon_the_registry_is_the_index_at_its_published_block() {
+    use super::support::index_version;
+    let Some(w) = world().await else { return };
+    let manager = address(MANAGER_KEY);
+    let provider = format!(
+        "urn:decentraland:matic:collections-thirdparty:x{}",
+        Uuid::new_v4().simple()
+    );
+    let root = format!("0x{}", "cd".repeat(32));
+    let contract = "0x00000000000000000000000000000000000000c1";
+    let state = |managers: Value, max_items: &str| {
+        json!({
+            "id": provider, "approved": true, "root": root, "resolver": null,
+            "raw_metadata": format!("tp:1:Indexed:From the index:matic-{contract}"),
+            "metadata": { "name": "Indexed", "description": "From the index",
+                "contracts": [{ "network": "matic", "address": contract }] },
+            "managers": managers, "programmatic": true,
+            "max_items": max_items, "consumed_slots": "4",
+        })
+    };
+    let mut conn = w.pool.acquire().await.unwrap();
+    index_version(&mut conn, 1, &provider, &state(json!([manager]), "9"), None).await;
+    index_version(&mut conn, 2, &provider, &state(json!([]), "50"), None).await;
+    let view = json!({
+        "id": provider, "root": root, "managers": [manager], "maxItems": "9",
+        "isApproved": true, "isProgrammatic": true, "name": "Indexed",
+        "description": "From the index",
+        "contracts": [{ "address": contract, "network": "matic" }], "published": true,
+    });
+    let (status, body) = get(&w.app, Some(MANAGER_KEY), "/v1/thirdParties".into()).await;
+    assert_eq!((status, &body["data"]), (200, &json!([view])), "{body}");
+    let one = format!("/v1/thirdParties/{provider}");
+    let (status, body) = get(&w.app, Some(COMMITTEE_KEY), one).await;
+    assert_eq!((status, &body["data"]), (200, &view), "{body}");
+
+    let (id, items) = collection(&w, &provider, 3).await;
+    let signed = cheque(MANAGER_KEY, &provider, 2, &salt());
+    let (status, body) = call(
+        &w.app,
+        Some(MANAGER_KEY),
+        publish(id),
+        Some(json!({ "itemIds": [items[0], items[1]], "cheque": signed })),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let slots = format!("/v1/thirdParties/{provider}/slots");
+    let (status, body) = get(&w.app, Some(MANAGER_KEY), slots.clone()).await;
+    assert_eq!(
+        (status, &body["data"]),
+        (200, &json!(7)),
+        "the indexed allowance less the items submitted here: {body}"
+    );
+
+    let receipt = json!({
+        "hash": receipt_of(&crate::network::POLYGON, &provider, &signed),
+        "quantity": "2", "signer": manager, "curator": address(COMMITTEE_KEY),
+    });
+    let consumed = async || {
+        let (status, body) = get(&w.app, Some(COMMITTEE_KEY), approval(id)).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["data"]["root"], json!(root));
+        body["data"]["chequeWasConsumed"].clone()
+    };
+    assert_eq!(consumed().await, json!(false));
+    index_version(
+        &mut conn,
+        2,
+        &provider,
+        &state(json!([]), "50"),
+        Some(receipt.clone()),
+    )
+    .await;
+    assert_eq!(
+        consumed().await,
+        json!(false),
+        "a receipt above the published block"
+    );
+    index_version(
+        &mut conn,
+        0,
+        &provider,
+        &state(json!([manager]), "9"),
+        Some(receipt),
+    )
+    .await;
+    assert_eq!(consumed().await, json!(true));
+    assert_eq!(w.registry.hits(), 0, "the registry subgraph was asked");
+
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = 2, last_block = 2 WHERE indexer = $1")
+        .bind(crate::chain_index::third_party_index::INDEXER)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    w.state.third_parties.outdate();
+    let (status, body) = get(&w.app, Some(MANAGER_KEY), "/v1/thirdParties".into()).await;
+    assert_eq!((status, &body["data"]), (200, &json!([])), "{body}");
+    assert_eq!(get(&w.app, Some(MANAGER_KEY), slots).await.0, 401);
+}
+
+#[tokio::test]
+async fn a_publication_dated_after_a_read_began_is_current_and_one_in_the_future_is_not() {
+    use crate::chain_index::third_party_index::{INDEXER, providers};
+    let Some(w) = world().await else { return };
+    let mut read = w.pool.begin().await.unwrap();
+    super::support::publish_registry_index(&mut read, false).await;
+    for (dated, current) in [("0 seconds", true), ("1 minute", false)] {
+        sqlx::query(
+            "WITH waited AS (SELECT pg_sleep(0.05)) \
+             UPDATE shop.chain_cursor SET folded_at = timezone('UTC', clock_timestamp()) + $2::interval \
+             FROM waited WHERE indexer = $1",
+        )
+        .bind(INDEXER)
+        .bind(dated)
+        .execute(&mut *read)
+        .await
+        .unwrap();
+        let answer = providers(&mut *read, None, None, false).await.unwrap();
+        assert_eq!(
+            answer.is_some(),
+            current,
+            "dated {dated} after the read began"
+        );
+    }
+}
+
+#[tokio::test]
+async fn while_the_index_has_no_current_publication_every_registry_answer_is_503() {
+    let Some(w) = world().await else { return };
+    let manager = address(MANAGER_KEY);
+    let provider = listed(&w, &[&manager], "10");
+    let (id, items) = collection(&w, &provider, 2).await;
+    let (status, body) = call(
+        &w.app,
+        Some(MANAGER_KEY),
+        publish(id),
+        Some(
+            json!({ "itemIds": [items[0]], "cheque": cheque(MANAGER_KEY, &provider, 1, &salt()) }),
+        ),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let indexer = crate::chain_index::third_party_index::INDEXER;
+    for (publication, unpublish) in [
+        (
+            "catching up",
+            "UPDATE shop.chain_cursor SET full_history = false WHERE indexer = $1",
+        ),
+        (
+            "not published",
+            "UPDATE shop.chain_cursor SET folded_block = NULL WHERE indexer = $1",
+        ),
+        (
+            "older than 30 minutes",
+            "UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) - interval '31 minutes' WHERE indexer = $1",
+        ),
+        (
+            "quarantined",
+            "UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()), quarantine_reason = 'another chain' WHERE indexer = $1",
+        ),
+        (
+            "diverged",
+            "UPDATE shop.chain_cursor SET diverged_at = timezone('UTC', now()) WHERE indexer = $1",
+        ),
+        (
+            "of another chain",
+            "UPDATE shop.chain_cursor SET chain_id = 80002 WHERE indexer = $1",
+        ),
+        ("absent", "DELETE FROM shop.chain_cursor WHERE indexer = $1"),
+    ] {
+        let mut conn = w.pool.acquire().await.unwrap();
+        sqlx::query("DELETE FROM shop.chain_cursor WHERE indexer = $1")
+            .bind(indexer)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        super::support::publish_registry_index(&mut conn, false).await;
+        forget_the_last_read(&w);
+        let listing = get(&w.app, Some(MANAGER_KEY), "/v1/thirdParties".into()).await;
+        assert_eq!(listing.0, 200, "{publication}: {}", listing.1);
+        sqlx::query(unpublish)
+            .bind(indexer)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        drop(conn);
+        let before = written(&w.pool).await;
+        let approve = json!({ "curation": { "status": "approved" } });
+        let item_curation = format!("/v1/items/{}/curation", items[0]);
+        for (key, method, path, body) in [
+            (MANAGER_KEY, "GET", "/v1/thirdParties".to_string(), None),
+            (
+                MANAGER_KEY,
+                "GET",
+                format!("/v1/thirdParties/{provider}"),
+                None,
+            ),
+            (
+                MANAGER_KEY,
+                "GET",
+                format!("/v1/thirdParties/{provider}/slots"),
+                None,
+            ),
+            (COMMITTEE_KEY, "GET", approval(id), None),
+            (
+                MANAGER_KEY,
+                "POST",
+                publish(id),
+                Some(
+                    json!({ "itemIds": [items[1]], "cheque": cheque(MANAGER_KEY, &provider, 1, &salt()) }),
+                ),
+            ),
+            (COMMITTEE_KEY, "PATCH", item_curation, Some(approve)),
+        ] {
+            forget_the_last_read(&w);
+            let status = match body {
+                Some(body) => send(&w.app, key, method, &path, body).await.0,
+                None => get(&w.app, Some(key), path.clone()).await.0,
+            };
+            assert_eq!(status, 503, "{publication}: {method} {path}");
+        }
+        assert_eq!(written(&w.pool).await, before, "{publication}");
+    }
+}
+
+#[tokio::test]
+async fn on_amoy_the_registry_is_still_its_subgraph() {
+    use crate::network::AMOY;
+    let Some(w) = world_with(crate::Settings {
+        network: AMOY,
+        ..crate::Settings::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let manager = address(MANAGER_KEY);
+    let provider = format!(
+        "urn:decentraland:amoy:collections-thirdparty:a{}",
+        Uuid::new_v4().simple()
+    );
+    w.registry.put(&provider, &[&manager], true, false);
+    let (status, body) = get(&w.app, Some(MANAGER_KEY), "/v1/thirdParties".into()).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["data"][0]["id"], json!(provider));
+    assert_eq!(body["data"][0]["maxItems"], json!("10"));
+    let slots = format!("/v1/thirdParties/{provider}/slots");
+    assert_eq!(
+        get(&w.app, Some(MANAGER_KEY), slots).await.1["data"],
+        json!(10)
+    );
+
+    let (id, items) = collection(&w, &provider, 1).await;
+    let signed = cheque_on(&AMOY, MANAGER_KEY, &provider, 1, &salt());
+    let (status, body) = call(
+        &w.app,
+        Some(MANAGER_KEY),
+        publish(id),
+        Some(json!({ "itemIds": [items[0]], "cheque": signed })),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let consumed = async || {
+        let (status, body) = get(&w.app, Some(COMMITTEE_KEY), approval(id)).await;
+        (status, body["data"]["chequeWasConsumed"].clone())
+    };
+    assert_eq!(consumed().await, (200, json!(false)));
+    w.registry
+        .consume(&provider, &receipt_of(&AMOY, &provider, &signed));
+    assert_eq!(consumed().await, (200, json!(true)));
+    w.registry.fail_receipts(true);
+    assert_eq!(consumed().await.0, 503);
+    w.registry.fail_receipts(false);
+    assert_eq!(consumed().await.0, 200);
+    assert!(w.registry.hits() > 0);
+    let published: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM shop.chain_cursor WHERE indexer = $1")
+            .bind(crate::chain_index::third_party_index::INDEXER)
+            .fetch_one(&w.pool)
+            .await
+            .unwrap();
+    assert_eq!(published, 0, "the node on Amoy needs no index");
 }

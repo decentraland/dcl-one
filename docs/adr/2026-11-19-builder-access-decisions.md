@@ -94,12 +94,17 @@ source is down.
 - **The registry, read live.** The builder reads the whole third-party
   registry (`thirdParties`, every provider, approved or not, with its
   managers, merkle root, item allowance, approval, kind and metadata)
-  through the chain index's subgraph client, under a 10-second bound, from
+  under a 10-second bound. On Polygon it reads the shop's published
+  registry index at its published block
+  ([registry index](2026-11-24-polygon-third-party-registry.md)), and can't
+  tell while that index has no current publication. On Amoy, which has no
+  index, it reads through the chain index's subgraph client from
   `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`, else the builder's network's
   registry subgraph on Decentraland's subgraph worker. A write's decision, and every
   check a write repeats inside its transaction, accepts only a read that
   started after the decision began, so a manager the registry stops
-  listing loses its writes as soon as the subgraph indexes the change. A
+  listing loses its writes as soon as the index publishes the change, or
+  the subgraph indexes it. A
   read-only decision (the grants behind `GET` routes, the public search's
   provider flags included) also accepts a read that started up to 5
   seconds before it, so a page's concurrent reads share one registry read
@@ -144,7 +149,8 @@ source is down.
 ## Consequences
 
 - A wallet the registry stops listing as a provider's manager is refused
-  on its next request once the registry subgraph has indexed the change. A
+  on its next request once the registry index has published the change, or
+  on Amoy the registry subgraph has indexed it. A
   request that involves a third-party collection waits for a registry read
   that starts after it arrives.
 - While the registry can't tell, every request that involves a third-party

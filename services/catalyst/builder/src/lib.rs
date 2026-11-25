@@ -160,7 +160,8 @@ pub struct RawSettings {
     /// the network's collections subgraph.
     pub matic_collections_subgraph_url: Option<String>,
     /// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` as set, empty included; unset
-    /// reads the network's registry subgraph.
+    /// reads the network's registry subgraph. Read on Amoy only
+    /// ([`State::registry_indexed`]).
     pub third_party_registry_subgraph_url: Option<String>,
     /// `CREATE_WRITES_ENABLED` (false).
     pub writes_enabled: bool,
@@ -586,13 +587,19 @@ impl State {
             .or_else(|| self.settings.default_collections_subgraph.clone())
     }
 
-    /// The third-party registry subgraph the builder reads:
+    /// The third-party registry subgraph the builder reads on Amoy:
     /// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` when set, else its network's.
     pub fn registry_subgraph(&self) -> Option<String> {
         self.market
             .as_ref()
             .and_then(|m| m.settings.third_party_registry_subgraph_url.clone())
             .or_else(|| self.settings.default_registry_subgraph.clone())
+    }
+
+    /// Whether the node reads the third-party registry from the shop's
+    /// published index: on Polygon, the only chain it indexes.
+    pub fn registry_indexed(&self) -> bool {
+        self.settings.network == network::POLYGON
     }
 
     /// What `serve` logs at startup.
