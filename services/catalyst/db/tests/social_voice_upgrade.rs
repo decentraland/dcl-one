@@ -248,6 +248,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
             "0066_map_grid_change_marks",
             "0067_rental_asset_membership_block",
             "0069_shop_trade_digest",
+            "0070_shop_mirror_chain",
         ])
         .collect();
     let done = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)

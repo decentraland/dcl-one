@@ -15,6 +15,8 @@ use crate::{
 
 #[path = "serve_adapters.rs"]
 mod adapters;
+#[path = "serve_health.rs"]
+mod health;
 #[path = "serve_lifecycle.rs"]
 mod lifecycle;
 #[path = "serve_routes.rs"]
@@ -183,6 +185,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     .await
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
+    let self_hosts = content::own_hosts(&config);
+    let market_settings = crate::settings::market_settings(&config, &self_hosts)?;
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
     worlds::rooms::ensure_scene_admin_place_release(&pool).await?;
     worlds::rooms::ensure_genesis_scene_ban_release(&pool).await?;
@@ -561,8 +565,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     // archive, every one over the same pool, client and job lifecycle. The
     // local writes among them sit behind DATA_WRITES_ENABLED
     // (`shop::market::DataWrites`, the social switch's twin).
-    let self_hosts = content::own_hosts(&config);
-    let market_settings = crate::settings::market_settings(&config, &self_hosts)?;
     shop::market::catalog::install_served_chains(&market_settings.market.indexes);
     let market = Arc::new(
         shop::market::MarketplaceState::new(

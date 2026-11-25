@@ -102,9 +102,9 @@ pub struct OffChainMarketplace {
 }
 
 pub const ETHEREUM_MAINNET: i64 = 1;
-pub const ETHEREUM_SEPOLIA: i64 = 11155111;
+pub const ETHEREUM_SEPOLIA: i64 = crate::types::ChainId::SEPOLIA.0 as i64;
 pub const MATIC_MAINNET: i64 = 137;
-pub const MATIC_AMOY: i64 = 80002;
+pub const MATIC_AMOY: i64 = crate::types::ChainId::AMOY.0 as i64;
 
 pub fn offchain_marketplace_v2(chain_id: i64) -> Option<OffChainMarketplace> {
     match chain_id {
@@ -1358,7 +1358,13 @@ async fn post_trade_inner(
         return Err(ApiError::http(429, "rate limit exceeded".to_string()));
     }
     require_auth_metadata(headers, MARKETPLACE_AUTH_SIGNERS, Some(CREATE_TRADE_INTENT))?;
-    let recovered = require_signer(headers, "post", "/v1/trades").await?;
+    let recovered = require_signer(
+        super::signed::fresh(state.eip1654.as_deref()),
+        headers,
+        "post",
+        "/v1/trades",
+    )
+    .await?;
     if TRADE_LIMITER.check(&recovered.to_ascii_lowercase()) == RateLimitDecision::Deny {
         return Err(ApiError::http(429, "rate limit exceeded".to_string()));
     }
