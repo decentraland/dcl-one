@@ -217,7 +217,9 @@ jobs:
             echo "SDK packages for $HEAD_SHA:"
             echo
             echo '```'
-            echo "$cli install @dcl/sdk@npm:$PREVIEW_SCOPE/sdk@$VERSION @dcl/sdk-commands@npm:$PREVIEW_SCOPE/sdk-commands@$VERSION"
+            printf '%s install' "$cli"
+            for name in $SDK_PACKAGES; do printf ' \\\n  @dcl/%s@npm:%s/%s@%s' "$name" "$PREVIEW_SCOPE" "$name" "$VERSION"; done
+            echo
             echo '```'
             echo
             echo 'The pr dist-tag points at the last PR preview published, so prefer the exact version.'

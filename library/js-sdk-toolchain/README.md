@@ -82,7 +82,12 @@ command to the PR's CI status comment. The run renames the packages before packi
 so a scene keeps importing `@dcl/sdk`:
 
 ```bash
-npm install @dcl/sdk@npm:@dcl-regenesislabs/sdk@<version> @dcl/sdk-commands@npm:@dcl-regenesislabs/sdk-commands@<version>
+npm install \
+  @dcl/ecs@npm:@dcl-regenesislabs/ecs@<version> \
+  @dcl/js-runtime@npm:@dcl-regenesislabs/js-runtime@<version> \
+  @dcl/react-ecs@npm:@dcl-regenesislabs/react-ecs@<version> \
+  @dcl/sdk-commands@npm:@dcl-regenesislabs/sdk-commands@<version> \
+  @dcl/sdk@npm:@dcl-regenesislabs/sdk@<version>
 ```
 
 Install the exact version; the tag moves to the last PR published. Those packages are previews
