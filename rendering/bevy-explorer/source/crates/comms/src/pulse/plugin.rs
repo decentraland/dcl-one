@@ -102,7 +102,8 @@ enum Connection {
     /// Handshake accepted and the realm announced, by its initial state or a teleport; steady state.
     Established,
     /// Terminally disconnected (banned, evicted by a newer session, flagged for misbehaviour, or a
-    /// code this build doesn't know) — no reconnect attempted. A realm change while here sets
+    /// code this build doesn't know) — no reconnect attempted. A listener whose announcement was
+    /// rejected retries instead (see [`ReconnectPolicy`]). A realm change while here sets
     /// `Down { respawn_at: 0.0 }` and resets the [`ReconnectPolicy`].
     Dead,
 }
@@ -242,10 +243,11 @@ struct ListenerRole {
     /// well as parcel because a parcel index only means something inside one: every world numbers
     /// its parcels from 0,0, so a server cohosting two worlds has two different scenes at `0,0`.
     transport_by_parcel: HashMap<String, HashMap<IVec2, Entity>>,
-    /// The AoI we want observed: one entry per hosted realm, its parcels consolidated into one rect
-    /// per contiguous rectangular block ([`scene_regions`]). The rects tile each realm's parcel set
-    /// exactly — no overlap, no over-coverage — so consolidating them is purely a wire-size win
-    /// against the server's Σ-area budget.
+    /// The AoI we want observed: one entry per hosted realm. A world is its hosted parcels'
+    /// bounding box ([`is_world_realm`]); any other realm is its parcels consolidated into one rect
+    /// per contiguous rectangular block ([`scene_regions`]), which tile the parcel set exactly — no
+    /// overlap, no over-coverage — so consolidating them is purely a wire-size win against the
+    /// server's Σ-area budget.
     aoi: Vec<pulse::SceneListenerAoi>,
     /// The AoI the server holds: what the handshake carried, then what the last update carried.
     /// `flush_listener_aoi` sends an update whenever `aoi` differs from this, so a change is never
@@ -385,12 +387,16 @@ impl PulseRole {
         }
     }
 
-    /// `handshake` / `scene-listener handshake (2 realms, 5 rects)`, for logs.
+    /// `handshake` / `scene-listener handshake (2 realms, 5 rects, 12 parcels)`, for logs: the AoI
+    /// the handshake carries, which `aoi` may have moved on from by the time it is sent.
     fn handshake_label(&self) -> String {
         match self {
             Self::Player(_) => "handshake".to_owned(),
             Self::Listener(listener) => {
-                format!("scene-listener handshake ({})", describe_aoi(&listener.aoi))
+                format!(
+                    "scene-listener handshake ({})",
+                    describe_aoi(&listener.announced)
+                )
             }
         }
     }
@@ -403,10 +409,16 @@ impl PulseRole {
     }
 }
 
-/// `2 realms, 5 rects` — the shape of an announced area of interest, for logs.
+/// `2 realms, 5 rects, 12 parcels`: an AoI's shape for logs, overlaps counted per rect as the
+/// server's budget counts them.
 fn describe_aoi(aoi: &[pulse::SceneListenerAoi]) -> String {
     let rects: usize = aoi.iter().map(|realm| realm.parcel_rects.len()).sum();
-    format!("{} realms, {rects} rects", aoi.len())
+    let area: i64 = aoi
+        .iter()
+        .flat_map(|realm| &realm.parcel_rects)
+        .map(rect_area)
+        .sum();
+    format!("{} realms, {rects} rects, {area} parcels", aoi.len())
 }
 
 /// A pending handshake's contents, before it is signed. Both variants carry the same auth chain;
@@ -1146,15 +1158,35 @@ fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64)
                 }
             }
             Ok(PulseStatus::Disconnected(reason)) => {
-                warn!("pulse: disconnected ({reason:?})");
-                taken_over |= reason == transport::PulseDisconnect::DuplicateSession;
-                let accepted = session.accepted;
-                lost_connection(
-                    session,
-                    sinks,
-                    Failure::Disconnected { reason, accepted },
-                    now,
+                let hint = match reason {
+                    transport::PulseDisconnect::None => {
+                        ": no reason code, e.g. a transport timeout"
+                    }
+                    _ => "",
+                };
+                warn!(
+                    "pulse: disconnected ({reason:?}{hint}; handshake accepted: {})",
+                    session.accepted
                 );
+                if let (
+                    transport::PulseDisconnect::InvalidHandshakeField
+                    | transport::PulseDisconnect::PacketCorrupted
+                    | transport::PulseDisconnect::InvalidSceneListenerField,
+                    PulseRole::Listener(listener),
+                ) = (reason, &session.role)
+                {
+                    error!(
+                        "pulse: the server rejected the scene-listener announcement ({}); retrying on the backoff",
+                        describe_aoi(&listener.announced)
+                    );
+                }
+                taken_over |= reason == transport::PulseDisconnect::DuplicateSession;
+                let failure = Failure::Disconnected {
+                    reason,
+                    accepted: session.accepted,
+                    listener: matches!(session.role, PulseRole::Listener(_)),
+                };
+                lost_connection(session, sinks, failure, now);
             }
             // A failure the driver reports itself, before or after the connection came up — always
             // retryable.
@@ -1259,6 +1291,7 @@ fn drive_connection(
             if let Some(result) = task.complete() {
                 match result {
                     Ok(bytes) => {
+                        let size = bytes.len();
                         if let Some(link) = session.link.as_mut() {
                             link.send(PulseFrame {
                                 bytes,
@@ -1266,7 +1299,10 @@ fn drive_connection(
                                 kind: FrameKind::Control,
                             });
                         }
-                        info!("pulse: {} sent", session.role.handshake_label());
+                        info!(
+                            "pulse: {} sent, {size} bytes",
+                            session.role.handshake_label()
+                        );
                         session.state = Connection::AwaitingResponse {
                             timeout_at: now + HANDSHAKE_RESPONSE_TIMEOUT_SECS,
                         };
@@ -1722,33 +1758,66 @@ fn update_listener_aoi(
         })
         .collect();
 
-    // One entry per realm, its parcels consolidated into one rect per contiguous rectangular block
-    // — blocks from adjacent scenes in the same realm merging is fine, the AoI is only a filter.
-    // Sorted so an unchanged AoI compares equal across frames (HashMap iteration order does not).
+    // One entry per realm: a world as the bounding box of its hosted parcels, anything else with
+    // its parcels consolidated into one rect per contiguous rectangular block — blocks from
+    // adjacent scenes in the same realm merging is fine, the AoI is only a filter. Sorted so an
+    // unchanged AoI compares equal across frames (HashMap iteration order does not). A realm whose
+    // scenes have no transport yet is left out: the server rejects a realm with no rects.
     let mut aoi: Vec<_> = listener
         .transport_by_parcel
         .iter()
+        .filter(|(_, parcels)| !parcels.is_empty())
         .map(|(realm, parcels)| {
-            // ordered input: rects come out in its order
-            let mut parcels: Vec<IVec2> = parcels.keys().copied().collect();
-            parcels.sort_unstable_by_key(|p| (p.x, p.y));
+            let parcel_rects = if is_world_realm(realm) {
+                let min = parcels.keys().fold(IVec2::MAX, |a, b| a.min(*b));
+                let max = parcels.keys().fold(IVec2::MIN, |a, b| a.max(*b));
+                vec![parcel_rect(min, max)]
+            } else {
+                // ordered input: rects come out in its order
+                let mut parcels: Vec<IVec2> = parcels.keys().copied().collect();
+                parcels.sort_unstable_by_key(|p| (p.x, p.y));
+                scene_regions(parcels.into_iter())
+                    .into_iter()
+                    .map(|region| parcel_rect(region.min, region.max))
+                    .collect()
+            };
             pulse::SceneListenerAoi {
                 realm: realm.clone(),
-                parcel_rects: scene_regions(parcels.into_iter())
-                    .into_iter()
-                    .map(|region| pulse::ParcelRect {
-                        min_x: region.min.x,
-                        min_z: region.min.y,
-                        max_x: region.max.x,
-                        max_z: region.max.y,
-                    })
-                    .collect(),
+                parcel_rects,
             }
         })
         .collect();
     aoi.sort_by(|a, b| a.realm.cmp(&b.realm));
 
     set_listener_aoi(session, aoi);
+}
+
+/// Whether `realm` is a world, judged by its name: a world served under its NAME or ENS name ends
+/// in `.eth`, and a Genesis City realm or a local preview key never does. A world whose realm name
+/// is something else (renamed, or with `.dcl.eth` stripped by the worlds server that publishes it)
+/// is announced exactly, as before. On an orchestrated server only the orchestrator knows whether a
+/// scene's realm lists its scenes ([`common::structs::ServerConfiguration::lists_scenes`]), and
+/// `add-scene` does not say yet. A world is announced as its
+/// bounding box, one rect however irregular it is: only the world's own scenes are inside it, so the
+/// extra parcels are empty ground, and routing still uses the exact parcels, so a peer standing
+/// there reaches no scene.
+fn is_world_realm(realm: &str) -> bool {
+    realm.ends_with(".eth")
+}
+
+/// The parcels `rect` covers.
+fn rect_area(rect: &pulse::ParcelRect) -> i64 {
+    (i64::from(rect.max_x) - i64::from(rect.min_x) + 1)
+        * (i64::from(rect.max_z) - i64::from(rect.min_z) + 1)
+}
+
+fn parcel_rect(min: IVec2, max: IVec2) -> pulse::ParcelRect {
+    pulse::ParcelRect {
+        min_x: min.x,
+        min_z: min.y,
+        max_x: max.x,
+        max_z: max.y,
+    }
 }
 
 /// The parcels a definition points at. Only scenes have any: profiles and wearables point at
@@ -1800,19 +1869,21 @@ fn flush_listener_aoi(session: &mut PulseSession, now: f64) {
 
     listener.announced = listener.aoi.clone();
     listener.next_update_at = now + AOI_UPDATE_MIN_INTERVAL_SECS;
-    info!(
-        "pulse: scene-listener AoI update sent ({})",
-        describe_aoi(&listener.announced)
-    );
-    let message = pulse::ClientMessage {
+    let bytes = pulse::ClientMessage {
         message: Some(pulse::client_message::Message::SceneListenerUpdate(
             pulse::SceneListenerUpdate {
                 aoi: listener.announced.clone(),
             },
         )),
-    };
+    }
+    .encode_to_vec();
+    info!(
+        "pulse: scene-listener AoI update sent ({}), {} bytes",
+        describe_aoi(&listener.announced),
+        bytes.len()
+    );
     link.send(PulseFrame {
-        bytes: message.encode_to_vec(),
+        bytes,
         reliability: PulseReliability::Reliable,
         kind: FrameKind::Control,
     });
