@@ -122,6 +122,7 @@ function renderShop(over: Partial<InWorldShopProps> = {}) {
     preview: vi.fn(),
     focus: vi.fn(),
     stage: vi.fn(),
+    nametag: vi.fn(),
     emote: vi.fn(),
     rotate: vi.fn(),
     zoom: vi.fn(),

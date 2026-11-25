@@ -3,7 +3,6 @@
 // data and wires them to the HUD (docs/ui-standards.md, App-specific UI). What it may import is checked by
 // apps/ui3/src/play/test/shopUiBoundary.test.ts, with the tests of /play, its host.
 
-export { AvatarNametag, NAMETAG_PLACEHOLDER } from './AvatarNametag'
 export { EmoteControls } from './EmoteControls'
 export { buyableInWorld, PriceTag } from './PriceTag'
 export { ShopFilters, type ShopFilterPatch, type ShopFilterStatus, type ShopFilterValues } from './ShopFilters'

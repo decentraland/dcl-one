@@ -6,7 +6,7 @@
 // dialog (purchaseQuery); resales, anything not sold in Credits, and buying outside the shell open on the
 // web Shop. ADD TO CART keeps such a sale in the in-world cart (cartStore), whose popover under the
 // header's cart button buys them all at once through the same dialog. Names is where a NAME is picked: the
-// typed NAME shows over the avatar in a nametag, as it will read once claimed, and CLAIM NAME registers it
+// typed NAME shows over the avatar in the engine's nametag, as it will read once claimed, and CLAIM NAME registers it
 // on the web Shop; RESALE NAME lists the NAMEs on resale, each bought on the web Marketplace. Where the shell
 // rehearses NAME purchases (its capabilities' `namesMode: 'simulation'`, a testnet build that turned it on),
 // CLAIM NAME opens that rehearsal instead, and its PREVIEW ON AVATAR shows the NAME over the avatar here,
@@ -21,9 +21,8 @@ import { hostOr } from '@shop-host'
 import { REMOTE_FLAG } from '@shop/discovery/lib/rolloutFlags'
 import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput } from '@shop/names/name'
 import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, showToast, Spinner, Tabs, type TabItem } from '@hud/design'
-import { resolveNameColor, userNameColor } from '@explorer-core/engine/nameColor'
 import { addressSuffix } from '@explorer-core/engine/profileEdit'
-import type { EngineViewportRegion, PreviewFocus, PreviewStageFraming, Wearable } from '@explorer-core/engine/protocol'
+import type { EngineViewportRegion, PreviewFocus, PreviewNametag, PreviewStageFraming, Wearable } from '@explorer-core/engine/protocol'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { splitName } from '@explorer-core/lib/identity'
 import { subscribeHudScale } from '@explorer-core/lib/hudScale'
@@ -47,7 +46,7 @@ import { NAME_RESALES_KEY, resalePageCount, useNameCheck, useNameResales, type N
 import { purchaseQueries, useCreditsBalance, useShopPurchase } from './purchaseQuery'
 import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
 import { ShopCardSkeleton } from '@dcl/one-ui'
-import { AvatarNametag, CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopNameCard, ShopNames, type PressedWith, type ShopHomeOutfitOffer, type ShopNamesTab } from './ui'
+import { CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopNameCard, ShopNames, type PressedWith, type ShopHomeOutfitOffer, type ShopNamesTab } from './ui'
 import styles from './InWorldShop.module.css'
 import { inShell } from '@explorer-core/lib/shell'
 
@@ -69,8 +68,9 @@ const SEARCH_DEBOUNCE_MS = 350
 const THUMB_LENGTH = 203
 /** The stage image (assets/stage.jpg) is the design's 1920×1080 frame, its top 70px under the top bar. */
 const STAGE = { width: 1920, height: 1080, top: 70 }
-/** The avatar's window, the design's Avatar slot (.preview, at the left of .stage): 573×942px. */
-const AVATAR_WINDOW = { width: 573, height: 942 }
+/** What Names' nametag reads while no NAME is typed, in the design's silver (DCL/Silver, #a09ba8). */
+export const NAMETAG_PLACEHOLDER = 'YourName'
+const NAMETAG_PLACEHOLDER_COLOR = { r: 160 / 255, g: 155 / 255, b: 168 / 255 }
 /** How long "1 Item Added to Cart" stays up. */
 const TOAST_MS = 3000
 type Rect = { x: number; y: number; width: number; height: number }
@@ -89,6 +89,8 @@ export interface InWorldShopProps {
   /** Where the page draws its stage image, for the engine to draw the same behind the avatar, and how the page
    *  draws the avatar; null restores the Backpack's backdrop. */
   stage: (rect: Rect | null, framing?: PreviewStageFraming) => void
+  /** The nametag the engine draws over the preview avatar; null takes it away. */
+  nametag: (nametag: PreviewNametag | null) => void
   /** Plays an emote on the preview avatar (again on every call); null stops it. */
   emote: (urn: string | null) => void
   /** Turns the preview avatar by these degrees (a drag over it). */
@@ -127,7 +129,7 @@ async function openWebShop(url: string | null, where: 'Shop' | 'Marketplace' = '
   if (go) window.open(url, '_blank', 'noopener')
 }
 
-export default function InWorldShop({ shop, profile, onNavigate, setEngineViewport, equipped, preview, focus, stage, emote, rotate, zoom, noEngine = false, emoteTryOn = !noEngine }: InWorldShopProps): React.JSX.Element | null {
+export default function InWorldShop({ shop, profile, onNavigate, setEngineViewport, equipped, preview, focus, stage, nametag, emote, rotate, zoom, noEngine = false, emoteTryOn = !noEngine }: InWorldShopProps): React.JSX.Element | null {
   // The Shop opens on the wearables catalogue, as the design's every frame of this flow does.
   const [section, setSection] = useState<Section>('wearables')
   const queryClient = useQueryClient()
@@ -146,12 +148,6 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const [resalePage, setResalePage] = useState(0)
   const resaleScroller = useRef<HTMLDivElement>(null)
   const [nameDraft, setNameDraft] = useState('')
-  const [nameFocused, setNameFocused] = useState(false)
-  // A zoomed preview hides the nametag: it would sit over the avatar's head.
-  const [zoomed, setZoomed] = useState(false)
-  // Names' nametag: on the engine's nametag anchor once it is known, else where the design puts it.
-  const anchor = shop.nametagAnchor ?? null
-  const nametagClass = anchor != null ? `${styles.nametag} ${styles.nametagAnchored}` : styles.nametag
   // Each ADD TO CART shows the toast again (its key restarts it).
   const [toast, setToast] = useState(0)
   const cartArea = useRef<HTMLDivElement>(null)
@@ -248,7 +244,6 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     setSection('names')
     setNameTab('unique')
     setNameDraft(name)
-    setNameFocused(false)
     showToast('Preview only: your profile’s name hasn’t changed.')
   }, [])
   const purchase = useShopPurchase(() => onNavigate('backpack'), { onPreviewName: previewName })
@@ -315,8 +310,6 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     setNameTab('unique')
     setResalePage(0)
     setNameDraft('')
-    setNameFocused(false)
-    setZoomed(false)
     restoreLook()
     stopEmote()
   }, [shop.open, focus, restoreLook, stopEmote])
@@ -355,6 +348,33 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
       stage(null)
     }
   }, [shop.open, noEngine, stage])
+
+  // The nametag the engine draws over the avatar on Names. On UNIQUE NAME, the NAME being picked as it will read
+  // once claimed (in a claimed NAME's colour), or the design's silver "YourName" while nothing is typed. On RESALE
+  // NAME, the player's own name as it reads now: a claimed NAME in its chosen colour, else the engine's hue and the
+  // end of the address. None there until the profile has a name: the placeholder's badge would show a claimed NAME
+  // the player may not have.
+  const own = splitName(profile.data?.name ?? '')
+  const ownClaimed = profile.data?.hasClaimedName === true
+  const ownColor = profile.data?.nameColor
+  const tag: PreviewNametag | null =
+    !shop.open || section !== 'names'
+      ? null
+      : namesTab === 'unique'
+        ? nameDraft === ''
+          ? { name: NAMETAG_PLACEHOLDER, claimed: true, color: NAMETAG_PLACEHOLDER_COLOR }
+          : { name: nameDraft, claimed: true }
+        : own.base === ''
+          ? null
+          : { name: own.base, claimed: ownClaimed, ...(ownClaimed && ownColor != null ? { color: ownColor } : {}) }
+  const tagKey = tag == null ? null : JSON.stringify(tag)
+  const tagRef = useRef(tag)
+  tagRef.current = tag
+  // Told once per change of what it reads, and taken away when the Shop closes or unmounts.
+  useEffect(() => {
+    nametag(tagKey == null ? null : tagRef.current)
+  }, [nametag, tagKey])
+  useEffect(() => () => nametag(null), [nametag])
 
   if (!shop.open) return null
 
@@ -527,11 +547,6 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const openNameResale = (resale: NameResale): void => void openWebShop(webNameTokenUrl(resale.contract, resale.tokenId), 'Marketplace')
 
   const p = profile.data
-  // Over the avatar on RESALE NAME: the player's own name as it reads now (a claimed NAME's colour, or the
-  // reference hue and the #last-four of an unclaimed one).
-  const own = splitName(p?.name ?? '')
-  const ownAddress = (p?.address ?? '').toLowerCase()
-  const ownClaimed = p?.hasClaimedName === true
   const sortLabel = CATALOGUE_SORTS.find((s) => s.id === filters.sort)?.label ?? CATALOGUE_SORTS[0].label
   // A new page or filter set shows the last rows, dimmed, until it answers.
   const stale = grid.isPlaceholderData
@@ -635,15 +650,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
           {toast > 0 && <ShopCartToast key={toast}>1 Item Added to Cart</ShopCartToast>}
         </div>
 
-        <div
-          className={styles.stage}
-          // Where the engine puts the avatar's nametag, over its head and what it wears: Names' nametag stands on it.
-          style={
-            anchor != null
-              ? ({ '--nametag-x': `${anchor.x * AVATAR_WINDOW.width}px`, '--nametag-y': `${anchor.y * AVATAR_WINDOW.height}px` } as React.CSSProperties)
-              : undefined
-          }
-        >
+        <div className={styles.stage}>
           {/* The engine draws the avatar preview here, seen through the backdrop's hole. */}
           <div className={styles.preview}>
             <EngineViewport region="avatarPreview" report={setEngineViewport} />
@@ -651,31 +658,10 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
             {!noEngine && (
               <AvatarDragSurface
                 onRotate={rotate}
-                onZoom={(z, anchor) => {
-                  setZoomed(z > 1)
-                  zoom(z, anchor)
-                }}
+                onZoom={zoom}
               />
             )}
           </div>
-          {section === 'names' &&
-            !zoomed &&
-            (namesTab === 'unique' ? (
-              // The NAME being picked, over the avatar as it will read once claimed (in a claimed NAME's colour).
-              <AvatarNametag className={nametagClass} name={nameDraft} typing={nameFocused} color={userNameColor(nameDraft, ownAddress, true)} />
-            ) : (
-              // The player's own name, as it reads today. None until the profile has one: the empty nametag's
-              // placeholder and badge would show a claimed NAME the player may not have.
-              own.base !== '' && (
-                <AvatarNametag
-                  className={nametagClass}
-                  name={own.base}
-                  claimed={ownClaimed}
-                  suffix={own.tag || addressSuffix(ownAddress)}
-                  color={resolveNameColor(own.base, ownAddress, ownClaimed, p?.nameColor)}
-                />
-              )
-            ))}
           {playing != null && (
             // The design's EMOTE controls, over the avatar while an emote plays.
             <EmoteControls className={styles.emoteControls} onStop={stopEmote} />
@@ -736,7 +722,6 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                 onChange={typeName}
                 clean={cleanName}
                 maxLength={NAME_TYPED_MAX}
-                onFocusChange={setNameFocused}
                 minLength={NAME_MIN_LENGTH}
                 limit={NAME_MAX_LENGTH}
                 suffix={addressSuffix(p?.address ?? '') || null}

@@ -267,9 +267,10 @@ impl Quad {
     }
 }
 
-/// The mesh of `quads`, painted in order, and how far it reaches from the anchor. Positions
-/// are tag units.
-pub fn quad_mesh(quads: &[Quad]) -> (Mesh, f32) {
+/// The mesh of `quads`, painted in order and drawn `scale` times their size, and how far it
+/// reaches from the anchor. Positions are tag units. The uvs stay as they are: a shape's are in
+/// tag units from its centre, so the whole tag grows alike.
+pub fn quad_mesh(quads: &[Quad], scale: f32) -> (Mesh, f32) {
     let count = quads.len() * 4;
     let mut positions = Vec::with_capacity(count);
     let mut uvs = Vec::with_capacity(count);
@@ -287,14 +288,14 @@ pub fn quad_mesh(quads: &[Quad]) -> (Mesh, f32) {
             (quad.max, quad.color_top),
             (Vec2::new(quad.min.x, quad.max.y), quad.color_top),
         ] {
-            positions.push([corner.x, corner.y, 0.0]);
+            positions.push([corner.x * scale, corner.y * scale, 0.0]);
             uvs.push(quad.uv_at(corner).to_array());
             colors.push(color.to_array());
             shapes.push(quad.shape.to_array());
             radii.push(quad.radii.to_array());
         }
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-        reach = reach.max(quad.min.abs().max(quad.max.abs()).length());
+        reach = reach.max(quad.min.abs().max(quad.max.abs()).length() * scale);
     }
 
     let mesh = Mesh::new(
@@ -385,7 +386,7 @@ mod tests {
             Quad::rect(Rect::new(-5.0, 0.0, 5.0, 4.0), 2.0, Color::BLACK),
             Quad::rect(Rect::new(-1.0, 1.0, 20.0, 3.0), 1.0, Color::WHITE),
         ];
-        let (mesh, reach) = quad_mesh(&quads);
+        let (mesh, reach) = quad_mesh(&quads, 1.0);
         assert_eq!(mesh.count_vertices(), 8);
         let Some(Indices::U32(indices)) = mesh.indices() else {
             panic!("no indices");

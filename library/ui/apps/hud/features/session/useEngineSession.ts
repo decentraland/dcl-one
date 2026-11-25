@@ -11,7 +11,7 @@ import { type GotoTarget, randomParcel, worldOfRealm } from '@explorer-core/feat
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
 import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus, type PreviewStageFraming } from '@explorer-core/engine/protocol'
+import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus, type PreviewNametag, type PreviewStageFraming } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
@@ -265,6 +265,8 @@ export interface BackpackState {
    *  page draws the avatar (the catalogue's framing, unless given); null gives the preview the Backpack's backdrop
    *  back. */
   stage: (rect: { x: number; y: number; width: number; height: number } | null, framing?: PreviewStageFraming) => void
+  /** The Shop's nametag over the preview avatar, drawn by the engine; null takes it away. */
+  nametag: (nametag: PreviewNametag | null) => void
   /** Play an emote on the preview avatar (again for every call); null stops it. */
   emote: (urn: string | null) => void
   /** Turn the preview avatar by `degrees` about its vertical axis (a drag over it). */
@@ -570,10 +572,6 @@ export interface EventsState {
 export interface ShopState {
   open: boolean
   toggle: () => void
-  /** Where the engine puts the Shop avatar's nametag (previewNametag): over the head and what it wears, as a point
-   *  in the avatar's window (shares of its width from its left and of its height from its top). null or absent
-   *  while it isn't known. */
-  nametagAnchor?: { x: number; y: number } | null
 }
 
 // Unity's sidebar Skybox menu: time of day, driven through the engine's `/time <hours> <speed>`.
@@ -1396,7 +1394,6 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [lobbyStageReady, setLobbyStageReady] = useState(false)
   const [communitiesLoaded, setCommunitiesLoaded] = useState(false)
   const [signinStageReady, setSigninStageReady] = useState(false)
-  const [previewNametagAnchor, setPreviewNametagAnchor] = useState<{ x: number; y: number } | null>(null)
   const [avatarPreviewReady, setAvatarPreviewReady] = useState(false)
   const previewOpen = useRef(false)
   const previewReadyFallback = useFallbackTimer(AVATAR_PREVIEW_READY_TIMEOUT_MS)
@@ -1762,13 +1759,6 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const eventsOpenSource = useRef<EventsOpenSource | null>(null)
   const eventsData = useEventsData(driverRef, (event) => track('event_set_as_interested', eventAnalytics(event)))
   const [shopOpen, setShopOpen] = useState(false)
-  // Read by the engine's messages, which a closed Shop's tag mustn't reach.
-  const shopOpenRef = useRef(false)
-  // The Shop closed: the tag over its avatar goes with it, and a place told late, while it is closed, is never kept.
-  useEffect(() => {
-    shopOpenRef.current = shopOpen
-    if (!shopOpen) setPreviewNametagAnchor(null)
-  }, [shopOpen])
   const bridgeRequestRef = useRef(0)
   const bridgePendingRef = useRef(new Map<number, (msg: BridgeReply) => void>())
   const [galleryMetas, setGalleryMetas] = useState<Record<string, GalleryPhotoMeta | null>>({})
@@ -2208,8 +2198,6 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'bridgeReady':
           setBridgeAnswered(true)
-          // a bridge (re)started knows no tag over the Shop's avatar until its stream tells it
-          setPreviewNametagAnchor(null)
           break
         case 'bridgeUnavailable':
           // no answer is coming: Verifying's clock runs, so a sign-in waiting on it gives up
@@ -2649,10 +2637,6 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'signinStageReady':
           setSigninStageReady(true)
-          break
-        case 'previewNametag':
-          // a place told while the Shop is closed (a stream's last word, late) is no place to open on
-          if (msg.anchor == null || shopOpenRef.current) setPreviewNametagAnchor(msg.anchor)
           break
         case 'avatarPreviewReady':
           previewReadyFallback.clear()
@@ -4211,6 +4195,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const stagePreview = useCallback((rect: { x: number; y: number; width: number; height: number } | null, framing?: PreviewStageFraming) => {
     driverRef.current?.send(framing != null ? { kind: 'previewStage', rect, framing } : { kind: 'previewStage', rect })
   }, [])
+  const nametagPreview = useCallback((nametag: PreviewNametag | null) => {
+    driverRef.current?.send({ kind: 'previewNametag', nametag })
+  }, [])
   const emotePreview = useCallback((urn: string | null) => {
     driverRef.current?.send({ kind: 'previewEmote', urn })
   }, [])
@@ -4553,8 +4540,6 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // out); without it (Cancel on Verifying, a sign-in that failed) the next visit still finds it.
   const signOut = useCallback((forget: boolean) => {
     signOuts.current += 1
-    // the Shop's nametag was the signed-in avatar's
-    setPreviewNametagAnchor(null)
     // a /goto still waiting for its answer has no chat of this session to post it in
     gotoReplies.current.clear()
     // the next sign-in starts with the whole UI shown; sent before the logout, while the engine listens
@@ -5577,7 +5562,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     queryGifting,
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
-      equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
+      equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, nametag: nametagPreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
       outfits: outfits.outfits, outfitSlots: extraOutfitSlots ? 10 : 5, outfitsLoaded, warnAboutClearingExtraOutfits,
       saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
@@ -5587,7 +5572,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces, close: closePlaces, readSigned: readSignedPlace, worldAccess },
     events: { open: eventsOpen, toggle: toggleEvents, close: closeEvents, data: eventsData, memberOf: eventCommunities },
-    shop: { open: shopOpen, toggle: toggleShop, nametagAnchor: previewNametagAnchor },
+    shop: { open: shopOpen, toggle: toggleShop },
     create: { open: createOpen, toggle: toggleCreate, show: showCreate },
     photoMode: {
       snapshot: photoMode,

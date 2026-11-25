@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc, sync::Arc};
 use strum::IntoEnumIterator;
 use system_bridge::{
-    settings::SettingInfo, AnalyticsEvent, AvatarModifierState, AvatarNametagAnchor,
+    settings::SettingInfo, AnalyticsEvent, AvatarModifierState, AvatarShapeNametag,
     BlockUpdateData, BlockedUserData, BlockingStatusData, ChatMessage, ChatReactionData,
     CommunityMemberConnectivityData, CommunityVoiceUpdate, ConnectivitySnapshot,
     DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
@@ -685,6 +685,20 @@ pub fn op_set_chat_bubble_text(
         .unwrap();
 }
 
+/// Puts the engine's nametag on one of the system scene's avatars (an `AvatarShape` entity, as the
+/// scene numbers it), or takes it away. A `SystemApi`, so only the system scene can ask.
+pub fn op_set_avatar_shape_nametag(
+    state: Rc<RefCell<impl State>>,
+    entity: u32,
+    nametag: Option<AvatarShapeNametag>,
+) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetAvatarShapeNametag { entity, nametag })
+        .unwrap();
+}
+
 pub async fn op_get_chat_reaction_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
@@ -782,36 +796,6 @@ pub async fn op_get_user_profile(
     rx.await
         .map_err(|e| anyhow::anyhow!(e))?
         .map_err(|_| anyhow::anyhow!("Not found"))
-}
-
-/// Where one of the system scene's avatars (an `AvatarShape` entity, as the scene numbers it) has
-/// its nametag, as a stream: its anchor's offset from the avatar's origin, in world metres with the
-/// avatar's scale along the scene's axes, told now and again whenever it moves by a step. The
-/// system scene's avatar preview places the page's nametag with it. A `SystemApi`, so only the
-/// system scene can ask.
-pub async fn op_get_avatar_nametag_anchor_stream(
-    state: Rc<RefCell<impl State>>,
-    entity: u32,
-) -> u32 {
-    let (sender, receiver) = RpcStreamSender::channel();
-    let rid = open_stream(&mut *state.borrow_mut(), receiver);
-    state
-        .borrow_mut()
-        .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetAvatarNametagAnchorStream { entity, sender })
-        .unwrap();
-    rid
-}
-
-pub async fn op_read_avatar_nametag_anchor_stream(
-    state: Rc<RefCell<impl State>>,
-    rid: u32,
-) -> Result<Option<AvatarNametagAnchor>, anyhow::Error> {
-    Ok(read_stream(state, rid).await)
-}
-
-pub fn op_close_avatar_nametag_anchor_stream(state: Rc<RefCell<impl State>>, rid: u32) {
-    close_stream::<AvatarNametagAnchor>(&mut *state.borrow_mut(), rid);
 }
 
 /// The most addresses one `getCompactProfiles` call may ask about.

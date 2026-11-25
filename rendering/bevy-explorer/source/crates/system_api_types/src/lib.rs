@@ -18,19 +18,25 @@ use dcl_component::proto_components::{
 use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
-/// Where one of the system scene's avatars (an `AvatarShape` entity) has its nametag: the nametag
-/// anchor's offset from the avatar's origin, in world metres with the avatar's scale, along the
-/// scene's axes (`x` east, `y` up, `z` north). The engine sets that anchor over the head and what
-/// it wears. `measured` is false (and the offset zero) until the engine has measured the avatar's
-/// body, or while the entity is no such avatar.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
+/// The nametag a system scene puts on one of its avatars (`SystemApi::SetAvatarShapeNametag`): the
+/// Explorer's own tag, which the engine draws over the avatar's head. A system scene's avatars get
+/// none from their `AvatarShape` name, only this way.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export)]
-pub struct AvatarNametagAnchor {
-    pub measured: bool,
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
+pub struct AvatarShapeNametag {
+    /// The name, as a player's tag reads it: whatever follows a `#` is dropped.
+    pub name: String,
+    /// A claimed NAME: the tag carries the verified badge and no suffix. One that isn't is followed
+    /// by `#` and the end of the avatar's id, as a scene avatar's is.
+    pub claimed: bool,
+    /// The name's colour. Absent, the engine's own for that name: the name's hue when claimed, the
+    /// name's and the id's otherwise.
+    #[serde(default)]
+    #[ts(optional)]
+    pub color: Option<NameColor>,
+    /// The tag's size on screen, as a multiple of the in-world tag's: 1 is a player's tag.
+    pub scale: f32,
 }
 
 /// The safe connectivity snapshot shared by the HUD and diagnostic console.
@@ -673,7 +679,7 @@ pub struct AvatarModifierState {
     pub pulse_absent: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[derive(ts_rs::TS)]
 #[ts(export)]

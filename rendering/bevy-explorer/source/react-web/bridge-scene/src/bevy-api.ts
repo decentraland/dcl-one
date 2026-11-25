@@ -7,12 +7,12 @@ import type { CompactProfile, SerializedProfile } from './domains/profile'
 import type {
   AnalyticsEvent,
   AvatarModifierState,
+  AvatarShapeNametag,
   BlockedUserData,
   BlockingStatusData,
   ChatMessage,
   ChatReactionData,
   CommunityMemberConnectivityData,
-  AvatarNametagAnchor,
   ConnectivitySnapshot,
   CommunityVoiceUpdate,
   DmHistoryEntryData,
@@ -193,6 +193,9 @@ export type BevyApiInterface = {
   /** Replace the text of the chat bubble still showing `messageId` (its translation, or the
    *  original back); a message no bubble shows is ignored. */
   setChatBubbleText: (messageId: string, message: string) => void
+  /** Puts the engine's own nametag on one of this scene's avatars (an AvatarShape entity), or takes it away (null).
+   *  The tag goes with the avatar's shape. Optional: absent on runtimes that predate it. */
+  setAvatarShapeNametag?: (entity: number, nametag: AvatarShapeNametag | null) => void
   getChatStream: () => Promise<AsyncIterable<ChatStreamMessage>>
   /** Add or remove the local user's reaction to a chat message; echoed on getChatReactionStream. */
   sendChatReaction: (channel: string, messageId: string, emoji: string, remove: boolean) => void
@@ -270,11 +273,6 @@ export type BevyApiInterface = {
    *  one call, through the engine's profile cache: what a list row shows. In request order; an
    *  address the engine can't resolve is left out. At most 200 addresses; more rejects. */
   getCompactProfiles: (addresses: string[]) => Promise<CompactProfile[]>
-  /** Where one of this scene's avatars (an AvatarShape entity) has its nametag, as a stream: the anchor's offset from
-   *  the avatar's origin, in metres with its scale along the scene's axes (x east, y up, z north), where the engine sets
-   *  it over the head and what it wears; told now, then whenever it moves by a step. `measured` is false until the
-   *  avatar's body is measured. `close` ends it. Optional: absent on runtimes that predate it. */
-  getAvatarNametagAnchorStream?: (entity: number) => Promise<AsyncIterable<AvatarNametagAnchor> & { close?: () => void }>
   kernelFetch: (req: KernelFetchRequest) => Promise<KernelFetchResponse>
   /** Each service's base url by its web param, as the engine resolves it: the service's
    *  override, else its composition from the base domain. */

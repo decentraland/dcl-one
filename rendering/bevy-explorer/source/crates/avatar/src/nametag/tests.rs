@@ -215,9 +215,15 @@ fn scene_avatar_app() -> App {
     app.add_plugins(MinimalPlugins)
         .init_resource::<MicState>()
         .init_resource::<NearbyMutes>()
+        .add_event::<SystemApi>()
         .add_systems(
             Update,
-            (resolve_scene_avatar_content, resolve_voice).chain(),
+            (
+                set_system_scene_nametags,
+                resolve_scene_avatar_content,
+                resolve_voice,
+            )
+                .chain(),
         );
     app
 }
@@ -405,6 +411,225 @@ fn previews_and_restyled_players_get_no_scene_avatar_tag() {
     }
 }
 
+/// The tag a system scene puts on its avatar: `scale` times a player's.
+fn system_tag(name: &str, claimed: bool) -> AvatarShapeNametag {
+    AvatarShapeNametag {
+        name: name.to_owned(),
+        claimed,
+        color: None,
+        scale: 2.4,
+    }
+}
+
+#[test]
+fn a_system_scene_tag_reads_as_a_claimed_or_an_unclaimed_name() {
+    let preview = shape(ADDRESS, Some("Ignored"));
+    let claimed = NametagContent::from_system(&system_tag("Ada", true), &preview).unwrap();
+    assert_eq!(
+        (claimed.name.as_str(), claimed.suffix.as_str()),
+        ("Ada", "")
+    );
+    assert!(claimed.verified && !claimed.official);
+    assert_eq!(claimed.color, name_color("Ada", ADDRESS, true));
+    assert_eq!(claimed.scale, 2.4);
+
+    // not claimed: the end of the avatar's id, as a scene avatar's, and the name's and id's hue
+    let unclaimed = NametagContent::from_system(&system_tag("Ada#9999", false), &preview).unwrap();
+    assert_eq!(
+        (unclaimed.name.as_str(), unclaimed.suffix.as_str()),
+        ("Ada", "#12ab")
+    );
+    assert!(!unclaimed.verified);
+    assert_eq!(unclaimed.color, name_color("Ada", ADDRESS, false));
+
+    // a colour given wins
+    let chosen = AvatarShapeNametag {
+        color: Some(system_bridge::NameColor {
+            r: 0.5,
+            g: 0.25,
+            b: 1.0,
+        }),
+        ..system_tag("Ada", true)
+    };
+    let chosen = NametagContent::from_system(&chosen, &preview).unwrap();
+    assert_eq!(chosen.color, Color::srgb(0.5, 0.25, 1.0));
+
+    // a blank name asks for no tag, and a size out of bounds is held to them
+    for blank in ["", "  ", "#ab"] {
+        assert!(NametagContent::from_system(&system_tag(blank, true), &preview).is_none());
+    }
+    for (given, scale) in [
+        (100.0, 4.0),
+        (0.0, 0.25),
+        (f32::NAN, 1.0),
+        (f32::INFINITY, 1.0),
+    ] {
+        let tag = AvatarShapeNametag {
+            scale: given,
+            ..system_tag("Ada", true)
+        };
+        let content = NametagContent::from_system(&tag, &preview).unwrap();
+        assert_eq!(content.scale, scale, "{given}");
+    }
+}
+
+/// Makes `root` the scene that numbers `avatar` as its entity 600: the system scene, or another.
+fn number_avatar(app: &mut App, root: Entity, avatar: Entity, system: bool) -> SceneEntityId {
+    let mut context = RendererSceneContext::new(
+        dcl_types::SceneId(root),
+        "scene".to_owned(),
+        String::new(),
+        false,
+        0,
+        "scene".to_owned(),
+        IVec2::ZERO,
+        [IVec2::ZERO].into_iter().collect(),
+        Vec::new(),
+        scene_material::SceneBounds::default(),
+        Vec::new(),
+        root,
+        0.0,
+        false,
+        "",
+        false,
+        false,
+    );
+    let id = SceneEntityId::new(600, 0);
+    context.associate_bevy_entity(id, avatar);
+    let mut root = app.world_mut().entity_mut(root);
+    root.insert(context);
+    if system {
+        root.insert(SuperUserScene);
+    }
+    id
+}
+
+/// The system scene's `setAvatarShapeNametag` for its entity `entity`.
+fn set_system_tag(app: &mut App, entity: SceneEntityId, nametag: Option<AvatarShapeNametag>) {
+    app.world_mut()
+        .send_event(SystemApi::SetAvatarShapeNametag {
+            entity: entity.as_proto_u32().unwrap(),
+            nametag,
+        });
+}
+
+#[test]
+fn a_system_scene_puts_a_tag_on_its_avatar_and_takes_it_away() {
+    let mut app = scene_avatar_app();
+    let root = app.world_mut().spawn_empty().id();
+    // the avatar's own name never shows: only the tag the scene puts on it
+    let preview = spawn_scene_avatar(&mut app, root, &shape(ADDRESS, Some("Ignored")));
+    app.world_mut()
+        .entity_mut(preview)
+        .insert(NametagHeadOffset(0.4));
+    let id = number_avatar(&mut app, root, preview, true);
+    app.update();
+    assert_eq!(name_of(&app, preview), None);
+
+    set_system_tag(&mut app, id, Some(system_tag("Ada", true)));
+    app.update();
+    let content = app.world().get::<NametagContent>(preview).unwrap();
+    assert_eq!(content.name, "Ada");
+    assert!(content.verified && content.suffix.is_empty());
+    assert_eq!(content.scale, 2.4);
+
+    // another name, not claimed
+    set_system_tag(&mut app, id, Some(system_tag("Adam", false)));
+    app.update();
+    let content = app.world().get::<NametagContent>(preview).unwrap();
+    assert_eq!(
+        (content.name.as_str(), content.suffix.as_str()),
+        ("Adam", "#12ab")
+    );
+
+    // taken away
+    set_system_tag(&mut app, id, None);
+    app.update();
+    assert_eq!(name_of(&app, preview), None);
+    assert!(app.world().get::<SystemSceneNametag>(preview).is_none());
+
+    // put back, then the avatar's shape goes: the tag goes with it
+    set_system_tag(&mut app, id, Some(system_tag("Ada", true)));
+    app.update();
+    assert_eq!(name_of(&app, preview).as_deref(), Some("Ada"));
+    app.world_mut().entity_mut(preview).remove::<AvatarShape>();
+    app.update();
+    assert_eq!(name_of(&app, preview), None);
+    assert!(app.world().get::<SystemSceneNametag>(preview).is_none());
+}
+
+#[test]
+fn a_tag_put_on_before_the_avatars_shape_arrives_shows_once_it_is_built() {
+    let mut app = scene_avatar_app();
+    let root = app.world_mut().spawn_empty().id();
+    // the scene's entity is in the engine, its AvatarShape not yet
+    let preview = app
+        .world_mut()
+        .spawn(SceneEntity {
+            root,
+            scene_id: dcl_types::SceneId::DUMMY,
+            id: SceneEntityId::ROOT,
+        })
+        .id();
+    let id = number_avatar(&mut app, root, preview, true);
+    set_system_tag(&mut app, id, Some(system_tag("Ada", true)));
+    app.update();
+    assert!(app.world().get::<SystemSceneNametag>(preview).is_some());
+    assert_eq!(name_of(&app, preview), None);
+
+    let look = shape(ADDRESS, None);
+    app.world_mut().entity_mut(preview).insert((
+        AvatarShape(look.clone()),
+        selection(&look),
+        NametagHeadOffset(0.4),
+    ));
+    app.update();
+    assert_eq!(name_of(&app, preview).as_deref(), Some("Ada"));
+}
+
+#[test]
+fn only_the_system_scenes_own_avatars_take_its_tag() {
+    let mut app = scene_avatar_app();
+    // another scene's avatar, numbered as the system scene numbers its own
+    let root = app.world_mut().spawn_empty().id();
+    let guide = spawn_scene_avatar(&mut app, root, &shape("guide-0001", None));
+    app.world_mut()
+        .entity_mut(guide)
+        .insert(NametagHeadOffset(0.4));
+    let id = number_avatar(&mut app, root, guide, false);
+    set_system_tag(&mut app, id, Some(system_tag("Ada", true)));
+    app.update();
+    app.update();
+    assert!(app.world().get::<SystemSceneNametag>(guide).is_none());
+    assert_eq!(name_of(&app, guide), None);
+}
+
+#[test]
+fn a_tag_drawn_larger_grows_alike() {
+    let quads = [Quad::rect(
+        Rect::new(-40.0, 0.0, 40.0, 32.0),
+        CORNER_RADIUS,
+        BACKGROUND,
+    )];
+    let (one, reach_one) = quad_mesh(&quads, 1.0);
+    let (larger, reach_larger) = quad_mesh(&quads, 2.5);
+    assert_eq!(reach_larger, reach_one * 2.5);
+    let positions = |mesh: &Mesh| {
+        mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+            .and_then(|positions| positions.as_float3())
+            .unwrap()
+            .to_vec()
+    };
+    for (a, b) in positions(&one).iter().zip(positions(&larger)) {
+        assert_eq!([a[0] * 2.5, a[1] * 2.5, a[2]], b);
+    }
+    // the uvs stay: a shape is drawn from its own units, so it grows with the quad
+    assert_eq!(
+        format!("{:?}", one.attribute(Mesh::ATTRIBUTE_UV_0)),
+        format!("{:?}", larger.attribute(Mesh::ATTRIBUTE_UV_0))
+    );
+}
+
 /// A world with the camera at the origin looking down -z, and the systems that give each
 /// player their tag and decide which names show.
 fn tag_app() -> App {
@@ -533,6 +758,24 @@ fn a_name_out_of_range_is_hidden_and_keeps_its_tag() {
     move_player(&mut app, ada, -10.0);
     app.update();
     assert!(shown(&app, ada));
+}
+
+#[test]
+fn a_system_scene_avatars_tag_shows_for_its_own_camera_wherever_the_player_is() {
+    let mut app = tag_app();
+    // both far out of the player's camera's range; one is a system scene's tagged avatar
+    let preview = spawn_player(&mut app, "Ada", 500.0);
+    app.world_mut()
+        .entity_mut(preview)
+        .insert(SystemSceneNametag(system_tag("Ada", true)));
+    let player = spawn_player(&mut app, "Bob", 500.0);
+    app.update();
+    assert!(shown(&app, preview));
+    assert!(!shown(&app, player));
+    // nametags turned off hide it as well
+    app.world_mut().resource_mut::<NametagsVisible>().0 = false;
+    app.update();
+    assert!(!shown(&app, preview));
 }
 
 #[test]
@@ -1124,23 +1367,26 @@ fn nametag_shader_compiles() {
     let rect = Rect::new(-40.0, 0.0, 40.0, 32.0);
     let badge = Rect::new(0.0, 8.0, 14.0, 22.0);
     let glyph = |bitmap| Quad::glyph(badge, Vec2::ZERO, Vec2::ONE, bitmap, LinearRgba::WHITE);
-    let (mesh, _) = quad_mesh(&[
-        Quad::tail(
-            Tail {
-                origin: Vec2::new(0.0, 1.0),
-                scale: 1.0,
-            },
-            BORDER_COLOR,
-        ),
-        Quad::gradient(rect, CORNER_RADIUS, MENTION_RING_BOTTOM, MENTION_RING_TOP),
-        Quad::rect(rect, CORNER_RADIUS, BACKGROUND),
-        glyph(false),
-        glyph(true),
-        Quad::icon(badge, Icon::Verified, Color::WHITE),
-        Quad::icon(badge, Icon::Official, Color::WHITE),
-        Quad::icon(badge, Icon::Hushed, HUSHED_COLOR),
-        Quad::voice_bar(badge, VOICE_BAR_LOW, VOICE_BAR_HIGH, VOICE_COLOR),
-    ]);
+    let (mesh, _) = quad_mesh(
+        &[
+            Quad::tail(
+                Tail {
+                    origin: Vec2::new(0.0, 1.0),
+                    scale: 1.0,
+                },
+                BORDER_COLOR,
+            ),
+            Quad::gradient(rect, CORNER_RADIUS, MENTION_RING_BOTTOM, MENTION_RING_TOP),
+            Quad::rect(rect, CORNER_RADIUS, BACKGROUND),
+            glyph(false),
+            glyph(true),
+            Quad::icon(badge, Icon::Verified, Color::WHITE),
+            Quad::icon(badge, Icon::Official, Color::WHITE),
+            Quad::icon(badge, Icon::Hushed, HUSHED_COLOR),
+            Quad::voice_bar(badge, VOICE_BAR_LOW, VOICE_BAR_HIGH, VOICE_COLOR),
+        ],
+        1.0,
+    );
     let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
 
     world.spawn((

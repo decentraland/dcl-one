@@ -5740,10 +5740,6 @@
           "kind": "regular"
         },
         {
-          "name": "shopNametag.test.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "sidebar.test.tsx",
           "kind": "regular"
         },
@@ -6027,7 +6023,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "98c9ed77cdff50140250d9e4a44e1e935066057b3ec448ad2bfa6169d5c7a859"
+      "sha256": "819eeacc2ad7ace4c8907b669bf4a21a135bd231b62aa9b607f5cabd9e8c0092"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -6051,7 +6047,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPreview.tsx",
-      "sha256": "28242fd3a30a859f707d4a27d200bbe84ffda0532d06a7fbbcb325e498e3d64a"
+      "sha256": "5be9dfb06bb35e0d6c247ebaa9ae4c4fd4fb0732836f4fb36aa5ab69b80730e5"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
@@ -6134,12 +6130,8 @@
       "sha256": "d280e0bf5fd6fec2d5f9440d84600aad455c7d63ca40557ea85062c66213096f"
     },
     {
-      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/previewNametagFeed.ts",
-      "sha256": "6e1ccf7fb6d2e13357f203b45f3f689f2daaab046e9b743386e42ccc4d181023"
-    },
-    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/previewView.ts",
-      "sha256": "5dda2413bfb1990699b9a97833199fac0c9262ce1f41f2195febfe0e4c2828e9"
+      "sha256": "2d96a364b896a96a61eeafdbd26bab9bac5f736fe1971a0bf7413edb936cf237"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
@@ -6327,7 +6319,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarPreviewShop.test.ts",
-      "sha256": "0e3203522c4eaece60cb98980c82c97f64da7c3fed94a740e7c647bfd16a73a4"
+      "sha256": "738aba6fe2351ee5c3bd5c7bec86e7a3849e13e3551a2105ac90daed0416ce23"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
@@ -6398,12 +6390,8 @@
       "sha256": "5b6206d2f815a52a02054dd682e877e4853b27c2a61049d3f37980942a7b3d0e"
     },
     {
-      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePreviewNametagFeed.test.ts",
-      "sha256": "ca2abab959414e37ca3f88f6031110d2035922f3b2694918f1b6b3db78cae78c"
-    },
-    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePreviewView.test.ts",
-      "sha256": "4b625ec28cfe3324c78a63b86da29f3113f3f523aa1ddbb2d72f2bcb8c308986"
+      "sha256": "47b19458d53dd44f76919a003129bf4dfb84bd8b36a37400debe81e14ca2a0df"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
@@ -6636,7 +6624,6 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNotifications.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
-    "rendering/bevy-explorer/source/react-web/src/test/bridgePreviewNametagFeed.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePreviewView.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
@@ -6772,7 +6759,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "deaabe4d97bdb18843d3fecb9d67cbc499b0754c7b5a84925d47bffcc8be4d88"
+      "sha256": "c310b373db7c7a8dd5ad6b6de847de22d9b4704b03a8b7edff61ed0c1a15bee5"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -10368,7 +10355,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "b51f2b217f8964e5e55ddd6037c3ca06dafdb9b055c2ac35edf93e1a982aeba3"
+      "sha256": "ee7f4dd6c495c2482c0210ccb953d37a658714c26360c0b24c95b090716e6e98"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10716,7 +10703,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "0153777d12b2e7dbc1a32a95a67b58000c397da07745dda02d1219c65f56a200"
+      "sha256": "5aa48d0bded6e0f8ce5c63615b33c019d730f6f6a81f7067a63d2d5f7c0ea2f4"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -11125,10 +11112,6 @@
     {
       "path": "library/ui/apps/hud/test/hosted/shop.test.tsx",
       "sha256": "85046b05b003befbf161f6b3c71cb8cdbee78cc3aacbc22233583a8111d57da0"
-    },
-    {
-      "path": "library/ui/apps/hud/test/hosted/shopNametag.test.tsx",
-      "sha256": "1716ccf8e9867f5db69c91874a1e5c5ca1deb00d7e418b7d3774f8aa62f9a0bb"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebar.test.tsx",
@@ -44113,21 +44096,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/test/hosted/shopNametag.test.tsx",
-      "to": "library/ui/apps/hud/test/harness.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/hosted/shopNametag.test.tsx",
-      "to": "library/ui/apps/hud/test/harness.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/hosted/shopNametag.test.tsx",
-      "to": "library/ui/apps/hud/test/harness.tsx",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/test/hosted/sidebar.test.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
@@ -49635,11 +49603,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/shop.test.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/test/hosted/shopNametag.test.tsx",
       "kind": "type"
     },
     {

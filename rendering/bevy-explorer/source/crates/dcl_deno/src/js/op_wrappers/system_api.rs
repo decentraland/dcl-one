@@ -8,7 +8,7 @@ use dcl_js::system_api::{JsBindingsData, PermissionTypeDetail};
 use deno_core::{anyhow, error::AnyError, op2, OpDecl, OpState};
 use std::{cell::RefCell, rc::Rc};
 use system_bridge::{
-    settings::SettingInfo, AnalyticsEvent, AvatarModifierState, AvatarNametagAnchor,
+    settings::SettingInfo, AnalyticsEvent, AvatarModifierState, AvatarShapeNametag,
     BlockUpdateData, BlockedUserData, BlockingStatusData, ChatMessage, ChatReactionData,
     CommunityMemberConnectivityData, CommunityVoiceUpdate, ConnectivitySnapshot,
     DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
@@ -62,6 +62,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_chat_stream(),
             op_send_chat(),
             op_set_chat_bubble_text(),
+            op_set_avatar_shape_nametag(),
             op_get_chat_reaction_stream(),
             op_read_chat_reaction_stream(),
             op_send_chat_reaction(),
@@ -70,9 +71,6 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_bridge_stream(),
             op_get_user_profile(),
             op_get_compact_profiles(),
-            op_get_avatar_nametag_anchor_stream(),
-            op_read_avatar_nametag_anchor_stream(),
-            op_close_avatar_nametag_anchor_stream(),
             op_quit(),
             op_get_permission_request_stream(),
             op_read_permission_request_stream(),
@@ -436,6 +434,15 @@ pub fn op_set_chat_bubble_text(
     dcl_js::system_api::op_set_chat_bubble_text(state, message_id, message)
 }
 
+#[op2]
+pub fn op_set_avatar_shape_nametag(
+    state: Rc<RefCell<OpState>>,
+    entity: u32,
+    #[serde] nametag: Option<AvatarShapeNametag>,
+) {
+    dcl_js::system_api::op_set_avatar_shape_nametag(state, entity, nametag)
+}
+
 #[op2(async)]
 pub async fn op_get_chat_reaction_stream(state: Rc<RefCell<OpState>>) -> u32 {
     dcl_js::system_api::op_get_chat_reaction_stream(state).await
@@ -496,25 +503,6 @@ pub async fn op_get_compact_profiles(
     #[serde] addresses: Vec<String>,
 ) -> Result<Vec<CompactProfile>, deno_core::anyhow::Error> {
     dcl_js::system_api::op_get_compact_profiles(state, addresses).await
-}
-
-#[op2(async)]
-pub async fn op_get_avatar_nametag_anchor_stream(state: Rc<RefCell<OpState>>, entity: u32) -> u32 {
-    dcl_js::system_api::op_get_avatar_nametag_anchor_stream(state, entity).await
-}
-
-#[op2(async)]
-#[serde]
-pub async fn op_read_avatar_nametag_anchor_stream(
-    state: Rc<RefCell<OpState>>,
-    rid: u32,
-) -> Result<Option<AvatarNametagAnchor>, deno_core::anyhow::Error> {
-    dcl_js::system_api::op_read_avatar_nametag_anchor_stream(state, rid).await
-}
-
-#[op2(fast)]
-pub fn op_close_avatar_nametag_anchor_stream(state: Rc<RefCell<OpState>>, #[smi] rid: u32) {
-    dcl_js::system_api::op_close_avatar_nametag_anchor_stream(state, rid)
 }
 
 #[op2(fast)]

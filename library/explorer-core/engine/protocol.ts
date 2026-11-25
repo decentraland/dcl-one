@@ -222,6 +222,7 @@ export type PageToScene =
   | PreviewAvatarRequest
   | PreviewFocusRequest
   | PreviewStageRequest
+  | PreviewNametagRequest
   | PreviewEmoteRequest
   | PreviewRotateRequest
   | PreviewZoomRequest
@@ -1037,15 +1038,6 @@ export interface LobbyStageReadyMessage {
  *  page), so the page's own background can fade out. */
 export interface SigninStageReadyMessage {
   kind: 'signinStageReady'
-}
-
-/** Where the Shop's preview avatar has its nametag (scene → page): the engine's nametag anchor, over the head and
- *  what the avatar wears, as a point in the avatar's window: `x` a share of its width from its left, `y` of its
- *  height from its top. null while it isn't known (the stage just came up or went, the avatar's body isn't measured,
- *  a read failed): the page keeps its own place for the nametag then. */
-export interface PreviewNametagMessage {
-  kind: 'previewNametag'
-  anchor: { x: number; y: number } | null
 }
 
 /** The Backpack's avatar preview has drawn the avatar (scene → page), so the page can open its hole onto it. */
@@ -2304,6 +2296,22 @@ export interface PreviewStageRequest {
  *  over the head for the nametag). */
 export type PreviewStageFraming = 'catalog' | 'names'
 
+/** The Shop's nametag over its preview avatar: the Explorer's own tag, which the engine draws over the head and
+ *  what the avatar wears, at the size the Shop's design draws it. `null` takes it away. */
+export interface PreviewNametagRequest {
+  kind: 'previewNametag'
+  nametag: PreviewNametag | null
+}
+
+/** What the Shop's nametag reads. A claimed NAME carries the verified badge; one that isn't is followed by `#`
+ *  and the end of the player's address. `color` is the name's (a claimed NAME's chosen one), else the engine's
+ *  for that name. */
+export interface PreviewNametag {
+  name: string
+  claimed: boolean
+  color?: { r: number; g: number; b: number }
+}
+
 /** Play an emote on the preview avatar once (the Shop trying one on); asked again, it plays again.
  *  `null` stops it. */
 export interface PreviewEmoteRequest {
@@ -2702,7 +2710,6 @@ export type SceneToPage =
   | SceneInfoMessage
   | LobbyStageReadyMessage
   | SigninStageReadyMessage
-  | PreviewNametagMessage
   | AvatarPreviewReadyMessage
   | MinimapReadyMessage
   | GalleryMessage

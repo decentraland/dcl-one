@@ -249,13 +249,18 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       out only once the engine reports `signinStageReady`, and comes back at once on Back. Picking a
       look or body type changes the avatar in place. Check a 16:9 window and a much wider or taller one.
       Mock has no engine, so the page's background stays.
-- [ ] **Shop NAMEs nametag** (`avatarPreview.tsx`, `previewNametagFeed.ts`, the engine's anchor stream in
-      `crates/avatar/src/dynamic_nametag.rs`): on the Shop's NAMEs pages the tag stands just over the
-      avatar's head and what it wears, on its axis, and stays still through the idle and a drag-turn.
-      Put on a tall hat: the tag rises over it. Zoom and resize the window, also while the camera eases
-      between a catalogue page and NAMEs: the tag follows the avatar, never left behind. Play an emote,
-      and stop it: the tag settles at the head's height once it ends. Leaving NAMEs, or closing the Shop,
-      takes the tag away at once. Mock has no engine, so the tag keeps the design's place.
+- [ ] **Shop NAMEs framing** (`avatarPreview.tsx`, `previewView.ts`): on the Shop's NAMEs pages the
+      avatar is drawn smaller and lower than on the catalogue pages, with room over its head for the
+      nametag, as the design's NAMEs frames draw it. Switching between a catalogue page and NAMEs eases
+      the camera from one framing to the other; resizing the window midway neither snaps nor restarts
+      it. Closing the Shop gives the Backpack its own framing back. Mock has no engine, so nothing moves.
+- [ ] **Shop NAMEs nametag** (`avatarPreview.tsx`, the engine's `SetAvatarShapeNametag` and nametag
+      shader): on the Shop's NAMEs pages the Explorer's own nametag stands over the avatar's head
+      and what it wears, at the design's size: the typed NAME (claimed, its badge), or the silver
+      "YourName" while nothing is typed; on RESALE NAME the player's own name. Put on a tall hat:
+      the tag rises over it. Turn the avatar, zoom and resize the window: the tag stays over the
+      head, the same size on screen. Leaving NAMEs, or closing the Shop, takes it away. It never
+      shows in the world view. Mock has no engine, so there is no tag.
 - [ ] **Full-screen view entrance** (`features/menu/MainMenuShell`): opening Map, Backpack or any other
       menu page from the world darkens the world to black, then reveals the page, in 0.2 s; the
       Backpack's engine-drawn avatar appears only after the black frame. Switching between menu pages

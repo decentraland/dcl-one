@@ -1,6 +1,6 @@
 export * from './AnalyticsEvent'
 export * from './AvatarModifierState'
-export * from './AvatarNametagAnchor'
+export * from './AvatarShapeNametag'
 export * from './BlockUpdateData'
 export * from './BlockedUserData'
 export * from './BlockingStatusData'
