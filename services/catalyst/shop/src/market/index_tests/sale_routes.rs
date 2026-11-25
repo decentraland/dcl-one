@@ -29,7 +29,7 @@ async fn top_owners_and_item_picks_use_local_rows() {
             .unwrap();
     }
     let state = state_over(pool.clone(), "http://127.0.0.1", settings, true);
-    let app = market_router(state);
+    let app = market_router(state.clone());
     sqlx::query(
         "INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
         VALUES ('items','ethereum','test',timezone('UTC',now())),
@@ -149,6 +149,7 @@ async fn top_owners_and_item_picks_use_local_rows() {
         "/v1/owners/top?creator=invalid".to_string(),
         format!("{base}&sortBy=invalid"),
         format!("{base}&orderDirection=invalid"),
+        format!("{base}&skip=1000000"),
     ] {
         assert_eq!(
             get_json(&app, &path).await.0,
@@ -156,6 +157,51 @@ async fn top_owners_and_item_picks_use_local_rows() {
             "{path}"
         );
     }
+    let analytics = state.sales_analytics_slots.try_acquire_many(2).unwrap();
+    assert_eq!(
+        get_json(&app, &format!("{base}&orderDirection=asc"))
+            .await
+            .0,
+        StatusCode::OK,
+        "a cold top-owners page does not take the shared sales permits"
+    );
+    drop(analytics);
+    let owner_slot = state.top_owners_slots.try_acquire().unwrap();
+    assert_eq!(get_json(&app, &base).await, (StatusCode::OK, body));
+    let (status, busy) = get_json(&app, &format!("/v1/owners/top?creator={ALICE}")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{busy}");
+    drop(owner_slot);
+    sqlx::query("DELETE FROM shop.mirror_state WHERE mirror='items' AND network='matic'")
+        .execute(pool)
+        .await
+        .unwrap();
+    let (status, missing_items) = get_json(&app, &base).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{missing_items}");
+    assert_eq!(missing_items["source"], "items-mirror");
+    sqlx::query(
+        "INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
+        VALUES ('items','matic','test',timezone('UTC',now()))",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let (status, warm_again) = get_json(&app, &base).await;
+    assert_eq!(status, StatusCode::OK, "{warm_again}");
+    sqlx::query("UPDATE shop.nft SET owner=$1 WHERE network='matic' AND contract_address=$2 AND token_id=202")
+        .bind(ALICE).bind(DAVE).execute(pool).await.unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_block=last_block,folded_at=timezone('UTC',now()),
+        sale_verified_through=last_block WHERE network='matic' AND indexer='nft'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let (status, newer_nft) = get_json(&app, &base).await;
+    assert_eq!(status, StatusCode::OK, "{newer_nft}");
+    assert_eq!(newer_nft["data"][0]["address"], ALICE);
+    assert_eq!(newer_nft["data"][0]["nfts"], 2);
+    assert_eq!(newer_nft["data"][1]["address"], BOB);
+    assert_eq!(newer_nft["data"][1]["nfts"], 2);
     let item = format!("{DAVE}-1");
     sqlx::query(
         "WITH lists AS (
@@ -180,6 +226,40 @@ async fn top_owners_and_item_picks_use_local_rows() {
     assert_eq!(unpicked["data"][0]["id"], format!("{DAVE}-2"));
     assert_eq!(unpicked["data"][0]["picks"], json!({"count":0}));
     assert_eq!(unpicked["total"], 2);
+    sqlx::query("ALTER TABLE shop.picks RENAME TO picks_unavailable")
+        .execute(pool)
+        .await
+        .unwrap();
+    let (status, unavailable_picks) = get_json(&app, &path).await;
+    assert_eq!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{unavailable_picks}"
+    );
+    sqlx::query("INSERT INTO shop.chain_cursor
+        (indexer,network,chain_id,start_block,last_block,last_block_hash,full_history,folded_block,folded_at)
+        SELECT 'collections',network,chain_id,start_block,last_block,last_block_hash,true,folded_block,folded_at
+        FROM shop.chain_cursor WHERE indexer='nft' AND network='matic'")
+        .execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.collection_projection(network,owned_at,projected_through,generation)
+        SELECT network,timezone('UTC',now()),block_number,1 FROM shop.sale_publication WHERE network='matic'")
+        .execute(pool).await.unwrap();
+    let (status, native) = get_json(&app, &base).await;
+    assert_eq!(status, StatusCode::OK, "{native}");
+    assert_eq!(native["data"][1]["nfts"], 2);
+    sqlx::query("UPDATE shop.items SET creator=$1 WHERE network='matic' AND contract_address=$2 AND item_id=1")
+        .bind(ALICE).bind(DAVE).execute(pool).await.unwrap();
+    sqlx::query(
+        "UPDATE shop.collection_projection
+        SET generation=generation+1,projected_through=projected_through+1 WHERE network='matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let (status, newer_items) = get_json(&app, &base).await;
+    assert_eq!(status, StatusCode::OK, "{newer_items}");
+    assert_eq!(newer_items["data"][1]["address"], BOB);
+    assert_eq!(newer_items["data"][1]["nfts"], 1);
     sqlx::query(
         "UPDATE shop.chain_cursor SET folded_at=NULL,folded_block=NULL
         WHERE indexer='nft' AND network='ethereum'",
@@ -190,6 +270,7 @@ async fn top_owners_and_item_picks_use_local_rows() {
     let (status, withdrawn) = get_json(&app, &base).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{withdrawn}");
     assert_eq!(withdrawn["source"], "sales-index");
+    db.drop().await;
 }
 
 #[tokio::test]

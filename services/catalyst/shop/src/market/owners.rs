@@ -192,6 +192,9 @@ pub async fn get_top_owners(
         .unwrap_or(20.0) as i64)
         .clamp(1, 100);
     let skip = (p.get_number("skip", None).unwrap_or_default() as i64).max(0);
+    if let Err(response) = readers::check_window(first, skip) {
+        return response;
+    }
     match super::sale_reads::top_owners(
         &state,
         &creator.to_lowercase(),
