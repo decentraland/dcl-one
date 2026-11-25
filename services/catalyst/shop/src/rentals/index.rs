@@ -911,6 +911,49 @@ pub(super) async fn rent_evidence_at(
     })
 }
 
+/// A direct LAND owner can already have rented out the token beyond the LAND
+/// fold. Only use observed events to refuse a new listing. No Rentals cursor
+/// is needed to accept one. The caller holds the observed LAND revision.
+pub(super) async fn observed_running_rent(
+    conn: &mut PgConnection,
+    contract: &str,
+    token_id: &str,
+    transfer_block: i64,
+    now: DateTime<Utc>,
+) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "WITH transfer AS (
+            SELECT block_number, log_index FROM land_authz.authz_event
+            WHERE token_address=$1 AND token_id=$2::numeric AND kind='transfer' AND block_number=$3
+            ORDER BY log_index DESC LIMIT 1
+        ), events AS (
+            SELECT r.kind, r.is_extension, r.block_time, r.rental_days, r.block_number, r.log_index
+            FROM shop.rental_event r, transfer t
+            WHERE r.network='ethereum' AND r.rentals_address=$4 AND r.contract_address=$1
+              AND r.token_id=$2::numeric AND r.kind IN ('rented','claimed')
+              AND (r.block_number,r.log_index) >= (t.block_number,t.log_index)
+        ), period AS (
+            SELECT kind,block_time,block_number,log_index FROM events
+            WHERE kind='claimed' OR is_extension IS NOT TRUE
+            ORDER BY block_number DESC,log_index DESC LIMIT 1
+        )
+        SELECT EXISTS (
+            SELECT 1 FROM period p WHERE p.kind='rented'
+              AND p.block_time + 86400 * (
+                  SELECT sum(e.rental_days) FROM events e WHERE e.kind='rented'
+                    AND (e.block_number,e.log_index) >= (p.block_number,p.log_index)
+              ) > $5
+        )",
+    )
+    .bind(contract.to_ascii_lowercase())
+    .bind(token_id)
+    .bind(transfer_block)
+    .bind(RENTALS_MAINNET)
+    .bind(now.timestamp())
+    .fetch_one(conn)
+    .await
+}
+
 /// Whether the statuses may be trusted at `now` (the cursor is published).
 pub async fn ready(pool: &PgPool, now: DateTime<Utc>) -> bool {
     ready_on(pool, RentalsChain::Mainnet, now).await

@@ -388,6 +388,23 @@ pub async fn create_rentals_listing(
     {
         return Ok(reader_unavailable(NftReadError::Unavailable));
     }
+    if signer_owns
+        && !venue_owned
+        && nft.land_cursor_updated_at.is_some()
+        && let Some(transfer_block) = nft.transfer_block
+        && super::index::observed_running_rent(
+            &mut tx,
+            &body.contract_address,
+            &body.token_id,
+            transfer_block,
+            write_time,
+        )
+        .await?
+    {
+        return Err(ApiError::conflict(
+            "An open rental already exists for this token",
+        ));
+    }
     if let Some(evidence) = &rent_evidence {
         let chain = super::index::RentalsChain::Mainnet;
         let cursor = super::index::lock_cursor(&mut tx, chain).await?;

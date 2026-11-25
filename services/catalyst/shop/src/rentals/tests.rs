@@ -1731,6 +1731,94 @@ async fn indexed_post_decides_direct_ownership_during_a_rentals_outage() {
 }
 
 #[tokio::test]
+async fn direct_owner_conflicts_only_with_a_running_rent_since_the_land_transfer() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    publish_land(&pool).await;
+    let signer = wallet();
+    let path = "/v1/rentals-listings";
+    let state = state_over(pool.clone(), Some(market()), true);
+    let now = chrono::Utc::now().timestamp();
+    let post = |token: &'static str| {
+        let state = state.clone();
+        let signer = &signer;
+        async move {
+            let mut listing = creation(token, "");
+            listing.signature = sign_listing(signer, &listing).await;
+            send(
+                router(state),
+                "POST",
+                path,
+                signed_headers(signer, "post", path).await,
+                Some(creation_json(&listing)),
+            )
+            .await
+        }
+    };
+    let rent = |token: &'static str, block: i64, log: i32, time: i64, extension: bool| {
+        let pool = &pool;
+        async move {
+            sqlx::query("INSERT INTO shop.rental_event(network,rentals_address,kind,contract_address,token_id,block_number,log_index,block_time,signer,tenant,rental_days,price_per_day,is_extension,signature,tx_hash)
+                VALUES ('ethereum',$1,'rented',$2,$3::numeric,$4,$5,$6,$7,$8,1,1,$9,'0x01','0x02')")
+                .bind(RENTALS).bind(LAND).bind(token).bind(block).bind(log).bind(time)
+                .bind(LESSOR).bind(ESTATE).bind(extension).execute(pool).await.unwrap();
+        }
+    };
+    transfer(&pool, LAND, "42", &signer.address, 3, now - 20).await;
+    // Rentals has observed a rent beyond LAND's published height (100).
+    rent("42", 101, 1, now - 10, false).await;
+    let (status, _, body) = post("42").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["error"],
+        "An open rental already exists for this token"
+    );
+    assert_eq!(counts(&pool, "42").await, (0, 0, 0, 0));
+    sqlx::query("INSERT INTO shop.rental_event(network,rentals_address,kind,contract_address,token_id,block_number,log_index,block_time,tx_hash)
+        VALUES ('ethereum',$1,'claimed',$2,42,101,2,$3,'0x03')").bind(RENTALS).bind(LAND).bind(now).execute(&pool).await.unwrap();
+    let (status, _, body) = post("42").await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    transfer(&pool, LAND, "43", &signer.address, 4, now - 20).await;
+    sqlx::query("UPDATE land_authz.authz_event SET log_index=2 WHERE block_number=4")
+        .execute(&pool)
+        .await
+        .unwrap();
+    rent("43", 4, 1, now - 20, false).await;
+    let (status, _, body) = post("43").await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "earlier log in transfer block: {body}"
+    );
+
+    transfer(&pool, LAND, "44", &signer.address, 5, now - 180000).await;
+    rent("44", 5, 1, now - 90000, false).await;
+    rent("44", 6, 1, now - 88000, true).await;
+    let (status, _, body) = post("44").await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "extension keeps the period running: {body}"
+    );
+
+    transfer(&pool, LAND, "45", &signer.address, 7, now - 180000).await;
+    rent("45", 7, 1, now - 90000, false).await;
+    let (status, _, body) = post("45").await;
+    assert_eq!(status, StatusCode::CREATED, "expired rent: {body}");
+
+    transfer(&pool, LAND, "46", LESSOR, 8, now - 20).await;
+    rent("46", 102, 1, now - 10, false).await;
+    let (status, _, body) = post("46").await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "third-party owner: {body}"
+    );
+}
+
+#[tokio::test]
 async fn post_rejects_custody_from_a_replaced_rentals_publication() {
     let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;
