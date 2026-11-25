@@ -76,6 +76,7 @@ pub mod admin_store;
 pub mod authorize;
 pub mod batch;
 pub mod captcha;
+pub mod charge;
 pub mod checkout;
 pub mod digest;
 pub mod dto;
@@ -1065,6 +1066,10 @@ pub fn router(state: SharedState) -> Router {
             post(handlers::authorize::submitted),
         )
         .route(
+            "/credits/authorize/{salt}",
+            get(handlers::charge::authorized_charge),
+        )
+        .route(
             "/credits/orders/{order_id}/cancel",
             post(handlers::orders::cancel_order),
         )
@@ -1179,6 +1184,10 @@ pub fn shop_router(state: SharedState) -> Router {
         .route(
             "/v1/credit-authorizations/submitted",
             post(handlers::authorize::submitted),
+        )
+        .route(
+            "/v1/credit-authorizations/{salt}",
+            get(handlers::charge::authorized_charge),
         )
         .route(
             "/v1/pack-orders/{order_id}/cancel",

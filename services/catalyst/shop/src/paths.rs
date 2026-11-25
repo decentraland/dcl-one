@@ -50,6 +50,7 @@ pub const ALIASES: &[&str] = &[
     "POST /shop-api/v1/credit-authorizations/batch /credits/credits/authorize/batch",
     "POST /shop-api/v1/credit-authorizations/cancel /credits/credits/authorize/cancel",
     "POST /shop-api/v1/credit-authorizations/submitted /credits/credits/authorize/submitted",
+    "GET /shop-api/v1/credit-authorizations/{salt} /credits/credits/authorize/{salt}",
     "GET /shop-api/v1/names/credit-route /credits/credits-name-route",
     "GET /shop-api/v1/credit-usage-index/status /credits/usage-index/status",
     "POST /shop-api/v1/credit-topups/mana /credits/topup/mana",
