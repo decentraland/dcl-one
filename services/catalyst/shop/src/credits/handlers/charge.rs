@@ -18,6 +18,7 @@ use serde_json::json;
 
 use super::signer_from;
 use crate::credits::SharedState;
+use crate::credits::digest::{bytes32_hex, parse_bytes32};
 use crate::credits::errors::ApiError;
 use crate::shared::limits::{RateLimitDecision, RateLimiter};
 
@@ -31,12 +32,6 @@ static LOOKUPS: LazyLock<RateLimiter> =
 /// The largest integer a JSON number carries exactly.
 const MAX_EXACT_JSON_INT: i64 = (1 << 53) - 1;
 
-/// A bytes32 hex string, either case.
-fn is_salt(text: &str) -> bool {
-    text.strip_prefix("0x")
-        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
-}
-
 pub async fn authorized_charge(
     State(state): State<SharedState>,
     Path(salt): Path<String>,
@@ -48,12 +43,12 @@ pub async fn authorized_charge(
     if LOOKUPS.check(signer.as_str()) == RateLimitDecision::Deny {
         return Ok(too_many_lookups());
     }
-    if !is_salt(&salt) {
+    // Either case on the wire; the database stores it lowercase.
+    let Some(salt) = parse_bytes32(&salt).map(bytes32_hex) else {
         return Err(ApiError::bad_request(
             "\"salt\" must be a 32-byte hex string",
         ));
-    }
-    let salt = salt.to_ascii_lowercase();
+    };
     let charge = state
         .credits
         .authorized_charge(signer.as_str(), &salt)
@@ -97,8 +92,16 @@ mod tests {
 
     #[test]
     fn a_salt_is_a_bytes32_hex_string() {
-        assert!(is_salt(&format!("0x{}", "ab".repeat(32))));
-        assert!(is_salt(&format!("0x{}", "AB".repeat(32))));
+        let lower = format!("0x{}", "ab".repeat(32));
+        assert_eq!(
+            parse_bytes32(&lower).map(bytes32_hex).as_deref(),
+            Some(lower.as_str())
+        );
+        assert_eq!(
+            parse_bytes32(&format!("0x{}", "AB".repeat(32))).map(bytes32_hex),
+            Some(lower.clone()),
+            "either case, stored lowercase"
+        );
         for bad in [
             "".to_string(),
             "ab".repeat(32),
@@ -107,7 +110,7 @@ mod tests {
             format!("0x{}zz", "ab".repeat(31)),
             "batch".to_string(),
         ] {
-            assert!(!is_salt(&bad), "{bad}");
+            assert!(parse_bytes32(&bad).is_none(), "{bad}");
         }
     }
 }

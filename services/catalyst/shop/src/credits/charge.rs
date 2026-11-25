@@ -3,10 +3,15 @@
 //! (`GET /credits/authorize/{salt}`). A signed `useCredits` payload proves
 //! what is bought and the MANA cap, not what the purchase takes out of the
 //! Credits balance: that is the authorization's charged total, debited when
-//! the salt is consumed on chain. The salt is the one value in both, so a
-//! client about to ask a person to approve a purchase (the auth site's
+//! the salt is first consumed on chain. The salt is the one value in both, so
+//! a client about to ask a person to approve a purchase (the auth site's
 //! credits approval) reads the charge by it and states a price only when the
 //! two agree.
+//!
+//! The total is the first consume's charge, not a ceiling: until the salt's
+//! revocation lands on chain, a later `CreditUsed` log for the same salt
+//! debits a remainder at the oracle rate (`settlement.rs`), even after this
+//! lookup answers `settled`. credits-server had the same semantics.
 
 use sqlx::Row;
 
