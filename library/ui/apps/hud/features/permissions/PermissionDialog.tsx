@@ -9,10 +9,11 @@
 // (permissionRule) for next time.
 
 import { useState } from 'react'
-import { Button, openPopup } from '../../design'
+import { openPopup } from '../../design'
 import type { PermissionLevelChoice, PermissionRequestMessage, PermissionRuleLevel } from '@explorer-core/engine/protocol'
 import type { PermissionSubject } from '../session/useEngineSession'
 import styles from './PermissionDialog.module.css'
+import { Button } from '@dcl/one-ui'
 
 // PermissionType (serde enum name) → the "wants permission to {…}" clause. Mirrors the engine's
 // PermissionStrings::passive in crates/common/src/structs.rs. Unknown types get a generic fallback.
@@ -104,10 +105,10 @@ function Card({
       </div>
 
       <div className={styles.actions}>
-        <Button variant="ghost" className={styles.deny} onClick={() => onChoose(false, level)}>
+        <Button appearance="hud" variant="ghost" className={styles.deny} onClick={() => onChoose(false, level)}>
           Deny
         </Button>
-        <Button variant="primary" onClick={() => onChoose(true, level)}>
+        <Button appearance="hud" variant="primary" onClick={() => onChoose(true, level)}>
           Allow
         </Button>
       </div>

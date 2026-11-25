@@ -7,9 +7,9 @@
 // it, and its description on hover. The sidebar's Invites & Requests opens the user's invites, the
 // join requests their communities received and their own requests.
 
-import { Spinner } from '@dcl/one-ui'
+import { Button, Spinner } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Button, Chip, CountBadge, EmptyState, SearchField, SwapLabel, Tooltip } from '../../design'
+import { Avatar, Chip, CountBadge, EmptyState, SearchField, SwapLabel, Tooltip } from '../../design'
 import { nameColor } from '@explorer-core/lib/identity'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { MenuBackdrop } from '../menu/MenuBackdrop'
@@ -70,8 +70,8 @@ function CardButton({ c, onOpen, onJoin, onRequestToJoin, onCancelRequest, onAcc
   if (inviteId != null) {
     return (
       <span className={styles.cardBtns}>
-        <Button size="sm" className={styles.cardBtn} aria-label="Accept invite" onClick={act(() => onAcceptInvite(c.id, inviteId))}>Accept</Button>
-        <Button
+        <Button appearance="hud" size="sm" className={styles.cardBtn} aria-label="Accept invite" onClick={act(() => onAcceptInvite(c.id, inviteId))}>Accept</Button>
+        <Button appearance="hud"
           size="sm"
           variant="secondary"
           className={styles.cardBtn}
@@ -84,20 +84,20 @@ function CardButton({ c, onOpen, onJoin, onRequestToJoin, onCancelRequest, onAcc
     )
   }
   if (isMember(c.role)) {
-    return <Button size="sm" variant="ghost" className={styles.cardBtn} onClick={act(onOpen)}>View</Button>
+    return <Button appearance="hud" size="sm" variant="ghost" className={styles.cardBtn} onClick={act(onOpen)}>View</Button>
   }
   if (c.privacy !== 'private') {
-    return <Button size="sm" className={styles.cardBtn} onClick={act(() => onJoin(c.id))}>Join</Button>
+    return <Button appearance="hud" size="sm" className={styles.cardBtn} onClick={act(() => onJoin(c.id))}>Join</Button>
   }
   const requestId = c.pendingRequestId
   if (requestId != null) {
     return (
-      <Button size="sm" variant="ghost" className={styles.cardBtn} aria-label="Cancel join request" onClick={act(() => onCancelRequest(c.id, requestId))}>
+      <Button appearance="hud" size="sm" variant="ghost" className={styles.cardBtn} aria-label="Cancel join request" onClick={act(() => onCancelRequest(c.id, requestId))}>
         <SwapLabel idle="Request Sent" hover="Cancel Request" />
       </Button>
     )
   }
-  return <Button size="sm" className={styles.cardBtn} onClick={act(() => onRequestToJoin(c.id))}>Request to Join</Button>
+  return <Button appearance="hud" size="sm" className={styles.cardBtn} onClick={act(() => onRequestToJoin(c.id))}>Request to Join</Button>
 }
 
 function CommunityCard({ c, live, onOpen, ...actions }: CardActions & { c: Community; live: boolean; onOpen: () => void }): React.JSX.Element {

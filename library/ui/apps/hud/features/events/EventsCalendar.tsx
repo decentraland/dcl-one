@@ -2,7 +2,7 @@
 // events' carousel in place of the last day when there are any.
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { Button, EmptyState, MaskIcon, ScrollThumb } from '../../design'
+import { EmptyState, MaskIcon, ScrollThumb } from '../../design'
 import type { EventData, Friend } from '@explorer-core/engine/protocol'
 import type { EventCommunity } from '../session/useEngineSession'
 import arrowDownIcon from '../../assets/events/arrow-down.png'
@@ -13,6 +13,7 @@ import { EventCardBanner, EventCardBig, EventCardEmptySlot, EventCardSkeleton, E
 import { SCROLL_ARROWS_OCCUPANCY, addDays, columnOccupancy, dayLabel, emptySlotCount, eventCardSize, sameDay, startOfDay } from './eventFormat'
 import type { EventActions } from './useEventActions'
 import styles from './EventsCalendar.module.css'
+import { Button } from '@dcl/one-ui'
 
 const SCROLL_STEP_PX = 300
 export const CAROUSEL_DELAY_MS = 10_000
@@ -177,7 +178,7 @@ export function EventsCalendar({
           const day = addDays(startDay, i)
           return <DayPill key={day.getTime()} day={day} onClick={() => onDay(day)} />
         })}
-        <Button size="bare"
+        <Button appearance="hud" size="bare"
           radius="pill"
           variant="clear"
           className={`${styles.rangeArrow} ${styles.rangePrev}`}
@@ -187,7 +188,7 @@ export function EventsCalendar({
         >
           <MaskIcon src={arrowLeftIcon} size={20} />
         </Button>
-        <Button size="bare"
+        <Button appearance="hud" size="bare"
           radius="pill"
           variant="clear"
           className={`${styles.rangeArrow} ${styles.rangeNext}`}

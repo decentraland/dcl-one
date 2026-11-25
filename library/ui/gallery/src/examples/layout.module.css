@@ -118,3 +118,16 @@
     gap: var(--dcl-space-16);
   }
 }
+
+/* A row of examples that scrolls inside the stage instead of wrapping or widening the page. */
+.strip {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  padding-block: var(--dcl-space-8);
+  overflow-x: auto;
+}
+
+.strip > * {
+  flex: none;
+}

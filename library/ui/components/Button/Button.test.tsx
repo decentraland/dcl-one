@@ -591,3 +591,120 @@ describe('when an untyped caller passes dangerouslySetInnerHTML', () => {
     })
   })
 })
+
+describe('when a Button takes the hud appearance', () => {
+  describe('and it renders a button', () => {
+    it('should default to the primary variant and the md size, with no radius override', () => {
+      render(<Button appearance="hud">Save</Button>)
+      const button = screen.getByRole('button', { name: 'Save' })
+      expect(button).toHaveAttribute('type', 'button')
+      expect(button).toHaveAttribute('data-variant', 'primary')
+      expect(button).toHaveAttribute('data-size', 'md')
+      expect(button).not.toHaveAttribute('data-radius')
+      expect(button).not.toHaveAttribute('appearance')
+    })
+
+    it("should carry its variant, size and radius and keep the caller's class", () => {
+      render(
+        <Button appearance="hud" variant="ghost" size="bare" radius="pill" className="mine">
+          Close
+        </Button>
+      )
+      const button = screen.getByRole('button', { name: 'Close' })
+      expect(button).toHaveAttribute('data-variant', 'ghost')
+      expect(button).toHaveAttribute('data-size', 'bare')
+      expect(button).toHaveAttribute('data-radius', 'pill')
+      expect(button).toHaveClass('mine')
+    })
+
+    it('should lay its children out as its own children, with no wrapper', () => {
+      render(
+        <Button appearance="hud">
+          <i data-testid="glyph" />
+          <span>Jump in</span>
+        </Button>
+      )
+      const button = screen.getByRole('button', { name: 'Jump in' })
+      expect(screen.getByTestId('glyph').parentElement).toBe(button)
+      expect(button.querySelector('[data-button-label]')).toBeNull()
+    })
+
+    it('should name itself from label when it has no children', () => {
+      render(<Button appearance="hud" label="Retry" />)
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    })
+
+    it('should not answer a click while disabled', async () => {
+      const onClick = vi.fn()
+      render(
+        <Button appearance="hud" disabled onClick={onClick}>
+          Send
+        </Button>
+      )
+      const button = screen.getByRole('button', { name: 'Send' })
+      expect(button).toBeDisabled()
+      await userEvent.click(button)
+      expect(onClick).not.toHaveBeenCalled()
+    })
+
+    it('should stay enabled and answer a click while only announced as disabled', async () => {
+      const onClick = vi.fn()
+      render(
+        <Button appearance="hud" aria-disabled="true" onClick={onClick}>
+          Send
+        </Button>
+      )
+      const button = screen.getByRole('button', { name: 'Send' })
+      expect(button).not.toBeDisabled()
+      await userEvent.click(button)
+      expect(onClick).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('and it renders a link', () => {
+    it('should render an anchor with the same look', () => {
+      render(
+        <Button appearance="hud" href="/shop" size="sm">
+          Shop
+        </Button>
+      )
+      const link = screen.getByRole('link', { name: 'Shop' })
+      expect(link).toHaveAttribute('href', '/shop')
+      expect(link).toHaveAttribute('data-size', 'sm')
+      expect(link).not.toHaveAttribute('type')
+    })
+
+    it('should protect a link that opens another tab', () => {
+      render(
+        <Button appearance="hud" href="https://example.com" target="_blank" rel="noopener">
+          Open
+        </Button>
+      )
+      expect(screen.getByRole('link', { name: 'Open' })).toHaveAttribute(
+        'rel',
+        'noopener noreferrer'
+      )
+    })
+
+    it('should drop the destination of a disabled link', () => {
+      render(
+        <Button appearance="hud" href="/shop" disabled>
+          Shop
+        </Button>
+      )
+      const link = screen.getByText('Shop')
+      expect(link).not.toHaveAttribute('href')
+      expect(link).toHaveAttribute('aria-disabled', 'true')
+    })
+  })
+})
+
+describe('when a Button names the default appearance', () => {
+  it('should render as it does without the prop', () => {
+    render(<Button appearance="default">Join</Button>)
+    const button = screen.getByRole('button', { name: 'Join' })
+    expect(button).toHaveAttribute('data-size', 'xl')
+    expect(button).not.toHaveAttribute('appearance')
+    expect(button.querySelector('[data-button-label]')).not.toBeNull()
+  })
+})

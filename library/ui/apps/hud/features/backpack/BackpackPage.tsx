@@ -4,9 +4,9 @@
 // grid, and a right-hand detail panel. Wearables + Emotes tabs. Data via the bridge relay
 // of fetchWearablesPage; equipping goes back through setAvatar.
 
-import { Skeleton } from '@dcl/one-ui'
+import { Button, Skeleton } from '@dcl/one-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Chip, ColorPicker, HintsButton, KeyCap, MaskIcon, OptionMenu, Pager, SearchField, Tabs, WearableCard, rarityPanel, rarityTile, type Rarity, type TabItem, NameSeal } from '../../design'
+import { Chip, ColorPicker, HintsButton, KeyCap, MaskIcon, OptionMenu, Pager, SearchField, Tabs, WearableCard, rarityPanel, rarityTile, type Rarity, type TabItem, NameSeal } from '../../design'
 import allIcon from '../../assets/category-icons/all.png'
 import arrowLeftIcon from '../../assets/backpack/icon-arrow-left.webp'
 import emptySearchArt from '../../assets/backpack/empty-search.webp'
@@ -228,7 +228,7 @@ function DetailPanel({ item, onClose }: { item: Wearable | Emote | null; onClose
   return (
     <aside className={styles.detail} style={{ '--panel-art': `url(${rarityPanel(rarity)})` } as React.CSSProperties}>
       {onClose != null && (
-        <Button size="bare" radius="md" variant="shade" className={styles.detailClose} aria-label="Close item details" onClick={onClose}>
+        <Button appearance="hud" size="bare" radius="md" variant="shade" className={styles.detailClose} aria-label="Close item details" onClick={onClose}>
           <MaskIcon src={closeIcon} size={10} />
         </Button>
       )}
@@ -614,7 +614,7 @@ export function BackpackPage({
           <h1 className={styles.title}>Backpack</h1>
           <Tabs variant="section" className={styles.tabs} items={BACKPACK_TABS} value={tab} onChange={(t) => { setTab(t); setSelected(null) }} aria-label="Backpack sections" />
           <div className={styles.filterWrap}>
-            <Button variant="light" className={styles.filterBtn} aria-expanded={showFilter} disabled={inOutfits} onClick={() => setShowFilter((s) => !s)}>
+            <Button appearance="hud" variant="light" className={styles.filterBtn} aria-expanded={showFilter} disabled={inOutfits} onClick={() => setShowFilter((s) => !s)}>
               <MaskIcon src={filterIcon} size={20} />
               FILTER &amp; SORT
               <MaskIcon src={arrowDownIcon} size={12} />
@@ -659,7 +659,7 @@ export function BackpackPage({
             {tab === 'wearables' && (
               <div className={styles.contentHead}>
                 <Tabs variant="subtab" className={styles.sectionTabs} items={SECTION_TABS} value={section} onChange={setSection} aria-label="Wearables sections" />
-                <Button variant="outline" className={styles.shop} onClick={() => window.open(withUtm(SHOP_URL), '_blank', 'noopener,noreferrer')}>
+                <Button appearance="hud" variant="outline" className={styles.shop} onClick={() => window.open(withUtm(SHOP_URL), '_blank', 'noopener,noreferrer')}>
                   <MaskIcon src={marketplaceIcon} />
                   SHOP
                 </Button>

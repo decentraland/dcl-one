@@ -6,12 +6,13 @@
 // its level, so dismissing leaves it cleared. Closes on an outside click or Escape, like the
 // nearby-voice popover.
 
-import { Button, showConfirm } from '../../design'
+import { showConfirm } from '../../design'
 import { useRailPopover } from '../sidebar/useRailPopover'
 import type { PermissionRuleItem, PermissionRuleLevel } from '@explorer-core/engine/protocol'
 import type { PermissionRules, PermissionSubject, TriggeredPermission, VisitAnswer } from '../session/useEngineSession'
 import { describePermission, openPermissionReview } from './PermissionDialog'
 import styles from './PermissionsPopover.module.css'
+import { Button } from '@dcl/one-ui'
 
 const VALUE_LABEL = { Allow: 'always', Deny: 'never', Ask: 'ask' } as const
 
@@ -116,7 +117,7 @@ export function PermissionsPopover({
         </div>
       )}
       <div className={styles.divider} />
-      <Button
+      <Button appearance="hud"
         variant="ghost"
         size="sm"
         className={styles.reset}

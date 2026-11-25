@@ -4,9 +4,9 @@
 // meanwhile (`inProgress`).
 //
 // Laid out on the startup screens' canvas, its 1080 rows centred vertically.
-import { Spinner } from '@dcl/one-ui'
+import { Button, Spinner } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { Button, MaskIcon, SubmitField } from '../../design'
+import { MaskIcon, SubmitField } from '../../design'
 import { EMAIL_MAX, EMAIL_PATTERN } from '@explorer-core/features/auth/email'
 import { emailLoginErrorCode } from '@explorer-core/features/auth/thirdweb'
 import type { LoginMethod } from '@explorer-core/features/auth/sso'
@@ -107,7 +107,7 @@ export function LoginSelection({
               </p>
             </>
           )}
-          <Button size="bare" variant="clear" className={styles.cancel} onClick={onCancel}>
+          <Button appearance="hud" size="bare" variant="clear" className={styles.cancel} onClick={onCancel}>
             Cancel
           </Button>
         </div>
@@ -143,22 +143,22 @@ export function LoginSelection({
             or continue with
             <span className={styles.line} />
           </div>
-          <Button size="modal" variant="method" className={styles.google} disabled={locked} onClick={() => onMethod('google')}>
+          <Button appearance="hud" size="modal" variant="method" className={styles.google} disabled={locked} onClick={() => onMethod('google')}>
             <img src={google} alt="" width={24} height={24} />
             Google
           </Button>
-          <Button size="modal" variant="method" className={styles.metamask} disabled={locked} onClick={() => onMethod('metamask')}>
+          <Button appearance="hud" size="modal" variant="method" className={styles.metamask} disabled={locked} onClick={() => onMethod('metamask')}>
             <img src={metamask} alt="" width={24} height={24} />
             MetaMask
           </Button>
-          <Button size="bare" variant="clear" className={styles.moreOptions} aria-expanded={more} onClick={() => setMore((open) => !open)}>
+          <Button appearance="hud" size="bare" variant="clear" className={styles.moreOptions} aria-expanded={more} onClick={() => setMore((open) => !open)}>
             MORE OPTIONS
             <MaskIcon src={arrowDown} size={11} height={6} className={more ? styles.arrowUp : styles.arrow} />
           </Button>
           {more && (
             <div className={styles.moreRow}>
               {MORE.map((m) => (
-                <Button key={m.method} size="modal" variant="method" className={styles.moreButton} aria-label={m.label} title={m.label} disabled={locked} onClick={() => onMethod(m.method)}>
+                <Button appearance="hud" key={m.method} size="modal" variant="method" className={styles.moreButton} aria-label={m.label} title={m.label} disabled={locked} onClick={() => onMethod(m.method)}>
                   <img src={m.icon} alt="" width={24} height={24} />
                 </Button>
               ))}

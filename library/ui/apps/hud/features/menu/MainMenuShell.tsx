@@ -3,7 +3,7 @@
 // the top bar is identical and consistent. Pages pass their content as children.
 
 import { useContext, useEffect, useState } from 'react'
-import { Button, DclLogo, Icon, type IconName } from '../../design'
+import { DclLogo, Icon, type IconName } from '../../design'
 import { keyHintFor, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { EDITOR_BUILD } from '@explorer-core/features/editorHost/config'
 import { EditorOffered } from '../editorHost/EditorOffered'
@@ -19,6 +19,7 @@ import onShop from '../../assets/menu-on/shop.webp'
 import onMap from '../../assets/menu-on/map.webp'
 import onSettings from '../../assets/menu-on/settings.webp'
 import onGallery from '../../assets/menu-on/gallery.webp'
+import { Button } from '@dcl/one-ui'
 
 // The selected tab's full-colour artwork, and its display size (the map and settings art sit in a
 // larger canvas).
@@ -124,7 +125,7 @@ export function MainMenuShell({
           <DclLogo size={25} />
           <span className={styles.brandName}>Decentraland</span>
         </div>
-        <Button variant="accent" size="header" className={styles.lobby} onClick={() => onNavigate('lobby')}>
+        <Button appearance="hud" variant="accent" size="header" className={styles.lobby} onClick={() => onNavigate('lobby')}>
           <Icon name="lobby" size={20} />
           Lobby
         </Button>

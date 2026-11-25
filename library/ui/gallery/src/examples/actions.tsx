@@ -111,6 +111,91 @@ export const actionEntries: GalleryEntry[] = [
         )
       },
       {
+        id: 'hud',
+        title: 'Explorer HUD',
+        render: () => (
+          <div className={layout.rows}>
+            <div className={layout.strip}>
+              {(
+                ['primary', 'accent', 'secondary', 'ghost', 'dark', 'tint', 'darkOutline'] as const
+              ).map((variant) => (
+                <Button key={variant} appearance="hud" variant={variant}>
+                  {variant}
+                </Button>
+              ))}
+              <Button appearance="hud" disabled>
+                Disabled
+              </Button>
+            </div>
+            <div className={layout.strip}>
+              {(
+                [
+                  'sm',
+                  'md',
+                  'lg',
+                  'row',
+                  'card',
+                  'header',
+                  'modal',
+                  'dialog',
+                  'cta',
+                  'start'
+                ] as const
+              ).map((size) => (
+                <Button key={size} appearance="hud" size={size}>
+                  {size}
+                </Button>
+              ))}
+            </div>
+            <div className={layout.strip}>
+              <Button appearance="hud" variant="light">
+                light
+              </Button>
+              <Button appearance="hud" variant="outline">
+                outline
+              </Button>
+              <Button appearance="hud" variant="whisper" size="start">
+                whisper
+              </Button>
+              <Button appearance="hud" variant="method" size="start">
+                method
+              </Button>
+              <Button appearance="hud" size="row" variant="secondary">
+                row
+              </Button>
+              <Button appearance="hud" size="sm" radius="md">
+                radius md
+              </Button>
+            </div>
+            <div className={layout.strip}>
+              {(
+                [
+                  'scrim',
+                  'faint',
+                  'veil',
+                  'glass',
+                  'shade',
+                  'primary',
+                  'clear',
+                  'navigate',
+                  'navigateExit'
+                ] as const
+              ).map((variant) => (
+                <Button
+                  key={variant}
+                  appearance="hud"
+                  size="bare"
+                  variant={variant}
+                  style={{ height: 46, padding: '0 20px' }}
+                >
+                  {variant}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )
+      },
+      {
         id: 'content',
         title: 'Icons, links and icon-only',
         render: () => (

@@ -1,7 +1,6 @@
 // Design system — tokens (src/styles/tokens.css) + base primitives.
 // Rebuilt in TS + CSS Modules, design referencing eordano/dcl-react-ui.
 
-export { Button } from './Button'
 export { ArmedButton, ARM_MS } from './ArmedButton'
 export { IconButton } from './IconButton'
 export { ControlButton } from './ControlButton'

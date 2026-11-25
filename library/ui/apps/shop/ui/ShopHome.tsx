@@ -2,9 +2,9 @@
 // the Trending and New rows, each with a way to the full catalogue. What it shows comes in as props; the
 // page reads it (homeQuery) and draws each row's card.
 
-import { Button, ChevronRight, EmptyState, Rail } from '@hud/design'
+import { ChevronRight, EmptyState, Rail } from '@hud/design'
 import { pressedWith, type PressedWith } from './pressedWith'
-import { ShopCardSkeleton } from '@dcl/one-ui'
+import { Button, ShopCardSkeleton } from '@dcl/one-ui'
 import styles from './ShopHome.module.css'
 
 /** A row shows five whole cards and the sixth's edge, so it pages five at a time. */
@@ -95,7 +95,7 @@ export function ShopHome<T extends { id: string }, O extends ShopHomeOutfit>({
                     </span>
                   )}
                   {offer?.onBuy != null && (
-                    <Button size="card" className={styles.outfitBuy} aria-label={`Buy ${o.name}`} onClick={(e) => offer.onBuy?.(pressedWith(e))}>
+                    <Button appearance="hud" size="card" className={styles.outfitBuy} aria-label={`Buy ${o.name}`} onClick={(e) => offer.onBuy?.(pressedWith(e))}>
                       BUY
                     </Button>
                   )}
@@ -133,7 +133,7 @@ function HomeRow<T extends { id: string }>({
         </header>
         <div className={styles.rowError} role="alert">
           <span>Couldn’t load these items.</span>
-          <Button variant="secondary" size="sm" onClick={onRetry}>
+          <Button appearance="hud" variant="secondary" size="sm" onClick={onRetry}>
             Retry
           </Button>
         </div>

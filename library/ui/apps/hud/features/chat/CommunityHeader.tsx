@@ -5,11 +5,12 @@
 
 import { createPortal } from 'react-dom'
 import type { CommunityConversation } from '../session/useEngineSession'
-import { Avatar, Button, ContextMenu, ControlButton, MaskIcon } from '../../design'
+import { Avatar, ContextMenu, ControlButton, MaskIcon } from '../../design'
 import { openCommunityModal } from '../communities/CommunityModal'
 import { ConversationMenu, MENU_LAYER, useAnchoredMenu } from './ConversationMenu'
 import playersIcon from '../../assets/chat/players.png'
 import styles from './Chat.module.css'
+import { Button } from '@dcl/one-ui'
 
 export function CommunityHeader({
   community,
@@ -62,7 +63,7 @@ function CommunityTitle({ community }: { community: CommunityConversation }): Re
   const { open, at, button, menu, toggle, close } = useAnchoredMenu(underTitle)
   return (
     <>
-      <Button
+      <Button appearance="hud"
         ref={button}
         size="bare"
         variant="clear"

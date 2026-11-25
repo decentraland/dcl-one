@@ -4,10 +4,9 @@
 // KEEP IN SYNC with deploy/web/index.html: the store/Chrome URLs and the Apple/Google/Chrome SVGs are
 // duplicated there (the engine loader gates before react-web mounts, so it can't import from here).
 
-import { Spinner } from '@dcl/one-ui'
+import { Button, Spinner } from '@dcl/one-ui'
 import { mobilePlatform } from '@explorer-core/lib/isMobile'
 import { publicUrl } from '@hud-host'
-import { Button } from '../../design'
 import { FlagStep } from './FlagStep'
 import styles from './MobileGate.module.css'
 
@@ -111,7 +110,7 @@ export function MobileGate({ reason = 'mobile' }: { reason?: 'mobile' | 'browser
             Decentraland Web requires <strong>Google Chrome</strong> on desktop to run.
           </p>
           <div className={styles.buttons}>
-            <Button variant="secondary" href={CHROME_URL} target="_blank" rel="noopener" className={styles.store}>
+            <Button appearance="hud" variant="secondary" href={CHROME_URL} target="_blank" rel="noopener" className={styles.store}>
               <ChromeIcon />
               <span>Download Chrome</span>
             </Button>
@@ -134,13 +133,13 @@ export function MobileGate({ reason = 'mobile' }: { reason?: 'mobile' | 'browser
         </p>
         <div className={styles.buttons}>
           {showApple && (
-            <Button variant="secondary" href={APP_STORE_URL} target="_blank" rel="noopener" className={styles.store}>
+            <Button appearance="hud" variant="secondary" href={APP_STORE_URL} target="_blank" rel="noopener" className={styles.store}>
               <AppleIcon />
               <span>Install from App Store</span>
             </Button>
           )}
           {showGoogle && (
-            <Button variant="secondary" href={PLAY_STORE_URL} target="_blank" rel="noopener" className={styles.store}>
+            <Button appearance="hud" variant="secondary" href={PLAY_STORE_URL} target="_blank" rel="noopener" className={styles.store}>
               <GooglePlayIcon />
               <span>Install from Google Play</span>
             </Button>

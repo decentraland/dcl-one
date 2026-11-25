@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { Button as ButtonModule } from '../../../apps/hud/design/Button'
+import { Chip as ChipModule } from '../../../apps/hud/design/Chip'
 import * as design from '../../../apps/hud/design'
 import * as glyphs from '../../../apps/hud/design/Glyphs'
 import { SHOWCASE_SECTIONS } from '../../../apps/hud/design/Showcase'
@@ -74,7 +74,7 @@ const missingGlyphs = (mounted: ReadonlySet<string>) =>
 describe('when the Showcase is checked against the HUD design entry', () => {
   it('should find the named component exports, the glyphs apart, and no function or constant', () => {
     expect(components).toEqual(
-      expect.arrayContaining(['Button', 'MenuRow', 'PopupHost', 'KeyCap', 'BrowseToolbar'])
+      expect.arrayContaining(['Chip', 'MenuRow', 'PopupHost', 'KeyCap', 'BrowseToolbar'])
     )
     for (const name of ['VerifiedBadge', 'showDialog', 'ARM_MS', 'rarityOf'])
       expect(components).not.toContain(name)
@@ -143,17 +143,17 @@ describe('when the Showcase has a gap', () => {
       name: 'Hooked',
       render: () => {
         const [label] = useState('Entry')
-        return <design.Button>{label}</design.Button>
+        return <design.Chip label={label} />
       }
     }
-    expect(mountedBy(hooked).has('Button')).toBe(true)
+    expect(mountedBy(hooked).has('Chip')).toBe(true)
   })
 
   it('should not count a component rendered around the design entry', () => {
-    const around = { name: 'Around', render: () => <ButtonModule>Direct</ButtonModule> }
-    const through = { name: 'Through', render: () => <design.Button>Entry</design.Button> }
-    expect(mountedBy(around).has('Button')).toBe(false)
-    expect(mountedBy(through).has('Button')).toBe(true)
+    const around = { name: 'Around', render: () => <ChipModule label="Direct" /> }
+    const through = { name: 'Through', render: () => <design.Chip label="Entry" /> }
+    expect(mountedBy(around).has('Chip')).toBe(false)
+    expect(mountedBy(through).has('Chip')).toBe(true)
   })
 
   it('should fail a Glyphs page that leaves a glyph out', () => {

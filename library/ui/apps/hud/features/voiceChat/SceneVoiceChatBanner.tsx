@@ -1,6 +1,6 @@
 // "A stream is happening here": the live community stream whose places include the parcel or the
 // world the player stands in, with a Join button.
-import { Avatar, Button, MaskIcon } from '../../design'
+import { Avatar, MaskIcon } from '../../design'
 import joinStreamIcon from '../../assets/voice/join-stream.png'
 import streamIcon from '../../assets/voice/stream-small.png'
 import { nameColor } from '@explorer-core/lib/identity'
@@ -8,6 +8,7 @@ import { useSession } from '../session/SessionContext'
 import { inCommunityStream, streamAct, voiceActive } from './callGate'
 import { VOICE_PANEL_SIZE, useVoiceDock } from './VoiceChatPanel'
 import styles from './VoiceChatPanel.module.css'
+import { Button } from '@dcl/one-ui'
 
 export function SceneVoiceChatBanner(): React.JSX.Element | null {
   const { voiceChat } = useSession()
@@ -26,7 +27,7 @@ export function SceneVoiceChatBanner(): React.JSX.Element | null {
           <MaskIcon src={streamIcon} size={12} /> Live Voice Stream · {chat.participantCount}
         </span>
       </span>
-      <Button size="sm" onClick={() => streamAct(voiceChat, { op: 'joinCommunityCall', communityId: chat.communityId })}>
+      <Button appearance="hud" size="sm" onClick={() => streamAct(voiceChat, { op: 'joinCommunityCall', communityId: chat.communityId })}>
         <MaskIcon src={joinStreamIcon} size={14} /> Join stream
       </Button>
     </div>

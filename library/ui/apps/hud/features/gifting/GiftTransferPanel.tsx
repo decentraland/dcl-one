@@ -4,8 +4,8 @@
 // the activity page), then "Gift Sent to <name>!" with rays and OK, or "Something went wrong" with TRY AGAIN and
 // Contact Support. The host resolves the recipient and the item itself.
 
-import { Spinner } from '@dcl/one-ui'
-import { ArmedButton, Avatar, Button, Modal, ModalActions, ModalTitle, VerifiedBadge } from '../../design'
+import { Button, Spinner } from '@dcl/one-ui'
+import { ArmedButton, Avatar, Modal, ModalActions, ModalTitle, VerifiedBadge } from '../../design'
 import { ItemTile, RaysPopup } from '../rewards/RewardPopup'
 import styles from './GiftTransferPanel.module.css'
 
@@ -89,7 +89,7 @@ export function GiftTransferPanel({ view, handlers }: { view: GiftTransferView; 
             <p className={styles.hint}>Gifting an item cannot be undone.</p>
           </div>
           <ModalActions>
-            <Button variant="secondary" onClick={handlers.onClose}>
+            <Button appearance="hud" variant="secondary" onClick={handlers.onClose}>
               CANCEL
             </Button>
             {/* Opened by a press in the app (the picker's SEND GIFT): a second click of that press must not send. */}
@@ -135,7 +135,7 @@ export function GiftTransferPanel({ view, handlers }: { view: GiftTransferView; 
             <h2 id="gift-sent-title" className={styles.sentTitle}>
               Gift Sent to <span style={view.recipient.nameColor ? { color: view.recipient.nameColor } : undefined}>{nameOf(view.recipient)}</span>!
             </h2>
-            <Button size="lg" onClick={handlers.onClose}>
+            <Button appearance="hud" size="lg" onClick={handlers.onClose}>
               OK
             </Button>
           </RaysPopup>
@@ -152,10 +152,10 @@ export function GiftTransferPanel({ view, handlers }: { view: GiftTransferView; 
             </button>
           </p>
           <ModalActions>
-            <Button variant="secondary" onClick={handlers.onClose}>
+            <Button appearance="hud" variant="secondary" onClick={handlers.onClose}>
               CLOSE
             </Button>
-            <Button onClick={handlers.onRetry}>TRY AGAIN</Button>
+            <Button appearance="hud" onClick={handlers.onRetry}>TRY AGAIN</Button>
           </ModalActions>
         </Modal>
       )

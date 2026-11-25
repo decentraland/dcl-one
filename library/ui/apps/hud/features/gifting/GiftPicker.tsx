@@ -7,12 +7,12 @@
 // only with a spare copy, and the token sent is the newest-transferred one neither equipped nor pending. An item that
 // isn't a Polygon collection item is refused: a gift is a gasless Polygon meta-transaction.
 
-import { Spinner } from '@dcl/one-ui'
+import { Button, Spinner } from '@dcl/one-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { gifting } from '@hud-host'
 import type { CatalogKind, GiftableItem, GiftingPageMessage } from '@explorer-core/engine/protocol'
 import { GIFT_PAGE_SIZE, NOT_TRANSFERABLE, DEFAULT_INFO, bestToken, giftRows, transferable } from '@explorer-core/features/gifting/picker'
-import { Avatar, Button, Close, ControlButton, Copy, Modal, SearchField, Tabs, WearableCard, openPopup, rarityOf, showToast, type TabItem } from '../../design'
+import { Avatar, Close, ControlButton, Copy, Modal, SearchField, Tabs, WearableCard, openPopup, rarityOf, showToast, type TabItem } from '../../design'
 import { useSession } from '../session/SessionContext'
 import { knownUserColor, useProfile } from '../session/profileStore'
 import { CategoryIcon } from '../backpack/categoryIcons'
@@ -178,10 +178,10 @@ export function GiftPicker({ recipient, onClose }: { recipient: GiftRecipient; o
             DEFAULT_INFO
           )}
         </p>
-        <Button variant="secondary" onClick={onClose}>
+        <Button appearance="hud" variant="secondary" onClick={onClose}>
           CANCEL
         </Button>
-        <Button disabled={chosen == null} onClick={send}>
+        <Button appearance="hud" disabled={chosen == null} onClick={send}>
           SEND GIFT
         </Button>
       </div>

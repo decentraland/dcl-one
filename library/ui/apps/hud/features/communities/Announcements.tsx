@@ -3,9 +3,9 @@
 // announcement and an author their own (asked first), and anyone who sees the list likes and
 // unlikes. Pages of 10 load as the list's end comes into view; failures are toasted by the session.
 
-import { Spinner } from '@dcl/one-ui'
+import { Button, Spinner } from '@dcl/one-ui'
 import { useRef, useState } from 'react'
-import { Avatar, Button, DclLogo, MaskIcon, TextArea, Trash, VerifiedBadge, showConfirm } from '../../design'
+import { Avatar, DclLogo, MaskIcon, TextArea, Trash, VerifiedBadge, showConfirm } from '../../design'
 import heartOutline from '../../assets/communities/favourite-outline.png'
 import heartSolid from '../../assets/communities/favourite-solid.png'
 import { splitName } from '@explorer-core/lib/identity'
@@ -216,7 +216,7 @@ function Composer({
               {draft.length}/{ANNOUNCEMENT_MAX}
             </span>
           )}
-          <Button size="sm" disabled={draft.trim() === '' || posting} onClick={() => {
+          <Button appearance="hud" size="sm" disabled={draft.trim() === '' || posting} onClick={() => {
               setPicker(false)
               onPost(draft.trim())
             }} aria-label="Post announcement">

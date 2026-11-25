@@ -2,7 +2,7 @@
 // over from the modal.
 
 import { useEffect } from 'react'
-import { Button, MaskIcon, openPopup } from '../../design'
+import { MaskIcon, openPopup } from '../../design'
 import closeIcon from '../../assets/events/close-icn-thin.png'
 import { CommunitiesPage } from '../communities/CommunitiesPage'
 import { EventsPage } from '../events/EventsPage'
@@ -14,6 +14,7 @@ import { openPassport } from '../profile/Passport'
 import { useSession } from '../session/SessionContext'
 import { SettingsPanel } from '../settings/SettingsPanel'
 import styles from './ExploreSectionModal.module.css'
+import { Button } from '@dcl/one-ui'
 
 export type ExploreSection = 'map' | 'places' | 'events' | 'communities' | 'gallery' | 'settings'
 
@@ -65,7 +66,7 @@ function ExploreSectionModal({ section, onClose }: { section: ExploreSection; on
         )}
         {section === 'settings' && <SettingsPanel settings={session.settings} bindings={session.bindings} profile={session.profile} lobbyStage={session.lobbyStage} compact />}
       </div>
-      <Button size="bare" radius="md" variant="shade" className={styles.close} aria-label={`Close ${LABEL[section]}`} onClick={onClose}>
+      <Button appearance="hud" size="bare" radius="md" variant="shade" className={styles.close} aria-label={`Close ${LABEL[section]}`} onClick={onClose}>
         <MaskIcon src={closeIcon} size={14} />
       </Button>
     </div>

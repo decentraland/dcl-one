@@ -6,7 +6,7 @@
 // features import them: that test watches the entry. Sections use local data only: no network,
 // wallet or engine call.
 
-import { Spinner, Switch } from '@dcl/one-ui'
+import { Button, Spinner, Switch } from '@dcl/one-ui'
 import { useId, useRef, useState, useSyncExternalStore } from 'react'
 import { getHudScale, subscribeHudScale } from '@explorer-core/lib/hudScale'
 import {
@@ -19,7 +19,6 @@ import {
   BrowseLoading,
   BrowsePanel,
   BrowseToolbar,
-  Button,
   CharCounter,
   Chip,
   Close,
@@ -258,32 +257,7 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
     </div>
   ),
 
-  Button: () => (
-    <>
-      <div style={row}>
-        <Button>Primary</Button>
-        <Button variant="secondary">Secondary</Button>
-        <Button variant="ghost">Ghost</Button>
-        <Button disabled>Disabled</Button>
-      </div>
-      <div style={{ ...row, marginTop: 12 }}>
-        <Button size="sm">Small</Button>
-        <Button size="row">Row</Button>
-        <Button size="row" variant="secondary">Row</Button>
-        <Button size="md">Medium</Button>
-        <Button size="lg">Large</Button>
-      </div>
-    </>
-  ),
-
   ArmedButton: () => <ArmedShowcase />,
-
-  StartButton: () => (
-    <div style={{ ...row, background: 'var(--loading-vignette)', padding: 16 }}>
-      <Button size="start" style={{ width: 300 }}>Play as guest</Button>
-      <Button size="start" variant="darkOutline" style={{ width: 300 }}>Login or signup</Button>
-    </div>
-  ),
 
   SignIn: () => <SignInShowcase />,
 
@@ -293,21 +267,11 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
     </div>
   ),
 
-  BareButton: () => (
-    <div style={row}>
-      {(['scrim', 'faint', 'veil', 'glass', 'shade', 'primary', 'clear', 'navigate', 'navigateExit'] as const).map((variant) => (
-        <Button key={variant} size="bare" variant={variant} style={{ height: 46, padding: '0 20px' }}>
-          {variant}
-        </Button>
-      ))}
-    </div>
-  ),
-
   Dialogs: () => (
     <div style={row}>
       {/* Showcase renders instead of Hud, so this section hosts the popup layer its dialogs open into. */}
       <PopupHost />
-      <Button
+      <Button appearance="hud"
         variant="secondary"
         onClick={() => {
           void showConfirm({
@@ -319,7 +283,7 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
       >
         Confirm
       </Button>
-      <Button
+      <Button appearance="hud"
         variant="secondary"
         onClick={() => {
           void showDialog({
@@ -331,7 +295,7 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
       >
         Alert
       </Button>
-      <Button
+      <Button appearance="hud"
         variant="secondary"
         onClick={() => {
           void showDialog({
@@ -362,8 +326,8 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
         actionsEqual
         actions={
           <>
-            <Button variant="secondary">Cancel</Button>
-            <Button>Leave</Button>
+            <Button appearance="hud" variant="secondary">Cancel</Button>
+            <Button appearance="hud">Leave</Button>
           </>
         }
       >
@@ -373,7 +337,7 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
         <ModalTitle title="Report submitted" onClose={() => undefined} />
         <p>Thanks — our moderators will review this report.</p>
         <ModalActions align="end">
-          <Button>OK</Button>
+          <Button appearance="hud">OK</Button>
         </ModalActions>
       </Modal>
     </div>
@@ -529,7 +493,7 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
   ),
 
   SwapLabel: () => (
-    <Button size="sm" variant="ghost" aria-label="Cancel join request">
+    <Button appearance="hud" size="sm" variant="ghost" aria-label="Cancel join request">
       <SwapLabel idle="Request Sent" hover="Cancel Request" />
     </Button>
   ),
@@ -579,19 +543,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
     </>
   ),
 
-  CardButton: () => (
-    <>
-      <Button size="card">Jump in</Button>
-      <Button size="cta">Claim name</Button>
-      <Button size="cta" disabled>
-        Claim name
-      </Button>
-      <div style={{ width: 264 }}>
-        <Button size="cardSm">Jump in</Button>
-      </div>
-    </>
-  ),
-
   VerifiedBadge: () => <VerifiedBadge />,
 
   Pager: () => (
@@ -632,7 +583,7 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
 
   PageHeader: () => (
     <div style={{ ...column, gap: 20, maxWidth: 720 }}>
-      <PageHeader as="h3" title="Places" subtitle="Where people are right now" actions={<Button size="sm" variant="secondary">Filters</Button>} />
+      <PageHeader as="h3" title="Places" subtitle="Where people are right now" actions={<Button appearance="hud" size="sm" variant="secondary">Filters</Button>} />
       <PageHeader as="h3" size="hero" title="Explore Decentraland" subtitle="Events, games and places built by the community." />
       <PageHeader as="h3" size="section" title="Live now" leading={<Pin size={16} />} />
     </div>
@@ -731,13 +682,13 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
   Toast: () => (
     <>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Button variant="secondary" size="sm" onClick={() => showToast('User Mojito has been successfully blocked.')}>
+        <Button appearance="hud" variant="secondary" size="sm" onClick={() => showToast('User Mojito has been successfully blocked.')}>
           Plain
         </Button>
-        <Button variant="secondary" size="sm" onClick={() => showToast('Something went wrong.', { tone: 'error' })}>
+        <Button appearance="hud" variant="secondary" size="sm" onClick={() => showToast('Something went wrong.', { tone: 'error' })}>
           Error
         </Button>
-        <Button
+        <Button appearance="hud"
           variant="secondary"
           size="sm"
           onClick={() => {
@@ -796,7 +747,7 @@ function AnchoredMenuDemo(): React.JSX.Element {
   const [pub, setPub] = useState(true)
   return (
     <>
-      <Button
+      <Button appearance="hud"
         variant="secondary"
         onClick={(e) => {
           const box = e.currentTarget.getBoundingClientRect()
@@ -1098,7 +1049,7 @@ function ArmedShowcase(): React.JSX.Element {
   const [sent, setSent] = useState(0)
   return (
     <div style={row}>
-      <Button variant="secondary" onClick={() => setShown((n) => n + 1)}>
+      <Button appearance="hud" variant="secondary" onClick={() => setShown((n) => n + 1)}>
         SHOW AGAIN
       </Button>
       <ArmedButton key={shown} onClick={() => setSent((n) => n + 1)}>
@@ -1118,8 +1069,8 @@ function SignInShowcase(): React.JSX.Element {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: 458, padding: 16, background: 'var(--loading-vignette)' }}>
       <SubmitField aria-label="Email" placeholder="your@email.com" value={email} onChange={setEmail} onSubmit={() => {}} submitLabel="Next" canSubmit={email.includes('@')} />
       <SubmitField aria-label="Email (invalid)" value="not-an-email" onChange={() => {}} onSubmit={() => {}} submitLabel="Next" canSubmit={false} error="Invalid email" />
-      <Button size="modal" variant="method">Google</Button>
-      <Button size="bare" variant="whisper" style={{ width: 36, height: 36 }} aria-label="whisper">‹</Button>
+      <Button appearance="hud" size="modal" variant="method">Google</Button>
+      <Button appearance="hud" size="bare" variant="whisper" style={{ width: 36, height: 36 }} aria-label="whisper">‹</Button>
       <CodeInput value={code} onChange={setCode} />
       <CodeInput value="123456" onChange={() => {}} state="success" disabled />
       <CodeInput value="123456" onChange={() => {}} state="error" disabled />

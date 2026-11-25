@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { DEFAULT_REALM } from '@hud-host'
-import { Button, ContextMenu, MaskIcon, openPopup, showToast } from '../../design'
+import { ContextMenu, MaskIcon, openPopup, showToast } from '../../design'
 import linkIcon from '../../assets/events/link-icn.png'
 import xIcon from '../../assets/events/x-icn.png'
 import dislikeOutline from '../../assets/map/panel/dislike-outline.png'
@@ -30,6 +30,7 @@ import { useSession } from '../session/SessionContext'
 import type { TravelOutcome } from '../session/useEngineSession'
 import { isWorldPlace, placeJumpLink, placeShareUrl } from './placeDetailFormat'
 import styles from './PlaceDetail.module.css'
+import { Button } from '@dcl/one-ui'
 
 export type DetailPlace = DiscoverPlace & { connected_addresses?: string[] | null }
 
@@ -257,7 +258,7 @@ export function travelToPlace(place: DiscoverPlace, map: { teleportToPlace: (x: 
 
 function Toggle({ label, on, iconOn, iconOff, size, className, disabled, onClick }: { label: string; on: boolean; iconOn: string; iconOff: string; size: number; className: string; disabled?: boolean; onClick?: () => void }): React.JSX.Element {
   return (
-    <Button size="bare" radius="md" variant="faint" className={className} aria-label={label} aria-pressed={on} disabled={disabled} onClick={onClick}>
+    <Button appearance="hud" size="bare" radius="md" variant="faint" className={className} aria-label={label} aria-pressed={on} disabled={disabled} onClick={onClick}>
       <MaskIcon src={on ? iconOn : iconOff} size={size} />
     </Button>
   )
@@ -306,7 +307,7 @@ export function PlaceActionButtons({ actions, iconSize = 24, toggle, share }: { 
       <Toggle label="Dislike" on={votes.dislike} iconOn={dislikeSolid} iconOff={dislikeOutline} size={iconSize} className={toggle} disabled={busy.vote} onClick={actions.dislike} />
       <Toggle label="Favorite" on={votes.favorite} iconOn={favouriteSolid} iconOff={favouriteOutline} size={iconSize} className={toggle} disabled={busy.favorite} onClick={actions.favorite} />
       {actions.canPinHome && <Toggle label="Set as Home" on={isHome} iconOn={homeSolid} iconOff={homeOutline} size={iconSize} className={toggle} onClick={actions.toggleHome} />}
-      <Button size="bare" radius="md" variant="faint" className={share} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, place, referrer)}>
+      <Button appearance="hud" size="bare" radius="md" variant="faint" className={share} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, place, referrer)}>
         <MaskIcon src={shareIcon} size={iconSize} />
       </Button>
     </>
@@ -319,7 +320,7 @@ export function PlaceJumpIn({ actions, className, iconSize = 24, onJumpIn }: { a
   const { access, place, signingIn } = actions
   if (access === 'allowed' || access === 'invited' || access === 'failed') {
     return (
-      <Button size="bare" radius="md" variant="primary" className={className} aria-label={`Jump in to ${place.title}`} disabled={signingIn} onClick={onJumpIn}>
+      <Button appearance="hud" size="bare" radius="md" variant="primary" className={className} aria-label={`Jump in to ${place.title}`} disabled={signingIn} onClick={onJumpIn}>
         JUMP IN
         <MaskIcon src={jumpInIcon} size={iconSize} />
       </Button>
@@ -327,7 +328,7 @@ export function PlaceJumpIn({ actions, className, iconSize = 24, onJumpIn }: { a
   }
   if (access === 'password') {
     return (
-      <Button size="bare" radius="md" variant="primary" className={className} aria-label={`Enter password for ${place.title}`} disabled={signingIn} onClick={onJumpIn}>
+      <Button appearance="hud" size="bare" radius="md" variant="primary" className={className} aria-label={`Enter password for ${place.title}`} disabled={signingIn} onClick={onJumpIn}>
         ENTER PASSWORD
       </Button>
     )

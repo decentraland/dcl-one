@@ -7,10 +7,10 @@
 // (`duration: null`), offer one action and a Dismiss button; only those toasts take pointer input.
 
 import { useSyncExternalStore, type ReactNode } from 'react'
-import { Button } from './Button'
 import { ControlButton } from './ControlButton'
 import { Close } from './Glyphs'
 import styles from './Toast.module.css'
+import { Button } from '@dcl/one-ui'
 
 export interface ToastAction {
   label: string
@@ -93,7 +93,7 @@ export function ToastHost(): React.JSX.Element {
             {t.icon}
             <span className={styles.text}>{t.content}</span>
             {t.action != null && (
-              <Button
+              <Button appearance="hud"
                 variant="secondary"
                 size="sm"
                 aria-label={t.action.ariaLabel}

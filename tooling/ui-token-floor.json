@@ -625,7 +625,7 @@
   },
   "library/ui/components/Button/Button.module.css": {
     "primitives": 0,
-    "tokens": 56
+    "tokens": 96
   },
   "library/ui/components/CardActionButton/CardActionButton.module.css": {
     "primitives": 0,

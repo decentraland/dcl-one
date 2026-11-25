@@ -236,7 +236,7 @@ describe('passport equipped items', () => {
     expect(shop.map((a) => a.getAttribute('href')).sort()).toEqual([SHOP_TIARA, SHOP_DISCO].sort())
     for (const a of shop) {
       expect(a).toHaveAttribute('target', '_blank')
-      expect(a).toHaveAttribute('rel', 'noopener')
+      expect(a).toHaveAttribute('rel', 'noopener noreferrer')
     }
   })
 

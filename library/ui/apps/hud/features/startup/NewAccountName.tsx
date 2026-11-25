@@ -3,9 +3,9 @@
 // account with its look and goes straight in; Back signs out of the new account.
 //
 // Laid out on the startup screens' canvas, its 1080 rows centred vertically.
-import { Spinner, Checkbox } from '@dcl/one-ui'
+import { Button, Checkbox, Spinner } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { Button, MaskIcon } from '../../design'
+import { MaskIcon } from '../../design'
 import { StartupBack } from './StartupBack'
 import logo from '../../assets/loading/logo-icon.webp'
 import warning from '../../assets/startup/warning.png'
@@ -136,7 +136,7 @@ export function NewAccountName({
             .*
           </label>
         </div>
-        <Button
+        <Button appearance="hud"
           size="start"
           className={styles.jumpIn}
           disabled={!valid || !terms || saving}

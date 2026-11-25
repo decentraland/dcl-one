@@ -7,9 +7,9 @@
 // NOTE: backend follow-up for OTHER users — the bridge must fetch their rich profile
 // (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
-import { Spinner } from '@dcl/one-ui'
+import { Button, Spinner } from '@dcl/one-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, Button, Close, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, MaskIcon, Pencil, ReportFlag, ScrollThumb, Search, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem, NameSeal } from '../../design'
+import { Avatar, BlockUserIcon, Close, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, MaskIcon, Pencil, ReportFlag, ScrollThumb, Search, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem, NameSeal } from '../../design'
 import giftIcon from '../../assets/gifting/gift.png'
 import jumpInIcon from '../../assets/friends/jump-in.png'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
@@ -616,12 +616,12 @@ export function ProfilePassport({
               </div>
             )}
             {canEdit && editMode && (
-              <Button variant="primary" disabled={!editStatus.canSave} onClick={() => saveRef.current?.()}>
+              <Button appearance="hud" variant="primary" disabled={!editStatus.canSave} onClick={() => saveRef.current?.()}>
                 {editing.saving ? 'SAVING…' : 'SAVE'}
               </Button>
             )}
             {canEdit && editMode ? (
-              <Button variant="secondary" onClick={() => void cancelEdit()} disabled={editing.saving}>
+              <Button appearance="hud" variant="secondary" onClick={() => void cancelEdit()} disabled={editing.saving}>
                 CANCEL
               </Button>
             ) : (

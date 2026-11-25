@@ -2,11 +2,12 @@
 // emotes on sale; Buy opens the item on the web marketplace, where the wallet transaction happens.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { BrowseControl, BrowseLoading, BrowsePanel, BrowseToolbar, Button, Dropdown, EmptyState, EquippedItemCard, SearchField, Tabs, type TabItem } from '../../design'
+import { BrowseControl, BrowseLoading, BrowsePanel, BrowseToolbar, Dropdown, EmptyState, EquippedItemCard, SearchField, Tabs, type TabItem } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { ProfileState, ShopState } from '../session/useEngineSession'
 import { fetchShop, marketplaceUrl, shopItemPrice, type ShopCategory, type ShopItem, type ShopSort } from '@explorer-core/features/shop/shopApi'
 import styles from './ShopPage.module.css'
+import { Button } from '@dcl/one-ui'
 
 const SECTIONS: TabItem<ShopCategory>[] = [
   { id: 'wearable', label: 'Wearables' },
@@ -133,7 +134,7 @@ export function ShopPage({
             </div>
             {!stale && items.length < total && (
               <div className={styles.more}>
-                <Button variant="secondary" disabled={loading} onClick={() => setSkip(items.length)}>
+                <Button appearance="hud" variant="secondary" disabled={loading} onClick={() => setSkip(items.length)}>
                   {loading ? 'Loading…' : 'Load more'}
                 </Button>
               </div>

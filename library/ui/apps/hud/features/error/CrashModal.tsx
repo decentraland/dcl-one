@@ -6,11 +6,12 @@
 
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { ModalShell, Button } from '../../design'
+import { ModalShell } from '../../design'
 import { useFocusTrap } from '../../lib/useFocusTrap'
 import { lockInput } from '@explorer-core/lib/inputLock'
 import type { CrashSource } from '@explorer-core/features/error/fatalError'
 import styles from './CrashModal.module.css'
+import { Button } from '@dcl/one-ui'
 
 const COPY: Record<CrashSource, { title: string; subtitle: string }> = {
   launch: { title: 'Something went wrong', subtitle: "The 3D engine couldn't start. Reloading often fixes it." },
@@ -66,11 +67,11 @@ export function CrashModal({
           actions={
             <>
               {onDismiss && (
-                <Button variant="ghost" className={styles.btn} onClick={onDismiss}>
+                <Button appearance="hud" variant="ghost" className={styles.btn} onClick={onDismiss}>
                   Dismiss
                 </Button>
               )}
-              <Button variant="primary" className={styles.btn} onClick={onReload}>
+              <Button appearance="hud" variant="primary" className={styles.btn} onClick={onReload}>
                 Reload
               </Button>
             </>
