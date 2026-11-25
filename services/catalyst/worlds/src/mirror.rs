@@ -37,8 +37,9 @@
 //! listed without a deploy time, a blocked world and one with a publish queued
 //! for forwarding. The newer upstream then
 //! takes the world as a newer publish takes a mirrored one: every local scene
-//! is retired (`worlds.retired_world_scenes`, its place identity kept by the
-//! overlap rule) and the world row is marked mirrored, in the transaction that
+//! is retired (`worlds.retired_world_scenes`, its place identity kept only by
+//! an upstream scene covering its whole footprint) and the world row is marked
+//! mirrored, in the transaction that
 //! writes the upstream's scenes. Otherwise the world is refused and only the
 //! scenes the mirror wrote there are retired, since it never refreshes them
 //! again. The listing's timestamps spare a refused world every download; the

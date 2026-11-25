@@ -2564,6 +2564,191 @@ async fn a_world_redeploy_overlapping_one_scene_keeps_the_rows_and_an_undeploy_d
     assert_eq!(rows, 1);
 }
 
+/// A mirror pass taking a local scene over (`mirror_reconcile`): the local row
+/// retires, the upstream scene lands on `parcels` with the world marked
+/// mirrored, and the retired scene's identity passes on only to a scene
+/// covering its whole footprint.
+async fn take_over(pool: &PgPool, world: &WorldName, retired: &str, id: &str, parcels: &[&str]) {
+    let mut tx = pool.begin().await.unwrap();
+    let must_cover: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT identity FROM explore.world_scene_place WHERE world_name = $1 AND active AND entity_id = $2",
+    )
+    .bind(world.key())
+    .bind(retired)
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name = $1 AND entity_id = $2")
+        .bind(world.key())
+        .bind(retired)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let parcels: Vec<String> = parcels.iter().map(|p| p.to_string()).collect();
+    sqlx::query(
+        "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size, mirror_source) \
+         VALUES ($1, $2, '[]'::json, '{}', $3, $4, 1, 'https://upstream.example')",
+    )
+    .bind(world.key())
+    .bind(id)
+    .bind(crate::ZERO_ADDRESS)
+    .bind(&parcels)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE worlds.worlds SET mirror_source = 'https://upstream.example' WHERE name = $1",
+    )
+    .bind(world.key())
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    crate::explore::places::scene_identity::assign_covering(
+        &mut tx,
+        world.key(),
+        id,
+        &parcels,
+        &must_cover,
+    )
+    .await
+    .unwrap();
+    crate::explore::places::scene_identity::retire_orphans(&mut tx, &[world.key().to_string()])
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+}
+
+/// DATABASE.md: an upstream scene taking a local one over keeps its identity,
+/// and so its rows, only when it covers the local scene's whole footprint. A
+/// deployer granted the upstream scene's parcels is admitted to it; on a
+/// subset of the old footprint it reaches none of the old rows, neither on
+/// the mirrored scene nor after publishing here again over it, and its writes
+/// leave them alone. One granted the whole footprint reaches them.
+#[tokio::test]
+async fn a_takeover_passes_storage_on_only_to_a_scene_covering_the_whole_footprint() {
+    let Some(pool) = scratch().await else { return };
+    for (upstream, granted, keeps) in [
+        (&["0,0"][..], &["0,0"][..], false),
+        (&["0,0", "0,1"][..], &["0,0", "0,1"][..], true),
+    ] {
+        let (world, _) = seed_owned_world(&pool).await;
+        let owner_key = random_key();
+        seed_world(
+            &pool,
+            &world,
+            Some(&Address::parse(&address_of(&owner_key)).unwrap()),
+        )
+        .await;
+        let state = state(&pool, None);
+        let app = router(state.clone());
+        let (status, _) = send(
+            &app,
+            signed_request(
+                "put",
+                "/values/k",
+                &owner_key,
+                &scene_metadata(world.display(), "0,1", SCENE_ID),
+                None,
+                Some(r#"{"value":"old"}"#),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let old_ns = scene_ns(&pool, &world, "0,0").await;
+        let old = active_identity(&pool, &world, "0,0").await.unwrap();
+        let enc = state.encryptor().unwrap().encrypt(SECRET).unwrap();
+        state
+            .store
+            .env_upsert_with_quota(
+                &old_ns,
+                ENV_KEY,
+                &enc,
+                value_size_bytes(SECRET),
+                state.settings.env_limits,
+            )
+            .await
+            .unwrap();
+        let grantee_key = random_key();
+        let grantee = Address::parse(&address_of(&grantee_key)).unwrap();
+        grant(&pool, &world, Permission::Deployment, &grantee, granted).await;
+
+        take_over(&pool, &world, SCENE_ID, "bafkrei-upstream", upstream).await;
+        let taken = active_identity(&pool, &world, "0,0").await;
+        assert_eq!(taken == Some(old), keeps, "{upstream:?}");
+        let old_active: bool =
+            sqlx::query_scalar("SELECT active FROM explore.world_scene_place WHERE identity = $1")
+                .bind(old)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(old_active, keeps, "{upstream:?}");
+        let reads = |scene: &'static str| {
+            let (app, key) = (app.clone(), grantee_key.clone());
+            let meta = scene_metadata(world.display(), "0,0", scene);
+            async move {
+                let (status, body) = send(
+                    &app,
+                    signed_request("get", "/values/k", &key, &meta, None, None).await,
+                )
+                .await;
+                if keeps {
+                    assert_eq!((status, body), (StatusCode::OK, json!({ "value": "old" })));
+                } else {
+                    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+                }
+                let (status, body) = send(
+                    &app,
+                    signed_request("get", "/env", &key, &meta, None, None).await,
+                )
+                .await;
+                assert_eq!(status, StatusCode::OK, "{body}");
+                assert_eq!(body.to_string().contains(ENV_KEY), keeps, "{body}");
+            }
+        };
+        reads("bafkrei-upstream").await;
+
+        // The grantee publishes here again over the upstream scene.
+        sqlx::query("UPDATE worlds.worlds SET mirror_source = NULL WHERE name = $1")
+            .bind(world.key())
+            .execute(&pool)
+            .await
+            .unwrap();
+        redeploy(
+            &pool,
+            &world,
+            &["bafkrei-upstream"],
+            "bafkrei-grantee",
+            granted,
+            Some("0,0"),
+        )
+        .await;
+        assert_eq!(active_identity(&pool, &world, "0,0").await, taken);
+        reads("bafkrei-grantee").await;
+        let meta = scene_metadata(world.display(), "0,0", "bafkrei-grantee");
+        let (status, _) = send(
+            &app,
+            signed_request(
+                "put",
+                "/values/k",
+                &grantee_key,
+                &meta,
+                None,
+                Some(r#"{"value":"new"}"#),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let expected = if keeps { r#""new""# } else { r#""old""# };
+        assert_eq!(
+            raw_world_value_text(&pool, &old_ns, "k").await.as_deref(),
+            Some(expected),
+            "{upstream:?}"
+        );
+    }
+}
+
 async fn seed_genesis_scene(pool: &PgPool) -> (String, String, String, i32) {
     let id = format!("bafyWS{}", Uuid::new_v4().simple());
     let x = 40_000 + (Uuid::new_v4().as_u128() % 10_000) as i32;

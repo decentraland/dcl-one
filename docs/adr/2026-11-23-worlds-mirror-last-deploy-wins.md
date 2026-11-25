@@ -2,9 +2,10 @@
 
 - Status: Accepted
 - Date: 2026-11-23
-- Decided by: user, 2026-11-24, in the review of this change: place identities
-  keep the overlap rule unchanged on a takeover, and a takeover that keeps a
-  place id queues no place removal.
+- Decided by: user, 2026-11-24, in the review of this change: on a takeover an
+  upstream scene keeps a local scene's place identity only when it covers that
+  scene's whole footprint, and a takeover that keeps a place id queues no place
+  removal.
 
 ## Context
 
@@ -39,12 +40,22 @@ deployment to a world name wins, with the whole world compared.
   world row's lock, every local scene of the world is retired into
   `worlds.retired_world_scenes`, as a replacing publish retires scenes. A local scene
   that the upstream lists by the same id becomes the mirrored row. The world row
-  is marked mirrored. Place identities follow the overlap rule: an upstream scene
-  overlapping exactly one retired scene keeps that identity, and so the storage
-  scoped to it. The rule is the same as for a publish here: it compares
-  footprints only, not who deployed either scene. The access setting and world settings are copied as for any mirrored
-  world, unless the owner set them here and still holds the name. An operator block
-  stands.
+  is marked mirrored. Place identities follow the overlap rule with one more
+  condition: an upstream scene keeps a retired local scene's identity, and so the
+  storage scoped to it, only when it overlaps exactly that one identity and its
+  parcels cover that scene's whole footprint. Otherwise it gets a new identity and
+  the local one is deactivated, as on any retirement; storage rows are never
+  deleted. An upstream scene that covers one local scene and stands on part of
+  another overlaps two, so it gets a new identity and both retire. This matches
+  the upstream deploy check (`decentraland/worlds-content-server` at
+  `04c8eea2ab96d35703ceae76140106da821ee409`, `src/logic/validations/scene.ts`):
+  a deployer who is not the name's owner needs permission over the new parcels
+  and the whole footprint of every scene the deployment replaces. Upstream checks
+  the signer's permissions; this node compares footprints only, not who deployed
+  either scene. A publish here and a pass that only updates a mirrored world keep
+  the plain overlap rule. The access setting and world settings are copied as for
+  any mirrored world, unless the owner set them here and still holds the name. An
+  operator block stands.
 - **Local not outdated.** The world is refused as before, and only the scenes the
   mirror wrote there are retired. The listing's timestamps decide this before
   anything is downloaded. The write decides again on the hash-checked entities, so a
@@ -67,7 +78,11 @@ deployment to a world name wins, with the whole world compared.
   scene is the newest deployment to the name.
 - A pass row carries the upstream's chain only when it checks. A local publish
   can be replaced by an upstream scene whose signer this node never verified,
-  on the upstream's word as for any mirrored world.
+  on the upstream's word as for any mirrored world. That scene reaches the local
+  scene's storage only when it covers the local scene's whole footprint.
+- A deployment grant over part of a local scene's footprint cannot reach that
+  scene's storage through a takeover: the upstream scene on that part starts
+  with a new identity.
 - A local identity that a takeover does not keep is retired as a replacing publish
   retires one: its storage stays, and its grants no longer resolve to a scene.
 - Every pass reads the `/about` and `/scenes` of each listed world that this node

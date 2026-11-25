@@ -296,7 +296,9 @@ A difference not listed here is a gap, not a decision.
   a world published here when the upstream's newest scene is newer than the
   newest local one, compared over the whole world, with each time capped the
   same way and ties to the greater entity id. Otherwise the world stays
-  local. A read-through fill never replaces a local publish
+  local. An upstream scene keeps a replaced local scene's storage identity
+  only when it covers that scene's whole footprint. A read-through fill never
+  replaces a local publish
   ([ADR](../../../docs/adr/2026-11-23-worlds-mirror-last-deploy-wins.md)).
 - **Validation errors** report the first failure only, and scene schema
   errors name the failing path.

@@ -2462,8 +2462,8 @@ async fn retired_ids(pool: &PgPool, world: &str) -> Vec<String> {
 }
 
 /// The whole world is compared: an upstream scene newer than every local one replaces them all,
-/// the one it partly overlaps (whose place identity it keeps) and the one it does not touch, as a
-/// newer publish replaces every mirrored scene. A second pass changes nothing.
+/// the one whose footprint it covers (whose place identity it keeps) and the one it does not
+/// touch, as a newer publish replaces every mirrored scene. A second pass changes nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_newer_upstream_deployment_replaces_a_local_publish_once() {
     let Some(scratch) = db::scratch_database().await else {
@@ -2494,7 +2494,7 @@ async fn a_newer_upstream_deployment_replaces_a_local_publish_once() {
         &mut fake.state.lock(),
         world,
         "U",
-        &["1,0", "2,0"],
+        &["0,0", "1,0", "2,0"],
         now - 600_000,
     );
 
@@ -2529,7 +2529,7 @@ async fn a_newer_upstream_deployment_replaces_a_local_publish_once() {
     assert_eq!(
         active_identity(&node.pool, world, &upstream).await,
         Some(overlapped),
-        "the scene overlapping exactly one local scene keeps its place identity"
+        "the scene covering one local scene's whole footprint keeps its place identity"
     );
     assert!(node.storage.exist(&hash_bytes_v1(&file)).await.unwrap());
     let stamps = |pool: PgPool| async move {
@@ -2842,7 +2842,7 @@ async fn a_takeover_queues_no_place_removal() {
     let fake = start_fake().await;
     let node = Node::new(scratch.pool.clone(), &fake.base, "removal").await;
     let now = now_ms();
-    // "k" keeps its identity (the upstream scene overlaps it), "d" does not (disjoint parcels).
+    // "k" keeps its identity (the upstream scene covers it), "d" does not (disjoint parcels).
     let kept = publish_here(
         &node.pool,
         "k.dcl.eth",
@@ -2891,7 +2891,13 @@ async fn a_takeover_queues_no_place_removal() {
     }
     {
         let mut st = fake.state.lock();
-        deploy_upstream(&mut st, "k.dcl.eth", "K", &["1,0", "2,0"], now - 600_000);
+        deploy_upstream(
+            &mut st,
+            "k.dcl.eth",
+            "K",
+            &["0,0", "1,0", "2,0"],
+            now - 600_000,
+        );
         deploy_upstream(&mut st, "d.dcl.eth", "D", &["7,7"], now - 600_000);
     }
     let summary = node.pass(&node.ctx().await).await;
@@ -2930,6 +2936,121 @@ async fn a_takeover_queues_no_place_removal() {
         .await
         .unwrap();
     assert_eq!((bans, admins), (2, 2));
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+async fn identity_active(pool: &PgPool, identity: uuid::Uuid) -> bool {
+    sqlx::query_scalar("SELECT active FROM explore.world_scene_place WHERE identity = $1")
+        .bind(identity)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// An upstream scene taking over a local one keeps its place identity only when it covers the
+/// local scene's whole footprint (as replacing a scene upstream takes permission over all of
+/// it). One standing on part of the footprint gets a new identity, and the local one retires.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_takeover_on_part_of_a_local_footprint_gets_a_new_identity() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "subset").await;
+    let world = "p.dcl.eth";
+    let now = now_ms();
+    let local = publish_here(
+        &node.pool,
+        world,
+        "bafkreilocalwide",
+        &["0,0", "1,0", "0,1", "1,1"],
+        now - 3_600_000,
+    )
+    .await;
+    let (upstream, _) =
+        deploy_upstream(&mut fake.state.lock(), world, "U", &["0,0"], now - 600_000);
+
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(summary.scenes.superseded_local, 1, "{summary:?}");
+    let fresh = active_identity(&node.pool, world, &upstream)
+        .await
+        .expect("the upstream scene has an identity");
+    assert_ne!(
+        fresh, local,
+        "a subset of the footprint gets a new identity"
+    );
+    assert!(
+        !identity_active(&node.pool, local).await,
+        "the local identity retires"
+    );
+    assert_eq!(
+        retired_ids(&node.pool, world).await,
+        vec!["bafkreilocalwide"]
+    );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// An upstream scene covering one local scene and standing on part of another overlaps both, so
+/// it gets a new identity and both local identities retire.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_takeover_covering_one_local_scene_and_part_of_another_gets_a_new_identity() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "mixed").await;
+    let world = "m.dcl.eth";
+    let now = now_ms();
+    let covered = publish_here(
+        &node.pool,
+        world,
+        "bafkreilocalcovered",
+        &["0,0"],
+        now - 3_600_000,
+    )
+    .await;
+    let partial = publish_here(
+        &node.pool,
+        world,
+        "bafkreilocalpartial",
+        &["1,0", "2,0"],
+        now - 3_600_000,
+    )
+    .await;
+    let (upstream, _) = deploy_upstream(
+        &mut fake.state.lock(),
+        world,
+        "U",
+        &["0,0", "1,0"],
+        now - 600_000,
+    );
+
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(summary.scenes.superseded_local, 2, "{summary:?}");
+    let fresh = active_identity(&node.pool, world, &upstream)
+        .await
+        .expect("the upstream scene has an identity");
+    assert!(![covered, partial].contains(&fresh), "{fresh}");
+    for identity in [covered, partial] {
+        assert!(!identity_active(&node.pool, identity).await, "{identity}");
+    }
+    assert_eq!(
+        identities(&node.pool, world)
+            .await
+            .into_iter()
+            .filter(|(_, _, active)| *active)
+            .count(),
+        1,
+        "only the upstream scene's identity is active"
+    );
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);
