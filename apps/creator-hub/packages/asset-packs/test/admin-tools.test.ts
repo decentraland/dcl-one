@@ -16,7 +16,11 @@ vi.mock('@dcl/sdk/react-ecs', () => ({
 }));
 vi.mock('@dcl/sdk/network', () => ({ syncEntity: vi.fn() }));
 vi.mock('@dcl/sdk/players', () => ({ default: {} }));
-vi.mock('~system/EngineApi', () => ({ isServer: mocks.isServer }));
+// One stub file stands for every `~system` module: the mock keeps the others.
+vi.mock('~system/EngineApi', async original => ({
+  ...(await original<object>()),
+  isServer: mocks.isServer,
+}));
 vi.mock('@dcl/asset-packs/dist/admin-toolkit-ui', async () => ({
   ...(await import('../src/admin-toolkit-ui/config')),
   createAdminToolkitUI: mocks.createAdminToolkitUI,

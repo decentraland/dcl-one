@@ -412,6 +412,13 @@ describe('presentation', () => {
     expect(packets({ ...(ended as Following), topic: true }, [SLIDES]).show).toEqual({ tag: 'none' })
   })
 
+  it('ignores the stop of a replaced presentation', () => {
+    const shown = packets(presenting(), [{ ...SLIDES, id: 'old' }, SLIDES, { type: 'presentation:stopped', id: 'old' }])
+    expect(shown.show).toMatchObject({ tag: 'showing', slides: { id: 'p1' } })
+    expect(packets(shown, [{ type: 'presentation:stopped', id: 'old' }]).show).toEqual(shown.show)
+    expect(packets(shown, [{ type: 'presentation:stopped' }]).show).toEqual({ tag: 'detected' })
+  })
+
   it('takes the slide state only from the presentation bot', () => {
     // Any wallet in the room can publish on the topic; the bot's identity comes from the server.
     const forged = packets(presenting(), [SLIDES], '0x00000000000000000000000000000000000000ff')

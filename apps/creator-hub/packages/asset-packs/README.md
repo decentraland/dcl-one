@@ -168,6 +168,16 @@ When a user installs `@dcl/sdk@next` on as scene, that updates `@dcl/ecs` from 1
 So we decisded to remove the explicit dependency of `@dcl/ecs` from the `@dcl/asset-packs` package, and that allows users to install `@dcl/sdk@next` or upgrade versions without problems.
 The downside is that if this package is used in some project where `@dcl/ecs` is not available, it's going to break. This package is not meant to be used outside of a Decentraland scene anyway so that shouldn't be a problem.
 
+#### `@dcl/sdk/cast` comes from this repository
+
+The Admin Toolkit imports `@dcl/sdk/cast`. The `@dcl/sdk` release that this workspace installs has no such module. `pnpm run sdk:cast` compiles the module of this repository (`library/js-sdk-toolchain/packages/@dcl/sdk/src/cast`) into the installed `@dcl/sdk`, and the `typecheck`, `build:lib`, `build:js` and `start:js` scripts run it first (`tsconfig.sdk-cast.json`). The tests read the same source through an alias in `vitest.config.ts`.
+
+The published package imports `@dcl/sdk/cast` from the SDK of the scene. Thus the release job publishes nothing to npm while `tsconfig.sdk-cast.json` exists. To release:
+
+1. Publish an `@dcl/sdk` release that has `cast`.
+2. Install that release in this workspace, then remove `tsconfig.sdk-cast.json`, the `sdk:cast` script and the alias.
+3. Publish this package as a new major version. The released `@dcl/inspector` versions accept each `2.x` version of this package, and their SDK has no `cast` module.
+
 ## Related Architecture Decisions
 
 For a deeper understanding of the architecture and design decisions:

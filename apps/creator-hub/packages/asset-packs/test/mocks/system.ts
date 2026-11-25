@@ -10,5 +10,7 @@ export const openExternalUrl = noop;
 export const teleportTo = noop;
 export const changeRealm = noop;
 export const signedFetch = noop;
+export const send = noop;
 export const getRealm = noop;
+export const getExplorerInformation = noop;
 export const isServer = async () => ({ isServer: false });

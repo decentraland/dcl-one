@@ -34,16 +34,22 @@ import type { Entity, IEngine, PBVideoPlayer } from '@dcl/ecs';
 import { MessageBus } from '@dcl/sdk/message-bus';
 import { send as commsSend } from '~system/CommunicationsController';
 import { getExplorerComponents } from '../components';
-import { getComponents } from '../definitions';
+import { getComponents, LIVEKIT_STREAM_SRC } from '../definitions';
 import type { IPlayersHelper } from '../types';
 import { isPreview } from './fetch-utils';
 import type { SceneAdmin } from './ModerationControl';
-import { getVideoPlayers } from './VideoControl/utils';
+import { CAST_SRC_PREFIX, getVideoPlayers } from './VideoControl/utils';
 import { clearInterval, setInterval } from './utils';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type VideoState = Pick<PBVideoPlayer, 'src' | 'playing' | 'volume' | 'loop'>;
+/** The section of the panel that put the room's stream on a screen: its `src` is the same for both. */
+type RoomSource = 'live' | 'dcl-cast';
+export type VideoSource = 'video-url' | RoomSource;
+type SetVideo = Partial<PBVideoPlayer> & { source?: RoomSource };
+type VideoState = Pick<PBVideoPlayer, 'src' | 'playing' | 'volume' | 'loop'> & {
+  source?: RoomSource;
+};
 
 type AnnouncementState = {
   text: string;
@@ -72,7 +78,9 @@ const MSG = {
 // ── Public interface ─────────────────────────────────────────────────────────
 
 export interface AdminMessageBusInstance {
-  emitSetVideo(entity: Entity, props: Partial<PBVideoPlayer>): void;
+  emitSetVideo(entity: Entity, props: SetVideo): void;
+  /** What the screen plays, as every client keeps it from the bus: the one state of every admin's panel. */
+  source(entity: Entity): VideoSource | undefined;
   emitSetAnnouncement(text: string, author?: string, id?: string): void;
   emitClearAnnouncement(): void;
   emitSyncAdmins(): void;
@@ -192,6 +200,8 @@ export function initAdminMessageBus(
       playing: payload.playing ?? current.playing,
       volume: payload.volume ?? current.volume,
       loop: payload.loop ?? current.loop,
+      // A message with a `src` says which section sent it; any other message keeps it.
+      source: payload.src === undefined ? authoritativeVideo.get(entity)?.source : payload.source,
     };
     authoritativeVideo.set(entity, updated);
 
@@ -239,7 +249,8 @@ export function initAdminMessageBus(
       const current = VideoPlayer.getOrNull(entity);
       if (!current) continue;
       if (current.src !== (screen?.defaultURL || '')) {
-        video.push({ entity: entity as number, ...current });
+        const source = authoritativeVideo.get(entity)?.source;
+        video.push({ entity: entity as number, ...current, source });
       }
     }
 
@@ -263,6 +274,7 @@ export function initAdminMessageBus(
         playing: vs.playing,
         volume: vs.volume,
         loop: vs.loop,
+        source: vs.source,
       });
       const video = VideoPlayer.getMutableOrNull(entity);
       if (!video) continue;
@@ -361,8 +373,15 @@ export function initAdminMessageBus(
   // ── Instance ───────────────────────────────────────────────────────────────
 
   instance = {
-    emitSetVideo(entity: Entity, props: Partial<PBVideoPlayer>) {
+    emitSetVideo(entity: Entity, props: SetVideo) {
       emitMessage(MSG.SET_VIDEO, { entity, ...props } as Record<string, unknown>);
+    },
+
+    source(entity: Entity) {
+      const { src, source } = authoritativeVideo.get(entity) ?? {};
+      if (!src) return undefined;
+      if (!src.startsWith(CAST_SRC_PREFIX)) return 'video-url';
+      return source ?? (src === LIVEKIT_STREAM_SRC ? 'live' : 'dcl-cast');
     },
 
     emitSetAnnouncement(text: string, author?: string, id?: string) {

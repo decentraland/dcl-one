@@ -1,5 +1,6 @@
 import type { Entity } from '@dcl/ecs';
-import type { DclCastResponse, FlattenedTrack, Participant } from './VideoControl/api';
+import type { FlattenedTrack, Participant } from './VideoControl/api';
+import type { ASK } from './cast';
 import type { SceneAdmin } from './ModerationControl';
 
 // Tab enum for type safety
@@ -13,33 +14,24 @@ export enum TabType {
 
 export type SelectedSmartItem = { visible: boolean; selectedAction: string };
 
-export type PresentationState = {
-  id: string;
-  fileName: string;
-  currentSlide: number;
-  slideCount: number;
-  fileType: 'pdf' | 'pptx';
-  slideVideos: Array<{
-    url: string;
-    geometry: { x: number; y: number; width: number; height: number };
-  }>;
-  videoState: 'idle' | 'loading' | 'playing' | 'paused';
-};
-
 export type State = {
   adminToolkitUiEntity: Entity;
   panelOpen: boolean;
   activeTab: TabType;
   videoControl: {
     selectedVideoPlayer: number | undefined;
-    selectedStream: 'live' | 'dcl-cast' | undefined;
     selectedTab: 'video-url' | 'live' | 'dcl-cast' | undefined;
-    dclCast: DclCastResponse | undefined;
-    presentationState: PresentationState | undefined;
+    /** The confirmation that is open. */
+    ask: keyof typeof ASK | undefined;
+    /** The stream key is in clear until this time (ms). */
+    keyShownUntil: number;
+    /** @deprecated Not set. Kept for a scene's own panel written before `SharePresentationModal` read the key itself. */
+    dclCast?: { streamingKey: string };
     participants: Participant[];
     showcase: {
       show: boolean;
-      activeTrackSid: string | undefined;
+      /** @deprecated Not set. A scene's own panel passes `selectedTrack(engine)` to the showcase. */
+      activeTrackSid?: string;
       onSelectTrack: ((track: FlattenedTrack) => void) | undefined;
       onSetDefault: (() => void) | undefined;
       onClose: (() => void) | undefined;

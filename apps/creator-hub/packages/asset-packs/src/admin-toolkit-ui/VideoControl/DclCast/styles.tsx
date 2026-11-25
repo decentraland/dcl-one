@@ -1,6 +1,6 @@
 import { Color4 } from '@dcl/sdk/math';
 import type { UiTransformProps } from '@dcl/react-ecs';
-import { getContentUrl } from '../../constants';
+import { getAssetsUrl } from '../../constants';
 import { COLORS, RADIUS, SPACING } from '../../theme';
 import {
   getModalStyles,
@@ -311,12 +311,12 @@ export function getShowcaseIconBackgrounds() {
       showcase: {
         textureMode: 'stretch',
         texture: {
-          src: `${getContentUrl()}/admin_toolkit/assets/icons/admin-panel-verified-user.png`,
+          src: `${getAssetsUrl()}/icons/admin-panel-verified-user.png`,
         },
       },
       star: {
         textureMode: 'stretch',
-        texture: { src: `${getContentUrl()}/admin_toolkit/assets/icons/star.png` },
+        texture: { src: `${getAssetsUrl()}/icons/star.png` },
       },
     };
   }

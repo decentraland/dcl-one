@@ -4,14 +4,16 @@ import type { DeepReadonlyObject, PBVideoPlayer } from '@dcl/ecs';
 import ReactEcs, { Label, UiEntity } from '@dcl/react-ecs';
 import { copyToClipboard } from '~system/RestrictedActions';
 import { Button } from '../../Button';
-import type { State } from '../../types';
-import { LIVEKIT_STREAM_SRC } from '../LiveStream';
-import { createVideoPlayerControls, isDclCast } from '../utils';
+import type { StreamKey } from '@dcl/sdk/cast';
+import { LIVEKIT_STREAM_SRC } from '../../../definitions';
+import { createVideoPlayerControls } from '../utils';
 import { COLORS, RADIUS, SPACING, TYPE } from '../../theme';
 import { Surface, Divider } from '../../Primitives';
 import { CopyRow, ActionLink } from '../../Controls';
 import { icon } from '../../icons';
-import { setStream, dismissPresentation } from '../../actions';
+import { ask, openSharePresentation, closeSharePresentation } from '../../actions';
+import { getAdminMessageBus } from '../../admin-message-bus';
+import { cast } from '../../cast';
 import { VolumeSlider } from '../VolumeSlider';
 import PresentationPanel from './PresentationPanel';
 
@@ -44,24 +46,22 @@ function SpeakersButton({ onShowShowcaseModal }: { onShowShowcaseModal: () => Pr
 }
 
 const DclCastInfo = ({
-  state,
+  links,
   engine,
-  onResetRoomId,
   onShowShowcaseModal,
-  onSharePresentation,
   entity,
   video,
 }: {
-  state: State;
+  links: NonNullable<StreamKey['links']>;
   engine: IEngine;
-  onResetRoomId: () => Promise<void>;
   onShowShowcaseModal: () => Promise<void>;
-  onSharePresentation: () => void;
   entity: Entity;
   video: DeepReadonlyObject<PBVideoPlayer> | undefined;
 }) => {
   const controls = createVideoPlayerControls(entity, engine);
-  const active = !!(video?.src && isDclCast(video.src));
+  const active = getAdminMessageBus().source(entity) === 'dcl-cast';
+  const following = cast().state;
+  const show = following.tag === 'following' ? following.show : { tag: 'none' as const };
 
   return (
     <UiEntity uiTransform={{ flexDirection: 'column', width: '100%' }}>
@@ -72,10 +72,7 @@ const DclCastInfo = ({
           badgeVariant="magenta"
           title="Speaker link"
           description="Grants streaming access"
-          onCopy={() =>
-            state.videoControl.dclCast?.streamLink &&
-            copyToClipboard({ text: state.videoControl.dclCast.streamLink })
-          }
+          onCopy={() => copyToClipboard({ text: links.stream })}
         />
         <UiEntity
           uiTransform={{ width: '100%', height: 1 }}
@@ -87,10 +84,7 @@ const DclCastInfo = ({
           badgeVariant="blue"
           title="Viewer link"
           description="Grants viewing access"
-          onCopy={() =>
-            state.videoControl.dclCast?.watcherLink &&
-            copyToClipboard({ text: state.videoControl.dclCast.watcherLink })
-          }
+          onCopy={() => copyToClipboard({ text: links.watch })}
         />
       </Surface>
 
@@ -104,13 +98,9 @@ const DclCastInfo = ({
       <UiEntity
         uiTransform={{ flexDirection: 'column', width: '100%', margin: { top: SPACING.xl } }}
       >
-        {state.videoControl.presentationState ? (
+        {show.tag !== 'none' ? (
           <UiEntity uiTransform={{ flexDirection: 'column', width: '100%' }}>
-            <PresentationPanel
-              presentationState={state.videoControl.presentationState}
-              idPrefix="dcl_cast"
-              onStopSharing={() => dismissPresentation()}
-            />
+            <PresentationPanel show={show} />
             <UiEntity
               uiTransform={{ flexDirection: 'row', width: '100%', margin: { top: SPACING.md } }}
             >
@@ -143,7 +133,7 @@ const DclCastInfo = ({
                 justifyContent: 'center',
                 margin: { right: SPACING.md },
               }}
-              onMouseDown={onSharePresentation}
+              onMouseDown={() => openSharePresentation(closeSharePresentation)}
             />
             <SpeakersButton onShowShowcaseModal={onShowShowcaseModal} />
           </UiEntity>
@@ -167,21 +157,13 @@ const DclCastInfo = ({
             label={active ? 'Deactivate room' : 'Activate room'}
             iconName="power"
             color={COLORS.textSecondary}
-            onClick={() => {
-              if (active) {
-                controls.setSource('');
-                setStream(undefined);
-              } else {
-                controls.setSource(LIVEKIT_STREAM_SRC);
-                setStream('dcl-cast');
-              }
-            }}
+            onClick={() => controls.setSource(active ? '' : LIVEKIT_STREAM_SRC, 'dcl-cast')}
           />
           <ActionLink
             label="Reset room"
             iconName="refresh"
             color={COLORS.danger}
-            onClick={onResetRoomId}
+            onClick={() => ask('room')}
           />
         </UiEntity>
       </UiEntity>

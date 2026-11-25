@@ -5,7 +5,7 @@ import ReactEcs, {
   type UiBackgroundProps,
   type UiTransformProps,
 } from '@dcl/react-ecs';
-import { getContentUrl } from './constants';
+import { getAssetsUrl } from './constants';
 import { Button } from './Button';
 import {
   getModalStyles,
@@ -15,7 +15,7 @@ import {
 
 const ICONS = {
   get CLOSE() {
-    return `${getContentUrl()}/admin_toolkit/assets/icons/close.png`;
+    return `${getAssetsUrl()}/icons/close.png`;
   },
 };
 

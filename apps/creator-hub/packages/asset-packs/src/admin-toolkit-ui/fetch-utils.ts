@@ -66,6 +66,13 @@ export function getDomain(realm: PBRealmInfo | undefined = realmCache) {
 // Decentraland's own hosts, where each service has a host of its own.
 const DECENTRALAND_HOST = /^(?:[a-z0-9-]+\.)*decentraland\.(?:org|zone|today)$/i;
 
+// The origin of a realm that is a node: it serves every service, and the docs, under its origin.
+function nodeOrigin(realm: PBRealmInfo | undefined): string | undefined {
+  const origin = /^https?:\/\/[^/?#]+/i.exec(realm?.baseUrl ?? '')?.[0];
+  const host = origin?.replace(/^https?:\/\//i, '').replace(/:\d+$/, '');
+  return host && !DECENTRALAND_HOST.test(host) ? origin : undefined;
+}
+
 /**
  * The URL of `path` on a service of the realm's deployment. A Decentraland realm's services each
  * have a host (`https://comms-gatekeeper.decentraland.org`). Any other realm is a node that serves
@@ -76,10 +83,14 @@ export function serviceUrl(
   path: string,
   realm: PBRealmInfo | undefined = realmCache,
 ): string {
-  const origin = /^https?:\/\/[^/?#]+/i.exec(realm?.baseUrl ?? '')?.[0];
-  const host = origin?.replace(/^https?:\/\//i, '').replace(/:\d+$/, '');
-  if (!origin || !host || DECENTRALAND_HOST.test(host)) {
-    return `https://${service}.decentraland.${getDomain(realm)}${path}`;
-  }
-  return `${origin}/${service}${path}`;
+  const origin = nodeOrigin(realm);
+  return origin
+    ? `${origin}/${service}${path}`
+    : `https://${service}.decentraland.${getDomain(realm)}${path}`;
+}
+
+/** A page of the docs: the node's own `/docs`, or docs.decentraland.org for a Decentraland realm. */
+export function docsUrl(path: string, realm: PBRealmInfo | undefined = realmCache): string {
+  const origin = nodeOrigin(realm);
+  return origin ? `${origin}/docs${path}` : `https://docs.decentraland.org${path}`;
 }

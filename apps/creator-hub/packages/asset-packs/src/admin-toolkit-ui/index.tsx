@@ -18,25 +18,24 @@ import { VideoControl } from './VideoControl';
 import { TextAnnouncementsControl } from './TextAnnouncementsControl';
 import { SmartItemsControl } from './SmartItemsControl';
 import { TextAnnouncements } from './TextAnnouncements';
-import { getContentUrl } from './constants';
+import { getAssetsUrl } from './constants';
 import { TabType } from './types';
 import { ModerationControl, type SceneAdmin } from './ModerationControl';
 import { getSceneAdmins, getSceneBans, type SceneBanUser } from './ModerationControl/api';
 import { ModalUserList, UserListType } from './ModerationControl/UsersList';
-import { startPresentationDetection } from './VideoControl/DclCast/presentation-detector';
-import { findActiveCastScreenIndex } from './VideoControl/utils';
+import {
+  findActiveCastScreenIndex,
+  getAdminToolkitVideoControl,
+  getVideoPlayers,
+  selectedTrack,
+} from './VideoControl/utils';
 import { SpeakerShowcase } from './VideoControl/DclCast/SpeakerShowcase';
 import SharePresentationModal from './VideoControl/DclCast/SharePresentationModal';
 import { isPreview } from './fetch-utils';
 import { initAdminMessageBus, getAdminMessageBus } from './admin-message-bus';
 import { state } from './store';
-import {
-  setActiveTab,
-  togglePanel,
-  showPresentation,
-  dismissPresentation,
-  setAdminToolkitUiEntity,
-} from './actions';
+import { setActiveTab, togglePanel, showPresentation, setAdminToolkitUiEntity } from './actions';
+import { cast } from './cast';
 import { COLORS, RADIUS, SPACING, TYPE } from './theme';
 import { IconTab, Divider } from './Primitives';
 import { getAdminConfig, getAdminEntityOrNull } from './config';
@@ -77,10 +76,10 @@ export function getSceneBansCache(): SceneBanUser[] {
 
 const ADMIN_ICONS = {
   get BTN_ADMIN_TOOLKIT_CONTROL() {
-    return `${getContentUrl()}/admin_toolkit/assets/icons/admin-panel-control-button.png`;
+    return `${getAssetsUrl()}/icons/admin-panel-control-button.png`;
   },
   get BTN_ADMIN_TOOLKIT_BACKGROUND() {
-    return `${getContentUrl()}/admin_toolkit/assets/backgrounds/admin-tool-background.png`;
+    return `${getAssetsUrl()}/backgrounds/admin-tool-background.png`;
   },
 };
 
@@ -178,7 +177,8 @@ export async function initializeAdminData(
       ADMIN_TOOLS_ENTITY,
     );
 
-    await Promise.all([fetchSceneAdmins(), fetchSceneBans()]);
+    // The ban list is read when an admin opens it: a visitor may not read it.
+    await fetchSceneAdmins();
 
     initAdminMessageBus(
       engine,
@@ -227,15 +227,29 @@ export function createAdminToolkitUI(
       { ...getVirtualUiSize(), zIndex: ADMIN_TOOLKIT_UI_Z_INDEX },
     );
 
-    // Background service: auto-open the panel to the DCL Cast tab when a
-    // presentation goes live, regardless of which tab (if any) the admin is on.
-    startPresentationDetection(
-      engine,
-      () => !!isAllowedAdmin(engine, getAdminToolkitComponent(engine), playersHelper?.getPlayer()),
-      () => playersHelper?.getPlayer()?.userId,
-      () => showPresentation(findActiveCastScreenIndex(engine)),
-      () => dismissPresentation(),
-    );
+    // Follow the stream and Cast once this player is an admin of a scene with screens. A
+    // presentation that starts opens the panel on the DCL Cast section, on any tab.
+    const follow = () => {
+      const admin = isAllowedAdmin(
+        engine,
+        getAdminToolkitComponent(engine),
+        playersHelper?.getPlayer(),
+      );
+      if (
+        !admin ||
+        !getAdminToolkitVideoControl(engine)?.isEnabled ||
+        !getVideoPlayers(engine).length
+      )
+        return;
+      engine.removeSystem(follow);
+      let on = false;
+      cast().onChange(following => {
+        const was = on;
+        on = following.tag === 'following' && following.show.tag !== 'none';
+        if (on && !was) showPresentation(findActiveCastScreenIndex(engine));
+      });
+    };
+    engine.addSystem(follow);
   });
   return uiRoot;
 }
@@ -459,17 +473,14 @@ const uiComponent = (
       state.videoControl.showcase.onClose && (
         <SpeakerShowcase
           participants={state.videoControl.participants}
-          activeTrackSid={state.videoControl.showcase.activeTrackSid}
+          activeTrackSid={selectedTrack(engine)}
           onSelectTrack={state.videoControl.showcase.onSelectTrack}
           onSetDefault={state.videoControl.showcase.onSetDefault}
           onClose={state.videoControl.showcase.onClose}
         />
       ),
     state.videoControl.sharePresentation.show && state.videoControl.sharePresentation.onClose && (
-      <SharePresentationModal
-        onClose={state.videoControl.sharePresentation.onClose}
-        streamingKey={state.videoControl.dclCast?.streamingKey ?? ''}
-      />
+      <SharePresentationModal onClose={state.videoControl.sharePresentation.onClose} />
     ),
   ];
 };

@@ -1,7 +1,7 @@
 import { type IEngine } from '@dcl/ecs';
 import ReactEcs, { UiEntity, Label } from '@dcl/react-ecs';
 
-import { getContentUrl } from '../constants';
+import { getAssetsUrl } from '../constants';
 import { Button } from '../Button';
 import { clearInterval, setInterval } from '../utils';
 import { state } from '../store';
@@ -31,13 +31,13 @@ const USERS_PER_PAGE = 5;
 
 const ICONS = {
   get BACK() {
-    return `${getContentUrl()}/admin_toolkit/assets/icons/chevron-back.png`;
+    return `${getAssetsUrl()}/icons/chevron-back.png`;
   },
   get NEXT() {
-    return `${getContentUrl()}/admin_toolkit/assets/icons/chevron-forward.png`;
+    return `${getAssetsUrl()}/icons/chevron-forward.png`;
   },
   get CLOSE() {
-    return `${getContentUrl()}/admin_toolkit/assets/icons/close.png`;
+    return `${getAssetsUrl()}/icons/close.png`;
   },
 };
 

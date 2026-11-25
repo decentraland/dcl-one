@@ -167,6 +167,8 @@ export const Button = (props: CompositeButtonProps) => {
         borderColor: buttonState.borderColor(variant),
         borderWidth: 2,
         borderRadius: RADIUS.sm,
+        alignItems: 'center',
+        justifyContent: 'center',
         ...uiTransform,
       }}
       uiBackground={{
