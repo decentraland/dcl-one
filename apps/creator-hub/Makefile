@@ -18,7 +18,9 @@ else
     PROTOBUF_ZIP = protoc-$(PROTOBUF_VERSION)-win64.zip
 endif
 
-PROTOC = node_modules/.bin/protobuf/bin/protoc
+# Set CREATOR_HUB_PROTOC to generate with an installed protoc (the Nix shell's protoc 21.12).
+# Not PROTOC, which prost-build and other tools read.
+PROTOC = $(or $(CREATOR_HUB_PROTOC),node_modules/.bin/protobuf/bin/protoc)
 INSPECTOR_PATH = packages/inspector
 CH_PATH = packages/creator-hub
 ASSET_PACKS_PATH = packages/asset-packs

@@ -548,6 +548,9 @@ def pulse_env(config, certificate, key):
 PUBLIC_SIGN_IN_IDS = ('THIRDWEB_CLIENT_ID', 'MAGIC_API_KEY', 'WALLETCONNECT_PROJECT_ID')
 
 
+PNPM_SECRET = re.compile(r'auth|token|password|_key|cert', re.I)
+
+
 def runtime_env(config, refuse_exposed_relayer=True):
     """The stack's environment. `refuse_exposed_relayer=False` is for callers that only read it and start nothing
     that signs (sql, psql, `foundation-dev env`, PostgreSQL): they work on a stack refuse_an_exposed_relayer stops."""
@@ -562,6 +565,10 @@ def runtime_env(config, refuse_exposed_relayer=True):
         # counts (unset: /download offers no installer and shows no total).
         'EXPLORER_INSTALLERS_URL', 'DOWNLOAD_COUNTS_URL',
     ) if key in os.environ}
+    # The shell's pnpm settings (store, offline, the pinned version), which `pnpm install` in web-install read:
+    # `pnpm dev` checks node_modules against them before it runs, and installs again when they differ.
+    env.update({key: value for key, value in os.environ.items()
+                if key.startswith('pnpm_config_') and not PNPM_SECRET.search(key)})
     base = config['port']
     env.update({
         'DATABASE_URL': database_url(config), 'CATALYST_DATABASE_URL': database_url(config),

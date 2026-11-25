@@ -40,7 +40,7 @@ def environment():
 def main():
     # Cargo reads Bevy and the forked crates from trees that are not tracked: write the ones that
     # are missing or stale.
-    subprocess.run((sys.executable, str(ROOT / 'tooling/patched-sources.py'), 'materialise', '--quiet'), check=True)
+    subprocess.run((sys.executable, str(ROOT / 'tooling/patched-sources.py'), 'materialise'), check=True)
     # The renderer starts the scene sidecar that is beside its binary, as the headless engine does.
     subprocess.run(['cargo', 'build', '--release', '--locked', '-p', 'dcl_deno_ipc'], cwd=SOURCE, check=True)
     subprocess.run(['cargo', 'build', '--release', '--locked', '--no-default-features', f'--features={FEATURES}',

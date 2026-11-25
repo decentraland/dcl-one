@@ -7,7 +7,7 @@
 { pkgs, devShell, inputs }:
 let
   root = ../../..;
-  pnpm = pkgs.pnpm.override { nodejs-slim = pkgs.nodejs-slim_26; };
+  pnpm = pkgs.callPackage ../../packages/pnpm.nix { };
   checkout = pkgs.runCommand "foundation-dev-service-fixture" { } ''
     cp -r ${./fixture} $out
     chmod -R u+w $out
@@ -26,7 +26,7 @@ let
     inherit pnpm;
     src = ./fixture/apps/sites;
     fetcherVersion = 4;
-    hash = "sha256-vF15XdxMkyECf4O7uNL57COosQix53V+jCflQygdA+o=";
+    hash = "sha256-+GnKyRkf2l47dpVmG3wy7LOpGKvMeAVsV7d9v+1JycU=";
   };
   store = "/home/dev/.local/share/pnpm-store";
 in
