@@ -1,6 +1,6 @@
-import { BevyApi } from './bevy-api'
-import type { Ctx } from './bridge'
-import { singleFlight, throttleByDt } from './system-helpers'
+import { BevyApi } from '../bevy-api'
+import type { Ctx } from '../bridge'
+import { singleFlight, throttleByDt } from '../system-helpers'
 
 export type AvatarModifierSnapshot = {
   passportDisabled: ReadonlySet<string>

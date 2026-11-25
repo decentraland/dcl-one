@@ -4,14 +4,14 @@
 // opens the ProfileCard anchored at the cursor.
 import { engine, pointerEventsSystem, InputAction, PlayerIdentityData, type Entity } from '@dcl/sdk/ecs'
 import { getPlayer } from '@dcl/sdk/players'
-import type { AvatarModifierSnapshot } from '../avatar-modifiers'
+import type { AvatarModifierSnapshot } from './avatarModifiers'
 import type { Ctx } from '../bridge'
 import { throttleByDt } from '../system-helpers'
 
 export function registerAvatarPointer(ctx: Ctx, avatarModifiers: () => AvatarModifierSnapshot): void {
   const registered = new Set<Entity>()
-  // Rescan identities twice per second and remove handlers for avatars hidden by a scene
-  // modifier or with passports disabled. Scene trigger areas still use the avatar collider.
+  // Scene trigger areas still use the collider when a modifier hides the avatar.
+  // Remove its pointer handler so "Show Profile" cannot reveal the hidden avatar.
   ctx.push(
     throttleByDt(0.5, () => {
       const { passportDisabled } = avatarModifiers()

@@ -505,8 +505,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
   When a peer's Pulse membership ends, its avatar and nametag disappear, its avatar collider is
-  removed, and it leaves the Nearby panel. Peers can stay in the LiveKit room for voice and Nearby
-  chat. Nearby resolves @mention links through its roster, so an @mention of a room-only peer
+  removed, and it leaves Nearby and the map's People layer. Overlapping SDK player triggers see
+  an exit when the collider is removed and an enter if it overlaps again on rejoin. Peers can
+  stay in the LiveKit room for voice and Nearby chat. Nearby resolves @mention links
+  through its roster, so an @mention of a room-only peer
   cannot open that peer's profile. Chat lines look up sender names by wallet in the profile store
   and fall back to a shortened address when no name is available. The next Pulse join places the
   avatar at its new pose immediately.

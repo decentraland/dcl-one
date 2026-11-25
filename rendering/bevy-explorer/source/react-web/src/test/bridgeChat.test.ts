@@ -4,6 +4,7 @@ import type { PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 const setChatBubbleText = vi.hoisted(() => vi.fn())
 const getAvatarModifiers = vi.hoisted(() => vi.fn())
 const getEntitiesWith = vi.hoisted(() => vi.fn())
+const getTransform = vi.hoisted(() => vi.fn())
 const onPointerDown = vi.hoisted(() => vi.fn())
 const removeOnPointerDown = vi.hoisted(() => vi.fn())
 vi.mock('../../bridge-scene/src/bevy-api', () => ({ BevyApi: { setChatBubbleText, getAvatarModifiers } }))
@@ -15,6 +16,7 @@ vi.mock('../../bridge-scene/src/domains/profile', () => ({ httpOrUndef: vi.fn(),
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/ecs.js', () => ({
   engine: { getEntitiesWith },
   PlayerIdentityData: { getOrNull: () => ({ address: '0xB' }) },
+  Transform: { getOrNull: getTransform },
   PointerLock: {},
   pointerEventsSystem: { onPointerDown, removeOnPointerDown },
   InputAction: { IA_POINTER: 1 }
@@ -36,22 +38,28 @@ describe('bridge scene: the chat domain', () => {
     expect(setChatBubbleText.mock.calls).toEqual([['m1', 'hola']])
   })
 
-  it('shares modifier polling with profile picking and keeps Nearby current during RPC failures', async () => {
-    const { registerAvatarModifiers } = await import('../../bridge-scene/src/avatar-modifiers')
+  it('shares modifier polling across profile picking, Nearby and the map', async () => {
+    const { registerAvatarModifiers } = await import('../../bridge-scene/src/domains/avatarModifiers')
     const { registerAvatarPointer } = await import('../../bridge-scene/src/domains/avatarPointer')
     const { registerChat } = await import('../../bridge-scene/src/domains/chat')
+    const { registerMapPlayers } = await import('../../bridge-scene/src/domains/mapPlayers')
     // LiveKit keeps both identities in the SDK view through the Pulse departure.
     getEntitiesWith.mockReturnValue([[1, { address: '0xA' }], [2, { address: '0xB' }]])
+    getTransform.mockImplementation((entity: number) => ({ position: { x: entity * 10, z: 0 } }))
     getAvatarModifiers.mockReset().mockResolvedValueOnce([])
     const systems: Array<(dt: number) => void> = []
     const rosters: string[][] = []
+    const mapRosters: string[][] = []
     const send = vi.fn((msg: SceneToPage) => {
       if (msg.kind === 'members') rosters.push(msg.members.map((member) => member.address))
+      if (msg.kind === 'mapPlayers') mapRosters.push(msg.players.map((player) => player.address))
     })
     const ctx = { send, on: vi.fn(), push: (system: (dt: number) => void) => systems.push(system) }
     const avatarModifiers = registerAvatarModifiers(ctx)
     registerChat(ctx, avatarModifiers)
     registerAvatarPointer(ctx, avatarModifiers)
+    registerMapPlayers(ctx, avatarModifiers)
+    ctx.on.mock.calls.find(([kind]) => kind === 'watchMapPlayers')![1]({ kind: 'watchMapPlayers', on: true })
 
     const tick = (dt: number) => {
       for (const system of systems) system(dt)
@@ -60,6 +68,7 @@ describe('bridge scene: the chat domain', () => {
     tick(0.016)
     expect(getAvatarModifiers).toHaveBeenCalledTimes(1)
     expect(rosters).toEqual([['0xA', '0xB']])
+    expect(mapRosters).toEqual([['0xA', '0xB']])
     await vi.waitFor(() => expect(avatarModifiers()).not.toBe(initial))
 
     getAvatarModifiers.mockResolvedValueOnce([
@@ -74,22 +83,30 @@ describe('bridge scene: the chat domain', () => {
     expect(send).not.toHaveBeenCalledWith({ kind: 'avatarClick', address: '0xB' })
     tick(0.5)
     expect(removeOnPointerDown).toHaveBeenCalledWith(2)
+    expect(mapRosters.at(-1)).toEqual(['0xB'])
 
     getAvatarModifiers.mockRejectedValueOnce(new Error('modifier snapshot unavailable'))
     tick(1.5)
     expect(rosters.at(-1)).toEqual(['0xB'])
-    await expect(getAvatarModifiers.mock.results[2].value).rejects.toThrow('modifier snapshot unavailable')
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     getEntitiesWith.mockReturnValue([[1, { address: '0xA' }], [3, { address: '0xC' }]])
     getAvatarModifiers.mockRejectedValueOnce(new Error('modifier snapshot still unavailable'))
     tick(3)
     expect(rosters.at(-1)).toEqual(['0xC'])
-    await expect(getAvatarModifiers.mock.results[3].value).rejects.toThrow('modifier snapshot still unavailable')
+    expect(mapRosters.at(-1)).toEqual(['0xC'])
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     getAvatarModifiers.mockResolvedValueOnce([])
+    getTransform.mockImplementation((entity: number) => ({ position: { x: entity * 20, z: 0 } }))
     tick(1)
     await vi.waitFor(() => expect(avatarModifiers().pulseAbsent.size).toBe(0))
     tick(2)
     expect(rosters.at(-1)).toEqual(['0xA', '0xC'])
+    expect(mapRosters.at(-1)).toEqual(['0xA', '0xC'])
+    expect(send).toHaveBeenLastCalledWith({
+      kind: 'mapPlayers',
+      players: [{ address: '0xA', x: 20, z: 0 }, { address: '0xC', x: 60, z: 0 }]
+    })
   })
 })

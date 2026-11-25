@@ -46,7 +46,7 @@ import { registerProximity } from './domains/proximity'
 import { registerSystemAction } from './domains/systemAction'
 import { registerBindings } from './domains/bindings'
 import { registerAvatarPointer } from './domains/avatarPointer'
-import { registerAvatarModifiers } from './avatar-modifiers'
+import { registerAvatarModifiers } from './domains/avatarModifiers'
 import { registerPermissions } from './domains/permissions'
 import { registerMapPins } from './domains/mapPins'
 import { registerPortables } from './domains/portables'
@@ -90,7 +90,7 @@ export function main(): void {
     registerGallery(ctx)
     registerPlaces(ctx)
     registerLobby(ctx)
-    registerMapPlayers(ctx)
+    registerMapPlayers(ctx, avatarModifiers)
     registerWorld(ctx)
     registerPointer(ctx)
     registerProximity(ctx)
