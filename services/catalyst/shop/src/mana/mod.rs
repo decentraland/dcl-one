@@ -106,7 +106,8 @@ fn settlement_book_for(
         ChainId::POLYGON => Ok(venues::Book::production(rpc)),
         ChainId::AMOY => {
             anyhow::ensure!(
-                market.settings.eth_network.trim() != "mainnet",
+                crate::shared::network::ChainPair::from_eth_network(&market.settings.eth_network)
+                    != Some(crate::shared::network::ChainPair::Mainnet),
                 "COLLECTIONS_CHAIN_ID is Amoy (80002) but ETH_NETWORK is mainnet: \
                  the Shop's testnet venues need a testnet node"
             );
