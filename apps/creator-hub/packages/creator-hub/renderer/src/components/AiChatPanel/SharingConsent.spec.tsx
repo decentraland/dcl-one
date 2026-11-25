@@ -185,6 +185,35 @@ describe('when sharing is on', () => {
     expect(thisChat.getAttribute('aria-checked')).toBe('true');
   });
 
+  it('should re-include a chat excluded elsewhere while the confirmation was open', () => {
+    const onSetConversationShared = vi.fn();
+    const view = (conversationExcluded: boolean): AiSharingView => ({
+      status: 'on',
+      conversationExcluded,
+      conversationHasShared: true,
+    });
+    const { rerender } = render(
+      <SharingStatusChip
+        sharing={view(false)}
+        onSetConversationShared={onSetConversationShared}
+      />,
+    );
+    openMenu();
+    const thisChat = screen.getByRole('switch', { name: copy.menu_share_chat });
+    fireEvent.click(thisChat);
+    rerender(
+      <SharingStatusChip
+        sharing={view(true)}
+        onSetConversationShared={onSetConversationShared}
+      />,
+    );
+
+    fireEvent.click(thisChat);
+
+    expect(onSetConversationShared).toHaveBeenCalledExactlyOnceWith(true);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
   it('should keep sharing a chat when the creator cancels', () => {
     const { onSetConversationShared } = renderBoth({
       status: 'on',

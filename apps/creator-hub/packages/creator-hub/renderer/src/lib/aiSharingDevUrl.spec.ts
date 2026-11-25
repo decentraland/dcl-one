@@ -41,7 +41,7 @@ describe('the renderer source', () => {
     const bare = files.filter(file =>
       readFileSync(join(root, file), 'utf8')
         .split('\n')
-        .some(line => !/^\s*(\/\/|\*)/.test(line) && /import\.meta\.env(?![.\w?])/.test(line)),
+        .some(line => !/^\s*(\/\/|\*)/.test(line) && /import\.meta\.env(?!\.\w)/.test(line)),
     );
 
     expect(bare).toEqual([]);
