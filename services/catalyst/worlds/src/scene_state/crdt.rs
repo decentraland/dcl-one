@@ -944,6 +944,24 @@ mod tests {
         assert_eq!(decode_batch(&batch), vec![put(1, 1, 1, b"ok")]);
     }
 
+    #[test]
+    fn short_bodies_in_well_framed_records_are_ignored() {
+        for (ty, body_len) in [
+            (msg_type::PUT_COMPONENT, 12),
+            (msg_type::APPEND_VALUE, 12),
+            (msg_type::DELETE_COMPONENT, 8),
+            (msg_type::DELETE_ENTITY, 0),
+        ] {
+            let mut batch = Vec::new();
+            write_u32(&mut batch, (HEADER_LEN + body_len) as u32);
+            write_u32(&mut batch, ty);
+            batch.resize(HEADER_LEN + body_len, 0);
+            // The next record still decodes, so the short one is not a framing error.
+            encode_message(&put(1, 1, 1, b"ok"), &mut batch);
+            assert_eq!(decode_batch(&batch), vec![put(1, 1, 1, b"ok")], "type {ty}");
+        }
+    }
+
     fn apply_all(ops: &[CrdtMessage]) -> Vec<u8> {
         let mut e = CrdtEngine::new();
         for m in ops {
