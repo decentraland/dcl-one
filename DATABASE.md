@@ -2265,11 +2265,11 @@ Sales publication version 3 sums gross volume from positively priced NFT assets.
 
 A wallet-filtered sale with an unresolved seller withholds a response only when indexed evidence ties that wallet to the sale. Candidates come from the asset, the consideration beneficiary for its line, the item or collection creator, collection seeds and published creatorship transfers. An unresolved sale without a candidate stays out of address lookups. An unfiltered sales page that contains it returns HTTP 503. The fold logs a warning with the count of sales without a candidate on the days it recomputed.
 
-The published sales readers use a 10-second PostgreSQL statement timeout. Recent unfiltered pages select asset keys in timestamp order and obtain the count from published daily rollups. Wallet lookups use indexes on the buyer, seller, payment beneficiary and collection item before enrichment. Filtered sales counts use the same 5,000-row or 25,000-row bound as the reader's page window. Accounts, rankings and volume use a 30-second memo keyed by publication generation and any additional proofs. Every hit rechecks readiness in the same snapshot. Two concurrent analytics requests may hold connections, and excess requests or pool acquisition timeouts receive HTTP 503.
+The published sales readers use a 10-second PostgreSQL statement timeout. Recent unfiltered pages select asset keys in timestamp order and obtain the count from published daily rollups. Wallet lookups use indexes on the buyer, seller, payment beneficiary and collection item before enrichment. Filtered sales counts use the same 5,000-row or 25,000-row bound as the reader's page window. Accounts, rankings and volume use a 30-second memo keyed by publication generation and any additional proofs. Every hit rechecks readiness in the same snapshot. Cache misses for accounts and the other analytics routes have separate limits of one and two concurrent reads, respectively. Warm hits bypass the query limits after checking publication. The accounts address selector accepts up to 50 distinct wallets. Sales pages use a separate limit of four reads. Excess cold requests and pool acquisition timeouts receive HTTP 503.
 
 Accounts read `shop.sale_account_total` for monetary totals. The sale fold credits net proceeds to the public seller, including the first consideration beneficiary of a mediated bid. Payout recipients retain their separate fee and royalty amounts. The publication upgrade repairs the UTC days containing affected bids from stored evidence before readers use those totals.
 
-The schema object pass creates the sales read indexes. On an existing large ledger, prebuild the definitions in `schemas/30_shop.sql` with `CREATE INDEX CONCURRENTLY` outside a transaction before running `catalyst schema migrate`.
+The schema object pass creates the sales read indexes. On an existing large ledger, prebuild the definitions in `schemas/30_shop.sql` with `CREATE INDEX CONCURRENTLY` outside a transaction before running `catalyst schema migrate`. Inspect `pg_index.indisvalid` and `pg_get_indexdef(indexrelid)` for each prebuilt index. If a build was interrupted, drop its invalid index concurrently and rebuild it before the migration's name-based check.
 
 ### Badge processor
 
@@ -3255,7 +3255,7 @@ The catalogue routes still decide readiness from the mirror's passes
 follow the index and the NFT and sales walks take their contracts from it.
 Deploys are manual, one process at a time:
 
-1. Enable the walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true`) on the
+1. Run the enabled walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true` in the mirror posture) on the
    process that runs the mirror, and wait until the `collections` cursor on
    `matic` publishes. That is the catch-up, from block 15,202,000. The
    mirror keeps serving meanwhile.

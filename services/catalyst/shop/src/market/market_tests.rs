@@ -3672,7 +3672,7 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     indexes.collections_enabled = true;
     indexes.committee_enabled = true;
     let pool = &own.pool;
-    let app = market_router(state);
+    let app = market_router(state.clone());
     let (venue, deployment_block, _) = super::trade_events::deployments(137)[0];
     let height = deployment_block as i64 + 1;
     let hash = format!("0x{:064x}", 91);
@@ -3703,6 +3703,30 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     let (status, before) = get(app.clone(), "/v1/accounts?first=10&skip=995").await;
     assert_eq!(status, StatusCode::OK, "{before}");
     assert_eq!(before["total"], 1400);
+    let (volume_status, warm_volume) = get(app.clone(), "/v1/volume/all").await;
+    assert_eq!(volume_status, StatusCode::OK);
+    let accounts_slot = state.sales_accounts_slots.try_acquire().unwrap();
+    assert_eq!(
+        get(app.clone(), "/v1/accounts?skip=111").await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    // An accounts miss cannot consume the independent rankings/volume budget.
+    assert_eq!(get(app.clone(), "/v1/volume/week").await.0, StatusCode::OK);
+    let analytics_slots = state.sales_analytics_slots.try_acquire_many(2).unwrap();
+    assert_eq!(
+        get(app.clone(), "/v1/accounts?first=10&skip=995").await,
+        (StatusCode::OK, before.clone())
+    );
+    assert_eq!(
+        get(app.clone(), "/v1/volume/all").await,
+        (StatusCode::OK, warm_volume)
+    );
+    assert_eq!(
+        get(app.clone(), "/v1/accounts?address=invalid").await.0,
+        StatusCode::BAD_REQUEST
+    );
+    drop(analytics_slots);
+    drop(accounts_slot);
     let earned: Vec<_> = before["data"]
         .as_array()
         .unwrap()

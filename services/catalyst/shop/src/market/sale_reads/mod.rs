@@ -54,15 +54,13 @@ fn analytics_busy() -> Response {
     unavailable(Source::SalesIndex, "sales analytics is busy")
 }
 
-fn analytics_slot(state: &MarketplaceState) -> Result<tokio::sync::SemaphorePermit<'_>, Response> {
-    state
-        .sales_analytics_slots
-        .try_acquire()
-        .map_err(|_| analytics_busy())
+fn read_slot(slots: &tokio::sync::Semaphore) -> Result<tokio::sync::SemaphorePermit<'_>, Response> {
+    slots.try_acquire().map_err(|_| analytics_busy())
 }
 
 async fn cached_analytics<T>(
     state: &MarketplaceState,
+    slots: &tokio::sync::Semaphore,
     key: String,
     expires_at: chrono::DateTime<Utc>,
     fetch: impl std::future::Future<Output = Result<T, Response>>,
@@ -70,10 +68,16 @@ async fn cached_analytics<T>(
 where
     T: serde::Serialize + serde::de::DeserializeOwned,
 {
-    let value = readers::memoized(state, readers::Ttl::S30, key, || async {
-        serde_json::to_value(fetch.await?).map_err(db_error)
-    })
-    .await?;
+    let ttl = readers::Ttl::S30;
+    let value = if let Some(value) = state.readers.fresh(ttl, &key) {
+        value
+    } else {
+        let _slot = read_slot(slots)?;
+        readers::memoized(state, ttl, key, || async {
+            serde_json::to_value(fetch.await?).map_err(db_error)
+        })
+        .await?
+    };
     if Utc::now() > expires_at {
         return Err(unavailable(
             Source::SalesIndex,
@@ -307,6 +311,7 @@ pub(super) async fn list(
             );
         }
     }
+    let _slot = read_slot(&state.sales_pages_slots)?;
     let (mut snap, nets) = snapshot(state, f.network).await?;
     if f.categories
         .iter()
@@ -314,7 +319,7 @@ pub(super) async fn list(
     {
         require_metadata(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
     }
-    sale_page(&mut snap, nets, f, first, skip).await
+    sale_page(&mut snap, nets, f, first, skip, false).await
 }
 
 pub(super) async fn activity_sales(
@@ -333,11 +338,11 @@ pub(super) async fn activity_sales(
         seller: Some(address.to_owned()),
         ..Default::default()
     };
-    let buyers = sale_page(&mut snap, nets, &bought, limit, 0)
+    let buyers = sale_page(&mut snap, nets, &bought, limit, 0, true)
         .await
         .unwrap_or_default()
         .0;
-    let sellers = sale_page(&mut snap, nets, &sold, limit, 0)
+    let sellers = sale_page(&mut snap, nets, &sold, limit, 0, true)
         .await
         .unwrap_or_default()
         .0;
@@ -350,6 +355,7 @@ async fn sale_page(
     f: &SaleFilters,
     first: i64,
     skip: i64,
+    allow_partial: bool,
 ) -> Result<(Vec<Sale>, i64), Response> {
     let unfiltered = f.sale_type.is_none()
         && f.buyer.is_none()
@@ -401,6 +407,7 @@ async fn sale_page(
         .bind(skip)
         .bind(unfiltered)
         .bind(readers::count_cap(first, skip))
+        .bind(allow_partial)
         .fetch_one(&mut *snap.transaction)
         .await
         .map_err(db_error)?;
@@ -417,34 +424,39 @@ pub(super) async fn volume(
     state: &MarketplaceState,
     from_ms: i64,
 ) -> Result<super::rankings::VolumeData, Response> {
-    let _slot = analytics_slot(state)?;
     let (mut snap, nets) = snapshot(state, None).await?;
     let key = format!("published-volume/{:?}/{from_ms}", snap.generations);
-    cached_analytics(state, key, snap.expires_at, async {
-        let (sales, volume, creators_earnings, dao_earnings, incomplete): (
-            i64,
-            String,
-            String,
-            String,
-            bool,
-        ) = sales_query!(nets, "volume.sql")
-            .bind(from_ms / 1000)
-            .fetch_one(&mut *snap.transaction)
-            .await
-            .map_err(db_error)?;
-        if incomplete {
-            return Err(unavailable(
-                Source::SalesIndex,
-                "the requested volume contains an unresolved payment split",
-            ));
-        }
-        Ok(super::rankings::VolumeData {
-            sales,
-            volume,
-            creators_earnings,
-            dao_earnings,
-        })
-    })
+    cached_analytics(
+        state,
+        &state.sales_analytics_slots,
+        key,
+        snap.expires_at,
+        async {
+            let (sales, volume, creators_earnings, dao_earnings, incomplete): (
+                i64,
+                String,
+                String,
+                String,
+                bool,
+            ) = sales_query!(nets, "volume.sql")
+                .bind(from_ms / 1000)
+                .fetch_one(&mut *snap.transaction)
+                .await
+                .map_err(db_error)?;
+            if incomplete {
+                return Err(unavailable(
+                    Source::SalesIndex,
+                    "the requested volume contains an unresolved payment split",
+                ));
+            }
+            Ok(super::rankings::VolumeData {
+                sales,
+                volume,
+                creators_earnings,
+                dao_earnings,
+            })
+        },
+    )
     .await
 }
 

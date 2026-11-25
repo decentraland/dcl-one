@@ -636,6 +636,8 @@ pub struct MarketplaceState {
     pub readers: readers::Caches,
     /// Bounds concurrent expensive sales analytics independently of other Shop reads.
     pub(crate) sales_analytics_slots: tokio::sync::Semaphore,
+    pub(crate) sales_accounts_slots: tokio::sync::Semaphore,
+    pub(crate) sales_pages_slots: tokio::sync::Semaphore,
     /// `mirror_state.last_complete_pass_at` per mirror, cached 10 s.
     pub(crate) mirror_ready: TtlMap<mirrors::Mirror, Option<chrono::NaiveDateTime>>,
     /// `trades_mirror.completed_at` for the configured upstream, cached 10 s
@@ -731,6 +733,8 @@ impl MarketplaceState {
             contracts: contracts::Caches::default(),
             readers: readers::Caches::default(),
             sales_analytics_slots: tokio::sync::Semaphore::new(2),
+            sales_accounts_slots: tokio::sync::Semaphore::new(1),
+            sales_pages_slots: tokio::sync::Semaphore::new(4),
             mirror_ready: TtlMap::bounded(mirrors::READY_TTL, 8),
             trades_ready: TtlMap::bounded(mirrors::READY_TTL, 1),
             trades_list: std::sync::Mutex::new(None),

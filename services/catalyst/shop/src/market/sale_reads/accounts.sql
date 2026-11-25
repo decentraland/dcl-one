@@ -33,15 +33,13 @@
     UNION
     SELECT network,address FROM collections
     UNION
-    SELECT DISTINCT n.network,n.to_address FROM shop.nft_event n JOIN prefix p USING(network)
+    SELECT DISTINCT n.network,w.address
+    FROM shop.nft_event n JOIN prefix p USING(network)
+    CROSS JOIN LATERAL (VALUES (n.to_address),
+        (CASE WHEN n.kind='transfer' THEN nullif(n.from_address,'0x0000000000000000000000000000000000000000') END)
+    ) w(address)
     WHERE n.kind IN ('transfer','issue_v1','name_registered') AND n.block_number<=p.block_number
-      AND n.to_address IS NOT NULL
-      AND (cardinality($7::text[])=0 OR n.to_address=ANY($7))
-    UNION
-    SELECT DISTINCT n.network,n.from_address FROM shop.nft_event n JOIN prefix p USING(network)
-    WHERE n.kind='transfer' AND n.block_number<=p.block_number
-      AND n.from_address<>'0x0000000000000000000000000000000000000000'
-      AND (cardinality($7::text[])=0 OR n.from_address=ANY($7))
+      AND w.address IS NOT NULL AND (cardinality($7::text[])=0 OR w.address=ANY($7))
     UNION
     SELECT m.network,m.buyer FROM shop.sale_event m JOIN prefix p USING(network)
     WHERE m.kind='mint' AND m.block_number<=p.block_number

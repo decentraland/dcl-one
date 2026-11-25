@@ -17336,14 +17336,12 @@ CREATE TABLE shop.collection_event (
 
 -- The walked collections: the walk's address filter and the creation reads
 -- take them first.
-CREATE INDEX collection_event_creator_contract_idx
-    ON shop.collection_event (network, contract_address, block_number, log_index) WHERE kind = 'creatorship_transferred';
+CREATE INDEX collection_event_created_idx ON shop.collection_event (network, contract_address)
+    WHERE kind = 'proxy_created';
 CREATE INDEX collection_event_creator_account_idx
     ON shop.collection_event (network, account, block_number) WHERE kind = 'creatorship_transferred';
 CREATE INDEX collection_event_creator_previous_idx
     ON shop.collection_event (network, previous_account, block_number) WHERE kind = 'creatorship_transferred';
-CREATE INDEX collection_event_created_idx ON shop.collection_event (network, contract_address)
-    WHERE kind = 'proxy_created';
 
 -- A collection's history in chain order, mints aside (a few hundred thousand
 -- rows): the fold of the collections it replays from their creation.

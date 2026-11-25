@@ -226,7 +226,7 @@ Collections index upgrade: run `catalyst schema migrate` before deploying the up
 Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The mirror
 posture enables `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`. A Polygon RPC in `TRADE_RPC_URLS` (chain 137)
 lets it walk from block 15,202,000. Polygon accounts and lifetime creator rankings return HTTP 503
-until the collections and sales indexes publish their required history. The catalogue continues to
+until the collections and sales indexes publish their required history. To warm the walk ahead of the API upgrade, set the switch on the deployed index worker and wait for those publications before rolling out the sales readers. The catalogue continues to
 read the collections mirror unless the on-chain projection owns that network.
 
 Trade digest upgrade: run `catalyst schema migrate` before deploying. Step `0069_shop_trade_digest` adds
