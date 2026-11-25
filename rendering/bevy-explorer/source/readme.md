@@ -276,8 +276,9 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   showing that message; replies with nothing), `/nametag_official <address> [bool]` (reads or
   sets, for the session, whether a wallet's nametag carries the official badge; replies with
   `address` and `official`),
-  `/reaction_state` (the situational reactions: the `outbox`, `sent`, `received`, `queued`,
-  `played` and `streamed` counts, and those `dropped` by cause),
+  `/reaction_state` (the situational reactions: the `outbox`, `refusedPicks`, `sent`, `received`,
+  `queued`, `played` and `streamed` counts, the `subscribers` streams, and those `dropped` by
+  cause),
   `/reaction_simulate <local|nearest|address> <emoji> [count]` (takes a message of reactions as if
   that player had sent it, on this client only; replies with the `target` taken and the emoji's
   wire `index`), `/reaction_send <emoji>` (reacts as the local user, the way the system API's
