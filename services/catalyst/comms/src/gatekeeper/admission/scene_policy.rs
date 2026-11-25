@@ -427,10 +427,10 @@ pub async fn names_for(
 /// An explicit active `scene_admins` row, else ownership of the place: the
 /// world's NAME (personal rule, then the name authority; never the stored
 /// owner) for a world, the LAND (a parcel directly or through its estate) for a
-/// Genesis place, all through `Policy::is_admin`. Without a marketplace
-/// reader a non-admin caller is refused (the old crate's "only explicit
-/// scene admins can moderate" degrade); a reader that cannot be asked is
-/// 503, never "not an owner".
+/// Genesis place, all through `Policy::is_admin`. Without a LAND index a
+/// non-admin caller is refused (the old crate's "only explicit scene admins
+/// can moderate" degrade); an index that cannot be read or is not published
+/// is 503, never "not an owner".
 pub async fn scene_owner_or_admin_decision(
     state: &CommsState,
     place: &PlaceLookup<'_>,

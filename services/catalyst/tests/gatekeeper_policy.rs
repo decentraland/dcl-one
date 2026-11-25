@@ -269,6 +269,12 @@ mod tests {
             undetermined.to_string().contains("land-authz-index"),
             "the refusal names the index: {undetermined}"
         );
+        // A ban cannot tell whether its target holds LAND there either.
+        let err = scene::ensure_target_not_protected(&state, &other, &bystander)
+            .await
+            .expect_err("a ban target cannot be checked");
+        assert_eq!(err.code, 503, "{}", err.message);
+        assert!(err.message.contains("land-authz-index"), "{}", err.message);
         // No LAND source attached: an explicit refusal, as for worlds.
         let unconfigured = state_with_land(pool.clone(), None);
         let place = PlaceLookup::new(&unconfigured, &place_id, &place_id);

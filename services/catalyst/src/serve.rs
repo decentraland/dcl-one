@@ -945,6 +945,19 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         worlds::policy::MAX_SCENE_SIZE_BYTES,
     )
     .context("WORLDS_PERSONAL_WORLDS_MAX / WORLDS_PERSONAL_WORLD_MAX_SIZE_BYTES")?;
+    // The permission core below always attaches the land-authz index, whose
+    // published fold is then the only LAND authority: neither variable is
+    // read any more, so a deployment still setting one is told so.
+    if comms_settings.land_operators_url.is_some() {
+        tracing::warn!(
+            "COMMS_LAND_OPERATORS_URL is set but not read: LAND rights come from the land-authz index alone"
+        );
+    }
+    if std::env::var_os("LAND_SUBGRAPH_URL").is_some() {
+        tracing::warn!(
+            "LAND_SUBGRAPH_URL is set but not read: LAND rights come from the land-authz index alone"
+        );
+    }
     let land_operators = comms_settings
         .land_operators_url
         .as_deref()

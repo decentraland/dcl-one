@@ -684,7 +684,8 @@ access.
   shared database whatever its own flag says. A pass runs every
   `LAND_AUTHZ_INDEX_INTERVAL_SECS` (120) and publishes a fold within 25
   blocks of a head kept `LAND_AUTHZ_CONFIRMATIONS` (12) blocks back. The
-  managers read the index while it is caught up, its fold is at most 30
+  managers read the index while its fold is current (folded at the walk's
+  head, or no authorization event walked past it), at most 30
   minutes old on the database clock and its registries are the node's; a
   fold older than that makes them unavailable at once.
   The lamb2 LAND routes require a fold at most ten minutes

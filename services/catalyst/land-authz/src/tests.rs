@@ -1674,7 +1674,27 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
     assert!(present(pool).await);
 
     set(pool, base + 101).await;
-    assert!(!present(pool).await, "backfill invalidates the old fold");
+    assert!(
+        present(pool).await,
+        "a walk past the fold with no authorization event keeps the fold current"
+    );
+    insert(
+        pool,
+        &[ev(
+            base + 101,
+            0,
+            KIND_TRANSFER,
+            Some(TOKEN_37_55),
+            Some(ALICE),
+            None,
+            None,
+        )],
+    )
+    .await;
+    assert!(
+        !present(pool).await,
+        "a walked event invalidates the old fold"
+    );
     assert!(
         mark_folded(pool, &Settings::for_tests(), (base + 101) as u64)
             .await
@@ -1686,7 +1706,10 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
         .execute(pool)
         .await
         .unwrap();
-    assert!(!present(pool).await, "a stopped indexer falls back");
+    assert!(
+        !present(pool).await,
+        "a stopped indexer answers no LAND right"
+    );
 
     // A fresh database starts from the deployment block and records the full replay.
     sqlx::query("DELETE FROM land_authz.index_cursor")
@@ -3221,8 +3244,8 @@ async fn a_full_replay_rebinds_a_cursor_indexed_from_other_registries() {
 
     // A node still configured with the old registries (a rolling deploy)
     // never reads the published index as its own: its rights rows are of
-    // the old registries, the estate links of the new one. It falls back
-    // (here there is no fallback reader), and its status shows why.
+    // the old registries, the estate links of the new one. Its LAND rights
+    // are unavailable, and its status shows why.
     assert!(full.ready().await.is_some());
     let stale_reader = state_over(pool.clone(), old.clone());
     assert!(stale_reader.ready().await.is_none());
@@ -5315,5 +5338,65 @@ async fn a_replay_whose_write_waits_past_the_lock_timeout_defers() {
     );
     writer.rollback().await.unwrap();
     assert!(cursor(pool, NETWORK_MAINNET).await.unwrap().is_none());
+    db.drop().await;
+}
+
+/// A pass commits its walk before it folds and publishes. While no
+/// authorization event lies past the published fold, that fold is every
+/// token's current state, so LAND answers keep coming from it; an event past
+/// it withdraws them until the next publish.
+#[tokio::test]
+async fn a_walk_past_the_fold_without_authorization_events_keeps_answering() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let state = state_over(pool.clone(), Settings::for_tests());
+    let app = router(state.clone());
+    sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ($1, $2, $3, 100, 100, timezone('UTC', now()), true)")
+        .bind(NETWORK_MAINNET).bind(LAND).bind(ESTATE)
+        .execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) VALUES ($1, $2::numeric, 1, 1, $3, 90, 0)")
+        .bind(LAND).bind(land_token(1, 1)).bind(ALICE)
+        .execute(pool).await.unwrap();
+    let operators = "/lambdas/parcels/1/1/operators";
+
+    // The walk moved on with nothing to fold.
+    sqlx::query("UPDATE land_authz.index_cursor SET last_block = 105")
+        .execute(pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        can_deploy(&state, (1, 1), ALICE).await,
+        Ok(Decision {
+            verdict: Verdict::Granted(_),
+            ..
+        })
+    ));
+    let (status, _, _) = get_json(&app, operators).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A walked transfer the fold has not seen yet.
+    sqlx::query("INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) VALUES (103, 0, 0, $1, 'transfer', $2::numeric, $3)")
+        .bind(LAND).bind(land_token(1, 1)).bind(BOB)
+        .execute(pool).await.unwrap();
+    assert!(matches!(
+        can_deploy(&state, (1, 1), ALICE).await,
+        Err(Unavailable::NotReady)
+    ));
+    let (status, _, body) = get_json(&app, operators).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index"))
+    );
+
+    // Published at the walk's head: it answers again.
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET folded_block = 105, folded_at = timezone('UTC', now())",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    assert!(can_deploy(&state, (1, 1), ALICE).await.is_ok());
     db.drop().await;
 }

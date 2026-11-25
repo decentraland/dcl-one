@@ -260,6 +260,14 @@ pub struct LandAuthzState {
 
 pub type SharedState = Arc<LandAuthzState>;
 
+/// The source every LAND answer names: the `x-land-authz-source` header and
+/// the unavailable envelope's `source`.
+pub const INDEX_SOURCE: &str = "land-authz-index";
+
+/// What a LAND answer says while the index has no fresh published fold.
+pub const NOT_READY_MSG: &str =
+    "LAND rights are unavailable on this node: the land-authz index has no fresh published fold";
+
 /// Which source decided: the local index, the only one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DecisionSource {
@@ -270,7 +278,7 @@ pub enum DecisionSource {
 impl DecisionSource {
     pub fn header_value(&self) -> &'static str {
         match self {
-            Self::Index { .. } => "land-authz-index",
+            Self::Index { .. } => INDEX_SOURCE,
         }
     }
 }
@@ -375,7 +383,7 @@ impl LandAuthzState {
     /// The configured registries' index when it may answer, as a snapshot
     /// the dependent reads run on ([`indexer::ReadySnapshot`]): the check and
     /// the reads see one state, so a rebind between them cannot mix two
-    /// registries' rows. A database error reads as not ready (the fallback,
+    /// registries' rows. A database error reads as not ready (unavailable,
     /// never a grant).
     pub async fn ready_snapshot(&self) -> Option<indexer::ReadySnapshot> {
         self.ready_snapshot_within(READY_WINDOW).await
@@ -505,41 +513,42 @@ pub async fn can_deploy_batch(
     parcels: &[(i32, i32)],
     actor: &str,
 ) -> Result<Vec<Decision>, Unavailable> {
+    let Some(mut snapshot) = state.ready_snapshot().await else {
+        return Err(Unavailable::NotReady);
+    };
+    // An empty set reads no row, and still waits for the index.
     if parcels.is_empty() {
         return Ok(Vec::new());
     }
-    if let Some(mut snapshot) = state.ready_snapshot().await {
-        let cursor = &snapshot.cursor;
-        let source = DecisionSource::Index {
-            folded_block: cursor.folded_block.unwrap_or(cursor.last_block),
-        };
-        let rights = state
-            .store()
-            .deploy_rights_batch_on(&mut snapshot.tx, parcels)
-            .await?;
-        return Ok(rights
-            .into_iter()
-            .map(|r| match r {
-                Some(rights) => {
-                    let flags = rights.deploy_flags_for(actor);
-                    let verdict = flags
-                        .granting_leg()
-                        .map_or(Verdict::Denied, Verdict::Granted);
-                    Decision {
-                        verdict,
-                        source: source.clone(),
-                        flags,
-                    }
-                }
-                None => Decision {
-                    verdict: Verdict::Unknown,
+    let cursor = &snapshot.cursor;
+    let source = DecisionSource::Index {
+        folded_block: cursor.folded_block.unwrap_or(cursor.last_block),
+    };
+    let rights = state
+        .store()
+        .deploy_rights_batch_on(&mut snapshot.tx, parcels)
+        .await?;
+    Ok(rights
+        .into_iter()
+        .map(|r| match r {
+            Some(rights) => {
+                let flags = rights.deploy_flags_for(actor);
+                let verdict = flags
+                    .granting_leg()
+                    .map_or(Verdict::Denied, Verdict::Granted);
+                Decision {
+                    verdict,
                     source: source.clone(),
-                    flags: ParcelPermissionFlags::default(),
-                },
-            })
-            .collect());
-    }
-    Err(Unavailable::NotReady)
+                    flags,
+                }
+            }
+            None => Decision {
+                verdict: Verdict::Unknown,
+                source: source.clone(),
+                flags: ParcelPermissionFlags::default(),
+            },
+        })
+        .collect())
 }
 
 /// One parcel: may `actor` deploy to it?

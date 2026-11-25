@@ -152,9 +152,8 @@ impl ApiError {
 }
 
 /// What world storage answers while the land-authz index has no fresh
-/// published fold.
-pub const LAND_INDEX_NOT_READY_MSG: &str =
-    "LAND rights are unavailable on this node: the land-authz index has no fresh published fold";
+/// published fold: land-authz's own wording.
+pub use crate::land_authz::NOT_READY_MSG as LAND_INDEX_NOT_READY_MSG;
 
 /// A permission refusal keeps its own status: 401 "not authorized to perform
 /// operations on this world", 401 "Failed to verify world permissions" for

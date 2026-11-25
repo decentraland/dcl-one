@@ -16,7 +16,8 @@ use axum::routing::{get, post};
 use serde_json::{Value, json};
 
 use super::{
-    LAMBDAS_FOLD_WINDOW, SharedState, Unavailable, Verdict, can_deploy_batch, indexer, is_address,
+    LAMBDAS_FOLD_WINDOW, NOT_READY_MSG, SharedState, Unavailable, Verdict, can_deploy_batch,
+    indexer, is_address,
 };
 use crate::chain_index::source::{Source, unavailable};
 use crate::shared::http_util::{bad_request, internal_server_error, lambdas_error};
@@ -29,8 +30,6 @@ const COORDS_ERR: &str = "Coordinates X and Y must be valid numbers in a valid r
 /// never a truncated batch.
 pub const MAX_BATCH_PARCELS: usize = 100;
 pub const SOURCE_HEADER: &str = "x-land-authz-source";
-const NOT_READY_MSG: &str =
-    "LAND rights are unavailable on this node: the land-authz index has no fresh published fold";
 
 pub fn router(state: SharedState) -> Router {
     Router::new()
@@ -305,17 +304,12 @@ async fn parcels_permissions_batch(
         Err(msg) => return bad_request(&msg),
     };
     let coords: Vec<(i32, i32)> = parcels.iter().map(|&(x, y)| (x as i32, y as i32)).collect();
-    // An empty set reads no row, but the route keeps its contract: no
-    // answer before the index is ready.
-    if coords.is_empty() && state.ready_snapshot().await.is_none() {
-        return not_ready();
-    }
     match can_deploy_batch(&state, &coords, &addr).await {
         Ok(decisions) => {
             let source = decisions
                 .first()
                 .map(|d| d.source.header_value())
-                .unwrap_or("land-authz-index");
+                .unwrap_or(super::INDEX_SOURCE);
             let elements: Vec<Value> = coords
                 .iter()
                 .zip(decisions)

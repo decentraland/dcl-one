@@ -2954,25 +2954,12 @@ async fn genesis_storage_admits_estate_owner_and_grants_from_the_land_index() {
 /// nothing, nor does a scene admin row.
 #[tokio::test]
 async fn genesis_land_ownership_counts_only_at_the_request_parcel() {
-    use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-    let Ok(url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
+    // Readiness is global per network: a database of its own keeps this
+    // fixture from replacing a concurrent test's LAND source (the process
+    // sweep drops it, also after a panic).
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
         return;
     };
-    // Readiness is global per network. Use an independent database so this
-    // fixture cannot replace another concurrently running test's LAND source.
-    let opts: PgConnectOptions = url.parse().unwrap();
-    let admin = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_with(opts.clone().database("postgres"))
-        .await
-        .unwrap();
-    let name = format!("catalyst_test_storage_parcel_{}", Uuid::new_v4().simple());
-    crate::db::scratch::create_database_with_schema(&admin, &name).await;
-    let pool = PgPoolOptions::new()
-        .max_connections(4)
-        .connect_with(opts.database(&name))
-        .await
-        .unwrap();
     let (id, p1, p2, _) = seed_genesis_scene(&pool).await;
     let (owner_key, admin_key) = (random_key(), random_key());
     sqlx::query(
@@ -3037,9 +3024,16 @@ async fn genesis_land_ownership_counts_only_at_the_request_parcel() {
         assert_eq!(status, expected, "{who}");
     }
 
-    // Once the index walks past its fold it decides nothing, with no
-    // operators URL configured either: a retryable 503, never a 401.
+    // Once the index walks an authorization event past its fold it decides
+    // nothing, with no operators URL configured either: a retryable 503,
+    // never a 401.
     sqlx::query("UPDATE land_authz.index_cursor SET last_block = 2")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) VALUES (2, 0, 0, $1, 'transfer', 1, $2)")
+        .bind(&crate::land_authz::Settings::for_tests().land_registry)
+        .bind(address_of(&admin_key))
         .execute(&pool)
         .await
         .unwrap();
@@ -3059,14 +3053,6 @@ async fn genesis_land_ownership_counts_only_at_the_request_parcel() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(body["message"], super::errors::LAND_INDEX_NOT_READY_MSG);
 
-    drop(app);
-    pool.close().await;
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "DROP DATABASE \"{name}\" WITH (FORCE)"
-    )))
-    .execute(&admin)
-    .await
-    .unwrap();
 }
 
 /// Nested under `/world-storage`, a signature over the public path verifies
@@ -4105,6 +4091,12 @@ async fn genesis_logs_permissions_follow_the_active_pointer() {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) VALUES (101, 0, 0, $1, 'transfer', 1, $2)")
+        .bind(&crate::land_authz::Settings::for_tests().land_registry)
+        .bind(address_of(OUTSIDER_KEY))
+        .execute(&pool)
+        .await
+        .unwrap();
     let granting_source = fake_land_operators(
         &pointer,
         json!({
@@ -4140,6 +4132,10 @@ async fn genesis_logs_permissions_follow_the_active_pointer() {
         assert_eq!(body["message"], super::errors::LAND_INDEX_NOT_READY_MSG);
     }
     sqlx::query("UPDATE land_authz.index_cursor SET last_block = 100")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM land_authz.authz_event WHERE block_number = 101")
         .execute(&pool)
         .await
         .unwrap();
