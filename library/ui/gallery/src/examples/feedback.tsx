@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   Button,
   ConnectionStatus,
+  CountBadge,
   ItemLabel,
   Modal,
   ModalActions,
@@ -415,6 +416,26 @@ export const feedbackEntries: GalleryEntry[] = [
             <Skeleton tone="overlay" style={{ display: 'block', width: 256, height: 146 }} />
             <Skeleton tone="sweep" style={{ width: 126, height: 126 }} />
             <Skeleton tone="band" style={{ width: 200, height: 22 }} />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'CountBadge',
+    group: 'Feedback',
+    summary: 'A small pill with a count, beside a label or inside a tab.',
+    components: ['CountBadge'],
+    examples: [
+      {
+        id: 'sizes',
+        title: 'The three sizes, and a count above its maximum',
+        render: () => (
+          <div className={layout.row}>
+            <CountBadge count={5} />
+            <CountBadge count={5} size="sm" />
+            <CountBadge count={5} size="xs" />
+            <CountBadge count={140} max={99} />
           </div>
         )
       }

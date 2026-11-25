@@ -3053,10 +3053,6 @@
           "kind": "regular"
         },
         {
-          "name": "Chip.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "Chip.tsx",
           "kind": "regular"
         },
@@ -3086,14 +3082,6 @@
         },
         {
           "name": "ControlButton.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "CountBadge.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "CountBadge.tsx",
           "kind": "regular"
         },
         {
@@ -7618,6 +7606,10 @@
           "kind": "directory"
         },
         {
+          "name": "Chip",
+          "kind": "directory"
+        },
+        {
           "name": "CloseButton",
           "kind": "directory"
         },
@@ -7627,6 +7619,10 @@
         },
         {
           "name": "CopyFeedback",
+          "kind": "directory"
+        },
+        {
+          "name": "CountBadge",
           "kind": "directory"
         },
         {
@@ -8022,6 +8018,23 @@
       ]
     },
     {
+      "path": "library/ui/components/Chip",
+      "entries": [
+        {
+          "name": "Chip.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "Chip.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "Chip.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/components/CloseButton",
       "entries": [
         {
@@ -8080,6 +8093,23 @@
         },
         {
           "name": "CopyFeedback.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/CountBadge",
+      "entries": [
+        {
+          "name": "CountBadge.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "CountBadge.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "CountBadge.tsx",
           "kind": "regular"
         }
       ]
@@ -12121,12 +12151,8 @@
       "sha256": "75c5a48abeabfaa3a7a3a189d43d0e731a7998663587dd6bcd13a0a00d176b9c"
     },
     {
-      "path": "library/ui/apps/hud/design/Chip.module.css",
-      "sha256": "fd4bdc096c3066762c15689743fbfd2fb1dd4fb286d7dd10d1da1dcb7d54bb7a"
-    },
-    {
       "path": "library/ui/apps/hud/design/Chip.tsx",
-      "sha256": "f13758dea5e8665abd9c3fb629eed4ee6bd25259580613952d601c6d8581c8c1"
+      "sha256": "45f5948e1d8794907dd45ea9d73fdcb754e377111015140c383d1fb27714cef6"
     },
     {
       "path": "library/ui/apps/hud/design/CodeInput.module.css",
@@ -12155,14 +12181,6 @@
     {
       "path": "library/ui/apps/hud/design/ControlButton.tsx",
       "sha256": "9164feebd1b6426c649adbb111c220751d275e68478a185bec2d72ef67117d57"
-    },
-    {
-      "path": "library/ui/apps/hud/design/CountBadge.module.css",
-      "sha256": "5222d20981f44c407d4a900a1e98e54832ba01a2aa519d1fa1cebae99a283330"
-    },
-    {
-      "path": "library/ui/apps/hud/design/CountBadge.tsx",
-      "sha256": "1ef1f247c6f79057cb023ca9d393584fd25eb1e7be04cc129180c008ed301c60"
     },
     {
       "path": "library/ui/apps/hud/design/DateField.module.css",
@@ -12318,11 +12336,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "9a6cea65ab216f46f27c7c11d61aeccbd314be03c260bfea9c7b21db73c9b0ac"
+      "sha256": "adcecadf4f307dd866aafccb80f86ce94694c036e70954aa6f9680d82f2644ee"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "8f48ffaeefcbe9c83625b54369ace679b4d8f41c09f831d28a1aa24db5908f0b"
+      "sha256": "3b0e93efdc01c46fdf8ddaa5a605cb95e26210d6905148a790a9b6a4a3f7686c"
     },
     {
       "path": "library/ui/apps/hud/design/Slider.module.css",
@@ -12358,7 +12376,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Tabs.tsx",
-      "sha256": "4b23ea9881034b69beda6ecfe0a0ba5cacdd51a054f0e143c8e4dd29b432c5de"
+      "sha256": "7f081c43fc63d219c7898ee08bde2a311903ed8dd42372b8a824a23c87f518c6"
     },
     {
       "path": "library/ui/apps/hud/design/TextArea.module.css",
@@ -12402,7 +12420,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "0f26d8635d434fc1002a5154ebbd4ad84de4d5b099f010726f9d2632fb8a8873"
+      "sha256": "a4daf1ae659d60d169d6c84a19215895a090f323f230cdedb49c8752e856f4c9"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -12558,7 +12576,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
-      "sha256": "cef167a8f5defbc87cf1fd45110d4ccfd8d892abf2fa42a2a6e305298f527cd9"
+      "sha256": "827a8a16dcae492b6613e1ab7ec61cc7566ad5d33d93a8153a15a9aef282cda8"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityCreateModal.module.css",
@@ -13466,7 +13484,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/DiscoverPanel.tsx",
-      "sha256": "bf50d5f1b82087dfb827a6ea5767f8a594c837c8cc385fc162990cd140883399"
+      "sha256": "530b27a6840dfcd75828385e124aa9677dc03ad82bb5c67387895517c775b888"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/panels/MapPanel.module.css",
@@ -16117,6 +16135,14 @@
       "sha256": "c3ae57905507c340176843fd6f8bc537e14d09eb167050fa9d6822ca0fc4407a"
     },
     {
+      "path": "library/ui/components/Chip/Chip.module.css",
+      "sha256": "cda5cfbe9c75772c401a00eb6913332cbc0ec6382baa80133f073f3715abd4bd"
+    },
+    {
+      "path": "library/ui/components/Chip/Chip.tsx",
+      "sha256": "a9004c47700835a4fe3d9186663a5e84f8f4b130e976982b23f6e5f043ec8f77"
+    },
+    {
       "path": "library/ui/components/CloseButton/CloseButton.module.css",
       "sha256": "a41548a1fdd7450b6ffce9a96af804fb61d4771825b61afaf002a8299ab2f8a5"
     },
@@ -16139,6 +16165,14 @@
     {
       "path": "library/ui/components/CopyFeedback/CopyFeedback.tsx",
       "sha256": "409e1baf67fb1166e0a3b7b6db2ecdadc3e87a52a81213c880f99594939b3b21"
+    },
+    {
+      "path": "library/ui/components/CountBadge/CountBadge.module.css",
+      "sha256": "55596bdecf19f7a2a6d789e22f7bf8c73c5fd13a83f2bc45e03555b5fa25e18e"
+    },
+    {
+      "path": "library/ui/components/CountBadge/CountBadge.tsx",
+      "sha256": "e4d4e419272750efa3ccecbf741599a644772f1cefeca3dea8fc742bd3c0ba03"
     },
     {
       "path": "library/ui/components/Dropdown/Dropdown.module.css",
@@ -16542,7 +16576,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "97143615f37b250f08f942b626b6e24262415827c7005fb5429e6a875d74889c"
+      "sha256": "369d0336641eafec1a7e05b894b27ab5a5ccafb8e4ee960b08994b43e61dbc7a"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -20570,32 +20604,32 @@
     },
     {
       "from": "library/ui/apps/hud/design/Chip.tsx",
-      "to": "library/ui/apps/hud/design/Chip.module.css",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Chip.tsx",
-      "to": "library/ui/apps/hud/design/Chip.module.css",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Chip.tsx",
-      "to": "library/ui/apps/hud/design/Chip.module.css",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
       "kind": "test:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Chip.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Chip.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Chip.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -20731,21 +20765,6 @@
     {
       "from": "library/ui/apps/hud/design/ControlButton.tsx",
       "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/CountBadge.tsx",
-      "to": "library/ui/apps/hud/design/CountBadge.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/CountBadge.tsx",
-      "to": "library/ui/apps/hud/design/CountBadge.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/CountBadge.tsx",
-      "to": "library/ui/apps/hud/design/CountBadge.module.css",
       "kind": "test:runtime"
     },
     {
@@ -21755,21 +21774,6 @@
     },
     {
       "from": "library/ui/apps/hud/design/Tabs.tsx",
-      "to": "library/ui/apps/hud/design/CountBadge.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Tabs.tsx",
-      "to": "library/ui/apps/hud/design/CountBadge.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Tabs.tsx",
-      "to": "library/ui/apps/hud/design/CountBadge.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Tabs.tsx",
       "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
@@ -22426,21 +22430,6 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/ControlButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/CountBadge.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/CountBadge.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/CountBadge.tsx",
       "kind": "test:runtime"
     },
     {
@@ -41671,6 +41660,21 @@
     {
       "from": "library/ui/apps/hud/features/sidebar/panels/DiscoverPanel.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/panels/DiscoverPanel.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/panels/DiscoverPanel.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/panels/DiscoverPanel.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -61714,6 +61718,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/components/Chip/Chip.tsx",
+      "to": "library/ui/components/Chip/Chip.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/Chip/Chip.tsx",
+      "to": "library/ui/components/Chip/Chip.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/Chip/Chip.tsx",
+      "to": "library/ui/components/Chip/Chip.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/components/CloseButton/CloseButton.tsx",
       "to": "library/ui/components/CloseButton/CloseButton.module.css",
       "kind": "native:runtime"
@@ -61846,6 +61865,21 @@
     {
       "from": "library/ui/components/CopyFeedback/CopyFeedback.tsx",
       "to": "library/ui/components/CopyFeedback/CopyFeedback.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/CountBadge/CountBadge.tsx",
+      "to": "library/ui/components/CountBadge/CountBadge.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/CountBadge/CountBadge.tsx",
+      "to": "library/ui/components/CountBadge/CountBadge.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/CountBadge/CountBadge.tsx",
+      "to": "library/ui/components/CountBadge/CountBadge.module.css",
       "kind": "test:runtime"
     },
     {
@@ -63630,6 +63664,21 @@
     },
     {
       "from": "library/ui/index.ts",
+      "to": "library/ui/components/Chip/Chip.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/Chip/Chip.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/Chip/Chip.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
       "to": "library/ui/components/CloseButton/CloseButton.tsx",
       "kind": "native:runtime"
     },
@@ -63671,6 +63720,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/CopyFeedback/CopyFeedback.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/CountBadge/CountBadge.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/CountBadge/CountBadge.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/CountBadge/CountBadge.tsx",
       "kind": "test:runtime"
     },
     {
@@ -65916,11 +65980,6 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/ControlButton.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/CountBadge.tsx",
       "kind": "type"
     },
     {
@@ -68760,6 +68819,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/Chip/Chip.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/CloseButton/CloseButton.tsx",
       "kind": "type"
     },
@@ -68771,6 +68835,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/CopyFeedback/CopyFeedback.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/CountBadge/CountBadge.tsx",
       "kind": "type"
     },
     {

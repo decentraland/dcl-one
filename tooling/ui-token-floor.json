@@ -643,6 +643,10 @@
     "primitives": 0,
     "tokens": 16
   },
+  "library/ui/components/Chip/Chip.module.css": {
+    "primitives": 0,
+    "tokens": 10
+  },
   "library/ui/components/CloseButton/CloseButton.module.css": {
     "primitives": 0,
     "tokens": 11
@@ -654,6 +658,10 @@
   "library/ui/components/CopyFeedback/CopyFeedback.module.css": {
     "primitives": 0,
     "tokens": 10
+  },
+  "library/ui/components/CountBadge/CountBadge.module.css": {
+    "primitives": 0,
+    "tokens": 3
   },
   "library/ui/components/Dropdown/Dropdown.module.css": {
     "primitives": 2,

@@ -3,8 +3,7 @@
 // + `onChange`. WAI-ARIA tablist/tab with a roving tabindex — Left/Right/Home/End move focus AND select, so a
 // strip is keyboard-operable (the panels it heads are not `tabpanel`s; the strip only owns selection).
 
-import { Tabs as SharedTab, TabsBar } from '@dcl/one-ui'
-import { CountBadge } from './CountBadge'
+import { CountBadge, Tabs as SharedTab, TabsBar } from '@dcl/one-ui'
 
 export interface TabItem<T extends string = string> {
   id: T

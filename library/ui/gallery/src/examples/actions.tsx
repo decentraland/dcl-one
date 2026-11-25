@@ -2,6 +2,7 @@ import {
   Button,
   BarButton,
   CardActionButton,
+  Chip,
   CloseButton,
   CopyFeedback,
   FriendCTA,
@@ -287,6 +288,43 @@ export const actionEntries: GalleryEntry[] = [
               >
                 Fill layout
               </Button>
+            </div>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'Chip',
+    group: 'Actions',
+    summary: 'A filter chip: a toggle with an optional icon and an optional clear button.',
+    components: ['Chip'],
+    examples: [
+      {
+        id: 'variants',
+        title: 'Light and dark, at rest, selected, and selected with a clear button',
+        render: () => (
+          <div className={layout.rows}>
+            <div className={layout.strip}>
+              <Chip label="All" />
+              <Chip label="Hats" selected />
+              <Chip label="Hats" selected onClear={() => {}} clearLabel="Clear Hats" />
+              <Chip
+                label="Starred"
+                icon={<GeneralStar size={24} aria-hidden="true" />}
+                selected
+                onClear={() => {}}
+                clearLabel="Clear Starred"
+              />
+            </div>
+            <div className={layout.strip}>
+              <Chip variant="dark" label="Wearables" />
+              <Chip
+                variant="dark"
+                label="Emotes"
+                icon={<GeneralStar size={24} aria-hidden="true" />}
+                selected
+              />
             </div>
           </div>
         )

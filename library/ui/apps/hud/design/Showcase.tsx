@@ -6,7 +6,7 @@
 // features import them: that test watches the entry. Sections use local data only: no network,
 // wallet or engine call.
 
-import { Button, Spinner, Switch } from '@dcl/one-ui'
+import { Button, CountBadge, Spinner, Switch } from '@dcl/one-ui'
 import { useId, useRef, useState, useSyncExternalStore } from 'react'
 import { getHudScale, subscribeHudScale } from '@explorer-core/lib/hudScale'
 import {
@@ -26,7 +26,6 @@ import {
   ColorPicker,
   ContextMenu,
   ControlButton,
-  CountBadge,
   DateField,
   DclLogo,
   Dropdown,
@@ -474,12 +473,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
     <Button appearance="hud" size="sm" variant="ghost" aria-label="Cancel join request">
       <SwapLabel idle="Request Sent" hover="Cancel Request" />
     </Button>
-  ),
-
-  CountBadge: () => (
-    <>
-      <CountBadge count={5} /> <CountBadge count={140} max={99} />
-    </>
   ),
 
   KebabMenu: () => (

@@ -95,6 +95,10 @@ export type {
 export { ProfilePic } from './components/ProfilePic/ProfilePic'
 export type { ProfilePicProps, ProfilePicSize } from './components/ProfilePic/ProfilePic'
 
+export { Chip } from './components/Chip/Chip'
+export type { ChipProps } from './components/Chip/Chip'
+export { CountBadge } from './components/CountBadge/CountBadge'
+export type { CountBadgeProps } from './components/CountBadge/CountBadge'
 export { Tag } from './components/Tag/Tag'
 export type { TagProps, TagVariant } from './components/Tag/Tag'
 
