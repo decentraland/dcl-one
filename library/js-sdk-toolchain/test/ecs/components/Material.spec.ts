@@ -36,7 +36,6 @@ describe('Generated Material ProtoBuf', () => {
     const Material = components.Material(newEngine)
 
     testComponentSerialization(Material, {
-      gltf: undefined,
       ...createPbrMaterial({
         texture: {
           tex: {
@@ -66,7 +65,6 @@ describe('Generated Material ProtoBuf', () => {
     })
 
     testComponentSerialization(Material, {
-      gltf: undefined,
       ...createPbrMaterial({
         albedoColor: { r: 0, g: 1, b: 1, a: 1 },
         alphaTest: 1,
@@ -118,7 +116,6 @@ describe('Generated Material ProtoBuf', () => {
     })
 
     testComponentSerialization(Material, {
-      gltf: undefined,
       ...createUnlitMaterial({
         castShadows: true,
         diffuseColor: { r: 0, g: 1, b: 1, a: 1 },

@@ -95,6 +95,14 @@ Some guidelines and testing before merge:
 - Testing in the Unity Editor: if you need to test with the editor opened, write the `ws` query parameter in your local or playground test.
 - Start merging when the three PRs are already to merge: first merge the Protocol one, then update the other two with the version @next and merge them at the same time.
 
+### Fields the SDK does not show
+
+`@dcl/sdk` is generated from these files without what sits between a `// sdk:hidden-begin` line and a
+`// sdk:hidden-end` line (`library/js-sdk-toolchain/scripts/protocol-buffer-generation/sdkProtocol.ts`).
+The Explorer reads the whole file, so a field can be implemented there before creators see it. Keep
+a blank line on both sides of each marker so it is not read as a comment on a field, and delete the
+two markers to publish what they hold.
+
 ## SDK: New APIs or APIs modifications
 
 Repositories: [kernel](https://github.com/decentraland/kernel/), [js-sdk-toolchain](https://github.com/decentraland/js-sdk-toolchain/) and [scene-runtime](https://github.com/decentraland/scene-runtime/)

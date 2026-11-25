@@ -89,9 +89,6 @@ describe('UiTransform component', () => {
       borderLeftColor: undefined,
       borderRightColor: undefined,
       opacity: undefined,
-      elementId: undefined,
-      scrollPosition: undefined,
-      scrollVisible: undefined,
       zIndex: undefined
     })
   })

@@ -37,6 +37,7 @@ import {
 } from './helpers'
 import { buildProtobuf, compileEcsComponents } from './protocol-buffer-generation'
 import { PROTO_COMPILER_PATH, TS_PROTO_PLUGIN_PATH } from './protocol-buffer-generation/protoConst'
+import { writeSdkProtocol } from './protocol-buffer-generation/sdkProtocol'
 import { FileDescriptorStandardOption, runCommand as runProtoc } from './utils/shellCommand'
 import { compileProtoApi } from './rpc-api-generation'
 import { getSnippetsfile } from './utils/getFilePathsSync'
@@ -75,10 +76,14 @@ flow('build-all', () => {
 
   flow('@dcl/ecs build', () => {
     itDeletesFolder('dist', ECS7_PATH)
+    const sdkProtocolPath = path.resolve(process.cwd(), 'node_modules/.cache/sdk-protocol/proto')
+    it('writes the protocol the SDK shows creators', () => {
+      writeSdkProtocol(path.resolve(process.cwd(), 'node_modules/@dcl/protocol/proto'), sdkProtocolPath)
+    })
     compileEcsComponents(
       `${ECS7_PATH}/src/components`,
-      `${process.cwd()}/node_modules/@dcl/protocol/proto/decentraland/sdk/components`,
-      `${process.cwd()}/node_modules/@dcl/protocol/proto/`
+      `${sdkProtocolPath}/decentraland/sdk/components`,
+      `${sdkProtocolPath}/`
     )
 
     const ECS_COMPOSITE_PATH = path.resolve(ECS7_PATH, 'src/composite/proto')
