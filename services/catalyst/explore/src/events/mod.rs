@@ -13,6 +13,7 @@ pub(crate) mod hooks;
 mod metadata;
 pub mod mirror;
 pub mod moderation;
+pub mod moderators;
 pub mod notifications;
 pub mod posters;
 pub mod profiles;
