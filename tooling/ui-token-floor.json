@@ -773,7 +773,7 @@
   },
   "library/ui/components/Slider/Slider.module.css": {
     "primitives": 0,
-    "tokens": 20
+    "tokens": 24
   },
   "library/ui/components/Spinner/Spinner.module.css": {
     "primitives": 0,

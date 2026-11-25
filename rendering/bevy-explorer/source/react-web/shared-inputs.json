@@ -5079,10 +5079,6 @@
           "kind": "regular"
         },
         {
-          "name": "pageWindow.test.ts",
-          "kind": "regular"
-        },
-        {
           "name": "photoDetail.test.tsx",
           "kind": "regular"
         },
@@ -7511,6 +7507,10 @@
         {
           "name": "skeleton-sweep.webp",
           "kind": "regular"
+        },
+        {
+          "name": "slider-handle.webp",
+          "kind": "regular"
         }
       ]
     },
@@ -8713,10 +8713,6 @@
         },
         {
           "name": "Slider.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "slider-handle.webp",
           "kind": "regular"
         }
       ]
@@ -14309,10 +14305,6 @@
       "sha256": "08d593d3686cd7e9da76821284db320f32e5cfa4632be60a132f126e9840a131"
     },
     {
-      "path": "library/ui/apps/hud/test/pageWindow.test.ts",
-      "sha256": "13067595423fedd01681a6b2e8d55585a71e129cee279c40834c056fededeb20"
-    },
-    {
       "path": "library/ui/apps/hud/test/photoDetail.test.tsx",
       "sha256": "b2db4f55cc0cc082d52e898e6e3c4b026332c20fe4995939826e7b9d4dc4b51d"
     },
@@ -16041,6 +16033,14 @@
       }
     },
     {
+      "path": "library/ui/assets/slider-handle.webp",
+      "sha256": "ced34ad97ae0a62e41f5fd96d7653cda2d23bc970e9c1b2ee007081106a4ec93",
+      "lfs": {
+        "oid": "ced34ad97ae0a62e41f5fd96d7653cda2d23bc970e9c1b2ee007081106a4ec93",
+        "size": 668
+      }
+    },
+    {
       "path": "library/ui/components/AnimatedBackground/AnimatedBackground.module.css",
       "sha256": "a016665633e10a79f097ea309a849d8a03f96f8e0c5691536dbc4cd32cea9394"
     },
@@ -16382,11 +16382,11 @@
     },
     {
       "path": "library/ui/components/Pager/Pager.module.css",
-      "sha256": "4a422fb79a91cc075373d6a0851abf257e1c531f25f945832376ddee2f68e5d6"
+      "sha256": "d84ac046b152884b819210c9c5cae934981093aa1d1cc56003fe3a92dc216918"
     },
     {
       "path": "library/ui/components/Pager/Pager.tsx",
-      "sha256": "252a2477ce625243fe4ce50b530e0720e5c8ed05ea31feda02c74d39887b7680"
+      "sha256": "f7fd6cfa0fcd3bf7446545d258c5d8a47e01f5f24024a9a9c8293df0cd1b701a"
     },
     {
       "path": "library/ui/components/PlaceCard/PlaceCard.module.css",
@@ -16446,15 +16446,11 @@
     },
     {
       "path": "library/ui/components/Slider/Slider.module.css",
-      "sha256": "f585fa09bcd03f2fb4a10f8fcadd5f67653ef45dfd7abd63ccb099edd547a496"
+      "sha256": "89c32dee040cef5d0c5694b61100368501558848e8ae4a66ebccaa3046c23a83"
     },
     {
       "path": "library/ui/components/Slider/Slider.tsx",
       "sha256": "4509d51ec698afa416645386c2b45f5689b753ce8972a015855065ec73091d56"
-    },
-    {
-      "path": "library/ui/components/Slider/slider-handle.webp",
-      "sha256": "ced34ad97ae0a62e41f5fd96d7653cda2d23bc970e9c1b2ee007081106a4ec93"
     },
     {
       "path": "library/ui/components/Spinner/Spinner.module.css",
@@ -16662,7 +16658,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "cfc5b943ce7cfe4774a58409a1e41f5d01a80b00999f7f9ee9054867bfba1643"
+      "sha256": "146570c5599dae5584144db5c79953f262e33024f352b86f567627f49fb4cb9b"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -50869,21 +50865,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/test/pageWindow.test.ts",
-      "to": "library/ui/index.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/pageWindow.test.ts",
-      "to": "library/ui/index.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/pageWindow.test.ts",
-      "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/test/photoDetail.test.tsx",
       "to": "library/explorer-core/lib/analytics.ts",
       "kind": "native:runtime"
@@ -67995,11 +67976,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/test/pageWindow.test.ts",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/photoDetail.test.tsx",
       "kind": "type"
     },
@@ -75740,17 +75716,17 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/components/Slider/slider-handle.webp",
+      "to": "library/ui/assets/slider-handle.webp",
       "kind": "native:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/components/Slider/slider-handle.webp",
+      "to": "library/ui/assets/slider-handle.webp",
       "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/components/Slider/slider-handle.webp",
+      "to": "library/ui/assets/slider-handle.webp",
       "kind": "test:asset"
     }
   ]

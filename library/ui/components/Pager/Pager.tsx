@@ -3,7 +3,10 @@ import styles from './Pager.module.css'
 
 const WINDOW = 5
 
-/** The pages shown: the current one stays centred past the first half, and the window clamps at both ends. */
+/**
+ * The pages shown: the current one stays centred past the first half, and the window clamps at both
+ * ends. Exported for its tests.
+ */
 export function pageWindow(current: number, count: number): number[] {
   const size = Math.min(WINDOW, count)
   const half = Math.floor(WINDOW / 2)
