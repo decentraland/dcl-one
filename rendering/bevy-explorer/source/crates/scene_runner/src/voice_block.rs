@@ -10,19 +10,16 @@ use common::structs::{MicState, NearbyVoiceDisabled, PermissionType, PrimaryUser
 
 use crate::{permissions::Permission, ContainingScene};
 
-/// The scene whose request is being answered and the answer, once there is one.
-#[derive(Default)]
-pub(crate) struct VoiceRequest(Option<(Entity, Option<bool>)>);
-
 /// Only the parcel scene under the player counts: a portable experience never blocks. The
-/// permission is asked once per visit, so leaving and returning asks again.
+/// permission is asked once per visit, so leaving and returning asks again. `request` is the scene
+/// asked for and the answer, once there is one.
 pub(crate) fn update_scene_voice_block(
     mic_state: Option<ResMut<MicState>>,
     containing_scene: ContainingScene,
     player: Query<Entity, With<PrimaryUser>>,
     disabling_scenes: Query<(), With<NearbyVoiceDisabled>>,
     mut perms: Permission<Entity>,
-    mut request: Local<VoiceRequest>,
+    mut request: Local<Option<(Entity, Option<bool>)>>,
 ) {
     let Some(mut mic_state) = mic_state else {
         return;
@@ -33,15 +30,22 @@ pub(crate) fn update_scene_voice_block(
         .and_then(|player| containing_scene.get_parcel(player))
         .filter(|scene| disabling_scenes.contains(*scene));
 
-    let allowed: Vec<_> = perms.drain_success(PermissionType::DisableVoice).collect();
-    let refused: Vec<_> = perms.drain_fail(PermissionType::DisableVoice).collect();
-    if asking != request.0.map(|(scene, _)| scene) {
-        request.0 = asking.map(|scene| (scene, None));
+    if asking != request.map(|(scene, _)| scene) {
+        // a question about a scene the player has left is withdrawn: dropping it closes the
+        // prompt, and no use is recorded for a visit where nothing was turned off
+        perms
+            .pending
+            .retain(|(_, ty, ..)| *ty != PermissionType::DisableVoice);
+        *request = asking.map(|scene| (scene, None));
         if let Some(scene) = asking {
             perms.check_unique(PermissionType::DisableVoice, scene, scene, None, false);
         }
-    } else if let Some((scene, answer)) = request.0.as_mut() {
-        // an answer for a scene the player has left is dropped
+    }
+    // asked before draining, so that an answer the stored rules give at once applies this frame:
+    // nearby voice stays off across two adjacent scenes that both turn it off
+    let allowed: Vec<_> = perms.drain_success(PermissionType::DisableVoice).collect();
+    let refused: Vec<_> = perms.drain_fail(PermissionType::DisableVoice).collect();
+    if let Some((scene, answer)) = request.as_mut() {
         if allowed.contains(scene) {
             *answer = Some(true);
         } else if refused.contains(scene) {
@@ -49,7 +53,7 @@ pub(crate) fn update_scene_voice_block(
         }
     }
 
-    let answer = request.0.and_then(|(_, answer)| answer);
+    let answer = request.and_then(|(_, answer)| answer);
     let disabled = answer == Some(true);
     if mic_state.scene_disabled() != disabled {
         mic_state.set_scene_disabled(disabled);
@@ -76,6 +80,7 @@ mod tests {
     };
 
     const HASH: &str = "voice-off-scene";
+    const NEXT_HASH: &str = "next-voice-off-scene";
 
     fn open_mic() -> MicState {
         let mut mic = MicState::default();
@@ -105,16 +110,22 @@ mod tests {
             .id();
         app.insert_resource(PrimaryPlayerRes(player));
 
+        voice_off_scene(&mut app, HASH, IVec2::ZERO);
+        (app, player)
+    }
+
+    /// A scene on `parcel` that turns nearby voice off.
+    fn voice_off_scene(app: &mut App, hash: &str, parcel: IVec2) -> Entity {
         let scene = app.world_mut().spawn(NearbyVoiceDisabled).id();
         let context = RendererSceneContext::new(
             SceneId::DUMMY,
-            HASH.to_owned(),
+            hash.to_owned(),
             "storage_root".to_owned(),
             false,
             0,
             "title".to_owned(),
-            IVec2::ZERO,
-            HashSet::from_iter([IVec2::ZERO]),
+            parcel,
+            HashSet::from_iter([parcel]),
             vec![],
             Default::default(),
             vec![],
@@ -129,15 +140,24 @@ mod tests {
         app.world_mut()
             .resource_mut::<LiveScenes>()
             .scenes
-            .insert(HASH.to_owned(), scene);
+            .insert(hash.to_owned(), scene);
         app.world_mut().resource_mut::<ScenePointers>().insert(
-            IVec2::ZERO,
+            parcel,
             PointerResult::Exists {
-                hash: HASH.to_owned(),
+                hash: hash.to_owned(),
                 urn: None,
             },
         );
-        (app, player)
+        scene
+    }
+
+    /// The questions the player is being asked.
+    fn prompts(app: &mut App) -> usize {
+        let mut manager = app.world_mut().resource_mut::<PermissionManager>();
+        manager
+            .pending
+            .retain(|request| !request.sender.is_cancelled());
+        manager.pending.len()
     }
 
     fn rule(app: &mut App, value: PermissionValue) {
@@ -167,7 +187,6 @@ mod tests {
             .drain()
             .map(|used| {
                 assert_eq!(used.ty, PermissionType::DisableVoice);
-                assert_eq!(used.scene, HASH);
                 used.was_allowed
             })
             .collect()
@@ -177,8 +196,7 @@ mod tests {
     fn by_default_the_scene_turns_nearby_voice_off_and_the_use_is_recorded() {
         let (mut app, player) = app();
         app.update();
-        app.update();
-        assert!(mic(&app).scene_blocked());
+        assert!(mic(&app).scene_blocked(), "on the frame the player enters");
         assert!(!mic(&app).enabled);
         assert!(!mic(&app).scene_disable_refused());
         assert_eq!(uses(&mut app), [true]);
@@ -243,5 +261,65 @@ mod tests {
         app.update();
         app.update();
         assert!(mic(&app).scene_blocked());
+    }
+
+    #[test]
+    fn leaving_before_answering_withdraws_the_question_and_blocks_nothing() {
+        let (mut app, player) = app();
+        rule(&mut app, PermissionValue::Ask);
+        app.update();
+        assert_eq!(prompts(&mut app), 1);
+
+        stand(&mut app, player, false);
+        app.update();
+        assert_eq!(prompts(&mut app), 0, "the prompt is closed");
+        app.update();
+        assert!(!mic(&app).scene_blocked());
+        assert!(!mic(&app).scene_disable_refused());
+        assert!(uses(&mut app).is_empty(), "nothing was used on that visit");
+    }
+
+    #[test]
+    fn returning_before_answering_asks_once_and_the_answer_applies() {
+        let (mut app, player) = app();
+        rule(&mut app, PermissionValue::Ask);
+        app.update();
+        stand(&mut app, player, false);
+        app.update();
+        stand(&mut app, player, true);
+        app.update();
+        app.update();
+        assert_eq!(prompts(&mut app), 1);
+        assert!(!mic(&app).scene_blocked());
+
+        let request = app
+            .world_mut()
+            .resource_mut::<PermissionManager>()
+            .pending
+            .pop_front()
+            .unwrap();
+        request.sender.send(true);
+        app.update();
+        assert!(mic(&app).scene_blocked());
+        assert_eq!(uses(&mut app), [true]);
+    }
+
+    #[test]
+    fn nearby_voice_stays_off_across_two_adjacent_scenes_that_turn_it_off() {
+        let (mut app, player) = app();
+        voice_off_scene(&mut app, NEXT_HASH, IVec2::new(1, 0));
+        app.update();
+        assert!(mic(&app).scene_blocked());
+        assert_eq!(uses(&mut app), [true]);
+
+        app.world_mut()
+            .entity_mut(player)
+            .insert(GlobalTransform::from_xyz(8.0 + 16.0, 0.0, -8.0));
+        for frame in 0..3 {
+            app.update();
+            assert!(mic(&app).scene_blocked(), "frame {frame} in the next scene");
+            // the next scene's use is recorded once, as the player enters
+            assert_eq!(uses(&mut app), if frame == 0 { vec![true] } else { vec![] });
+        }
     }
 }

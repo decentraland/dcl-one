@@ -277,7 +277,8 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   sets, for the session, whether a wallet's nametag carries the official badge; replies with
   `address` and `official`),
   `/voice_state` (the nearby mic, with `sceneBlocked` while the scene the player stands in turns
-  nearby voice off or its room refused the player as banned, asking again every 15 seconds; the
+  nearby voice off or its room refused the player as banned, asking again every 15 seconds, and
+  `sceneRefused` while the scene asks to turn it off and the `DisableVoice` permission refuses; the
   nearby voice rooms and, as `call`, the private call or community stream the player is in:
   `status`, `kind`, `peer`, `communityId`, `connection`, `participants`, `micEnabled`,
   `localSpeaker`, `localRole`, `error`, `errorIsNotice`),
