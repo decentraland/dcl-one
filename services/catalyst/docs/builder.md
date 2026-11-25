@@ -62,18 +62,21 @@ Every chain source the builder reads must serve that chain:
 - `BUILDER_POLYGON_RPC_URL`: the receipt check, the deployment check and the
   rarities read ask its `eth_chainId` and answer 503 when it names another
   chain.
-- The Polygon collections subgraph and the third-party registry subgraph:
-  the node can't check which chain a subgraph indexes, so the rarities, the
-  curation committee and the third-party registry follow whatever chain
-  those subgraphs index.
+- The Polygon collections subgraph and, on Amoy, the third-party registry
+  subgraph: the node can't check which chain a subgraph indexes, so the
+  rarities, the curation committee and Amoy's third-party registry follow
+  whatever chain those subgraphs index.
+- On Polygon the third-party registry is the node's own registry index,
+  which is bound to chain 137.
 
 The builder reads those two subgraphs from Decentraland's subgraph worker
-for its chain unless a setting names another:
+for its chain unless a setting names another. On Polygon it reads the
+collections subgraph only:
 
 | Subgraph | Setting that overrides it | Mainnet (Polygon) | Sepolia (Amoy) |
 | --- | --- | --- | --- |
 | Collections (rarities, committee) | `MATIC_COLLECTIONS_SUBGRAPH_URL` | `https://subgraph.decentraland.org/collections-matic-mainnet` | `https://subgraph.decentraland.org/collections-matic-amoy` |
-| Third-party registry (providers, slot cheque receipts) | `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` | `https://subgraph.decentraland.org/tpr-matic-mainnet` | `https://subgraph.decentraland.org/tpr-matic-amoy` |
+| Third-party registry (providers, slot cheque receipts) | `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` | not read: the registry index answers | `https://subgraph.decentraland.org/tpr-matic-amoy` |
 
 A setting set to a URL wins; a setting set empty reads no subgraph, which
 is how the `island` and `journey` postures keep the builder off
@@ -109,8 +112,13 @@ the curation committee from the Polygon collections subgraph.
   rarities' prices and checks a collection's contract before a save that
   changes its address, a delete and a publish. Unset, the publication and
   rarities routes answer 503 and the contract check is skipped.
-- The third-party registry subgraph (see "Network"). Set empty or
-  unreadable, every request about a third party answers 503.
+- The third-party registry. On Polygon it's the shop's registry index:
+  `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED` on, with a Polygon
+  JSON-RPC for its walk, caught up and publishing. While the index is off,
+  catching up, quarantined, diverged, or its publication is older than 30
+  minutes, every request about a third party answers 503. On Amoy it's the
+  registry subgraph (see "Network"): set empty or unreadable, every request
+  about a third party answers 503.
 - The content sync's item history coverage: a new third-party item URN is
   taken only where the content history is covered or this node is its own
   content authority; elsewhere the URN check answers 503.

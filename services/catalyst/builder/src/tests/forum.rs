@@ -535,6 +535,7 @@ async fn simultaneous_claims_decide_under_the_collection_lock() {
     };
     sqlx::query("INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, pass_started_at) VALUES ('collections', 'matic', 'https://subgraph.example', timezone('UTC', now()), timezone('UTC', now()))")
         .execute(&pool).await.unwrap();
+    crate::tests::support::publish_registry_index(&mut *pool.acquire().await.unwrap(), false).await;
     let e = env_with(pool, true).await;
     let (id, _) = standard(&e.pool, "Simultaneous", true).await;
     sqlx::raw_sql("CREATE FUNCTION builder.delay_forum_claim() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.2); RETURN NEW; END $$; CREATE TRIGGER delay_forum_claim BEFORE UPDATE OF forum_claimed_at ON builder.collections FOR EACH ROW EXECUTE FUNCTION builder.delay_forum_claim();")
@@ -757,6 +758,7 @@ async fn no_connection_is_held_while_the_forum_answers() {
     .execute(&pool)
     .await
     .unwrap();
+    crate::tests::support::publish_registry_index(&mut *pool.acquire().await.unwrap(), false).await;
     let e = env_with(pool, true).await;
     let (id, _) = standard(&e.pool, "Pooled", true).await;
     e.forum.hold();

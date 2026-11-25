@@ -1951,31 +1951,81 @@ fn roles(seed: &Seed, roles: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// The shop's third-party registry index holding `seed.registry`, each
+/// provider as the capture's fake serves it, and `seed.receipts`, at a
+/// current publication.
+async fn registry_index(pool: &sqlx::PgPool, seed: &Seed) {
+    const VERSION: &str = "INSERT INTO shop.third_party_registry_event \
+           (block_number, log_index, block_time, provider_id, state, receipt) \
+         VALUES (1, (SELECT count(*) FROM shop.third_party_registry_event), 0, $1, $2, $3)";
+    for p in &seed.registry {
+        let managers: Vec<String> = roles(seed, &p.managers)
+            .iter()
+            .map(|m| m.to_ascii_lowercase())
+            .collect();
+        let state = serde_json::json!({
+            "id": p.id,
+            "approved": p.approved.unwrap_or(true),
+            "root": null,
+            "resolver": null,
+            "raw_metadata": "",
+            "metadata": { "name": p.name, "description": "", "contracts": [] },
+            "managers": managers,
+            "programmatic": p.programmatic,
+            "max_items": p.max_items.as_deref().unwrap_or("100"),
+            "consumed_slots": "0",
+        });
+        for r in seed.receipts.iter().filter(|r| r.provider == p.id) {
+            let hash = format!(
+                "0x{}",
+                hex::encode(catalyst_builder::cheques::digest(
+                    &catalyst_builder::network::POLYGON,
+                    &r.provider,
+                    r.qty,
+                    r.salt.parse().expect("seed.json receipt salt"),
+                ))
+            );
+            sqlx::query(VERSION)
+                .bind(&p.id)
+                .bind(&state)
+                .bind(serde_json::json!({
+                    "hash": hash, "quantity": r.qty.to_string(),
+                    "signer": seed.wallets[&r.signer], "curator": "",
+                }))
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query(VERSION)
+            .bind(&p.id)
+            .bind(&state)
+            .bind(None::<Value>)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    for r in &seed.receipts {
+        assert!(
+            seed.registry.iter().any(|p| p.id == r.provider),
+            "seed.json receipt of {}, which the registry does not list",
+            r.provider
+        );
+    }
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor \
+           (indexer, network, start_block, last_block, full_history, folded_block, folded_at, chain_id) \
+         VALUES ($1, 'matic', 0, 1, true, 1, timezone('UTC', now()), 137)",
+    )
+    .bind(catalyst::chain_index::third_party_index::INDEXER)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// A loopback Polygon collections subgraph that answers `seed.chain`'s
 /// `rarities` and its `committee` as `accounts` (ordered by id, paged by
-/// `first` and `skip`), and a third-party
-/// registry subgraph beside it (`/graph/third-parties`) that answers the
-/// node's walk with `seed.registry`, each provider as the capture's fake
-/// serves it; returns both URLs.
-async fn chain_subgraphs(seed: &Seed) -> (String, String) {
-    let mut providers: Vec<Value> = seed
-        .registry
-        .iter()
-        .map(|p| {
-            serde_json::json!({
-                "id": p.id,
-                "root": null,
-                "managers": roles(seed, &p.managers),
-                "maxItems": p.max_items.as_deref().unwrap_or("100"),
-                "isApproved": p.approved.unwrap_or(true),
-                "isProgrammatic": p.programmatic,
-                "metadata": { "type": "third_party_v2", "thirdParty": {
-                    "name": p.name, "description": "", "contracts": []
-                } }
-            })
-        })
-        .collect();
-    providers.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+/// `first` and `skip`); returns its URL.
+async fn collections_subgraph(seed: &Seed) -> String {
     let rarities: Vec<Value> = seed
         .chain
         .rarities
@@ -1988,82 +2038,33 @@ async fn chain_subgraphs(seed: &Seed) -> (String, String) {
         .map(|m| m.to_ascii_lowercase())
         .collect();
     committee.sort();
-    let receipts: Vec<Value> = seed
-        .receipts
-        .iter()
-        .map(|r| {
-            serde_json::json!({
-                "id": format!("0x{}", hex::encode(catalyst_builder::cheques::digest(
-                    &catalyst_builder::network::POLYGON,
-                    &r.provider,
-                    r.qty,
-                    r.salt.parse().expect("seed.json receipt salt"),
-                ))),
-                "qty": r.qty.to_string(),
-                "signer": seed.wallets[&r.signer],
-            })
-        })
-        .collect();
-    let app = Router::new()
-        .route(
-            "/graph/collections",
-            axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
-                let (listed, committee) = (listed.clone(), committee.clone());
-                async move {
-                    if !body["query"]
-                        .as_str()
-                        .is_some_and(|q| q.contains("accounts"))
-                    {
-                        return axum::Json(listed);
-                    }
-                    let skip = body["variables"]["skip"].as_u64().unwrap_or(0) as usize;
-                    let first = body["variables"]["first"].as_u64().unwrap_or(100) as usize;
-                    let page: Vec<Value> = committee
-                        .into_iter()
-                        .skip(skip)
-                        .take(first)
-                        .map(|m| serde_json::json!({ "id": m, "address": m }))
-                        .collect();
-                    axum::Json(serde_json::json!({ "data": { "accounts": page } }))
+    let app = Router::new().route(
+        "/graph/collections",
+        axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            let (listed, committee) = (listed.clone(), committee.clone());
+            async move {
+                if !body["query"]
+                    .as_str()
+                    .is_some_and(|q| q.contains("accounts"))
+                {
+                    return axum::Json(listed);
                 }
-            }),
-        )
-        .route(
-            "/graph/third-parties",
-            axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
-                let providers = providers.clone();
-                let receipts = receipts.clone();
-                async move {
-                    if body["query"]
-                        .as_str()
-                        .is_some_and(|q| q.contains("receipts"))
-                    {
-                        let id = body["variables"]["id"].as_str().unwrap_or_default();
-                        let held: Vec<Value> =
-                            receipts.into_iter().filter(|r| r["id"] == id).collect();
-                        return axum::Json(serde_json::json!({ "data": { "receipts": held } }));
-                    }
-                    let from = body["variables"]["idFrom"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string();
-                    let first = body["variables"]["first"].as_u64().unwrap_or(100) as usize;
-                    let page: Vec<Value> = providers
-                        .into_iter()
-                        .filter(|p| p["id"].as_str().unwrap_or_default() > from.as_str())
-                        .take(first)
-                        .collect();
-                    axum::Json(serde_json::json!({ "data": { "thirdParties": page } }))
-                }
-            }),
-        );
+                let skip = body["variables"]["skip"].as_u64().unwrap_or(0) as usize;
+                let first = body["variables"]["first"].as_u64().unwrap_or(100) as usize;
+                let page: Vec<Value> = committee
+                    .into_iter()
+                    .skip(skip)
+                    .take(first)
+                    .map(|m| serde_json::json!({ "id": m, "address": m }))
+                    .collect();
+                axum::Json(serde_json::json!({ "data": { "accounts": page } }))
+            }
+        }),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (
-        format!("http://{addr}/graph/collections"),
-        format!("http://{addr}/graph/third-parties"),
-    )
+    format!("http://{addr}/graph/collections")
 }
 
 alloy_sol_types::sol! {
@@ -2615,12 +2616,12 @@ async fn replay_setup() -> Option<Replay> {
     .execute(&scratch.pool)
     .await
     .unwrap();
-    let (collections_subgraph, registry_subgraph) = chain_subgraphs(&seed_data).await;
+    registry_index(&scratch.pool, &seed_data).await;
+    let collections_subgraph = collections_subgraph(&seed_data).await;
     let index = catalyst::chain_index::ChainIndex::new(
         Outbound::for_tests(),
         catalyst::chain_index::IndexSettings {
             matic_collections_subgraph_url: Some(collections_subgraph),
-            third_party_registry_subgraph_url: Some(registry_subgraph),
             ..catalyst::chain_index::IndexSettings::for_tests()
         },
     );
