@@ -38,6 +38,9 @@ pub enum RequestAuthError {
     /// 503: a contract wallet's signature could not be checked.
     #[error("Signature verification unavailable")]
     Unavailable,
+    /// 429: the client source spent its budget of contract-wallet checks.
+    #[error("Too many contract-wallet signature checks; retry later")]
+    RateLimited,
 }
 
 impl RequestAuthError {
@@ -47,6 +50,7 @@ impl RequestAuthError {
             Self::Unauthorized(_) => 401,
             Self::Forbidden { .. } => 403,
             Self::Unavailable => 503,
+            Self::RateLimited => 429,
         }
     }
 

@@ -2859,14 +2859,25 @@ async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_r
     // This first window spans the first two event blocks. Its request budget
     // stops before the next creation block; the next owner resumes there.
     let dense = state_over(db.pool.clone(), &url, index_settings(2, 6), false);
+    let rebuilds = || {
+        sqlx::query_scalar::<_, i32>(
+            "SELECT rebuilds FROM shop.chain_cursor WHERE indexer='nft' AND network='ethereum'",
+        )
+        .fetch_one(&db.pool)
+    };
+    let unrepaired = rebuilds().await.unwrap();
     for (position, state) in [(first + 1, &dense), (first + 3, &small), (last, &small)] {
         let out = pass(state, &url, &NftIndex::new(net)).await;
         assert!(out.published, "{out:?}");
         assert_eq!(marker().await.unwrap(), (position as i64, last as i64));
         if position < last {
             assert_eq!(names().await.unwrap(), old);
+            assert_eq!(rebuilds().await.unwrap(), unrepaired);
         }
     }
+    // The final window rewrote names in place: it counts itself in the
+    // cursor, where the explorer map's marks see it.
+    assert_eq!(rebuilds().await.unwrap(), unrepaired + 1);
     assert_eq!(
         names().await.unwrap(),
         [
@@ -11999,6 +12010,13 @@ mod recovery {
             .unwrap();
         assert!(pass(&st, &url, &MANA).await.rebuilt);
         assert!(points(&db.pool, INDEXER_MANA).await.is_empty());
+        let rebuilds: i32 = sqlx::query_scalar(
+            "SELECT rebuilds FROM shop.chain_cursor WHERE indexer = 'mana_transfers'",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(rebuilds, 1, "the rebuild counts itself in the cursor");
         db.drop().await;
     }
 
@@ -14136,3 +14154,5 @@ mod compare_sources_tests {
 }
 
 mod sale_accounting;
+
+mod sale_routes;

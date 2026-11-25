@@ -874,7 +874,7 @@ mod tests {
         use system_bridge::settings::AppSetting;
 
         let bloom = |commands: &mut Commands, camera: Entity| {
-            BloomSetting::High.apply_to_camera(&(), commands.reborrow(), camera)
+            BloomSetting::On.apply_to_camera(&(), commands.reborrow(), camera)
         };
         for stage_first in [true, false] {
             let mut world = World::new();

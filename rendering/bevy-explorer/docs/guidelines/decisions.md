@@ -28,8 +28,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **The toon outline is a screen-space line, not an inverted hull.** It keeps Unity's colour,
   width falloff and 8 m cutoff. Kept differences: the cutoff is per mesh, not per avatar; an
   overlap shallower than the edge threshold gets no line, so a curved surface draws none on
-  itself; creases inside the silhouette darken, which the look relies on; and an orthographic
-  view (the Backpack) skips the cutoff, in place of Unity's preview flag.
+  itself; creases inside the silhouette darken, which the look relies on; an orthographic
+  view (the Backpack) skips the cutoff, in place of Unity's preview flag; an alpha-blended
+  mesh draws no line, since the line reads the depth and normal prepass and a blended mesh is not
+  in it (it would trace the edges of the scene behind); and a single-sided mesh seen from its
+  back draws nothing, where Unity's hull, made of back faces, fills its shape with the outline
+  colour (the Epic Arrival Shield's particles, seen from the front). As with Unity's hull, the
+  line never covers a mesh's emission, so a glowing mesh glows to its edge.
 - **A hovered avatar glows through the shared highlight pass.** Unity's colour, opacity, width
   and 0.1 s fade, through the pass scene entities use, so the glow shows through what stands in
   front and ignores the camera dither and the ghost reveal. Kept differences: every opaque or
@@ -69,9 +74,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   no direct light; at most a tenth of a light unit points upward. It is not clamped to the
   horizon.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
-  it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
-  the extension is not the fix; the long-term answer is still open. A glTF emissive factor of 1
-  draws five times as bright as a lit white surface, and the strength multiplies that.
+  it, spec-correctly, on scene glTFs. Content authored against Unity can glow (the Nekko cat at
+  65x). Dropping the extension is not the fix for scenes; the long-term answer is still open. A
+  glTF emissive factor of 1 draws five times as bright as a lit white surface, and the strength
+  multiplies that. Wearables are the exception: an avatar drops the strength, as Unity does, and
+  draws a factor of 1 at 12.5 times a lit white surface, so a wearable glows as its creator saw
+  it in Unity.
 - **A Material that names a glTF keeps the glTF's rules.** An SDK unlit material is opaque
   unless it has an alpha texture, whose brightness scales the alpha, and an SDK PBR emissive
   colour is drawn as it is, as in Unity. A glTF's own unlit material cuts out or blends through
@@ -86,9 +94,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   channel pointing down the image and a glTF's normal map up, so the glTF's own normal map
   keeps its orientation when it comes back, and a bump texture the scene puts in its place is
   read as the SDK's.
-- **High bloom scatters at 0.5.** Unity's settings name 0.3; at 0.3 the glow around a bright
-  surface here is about half as strong as Unity draws it, and 0.5 matches its captures
-  (`BLOOM_SCATTER`).
+- **Bloom is off or on, and scatters at 0.5.** Unity's quality presets name 0.3 (Low, where
+  bloom is off), 0.5 (Medium) and 0.6 (High). At 0.3 the glow around a bright surface here is
+  about half as strong as Unity draws it, and 0.5 matches its captures (`BLOOM_SCATTER`). The
+  setting has one level: a saved config that names an earlier one (Low or High) reads as On.
 - **Alpha test and blend premultiplies the whole base colour.** The alpha multiplies the base
   colour before lighting, and a metal's reflectance is its base colour, so a transparent metal's
   reflections thin with it where Unity keeps them. Keeping them needs the diffuse and specular
@@ -985,8 +994,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   carry Unity's values for the frame rate, VSync, render scale, avatar outline, jiggle bones, sun
   shadow quality, the Low and High shadow distances and scene lights; Medium is the default and
   the one every saved config migrates to, except jiggle bones, which stay off by default (see the
-  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Bloom is Low in every
-  preset, closer to Unity's look than High. Medium's sun shadow distance is 20 m, not 60 m: Medium
+  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Every preset keeps
+  bloom on, as Unity's Medium and High do; Unity turns bloom off on
+  Low. Medium's sun shadow distance is 20 m, not 60 m: Medium
   has one cascade (above), which stops at 40 m, and at 20 m its texels are half as large as at
   40 m. The presets leave out Unity's scene distance (in parcels, where far scenes load as
   LODs; here imposters draw them and the load distance stays the player's), the landscape

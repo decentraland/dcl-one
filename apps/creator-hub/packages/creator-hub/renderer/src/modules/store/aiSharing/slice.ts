@@ -20,6 +20,9 @@ export * from './selectors';
 /** Backoff between failed uploads: 1, 2, 4… minutes, capped at an hour. */
 const MIN_BACKOFF_MS = 60_000;
 const MAX_BACKOFF_MS = 60 * 60_000;
+// Each wait is stretched by a random 0–20%, so clients that failed together (an outage, the
+// day's quota) don't all come back in the same second. Never shortened: Retry-After holds.
+export const BACKOFF_JITTER = 0.2;
 
 export type DeleteStatus = 'idle' | 'confirming' | 'deleting' | 'deleted' | 'failed';
 
@@ -103,19 +106,26 @@ const slice = createSlice({
     uploadSucceeded: (state, { payload }: PayloadAction<{ wallet: string }>) => {
       delete state.backoff[payload.wallet];
     },
-    uploadFailed: (
-      state,
-      { payload }: PayloadAction<{ wallet: string; retryAfterSeconds?: number }>,
-    ) => {
-      const failures = (state.backoff[payload.wallet]?.failures ?? 0) + 1;
-      const backoff = Math.min(MIN_BACKOFF_MS * 2 ** (failures - 1), MAX_BACKOFF_MS);
-      // Capped like the backoff: a far-off Retry-After must not stall uploads, erasures and
-      // withdrawals for the rest of the session.
-      const asked = Math.min((payload.retryAfterSeconds ?? 0) * 1000, MAX_BACKOFF_MS);
-      state.backoff[payload.wallet] = {
-        failures,
-        nextUploadAt: Date.now() + Math.max(backoff, asked),
-      };
+    uploadFailed: {
+      reducer: (
+        state,
+        { payload }: PayloadAction<{ wallet: string; retryAfterSeconds?: number; jitter: number }>,
+      ) => {
+        const failures = (state.backoff[payload.wallet]?.failures ?? 0) + 1;
+        const backoff = Math.min(MIN_BACKOFF_MS * 2 ** (failures - 1), MAX_BACKOFF_MS);
+        // Capped like the backoff: a far-off Retry-After must not stall uploads, erasures and
+        // withdrawals for the rest of the session.
+        const asked = Math.min((payload.retryAfterSeconds ?? 0) * 1000, MAX_BACKOFF_MS);
+        const wait = Math.max(backoff, asked);
+        state.backoff[payload.wallet] = {
+          failures,
+          nextUploadAt: Date.now() + Math.round(wait * (1 + BACKOFF_JITTER * payload.jitter)),
+        };
+      },
+      // The random draw happens here, so the reducer stays a pure function of its action.
+      prepare: (payload: { wallet: string; retryAfterSeconds?: number }) => ({
+        payload: { ...payload, jitter: Math.random() },
+      }),
     },
     askDeleteConfirmation: state => {
       state.deleteStatus = 'confirming';

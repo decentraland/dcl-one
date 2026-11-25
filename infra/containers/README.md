@@ -224,10 +224,14 @@ registry history, API replicas prefer the native index and can serve manager and
 The NFT worker supplies wallet holdings for open mappings.
 
 Collections index upgrade: run `catalyst schema migrate` before deploying the updated index worker.
-Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The index is off
-under every posture; `MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true` with a Polygon RPC in `TRADE_RPC_URLS`
-(chain 137) starts its walk from block 15,202,000. Nothing reads it yet: the catalogue keeps serving the
-collections subgraph's copy.
+Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The mirror
+posture enables `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`. A Polygon RPC in `TRADE_RPC_URLS` (chain 137)
+lets it walk from block 15,202,000. Polygon accounts and lifetime creator rankings return HTTP 503
+until the collections and sales indexes publish their required history. Polygon accounts also require
+a fresh committee fold covering the published sales block. To warm the walks ahead of the API upgrade,
+enable the switches on the index worker and wait for the required publications before rolling out the sales readers.
+The catalogue continues to
+read the collections mirror unless the on-chain projection owns that network.
 
 Trade digest upgrade: run `catalyst schema migrate` before deploying. Step `0069_shop_trade_digest` adds
 `shop.trades.trade_digest` and `shop.trade_chain_state.digest_failed_at`, and needs no backfill: the next
