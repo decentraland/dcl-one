@@ -186,9 +186,11 @@ impl Queue {
             return;
         }
         self.retry = None;
-        while !self.pending.is_empty() {
+        loop {
             let queued = self.pending.len();
-            let item = self.pending.front_mut().unwrap();
+            let Some(item) = self.pending.front_mut() else {
+                break;
+            };
             if item.attempts as f64 >= self.config.max_retry_attempts {
                 self.counter("ws_backpressure_events", Some("max_retries"));
                 self.fail("Message not deliverable after max retries");
@@ -220,14 +222,16 @@ impl Queue {
             }
             let attempts = match outcome {
                 SendOutcome::Code(1) => {
-                    let item = self.pending.pop_front().unwrap();
-                    let _ = item.completion.send(Ok(()));
+                    if let Some(item) = self.pending.pop_front() {
+                        let _ = item.completion.send(Ok(()));
+                    }
                     self.counter("ws_messages_sent", None);
                     continue;
                 }
                 SendOutcome::Code(0) => {
-                    let item = self.pending.pop_front().unwrap();
-                    let _ = item.completion.send(Ok(()));
+                    if let Some(item) = self.pending.pop_front() {
+                        let _ = item.completion.send(Ok(()));
+                    }
                     self.counter("ws_messages_sent", None);
                     self.counter("ws_backpressure_events", Some("backpressure"));
                     0
@@ -246,8 +250,9 @@ impl Queue {
                 SendOutcome::Contended => unreachable!("returned above"),
                 SendOutcome::Failure(error) => {
                     let message = format!("Failed to send message: {error}");
-                    let item = self.pending.pop_front().unwrap();
-                    let _ = item.completion.send(Err(message.clone()));
+                    if let Some(item) = self.pending.pop_front() {
+                        let _ = item.completion.send(Err(message.clone()));
+                    }
                     self.fail(&message);
                     return;
                 }

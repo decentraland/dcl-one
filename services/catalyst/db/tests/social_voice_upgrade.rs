@@ -1,5 +1,6 @@
 //! Upgrade genuinely prepared v2 facts through the composed v3 release and
 //! production additive executor, retaining the historical migration ledger.
+#![allow(clippy::unwrap_used, reason = "test support")]
 use catalyst_db::{MIGRATIONS_SQL, SCHEMA_SQL, schema_migrate};
 use sha2::{Digest, Sha256};
 use sqlx::{

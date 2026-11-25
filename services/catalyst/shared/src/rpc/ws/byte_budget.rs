@@ -47,7 +47,11 @@ impl ByteBudget {
     pub(super) async fn reserve(self: &Arc<Self>, bytes: usize) -> Permit {
         let _turn = Turn {
             budget: self,
-            _permit: self.admission.acquire().await.unwrap(),
+            _permit: self
+                .admission
+                .acquire()
+                .await
+                .expect("the admission semaphore is never closed"),
         };
         loop {
             let changed = self.changed.notified();

@@ -411,8 +411,10 @@ pub async fn run_sync_job(
             _ = ctx.cancel.cancelled() => break,
             _ = signal.wait_settled(), if !bootstrapped => {
                 bootstrapped = true;
-                if !ctx.cancel.is_cancelled() && status.state() == SyncState::Syncing {
-                    on_bootstrap.take().unwrap()();
+                if !ctx.cancel.is_cancelled() && status.state() == SyncState::Syncing
+                    && let Some(on_bootstrap) = on_bootstrap.take()
+                {
+                    on_bootstrap();
                 }
                 info!("Bootstrap complete, sync is now in steady state");
                 ctx.progress(format!("bootstrapped; {}", status.state_name()));

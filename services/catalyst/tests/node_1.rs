@@ -1,5 +1,6 @@
 //! Node integration tests that need no socket budget, one binary for several files so a
 //! build links few test executables. Each file stays a module named after it.
+#![allow(clippy::unwrap_used, reason = "test support")]
 // explore_parity needs it.
 #![recursion_limit = "256"]
 
