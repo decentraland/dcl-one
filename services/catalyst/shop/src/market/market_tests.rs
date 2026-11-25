@@ -3713,6 +3713,16 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     // An accounts miss cannot consume the independent rankings/volume budget.
     assert_eq!(get(app.clone(), "/v1/volume/week").await.0, StatusCode::OK);
     let analytics_slots = state.sales_analytics_slots.try_acquire_many(2).unwrap();
+    // Forward cursor progress and freshness updates leave an already
+    // published prefix usable while the auxiliary folds catch up.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block=last_block+1,
+        updated_at=timezone('UTC',now()),folded_at=timezone('UTC',now())
+        WHERE network='matic' AND indexer IN ('collections','committee')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
     assert_eq!(
         get(app.clone(), "/v1/accounts?first=10&skip=995").await,
         (StatusCode::OK, before.clone())
@@ -3725,6 +3735,16 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
         get(app.clone(), "/v1/accounts?address=invalid").await.0,
         StatusCode::BAD_REQUEST
     );
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET sale_history_revision=sale_history_revision+1
+        WHERE network='matic' AND indexer='committee'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let (status, busy) = get(app.clone(), "/v1/accounts?first=10&skip=995").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{busy}");
+    assert_eq!(busy["message"], "sales analytics is busy");
     drop(analytics_slots);
     drop(accounts_slot);
     let earned: Vec<_> = before["data"]

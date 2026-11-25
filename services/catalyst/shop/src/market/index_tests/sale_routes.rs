@@ -100,8 +100,8 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         format!("buyer={ALICE}"),
         "itemId=7".into(),
         "tokenId=3".into(),
-        "from=1700000001000".into(),
-        "to=1699999999000".into(),
+        "from=1700000000001".into(),
+        "to=1699999999999".into(),
         "maxPrice=1".into(),
         "category=estate".into(),
     ] {
@@ -195,6 +195,63 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         week["data"],
         json!({"sales":0,"volume":"0","creatorsEarnings":"0","daoEarnings":"0"})
     );
+    let generation = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT generation FROM shop.sale_publication WHERE network='matic'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    // Exercise the real fold, with an ordinary tip advance while the old
+    // publication is cached. A repair of the same height must miss the cache.
+    let later = polygon + 1;
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block=$1,last_block_hash=$2,folded_block=$1,
+        folded_at=timezone('UTC',now()),sale_verified_through=$1 WHERE network='matic'",
+    )
+    .bind(later as i64)
+    .bind(polygon_chain.hash_of(later))
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let polygon_rpc = Rpc::at(&state.http, &polygon_url);
+    sale_fold::pass(&db.pool, &polygon_rpc, ChainNet::Matic)
+        .await
+        .unwrap();
+    let publication: (i64, uuid::Uuid) = sqlx::query_as(
+        "SELECT block_number,generation FROM shop.sale_publication WHERE network='matic'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(publication, (later as i64, generation));
+    let slots = state.sales_analytics_slots.try_acquire_many(2).unwrap();
+    assert_eq!(
+        get_json(&app, "/v1/volume/all").await,
+        (StatusCode::OK, volume.clone())
+    );
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET sale_history_revision=sale_history_revision+1,
+        sale_dirty_from=$1 WHERE network='matic' AND indexer='sales'",
+    )
+    .bind(later as i64)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, gap) = get_json(&app, "/v1/volume/all").await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{gap}");
+    let history_repaired = sale_fold::pass(&db.pool, &polygon_rpc, ChainNet::Matic).await;
+    history_repaired.unwrap();
+    let updated = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT generation FROM shop.sale_publication WHERE network='matic'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_ne!(updated, generation);
+    let (code, busy) = get_json(&app, "/v1/volume/all").await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{busy}");
+    assert_eq!(busy["message"], "sales analytics is busy");
+    drop(slots);
     // Both item categories share an address and have equal sales. Their public
     // rankings split by item type and honor the rarity and UTC-day filters.
     seed_item(
@@ -276,11 +333,31 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
         SELECT 'collections',network,chain_id,start_block,last_block,last_block_hash,true,folded_block,folded_at
         FROM shop.chain_cursor WHERE indexer='nft' AND network='matic'").execute(&db.pool).await.unwrap();
     sqlx::query("UPDATE shop.collection_projection SET projected_through=$1 WHERE network='matic'")
-        .bind(polygon as i64)
+        .bind(later as i64)
         .execute(&db.pool)
         .await
         .unwrap();
-    assert_eq!(get_json(&app, ranked_path).await.0, StatusCode::OK);
+    let ranked = get_json(&app, ranked_path).await;
+    assert_eq!(ranked.0, StatusCode::OK);
+    let slots = state.sales_analytics_slots.try_acquire_many(2).unwrap();
+    sqlx::query(
+        "UPDATE shop.collection_projection SET generation=generation+1 WHERE network='matic'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(get_json(&app, ranked_path).await, ranked);
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET sale_history_revision=sale_history_revision+1
+        WHERE network='matic' AND indexer='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, busy) = get_json(&app, ranked_path).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{busy}");
+    assert_eq!(busy["message"], "sales analytics is busy");
+    drop(slots);
     sqlx::query("DELETE FROM shop.collection_projection WHERE network='matic'")
         .execute(&db.pool)
         .await
@@ -599,12 +676,8 @@ async fn deep_sales_pages_keep_equal_timestamps_in_id_order_across_networks() {
         .execute(&db.pool)
         .await
         .unwrap();
-    let router = market_router(state_over(
-        db.pool.clone(),
-        "http://127.0.0.1",
-        settings,
-        false,
-    ));
+    let state = state_over(db.pool.clone(), "http://127.0.0.1", settings, false);
+    let router = market_router(state.clone());
     expected.sort();
     for (nets, first, skip) in [
         ("MATIC", 5, 5998),
@@ -660,6 +733,20 @@ async fn deep_sales_pages_keep_equal_timestamps_in_id_order_across_networks() {
         get_json(&router, "/v1/sales?tokenId=1e2").await.0,
         StatusCode::BAD_REQUEST
     );
+    let slots = state.sales_seller_slots.try_acquire_many(2).unwrap();
+    for path in [
+        format!("/v1/sales/summary?seller={BOB}"),
+        format!("/v1/proceeds?seller={BOB}"),
+        format!("/v1/proceeds/summary?seller={BOB}"),
+        format!("/v1/stores/{BOB}/stats"),
+    ] {
+        let (code, busy) = get_json(&router, &path).await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{path} {busy}");
+        assert_eq!(busy["message"], "sales analytics is busy");
+    }
+    let (bought, sold) = crate::market::sale_reads::activity_sales(&state, BOB, 100).await;
+    assert!(bought.is_empty() && sold.is_empty());
+    drop(slots);
     // Aggregates cover every published sale, including a seller beyond the
     // list's 25,000-row paging window on a single network.
     sqlx::query(
@@ -679,6 +766,16 @@ async fn deep_sales_pages_keep_equal_timestamps_in_id_order_across_networks() {
     // Bulk seeding above runs before autovacuum can collect normal planner statistics.
     for analyze in ["ANALYZE shop.sale_payment", "ANALYZE shop.sale_payout"] {
         sqlx::query(analyze).execute(&db.pool).await.unwrap();
+    }
+    for (skip, total) in [(0, 5_000), (5_500, 25_000)] {
+        let (code, page) = get_json(
+            &router,
+            &format!("/v1/proceeds?seller={BOB}&network=ETHEREUM&first=5&skip={skip}"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{page}");
+        assert_eq!(page["total"], total);
+        assert_eq!(page["data"].as_array().unwrap().len(), 5);
     }
     for (route, count_field, wei_field) in [
         ("/v1/sales/summary", "total", "earnedWei"),

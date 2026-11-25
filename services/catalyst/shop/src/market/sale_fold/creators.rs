@@ -25,10 +25,10 @@ pub(super) async fn write(
     net: ChainNet,
     from: i64,
     to: i64,
-) -> anyhow::Result<Vec<i64>> {
+) -> anyhow::Result<(Vec<i64>, bool)> {
     type Mint = (i64, i32, i32, String, i32);
     if net != ChainNet::Matic {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     }
     let mints: Vec<Mint> = sqlx::query_as(
         "WITH pending AS (
@@ -148,6 +148,8 @@ pub(super) async fn write(
                (e.network,e.block_number,e.log_index) AND a.seller IS NULL)")
         .bind(net.db_name()).bind(mints.iter().map(|m| m.0).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>())
         .bind(from).bind(to).execute(&mut *c).await?;
-    Ok(sqlx::query_scalar("SELECT DISTINCT block_time/86400*86400 FROM shop.sale_execution WHERE network=$1 AND block_number=ANY($2)")
-        .bind(net.db_name()).bind(days.into_iter().collect::<Vec<_>>()).fetch_all(&mut *c).await?)
+    let corrected_prefix = days.first().is_some_and(|block| *block <= from);
+    let days = sqlx::query_scalar("SELECT DISTINCT block_time/86400*86400 FROM shop.sale_execution WHERE network=$1 AND block_number=ANY($2)")
+        .bind(net.db_name()).bind(days.into_iter().collect::<Vec<_>>()).fetch_all(&mut *c).await?;
+    Ok((days, corrected_prefix))
 }

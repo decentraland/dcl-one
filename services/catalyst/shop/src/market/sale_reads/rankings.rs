@@ -15,7 +15,7 @@ pub(in crate::market) async fn item_rankings(
     use crate::market::rankings::{RankingEntity, RankingResponse, RankingsSortBy};
 
     let (mut snap, nets) = snapshot(state, None).await?;
-    let items = require_metadata(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
+    let items = require_metadata(&mut snap, nets, "items", Source::ItemsMirror).await?;
     let key = format!(
         "published-items-rank/{entity:?}/{filters:?}/{:?}/{items:?}",
         snap.generations
@@ -55,7 +55,7 @@ pub(in crate::market) async fn collector_rankings(
 ) -> Result<crate::market::rankings::RankingResponse, Response> {
     use crate::market::rankings::{RankingResponse, RankingsSortBy};
     let (mut snap, nets) = snapshot(state, None).await?;
-    let items = require_metadata(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
+    let items = require_metadata(&mut snap, nets, "items", Source::ItemsMirror).await?;
     let key = format!(
         "published-collector-rank/{filters:?}/{:?}/{items:?}",
         snap.generations
@@ -96,8 +96,7 @@ pub(in crate::market) async fn creator_rankings(
     use crate::market::rankings::{CreatorRank, RankingResponse, RankingsSortBy};
     let (mut snap, nets) = snapshot(state, None).await?;
     let dependencies = if filters.from == 0 {
-        let items =
-            require_metadata(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
+        let items = require_metadata(&mut snap, nets, "items", Source::ItemsMirror).await?;
         Some((items, require_collections(state, &mut snap).await?))
     } else {
         None

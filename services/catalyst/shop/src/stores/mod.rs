@@ -238,11 +238,12 @@ pub async fn store_stats(
     filters: &SalesSummaryFilters,
 ) -> Result<StoreStats, Response> {
     let seller = filters.seller.to_lowercase();
+    let _slot = crate::market::sale_reads::seller_slot(state)?;
     let (mut snapshot, nets) = crate::market::sale_reads::snapshot(state, None).await?;
     let crate::market::sale_reads::SellerStats { summary, window } =
         crate::market::sale_reads::seller_stats(&mut snapshot, nets, filters).await?;
     crate::market::sale_reads::require_metadata(
-        &mut snapshot.transaction,
+        &mut snapshot,
         nets,
         "collections",
         crate::market::Source::CollectionsMirror,
@@ -318,6 +319,7 @@ pub async fn store_stats(
             crate::market::wire::bn_add(&sum, &i.earned_wei)
         });
     }
+    crate::market::sale_reads::ensure_fresh(snapshot.expires_at)?;
     Ok(StoreStats {
         owner: seller,
         from: filters.from,

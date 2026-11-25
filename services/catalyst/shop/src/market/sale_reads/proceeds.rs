@@ -15,6 +15,7 @@ pub(crate) async fn proceeds_page(
     f: &ProceedsFilters,
 ) -> Result<(Vec<ProceedsRow>, i64), Response> {
     let (first, skip) = readers::deep_page(f.first, f.skip, 24)?;
+    let _slot = seller_slot(state)?;
     let (mut snap, nets) = snapshot(state, f.network).await?;
     let (total, incomplete, rows): (i64, bool, Value) = sales_query!(
         nets, wallet "$7";
@@ -27,6 +28,7 @@ pub(crate) async fn proceeds_page(
     .bind(f.to)
     .bind(first)
     .bind(skip)
+    .bind(readers::count_cap(first, skip))
     .fetch_one(&mut *snap.transaction)
     .await
     .map_err(db_error)?;
@@ -36,6 +38,7 @@ pub(crate) async fn proceeds_page(
             "the requested proceeds lack a proven seller or payment split",
         ));
     }
+    ensure_fresh(snap.expires_at)?;
     let rows: Vec<PaidSale> = serde_json::from_value(rows).map_err(db_error)?;
     Ok((
         rows.into_iter()
@@ -86,8 +89,9 @@ pub(crate) async fn proceeds_summary(
     state: &MarketplaceState,
     f: &ProceedsFilters,
 ) -> Result<ProceedsSummary, Response> {
+    let _slot = seller_slot(state)?;
     let (mut snap, nets) = snapshot(state, f.network).await?;
-    require_metadata(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
+    require_metadata(&mut snap, nets, "items", Source::ItemsMirror).await?;
     let r: Totals = sales_query!(
         nets, wallet "$7";
         "settled_sales.sql",
@@ -106,6 +110,7 @@ pub(crate) async fn proceeds_summary(
             "the requested proceeds lack a proven seller or payment split",
         ));
     }
+    ensure_fresh(snap.expires_at)?;
     Ok(ProceedsSummary {
         seller: f.seller.clone(),
         from: f.from,

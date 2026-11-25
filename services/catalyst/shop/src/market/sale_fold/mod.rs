@@ -236,6 +236,7 @@ async fn inputs(
 pub struct SalesSnapshot {
     pub transaction: Transaction<'static, Postgres>,
     pub expires_at: DateTime<Utc>,
+    /// Identity of the published history, stable across append-only advances.
     pub generations: Vec<(ChainNet, Uuid)>,
 }
 
@@ -501,8 +502,11 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         repair_ids(&mut tx, net, from).await?;
     }
     write_rows(&mut tx, net, from, to).await?;
-    days.extend(creators::write(&mut tx, rpc, net, from, to).await?);
-    days.extend(settlements::write(&mut tx, rpc, net, from, to).await?);
+    let (creator_days, corrected_creators) = creators::write(&mut tx, rpc, net, from, to).await?;
+    let (payment_days, corrected_payments) =
+        settlements::write(&mut tx, rpc, net, from, to).await?;
+    days.extend(creator_days);
+    days.extend(payment_days);
     let upgrading_rollups = previous
         .as_ref()
         .is_some_and(|m| matches!(m.input_version, 1 | 2));
@@ -525,18 +529,21 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     days.dedup();
     // These checkout providers take custody before delivery. Preserve the
     // immediate beneficiary and the payment sender alongside the public buyer.
-    sqlx::query("WITH delivered AS (
+    let corrected_buyers: bool = sqlx::query_scalar("WITH delivered AS (
         SELECT a.block_number,a.log_index,a.ordinal,
           (SELECT n.to_address FROM shop.nft_event n WHERE n.network=a.network AND n.contract_address=a.contract_address
             AND n.token_id=a.token_id AND n.block_number=a.block_number AND n.kind='transfer'
             AND n.from_address=a.beneficiary AND n.log_index>a.log_index ORDER BY n.log_index LIMIT 1) AS recipient
         FROM shop.sale_asset a JOIN shop.sale_execution e USING(network,block_number,log_index)
-        WHERE a.network=$1 AND e.block_time/86400*86400=ANY($2) AND a.beneficiary=ANY($3))
-        UPDATE shop.sale_asset a SET buyer=d.recipient FROM delivered d WHERE a.network=$1
-          AND (a.block_number,a.log_index,a.ordinal)=(d.block_number,d.log_index,d.ordinal)
-          AND d.recipient IS NOT NULL AND a.buyer IS DISTINCT FROM d.recipient")
+        WHERE a.network=$1 AND e.block_time/86400*86400=ANY($2) AND a.beneficiary=ANY($3)),
+        updated AS (
+            UPDATE shop.sale_asset a SET buyer=d.recipient FROM delivered d WHERE a.network=$1
+              AND (a.block_number,a.log_index,a.ordinal)=(d.block_number,d.log_index,d.ordinal)
+              AND d.recipient IS NOT NULL AND a.buyer IS DISTINCT FROM d.recipient
+            RETURNING a.block_number)
+        SELECT EXISTS(SELECT FROM updated WHERE block_number<=$4)")
         .bind(net.db_name()).bind(&days).bind(&["0xed038688ecf1193f8d9717eb3930f0bf0d745cb4","0xea749fd6ba492dbc14c24fe8a3d08769229b896c"][..])
-        .execute(&mut *tx).await?;
+        .bind(from).fetch_one(&mut *tx).await?;
     if !days.is_empty() {
         // A later receipt can replace the checkout provider with the recipient.
         // The old buyer may still have a later purchase of the same item.
@@ -635,13 +642,21 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
              ON CONFLICT(network,contract_address) DO UPDATE SET backfill_from_block=excluded.backfill_from_block
              WHERE s.backfill_from_block<>excluded.backfill_from_block").bind(net.db_name()).execute(&mut *tx).await?;
     }
+    // Cached reads may lag an append by their TTL. Changes within that
+    // prefix and a newly restored publication invalidate those results.
+    let replace_generation = !same_history
+        || upgrading_rollups
+        || corrected_creators
+        || corrected_payments
+        || corrected_buyers
+        || (previously_published.is_none() && published_at.is_some());
     sqlx::query("INSERT INTO shop.sale_publication (network,block_number,block_hash,input_version,input_epochs,input_revisions,late_collections,published_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (network) DO UPDATE SET block_number=EXCLUDED.block_number,
         generation=CASE WHEN $9 THEN EXCLUDED.generation ELSE sale_publication.generation END,
         block_hash=EXCLUDED.block_hash,input_version=EXCLUDED.input_version,input_epochs=EXCLUDED.input_epochs,
         input_revisions=EXCLUDED.input_revisions,late_collections=EXCLUDED.late_collections,published_at=EXCLUDED.published_at")
         .bind(net.db_name()).bind(to).bind(hash).bind(PUBLICATION_VERSION).bind(start.epochs()).bind(start.revisions())
-        .bind(start.late_collections).bind(published_at).bind(upgrading_rollups || !same_history || from!=to || !days.is_empty()).execute(&mut *tx).await?;
+        .bind(start.late_collections).bind(published_at).bind(replace_generation).execute(&mut *tx).await?;
     if !days.is_empty() {
         let unknown: i64 = sqlx::query_scalar(concat!(
             include_str!("../sale_reads/seller_evidence.sql"),

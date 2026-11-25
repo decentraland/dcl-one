@@ -1,6 +1,6 @@
 //! Marketplace sales served from a common published prefix of the requested chains.
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::Value;
 use sqlx::types::Json;
 use std::collections::BTreeMap;
@@ -72,19 +72,34 @@ where
     let value = if let Some(value) = state.readers.fresh(ttl, &key) {
         value
     } else {
+        // A cold request already holds a read transaction. Bound the number
+        // that can wait for another request's cache fill as well as leaders.
         let _slot = read_slot(slots)?;
         readers::memoized(state, ttl, key, || async {
-            serde_json::to_value(fetch.await?).map_err(db_error)
+            let result = fetch.await?;
+            ensure_fresh(expires_at)?;
+            serde_json::to_value(result).map_err(db_error)
         })
         .await?
     };
+    ensure_fresh(expires_at)?;
+    serde_json::from_value(value.as_ref().clone()).map_err(db_error)
+}
+
+pub(crate) fn ensure_fresh(expires_at: DateTime<Utc>) -> Result<(), Response> {
     if Utc::now() > expires_at {
         return Err(unavailable(
             Source::SalesIndex,
             "the sales publication expired during the read",
         ));
     }
-    serde_json::from_value(value.as_ref().clone()).map_err(db_error)
+    Ok(())
+}
+
+pub(crate) fn seller_slot(
+    state: &MarketplaceState,
+) -> Result<tokio::sync::SemaphorePermit<'_>, Response> {
+    read_slot(&state.sales_seller_slots)
 }
 
 pub(crate) async fn snapshot(
@@ -118,12 +133,13 @@ pub(crate) async fn snapshot(
 }
 
 pub(crate) async fn require_metadata(
-    tx: &mut sqlx::PgConnection,
+    snap: &mut sale_fold::SalesSnapshot,
     nets: &[ChainNet],
     mirror: &'static str,
     source: Source,
 ) -> Result<Vec<String>, Response> {
-    let proofs: Vec<(bool, Option<String>)> = sqlx::query_as(
+    let now = Utc::now();
+    let proofs: Vec<(bool, Option<String>, Option<NaiveDateTime>)> = sqlx::query_as(
         "SELECT projection.owned_at IS NOT NULL,
            CASE WHEN projection.owned_at IS NOT NULL THEN
              CASE WHEN projection.pending=0 AND projection.projected_through>=sales.block_number
@@ -131,21 +147,29 @@ pub(crate) async fn require_metadata(
                         AND walk.chain_id=CASE WHEN sales.network='matic' THEN 137 ELSE 1 END
                         AND walk.folded_at BETWEEN $3 AND $4
                         AND walk.diverged_at IS NULL AND walk.quarantined_at IS NULL
-                        AND walk.rebuild_requested_at IS NULL THEN 'index:'||projection.generation END
-           ELSE 'mirror:'||copy.last_complete_pass_at END AS proof
+                        AND walk.rebuild_requested_at IS NULL THEN concat('index:', projection.owned_at,
+                            '/',walk.sale_input_epoch,'/',walk.sale_history_revision,'/',coalesce(collection.epoch,0)) END
+           ELSE 'mirror:'||copy.last_complete_pass_at END AS proof,
+           CASE WHEN projection.owned_at IS NOT NULL THEN walk.folded_at END
          FROM shop.sale_publication sales
          LEFT JOIN shop.collection_projection projection USING(network)
+         LEFT JOIN shop.collection_walk collection USING(network)
          LEFT JOIN shop.chain_cursor walk ON walk.network=sales.network AND walk.indexer='collections'
          LEFT JOIN shop.mirror_state copy ON copy.network=sales.network AND copy.mirror=$1
          WHERE sales.network=ANY($2)
          ORDER BY sales.network",
     )
     .bind(mirror).bind(nets.iter().map(|n|n.db_name()).collect::<Vec<_>>())
-    .bind((Utc::now()-super::chain_walk::READY_WINDOW).naive_utc()).bind(Utc::now().naive_utc())
-    .fetch_all(tx).await.map_err(db_error)?;
+    .bind((now-super::chain_walk::READY_WINDOW).naive_utc()).bind(now.naive_utc())
+    .fetch_all(&mut *snap.transaction).await.map_err(db_error)?;
     proofs
         .into_iter()
-        .map(|(native, proof)| {
+        .map(|(native, proof, folded_at)| {
+            if let Some(folded_at) = folded_at {
+                snap.expires_at = snap
+                    .expires_at
+                    .min(folded_at.and_utc() + super::chain_walk::READY_WINDOW);
+            }
             proof.ok_or_else(|| {
                 if native {
                     unavailable(
@@ -166,7 +190,7 @@ pub(crate) async fn require_metadata(
 async fn require_collections(
     state: &MarketplaceState,
     snap: &mut sale_fold::SalesSnapshot,
-) -> Result<super::chain_walk::Cursor, Response> {
+) -> Result<String, Response> {
     require_polygon_cursor(
         snap,
         super::chain_walk::INDEXER_COLLECTIONS,
@@ -183,35 +207,34 @@ async fn require_polygon_cursor(
     start_block: u64,
     enabled: bool,
     source: Source,
-) -> Result<super::chain_walk::Cursor, Response> {
+) -> Result<String, Response> {
     use super::chain_walk;
     if !enabled {
         return Err(unavailable(source, "the Polygon index is disabled"));
     }
-    let cursor = chain_walk::cursor(&mut *snap.transaction, indexer, ChainNet::Matic)
-        .await
-        .map_err(db_error)?;
-    let (height, hash): (i64, String) = sqlx::query_as(
-        "SELECT block_number,block_hash FROM shop.sale_publication WHERE network='matic'",
+    let now = Utc::now();
+    let (identity, folded_at): (String, NaiveDateTime) = sqlx::query_as(
+        "SELECT concat(c.sale_input_epoch,'/',c.sale_history_revision,'/',coalesce(w.epoch,0)), c.folded_at
+         FROM shop.sale_publication p JOIN shop.chain_cursor c USING(network)
+         LEFT JOIN shop.collection_walk w ON w.network=c.network AND c.indexer='collections'
+         WHERE p.network='matic' AND c.indexer=$1 AND c.chain_id=137 AND c.full_history
+           AND c.start_block<=$2 AND c.folded_at BETWEEN $3 AND $4
+           AND c.folded_block BETWEEN p.block_number AND c.last_block
+           AND c.diverged_at IS NULL AND c.quarantined_at IS NULL AND c.rebuild_requested_at IS NULL
+           AND c.last_block_hash IS NOT NULL AND (c.last_block>p.block_number OR c.last_block_hash=p.block_hash)",
     )
-    .fetch_one(&mut *snap.transaction)
+    .bind(indexer)
+    .bind(start_block as i64)
+    .bind((now - chain_walk::READY_WINDOW).naive_utc())
+    .bind(now.naive_utc())
+    .fetch_optional(&mut *snap.transaction)
     .await
-    .map_err(db_error)?;
-    let cursor = cursor.filter(|c| {
-        chain_walk::is_ready_on(c, 137, Utc::now())
-            && c.start_block <= start_block as i64
-            && c.diverged_at.is_none()
-            && c.rebuild_requested_at.is_none()
-            && c.last_block_hash.is_some()
-            && c.last_block >= height
-            && (c.last_block != height || c.last_block_hash.as_deref() == Some(hash.as_str()))
-    });
-    cursor.ok_or_else(|| {
-        unavailable(
-            source,
-            "the Polygon index does not cover the published sales",
-        )
-    })
+    .map_err(db_error)?
+    .ok_or_else(|| unavailable(source, "the Polygon index does not cover the published sales"))?;
+    snap.expires_at = snap
+        .expires_at
+        .min(folded_at.and_utc() + chain_walk::READY_WINDOW);
+    Ok(identity)
 }
 
 pub(crate) struct SellerStats {
@@ -247,7 +270,7 @@ pub(crate) async fn seller_stats(
     f: &super::sales::SalesSummaryFilters,
 ) -> Result<SellerStats, Response> {
     use super::sales::{SalesSummary, SalesSummaryItem, SalesSummaryRoyalties};
-    require_metadata(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
+    require_metadata(snap, nets, "items", Source::ItemsMirror).await?;
     let row: SellerTotals = sales_query!(nets, wallet "$7"; "summary.sql")
         .bind(f.seller.to_lowercase())
         .bind(f.from)
@@ -274,6 +297,7 @@ pub(crate) async fn seller_stats(
             sold_lifetime: i.lifetime,
         });
     }
+    ensure_fresh(snap.expires_at)?;
     Ok(SellerStats {
         summary: SalesSummary {
             total: row.total,
@@ -317,7 +341,7 @@ pub(super) async fn list(
         .iter()
         .any(|c| matches!(c.as_str(), "wearable" | "emote"))
     {
-        require_metadata(&mut snap.transaction, nets, "items", Source::ItemsMirror).await?;
+        require_metadata(&mut snap, nets, "items", Source::ItemsMirror).await?;
     }
     sale_page(&mut snap, nets, f, first, skip, false).await
 }
@@ -327,6 +351,9 @@ pub(super) async fn activity_sales(
     address: &str,
     limit: i64,
 ) -> (Vec<Sale>, Vec<Sale>) {
+    let Ok(_slot) = seller_slot(state) else {
+        return (Vec::new(), Vec::new());
+    };
     let Ok((mut snap, nets)) = snapshot(state, None).await else {
         return (Vec::new(), Vec::new());
     };
@@ -397,8 +424,11 @@ async fn sale_page(
         .bind(&f.contract_address)
         .bind(&f.item_id)
         .bind(&f.token_id)
-        .bind(f.from.map(|t| t / 1000))
-        .bind(f.to.map(|t| t / 1000))
+        .bind(
+            f.from
+                .map(|t| t.div_euclid(1000) + i64::from(t.rem_euclid(1000) != 0)),
+        )
+        .bind(f.to.map(|t| t.div_euclid(1000)))
         .bind(&f.min_price)
         .bind(&f.max_price)
         .bind(&f.categories)
@@ -417,6 +447,7 @@ async fn sale_page(
             "the requested sales are missing asset or seller evidence",
         ));
     }
+    ensure_fresh(snap.expires_at)?;
     Ok((serde_json::from_value(rows).map_err(db_error)?, total))
 }
 
