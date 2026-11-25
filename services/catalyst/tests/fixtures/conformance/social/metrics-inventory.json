@@ -233,7 +233,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/limits.rs",
-          "line": 286,
+          "line": 287,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -254,7 +254,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/limits.rs",
-          "line": 305,
+          "line": 306,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -544,7 +544,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 163,
+          "line": 165,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -575,7 +575,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 165,
+          "line": 167,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -606,7 +606,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 156,
+          "line": 158,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -637,7 +637,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 193,
+          "line": 195,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -658,7 +658,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 214,
+          "line": 216,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -1043,14 +1043,14 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/limits.rs",
-          "line": 145,
+          "line": 146,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
         },
         {
           "path": "services/catalyst/social/src/rpc/limits.rs",
-          "line": 151,
+          "line": 152,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
