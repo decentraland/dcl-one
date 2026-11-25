@@ -24,6 +24,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+use super::metrics;
 use super::pointer_changes::{self, PointerChangesOptions, ScheduleTarget};
 use super::repository::{LiveDeploymentRepository, LiveProcessedSnapshotStore};
 use super::snapshots::{self, SnapshotScheduling};
@@ -265,6 +266,7 @@ impl SyncOrchestrator {
                 }
                 false
             });
+            report_phases(&servers);
             let mut urls: Vec<String> = servers.keys().cloned().collect();
             urls.sort();
             self.inner.deployer.set_peers(urls).await;
@@ -340,6 +342,7 @@ impl SyncOrchestrator {
                 self.inner.deployer.cancel_pending();
             }
         }
+        metrics::server_phases(0, 0, 0);
         tasks.stopped = true;
     }
 
@@ -891,6 +894,7 @@ impl SyncOrchestratorRefs {
                     state.phase = ServerPhase::BootstrappingSnapshots;
                 }
             }
+            report_phases(&servers);
         }
 
         info!("Phase 4: Bootstrap profiles from snapshots");
@@ -1075,7 +1079,10 @@ impl SyncOrchestratorRefs {
 
         let pass: Vec<(String, HashSet<String>, Arc<DeploymentReport>)> = snapshots_to_process
             .into_iter()
-            .map(|(hash, servers)| (hash, servers, Arc::new(DeploymentReport::default())))
+            .map(|(hash, servers)| {
+                let report = DeploymentReport::new(metrics::SyncSource::snapshots());
+                (hash, servers, Arc::new(report))
+            })
             .collect();
         let failed_hashes = StdMutex::new(HashSet::<String>::new());
 
@@ -1189,6 +1196,7 @@ impl SyncOrchestratorRefs {
                 .mark_processed_many(&to_mark, self.config.entity_types.as_ref()),
         )
         .await??;
+        metrics::snapshots_processed("saved", to_mark.len() as u64);
         if !to_mark.is_empty() {
             let mut failed_global = self.failed_snapshot_hashes.lock().unwrap();
             let mut clean_unmarked = self.unmarked_clean_snapshots.lock().unwrap();
@@ -1224,6 +1232,7 @@ impl SyncOrchestratorRefs {
                     advanced.push((url.clone(), state.last_snapshot_timestamp));
                 }
             }
+            report_phases(&servers);
         }
 
         if mark_processed {
@@ -1285,7 +1294,9 @@ impl SyncOrchestratorRefs {
                 };
                 let progress = AtomicI64::new(from_timestamp);
                 let settled_polls = AtomicU64::new(0);
-                let report = Arc::new(DeploymentReport::default());
+                let report = Arc::new(DeploymentReport::new(metrics::SyncSource::pointer_changes(
+                    server,
+                )));
                 let pass = pointer_changes::deploy_entities_from_pointer_changes(
                     &self.http_client,
                     server,
@@ -1328,6 +1339,7 @@ impl SyncOrchestratorRefs {
                         state.phase = ServerPhase::Syncing;
                     }
                 }
+                report_phases(&servers);
             })
             .await;
 
@@ -1363,9 +1375,12 @@ impl SyncOrchestratorRefs {
                         entity_type_filter: cfg.entity_types.as_ref(),
                     };
                     let progress = AtomicI64::new(from_timestamp);
-                    let report = Arc::new(DeploymentReport::default());
+                    let report = Arc::new(DeploymentReport::new(
+                        metrics::SyncSource::pointer_changes(&server),
+                    ));
                     let settled_polls = AtomicU64::new(0);
                     let run_started = tokio::time::Instant::now();
+                    metrics::stream_connected(&server);
                     let stream = pointer_changes::deploy_entities_from_pointer_changes(
                         &refs.http_client,
                         &server,
@@ -1394,6 +1409,7 @@ impl SyncOrchestratorRefs {
                         Ok(_) => false,
                         Err(e) => {
                             error!(server = %server, error = %e, "Sync stream failed");
+                            metrics::stream_failed(&server);
                             true
                         }
                     };
@@ -1515,6 +1531,16 @@ fn apply_snapshot_fetch(
         entry.0.push(snap);
         entry.1.insert(server.to_string());
     }
+}
+
+/// The peers in each phase, for the `dcl_bootstrapping_servers` and `dcl_syncing_servers` gauges.
+fn report_phases(servers: &HashMap<String, ServerState>) {
+    let count = |phase| servers.values().filter(|s| s.phase == phase).count();
+    metrics::server_phases(
+        count(ServerPhase::BootstrappingSnapshots),
+        count(ServerPhase::BootstrappingPointerChanges),
+        count(ServerPhase::Syncing),
+    );
 }
 
 /// Its OWN persisted cursor, even when that lags the global frontier, and zero for a server with
