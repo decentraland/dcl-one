@@ -818,7 +818,15 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
             .await
             .context("reading the snapshot's clock")?;
         let expected = stored_revision(&mut *snapshot.tx).await?;
-        let land_rows = build::read_land(&mut snapshot.tx, &land_registry, &estate_registry).await?;
+        // A ready cursor has folded (`indexer::observation_ready`).
+        let folded_block = snapshot.cursor.folded_block.unwrap_or(-1);
+        let land_rows = build::read_land(
+            &mut snapshot.tx,
+            &land_registry,
+            &estate_registry,
+            folded_block,
+        )
+        .await?;
         let listings = match market
             .snapshot(&mut snapshot.tx, chain_id, &land_registry, &estate_registry, now)
             .await
@@ -883,8 +891,14 @@ async fn publish(
             stamp: expected.as_ref().map_or(0, |r| r.stamp),
             etag: Some(digest_hex),
         };
-        if confirm_current(state, ctx, &current, now.naive_utc()).await? {
-            *state.map.confirmed.lock() = Some(current);
+        // A failed record of the check is bookkeeping, not a failed pass:
+        // the inputs matched the stored body, as `Watcher::tick` treats it.
+        match confirm_current(state, ctx, &current, now.naive_utc()).await {
+            Ok(true) => *state.map.confirmed.lock() = Some(current),
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "recording the map grid checked failed")
+            }
         }
         return Ok(served(state));
     }

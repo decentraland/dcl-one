@@ -1,5 +1,5 @@
-// The parcel map's age label, shared by every map drawn from the map API's grid: the Explorer's map
-// page (here) and the Shop's LAND pages (ui3's `MapGridAge`).
+// The parcel map's age label on the Explorer's map page. The Shop's LAND pages read the same age
+// through TanStack Query (ui3's `MapGridAge`); both use explorer-core's `gridAge`.
 
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { fetchMapGridAge, mapGridAgeLabel, MAP_GRID_AGE_POLL_MS, type MapGridAge } from '@explorer-core/features/map/gridAge'

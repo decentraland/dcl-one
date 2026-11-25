@@ -590,7 +590,7 @@ FROM land_authz.token_right e
 LEFT JOIN land_authz.authz_event ee ON ee.block_number = e.updated_block AND ee.log_index = e.updated_log
 LEFT JOIN LATERAL (
     SELECT dd.name FROM land_authz.estate_data_event dd
-    WHERE dd.token_address = e.token_address AND dd.estate_id = e.token_id
+    WHERE dd.token_address = e.token_address AND dd.estate_id = e.token_id AND dd.block_number <= $2
     ORDER BY dd.block_number DESC, dd.log_index DESC LIMIT 1
 ) d ON true
 WHERE e.token_address = $1
@@ -598,11 +598,15 @@ WHERE e.token_address = $1
 
 /// Every LAND token of `land_registry` and every estate of
 /// `estate_registry` holding one, on `conn`: the published snapshot of the
-/// land-authz index (`indexer::ready_snapshot`).
+/// land-authz index (`indexer::ready_snapshot`). Estate names come from the
+/// newest document at or before `folded_block`, the snapshot cursor's
+/// published block, as the marks read them ([`LAND_MARKS_SQL`]): a
+/// document the walk committed past the fold shows once it is folded.
 pub async fn read_land(
     conn: &mut PgConnection,
     land_registry: &str,
     estate_registry: &str,
+    folded_block: i64,
 ) -> anyhow::Result<LandSnapshot> {
     use anyhow::Context as _;
     let lands: Vec<LandRow> = sqlx::query_as(LANDS_SQL)
@@ -612,6 +616,7 @@ pub async fn read_land(
         .context("reading the LAND tokens")?;
     let estates: Vec<EstateRead> = sqlx::query_as(ESTATES_SQL)
         .bind(estate_registry)
+        .bind(folded_block)
         .fetch_all(&mut *conn)
         .await
         .context("reading the estates")?;

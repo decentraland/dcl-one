@@ -3544,6 +3544,76 @@ async fn a_check_never_confirms_land_at_a_clock_after_it_stopped_publishing() {
     db.teardown().await;
 }
 
+/// An Estate name the walk committed past the published fold (an index
+/// that stays ready: no authorization event past it) is not built, as the
+/// marks do not see it either: a pass then builds the same grid. Once the
+/// fold reaches it, the marks move and the grid shows it.
+#[tokio::test]
+async fn an_estate_name_past_the_fold_waits_for_the_fold() {
+    use std::time::Instant;
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let (jobs, ctx) = job_ctx().await;
+    let settings = crate::land_authz::Settings::for_tests();
+    seed_land(&db.pool, &settings).await;
+    publish_land(&db.pool, &settings).await;
+    let node = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    node.state.attach_land_authz(land_authz_on(&db.pool));
+    node.state
+        .attach_land_market(Arc::new(ScriptedLandMarket::default()));
+    let t0 = Instant::now();
+    let mut w = map::Watcher::default();
+    assert_eq!(w.tick(&node.state, &ctx, t0).await, map::Tick::Built);
+    let folded = grid_etag(&db.pool).await;
+
+    sqlx::query(
+        "INSERT INTO land_authz.estate_data_event (block_number, log_index, token_address, estate_id, name) \
+         VALUES (101, 0, $1, 7, 'Renamed')",
+    )
+    .bind(&settings.estate_registry)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE land_authz.index_cursor SET last_block = 101 WHERE network = $1")
+        .bind(&settings.network)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let watched = map::watch_marks(&node.state).await.unwrap().unwrap();
+    assert!(watched.ready, "no authorization event past the fold");
+    assert_ne!(
+        w.tick(&node.state, &ctx, t0 + Duration::from_secs(5)).await,
+        map::Tick::Built,
+        "the marks do not see it"
+    );
+    assert_eq!(
+        w.tick(&node.state, &ctx, t0 + map::SAFETY_INTERVAL).await,
+        map::Tick::Built
+    );
+    assert_eq!(grid_etag(&db.pool).await, folded, "nor does the build");
+
+    sqlx::query("UPDATE land_authz.index_cursor SET folded_block = 101, folded_at = timezone('UTC', now()) WHERE network = $1")
+        .bind(&settings.network)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        w.tick(
+            &node.state,
+            &ctx,
+            t0 + map::SAFETY_INTERVAL + Duration::from_secs(5)
+        )
+        .await,
+        map::Tick::Built,
+        "folding it moves the marks"
+    );
+    assert_ne!(grid_etag(&db.pool).await, folded, "and the grid shows it");
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
 /// A pass that another publisher overtakes (a revision stored after its
 /// snapshot began) leaves nothing current, and the next tick compares the
 /// inputs with the stored revision at once, not after the safety interval.

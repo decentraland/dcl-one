@@ -438,7 +438,7 @@ export default function LandMap({
         </div>
       </div>
 
-      {status != null ? <div className={styles.status}>{status}</div> : null}
+      {status != null ? <div className={`shop-landmap__status ${styles.status}`}>{status}</div> : null}
 
       {withZoomControls ? (
         <div className="shop-landmap__zoom">

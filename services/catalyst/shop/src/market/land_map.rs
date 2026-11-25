@@ -105,18 +105,38 @@ impl From<sqlx::Error> for LandMarketError {
     }
 }
 
-const ORDERS_SQL: &str = "\
-SELECT contract_address, token_id::text AS token_id, status = 'open' AS open, seller, price::text AS price,
-       expires_at, created_at, updated_at
-FROM shop.nft_order
-WHERE network = 'ethereum' AND contract_address = ANY($1)";
+/// The `shop.nft_order` rows the build reads: the registries `contracts_p`'
+/// legacy orders on Ethereum. [`marks_sql`] counts and positions the same
+/// rows.
+fn orders_filter(contracts_p: &str) -> String {
+    format!("network = 'ethereum' AND contract_address = ANY({contracts_p})")
+}
 
-const DATA_SQL: &str = "\
-SELECT d.token_address, d.token_id::text AS token_id, d.name, e.block_time
-FROM shop.land_data d
-LEFT JOIN shop.nft_event e
-  ON e.network = 'ethereum' AND e.block_number = d.updated_block AND e.log_index = d.updated_log
-WHERE d.token_address = ANY($1)";
+/// The `shop.land_data` rows (as `alias`) the build reads: the registries
+/// `contracts_p`' names. [`marks_sql`] counts and positions the same rows.
+fn data_filter(alias: &str, contracts_p: &str) -> String {
+    format!("{alias}.token_address = ANY({contracts_p})")
+}
+
+fn orders_sql() -> String {
+    format!(
+        "SELECT contract_address, token_id::text AS token_id, status = 'open' AS open, seller, price::text AS price, \
+                expires_at, created_at, updated_at \
+         FROM shop.nft_order WHERE {}",
+        orders_filter("$1")
+    )
+}
+
+fn data_sql() -> String {
+    format!(
+        "SELECT d.token_address, d.token_id::text AS token_id, d.name, e.block_time \
+         FROM shop.land_data d \
+         LEFT JOIN shop.nft_event e \
+           ON e.network = 'ethereum' AND e.block_number = d.updated_block AND e.log_index = d.updated_log \
+         WHERE {}",
+        data_filter("d", "$1")
+    )
+}
 
 /// The open, unexpired rental listings of the registries `contracts_p` at
 /// `now_p` signed for chain `chain_p` and its Rentals contract `venue_p`, with
@@ -158,11 +178,13 @@ fn trades_sql() -> String {
     )
 }
 
-/// The hex SHA-256 of the rows of `rows_sql` (a subquery), in the order
-/// `order_by` (its unique key), as text: equal digests, equal rows.
+/// The hex SHA-256 of the rows of `rows_sql` (a subquery), as text, ordered
+/// by `order_by` and then by the whole row: a total order, so equal rows
+/// give equal digests whatever plan reads them (a trade has a row per
+/// asset, so its `id` alone ties).
 fn rows_digest(rows_sql: &str, order_by: &str) -> String {
     format!(
-        "(SELECT encode(sha256(convert_to(coalesce(string_agg(x::text, ',' ORDER BY {order_by}), ''), 'UTF8')), 'hex') \
+        "(SELECT encode(sha256(convert_to(coalesce(string_agg(x::text, ',' ORDER BY {order_by}, x::text), ''), 'UTF8')), 'hex') \
           FROM ({rows_sql}) x)"
     )
 }
@@ -199,16 +221,18 @@ fn marks_sql() -> String {
            concat_ws('|', \
              EXISTS (SELECT 1 FROM shop.chain_cursor c WHERE c.indexer = 'trade_events' AND c.network = 'ethereum' AND {verdicts_ready}), \
              coalesce((SELECT c.reorg_rewinds || '.' || c.rebuilds FROM shop.chain_cursor c WHERE c.indexer = 'nft' AND c.network = 'ethereum'), '-'), \
-             (SELECT count(*) FILTER (WHERE status = 'open' AND floor((expires_at::numeric + 500) / 1000) > $2) FROM shop.nft_order WHERE network = 'ethereum' AND contract_address = ANY($3)), \
-             coalesce((SELECT updated_block || '.' || updated_log FROM shop.nft_order WHERE network = 'ethereum' AND contract_address = ANY($3) \
+             (SELECT count(*) FILTER (WHERE status = 'open' AND floor((expires_at::numeric + 500) / 1000) > $2) FROM shop.nft_order WHERE {orders}), \
+             coalesce((SELECT updated_block || '.' || updated_log FROM shop.nft_order WHERE {orders} \
                        ORDER BY updated_block DESC, updated_log DESC LIMIT 1), '-'), \
-             (SELECT count(*) FROM shop.land_data WHERE token_address = ANY($3)), \
-             coalesce((SELECT updated_block || '.' || updated_log FROM shop.land_data WHERE token_address = ANY($3) \
-                       ORDER BY updated_block DESC, updated_log DESC LIMIT 1), '-'), \
+             (SELECT count(*) FROM shop.land_data d WHERE {data}), \
+             coalesce((SELECT d.updated_block || '.' || d.updated_log FROM shop.land_data d WHERE {data} \
+                       ORDER BY d.updated_block DESC, d.updated_log DESC LIMIT 1), '-'), \
              {trades}, \
              {rentals}) AS marks",
         cte = super::catalog::unified_trades_cte_of("$1", "$4", Some("$3")),
         nft_ready = chain_walk::ready_sql("c", "$1"),
+        orders = orders_filter("$3"),
+        data = data_filter("d", "$3"),
         verdicts_ready = super::trade_events::verdicts_ready_sql("c", "$1"),
         trades = rows_digest(
             &format!(
@@ -330,7 +354,7 @@ async fn read(
 ) -> Result<LandMarket, LandMarketError> {
     let contracts = vec![land.to_ascii_lowercase(), estate.to_ascii_lowercase()];
     let naive_now = now.naive_utc();
-    let orders = sqlx::query(ORDERS_SQL)
+    let orders = sqlx::query(sqlx::AssertSqlSafe(orders_sql()))
         .bind(&contracts)
         .fetch_all(&mut *conn)
         .await?
@@ -346,7 +370,7 @@ async fn read(
             updated_at: r.get("updated_at"),
         })
         .collect();
-    let data = sqlx::query(DATA_SQL)
+    let data = sqlx::query(sqlx::AssertSqlSafe(data_sql()))
         .bind(&contracts)
         .fetch_all(&mut *conn)
         .await?

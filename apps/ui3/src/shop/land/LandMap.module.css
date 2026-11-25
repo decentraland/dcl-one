@@ -39,7 +39,8 @@
 }
 
 /* The status slot (the atlas's age), in the corner the zoom buttons, the legend and the land page's
-   filters leave free. */
+   filters leave free. On phones the LAND list's filter bar spans the top edge, so that page hides this
+   slot (`shop-landmap__status`) and shows the age in its bar instead (`lands.css`). */
 .status {
   position: absolute;
   top: 12px;

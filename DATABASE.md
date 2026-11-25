@@ -3223,8 +3223,10 @@ builds it from its own indexes.
   row with coordinates, its `estate_land` row and the `authz_event` row its
   `(updated_block, updated_log)` names, by primary key, for the time of its
   last rights event. Every Estate `token_right` row that holds LAND, with
-  the same event join and the name of its latest `estate_data_event`
-  (`estate_data_event_estate_idx`, one probe per estate).
+  the same event join and the name of its latest `estate_data_event` at or
+  before the snapshot cursor's `folded_block` (`estate_data_event_estate_idx`,
+  one probe per estate), the bound the marks read it with: a document the
+  walk committed past the fold shows once it is folded.
 - **Shop reads** (`shop/src/market/land_map.rs`): the Ethereum
   `shop.nft_order` rows of the LAND and Estate registries, whatever their
   status (primary-key range). The `shop.land_data` rows of both registries,

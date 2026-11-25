@@ -137,6 +137,17 @@ describe('the parcel map age', () => {
     expect(result.current).toBeNull()
   })
 
+  it("measures the age on the server's clock, so a device clock behind still shows a stale grid", async () => {
+    // This device runs ten minutes behind the server, whose grid was checked twelve minutes ago.
+    vi.setSystemTime(NOW - 10 * MINUTE)
+    fetch.mockImplementation(async () =>
+      Response.json({ checkedAt: NOW - 12 * MINUTE }, { headers: { date: new Date(NOW).toUTCString() } })
+    )
+    const { result } = renderHook(() => useMapGridAge(BASE, true))
+    await advance(0)
+    expect(result.current).toBe('Updated 12 min ago')
+  })
+
   it('gives up a read still pending when the next starts, so a late answer never lands', async () => {
     let lateAnswer: (response: Response) => void = () => {}
     fetch.mockImplementationOnce(() => new Promise<Response>((resolve) => (lateAnswer = resolve)))

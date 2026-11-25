@@ -63,6 +63,17 @@ describe('reading the parcel map age', () => {
     expect(mapGridAgeLabel(age!.checkedAt, Date.now()), 'on the device clock alone').toBe('Updated 7 min ago')
   })
 
+  it("measures it on the server's clock as well when this device runs behind", async () => {
+    // This device runs ten minutes behind the server, whose grid was checked twelve minutes ago.
+    vi.useFakeTimers({ now: NOW - 10 * MINUTE })
+    const date = new Date(NOW).toUTCString()
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ checkedAt: NOW - 12 * MINUTE }, { headers: { date } })))
+    const age = await fetchMapGridAge('https://map.test')
+    expect(age).toEqual({ checkedAt: NOW - 12 * MINUTE, skew: 10 * MINUTE })
+    expect(mapGridAgeLabel(age!.checkedAt, Date.now() + age!.skew)).toBe('Updated 12 min ago')
+    expect(mapGridAgeLabel(age!.checkedAt, Date.now()), 'on the device clock alone').toBeNull()
+  })
+
   it('has no age when the answer has no checkedAt', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ lastUpdatedAt: NOW - 600 * MINUTE })))
     await expect(fetchMapGridAge('https://map.test')).resolves.toBeNull()
