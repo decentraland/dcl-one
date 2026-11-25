@@ -1928,6 +1928,7 @@ async fn a_contract_wallet_picks_through_the_eip1654_validator() {
         &pool,
         super::graph::Network::Matic,
         137,
+        false,
         &[mirrors::items::fixture(
             &contract_of(&t, 7),
             "0",
@@ -2148,6 +2149,7 @@ async fn writes_ask_the_contract_and_optional_reads_fail_closed() {
         &pool,
         super::graph::Network::Matic,
         137,
+        false,
         &[mirrors::items::fixture(
             &contract_of(&t, 9),
             "0",
@@ -2381,6 +2383,7 @@ async fn favorites_lists_and_picks_keep_the_old_authorization_and_counting_rules
         &pool,
         super::graph::Network::Matic,
         137,
+        false,
         &[mirrors::items::fixture(
             &contract_of(&t, 1),
             "0",
@@ -4309,6 +4312,185 @@ async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
     db.drop().await;
 }
 
+/// With Polygon taken by the collections index, the mirror skips it (no
+/// page read, no row written) and still walks Ethereum. A hand-back returns
+/// Polygon to the mirror: strict reads wait until its next complete passes,
+/// which leave only the mirror's rows.
+#[tokio::test]
+async fn the_mirror_walks_ethereum_while_the_index_owns_polygon_then_takes_polygon_back() {
+    use super::chain_walk::ChainNet;
+    use super::collections_projection;
+    let (matic, eth) = (FakeGraph::new(), FakeGraph::new());
+    let (matic_url, eth_url) = (
+        serve_graph(matic.clone()).await,
+        serve_graph(eth.clone()).await,
+    );
+    let Some(own) = super::tests::support::OwnDb::create("collections-takeover").await else {
+        return;
+    };
+    let pool = own.pool.clone();
+    let state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings(&matic_url, &eth_url, false),
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    let t = tag();
+    let (mirrored, native, ethereum) = (contract_of(&t, 1), contract_of(&t, 2), contract_of(&t, 3));
+    matic.set(
+        "collections",
+        vec![mirrors::collections::fixture(
+            &mirrored, "Mirrored", CREATOR, true,
+        )],
+    );
+    matic.set(
+        "items",
+        vec![mirrors::items::fixture(
+            &mirrored,
+            "0",
+            "wearable_v2",
+            "Hat",
+        )],
+    );
+    eth.set(
+        "collections",
+        vec![mirrors::collections::fixture(
+            &ethereum, "Ethereum", CREATOR, true,
+        )],
+    );
+    eth.set(
+        "items",
+        vec![mirrors::items::fixture(
+            &ethereum,
+            "0",
+            "wearable_v2",
+            "Mask",
+        )],
+    );
+
+    // The index has taken Polygon: a row the mirror never had stands there.
+    mirrors::collections::upsert(
+        &pool,
+        super::graph::Network::Matic,
+        137,
+        false,
+        &[mirrors::collections::fixture(
+            &native, "Native", CREATOR, true,
+        )],
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.collection_projection (network, owned_at, projected_through, generation) \
+         VALUES ('matic', timezone('UTC', now()), 100, 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let jobs = crate::jobs::Jobs::new();
+    let ctx = job_ctx(&jobs).await;
+    let tick = || async {
+        for mirror in [mirrors::Mirror::Collections, mirrors::Mirror::Items] {
+            mirrors::run_tick(&state, mirror, &ctx).await.unwrap();
+        }
+    };
+    let contracts = |network: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT contract_address FROM shop.collections WHERE network = $1 ORDER BY contract_address",
+            )
+            .bind(network)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    tick().await;
+    assert!(
+        matic.requests.lock().unwrap().is_empty(),
+        "Polygon's pages are not read"
+    );
+    assert_eq!(contracts("matic").await, vec![native.clone()]);
+    assert_eq!(contracts("ethereum").await, vec![ethereum.clone()]);
+    for mirror in [mirrors::Mirror::Collections, mirrors::Mirror::Items] {
+        let pass = mirrors::load(&pool, mirror, super::graph::Network::Ethereum)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(pass.last_complete_pass_at.is_some(), "{pass:?}");
+    }
+
+    assert!(
+        collections_projection::hand_back(&pool, ChainNet::Matic)
+            .await
+            .unwrap()
+    );
+    state.mirror_ready.clear();
+    assert_eq!(contracts("matic").await, Vec::<String>::new());
+    let err = mirrors::require_ready(&state, mirrors::Mirror::Items)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        err.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no Polygon pass yet"
+    );
+    let (owned, generation): (bool, i64) = sqlx::query_as(
+        "SELECT owned_at IS NOT NULL, generation FROM shop.collection_projection WHERE network = 'matic'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((owned, generation), (false, 2));
+
+    tick().await;
+    state.mirror_ready.clear();
+    assert!(
+        mirrors::require_ready(&state, mirrors::Mirror::Items)
+            .await
+            .is_ok()
+    );
+    assert_eq!(
+        contracts("matic").await,
+        vec![mirrored.clone()],
+        "the mirror's rows alone"
+    );
+    let (minters, allowances): (Vec<String>, Vec<String>) = sqlx::query_as(
+        "SELECT minters, minter_allowances::text[] FROM shop.items WHERE network = 'matic'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(minters.is_empty() && allowances.is_empty());
+
+    // A hand-back repeated after its commit went unconfirmed changes nothing.
+    let passes = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM shop.mirror_state WHERE network = 'matic' AND last_complete_pass_at IS NOT NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(passes().await, 2);
+    assert!(
+        !collections_projection::hand_back(&pool, ChainNet::Matic)
+            .await
+            .unwrap()
+    );
+    assert_eq!(contracts("matic").await, vec![mirrored.clone()]);
+    assert_eq!(passes().await, 2);
+    let generation: i64 = sqlx::query_scalar(
+        "SELECT generation FROM shop.collection_projection WHERE network = 'matic'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(generation, 2);
+    own.drop().await;
+}
+
 #[tokio::test]
 async fn land_pages_read_the_published_catalogue_and_enrich_the_same_snapshot() {
     use crate::land_authz::LAND_MAINNET;
@@ -4555,6 +4737,146 @@ async fn land_pages_read_the_published_catalogue_and_enrich_the_same_snapshot() 
         assert!(!std::mem::take(&mut *graph.requests.lock().unwrap()).is_empty());
     }
     drop(walker);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn testnet_collection_and_name_pages_bind_the_mirrored_rows_and_registrar() {
+    use super::nft_index::Catalogue;
+    use crate::chain_index::names::Purpose;
+
+    let Some(db) = super::tests::support::OwnDb::create("testnet_catalogue").await else {
+        return;
+    };
+    let mut settings = Settings::for_tests();
+    settings.eth_network = "sepolia".into();
+    settings.market.indexes.nft_enabled = true;
+    settings.market.indexes.chain_id_ethereum = 11_155_111;
+    settings.market.indexes.chain_id_matic = 80_002;
+    let state = Arc::new(super::MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    let app = market_router(state);
+    let registrar = Catalogue::Testnet.registrar();
+    let wearable = "/v1/nfts?category=wearable&network=MATIC";
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,folded_block,folded_at,full_history)
+      VALUES('nft','ethereum',11155111,1,101,100,now(),true),('nft','matic',80002,1,101,100,now(),true);
+      INSERT INTO shop.collections(network,contract_address,chain_id,name,creator,owner,urn,is_completed,is_approved,is_editable,created_at,updated_at,reviewed_at,mirrored_at,testnet_verified)
+      VALUES('matic','{WALLET_B}',80002,'Amoy collection','{WALLET_A}','{WALLET_A}','urn:decentraland:amoy:collections-v2:{WALLET_B}',true,true,false,1,1,1,now(),true);
+      INSERT INTO shop.items(network,contract_address,item_id,chain_id,item_type,urn,creator,rarity,total_supply,max_supply,available,price,image,name,category,body_shapes,search_is_collection_approved,created_at,updated_at,reviewed_at,mirrored_at,testnet_verified)
+      SELECT 'matic','{WALLET_B}',n,80002,'wearable_v2','urn:decentraland:amoy:collections-v2:{WALLET_B}:'||n,'{WALLET_A}','rare',1,1,0,5,'img','Hat','hat',ARRAY['BaseMale'],true,1,1,1,now(),n=1 FROM generate_series(1,2)n;
+      INSERT INTO shop.nft(network,contract_address,token_id,owner,item_id,issued_id,minted_block,minted_at,transferred_block,transferred_log,transferred_at)
+      SELECT 'matic','{WALLET_B}',n,'{WALLET_A}',n,n,1,1,1,0,1 FROM generate_series(1,2)n;
+      INSERT INTO shop.nft(network,contract_address,token_id,owner,ens_subdomain,minted_block,minted_at,transferred_block,transferred_log,transferred_at)
+      VALUES ('ethereum','{registrar}',8,'{WALLET_A}','testname',1,1,1,0,1)"))).execute(&db.pool).await.unwrap();
+    let (code, out) = get(app.clone(), wearable).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{out}");
+    assert_eq!(out["source"], "items-mirror");
+    sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url,chain_id,last_complete_pass_at,marks_item_rows) VALUES('items','matic','graph',80002,now(),true)").execute(&db.pool).await.unwrap();
+    let (code, out) = get(app.clone(), wearable).await;
+    assert_eq!(code, StatusCode::OK, "{out}");
+    assert_eq!(out["total"], 1, "{out}");
+    assert_eq!(out["data"][0]["nft"]["chainId"], 80002);
+    let (code, out) = get(
+        app,
+        &format!("/v1/nfts?contractAddress={registrar}&tokenId=8"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{out}");
+    assert_eq!(out["data"][0]["nft"]["chainId"], 11155111, "{out}");
+    {
+        let mut conn = db.pool.acquire().await.unwrap();
+        assert!(
+            super::names::check(
+                Catalogue::Testnet,
+                &mut conn,
+                Purpose::Authorize,
+                chrono::Utc::now()
+            )
+            .await
+            .is_ok()
+        );
+        sqlx::query("INSERT INTO shop.nft_event(network,block_number,log_index,block_time,kind,emitter,contract_address,token_id)
+            VALUES('ethereum',101,0,1,'transfer',$1,$1,8)").bind(registrar).execute(&mut *conn).await.unwrap();
+        assert!(
+            super::names::check(
+                Catalogue::Testnet,
+                &mut conn,
+                Purpose::Authorize,
+                chrono::Utc::now()
+            )
+            .await
+            .is_err()
+        );
+    }
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn sepolia_owner_pages_require_the_matching_publications_and_keep_the_wire_owner() {
+    use crate::land_authz::LAND_SEPOLIA;
+    let venue = crate::rentals::index::RentalsChain::Sepolia.venue();
+    let Some(db) = super::tests::support::OwnDb::create("sepolia_local_inventory").await else {
+        return;
+    };
+    let mut settings = Settings::for_tests();
+    settings.eth_network = "sepolia".into();
+    settings.market.indexes.nft_enabled = true;
+    settings.market.indexes.chain_id_ethereum = 11_155_111;
+    settings.market.indexes.chain_id_matic = 80_002;
+    let graph = FakeGraph::new();
+    settings.marketplace_subgraph_url = Some(serve_graph(graph.clone()).await);
+    let state = Arc::new(super::MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    let app = market_router(state);
+    let land = LAND_SEPOLIA.land_registry;
+    let estate = LAND_SEPOLIA.estate_registry;
+    let url = format!("/v1/nfts?category=parcel&owner={WALLET_A}");
+    let run = |sql: String| async {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+    };
+    run(format!("INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started)
+      VALUES ('ethereum-sepolia','{land}','{estate}',35,35,timezone('UTC',now()),true);
+      INSERT INTO land_authz.token_right(token_address,token_id,owner,x,y,updated_block,updated_log)
+      VALUES ('{land}',13,'{venue}',0,13,12,0);
+      INSERT INTO land_authz.authz_event(token_address,token_id,kind,block_number,log_index,block_time,account)
+      VALUES ('{land}',13,'transfer',12,0,100,'{venue}');
+      INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+      VALUES ('nft','ethereum',0,39,35,timezone('UTC',now()),true,1),
+             ('rentals','ethereum',0,40,40,timezone('UTC',now()),true,1);
+      INSERT INTO shop.rental_event(network,rentals_address,kind,contract_address,token_id,block_number,log_index,block_time,signer,tenant,rental_days,price_per_day,is_extension,signature,tx_hash)
+      VALUES ('sepolia','{venue}','rented','{land}',13,12,1,100,'{WALLET_A}','{WALLET_B}',1,1,false,'0x01','0x02')")).await;
+    let request = || get(app.clone(), &url);
+    let (status, page) = request().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{page}");
+    assert_eq!(page["source"], "nft-index");
+    run("UPDATE shop.chain_cursor SET chain_id=11155111 WHERE indexer='nft'".into()).await;
+    for seed in ["", "INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+           VALUES ('rentals_sepolia','ethereum',0,40,30,timezone('UTC',now()),true,11155111)"] {
+        if !seed.is_empty() {run(seed.into()).await;}
+        let (status,page)=request().await;
+        assert_eq!(status,StatusCode::SERVICE_UNAVAILABLE,"{page}");
+        assert_eq!(page["source"],"rentals-index");
+    }
+    run("INSERT INTO shop.worker_progress(worker,scope,position,ceiling) VALUES ('rental_listing_generation',11155111,0,0)".into()).await;
+    let (status, page) = request().await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["total"], 1);
+    let nft = &page["data"][0]["nft"];
+    assert_eq!(nft["owner"], venue);
+    assert_eq!(nft["chainId"], 11155111);
+    let (status, empty) = get(app, "/v1/nfts?category=parcel&network=MATIC").await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert_eq!(empty["total"], 0);
+    assert!(graph.requests.lock().unwrap().is_empty());
     db.drop().await;
 }
 

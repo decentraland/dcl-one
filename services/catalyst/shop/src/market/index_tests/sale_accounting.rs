@@ -161,13 +161,13 @@ async fn ethereum_sales_walk_withdraws_name_fees_on_a_reorg_and_publishes_the_re
     let st = state_over(db.pool.clone(), &url, index_settings(100, 10), false);
     assert!(publish(&st, &url, &ix).await.published);
     assert_eq!(
-        sales_index::status(&db.pool).await["ethereum"]["ready"],
+        sales_index::status(&db.pool, &IndexSettings::default()).await["ethereum"]["ready"],
         true
     );
     chain.fork(block, 0xee, vec![purchase(200)]);
     assert!(pass(&st, &url, &ix).await.reorg_rewound_to.is_some());
     assert_eq!(
-        sales_index::status(&db.pool).await["ethereum"]["ready"],
+        sales_index::status(&db.pool, &IndexSettings::default()).await["ethereum"]["ready"],
         false
     );
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.name_purchase")
@@ -622,7 +622,7 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let s = SalesIndex.start_block();
+    let s = sales_index::POLYGON.start_block();
     let b = s + 10_020;
     seed_collection(
         &db.pool,
@@ -710,7 +710,9 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         .bind(s as i64).bind(tip as i64).bind(&anchor).execute(&db.pool).await.unwrap();
     let source = chain_walk::RpcSource::new(Rpc::at(&st.http, &url));
     assert_eq!(
-        sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
+        sale_history::pending(&db.pool, &sales_index::POLYGON)
+            .await
+            .unwrap(),
         Some(s as i64)
     );
     // Multiple address chunks share one archive budget, even if a later
@@ -728,11 +730,11 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         crate::chain_index::rpc::RpcError::Budget { requests: 1, .. }
     ));
     assert_eq!(chain.get_logs.load(Ordering::SeqCst) - before_reads, 1);
-    let owner = chain_walk::test_owner(&db.pool, &SalesIndex, &settings).await;
+    let owner = chain_walk::test_owner(&db.pool, &sales_index::POLYGON, &settings).await;
     let charged = sale_history::repair(
         &db.pool,
         &source,
-        &SalesIndex,
+        &sales_index::POLYGON,
         &owner,
         Some((tip, &anchor)),
         2,
@@ -742,11 +744,11 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     .unwrap();
     assert_eq!(charged, chain_walk::Spent::default());
     for (expected, calls) in [(Some((s + 10_000) as i64), 0), (None, 5)] {
-        let owner = chain_walk::test_owner(&db.pool, &SalesIndex, &settings).await;
+        let owner = chain_walk::test_owner(&db.pool, &sales_index::POLYGON, &settings).await;
         sale_history::repair(
             &db.pool,
             &source,
-            &SalesIndex,
+            &sales_index::POLYGON,
             &owner,
             Some((tip, &anchor)),
             150,
@@ -755,7 +757,9 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         .await
         .unwrap();
         assert_eq!(
-            sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
+            sale_history::pending(&db.pool, &sales_index::POLYGON)
+                .await
+                .unwrap(),
             expected
         );
         assert_eq!(
@@ -786,14 +790,16 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         .await
         .unwrap();
     assert_eq!(
-        sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
+        sale_history::pending(&db.pool, &sales_index::POLYGON)
+            .await
+            .unwrap(),
         Some(b as i64)
     );
-    let owner = chain_walk::test_owner(&db.pool, &SalesIndex, &settings).await;
+    let owner = chain_walk::test_owner(&db.pool, &sales_index::POLYGON, &settings).await;
     sale_history::repair(
         &db.pool,
         &source,
-        &SalesIndex,
+        &sales_index::POLYGON,
         &owner,
         Some((tip, &anchor)),
         100,
@@ -941,7 +947,9 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
         "both mints preceded the same-block change to DAVE"
     );
     assert_eq!(
-        sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
+        sale_history::pending(&db.pool, &sales_index::POLYGON)
+            .await
+            .unwrap(),
         None
     );
     // Historical discovery behind that attested prefix reopens the line.
@@ -954,7 +962,9 @@ async fn sales_history_repair_resumes_at_the_next_window_and_discovers_store_iss
     .await
     .unwrap();
     assert_eq!(
-        sale_history::pending(&db.pool, &SalesIndex).await.unwrap(),
+        sale_history::pending(&db.pool, &sales_index::POLYGON)
+            .await
+            .unwrap(),
         Some(b as i64)
     );
     assert!(
@@ -1297,7 +1307,7 @@ async fn incomplete_sales_evidence_keeps_the_primary_walk_live_and_the_proof_at_
     settings.sales_enabled = true;
     let enabled = state_over(db.pool.clone(), &url, settings, false);
     let nft = NftIndex::new(net);
-    for ix in [&SalesIndex as &dyn ChainIndex, &nft] {
+    for ix in [&sales_index::POLYGON as &dyn ChainIndex, &nft] {
         sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,full_history,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
             VALUES($1,'matic',137,$2,$3,$4,true,$3,timezone('UTC',now()),1,$3,0)")
             .bind(ix.indexer()).bind(ix.start_block() as i64).bind(b as i64-1).bind(chain.hash_of(b-1)).execute(&db.pool).await.unwrap();
@@ -1305,7 +1315,7 @@ async fn incomplete_sales_evidence_keeps_the_primary_walk_live_and_the_proof_at_
     // A Polygon sale with its fee evidence missing must still allow a valid
     // bid in the same window to reach the existing notice and badge readers.
     assert!(
-        try_pass(&disabled, &url, &SalesIndex)
+        try_pass(&disabled, &url, &sales_index::POLYGON)
             .await
             .unwrap()
             .published
@@ -1322,7 +1332,7 @@ async fn incomplete_sales_evidence_keeps_the_primary_walk_live_and_the_proof_at_
     // Start with an unverified old window, then advance live again. A failing
     // sales replay cannot keep either projection at its previous checkpoint.
     *chain.head.lock() += 1;
-    for ix in [&SalesIndex as &dyn ChainIndex, &nft] {
+    for ix in [&sales_index::POLYGON as &dyn ChainIndex, &nft] {
         let out = try_pass(&enabled, &url, ix).await.unwrap();
         assert_eq!(out.indexed_to, b as i64 + 1);
         let row:(i64,Option<i64>, Option<i64>)=sqlx::query_as("SELECT last_block,folded_block,sale_verified_through FROM shop.chain_cursor WHERE network='matic' AND indexer=$1")
@@ -1347,7 +1357,7 @@ async fn incomplete_sales_evidence_keeps_the_primary_walk_live_and_the_proof_at_
     );
     chain.logs.lock().retain(|log| log["logIndex"] == "0x3");
     chain.logs.lock().push(log_json(&order));
-    for ix in [&SalesIndex as &dyn ChainIndex, &nft] {
+    for ix in [&sales_index::POLYGON as &dyn ChainIndex, &nft] {
         try_pass(&enabled, &url, ix).await.unwrap();
         assert_eq!(sqlx::query_scalar::<_,Option<i64>>("SELECT sale_verified_through FROM shop.chain_cursor WHERE network='matic' AND indexer=$1")
             .bind(ix.indexer()).fetch_one(&db.pool).await.unwrap(),Some(b as i64+1));
@@ -1483,7 +1493,7 @@ async fn archive_repair_carries_a_narrowed_range_across_passes() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let first = SalesIndex.start_block();
+    let first = sales_index::POLYGON.start_block();
     let tip = first + 500;
     let chain = FakeChain::new(tip + 64, vec![], 1, 100);
     chain.omit_range_hint.store(true, Ordering::SeqCst);
@@ -1497,11 +1507,11 @@ async fn archive_repair_carries_a_narrowed_range_across_passes() {
     let source = chain_walk::RpcSource::new(Rpc::at(&st.http, &url));
     let mut previous = tip as i64;
     for _ in 0..8 {
-        let owner = chain_walk::test_owner(&db.pool, &SalesIndex, &settings).await;
+        let owner = chain_walk::test_owner(&db.pool, &sales_index::POLYGON, &settings).await;
         let spent = crate::market::sale_history::repair(
             &db.pool,
             &source,
-            &SalesIndex,
+            &sales_index::POLYGON,
             &owner,
             Some((tip, &hash)),
             7,
@@ -1583,7 +1593,7 @@ async fn a_store_purchase_and_order_in_one_receipt_settle_after_a_failed_batch()
     };
     let net = ChainNet::Matic;
     let (order_venue, deployed) = nft_index::deployments::Deployments::mainnet(net).markets[0];
-    let block = deployed.max(SalesIndex.start_block()) + 100;
+    let block = deployed.max(sales_index::POLYGON.start_block()) + 100;
     let chain = FakeChain::new(block + 5, vec![], 1000, 100);
     let url = serve(chain.clone()).await;
     let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);

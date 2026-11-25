@@ -1489,8 +1489,12 @@ fn visit_projections(
             market_cfg(),
         );
     }
-    if settings.sales_enabled && net == ChainNet::Matic && mainnet {
-        let url = state.chain_rpc_url(net);
+    if settings.sales_enabled
+        && (net == ChainNet::Matic || chain_id == ChainNet::Ethereum.testnet_chain_id())
+    {
+        let index = super::sales_index::SalesIndex::for_chain(chain_id)
+            .expect("validated sales index chain");
+        let url = state.catalogue_rpc_url(net);
         let gate: Gate = {
             let (state, url) = (state.clone(), url.clone().unwrap_or_default());
             let venues_checked = Arc::new(AtomicBool::new(false));
@@ -1500,10 +1504,10 @@ fn visit_projections(
                 async move {
                     if !venues_checked.load(Ordering::SeqCst) {
                         let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &url);
-                        super::sales_index::check_venues(&rpc, &state.pool).await?;
+                        super::sales_index::check_venues(&rpc, &state.pool, index).await?;
                         venues_checked.store(true, Ordering::SeqCst);
                     }
-                    Ok((!super::nft_index::mirror_complete(&state.pool, net, net.chain_id()).await).then(|| {
+                    Ok((!super::nft_index::mirror_complete(&state.pool, net, chain_id).await).then(|| {
                         "sales matic: waiting for the collections mirror's first complete pass".to_string()
                     }))
                 }
@@ -1513,8 +1517,8 @@ fn visit_projections(
         add(
             "sales-index",
             url,
-            Arc::new(|| Arc::new(super::sales_index::SalesIndex)),
-            Some(gate),
+            Arc::new(move || Arc::new(index)),
+            (net == ChainNet::Matic).then_some(gate),
             market_cfg(),
         );
     }
@@ -1555,7 +1559,16 @@ fn visit_projections(
         add(
             "collections-index",
             url,
-            Arc::new(|| Arc::new(super::collections_index::CollectionsIndex::new())),
+            {
+                // Only a network the operator hands it is projected: the
+                // mirror and the fold never both write a network's rows.
+                let project = settings.collections_owned.contains(&ChainNet::Matic);
+                Arc::new(move || {
+                    Arc::new(super::collections_index::CollectionsIndex::projecting(
+                        project,
+                    ))
+                })
+            },
             Some(gate),
             market_cfg(),
         );
@@ -1593,14 +1606,19 @@ fn visit_projections(
         }
         // A Sepolia endpoint opts the worker into the separate testnet history.
         if let Some(url) = state.sepolia_rentals_rpc_url() {
+            let fold_listings = settings.chain_id_ethereum == ChainNet::Ethereum.testnet_chain_id();
             add(
                 "rentals-index-sepolia",
                 Some(url),
-                Arc::new(|| Arc::new(RentalsIndex::sepolia())),
+                Arc::new(move || Arc::new(RentalsIndex::sepolia(fold_listings))),
                 None,
-                PeriodicCfg::every(settings.interval)
-                    .with_jitter(Duration::from_secs(20))
-                    .with_error_backoff(Duration::from_secs(1800)),
+                if fold_listings {
+                    market_cfg().with_jitter(Duration::from_secs(20))
+                } else {
+                    PeriodicCfg::every(settings.interval)
+                        .with_jitter(Duration::from_secs(20))
+                        .with_error_backoff(Duration::from_secs(1800))
+                },
             );
         }
     }
@@ -1723,7 +1741,7 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
     if !polygon_mainnet {
         tracing::info!(
             chain_id = settings.chain_id(ChainNet::Matic),
-            "mainnet-only sales, committee, collections and third-party registry walks are off for this catalogue"
+            "mainnet-only committee, collections and third-party registry walks are off for this catalogue"
         );
     }
     for net in ChainNet::ALL {
@@ -1741,7 +1759,9 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
         );
     } else {
         for net in ChainNet::ALL {
-            if settings.chain_id(net) == net.chain_id() && state.chain_rpc_url(net).is_none() {
+            if (net == ChainNet::Matic || settings.chain_id(net) == net.chain_id())
+                && state.catalogue_rpc_url(net).is_none()
+            {
                 tracing::warn!(
                     job = "sales-index",
                     network = net.db_name(),
@@ -1810,7 +1830,7 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
     }
     if rentals == Some(false) {
         tracing::info!(
-            "rentals index off (SHOP_RENTALS_INDEX_ENABLED=false): on mainnet NFT walkers, owner pages that include LAND return 503 rentals-index while the Rentals publication is unavailable"
+            "rentals index off (SHOP_RENTALS_INDEX_ENABLED=false): on NFT walkers, owner pages that include LAND return 503 rentals-index while the Rentals publication is unavailable"
         );
     } else if state.venue_rpc_url(1).is_none() {
         let why = "no chain-1 JSON-RPC endpoint is configured (TRADE_RPC_URLS 1=, or ETH_RPC_URL on mainnet)";

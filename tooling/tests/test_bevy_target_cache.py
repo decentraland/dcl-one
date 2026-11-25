@@ -49,7 +49,7 @@ class KeyTest(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def git(self, *args):
-        return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', *args],
+        return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', '-c', 'commit.gpgsign=false', *args],
                                        cwd=self.root, text=True).strip()
 
     def write(self, name, text):
