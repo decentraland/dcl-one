@@ -595,6 +595,17 @@ class DevTest(unittest.TestCase):
         self.assertEqual(observed.count(api_url + '/health'), 2)
         mirrors.assert_called_once()
 
+    def test_local_mirror_can_start_while_its_map_indexes_catch_up(self):
+        config = {**self.config, 'profile': 'mirror'}
+        listing = subprocess.CompletedProcess([], 0, stdout='[]')
+        with patch.object(dev, 'settings', return_value=config), \
+                patch.object(dev, 'pc', return_value=listing), \
+                patch.object(dev, 'wait_first_mirror_pass', return_value=0), \
+                patch.object(dev.urllib.request, 'urlopen') as request:
+            request.return_value.__enter__.return_value.status = 200
+            self.assertEqual(dev.wait_ready(10), 0)
+            self.assertEqual(request.call_args_list[0].args[0], f"http://127.0.0.1:{config['port']}/about")
+
     def test_the_stacks_own_nats_carries_pulses_cluster_feed_to_archipelago(self):
         client, monitor = dev.nats_ports(self.config)
         taken = {self.config['port'], self.config['port'] + 3, *dev.livekit_ports(self.config), *dev.pulse_ports(self.config)}

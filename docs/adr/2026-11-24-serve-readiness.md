@@ -14,4 +14,4 @@ Checks run concurrently with a two-second deadline. Concurrent requests share th
 
 Point load balancer readiness probes at `/health` on each backend. Through the apex gateway the same path samples the replica that handled the request. Probe `/_gateway/healthz` for nginx liveness. Per-service ping, status and health routes retain their published responses for existing clients.
 
-The development supervisor uses `/status` to start Pulse once the API is listening. After Pulse starts, the final stack check uses `/health`, which can then observe its heartbeat. Sites and separately deployed worker processes have their own lifecycle checks.
+The development supervisor uses `/status` to start Pulse once the API is listening. After Pulse starts, offline and testnet stacks check `/health`, which can then observe its heartbeat. The local mirror profile checks realm availability through `/about` during startup so a fresh installation can launch while its historical map indexes catch up. Its `/health` reports full readiness once those inputs are available. Sites and separately deployed worker processes have their own lifecycle checks.
