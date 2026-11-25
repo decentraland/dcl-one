@@ -169,9 +169,16 @@ pub enum Rule {
 
 impl Rule {
     pub fn holds(self, c: &Cursor, now: DateTime<Utc>) -> bool {
+        ChainNet::parse(&c.network)
+            .is_some_and(|net| self.holds_on(c, chain_walk::mainnet_chain(net), now))
+    }
+
+    /// [`Rule::holds`] for a reader that serves `chain_id` on the cursor's
+    /// network (`IndexSettings::chain_id`).
+    pub fn holds_on(self, c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
         match self {
-            Rule::Complete => complete(c),
-            Rule::Fresh => fresh(c, now),
+            Rule::Complete => complete_on(c, chain_id),
+            Rule::Fresh => fresh_on(c, chain_id, now),
         }
     }
 }
@@ -180,22 +187,31 @@ impl Rule {
 /// unpublish since, read from the chain the network names and out of
 /// quarantine (as [`chain_walk::is_ready_on`] requires of every index).
 pub fn complete(c: &Cursor) -> bool {
+    ChainNet::parse(&c.network).is_some_and(|net| complete_on(c, chain_walk::mainnet_chain(net)))
+}
+
+/// [`complete`], read from `chain_id`.
+pub fn complete_on(c: &Cursor, chain_id: i64) -> bool {
     c.indexer == INDEXER_NFT
         && c.full_history
         && c.folded_block.is_some()
         && c.folded_at.is_some()
         && c.quarantined_at.is_none()
-        && ChainNet::parse(&c.network)
-            .is_some_and(|net| c.chain_id == Some(chain_walk::mainnet_chain(net)))
+        && c.chain_id == Some(chain_id)
 }
 
 /// [`complete`], published within [`READY_WINDOW`] at `now`.
 pub fn fresh(c: &Cursor, now: DateTime<Utc>) -> bool {
+    ChainNet::parse(&c.network).is_some_and(|net| fresh_on(c, chain_walk::mainnet_chain(net), now))
+}
+
+/// [`fresh`], read from `chain_id`.
+pub fn fresh_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
     let Some(folded_at) = c.folded_at else {
         return false;
     };
     let age = now.naive_utc().signed_duration_since(folded_at);
-    complete(c) && age >= ChronoDuration::zero() && age <= READY_WINDOW
+    complete_on(c, chain_id) && age >= ChronoDuration::zero() && age <= READY_WINDOW
 }
 
 /// Whether this node walks the nft index: its switch is on and the node
@@ -263,9 +279,22 @@ pub async fn check(
     items: bool,
     now: DateTime<Utc>,
 ) -> Result<(), ReadError> {
+    check_on(conn, nets, chain_walk::mainnet_chain, rule, items, now).await
+}
+
+/// [`check`] for a reader that serves `chain(net)` on each network
+/// (`IndexSettings::chain_id`): the nft cursor must be read from that chain.
+pub async fn check_on(
+    conn: &mut PgConnection,
+    nets: &[ChainNet],
+    chain: impl Fn(ChainNet) -> i64,
+    rule: Rule,
+    items: bool,
+    now: DateTime<Utc>,
+) -> Result<(), ReadError> {
     for &net in nets {
         let cursor = chain_walk::cursor(&mut *conn, INDEXER_NFT, net).await?;
-        if !cursor.is_some_and(|c| rule.holds(&c, now)) {
+        if !cursor.is_some_and(|c| rule.holds_on(&c, chain(net), now)) {
             return Err(ReadError::NotReady(
                 Source::NftIndex,
                 format!(
@@ -837,6 +866,14 @@ mod tests {
         // A publish stamped ahead of the clock is not trusted as fresh.
         let ahead = cursor(true, Some(100), 100, Some(-5));
         assert!(!Rule::Fresh.holds(&ahead, now));
+        // A reader serving a testnet takes that chain's publication, and
+        // only it; the mainnet rules refuse it.
+        let mut amoy = cursor(true, Some(100), 140, Some(0));
+        amoy.chain_id = Some(80_002);
+        assert!(Rule::Fresh.holds_on(&amoy, 80_002, now));
+        assert!(Rule::Complete.holds_on(&amoy, 80_002, now));
+        assert!(!Rule::Fresh.holds(&amoy, now));
+        assert!(!Rule::Fresh.holds_on(&mid_pass, 80_002, now));
     }
 
     #[test]

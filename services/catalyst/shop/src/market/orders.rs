@@ -420,10 +420,12 @@ fn reads_land(state: &MarketplaceState, f: &OrderFilters) -> bool {
 /// The read-only snapshot a walking node's order book reads on: the
 /// land-authz index ready on it when `land` (its own snapshot, which the
 /// LAND/estate reads share), the nft index published and recent on `nets`
-/// at `now` ([`Rule::Fresh`]) and, with `book`, the legacy order book caught
-/// up with that publication on each (`legacy_orders::caught_up`), each
-/// statement bounded by `nft_reads::READ_STATEMENT_TIMEOUT`. `Err` is the
-/// unavailable envelope naming the index that is not ready, or a 500.
+/// at `now` ([`Rule::Fresh`]) on the chain the node serves on each
+/// (`IndexSettings::chain_id`) and, with `book`, the legacy order book caught
+/// up with that publication on each (`legacy_orders::caught_up`) and the
+/// trades mirror and its verdicts ready (`trades::ready_on`), each statement
+/// bounded by `nft_reads::READ_STATEMENT_TIMEOUT`. `Err` is the unavailable
+/// envelope naming the source that is not ready, or a 500.
 pub(crate) async fn book_snapshot(
     state: &MarketplaceState,
     nets: &[ChainNet],
@@ -454,9 +456,17 @@ pub(crate) async fn book_snapshot(
         .execute(&mut *tx)
         .await
         .map_err(db)?;
-    owned_items::check(&mut tx, nets, Rule::Fresh, false, now)
-        .await
-        .map_err(|e| e.into_response(|m| ApiError::internal(m.to_string()).into_response()))?;
+    let indexes = &state.settings.market.indexes;
+    owned_items::check_on(
+        &mut tx,
+        nets,
+        |net| indexes.chain_id(net),
+        Rule::Fresh,
+        false,
+        now,
+    )
+    .await
+    .map_err(|e| e.into_response(|m| ApiError::internal(m.to_string()).into_response()))?;
     if book {
         for &net in nets {
             if !super::legacy_orders::caught_up(&mut tx, net)
@@ -469,6 +479,7 @@ pub(crate) async fn book_snapshot(
                 )));
             }
         }
+        super::trades::ready_on(state, &mut tx, now).await?;
     }
     Ok(tx)
 }
@@ -1017,7 +1028,6 @@ pub async fn list_orders_checked(
     readers::check_window(limit, offset)?;
     let window = offset + limit;
     let (mut merged, legacy_total, trades, check) = if owned_items::walks_here(state) {
-        super::trades::require_ready(state).await?;
         let land = reads_land(state, f);
         let now = Utc::now();
         let now_ms = now.timestamp_millis();
@@ -1117,7 +1127,6 @@ pub async fn open_orders_by_items_checked(
     };
     let mut per: Vec<(String, Vec<Keyed>)> = Vec::with_capacity(contracts.len());
     let check = if owned_items::walks_here(state) {
-        super::trades::require_ready(state).await?;
         let land = contracts.iter().any(|c| is_land_registry(state, c));
         let now = Utc::now();
         let mut tx = book_snapshot(state, &ChainNet::ALL, land, true, now).await?;

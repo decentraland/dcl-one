@@ -3804,6 +3804,7 @@ async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
     let Some((state, own)) = state_over_own(&url, true).await else {
         return;
     };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
     let pool = state.pool.clone();
     let t = tag();
     let (c, stray) = (contract_of(&t, 1), contract_of(&t, 2));
@@ -4223,6 +4224,7 @@ async fn the_order_book_agrees_with_the_subgraph_on_transfers_away_and_back() {
     let Some((state, own)) = state_over_own(&url, true).await else {
         return;
     };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
     let pool = state.pool.clone();
     let c = contract_of(&tag(), 4);
     sqlx::query(
@@ -4401,6 +4403,7 @@ async fn the_legacy_order_total_caps_each_network_and_sums_them() {
     let Some((state, own)) = state_over_own(&url, true).await else {
         return;
     };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
     let pool = state.pool.clone();
     let c = contract_of(&tag(), 6);
     sqlx::query(
@@ -4453,6 +4456,7 @@ async fn a_partial_activity_names_the_unavailable_sources() {
     let Some((state, own)) = state_over_own(&url, true).await else {
         return;
     };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
     let me = crate::shared::signed_fetch::test_support::address();
     let marketplace = r#"{"signer":"dcl:marketplace"}"#;
     let activity = || {

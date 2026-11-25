@@ -37,9 +37,11 @@ the subgraphs knew: a mirrored collection, the LAND and Estate registries,
 and the DCLRegistrar.
 
 Readiness follows the ownership readers' fresh rule: the nft index complete
-and published within 30 minutes on every network the read names, read on
-the same `REPEATABLE READ, READ ONLY` snapshot as the rows, with the order
-book caught up with that publication (below); and, when an open LAND or
+and published within 30 minutes on every network the read names, from the
+chain the node serves there (`MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM`,
+`_MATIC`), read on the same `REPEATABLE READ, READ ONLY` snapshot as the
+rows, with the order book caught up with that publication (below) and the
+trades mirror and its verdicts ready on it; and, when an open LAND or
 estate order could be answered, the land-authz index ready, whose snapshot
 the read then runs on. Otherwise the route answers the unavailable envelope
 naming the index that is not ready. The v3 listings leg reads the same

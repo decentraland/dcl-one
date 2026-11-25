@@ -4253,9 +4253,11 @@ Invariants:
   takes the rest.
 
 Reads, each on one `REPEATABLE READ, READ ONLY` snapshot that also checks the
-nft cursor (fresh on the networks read) and, when an open LAND or estate
-order could be answered, the land-authz cursor; each statement is bounded by
-the `/v1/nfts` statement timeout:
+nft cursor (published within 30 minutes on the networks read, from the chain
+the node serves on each, `IndexSettings::chain_id`), the trades mirror and
+its verdicts and, when an open LAND or estate order could be answered, the
+land-authz cursor; each statement is bounded by the `/v1/nfts` statement
+timeout:
 
 - the page: the filters, a sort (`created_at`, `updated_at`, `price` or
   `token_id`, ties by id) and `LIMIT first + skip`, beside the v3 listings
