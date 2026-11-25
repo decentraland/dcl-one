@@ -1,8 +1,9 @@
 //! `/screenshot`, one frame or with `--count` a timed sequence: frames of the primary window, read
 //! back at the end of the frame they were rendered in, through one capture job at a time (the gate; a second capture
 //! is refused and the refusal names the holder). A job waits two frames, then for the camera's
-//! transition (at most 1.5 s), then captures; the frames are scaled and encoded on the IO task
-//! pool, which is off the main thread natively and on the engine's own thread on the web.
+//! transition (at most 1.5 s), then captures; the frames are scaled and encoded by
+//! `common::frame`, as `/texture_camera_screenshot` and the camera reel's photo are, on the IO
+//! task pool, which is off the main thread natively and on the engine's own thread on the web.
 //! `--world-only` hides the native HUD and the scenes' window UI while the job runs, the scene UI
 //! through `HiddenSceneUis`, the rule `/show_ui` uses.
 
@@ -12,12 +13,13 @@ use base64::{prelude::BASE64_STANDARD, Engine};
 use bevy::{
     diagnostic::FrameCount,
     prelude::*,
-    render::view::screenshot::{Screenshot, ScreenshotCaptured},
+    render::view::screenshot::Screenshot,
     tasks::{IoTaskPool, Task},
     window::PrimaryWindow,
 };
 use bevy_console::ConsoleCommand;
 use common::{
+    frame::{self, Encoding, Scale},
     structs::{PrimaryCamera, PrimaryUser},
     util::TaskExt,
 };
@@ -25,7 +27,6 @@ use console::{
     reply::{self, Screen},
     AddDebugSection, DebugSection, DoAddConsoleCommand, PendingConsoleResponses,
 };
-use image::{codecs::jpeg::JpegEncoder, DynamicImage};
 use scene_runner::{update_world::scene_ui::HiddenSceneUis, vec3_to_parcel};
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
@@ -33,7 +34,6 @@ use tween::{SystemTween, SystemTweenData};
 
 use crate::active_scene::SceneResolver;
 
-const JPG_QUALITY: u8 = 75;
 /// Frames a capture waits before it looks at the camera, so a change the command's own frame
 /// started (a virtual camera handing back) has begun its transition.
 const SETTLE_FRAMES: u32 = 2;
@@ -238,8 +238,8 @@ fn capture_target(dir: Option<PathBuf>, store: &mut CaptureStore) -> Result<Targ
         }
         Some(dir) => Some(dir),
         None => platform::project_directories().map(|dirs| {
-            let stamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+            let stamp = web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
                 .map(|d| d.as_millis())
                 .unwrap_or_default();
             dirs.cache_dir()
@@ -342,6 +342,13 @@ impl Format {
         match self {
             Self::Png => "png",
             Self::Jpg => "jpg",
+        }
+    }
+
+    fn encoding(self) -> Encoding {
+        match self {
+            Self::Png => Encoding::Png,
+            Self::Jpg => Encoding::Jpeg(frame::JPEG_QUALITY),
         }
     }
 }
@@ -552,15 +559,7 @@ fn drive_capture(
         return;
     };
     if let Some(scheduled) = job.next_due().filter(|due| now >= *due) {
-        let (tx, rx) = oneshot::channel();
-        let mut tx = Some(tx);
-        commands.spawn(Screenshot::window(window)).observe(
-            move |mut trigger: Trigger<ScreenshotCaptured>| {
-                if let Some(tx) = tx.take() {
-                    let _ = tx.send(std::mem::take(&mut trigger.0));
-                }
-            },
-        );
+        let rx = frame::read_back(&mut commands, Screenshot::window(window));
         job.frames.push(Slot {
             // the first frame sets the schedule: it is never late
             scheduled: if scheduled.is_finite() {
@@ -668,22 +667,20 @@ fn finish(
     }
 }
 
-/// Scale `image` to at most `max_width` wide and encode it; write it to `path` when it has a file.
+/// Scale `image` to at most `max_width` wide and encode it, through `common::frame`; write it to
+/// `path` when it has a file.
 fn encode(
     image: Image,
     max_width: Option<u32>,
     format: Format,
     path: Option<(String, Option<PathBuf>)>,
 ) -> Result<Encoded, String> {
-    let dynamic = image
-        .try_into_dynamic()
-        .map_err(|e| format!("the frame cannot be read: {e:?}"))?;
-    let frame = UVec2::new(dynamic.width(), dynamic.height());
-    let scaled = match max_width.filter(|max| frame.x > *max) {
-        Some(max) => dynamic.thumbnail(max, u32::MAX),
-        None => dynamic,
-    };
-    let bytes = encode_image(&scaled, format)?;
+    let pixels = frame::pixels(image)?;
+    let read = UVec2::new(pixels.width(), pixels.height());
+    let scaled = max_width
+        .map_or(Scale::Full, Scale::max_width)
+        .apply(pixels);
+    let bytes = frame::encode(&scaled, format.encoding())?;
     let path = match path {
         Some((name, Some(file))) => {
             std::fs::write(&file, &bytes)
@@ -697,26 +694,9 @@ fn encode(
         width: scaled.width(),
         height: scaled.height(),
         bytes,
-        frame,
+        frame: read,
         path,
     })
-}
-
-/// The one encoder of a captured frame: `/texture_camera_screenshot` encodes through it too.
-pub(crate) fn encode_image(image: &DynamicImage, format: Format) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    match format {
-        Format::Png => image
-            .write_to(
-                &mut std::io::Cursor::new(&mut bytes),
-                image::ImageFormat::Png,
-            )
-            .map_err(|e| format!("PNG encode failed: {e}"))?,
-        Format::Jpg => JpegEncoder::new_with_quality(&mut bytes, JPG_QUALITY)
-            .encode_image(&image.to_rgb8())
-            .map_err(|e| format!("JPEG encode failed: {e}"))?,
-    }
-    Ok(bytes)
 }
 
 /// `640x325 (screen 1600x813, frame 3200x1626) full-view capture at parcel (149,149)`, then the

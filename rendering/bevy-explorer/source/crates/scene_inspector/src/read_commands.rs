@@ -1,8 +1,9 @@
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+use bevy::render::view::screenshot::Screenshot;
 use bevy::tasks::IoTaskPool;
 use bevy_console::ConsoleCommand;
+use common::frame::{self, Encoding, Scale};
 use console::{DoAddConsoleCommand, PendingConsoleResponses};
 use dcl_component::{
     component_name_registry::InspectFn, ComponentNameRegistry, SceneComponentId, SceneEntityId,
@@ -807,34 +808,26 @@ fn texture_camera_screenshot_cmd(
             input.reply_failed(format!("no system texture camera on layer {}", cmd.layer));
             return;
         };
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let mut tx = Some(tx);
         let max_size = cmd.max_size;
-        commands.spawn(Screenshot::image(image)).observe(
-            move |mut trigger: Trigger<ScreenshotCaptured>| {
-                if let Some(tx) = tx.take() {
-                    let _ = tx.send(encode_screenshot_png_base64(
-                        std::mem::take(&mut trigger.0),
-                        max_size,
-                    ));
-                }
-            },
+        let read = frame::read_back(&mut commands, Screenshot::image(image));
+        console_responses.push_oneshot(
+            read,
+            move |image| png_base64(image, max_size),
+            input.take_responder(),
         );
-        console_responses.push_oneshot(rx, |r| r, input.take_responder());
     }
 }
 
-/// Encode a captured frame as base64 PNG, scaled down to fit `max_size` if given. Errors
-/// (unsupported texture format, encoder failure) surface as the console command's failure reply.
-fn encode_screenshot_png_base64(image: Image, max_size: Option<u32>) -> Result<String, String> {
-    let mut dynamic = image
-        .try_into_dynamic()
-        .map_err(|e| format!("screenshot: could not read frame: {e:?}"))?;
-    if let Some(max) = max_size.filter(|m| dynamic.width() > *m || dynamic.height() > *m) {
-        dynamic = dynamic.resize(max, max, image::imageops::FilterType::Triangle);
-    }
-    let png = crate::capture::encode_image(&dynamic, crate::capture::Format::Png)
-        .map_err(|e| format!("screenshot: {e}"))?;
+/// A frame that was read back as base64 PNG, scaled down to fit `max_size` on either side when
+/// given. Errors (unsupported texture format, encoder failure) surface as the console command's
+/// failure reply.
+fn png_base64(image: Image, max_size: Option<u32>) -> Result<String, String> {
+    let scale = max_size.map_or(Scale::Full, |max| Scale::Within {
+        width: max,
+        height: max,
+    });
+    let scaled = scale.apply(frame::pixels(image).map_err(|e| format!("screenshot: {e}"))?);
+    let png = frame::encode(&scaled, Encoding::Png).map_err(|e| format!("screenshot: {e}"))?;
     Ok(BASE64_STANDARD.encode(&png))
 }
 
