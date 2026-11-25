@@ -1,4 +1,4 @@
-//! What the file name of a clip that the movement scene plays says about the avatar's motion.
+//! What the file name of a clip that a scene plays says about the avatar's motion.
 
 use crate::structs::MoveKind;
 
@@ -6,6 +6,13 @@ use crate::structs::MoveKind;
 fn clip_stem(src: &str) -> &str {
     let file = src.rsplit(['/', '\\']).next().unwrap_or(src);
     file.rsplit_once('.').map_or(file, |(stem, _)| stem)
+}
+
+/// Whether `text` contains `word`, ignoring ASCII case.
+fn contains_ignore_case(text: &str, word: &str) -> bool {
+    text.as_bytes()
+        .windows(word.len())
+        .any(|window| window.eq_ignore_ascii_case(word.as_bytes()))
 }
 
 /// The clips a ground jump starts with, one for each take-off gait.
@@ -30,7 +37,8 @@ const DOUBLE_JUMPS: [&str; 6] = [
 ];
 
 /// What the file name of a clip of the movement scene (`movement-scene/assets/animations`) says
-/// about the avatar's motion. Any other clip is [`Self::None`].
+/// about the avatar's motion. Any other clip is [`Self::None`]. [`Self::of_other_scene_clip`] reads
+/// the clips of any other scene.
 ///
 /// - The fall loops and touchdowns are not jumps, so walking off a ledge is not a jump.
 /// - The stun clips count only at speed 1 or slower, because the scene speeds up the Exit clip as
@@ -61,6 +69,18 @@ impl ClipMotion {
                 Self::HardLanding
             }
             _ => Self::None,
+        }
+    }
+
+    /// What the path of a clip of any other scene says: `glide` in it, in any case, is the glide,
+    /// and `double` the air jump. Nothing else in it counts.
+    pub fn of_other_scene_clip(src: &str) -> Self {
+        if contains_ignore_case(src, "glide") {
+            Self::Gliding
+        } else if contains_ignore_case(src, "double") {
+            Self::DoubleJump
+        } else {
+            Self::None
         }
     }
 
@@ -177,6 +197,23 @@ mod tests {
             ("Glider_Open.glb", ClipMotion::None),
         ] {
             assert_eq!(ClipMotion::of_clip(clip, 1.0), motion, "{clip}");
+        }
+    }
+
+    #[test]
+    fn another_scenes_clip_names_only_its_air_jump_and_glide() {
+        for (clip, motion) in [
+            ("assets/MyDoubleJump.glb", ClipMotion::DoubleJump),
+            ("DOUBLE.glb", ClipMotion::DoubleJump),
+            ("glide.glb", ClipMotion::Gliding),
+            ("anims/Player_Glide_Double.glb", ClipMotion::Gliding),
+            ("custom_jump.glb", ClipMotion::None),
+            ("Jump_Start.glb", ClipMotion::None),
+            ("Gliding_AvatarForwardRig.glb", ClipMotion::None),
+            ("Hard_Landing_Enter.glb", ClipMotion::None),
+            ("gl", ClipMotion::None),
+        ] {
+            assert_eq!(ClipMotion::of_other_scene_clip(clip), motion, "{clip}");
         }
     }
 

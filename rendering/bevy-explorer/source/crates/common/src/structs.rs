@@ -380,6 +380,9 @@ pub struct SceneDrivenAnimationRequest {
     // dedups per-avatar so leaving identical entries across consecutive updates doesn't
     // re-fire; the scene clears the list on frames it doesn't want sound.
     pub sounds: Vec<String>,
+    // The scene is a startup portable, as the movement scene is, so the clip's file name says the
+    // avatar's motion (`ClipMotion::of_clip`). False for remote requests.
+    pub movement_scene: bool,
 }
 
 // Current scene-driven animation playback state, written by `play_current_emote` in

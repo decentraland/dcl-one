@@ -1379,6 +1379,7 @@ fn resolve_remote_anim(
         transition_seconds,
         seek: anim.playback_time,
         sounds: anim.sound_content_hashes,
+        movement_scene: false,
     })
 }
 

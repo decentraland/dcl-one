@@ -180,6 +180,7 @@ fn update_scene_driven_animation(
     mut commands: Commands,
     player: Query<(Entity, &ActivePlayerComponent<AvatarMovement>), With<PrimaryUser>>,
     scenes: Query<&RendererSceneContext>,
+    portables: Res<PortableScenes>,
     ipfas: IpfsAssetServer,
     mut logged_failures: Local<HashSet<String>>,
 ) {
@@ -249,6 +250,7 @@ fn update_scene_driven_animation(
             transition_seconds: anim.transition_seconds.unwrap_or(0.2),
             seek: anim.playback_time,
             sounds,
+            movement_scene: is_startup_portable(ctx, &portables),
         })
     })();
 
@@ -703,6 +705,8 @@ pub(crate) fn apply_movement(
         With<PrimaryUser>,
     >,
     mut scenes: Query<(Entity, &mut SceneColliderData)>,
+    contexts: Query<&RendererSceneContext>,
+    portables: Res<PortableScenes>,
     containing_scenes: ContainingScene,
     time_res: Res<Time>,
     mut info: ResMut<AvatarMovementInfo>,
@@ -718,8 +722,12 @@ pub(crate) fn apply_movement(
     let around = (movement.component.ground_direction != Vec3::ZERO)
         .then(|| containing_scenes.get_area(player, PLAYER_COLLIDER_RADIUS));
     let moves_with_ground = |scene: Entity| around.as_ref().is_some_and(|a| a.contains(&scene));
+    let movement_scene = contexts
+        .get(movement.scene())
+        .is_ok_and(|ctx| is_startup_portable(ctx, &portables));
     let jump_cue = JumpCue::of_step(
         movement.component.animation.as_ref(),
+        movement_scene,
         &mut last_clip,
         dynamic_state.velocity.y > 0.0,
     );
@@ -867,7 +875,7 @@ fn find_ground(
     (height, collider)
 }
 
-/// The scene's clip on the player's previous movement step, `None` when no scene drove the
+/// The movement scene's clip on the player's previous movement step, `None` when it drove no
 /// animation: [`JumpCue::of_step`] compares the next step's clip with it.
 #[derive(Component, Default)]
 pub(crate) struct LastMovementClip(Option<String>);
@@ -875,21 +883,26 @@ pub(crate) struct LastMovementClip(Option<String>);
 /// What marks the player's jumps on a movement step.
 #[derive(Clone, Copy, Debug)]
 enum JumpCue {
-    /// A scene drives the player's animation. `starts` is true on the step its clip changes to one
-    /// that a jump starts with, and `in_jump` while its clip is a jump on its way up.
+    /// The movement scene drives the player's animation. `starts` is true on the step its clip
+    /// changes to one that a jump starts with, and `in_jump` while its clip is a jump on its way
+    /// up.
     Clip { starts: bool, in_jump: bool },
-    /// No scene drives the animation. `rose` is whether the player rose on the previous step.
+    /// No scene drives the animation, or another scene does, whose clip names say no take-off.
+    /// `rose` is whether the player rose on the previous step.
     Rise { rose: bool },
 }
 
 impl JumpCue {
-    /// `last_clip` holds the scene's clip of the previous step, and takes this step's.
+    /// `movement_scene` is whether the scene that drives the movement is a startup portable, as
+    /// the movement scene is. `last_clip` holds its clip of the previous step, and takes this
+    /// step's.
     fn of_step(
         animation: Option<&MovementAnimation>,
+        movement_scene: bool,
         LastMovementClip(last_clip): &mut LastMovementClip,
         rose: bool,
     ) -> Self {
-        let Some(animation) = animation else {
+        let Some(animation) = animation.filter(|_| movement_scene) else {
             *last_clip = None;
             return Self::Rise { rose };
         };
@@ -904,10 +917,10 @@ impl JumpCue {
     }
 }
 
-/// Record the take-off time of a jump. While a scene drives the player's animation, the clip a jump
-/// starts with marks it, so walking up a step is no jump and a jump of any height is one.
-/// Otherwise the player takes off when it rises off the ground, or starts rising again in the air
-/// (an air jump): off the ground is not [`landed`], where [`end_jump_on_landing`] stops.
+/// Record the take-off time of a jump. While the movement scene drives the player's animation, the
+/// clip a jump starts with marks it, so walking up a step is no jump and a jump of any height is
+/// one. Otherwise the player takes off when it rises off the ground, or starts rising again in the
+/// air (an air jump): off the ground is not [`landed`], where [`end_jump_on_landing`] stops.
 fn start_jump_on_take_off(dynamic_state: &mut AvatarDynamicState, cue: JumpCue, now: f64) {
     let take_off = match cue {
         JumpCue::Clip { starts, .. } => starts,
@@ -924,8 +937,8 @@ fn start_jump_on_take_off(dynamic_state: &mut AvatarDynamicState, cue: JumpCue, 
 
 /// Forget the take-off time once the player is back on the ground and no longer rising, so that
 /// `jump_time` marks a jump in flight (`<= 0.0` for none): the animation's take-off window and the
-/// `jump_count` this client broadcasts both read it. A scene's jump clip keeps it, because the clip
-/// can start before the feet leave the ground.
+/// `jump_count` this client broadcasts both read it. The movement scene's jump clip keeps it,
+/// because the clip can start before the feet leave the ground.
 fn end_jump_on_landing(dynamic_state: &mut AvatarDynamicState, cue: JumpCue) {
     let jump_clip = matches!(cue, JumpCue::Clip { in_jump: true, .. });
     if !jump_clip && landed(dynamic_state.ground_height) && dynamic_state.velocity.y <= 0.0 {
@@ -961,10 +974,7 @@ fn record_own_movement(
     };
     let startup_controller = scenes
         .get(movement.scene())
-        .ok()
-        .filter(|ctx| ctx.is_portable)
-        .and_then(|ctx| portables.get(&ctx.hash))
-        .is_some_and(|source| source.is_startup());
+        .is_ok_and(|ctx| is_startup_portable(ctx, &portables));
     let pushed = info
         .0
         .external_velocity
@@ -982,6 +992,15 @@ fn record_own_movement(
         .map_or(Vec3::ZERO, |v| v.world_vec_to_vec3());
     // `step_time` is this frame's delta, the one `actual_velocity` was divided by
     dynamic_state.own_displacement = velocity * info.0.step_time;
+}
+
+/// Whether the scene is a startup portable (launch-time, console or server-hosted), as the default
+/// movement scene is.
+fn is_startup_portable(scene: &RendererSceneContext, portables: &PortableScenes) -> bool {
+    scene.is_portable
+        && portables
+            .get(&scene.hash)
+            .is_some_and(|source| source.is_startup())
 }
 
 // (scene entity, collider id) of collider player is standing on
@@ -1833,6 +1852,8 @@ mod jump_tests {
         state: AvatarDynamicState,
         last_clip: LastMovementClip,
         frame: u32,
+        /// Another scene than the movement scene plays the clips.
+        other_scene: bool,
     }
 
     impl Steps {
@@ -1848,6 +1869,7 @@ mod jump_tests {
             });
             let cue = JumpCue::of_step(
                 animation.as_ref(),
+                !self.other_scene,
                 &mut self.last_clip,
                 self.state.velocity.y > 0.0,
             );
@@ -2001,6 +2023,29 @@ mod jump_tests {
         assert_eq!(
             steps.step(Some("Run_Jump_Fall_Loop.glb"), -3.0, 1.0),
             second
+        );
+    }
+
+    #[test]
+    fn another_scenes_jump_records_its_take_off_when_the_player_rises() {
+        let mut steps = Steps {
+            other_scene: true,
+            ..Steps::default()
+        };
+        // the movement scene's start clip is no take-off under another scene
+        assert!(steps.step(Some("Jump_Start.glb"), 0.0, 0.0) <= 0.0);
+        let jump_times = steps.rise(1.0, |_| Some("custom_jump.glb"));
+        let take_off = jump_times
+            .iter()
+            .copied()
+            .find(|&time| time > 0.0)
+            .expect("the jump records its take-off");
+        assert!(
+            jump_times
+                .iter()
+                .skip_while(|&&time| time <= 0.0)
+                .all(|&time| time == take_off),
+            "{jump_times:?}"
         );
     }
 
