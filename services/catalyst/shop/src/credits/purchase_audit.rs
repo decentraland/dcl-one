@@ -106,7 +106,7 @@ fn per_credit() -> &'static str {
          SELECT u.salt, u.tx_hash, MIN(u.block_number) AS block, \
                 MIN(COALESCE(u.block_time, u.indexed_at)) AS at, SUM(u.value_wei) AS wei, \
                 COALESCE(SUM(s.debited_credits), 0) * 10 AS reserved, \
-                (SELECT count(*) FROM credits.authorization_lines l WHERE l.authorization_id = u.salt) AS lines \
+                GREATEST((SELECT count(*) FROM credits.authorization_lines l WHERE l.authorization_id = u.salt), 1) AS lines \
          FROM credits.usages u \
          JOIN credits.authorizations a ON a.id = u.salt \
          LEFT JOIN credits.usage_settlements s \

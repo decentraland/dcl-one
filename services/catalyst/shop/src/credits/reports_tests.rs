@@ -958,15 +958,13 @@ async fn the_purchase_audit_reconciles_per_transaction() {
         Some("10"),
     )
     .await;
-    // What each credit bought: the cart's first credit two items, the others one each.
-    for (salt, position) in [(hash(1), 0), (hash(1), 1), (hash(2), 0), (hash(3), 0)] {
-        sqlx::query("INSERT INTO credits.authorization_lines (authorization_id, position, quoted_cents, charged_cents, sale_kind, asset_kind, asset_chain_id, asset_contract) VALUES ($1, $2, 100, 100, 'primary_mint', 'wearable', 137, '0x00000000000000000000000000000000000000c1')")
-            .bind(salt)
-            .bind(position)
-            .execute(&pool)
-            .await
-            .unwrap();
-    }
+    // What each credit bought. A single-item credit keeps its item on the authorization
+    // and has no lines (the cart's two), so it counts as one; the other credit has one line.
+    sqlx::query("INSERT INTO credits.authorization_lines (authorization_id, position, quoted_cents, charged_cents, sale_kind, asset_kind, asset_chain_id, asset_contract) VALUES ($1, 0, 100, 100, 'primary_mint', 'wearable', 137, '0x00000000000000000000000000000000000000c1')")
+        .bind(hash(3))
+        .execute(&pool)
+        .await
+        .unwrap();
     // A credit nobody on this node signed is not a purchase here.
     used(
         &pool,
@@ -1023,7 +1021,7 @@ async fn the_purchase_audit_reconciles_per_transaction() {
         let headers = signed_headers(&admin, "get", path).await;
         send(&app, "GET", &format!("{path}?{q}"), headers, None).await
     };
-    // Every sort against the database: the cart (3 items, $11.80 charged, $9.05 spent,
+    // Every sort against the database: the cart (2 items, $11.80 charged, $9.05 spent,
     // $2.75 kept) against the single credit (1 item, $1.00, $0.09, $0.91).
     let cart_first_by_buyer = if buyer.address < other.address {
         hash(0xa1)
