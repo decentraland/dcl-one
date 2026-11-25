@@ -37,11 +37,10 @@ impl Plugin for SettingsSnapshotPlugin {
 /// `system_bridge/src/settings/`). Every other setting is left out, even when changed: they are
 /// tuning knobs few players touch (cache size, threads, downloads, LOD rings) or window and
 /// rendering details that say little about the player. A new setting is reported only once it is
-/// added here; a name that matches no registered setting is shown as `missing` by
-/// `/settings_snapshot` (some settings exist on one platform only).
+/// added here, in the same change that adds the setting; a name that matches no registered setting
+/// is shown as `missing` by `/settings_snapshot` (some settings exist on one platform only).
 const REPORTED: &[&str] = &[
     // Gameplay
-    "Left-Drag Camera",
     "Walk Speed",
     "Jog Speed",
     "Run Speed",
@@ -220,7 +219,7 @@ mod tests {
         tenths.step_size = 0.1;
         let changed = changed_settings(&[
             setting("Shadow settings", 2.0, 2.0, &["Off", "Low", "High"]),
-            setting("Left-Drag Camera", 1.0, 0.0, &["Off", "On"]),
+            setting("VSync", 1.0, 0.0, &["Off", "On"]),
             setting("Render Resolution", 80.0, 100.0, &[]),
             setting("Chat bubbles", -1.0, 0.0, &["All", "Nearby only", "None"]),
             tenths,
@@ -229,13 +228,13 @@ mod tests {
             serde_json::Value::Object(changed.clone()),
             serde_json::json!({
                 "Camera Zoom": 0.3,
-                "Left-Drag Camera": "On",
                 "Render Resolution": 80.0,
+                "VSync": "On",
             })
         );
         assert_eq!(
             changed.keys().collect::<Vec<_>>(),
-            ["Camera Zoom", "Left-Drag Camera", "Render Resolution"]
+            ["Camera Zoom", "Render Resolution", "VSync"]
         );
     }
 
@@ -254,7 +253,7 @@ mod tests {
         assert!(changed.is_empty());
         let registry = [setting("Fog", 1.0, 1.0, &["Off", "On"])];
         let absent = missing(&registry);
-        assert!(!absent.contains(&"Fog") && absent.contains(&"Left-Drag Camera"));
+        assert!(!absent.contains(&"Fog") && absent.contains(&"Walk Speed"));
     }
 
     fn app(
