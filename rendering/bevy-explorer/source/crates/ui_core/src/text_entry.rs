@@ -125,7 +125,10 @@ fn update_text_entry_components(
         let wrapper = match (maybe_wrapper, maybe_existing) {
             (Some(w), _) => Some(w.0),
             (None, None) if textbox.vertical_align.is_some() => {
-                let w = commands.spawn_empty().id();
+                // the wrapper fills the owner, so it is the click target for the whole box
+                let w = commands
+                    .spawn((Interaction::default(), Focusable(Some(entity))))
+                    .id();
                 commands
                     .entity(entity)
                     .try_push_children(&[w])

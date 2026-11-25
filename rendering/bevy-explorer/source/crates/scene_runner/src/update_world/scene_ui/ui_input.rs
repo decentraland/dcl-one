@@ -20,9 +20,9 @@ use crate::{
 
 use super::UiLink;
 
-/// Horizontal space between a scene input's box and its text, in UI px: the input's 10 px
-/// padding and its text's own 2 px.
-const INPUT_TEXT_INSET: f32 = 12.0;
+/// Horizontal space between a scene input's box and its text, in UI px: CSS's default
+/// `padding-inline` for a text input. A larger inset is the scene's styling.
+const INPUT_TEXT_INSET: f32 = 2.0;
 
 #[derive(Component, Debug)]
 pub struct UiInput(PbUiInput);

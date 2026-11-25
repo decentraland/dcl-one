@@ -826,11 +826,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   and padding (top 4, right 2, bottom 4, left 1 px) that the Unity client's default runtime UI
   theme gives scene labels; CSS adds none. They are logical pixels like every other scene size,
   so on a display with a scale factor of 2 they are twice the size the Unity client draws, which
-  counts them in device pixels. A scene input's text is inset 12 px from its sides, the theme's
-  input padding and inner text padding. Scenes are authored against the Unity client, so its
-  spacing is kept. These are engine defaults that a scene cannot override; if react-ecs starts
-  sending default margin and padding for labels and inputs, both clients drop theirs at the same
-  time, or new scenes get the spacing twice.
+  counts them in device pixels. Scenes are authored against the Unity client, so its label
+  spacing is kept. A scene input's text is inset 2 px from its sides, CSS's default
+  `padding-inline`, not the Unity theme's 12 px; a larger inset belongs in react-ecs, where a
+  scene can see and override it. The label spacing is an engine default that a scene cannot
+  override; if react-ecs starts sending a default label margin and padding, both clients drop
+  theirs at the same time, or new scenes get the spacing twice.
 - **glTF occlusion textures are ignored.** Scene materials drop a glTF's occlusion texture, so
   baked ambient occlusion does not darken the ambient light. The Unity client's scene shader
   does not sample it either, and content is authored against that look.
