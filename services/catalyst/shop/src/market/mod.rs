@@ -64,6 +64,7 @@ pub mod admin;
 pub mod base_wearables;
 pub mod bid_notices;
 pub mod bids;
+mod cancelled_trades;
 pub mod catalog;
 pub mod chain_group;
 pub mod chain_jobs;
@@ -656,6 +657,8 @@ pub struct MarketplaceState {
     pub(crate) sales_analytics_slots: tokio::sync::Semaphore,
     /// Concurrent uncached creator owner rankings.
     pub(crate) top_owners_slots: tokio::sync::Semaphore,
+    /// Concurrent creator royalty scans.
+    pub(crate) royalty_analytics_slots: tokio::sync::Semaphore,
     pub(crate) sales_accounts_slots: tokio::sync::Semaphore,
     sales_seller_slots: tokio::sync::Semaphore,
     pub(crate) sales_pages_slots: tokio::sync::Semaphore,
@@ -755,6 +758,7 @@ impl MarketplaceState {
             readers: readers::Caches::default(),
             sales_analytics_slots: tokio::sync::Semaphore::new(2),
             top_owners_slots: tokio::sync::Semaphore::new(1),
+            royalty_analytics_slots: tokio::sync::Semaphore::new(1),
             sales_accounts_slots: tokio::sync::Semaphore::new(1),
             sales_seller_slots: tokio::sync::Semaphore::new(4),
             sales_pages_slots: tokio::sync::Semaphore::new(4),
@@ -1311,7 +1315,9 @@ pub fn market_router(state: SharedState) -> Router {
         )
         .route("/v1/bids", get(bids::get_bids))
         .route("/v1/sales/summary", get(sales::get_sales_summary))
+        .route("/v1/sales/royalties", get(sale_reads::get_royalties))
         .route("/v1/sales", get(sales::get_sales))
+        .route("/v1/cancelled-trades", get(cancelled_trades::get))
         .route("/v1/prices", get(prices::get_prices))
         .route("/v1/rates/mana-usd", get(rates::get_mana_usd_rates))
         .route("/v1/trendings", get(items::get_trendings))

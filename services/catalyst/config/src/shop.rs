@@ -441,6 +441,13 @@ pub struct ShopConfig {
     #[arg(long, env = "CATALYRST_CREDITS_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_credits_admin_token: Option<String>,
 
+    /// Wallets whose signed requests may read the credits reports (the
+    /// cross-wallet credits list and its grant reasons), comma-separated: the
+    /// old credits server's `READ_ONLY_ADMIN_ADDRESSES` and
+    /// `READ_WRITE_ADMIN_ADDRESSES` together. Empty leaves them to the bearer.
+    #[arg(long, env = "CREDITS_READ_ADMIN_ADDRESSES", default_value = "")]
+    pub credits_read_admin_addresses: String,
+
     /// The hCaptcha secret (or `_FILE`); unset skips the token check.
     #[arg(long, env = "CREDITS_CAPTCHA_SECRET", hide_env_values = true)]
     pub credits_captcha_secret: Option<String>,
