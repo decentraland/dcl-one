@@ -591,7 +591,7 @@ fn compile_function_is_disabled() {
         let mut runtime = client_runtime();
         let err = eval(
             &mut runtime,
-            r#"Deno.core.ops.op_compile_function("", "f", [1])"#.to_owned(),
+            r#"Deno.core.ops.op_compile_function("", "file:///f", undefined, [1])"#.to_owned(),
         )
         .unwrap_err();
         assert!(err.contains("disabled"), "{err}");
