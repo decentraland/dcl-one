@@ -999,9 +999,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **The baked trees, bushes and stones** keep unity-explorer's layouts (Genesis City's and the
   Worlds'), prototypes, scale ranges, footprints, first level of detail, collider shapes, material
   values and occupancy rule, and differ in these ways.
-  - Each instance is an entity, spawned when it is within the Landscape Distance of the player
-    (horizontally) and checked again when the player changes parcel; bevy batches the shared
-    meshes. Unity hands the whole layout to a GPU instancing package that culls by distance.
+  - Each instance is an entity, spawned when it is within 150 m of the player (horizontally) and
+    checked again when the player changes parcel; bevy batches the shared meshes. Unity hands the
+    whole layout to a GPU instancing package that draws a prototype's full mesh only while it
+    covers enough of the screen (out to about 15 m for the bushes, 70 to 85 m for the stones and
+    90 to 140 m for the trees, at scale 1), then an impostor or nothing; 150 m covers its farthest
+    full mesh, and the Landscape Distance does not drive the trees.
   - Bevy's lit material replaces the trees' and bushes' simple Blinn-Phong one. Colour, texture,
     cut-off, culling and normal maps carry over; the trunk takes a roughness of one minus its
     smoothness. The leaves are fully rough: their Unity smoothness of 1 is a pin-point

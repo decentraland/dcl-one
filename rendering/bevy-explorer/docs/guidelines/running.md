@@ -383,7 +383,7 @@ State, in every build:
   ("Tree wind").
 - `/landscape [ground|trees|grass] [true|false]`: the landscape layers as JSON:
   `ground`, `trees` and `grass` (each layer's toggle), `treeCount`, `grassParcels`,
-  `loadDistance` (the scene load distance), `landscapeDistance` (how far the trees reach, in m)
+  `loadDistance` (the scene load distance), `landscapeDistance` (how far the hills reach, in m)
   and `treeWind` (whether the trees sway, as `/tree_wind` sets it). With a layer and a value it
   shows or hides that layer, in preview mode only. The debug panel's "Landscape" section binds it.
 - `/media_state`: the loaded video players and audio streams as JSON, the Media player debug
