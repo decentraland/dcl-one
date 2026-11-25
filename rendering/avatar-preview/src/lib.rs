@@ -144,7 +144,7 @@ pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) {
         .insert_resource(request)
         .insert_resource(stage);
     app.add_systems(Startup, (point_at_catalyst, setup_stage));
-    app.add_systems(Update, spawn_avatar_on_first_outfit);
+    app.add_systems(Update, (spawn_avatar_on_first_outfit, size_bloom_to_view));
     app.run();
 }
 
@@ -200,15 +200,15 @@ pub fn dress_camera(camera: &mut EntityCommands, flags: &StageFlags) {
     if flags.no_bloom {
         camera.remove::<bevy::core_pipeline::bloom::Bloom>();
     } else {
-        // only what is brighter than white blooms (emissive parts), as in the Unity preview: the
-        // Explorer's thresholdless bloom haloes the whole avatar on a transparent page
+        // the Unity preview's bloom: threshold 1, so only what is brighter than white blooms
+        // (emissive parts), intensity 1 and scatter 0.6. That is the Explorer's High bloom with
+        // a wider scatter; `platform::scatter_bloom` derives the two weights, and
+        // `size_bloom_to_view` sets how far it reaches
+        let scatter = 0.05 + 0.9 * 0.6;
         camera.insert(bevy::core_pipeline::bloom::Bloom {
-            intensity: 0.15,
-            prefilter: bevy::core_pipeline::bloom::BloomPrefilter {
-                threshold: 1.0,
-                threshold_softness: 0.5,
-            },
-            ..bevy::core_pipeline::bloom::Bloom::OLD_SCHOOL
+            intensity: 1.0 - scatter,
+            low_frequency_boost: scatter - (1.0 - scatter),
+            ..platform::scatter_bloom()
         });
     }
     if flags.no_msaa {
@@ -223,6 +223,21 @@ pub fn dress_camera(camera: &mut EntityCommands, flags: &StageFlags) {
                 bevy::core_pipeline::prepass::NormalPrepass,
             )>()
             .insert((Msaa::Off, bevy::core_pipeline::fxaa::Fxaa::default()));
+    }
+}
+
+/// Unity's bloom blurs down from half the view's size, bevy's from a fixed height (512): sized
+/// by the view, the glow reaches as far as the Unity preview's at any canvas or screenshot size.
+fn size_bloom_to_view(mut cameras: Query<(&Camera, &mut bevy::core_pipeline::bloom::Bloom)>) {
+    for (camera, mut bloom) in &mut cameras {
+        let Some(view) = camera.physical_viewport_size() else {
+            continue;
+        };
+        // bevy's mip count needs a first mip of 4 pixels or more
+        let half = (view.y / 2).max(4);
+        if bloom.max_mip_dimension != half {
+            bloom.max_mip_dimension = half;
+        }
     }
 }
 
