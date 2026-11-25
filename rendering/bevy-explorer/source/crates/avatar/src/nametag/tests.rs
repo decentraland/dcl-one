@@ -684,6 +684,36 @@ fn a_waiting_tag_goes_with_a_clear_its_entity_or_its_scene() {
 }
 
 #[test]
+fn a_word_is_taken_only_while_there_is_one_system_scene() {
+    // a tag waiting in the one system scene there is
+    let mut app = scene_avatar_app();
+    let first = app.world_mut().spawn_empty().id();
+    let id = scene_context(&mut app, first, true);
+    set_system_tag(&mut app, id, Some(system_tag("Ada", true)));
+    app.update();
+
+    // another system scene comes, naming an entity of the same number: it never takes the tag,
+    // which stays the first scene's
+    let second = app.world_mut().spawn_empty().id();
+    scene_context(&mut app, second, true);
+    let theirs = spawn_preview(&mut app, second);
+    name_entity(&mut app, second, id, theirs);
+    let ours = spawn_preview(&mut app, first);
+    name_entity(&mut app, first, id, ours);
+    app.update();
+    app.update();
+    assert_eq!(name_of(&app, ours).as_deref(), Some("Ada"));
+    assert_eq!(name_of(&app, theirs), None);
+
+    // while both are up, a word can't be told apart: it is dropped
+    set_system_tag(&mut app, id, Some(system_tag("Bob", true)));
+    app.update();
+    app.update();
+    assert_eq!(name_of(&app, ours).as_deref(), Some("Ada"));
+    assert_eq!(name_of(&app, theirs), None);
+}
+
+#[test]
 fn the_last_word_on_a_tag_in_an_update_wins() {
     let mut app = scene_avatar_app();
     let root = app.world_mut().spawn_empty().id();

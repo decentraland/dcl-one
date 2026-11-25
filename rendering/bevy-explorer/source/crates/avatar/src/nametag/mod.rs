@@ -629,7 +629,9 @@ pub(crate) struct PendingSystemNametags(HashMap<SceneEntityId, Option<AvatarShap
 
 /// The system scene's word on the tag of one of its avatars: put on it, or taken away. Only the
 /// last word on an entity in an engine update counts. The entity is read in the system scene's
-/// own context, so no other scene's entity can be reached. The scene's word can come before the
+/// own context, so no other scene's entity can be reached. The word doesn't say which scene sent
+/// it, so it is taken only while there is one system scene: with two (one going as another
+/// comes), it could land on the other's entity of the same number. The scene's word can come before the
 /// engine has the entity: it waits on the scene's root ([`PendingSystemNametags`]) until the
 /// scene names the entity, and a tag waiting for an entity that died is dropped; a word to take
 /// it away has nothing to wait for. The scene's `AvatarShape` may come later still: the tag waits
@@ -656,6 +658,16 @@ fn set_system_scene_nametags(
             _ => None,
         })
         .collect();
+    let scenes = system_scenes.iter().count();
+    let words = match scenes {
+        1 => words,
+        _ => {
+            if !words.is_empty() {
+                warn!("{scenes} system scenes: their nametag words can't be told apart and are dropped");
+            }
+            Vec::new()
+        }
+    };
     for (root, context, pending) in &mut system_scenes {
         if words.is_empty() && pending.as_ref().is_none_or(|pending| pending.0.is_empty()) {
             continue;

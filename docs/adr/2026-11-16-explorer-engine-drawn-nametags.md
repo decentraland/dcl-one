@@ -63,7 +63,8 @@ scene draws none.
   the avatar.
 - **A system scene puts a tag on its own avatar by call.** `SystemApi::SetAvatarShapeNametag`
   (the bridge's `setAvatarShapeNametag`) names an entity, read in the system scene's own context,
-  and a tag or none; of several words on an entity in one engine update, the last counts. A tag
+  and a tag or none; of several words on an entity in one engine update, the last counts. The
+  word doesn't name its scene, so it is taken only while there is one system scene. A tag
   asked before the engine has the entity waits until that scene names it, and is dropped if the
   entity dies or the scene goes. The engine keeps the tag on the entity as `SystemSceneNametag`
   until it is taken away or the avatar's `AvatarShape` is removed, and makes it the avatar's
