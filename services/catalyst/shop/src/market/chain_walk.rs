@@ -994,7 +994,7 @@ pub fn is_ready_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
 
 /// The published height for a reader that bounds every event query by that
 /// height. A forward walk may already have committed the next window.
-pub(super) fn fresh_fold_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> Option<i64> {
+pub(crate) fn fresh_fold_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> Option<i64> {
     let age = now.naive_utc().signed_duration_since(c.folded_at?);
     c.folded_block.filter(|folded| {
         c.full_history
@@ -1638,7 +1638,7 @@ async fn rebuild(
              fold_through = NULL, folded_block = NULL, folded_at = NULL, full_history = $4, chain_id = $5, \
              sepolia_trade_v1 = sepolia_trade_v1 OR ($1 = 'trade_events' AND $5 = 11155111), \
              quarantined_at = NULL, quarantine_reason = NULL, rebuild_requested_at = NULL, diverged_at = NULL, \
-             updated_at = timezone('UTC', now()) \
+             rebuilds = rebuilds + 1, updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2",
     )
     .bind(owner.indexer)

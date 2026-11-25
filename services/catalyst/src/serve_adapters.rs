@@ -142,6 +142,33 @@ impl explore::api::map::LandMarket for ShopLandMarket {
             })
         })
     }
+
+    fn marks<'a>(
+        &'a self,
+        conn: &'a mut sqlx::PgConnection,
+        chain_id: i64,
+        land: &'a str,
+        estate: &'a str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> futures::future::BoxFuture<
+        'a,
+        Result<explore::api::map::build::Marks, explore::api::map::LandMarketError>,
+    > {
+        use explore::api::map::build;
+        use shop::market::land_map;
+        Box::pin(async move {
+            let land_map::LandMarketMarks { ready, marks } =
+                land_map::land_market_marks(&self.0, conn, chain_id, land, estate, now)
+                    .await
+                    .map_err(|e| match e {
+                        land_map::LandMarketError::Unready(source, why) => {
+                            build::LandMarketError::Unready(source, why)
+                        }
+                        land_map::LandMarketError::Failed(e) => build::LandMarketError::Failed(e),
+                    })?;
+            Ok(build::Marks { ready, marks })
+        })
+    }
 }
 
 /// Social's SendGrid sender as the Shop deliveries worker's mailer.

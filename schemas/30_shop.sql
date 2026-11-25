@@ -208,6 +208,7 @@ CREATE TABLE shop.items (
     -- copy, which has no item minters).
     minters text[] NOT NULL DEFAULT '{}',
     minter_allowances numeric(78,0)[] NOT NULL DEFAULT '{}',
+    testnet_verified boolean NOT NULL DEFAULT false,
     PRIMARY KEY (network, contract_address, item_id),
     CONSTRAINT items_urn_key UNIQUE (urn),
     CONSTRAINT items_network_known CHECK (network IN ('ethereum', 'matic')),
@@ -248,6 +249,11 @@ CREATE TABLE shop.mirror_state (
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     chain_id bigint,
     pass_block_hash text,
+    marks_item_rows boolean NOT NULL DEFAULT false,
+    CONSTRAINT mirror_state_verified_item_rows CHECK (
+        mirror <> 'items' OR marks_item_rows OR
+        (pass_block_hash IS NULL AND COALESCE(chain_id,0) NOT IN (11155111,80002))
+    ),
     PRIMARY KEY (mirror, network),
     CONSTRAINT mirror_state_known_mirror CHECK (mirror IN ('collections', 'items')),
     CONSTRAINT mirror_state_network_known CHECK (network IN ('ethereum', 'matic'))
@@ -421,6 +427,9 @@ CREATE TABLE shop.chain_cursor (
     -- cleared by the rewind or by a pass that proves the cursor again.
     -- Readers of the height without the publication skip it meanwhile.
     diverged_at timestamp without time zone,
+    -- Raised by the rebuild that clears the projection and by the estate
+    -- repair's refold: with reorg_rewinds, every rewrite of rows in place.
+    rebuilds integer NOT NULL DEFAULT 0,
     -- An old binary omits this column when claiming its lease. It cannot
     -- take the Sepolia trades cursor and publish a history missing V1.
     sepolia_trade_v1 boolean NOT NULL DEFAULT false,
@@ -16940,6 +16949,9 @@ CREATE TABLE shop.sale_execution (
     block_time bigint NOT NULL,
     PRIMARY KEY (network, block_number, log_index)
 );
+CREATE INDEX sale_execution_read_special
+    ON shop.sale_execution (network, kind, block_number, log_index) WHERE kind IN ('store', 'trade', 'name_fee');
+CREATE INDEX sale_execution_read_time ON shop.sale_execution (block_time DESC,network,block_number,log_index);
 CREATE INDEX sale_execution_tx ON shop.sale_execution (network, tx_hash, log_index);
 CREATE INDEX sale_execution_day ON shop.sale_execution (network, ((block_time / 86400) * 86400));
 CREATE INDEX sale_execution_pending_creator ON shop.sale_execution (network, creator_attempted_at NULLS FIRST, block_number) WHERE kind='store' AND NOT creator_checked;
@@ -16967,6 +16979,14 @@ CREATE TABLE shop.sale_asset (
     FOREIGN KEY (network, block_number, log_index)
        REFERENCES shop.sale_execution ON DELETE CASCADE
 );
+CREATE INDEX sale_asset_read_unresolved
+    ON shop.sale_asset (network, block_number, log_index, ordinal) WHERE price > 0 AND (seller IS NULL OR kind = 'bid');
+CREATE INDEX sale_asset_read_seller ON shop.sale_asset (network,seller,block_number) WHERE price>0;
+CREATE INDEX sale_asset_read_buyer ON shop.sale_asset (network,buyer,block_number) WHERE price>0;
+CREATE INDEX sale_asset_read_token ON shop.sale_asset (network, token_id, contract_address) WHERE price > 0;
+CREATE INDEX sale_asset_read_kind ON shop.sale_asset (network, kind, block_number) WHERE price > 0;
+CREATE INDEX sale_asset_read_item ON shop.sale_asset (network,contract_address,item_id) WHERE price>0;
+CREATE INDEX sale_asset_read_price ON shop.sale_asset (price DESC,public_id) WHERE price>0;
 
 CREATE INDEX sale_asset_priced_buyer ON shop.sale_asset(network,buyer,seller,contract_address,currency) WHERE price>0 AND seller IS NOT NULL;
 
@@ -16988,6 +17008,7 @@ CREATE TABLE shop.sale_payment (
     FOREIGN KEY (network, block_number, log_index)
        REFERENCES shop.sale_execution ON DELETE CASCADE
 );
+CREATE INDEX sale_payment_read_beneficiary ON shop.sale_payment (network,beneficiary,block_number) WHERE consideration;
 CREATE TABLE shop.sale_payout (
     network text NOT NULL,
     block_number bigint NOT NULL,
@@ -17326,6 +17347,10 @@ CREATE TABLE shop.collection_event (
 -- take them first.
 CREATE INDEX collection_event_created_idx ON shop.collection_event (network, contract_address)
     WHERE kind = 'proxy_created';
+CREATE INDEX collection_event_creator_account_idx
+    ON shop.collection_event (network, account, block_number) WHERE kind = 'creatorship_transferred';
+CREATE INDEX collection_event_creator_previous_idx
+    ON shop.collection_event (network, previous_account, block_number) WHERE kind = 'creatorship_transferred';
 
 -- A collection's history in chain order, mints aside (a few hundred thousand
 -- rows): the fold of the collections it replays from their creation.
