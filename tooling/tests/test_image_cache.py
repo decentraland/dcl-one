@@ -705,6 +705,27 @@ class CacheSweepBudgetTest(unittest.TestCase):
         self.assertEqual((code, deleted), (None, [1]))
         self.assertIn('closed-PR cleanup deferred', output)
 
+    def test_a_failed_state_lookup_still_prunes_main_and_fails_the_run(self):
+        rows = [self.image(1), self.image(2), self.image(3), self.image(4, 'pr-93')]
+        # An empty stderr (a killed gh) must fail the run as well.
+        for error in ('gh: Bad credentials (HTTP 401)', ''):
+            with self.subTest(error=error):
+                calls, deleted, code, output = self.sweep(rows, states={'93': 'CLOSED'}, states_error=error)
+                self.assertEqual((code, deleted), (1, [1]))
+                self.assertEqual(sum('graphql' in call for call in calls), 1)
+                self.assertIn('::error::PR states unresolved', output)
+                self.assertNotIn('deferred', output)
+                self.assertNotIn('query=', output)
+
+    def test_a_graphql_query_error_is_retried_before_it_fails_the_run(self):
+        rows = [self.image(1), self.image(2), self.image(3), self.image(4, 'pr-93')]
+        error = 'gh: Something went wrong while executing your query. Please include `ABCD:1234` when reporting this issue.'
+        with patch('time.sleep') as slept:
+            calls, deleted, code, _ = self.sweep(rows, states={'93': 'CLOSED'}, states_error=error)
+        self.assertEqual(sum('graphql' in call for call in calls), 4)
+        self.assertEqual(slept.call_count, 3)
+        self.assertEqual((code, deleted), (1, [1]))
+
 
 if __name__ == '__main__':
     unittest.main()

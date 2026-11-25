@@ -138,7 +138,7 @@ impl PortalSettings {
         for net in ChainNet::ALL {
             let reader = settings.reader(net).map_err(anyhow::Error::msg)?;
             anyhow::ensure!(
-                reader.chain() == chain_walk::mainnet_chain(net) as u64,
+                reader.chain() == net.chain_id() as u64,
                 "the {} portal dataset {:?} is not {} mainnet",
                 net.db_name(),
                 reader.dataset(),
@@ -1447,6 +1447,8 @@ fn visit_projections(
             .with_jitter(Duration::from_secs(1))
             .with_error_backoff(Duration::from_secs(30))
     };
+    let chain_id = settings.chain_id(net);
+    let mainnet = chain_id == net.chain_id();
     if settings.nft_enabled {
         let gate: Gate = {
             let state = state.clone();
@@ -1454,7 +1456,7 @@ fn visit_projections(
                 let state = state.clone();
                 async move {
                     Ok(
-                        (!super::nft_index::mirror_complete(&state.pool, net).await).then(|| {
+                        (!super::nft_index::mirror_complete(&state.pool, net, chain_id).await).then(|| {
                             format!(
                                 "nft {}: waiting for the collections mirror's first complete pass",
                                 net.db_name()
@@ -1467,14 +1469,32 @@ fn visit_projections(
         };
         add(
             "nft-index",
-            state.chain_rpc_url(net),
-            Arc::new(move || Arc::new(super::nft_index::NftIndex::new(net))),
+            state.catalogue_rpc_url(net),
+            Arc::new(move || {
+                Arc::new(
+                    super::nft_index::NftIndex::for_chain(net, chain_id)
+                        .expect("validated NFT index chain"),
+                )
+            }),
             Some(gate),
             market_cfg(),
         );
     }
-    if settings.sales_enabled && net == ChainNet::Matic {
-        let url = state.chain_rpc_url(net);
+    if settings.sales_enabled && net == ChainNet::Ethereum && mainnet {
+        add(
+            "sales-index",
+            state.chain_rpc_url(net),
+            Arc::new(|| Arc::new(super::ethereum_sales::EthereumSalesIndex)),
+            None,
+            market_cfg(),
+        );
+    }
+    if settings.sales_enabled
+        && (net == ChainNet::Matic || chain_id == ChainNet::Ethereum.testnet_chain_id())
+    {
+        let index = super::sales_index::SalesIndex::for_chain(chain_id)
+            .expect("validated sales index chain");
+        let url = state.catalogue_rpc_url(net);
         let gate: Gate = {
             let (state, url) = (state.clone(), url.clone().unwrap_or_default());
             let venues_checked = Arc::new(AtomicBool::new(false));
@@ -1484,10 +1504,10 @@ fn visit_projections(
                 async move {
                     if !venues_checked.load(Ordering::SeqCst) {
                         let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &url);
-                        super::sales_index::check_venues(&rpc, &state.pool).await?;
+                        super::sales_index::check_venues(&rpc, &state.pool, index).await?;
                         venues_checked.store(true, Ordering::SeqCst);
                     }
-                    Ok((!super::nft_index::mirror_complete(&state.pool, net).await).then(|| {
+                    Ok((!super::nft_index::mirror_complete(&state.pool, net, chain_id).await).then(|| {
                         "sales matic: waiting for the collections mirror's first complete pass".to_string()
                     }))
                 }
@@ -1497,8 +1517,8 @@ fn visit_projections(
         add(
             "sales-index",
             url,
-            Arc::new(|| Arc::new(super::sales_index::SalesIndex)),
-            Some(gate),
+            Arc::new(move || Arc::new(index)),
+            (net == ChainNet::Matic).then_some(gate),
             market_cfg(),
         );
     }
@@ -1512,7 +1532,7 @@ fn visit_projections(
             market_cfg(),
         );
     }
-    if settings.committee_enabled && net == ChainNet::Matic {
+    if settings.committee_enabled && net == ChainNet::Matic && mainnet {
         add(
             "committee-index",
             state.polygon_mainnet_rpc_url(),
@@ -1521,7 +1541,7 @@ fn visit_projections(
             market_cfg(),
         );
     }
-    if settings.collections_enabled && net == ChainNet::Matic {
+    if settings.collections_enabled && net == ChainNet::Matic && mainnet {
         let url = state.chain_rpc_url(net);
         // The factories' lists (the walk's filter) and the collections'
         // creation state, read before each attempt.
@@ -1539,12 +1559,21 @@ fn visit_projections(
         add(
             "collections-index",
             url,
-            Arc::new(|| Arc::new(super::collections_index::CollectionsIndex::new())),
+            {
+                // Only a network the operator hands it is projected: the
+                // mirror and the fold never both write a network's rows.
+                let project = settings.collections_owned.contains(&ChainNet::Matic);
+                Arc::new(move || {
+                    Arc::new(super::collections_index::CollectionsIndex::projecting(
+                        project,
+                    ))
+                })
+            },
             Some(gate),
             market_cfg(),
         );
     }
-    if settings.third_party_registry_enabled && net == ChainNet::Matic {
+    if settings.third_party_registry_enabled && net == ChainNet::Matic && mainnet {
         add(
             "third-party-registry-index",
             state.polygon_mainnet_rpc_url(),
@@ -1553,7 +1582,7 @@ fn visit_projections(
             market_cfg(),
         );
     }
-    if settings.mana_transfers_enabled {
+    if settings.mana_transfers_enabled && mainnet {
         add(
             "mana-transfers-index",
             state.chain_rpc_url(net),
@@ -1577,14 +1606,19 @@ fn visit_projections(
         }
         // A Sepolia endpoint opts the worker into the separate testnet history.
         if let Some(url) = state.sepolia_rentals_rpc_url() {
+            let fold_listings = settings.chain_id_ethereum == ChainNet::Ethereum.testnet_chain_id();
             add(
                 "rentals-index-sepolia",
                 Some(url),
-                Arc::new(|| Arc::new(RentalsIndex::sepolia())),
+                Arc::new(move || Arc::new(RentalsIndex::sepolia(fold_listings))),
                 None,
-                PeriodicCfg::every(settings.interval)
-                    .with_jitter(Duration::from_secs(20))
-                    .with_error_backoff(Duration::from_secs(1800)),
+                if fold_listings {
+                    market_cfg().with_jitter(Duration::from_secs(20))
+                } else {
+                    PeriodicCfg::every(settings.interval)
+                        .with_jitter(Duration::from_secs(20))
+                        .with_error_backoff(Duration::from_secs(1800))
+                },
             );
         }
     }
@@ -1595,6 +1629,25 @@ fn visit_projections(
 pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs, rentals: Option<bool>) {
     log_switches(state, rentals);
     for net in ChainNet::ALL {
+        if state.settings.market.indexes.sales_enabled
+            && state.settings.market.indexes.chain_id(net) == net.chain_id()
+            && let Some(url) = state.chain_rpc_url(net)
+        {
+            let state = state.clone();
+            let cfg = PeriodicCfg::every(state.settings.market.indexes.interval)
+                .with_error_backoff(Duration::from_secs(60));
+            jobs.spawn_periodic_leased(
+                format!("sales-accounting-{}", net.db_name()),
+                cfg,
+                move |_| {
+                    let (state, url) = (state.clone(), url.clone());
+                    async move {
+                        let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &url);
+                        super::sale_fold::pass(&state.pool, &rpc, net).await
+                    }
+                },
+            );
+        }
         let projections = projections(state, net, rentals);
         if projections.is_empty() {
             continue;
@@ -1684,22 +1737,44 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
     let settings = &state.settings.market.indexes;
     let any_url =
         |f: &dyn Fn(ChainNet) -> Option<String>| ChainNet::ALL.into_iter().any(|n| f(n).is_some());
+    let polygon_mainnet = settings.chain_id(ChainNet::Matic) == ChainNet::Matic.chain_id();
+    if !polygon_mainnet {
+        tracing::info!(
+            chain_id = settings.chain_id(ChainNet::Matic),
+            "mainnet-only committee, collections and third-party registry walks are off for this catalogue"
+        );
+    }
+    for net in ChainNet::ALL {
+        if settings.mana_transfers_enabled && settings.chain_id(net) != net.chain_id() {
+            tracing::info!(
+                network = net.db_name(),
+                "mainnet-only MANA transfer walk is off for this catalogue"
+            );
+        }
+    }
     if !settings.sales_enabled {
         tracing::info!(
             job = "sales-index",
             "marketplace chain index off: its routes answer the unavailable envelope"
         );
-    } else if state.chain_rpc_url(ChainNet::Matic).is_none() {
-        tracing::warn!(
-            job = "sales-index",
-            "marketplace chain index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
-        );
+    } else {
+        for net in ChainNet::ALL {
+            if (net == ChainNet::Matic || settings.chain_id(net) == net.chain_id())
+                && state.catalogue_rpc_url(net).is_none()
+            {
+                tracing::warn!(
+                    job = "sales-index",
+                    network = net.db_name(),
+                    "sales index enabled without an RPC endpoint for this network"
+                );
+            }
+        }
     }
     for (enabled, job, has_url) in [
         (
             settings.nft_enabled,
             "nft-index",
-            any_url(&|n| state.chain_rpc_url(n)),
+            any_url(&|n| state.catalogue_rpc_url(n)),
         ),
         (
             settings.trade_events_enabled,
@@ -1720,7 +1795,7 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
         } else if !has_url {
             tracing::warn!(
                 job,
-                "marketplace chain index enabled but no JSON-RPC endpoint is configured (TRADE_RPC_URLS 1= / 137=, or ETH_RPC_URL): it stays off"
+                "marketplace chain index enabled but no JSON-RPC endpoint is configured for its chain: it stays off"
             );
         }
     }
@@ -1729,19 +1804,25 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
             job = "committee-index",
             "committee index off: builder's committee routes admit only BUILDER_ADMIN_ADDRESSES"
         );
-    } else if state.polygon_mainnet_rpc_url().is_none() {
+    } else if polygon_mainnet && state.polygon_mainnet_rpc_url().is_none() {
         tracing::warn!(
             job = "committee-index",
             "committee index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
         );
     }
-    if settings.collections_enabled && state.chain_rpc_url(ChainNet::Matic).is_none() {
+    if settings.collections_enabled
+        && polygon_mainnet
+        && state.chain_rpc_url(ChainNet::Matic).is_none()
+    {
         tracing::warn!(
             job = "collections-index",
             "collections index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
         );
     }
-    if settings.third_party_registry_enabled && state.polygon_mainnet_rpc_url().is_none() {
+    if settings.third_party_registry_enabled
+        && polygon_mainnet
+        && state.polygon_mainnet_rpc_url().is_none()
+    {
         tracing::warn!(
             job = "third-party-registry-index",
             "third-party registry index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
@@ -1749,7 +1830,7 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
     }
     if rentals == Some(false) {
         tracing::info!(
-            "rentals index off (SHOP_RENTALS_INDEX_ENABLED=false): on mainnet NFT walkers, owner pages that include LAND return 503 rentals-index while the Rentals publication is unavailable"
+            "rentals index off (SHOP_RENTALS_INDEX_ENABLED=false): on NFT walkers, owner pages that include LAND return 503 rentals-index while the Rentals publication is unavailable"
         );
     } else if state.venue_rpc_url(1).is_none() {
         let why = "no chain-1 JSON-RPC endpoint is configured (TRADE_RPC_URLS 1=, or ETH_RPC_URL on mainnet)";

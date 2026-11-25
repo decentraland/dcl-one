@@ -265,22 +265,6 @@ fn parse_optional_bool(p: &Params, key: &str) -> Option<bool> {
     }
 }
 
-/// `minPrice`/`maxPrice`: MANA in wei (marketplace-server's unit), a whole number. Anything else
-/// is a 400 here rather than a failed `::numeric` cast in the read.
-fn wei_param(p: &Params, key: &str) -> Result<Option<String>, ApiError> {
-    match p.get_string(key, None) {
-        Some(raw) if !raw.trim().is_empty() => {
-            let digits = raw.trim();
-            if digits.len() <= 78 && digits.bytes().all(|b| b.is_ascii_digit()) {
-                Ok(Some(digits.to_string()))
-            } else {
-                Err(ApiError::bad_request(format!("Invalid {key} value: {raw}")))
-            }
-        }
-        _ => Ok(None),
-    }
-}
-
 pub fn parse_filters(pairs: &[(String, String)]) -> Result<NftFilters, ApiError> {
     let p = Params::new(pairs);
     let category = p
@@ -345,8 +329,8 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<NftFilters, ApiError>
         max_distance_to_plaza: p.get_number("maxDistanceToPlaza", None),
         min_estate_size: p.get_number("minEstateSize", None),
         max_estate_size: p.get_number("maxEstateSize", None),
-        min_price: wei_param(&p, "minPrice")?,
-        max_price: wei_param(&p, "maxPrice")?,
+        min_price: super::items::parse_price_param(&p, "minPrice")?,
+        max_price: super::items::parse_price_param(&p, "maxPrice")?,
         emote_has_geometry: p.get_boolean("emoteHasGeometry"),
         emote_has_sound: p.get_boolean("emoteHasSound"),
         emote_outcome_type: p.get_string("emoteOutcomeType", None),
@@ -715,9 +699,24 @@ pub async fn list_nfts(
     f: &NftFilters,
 ) -> Result<(Vec<NftResult>, i64), Response> {
     validate(f)?;
+    let chain_id = state.settings.market.indexes.chain_id_ethereum;
+    // The pinned Decentraland contracts address book (01b40cff154a046f9ec509ac84be3643b51181c6,
+    // addresses.json) has LANDProxy, EstateProxy and DCLRegistrar on Sepolia only on this pair.
+    if super::owned_items::walks_here(state)
+        && state.settings.catalogue() == super::nft_index::Catalogue::Testnet
+        && f.network == Some(Network::Matic)
+        && (f.is_land
+            || matches!(
+                f.category,
+                Some(NftCategory::Parcel | NftCategory::Estate | NftCategory::Ens)
+            ))
+    {
+        return Ok((vec![], 0));
+    }
     let mut snapshot = None;
     if super::owned_items::walks_here(state)
-        && let Some(sources) = super::nft_reads::land_page_sources(f)
+        && let Some(land) = state.land_network()
+        && let Some(sources) = super::nft_reads::land_page_sources(f, land)
     {
         let (first, skip) = index_page(f);
         if first.saturating_add(skip) > super::nft_reads::MAX_WINDOW {
@@ -754,10 +753,10 @@ pub async fn list_nfts(
     let narrowed;
     if wants_rentals {
         let listings = match snapshot.as_mut() {
-            Some((conn, _)) => super::rentals::newest_listings(&mut **conn, &statuses)
+            Some((conn, _)) => super::rentals::newest_listings(&mut **conn, chain_id, &statuses)
                 .await
                 .map_err(super::nft_reads::read_error)?,
-            None => super::rentals::newest_listings(&state.pool, &statuses)
+            None => super::rentals::newest_listings(&state.pool, chain_id, &statuses)
                 .await
                 .unwrap_or_else(|e| {
                     tracing::warn!(error = %e, "/v1/nfts: the rentals read failed");
@@ -790,10 +789,12 @@ pub async fn list_nfts(
                 .map(|r| r.nft.id.clone())
                 .collect();
             match snapshot.as_mut() {
-                Some((conn, _)) => super::rentals::listings_of_nfts(&mut **conn, &land, &statuses)
-                    .await
-                    .map_err(super::nft_reads::read_error)?,
-                None => super::rentals::listings_of_nfts(&state.pool, &land, &statuses)
+                Some((conn, _)) => {
+                    super::rentals::listings_of_nfts(&mut **conn, chain_id, &land, &statuses)
+                        .await
+                        .map_err(super::nft_reads::read_error)?
+                }
+                None => super::rentals::listings_of_nfts(&state.pool, chain_id, &land, &statuses)
                     .await
                     .unwrap_or_else(|e| {
                         tracing::warn!(error = %e, "/v1/nfts: the rentals read failed");
@@ -930,6 +931,12 @@ async fn list_page(
     state: &MarketplaceState,
     f: &NftFilters,
 ) -> Result<(Vec<NftResult>, i64), Response> {
+    if super::owned_items::walks_here(state)
+        && state.settings.catalogue() == super::nft_index::Catalogue::Testnet
+    {
+        let (first, skip) = index_page(f);
+        return super::nft_reads::list_nfts(state, f, first, skip).await;
+    }
     let reader_page = readers::reader_page(f.first, f.skip, DEFAULT_FIRST);
     let (first, skip) = match reader_page {
         Some(page) if is_land_routed(f) && f.search.is_none() => page,
@@ -1023,14 +1030,15 @@ mod tests {
             .collect()
     }
 
-    /// The NAME browse's price range and sort: wei bounds kept as given, `cheapest` read as the
-    /// listing-price order, and a bound that is not a whole number of wei refused with a 400.
+    /// The NAME browse's price range and sort: MANA bounds read as wei (the legacy `parsePrice`),
+    /// `cheapest` read as the listing-price order, and a bound ethers would not parse refused
+    /// with a 400.
     #[test]
-    fn the_price_range_is_whole_wei_and_cheapest_sorts_by_price() {
+    fn the_price_range_is_mana_and_cheapest_sorts_by_price() {
         let f = parse_filters(&pairs(&[
             ("category", "ens"),
-            ("minPrice", " 1000000000000000000 "),
-            ("maxPrice", "25000000000000000000"),
+            ("minPrice", "1"),
+            ("maxPrice", "25"),
             ("sortBy", "cheapest"),
         ]))
         .unwrap();
@@ -1048,7 +1056,16 @@ mod tests {
         assert_eq!(graph_sort(f.sort_by), ("searchOrderPrice", "asc"));
         let blank = parse_filters(&pairs(&[("minPrice", ""), ("maxPrice", " ")])).unwrap();
         assert_eq!((blank.min_price, blank.max_price), (None, None));
-        for bad in ["abc", "1e18", "1.5", "-1", "0x10", &"9".repeat(79)] {
+        let decimal = parse_filters(&pairs(&[
+            ("minPrice", "1.5"),
+            ("maxPrice", "0.000000000000000001"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            (decimal.min_price.as_deref(), decimal.max_price.as_deref()),
+            (Some("1500000000000000000"), Some("1"))
+        );
+        for bad in ["abc", "1e18", " 1 ", "0x10", "1.0000000000000000001"] {
             let Err(err) = parse_filters(&pairs(&[("minPrice", bad)])) else {
                 panic!("minPrice={bad} was accepted")
             };

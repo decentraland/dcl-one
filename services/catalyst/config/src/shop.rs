@@ -148,7 +148,7 @@ pub struct MarketplaceConfig {
     /// Tip forwards waiting for the MANA transfer index, across every sender.
     #[arg(long, env = "MARKETPLACE_TIP_MAX_PENDING", default_value_t = 2_000)]
     pub marketplace_tip_max_pending: u64,
-    /// Walk the store's primary mints and the ERC721BidV2 bids on Polygon.
+    /// Walk Polygon store mints and bids, and Ethereum accepted bids and NAME purchase fees.
     #[arg(long, env = "MARKETPLACE_SALES_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_sales_index_enabled: bool,
 
@@ -165,6 +165,11 @@ pub struct MarketplaceConfig {
     /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry. Nothing reads it yet.
     #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_collections_index_enabled: bool,
+
+    /// The networks whose `shop.collections` and `shop.items` rows the collections index's fold
+    /// takes from the collections mirror and writes (`matic`); empty, it keeps its log alone.
+    #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_OWNS", default_value = "")]
+    pub marketplace_collections_index_owns: String,
 
     /// Pause between the end of one pass and the start of the next, for the nft, trade-events,
     /// MANA transfers, sales, committee, third-party registry, collections and rentals walks
@@ -215,8 +220,8 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_INDEX_STOP_BLOCK_MATIC")]
     pub marketplace_index_stop_block_matic: Option<u64>,
 
-    /// The chain the trade-events walk of each network reads: its mainnet, or
-    /// its testnet (11155111, 80002) on a stack that trades there.
+    /// The chains the NFT and trade-events walks read. A catalogue node serves
+    /// Ethereum and Polygon mainnet (1/137) or Sepolia and Amoy (11155111/80002).
     #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", default_value_t = 1)]
     pub marketplace_index_chain_id_ethereum: i64,
 

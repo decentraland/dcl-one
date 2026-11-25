@@ -11,6 +11,11 @@ use axum::Router;
 use axum::http::header::CONTENT_TYPE;
 use axum::routing::get;
 
+/// Check the database through the same connection pool that serves requests.
+pub async fn database_ready(pool: &sqlx::PgPool) -> bool {
+    sqlx::query("SELECT 1").execute(pool).await.is_ok()
+}
+
 /// The pass document of a service whose component map names the server
 /// `httpServer` (social-service-ea).
 pub const PASS: &str = r#"{"details":{"httpServer":{"status":"pass"}},"status":"pass"}"#;

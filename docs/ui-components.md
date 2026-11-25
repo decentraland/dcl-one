@@ -79,6 +79,8 @@ Some names requested in [the shared UI backlog](https://github.com/decentraland/
 
 The editor's dropdown field and dropdown trigger form the separate [Creator Hub Dropdown-Input design contract](../apps/creator-hub/docs/DESIGN.md#dropdown-input-dropdown). The inspector uses its own [Dropdown](../apps/creator-hub/packages/inspector/src/components/ui/Dropdown/Dropdown.tsx). The Creator Hub renderer uses the [ui3 Select](../apps/ui3/src/atoms/Select.tsx) for fields such as [DomainSelect](../apps/creator-hub/packages/creator-hub/renderer/src/components/LandDetailPage/DetailsTab/DomainSelect.tsx) and its [local Dropdown](../apps/creator-hub/packages/creator-hub/renderer/src/components/Dropdown/component.tsx) for menus such as [ProjectCard](../apps/creator-hub/packages/creator-hub/renderer/src/components/ProjectCard/component.tsx). The requested web Dropdown names above refer to the public web Dropdown.
 
+The web and native Shop routes use [ShopCartDrawer](../library/ui/apps/shop/ShopCartDrawer.tsx) for cart lines, quantities, totals and dismissal. The Shop supplies the store and checkout links. The in-world HUD uses its own Shop cart.
+
 ## Review-only components
 
 The [local review manifest](../library/ui/figma/review/src/generated/components/manifest.ts) owns preview names, node identities, variants and `needsManual` flags. It is not an application import surface. Do not duplicate its records here or infer visual parity from a passing build.
