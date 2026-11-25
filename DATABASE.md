@@ -3139,7 +3139,11 @@ contract-wallet sign-in on that replica then gets a 429 ("on this node") until
 the window ends, while EOA chains are unaffected; the replica logs a warning
 once per window when that happens. During an RPC outage, after 20 failed calls
 (about 10 sign-ins) a network sees that 429 instead of the 503 for up to a
-minute.
+minute. Below this budget, the node's shared validator applies its own to every
+contract-wallet check that reaches the RPC on any route
+(`shared::eip1654_budget`, also in memory): 120 calls per client source a
+minute (an IPv6 caller by its /64) and 480 per IPv6 /48, with a 429 before the
+RPC past it; a cached acceptance spends nothing.
 
 Expiry compares the stored instant with the handling replica's clock, so
 replicas need synchronized clocks (NTP). The periodic

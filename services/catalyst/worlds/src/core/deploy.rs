@@ -647,6 +647,10 @@ async fn authenticate(
         Err(AuthError::Eip1654ValidationFailed(e)) => Err(unavailable(format!(
             "The auth chain could not be verified right now: {e}"
         ))),
+        // The client source spent its contract-wallet checks, before any RPC call.
+        Err(e @ AuthError::Eip1654RateLimited) => {
+            Err(Refusal(StatusCode::TOO_MANY_REQUESTS, e.to_string()))
+        }
         Err(e) => Err(refused(crypto_message(&chain, entity_id, &e))),
     }
 }

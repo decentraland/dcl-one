@@ -334,8 +334,6 @@ async fn preflight<T: TypedMessage + DeserializeOwned>(
     body: &[u8],
 ) -> Result<(Signed<T>, String), Response> {
     let eip1654 = super::signed::fresh(state.eip1654.as_deref());
-    super::signed::admit_contract_wallet_check(eip1654, headers)
-        .map_err(|e| err_json(StatusCode::TOO_MANY_REQUESTS, e.message()))?;
     let outer =
         signed_fetch::require_signer(headers, "post", path, PayloadPolicy::V6ThenLegacy, eip1654)
             .await
@@ -345,6 +343,10 @@ async fn preflight<T: TypedMessage + DeserializeOwned>(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "The contract-wallet signature cannot be checked right now".to_string(),
                 ),
+                // The client source spent its contract-wallet checks, before any RPC call.
+                e @ signed_fetch::SignedFetchError::RateLimited => {
+                    err_json(StatusCode::TOO_MANY_REQUESTS, e.to_string())
+                }
                 e => err_json(StatusCode::UNAUTHORIZED, format!("auth chain: {e}")),
             })?
             .into_string();

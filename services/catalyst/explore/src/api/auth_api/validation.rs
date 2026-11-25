@@ -203,6 +203,9 @@ pub(super) fn refusal(err: AuthError) -> ChainRefusal {
             }
             ChainRefusal::Unavailable
         }
+        // The node-wide budget of the client source (`eip1654_budget`), below
+        // this route's own: refused before the RPC, the same 429.
+        AuthError::Eip1654RateLimited => ChainRefusal::Throttled(Spent::Network),
         e => ChainRefusal::Invalid(e.to_string()),
     }
 }

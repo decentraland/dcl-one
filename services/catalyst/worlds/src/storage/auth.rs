@@ -115,6 +115,8 @@ pub enum AuthChainError {
     InvalidSignature(String),
     EipNotImplemented,
     CatalystUnavailable(String),
+    /// The client source spent its contract-wallet checks (`eip1654_budget`).
+    RateLimited,
     /// The whole `Invalid metadata content: …` message.
     SceneSignerRejected(String),
 }
@@ -129,6 +131,7 @@ impl AuthChainError {
             | Self::SceneSignerRejected(_) => 400,
             Self::Expired(_) | Self::InvalidSignature(_) => 401,
             Self::EipNotImplemented | Self::CatalystUnavailable(_) => 503,
+            Self::RateLimited => 429,
         }
     }
 
@@ -143,6 +146,9 @@ impl AuthChainError {
             Self::InvalidSignature(detail) => format!("Invalid signature: {detail}"),
             Self::EipNotImplemented => "EIP-1654 chains need an RPC validator".to_string(),
             Self::CatalystUnavailable(detail) => format!("Error connecting to catalyst: {detail}"),
+            Self::RateLimited => {
+                "Too many contract-wallet signature checks; retry later".to_string()
+            }
         }
     }
 }
@@ -164,6 +170,7 @@ impl From<SignedFetchError> for AuthChainError {
             SignedFetchError::InvalidSignature(d) => Self::InvalidSignature(d),
             SignedFetchError::EipNotImplemented => Self::EipNotImplemented,
             SignedFetchError::CatalystUnavailable(d) => Self::CatalystUnavailable(d),
+            SignedFetchError::RateLimited => Self::RateLimited,
         }
     }
 }
@@ -184,6 +191,7 @@ fn map_auth_error(err: AuthError) -> AuthChainError {
         | AuthError::Eip1654Rejected { .. } => AuthChainError::InvalidSignature(err.to_string()),
         AuthError::Eip1654NotImplemented => AuthChainError::EipNotImplemented,
         AuthError::Eip1654ValidationFailed(d) => AuthChainError::CatalystUnavailable(d),
+        AuthError::Eip1654RateLimited => AuthChainError::RateLimited,
     }
 }
 
@@ -756,6 +764,58 @@ mod tests {
         };
         let result = verify_request(headers, "get", &paths(), Some(&validator)).await;
         (result, validator.calls.into_inner())
+    }
+
+    /// The node's validator (`eip1654_budget`) refuses a client source's
+    /// contract-wallet checks past its pre-auth budget before the RPC:
+    /// world-storage answers 429, and another source keeps its own budget.
+    #[tokio::test]
+    async fn a_spent_contract_wallet_budget_is_a_429_before_any_rpc_call() {
+        use crate::shared::eip1654_budget::{SourceBudgeted, with_source};
+        use crate::shared::limits::PREAUTH_PER_MINUTE;
+        use std::sync::atomic::Ordering::SeqCst;
+
+        let inner = std::sync::Arc::new(CountingValidator {
+            valid: false,
+            calls: Default::default(),
+        });
+        let validator = SourceBudgeted::new(inner.clone());
+        let headers = contract_wallet_headers(
+            |ts| build_payload_v6("get", "/values/k", ts, METADATA),
+            3_600_000,
+        );
+        let paths = paths();
+        let verify = |source: &str| {
+            with_source(
+                Some(source.to_string()),
+                verify_request(&headers, "get", &paths, Some(&validator)),
+            )
+        };
+        let mut refused = 0;
+        let tripped = loop {
+            let err = verify("203.0.113.61").await.err().expect("refused");
+            if err.status_code() == 429 {
+                break err;
+            }
+            assert_eq!(err.status_code(), 401, "{err:?}");
+            refused += 1;
+            assert!(refused <= PREAUTH_PER_MINUTE, "the source's budget trips");
+        };
+        assert_eq!(tripped, AuthChainError::RateLimited);
+        let spent = inner.calls.load(SeqCst);
+        assert_eq!(spent, PREAUTH_PER_MINUTE as usize);
+        let again = verify("203.0.113.61").await.err().expect("refused");
+        assert_eq!(again.status_code(), 429);
+        assert_eq!(inner.calls.load(SeqCst), spent, "no call past the budget");
+        assert_eq!(
+            verify("198.51.100.61")
+                .await
+                .err()
+                .expect("refused")
+                .status_code(),
+            401,
+            "another source keeps its own budget"
+        );
     }
 
     #[tokio::test]

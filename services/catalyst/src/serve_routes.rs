@@ -349,5 +349,15 @@ pub(super) fn build_routes(
     // their case, and its `Allow` list on a 405 (also under
     // /worlds-content-server/). Other paths pass untouched.
     let app = content::routing::upstream_routing(app);
-    comms::stats::http::mount_services(app, statistics, archipelago.stats, archipelago.connector)
+    let app = comms::stats::http::mount_services(
+        app,
+        statistics,
+        archipelago.stats,
+        archipelago.connector,
+    );
+    // Every request, whichever mount answers it (the archipelago socket's
+    // stats and connector aliases included), runs inside its client source,
+    // which the shared EIP-1654 validator charges its contract-wallet checks
+    // to (`shared::eip1654_budget`).
+    shared::eip1654_budget::scope_client_source(app, config.node.http_trusted_proxy_cidrs.clone())
 }

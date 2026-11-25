@@ -258,7 +258,15 @@ fn verdict_message(chain: &[AuthLink], err: &AuthError) -> String {
     }
 }
 
-async fn verdict(state: &SharedState, prepared: &PreparedValidation) -> Result<(), String> {
+/// Why a chain does not verify: a verdict (`valid: false`), or a
+/// contract-wallet check the client source's EIP-1654 budget refused before
+/// the RPC (a 429, no verdict on the signature).
+enum Refused {
+    Verdict(String),
+    RateLimited,
+}
+
+async fn verdict(state: &SharedState, prepared: &PreparedValidation) -> Result<(), Refused> {
     // `@dcl/crypto` takes a lone SIGNER's address as the final authority;
     // the shared verifier refuses an unsigned chain.
     if let [signer] = prepared.chain.as_slice()
@@ -267,10 +275,10 @@ async fn verdict(state: &SharedState, prepared: &PreparedValidation) -> Result<(
         if signer.payload == prepared.final_authority {
             return Ok(());
         }
-        return Err(final_authority_message(
+        return Err(Refused::Verdict(final_authority_message(
             &prepared.final_authority,
             &signer.payload,
-        ));
+        )));
     }
     let now_ms = chrono::Utc::now().timestamp_millis();
     verify_auth_chain_async(
@@ -280,7 +288,10 @@ async fn verdict(state: &SharedState, prepared: &PreparedValidation) -> Result<(
         state.eip1654.as_deref(),
     )
     .await
-    .map_err(|e| verdict_message(&prepared.chain, &e))
+    .map_err(|e| match e {
+        AuthError::Eip1654RateLimited => Refused::RateLimited,
+        e => Refused::Verdict(verdict_message(&prepared.chain, &e)),
+    })
 }
 
 pub async fn validate_signature(
@@ -322,7 +333,14 @@ pub async fn validate_signature(
         };
     let body = match verdict(&state, &prepared).await {
         Ok(()) => json!({ "valid": true, "ownerAddress": prepared.owner }),
-        Err(error) => json!({ "valid": false, "error": error }),
+        Err(Refused::Verdict(error)) => json!({ "valid": false, "error": error }),
+        Err(Refused::RateLimited) => {
+            return validator_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many contract-wallet signature checks; retry later",
+                None,
+            );
+        }
     };
     (StatusCode::OK, Json(body)).into_response()
 }
