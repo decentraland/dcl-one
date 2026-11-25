@@ -710,6 +710,7 @@ mod tests {
         logs: Vec<RpcLog>,
         tip: u64,
         changed_tip_read: Option<usize>,
+        forked_block: Option<u64>,
         tip_reads: std::sync::atomic::AtomicUsize,
     }
 
@@ -737,6 +738,9 @@ mod tests {
 
         async fn header(&self, number: u64) -> Result<Read<BlockHeader>, RpcError> {
             let mut value = repair_header(number);
+            if self.forked_block == Some(number) {
+                value.hash = repair_header(number + 100).hash;
+            }
             if number == self.tip
                 && self.changed_tip_read
                     == Some(
@@ -851,16 +855,18 @@ mod tests {
             "UPDATE shop.chain_cursor SET last_block=$2::bigint+2,folded_block=$2,folded_at=timezone('UTC',now())
              WHERE indexer=$1 AND network='matic'",
         ).bind(index.indexer()).bind(tip as i64).execute(&mut *tx).await.unwrap();
-        sqlx::query(
+        let checkpoint =
             "INSERT INTO shop.chain_checkpoint(indexer,network,block_number,block_hash,block_time)
-             VALUES ($1,'matic',$2,$3,$2)",
-        )
-        .bind(index.indexer())
-        .bind(tip as i64)
-        .bind(repair_header(tip).hash)
-        .execute(&mut *tx)
-        .await
-        .unwrap();
+            VALUES ($1,'matic',$2,$3,$2)";
+        for block in [START_BLOCK, START_BLOCK + 1, tip] {
+            sqlx::query(checkpoint)
+                .bind(index.indexer())
+                .bind(block as i64)
+                .bind(repair_header(block).hash)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
         tx.commit().await.unwrap();
 
         let flags = || {
@@ -897,6 +903,7 @@ mod tests {
             logs,
             tip,
             changed_tip_read,
+            forked_block: None,
             tip_reads: 0.into(),
         };
         let mut wrong_branch = logs.clone();
@@ -921,7 +928,55 @@ mod tests {
             assert_eq!(flags().await.unwrap(), pending);
         }
 
+        let mut other_branch = logs.clone();
+        other_branch[1] = log(
+            Registry::ThirdPartyItemSlotsBought {
+                id: ID.into(),
+                price: U256::ZERO,
+                slots: U256::ZERO,
+                sender: MANAGER,
+            },
+            START + 1,
+            0,
+        );
+        other_branch[1].block_hash = Some(repair_header(START_BLOCK + 101).hash);
+        let forked_source = RepairArchive {
+            forked_block: Some(START_BLOCK + 1),
+            ..archive(other_branch, None)
+        };
+        let error = index
+            .after_publish(pool, &forked_source, &owner, 10, 10)
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("no matching published checkpoint"),
+            "{error:#}"
+        );
+        assert_eq!(flags().await.unwrap(), pending);
+
         let source = archive(logs, None);
+        sqlx::query("DELETE FROM shop.chain_checkpoint WHERE indexer=$1 AND network='matic' AND block_number=$2")
+            .bind(index.indexer()).bind(START + 1).execute(pool).await.unwrap();
+        let error = index
+            .after_publish(pool, &source, &owner, 10, 10)
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("no matching published checkpoint"),
+            "{error:#}"
+        );
+        assert_eq!(flags().await.unwrap(), pending);
+        sqlx::query(checkpoint)
+            .bind(index.indexer())
+            .bind(START + 1)
+            .bind(repair_header(START_BLOCK + 1).hash)
+            .execute(pool)
+            .await
+            .unwrap();
         assert_eq!(
             index
                 .after_publish(pool, &source, &owner, 10, 4)

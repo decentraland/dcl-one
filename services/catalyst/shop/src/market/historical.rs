@@ -142,6 +142,10 @@ async fn respond(state: SharedState, req: Request, resource: Resource) -> Respon
         return ApiError::unauthorized("Unauthorized").into_response();
     }
     let read = async {
+        let body_slot = state
+            .historical_body_slots
+            .try_acquire()
+            .map_err(|_| Failure::Busy)?;
         let bytes =
             tokio::time::timeout(Duration::from_secs(10), to_bytes(req.into_body(), MAX_BODY))
                 .await
@@ -153,6 +157,8 @@ async fn respond(state: SharedState, req: Request, resource: Resource) -> Respon
             .map_err(|_| Failure::Busy)?;
         let data: Value = serde_json::from_slice(&bytes)
             .map_err(|_| Failure::BadRequest("Invalid historical request".into()))?;
+        drop(bytes);
+        drop(body_slot);
         lookup(&state, resource, data).await
     };
     match read.await {

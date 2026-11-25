@@ -669,6 +669,7 @@ pub struct MarketplaceState {
     pub(crate) sales_accounts_slots: tokio::sync::Semaphore,
     sales_seller_slots: tokio::sync::Semaphore,
     historical_slots: tokio::sync::Semaphore,
+    historical_body_slots: tokio::sync::Semaphore,
     pub(crate) sales_pages_slots: tokio::sync::Semaphore,
     /// `mirror_state.last_complete_pass_at` per mirror, cached 10 s.
     pub(crate) mirror_ready: TtlMap<mirrors::Mirror, Option<chrono::NaiveDateTime>>,
@@ -768,6 +769,7 @@ impl MarketplaceState {
             sales_accounts_slots: tokio::sync::Semaphore::new(1),
             sales_seller_slots: tokio::sync::Semaphore::new(4),
             historical_slots: tokio::sync::Semaphore::new(2),
+            historical_body_slots: tokio::sync::Semaphore::new(2),
             sales_pages_slots: tokio::sync::Semaphore::new(4),
             mirror_ready: TtlMap::bounded(mirrors::READY_TTL, 8),
             trades_ready: TtlMap::bounded(mirrors::READY_TTL, 1),

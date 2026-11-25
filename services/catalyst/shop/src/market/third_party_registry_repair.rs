@@ -1,5 +1,5 @@
 //! Classify old provider versions without withdrawing the current registry.
-//! Existing rows are changed only when the archive supplies their own logs.
+//! The archive must prove each old log against a checkpoint in the publication.
 
 use anyhow::ensure;
 use sqlx::PgPool;
@@ -50,6 +50,7 @@ pub(super) async fn backfill_reviews(
     let mut logs = Vec::new();
     let mut ids = Vec::new();
     let mut reviews = Vec::new();
+    let mut hashes = Vec::new();
     let mut reached = batch.reached;
     let mut used = before.requests + batch.requests;
     for group in batch
@@ -76,6 +77,7 @@ pub(super) async fn backfill_reviews(
                 logs.push(event.index);
                 ids.push(event.id);
                 reviews.push(matches!(event.change, Change::Reviewed { .. }));
+                hashes.push(header.value.hash.clone());
             }
         }
     }
@@ -106,27 +108,42 @@ pub(super) async fn backfill_reviews(
         anchored,
         "registry review publication changed during repair"
     );
-    let missing: bool = sqlx::query_scalar(
+    let (missing, unproven): (bool, bool) = sqlx::query_as(
         "WITH archive AS (
-             SELECT * FROM unnest($1::bigint[],$2::integer[],$3::text[],$4::boolean[])
-                 AS a(block_number,log_index,provider_id,is_review)
+             SELECT * FROM unnest($1::bigint[],$2::integer[],$3::text[],$4::boolean[],$5::text[])
+                 AS a(block_number,log_index,provider_id,is_review,block_hash)
+         ), proven AS (
+             SELECT a.* FROM archive a
+             JOIN shop.chain_checkpoint p ON p.indexer=$8 AND p.network='matic'
+                AND (p.block_number,p.block_hash)=(a.block_number,a.block_hash)
          ), fixed AS (
              UPDATE shop.third_party_registry_event e SET is_review=a.is_review
-             FROM archive a
+             FROM proven a
              WHERE (e.block_number,e.log_index,e.provider_id)=(a.block_number,a.log_index,a.provider_id)
-               AND e.block_number BETWEEN $5 AND $6 AND e.is_review IS NULL
+               AND e.block_number BETWEEN $6 AND $7 AND e.is_review IS NULL
              RETURNING e.block_number,e.log_index
+         ), remaining AS (
+             SELECT e.block_number,e.log_index,e.provider_id FROM shop.third_party_registry_event e
+             WHERE e.block_number BETWEEN $6 AND $7 AND e.is_review IS NULL
+               AND NOT EXISTS (SELECT 1 FROM fixed f WHERE (f.block_number,f.log_index)=(e.block_number,e.log_index))
          )
          SELECT EXISTS (
-             SELECT 1 FROM shop.third_party_registry_event e
-             WHERE e.block_number BETWEEN $5 AND $6 AND e.is_review IS NULL
-               AND NOT EXISTS (SELECT 1 FROM fixed f WHERE (f.block_number,f.log_index)=(e.block_number,e.log_index))
-         )",
+                 SELECT 1 FROM remaining e WHERE NOT EXISTS (
+                    SELECT 1 FROM archive a
+                    WHERE (e.block_number,e.log_index,e.provider_id)=(a.block_number,a.log_index,a.provider_id))
+                ), EXISTS (
+                 SELECT 1 FROM remaining e JOIN archive a USING(block_number,log_index,provider_id)
+                )",
     )
-    .bind(blocks).bind(logs).bind(ids).bind(reviews)
+    .bind(blocks).bind(logs).bind(ids).bind(reviews).bind(hashes)
     .bind(i64::try_from(from)?).bind(i64::try_from(reached)?)
+    .bind(INDEXER_THIRD_PARTY_REGISTRY)
     .fetch_one(&mut *tx).await?;
     ensure!(!missing, "registry review archive omitted an indexed event");
+    ensure!(
+        !unproven,
+        "registry review archive block has no matching published checkpoint"
+    );
     owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(used)
