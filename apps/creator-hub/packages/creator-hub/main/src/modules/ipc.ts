@@ -60,6 +60,9 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
   handle('electron.showOpenDialog', (_event, opts) => electron.showOpenDialog(opts));
   handle('electron.showSaveDialog', (_event, opts) => electron.showSaveDialog(opts));
   handle('electron.openExternal', (_event, url) => electron.openExternal(url));
+  handle('electron.fetchAuthIdentity', (_event, url, id, verifier) =>
+    electron.fetchAuthIdentity(url, id, verifier),
+  );
   handle('electron.openDeepLink', (_event, url) => electron.openDeepLink(url));
   handle('electron.logDeployment', (_event, entry) => electron.logDeployment(entry));
   handle('electron.logRendererError', (_event, entry) => electron.logRendererError(entry));

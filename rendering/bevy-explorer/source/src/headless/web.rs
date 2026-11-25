@@ -155,7 +155,7 @@ fn run_on_worker_timer(mut app: App) -> AppExit {
     let reschedule = schedule.clone();
     // Each tick is due an interval after the last was DUE, not after it ran, so a timer that
     // fires late (they do, by a millisecond or several) is repaid by a shorter wait and the
-    // rate holds; as the scene loop's `next_frame_end` does for its native sleep.
+    // rate holds; as the scene loop's frame grid (`FrameGrid`) does for its native sleep.
     let mut due = Instant::now();
     *tick.borrow_mut() = Some(Closure::new(move || {
         app.update();

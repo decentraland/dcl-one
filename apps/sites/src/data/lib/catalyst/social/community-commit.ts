@@ -61,6 +61,7 @@ export async function createCommunity(
     throw new CatalystError(
       `Create community failed (${res.status}): ${await readError(res)}`,
       url,
+      res.status,
     );
   }
   const body = (await res.json()) as { data?: unknown } & Record<string, unknown>;

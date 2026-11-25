@@ -23,7 +23,7 @@ export async function shopLoader(
     track(
       "ffw_shop_landing",
       { item_id: `${params.contractAddress ?? ""}-${params.itemId ?? ""}`.toLowerCase(), nid: url.searchParams.get("nid") ?? "", on_sale: !!listing?.[1] },
-      { sid: session.sid, story: "notifications/first-wear"},
+      { sid: session.sid, story: "notifications/first-wear", requestUserAgent: request.headers.get("user-agent") },
     );
   }
   return session.wrap({ ...load.data, sid: session.sid }, { status: load.status });

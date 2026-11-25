@@ -13,6 +13,8 @@ export type TrackContext = {
   userId?: string;
   /** Unset means `sites`. */
   source?: TelemetrySource;
+  /** Incoming request's User-Agent for server tracking. Background reports have no request. */
+  requestUserAgent?: string | null;
   /**
    * A Sites conversion (a download) skips the bot and exempt-session gates, as the legacy site's
    * beacon did. The Shop suppressed every bot event, purchases included, so it is ignored there.
@@ -447,7 +449,7 @@ function exemptSession(): boolean {
   return isAnalyticsExemptPath(initialPath());
 }
 
-type GateContext = Pick<TrackContext, "source" | "conversion" | "legacy">;
+type GateContext = Pick<TrackContext, "source" | "conversion" | "legacy" | "requestUserAgent">;
 
 /**
  * The browser gates: a bot, for every source; and, for Sites only, an exempt session, which holds
@@ -465,12 +467,18 @@ function suppressedInBrowser(body: SegmentBody, ctx: GateContext): boolean {
 function sendToSegment(body: SegmentBody, ctx: GateContext): boolean {
   const writeKey = segmentWriteKey(ctx.source);
   if (!writeKey) return false;
-  if (isBrowser() && suppressedInBrowser(body, ctx)) return false;
+  const browser = isBrowser();
+  if (browser) {
+    if (suppressedInBrowser(body, ctx)) return false;
+  } else {
+    if (ctx.requestUserAgent && isBotUserAgent(ctx.requestUserAgent)) return false;
+    if (body.type !== "track" || !serverBudgetAllows(body.event)) return false;
+  }
 
   const url = segmentApiUrl(body.type);
   const payload = JSON.stringify(buildSegmentPayload(body, writeKey));
 
-  if (isBrowser()) {
+  if (browser) {
     try {
       // text/plain keeps the request CORS-simple; application/json would preflight,
       // which is unsafe during unload.
@@ -482,7 +490,6 @@ function sendToSegment(body: SegmentBody, ctx: GateContext): boolean {
     return true;
   }
 
-  if (body.type !== "track" || !serverBudgetAllows(body.event)) return false;
   postTelemetry(url, payload, "application/json");
   return true;
 }

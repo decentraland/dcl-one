@@ -33,6 +33,8 @@ use crate::world_identity::{
 pub const WORLD_ROOM_PREFIX: &str = "world-";
 pub const LEGACY_WORLD_SCENE_ROOM_PREFIX: &str = "world-scene-room-";
 pub const GATEKEEPER_SCENE_ROOM_PREFIX: &str = "scene:";
+/// The one mark of a world scene room: `decode_world_scene_room` reads it,
+/// and SQL tells a world scene room by binding it (`starts_with(room_id, $n)`).
 pub const SCENE_ROOM_PREFIX: &str = "w1:";
 
 // Part of the w1 wire format: never reorder, renumber or derive this table

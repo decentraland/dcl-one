@@ -302,6 +302,7 @@ export type PageToScene =
   | SetPhotoModeRequest
   | TakePhotoRequest
   | GetGalleryPhotoRequest
+  | GetGalleryWearablesRequest
   | DeleteGalleryPhotoRequest
   | SetGalleryPhotoPublicRequest
 
@@ -1041,6 +1042,12 @@ export interface SigninStageReadyMessage {
 /** The Backpack's avatar preview has drawn the avatar (scene → page), so the page can open its hole onto it. */
 export interface AvatarPreviewReadyMessage {
   kind: 'avatarPreviewReady'
+}
+
+/** The minimap's Camera style is drawing its top-down view (scene → page), so the page can open the
+ *  map's hole onto it. Sent again for every camera the scene creates. */
+export interface MinimapReadyMessage {
+  kind: 'minimapReady'
 }
 
 export interface SceneInfoMessage {
@@ -1951,10 +1958,16 @@ export interface GalleryPerson {
   address: string
   name: string
   isGuest?: boolean
+  /** Urns of the wearables they had on when the photo was taken. */
+  wearables?: string[]
+  /** An official wallet, as the nametags mark it. */
+  official?: boolean
 }
 
 /** Full metadata for one photo (fetched lazily when its detail view opens). */
 export interface GalleryPhotoMeta {
+  /** When it was taken, epoch seconds as a string. */
+  dateTime?: string
   /** Who took the photo. */
   userName?: string
   userAddress?: string
@@ -2045,6 +2058,20 @@ export interface GalleryPhotoMessage {
   kind: 'galleryPhoto'
   id: string
   meta: GalleryPhotoMeta | null
+}
+
+/** Resolve a photo person's wearable urns, with shop links. Answered by a GalleryWearablesMessage. */
+export interface GetGalleryWearablesRequest {
+  kind: 'getGalleryWearables'
+  requestId: number
+  urns: string[]
+}
+
+export interface GalleryWearablesMessage {
+  kind: 'galleryWearables'
+  requestId: number
+  ok: boolean
+  wearables: Wearable[]
 }
 
 /** Delete one of the local player's photos (signed DELETE). Answered by a GalleryWriteMessage. */
@@ -2661,9 +2688,11 @@ export type SceneToPage =
   | LobbyStageReadyMessage
   | SigninStageReadyMessage
   | AvatarPreviewReadyMessage
+  | MinimapReadyMessage
   | GalleryMessage
   | MapPlayersMessage
   | GalleryPhotoMessage
+  | GalleryWearablesMessage
   | GalleryWriteMessage
   | PermissionRequestMessage
   | PermissionWithdrawnMessage

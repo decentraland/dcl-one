@@ -500,6 +500,7 @@ CREATE TABLE social.scene_stream_access (
     streaming_key text NOT NULL,
     ingress_id text,
     room_id text,
+    admin_place_key text,
     generated_by text NOT NULL,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     expiration_time timestamp without time zone,
@@ -529,6 +530,26 @@ CREATE INDEX scene_stream_access_active_key_idx
 CREATE INDEX scene_stream_access_active_room_idx
     ON social.scene_stream_access (room_id) WHERE active;
 
+-- A world scene's key is stored under its scene's place. An older binary
+-- stores a new world key under the world's catalogue place (with the scene in
+-- `admin_place_key`): that insert is refused, so a mixed rollout cannot leave
+-- two keys streaming into one room. Rows already stored, imported rows
+-- (`admin_place_key` NULL) and updates are untouched.
+CREATE FUNCTION social.scene_stream_access_scene_place() RETURNS trigger AS $$
+BEGIN
+    IF starts_with(NEW.room_id, 'w1:') AND NEW.admin_place_key IS NOT NULL
+       AND NEW.admin_place_key <> '' AND NEW.place_id <> NEW.admin_place_key THEN
+        RAISE EXCEPTION 'a world scene stream key is stored under its scene place'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER scene_stream_access_scene_place
+    BEFORE INSERT ON social.scene_stream_access
+    FOR EACH ROW EXECUTE FUNCTION social.scene_stream_access_scene_place();
+
 -- Comms-owned streaming cleanup intents: no FK, so revocation survives place/access removal.
 CREATE TABLE social.scene_stream_cleanup (
  access_id uuid PRIMARY KEY, place_id text NOT NULL, ingress_id text,
@@ -536,7 +557,10 @@ CREATE TABLE social.scene_stream_cleanup (
  occurred_at timestamp without time zone NOT NULL, due_at timestamp without time zone NOT NULL,
  claim_token uuid, claim_until timestamp without time zone,
  attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0), ingress_deleted boolean NOT NULL DEFAULT false,
- recipient text, metadata jsonb, source_context jsonb
+ recipient text, metadata jsonb, source_context jsonb,
+ recipients text[] NOT NULL DEFAULT '{}', recipients_resolved boolean NOT NULL DEFAULT false,
+ recipient_cursor integer NOT NULL DEFAULT 0 CHECK (recipient_cursor >= 0),
+ notification_started boolean NOT NULL DEFAULT false
 );
 -- Bounded ordered cleanup retries.
 CREATE INDEX scene_stream_cleanup_due_idx ON social.scene_stream_cleanup (due_at, access_id);

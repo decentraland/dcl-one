@@ -28,11 +28,11 @@ use super::super::readers::{
     at, bool_of, int_of, opt_bool_of, opt_int_of, opt_str_of, str_of, strings_of,
 };
 use super::super::wire;
-use super::{Mirror, PAGE_SIZE, Page, walk};
+use super::{Mirror, Page, walk};
 
 const QUERY: &str = r#"
-query items($idFrom: ID!, $first: Int!) {
-  items(first: $first, orderBy: id, orderDirection: asc, where: { id_gt: $idFrom }) {
+query items($idFrom: ID!, $first: Int!, $verifyChain: Boolean!, $block: Block_height) {
+  items(block: $block, first: $first, orderBy: id, orderDirection: asc, where: { id_gt: $idFrom }) {
     id
     blockchainId
     collection { id }
@@ -59,6 +59,7 @@ query items($idFrom: ID!, $first: Int!) {
       emote { name description category bodyShapes loop hasSound hasGeometry }
     }
   }
+  _meta(block: $block) @include(if: $verifyChain) { block { number hash } }
 }"#;
 
 pub const ITEM_TYPES: [&str; 4] = [
@@ -75,7 +76,6 @@ pub(super) async fn run_pass(
     url: &str,
 ) -> anyhow::Result<()> {
     let pool = state.pool.clone();
-    let chain_id: i32 = u64::from(wire::Network::from(network).chain_id()) as i32;
     walk(
         state,
         ctx,
@@ -83,9 +83,8 @@ pub(super) async fn run_pass(
         network,
         url,
         false,
-        |_, id| async move {
-            let vars = json!({ "idFrom": id.unwrap_or_default(), "first": PAGE_SIZE });
-            let data = super::super::readers::query(state, url, QUERY, vars).await?;
+        |_, id, hash| async move {
+            let data = super::read_catalogue_page(state, url, QUERY, id, hash).await?;
             let rows = super::super::readers::rows(&data, "items");
             let last_id = rows
                 .last()
@@ -98,7 +97,7 @@ pub(super) async fn run_pass(
                 last_id,
             })
         },
-        |rows| {
+        |rows, chain_id, _verified| {
             let pool = pool.clone();
             async move { upsert(&pool, network, chain_id, &rows).await }
         },

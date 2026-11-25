@@ -461,18 +461,6 @@ pub struct SocialConfig {
     #[arg(long, env = "CURRENT_VERSION")]
     pub social_rpc_current_version: Option<String>,
 
-    /// Legacy uWS metrics path; unset/empty uses /metrics under /social-rpc.
-    #[arg(long, env = "WKC_METRICS_PUBLIC_PATH")]
-    pub wkc_metrics_public_path: Option<String>,
-
-    /// Legacy metrics Bearer; unset/empty permits scrapes.
-    #[arg(long, env = "WKC_METRICS_BEARER_TOKEN", hide_env_values = true)]
-    pub wkc_metrics_bearer_token: Option<String>,
-
-    /// Source opt-in reset flag. Shared-recorder reset parity remains a known gap.
-    #[arg(long, env = "WKC_METRICS_RESET_AT_NIGHT")]
-    pub wkc_metrics_reset_at_night: Option<String>,
-
     // comms::gatekeeper: the comms gatekeeper (LiveKit token minting, scene and
     // platform moderation, voice presence). The LiveKit media server is a
     // separate process reached over the network.
@@ -567,7 +555,10 @@ pub struct SocialConfig {
     pub comms_gatekeeper_auth_token: Option<String>,
 
     /// Lambdas base whose `/parcels/{x}/{y}/operators` protects LAND
-    /// owners/operators from scene bans (old LAMBDAS_URL); unset protects none.
+    /// owners/operators from scene bans (old LAMBDAS_URL), read only by a
+    /// permission core without the land-authz index. `catalyst serve` always
+    /// attaches the index, whose published fold is then the only LAND
+    /// authority, so the URL is not read there.
     #[arg(long, env = "COMMS_LAND_OPERATORS_URL")]
     pub comms_land_operators_url: Option<String>,
 
@@ -1507,30 +1498,11 @@ mod tests {
     }
 
     #[test]
-    fn legacy_uws_status_and_metrics_keep_raw_source_strings() {
-        let config = social(&[
-            ("CURRENT_VERSION", ""),
-            ("WKC_METRICS_PUBLIC_PATH", ""),
-            ("WKC_METRICS_BEARER_TOKEN", "  "),
-            ("WKC_METRICS_RESET_AT_NIGHT", "TRUE"),
-        ])
-        .unwrap();
-        assert_eq!(config.social_rpc_current_version.as_deref(), Some(""));
-        assert_eq!(config.wkc_metrics_public_path.as_deref(), Some(""));
-        assert_eq!(config.wkc_metrics_bearer_token.as_deref(), Some("  "));
-        assert_eq!(config.wkc_metrics_reset_at_night.as_deref(), Some("TRUE"));
-        let config = social(&[
-            ("CURRENT_VERSION", "source-version"),
-            ("WKC_METRICS_PUBLIC_PATH", "/custom"),
-            ("WKC_METRICS_RESET_AT_NIGHT", "true"),
-        ])
-        .unwrap();
-        assert_eq!(
-            config.social_rpc_current_version.as_deref(),
-            Some("source-version")
-        );
-        assert_eq!(config.wkc_metrics_public_path.as_deref(), Some("/custom"));
-        assert_eq!(config.wkc_metrics_reset_at_night.as_deref(), Some("true"));
+    fn social_rpc_status_keeps_raw_version_strings() {
+        for version in ["", "source-version"] {
+            let config = social(&[("CURRENT_VERSION", version)]).unwrap();
+            assert_eq!(config.social_rpc_current_version.as_deref(), Some(version));
+        }
     }
 
     #[test]

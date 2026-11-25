@@ -63,7 +63,7 @@ async fn every_community_http_database_failure_uses_the_source_message_boundary(
         &crate::http::Outbound::for_tests(),
         rig.state.explore.clone(),
     ));
-    state.set_chain_index(rig.state.chain_index.get().unwrap().clone());
+    state.set_name_authority(rig.names.clone());
     let legacy = router(state.clone());
     let api = Router::new().nest("/social-api", crate::social_api_gateway(router(state)));
     let fixture:Value=serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"),"/services/catalyst/tests/fixtures/conformance/social/source-contracts/community-errors.json"))).unwrap();

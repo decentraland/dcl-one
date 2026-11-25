@@ -293,6 +293,14 @@ pub struct EmoteCommand {
     pub mask: EmoteMask,
 }
 
+/// The local player triggered an emote: `source` is `self` (the HUD, the console) or `scene`,
+/// the `used_emote` source values.
+#[derive(Event, Clone, Debug)]
+pub struct PlayerEmoteTriggered {
+    pub urn: String,
+    pub source: &'static str,
+}
+
 /// A transition in an avatar's triggered-emote playback, reported to scenes as an
 /// `AvatarEmoteCommand` entry by `avatar::emote_report`. Raised by `comms` from the wire (in wire
 /// order, so client and server report the same sequence) and by the avatar animator from
@@ -1096,6 +1104,9 @@ impl AppConfig {
     }
 }
 
+/// The `fps_target` meaning no cap (Max).
+pub const UNCAPPED_FPS: usize = 999;
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct GraphicsSettings {
@@ -1242,9 +1253,9 @@ impl SessionGraphics {
 
     /// The frame rate the explorer paces to: the session's target, else the player's, and with
     /// VSync on no faster than the monitor. VSync only removes tearing, so a lower target still
-    /// applies, and Max (999) means the monitor's rate. `refresh_hz`, when known, is the monitor's
-    /// rate rounded up past it (60 Hz gives 61), so at the monitor's rate VSync, not the pacer's
-    /// sleep, sets the frame time.
+    /// applies, and Max ([`UNCAPPED_FPS`]) means the monitor's rate. `refresh_hz`, when known, is
+    /// the monitor's rate rounded up past it (60 Hz gives 61), so at the monitor's rate VSync, not
+    /// the pacer's sleep, sets the frame time.
     pub fn paced_fps(
         session: Option<&Self>,
         config: &AppConfig,
@@ -1305,6 +1316,8 @@ pub struct AudioSettings {
     pub scene: i32,
     pub system: i32,
     pub avatar: i32,
+    /// Whether [`Self::microphone_focus`] passes the client window's focus through.
+    pub mute_mic_in_background: bool,
 }
 
 impl Default for AudioSettings {
@@ -1316,11 +1329,20 @@ impl Default for AudioSettings {
             scene: 100,
             system: 100,
             avatar: 100,
+            mute_mic_in_background: true,
         }
     }
 }
 
 impl AudioSettings {
+    /// `focus` while `mute_mic_in_background` is on, `Focused` while it is off.
+    pub const fn microphone_focus(&self, focus: ClientWindowFocus) -> ClientWindowFocus {
+        if self.mute_mic_in_background {
+            focus
+        } else {
+            ClientWindowFocus::Focused
+        }
+    }
     pub fn voice(&self) -> f32 {
         (self.voice * self.master) as f32 / 10_000.0
     }
@@ -1966,6 +1988,12 @@ pub enum MoveKind {
 #[derive(Component, Default)]
 pub struct AvatarDynamicState {
     pub velocity: Vec3,
+    /// Primary player only: how far a startup portable's controller (launch-time, console or
+    /// server-hosted, such as the default controller) moved the player this frame, after collisions
+    /// and without lifts or platforms, with movement input held; zero while a parcel scene, a
+    /// smart wearable or a scene-spawned portable drives, a suppression holds or a force pushes the
+    /// player.
+    pub own_displacement: Vec3,
     pub ground_height: f32,
     pub jump_time: f64,
     pub move_kind: MoveKind,
@@ -2016,6 +2044,22 @@ impl From<ws_scene_message::Message> for PreviewCommand {
 #[derive(Event)]
 pub struct PlayerTeleported {
     pub position: Vec3,
+}
+
+/// The local player's parcel changed, the scene the realm lists at it did, or the player entered
+/// or left the world. `old` is the parcel before (`None` for the first; `parcel` itself when only
+/// the scene or `in_world` changed). `scene`: `None` unresolved, `Some(None)` an empty parcel,
+/// `Some(Some(hash))` a scene. `in_world` is read with the parcel: false behind the loading
+/// screen ([`OutOfWorld`]).
+///
+/// A change of the scene alone is reported too: analytics cannot read the scene pointers, and a
+/// realm change at the same parcel lists another scene there.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct PlayerParcelChanged {
+    pub old: Option<IVec2>,
+    pub parcel: IVec2,
+    pub scene: Option<Option<String>>,
+    pub in_world: bool,
 }
 
 /// Marks the local player as behind the loading screen — teleported or spawning, with a provisional
@@ -2816,7 +2860,22 @@ mod tests {
                 scene: 30,
                 system: 20,
                 avatar: 10,
+                mute_mic_in_background: true,
             }
+        );
+    }
+
+    #[test]
+    fn the_mic_follows_the_window_focus_only_while_it_mutes_in_the_background() {
+        let mut audio = AudioSettings::default();
+        assert_eq!(
+            audio.microphone_focus(ClientWindowFocus::NoFocus),
+            ClientWindowFocus::NoFocus
+        );
+        audio.mute_mic_in_background = false;
+        assert_eq!(
+            audio.microphone_focus(ClientWindowFocus::NoFocus),
+            ClientWindowFocus::Focused
         );
     }
 
@@ -2988,10 +3047,10 @@ mod tests {
         assert_eq!(paced(&config, None, Some(61)), 61);
         assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
         assert_eq!(paced(&config, None, None), 60);
-        config.graphics.fps_target = 999;
+        config.graphics.fps_target = UNCAPPED_FPS;
         assert_eq!(paced(&config, None, Some(144)), 144);
         config.graphics.vsync = false;
-        assert_eq!(paced(&config, None, Some(144)), 999);
+        assert_eq!(paced(&config, None, Some(144)), UNCAPPED_FPS);
         assert_eq!(paced(&config, Some(&thirty), Some(144)), 30);
     }
 
@@ -3000,15 +3059,15 @@ mod tests {
         let mut config = AppConfig::default();
         let shown = |config: &AppConfig, refresh| SessionGraphics::shown_fps(None, config, refresh);
         config.graphics.vsync = true;
-        config.graphics.fps_target = 999;
+        config.graphics.fps_target = UNCAPPED_FPS;
         assert_eq!(shown(&config, Some(61)), 60);
-        assert_eq!(shown(&config, None), 999);
+        assert_eq!(shown(&config, None), UNCAPPED_FPS);
         config.graphics.fps_target = 60;
         assert_eq!(shown(&config, Some(61)), 60);
         assert_eq!(shown(&config, Some(145)), 60);
         config.graphics.vsync = false;
-        config.graphics.fps_target = 999;
-        assert_eq!(shown(&config, Some(61)), 999);
+        config.graphics.fps_target = UNCAPPED_FPS;
+        assert_eq!(shown(&config, Some(61)), UNCAPPED_FPS);
     }
 
     #[test]

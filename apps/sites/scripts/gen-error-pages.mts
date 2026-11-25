@@ -14,7 +14,9 @@
 //
 //   node scripts/gen-error-pages.mts [--check]
 //   ERROR_PAGES_OUT=<dir> writes elsewhere than public/errors.
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+//   ERROR_PAGES_ASSET_OVERRIDES=<dir> reads an art or font file from <dir>/<its repository path> when that
+//   file exists there, so a test can stand in a broken copy without writing over the tracked LFS asset.
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createElement, type ComponentType } from "react";
@@ -157,13 +159,19 @@ const cls = (...names: string[]) =>
   }).join(" ");
 
 const LFS_POINTER = "version https://git-lfs.github.com/spec/v1";
+const repository = join(oneUi, "../..");
+const assetOverrides = process.env.ERROR_PAGES_ASSET_OVERRIDES;
+const readAsset = (path: string) => {
+  const override = assetOverrides ? join(assetOverrides, relative(repository, path)) : null;
+  return readFileSync(override && existsSync(override) ? override : path);
+};
 const artData = new Map<string, string>();
 const artUri = (file: string) => webpUri(join(artDir, file));
 const webpUri = (path: string) => {
-  const file = relative(join(oneUi, "../.."), path);
+  const file = relative(repository, path);
   if (!artData.has(path)) {
     if (!path.endsWith(".webp")) throw new Error(`gen-error-pages: ${file} is not a webp image`);
-    const bytes = readFileSync(path);
+    const bytes = readAsset(path);
     if (bytes.subarray(0, LFS_POINTER.length).toString("latin1") === LFS_POINTER) {
       throw new Error(
         `gen-error-pages: ${file} is a Git LFS pointer, not the image. From the repository root run: git lfs pull --include="${file.startsWith("library/ui/assets/") ? "library/ui/assets" : "library/ui/apps/sites/assets"}/**"`,
@@ -183,8 +191,8 @@ const assetUri = (url: string) => {
 };
 
 const woff2Uri = (path: string) => {
-  const file = relative(join(oneUi, "../.."), path);
-  const bytes = readFileSync(path);
+  const file = relative(repository, path);
+  const bytes = readAsset(path);
   if (bytes.subarray(0, LFS_POINTER.length).toString("latin1") === LFS_POINTER) {
     throw new Error(
       `gen-error-pages: ${file} is a Git LFS pointer, not the font. From the repository root run: git lfs pull --include="library/ui/foundations/typography/fonts/**"`,

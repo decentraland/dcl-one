@@ -398,8 +398,8 @@ const mockEquippedEmotes = (): Emote[] =>
 
 const v = (name: string): { name: string; description: string } => ({ name, description: '' })
 
-const choice = (name: string, category: string, variants: string[], value: number): Setting => ({ name, category, description: '', minValue: 0, maxValue: variants.length - 1, namedVariants: variants.map(v), value, default: value, stepSize: 1 })
-const level = (name: string, category: string, value: number, max = 100, min = 0, stepSize = 1): Setting => ({ name, category, description: '', minValue: min, maxValue: max, namedVariants: [], value, default: value, stepSize })
+const choice = (name: string, category: string, variants: string[], value: number): Setting => ({ name, category, description: '', minValue: 0, maxValue: variants.length - 1, namedVariants: variants.map(v), value, default: value, stepSize: 1, disabled: false })
+const level = (name: string, category: string, value: number, max = 100, min = 0, stepSize = 1): Setting => ({ name, category, description: '', minValue: min, maxValue: max, namedVariants: [], value, default: value, stepSize, disabled: false })
 const ON_OFF = ['Off', 'On']
 // Stateful so the mock's controls actually move when changed (setSetting → re-emit). The rows, their
 // names, order and values are the reference client's settings pages (Graphics, Sounds, Controls,
@@ -1406,6 +1406,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'minimapConfig') {
       // No engine in mock mode — the Camera style has nothing to render. The DOM styles
       // are unaffected: React draws those from map tiles without the scene's help.
+      if (msg.style === 'imposters') reply({ kind: 'minimapReady' })
       return
     }
     if (msg.kind === 'previewFocus') return
@@ -1859,19 +1860,39 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'getGalleryPhoto') {
-      reply({
-        kind: 'galleryPhoto',
-        id: msg.id,
-        meta: {
-          userName: o.hasPreviousLogin ? 'Mojito' : 'Guest',
-          userAddress: o.userId,
-          sceneName: 'Genesis Plaza',
-          x: -9,
-          y: 14,
-          realm: 'main',
-          people: MOCK_NEARBY.slice(0, 3).map((m) => ({ address: m.address, name: m.name || 'Guest', isGuest: false }))
-        }
-      })
+      const photo = mockGallery.find((p) => p.id === msg.id)
+      // Covers a person with collectibles, one with none, and an official wallet.
+      const wearablesOf = [MOCK_COLLECTIBLE_EQUIPPED.map((w) => w.urn), [], MOCK_OFF_CATALOG_EQUIPPED.map((w) => w.urn)]
+      setTimeout(
+        () =>
+          reply({
+            kind: 'galleryPhoto',
+            id: msg.id,
+            meta: {
+              dateTime: photo?.dateTime,
+              userName: o.hasPreviousLogin ? 'Mojito' : 'Guest',
+              userAddress: o.userId,
+              sceneName: 'Genesis Plaza',
+              x: -9,
+              y: 14,
+              realm: 'main',
+              people: MOCK_NEARBY.slice(0, 3).map((m, i) => ({
+                address: m.address,
+                name: m.name || 'Guest',
+                isGuest: false,
+                wearables: wearablesOf[i],
+                official: i === 2
+              }))
+            }
+          }),
+        o.latency
+      )
+      return
+    }
+    if (msg.kind === 'getGalleryWearables') {
+      const known = [...MOCK_COLLECTIBLE_EQUIPPED, ...MOCK_OFF_CATALOG_EQUIPPED]
+      const wearables = msg.urns.map((urn) => known.find((w) => w.urn === urn)).filter((w): w is Wearable => w != null)
+      setTimeout(() => reply({ kind: 'galleryWearables', requestId: msg.requestId, ok: true, wearables }), o.latency)
       return
     }
     if (msg.kind === 'quit') return
