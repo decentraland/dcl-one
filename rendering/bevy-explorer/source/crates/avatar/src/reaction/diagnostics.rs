@@ -181,7 +181,6 @@ pub fn reaction_simulate(
         .try_insert_if_new(ReactionGuard::default());
     events.write(ReactionEvent {
         sender,
-        from,
         reaction: rfc4::Reaction {
             emoji_index: index,
             timestamp: 0.0,

@@ -7,7 +7,6 @@ use tokio::sync::mpsc;
 
 use super::*;
 
-const PEER: Address = Address::repeat_byte(0xab);
 const FRAME: f32 = 0.05;
 
 /// The plugin in an app of its own, with a signed-in local player and a stream to the HUD.
@@ -87,7 +86,6 @@ impl Harness {
     fn hear(&mut self, sender: Entity, emoji: &str, timestamp: f32, count: i32) {
         self.app.world_mut().send_event(ReactionEvent {
             sender,
-            from: PEER,
             reaction: rfc4::Reaction {
                 emoji_index: emoji_to_atlas_index(emoji),
                 timestamp,
@@ -158,7 +156,6 @@ fn a_pick_plays_at_once_and_is_sent_once_the_picks_stop() {
         harness.played(),
         [ReactionPlayed {
             player: harness.local,
-            from: harness.me,
             emoji: "👍",
         }]
     );

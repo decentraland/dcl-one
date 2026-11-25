@@ -5,7 +5,7 @@
 use std::collections::VecDeque;
 
 use bevy::prelude::*;
-use comms::chat_reaction::atlas_index_to_emoji;
+use comms::{chat_reaction::atlas_index_to_emoji, pulse::pacing::TokenBucket};
 use dcl_component::proto_components::kernel::comms::rfc4;
 
 /// Picks are sent this long after the last one, in seconds.
@@ -18,8 +18,8 @@ const STAMP_STEP: f32 = 0.001;
 /// The messages of a sender remembered to recognise a copy of one.
 const SEEN_MESSAGES: usize = 64;
 /// Messages a sender may have let through per second, and at once.
-const MESSAGES_PER_SECOND: f32 = 20.0;
-const MESSAGE_BURST: f32 = 20.0;
+const MESSAGES_PER_SECOND: f64 = 20.0;
+const MESSAGE_BURST: f64 = 20.0;
 /// The most reactions one message plays.
 const MAX_COUNT: i32 = 50;
 
@@ -121,24 +121,22 @@ pub enum Refused {
 pub struct ReactionGuard {
     /// The stamp bits and emoji index of the last messages seen.
     seen: VecDeque<(u32, i32)>,
-    tokens: f32,
-    /// When `tokens` was last topped up, in seconds.
-    refilled: f64,
+    /// The messages the sender may still have let through.
+    bucket: TokenBucket,
 }
 
 impl Default for ReactionGuard {
     fn default() -> Self {
         Self {
             seen: VecDeque::new(),
-            tokens: MESSAGE_BURST,
-            refilled: 0.0,
+            bucket: TokenBucket::new(MESSAGES_PER_SECOND, MESSAGE_BURST),
         }
     }
 }
 
 impl ReactionGuard {
     /// The emoji a message plays and how many times, or why it plays nothing. `now` is in
-    /// seconds; a reading earlier than the last earns the sender nothing.
+    /// seconds, on a clock that only moves on.
     pub fn admit(
         &mut self,
         reaction: &rfc4::Reaction,
@@ -158,13 +156,9 @@ impl ReactionGuard {
 
         let emoji = atlas_index_to_emoji(reaction.emoji_index).ok_or(Refused::UnknownEmoji)?;
 
-        let elapsed = (now - self.refilled).max(0.0) as f32;
-        self.tokens = (self.tokens + elapsed * MESSAGES_PER_SECOND).min(MESSAGE_BURST);
-        self.refilled = self.refilled.max(now);
-        if self.tokens < 1.0 {
+        if !self.bucket.try_spend(now) {
             return Err(Refused::RateLimited);
         }
-        self.tokens -= 1.0;
 
         Ok((emoji, reaction.count.clamp(1, MAX_COUNT) as u32))
     }
@@ -360,14 +354,12 @@ mod tests {
         }
         assert_eq!(send(&mut guard, 10.0), Err(Refused::RateLimited));
         // one message's worth of time lets one more through
-        let one = 1.0 / MESSAGES_PER_SECOND as f64;
+        let one = 1.0 / MESSAGES_PER_SECOND;
         assert!(send(&mut guard, 10.0 + one * 1.5).is_ok());
         assert_eq!(
             send(&mut guard, 10.0 + one * 1.5),
             Err(Refused::RateLimited)
         );
-        // a clock that reads earlier gives nothing back
-        assert_eq!(send(&mut guard, 0.0), Err(Refused::RateLimited));
         // a long quiet refills no more than the burst
         for _ in 0..MESSAGE_BURST as u32 {
             assert!(send(&mut guard, 1000.0).is_ok());

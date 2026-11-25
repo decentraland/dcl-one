@@ -725,7 +725,6 @@ pub struct ChatEvent {
 #[derive(Event, Debug, Clone)]
 pub struct ReactionEvent {
     pub sender: Entity,
-    pub from: Address,
     pub reaction: rfc4::Reaction,
 }
 
@@ -1205,7 +1204,6 @@ pub fn process_transport_updates(
                             debug!("reaction from {:#x}: {reaction:?}", update.address);
                             situational_events.write(ReactionEvent {
                                 sender: entity,
-                                from: update.address,
                                 reaction,
                             });
                         }
@@ -2355,7 +2353,8 @@ mod tests {
         app.update();
 
         let mut players = app.world_mut().query::<(Entity, &ForeignPlayer)>();
-        let (player, _) = players.single(app.world()).unwrap();
+        let (player, heard) = players.single(app.world()).unwrap();
+        assert_eq!(heard.address, peer);
         let raised = app
             .world()
             .resource::<Events<ReactionEvent>>()
@@ -2363,7 +2362,6 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(raised.len(), 1);
         assert_eq!(raised[0].sender, player);
-        assert_eq!(raised[0].from, peer);
         // its bounds are the reader's to enforce: the event carries what the peer sent
         assert_eq!(raised[0].reaction, reaction);
     }

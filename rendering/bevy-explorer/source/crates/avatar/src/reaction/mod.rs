@@ -74,13 +74,19 @@ impl Plugin for ReactionPlugin {
     }
 }
 
-/// One reaction as it plays: `emoji` for `player`, the local user or a peer, who is `from` on
-/// the wire.
+/// One reaction as it plays: `emoji` for `player`, the local user or a peer.
 #[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
 struct ReactionPlayed {
     player: Entity,
-    from: Address,
     emoji: &'static str,
+}
+
+/// The address a player reacts under. A peer is who comms heard them as; the one other player
+/// who reacts is the local user.
+fn address_of(peer: Option<&ForeignPlayer>, wallet: &Wallet) -> Address {
+    peer.map(|peer| peer.address)
+        .or_else(|| wallet.address())
+        .unwrap_or_default()
 }
 
 /// What has happened to reactions this session, for the debug panel.
@@ -129,7 +135,8 @@ fn accept_local_reactions(
         // the others will
         let reaction =
             picked_emoji_tile(picked).and_then(|tile| Some((tile, atlas_index_to_emoji(tile)?)));
-        let (Some((tile, emoji)), Some(from), Ok((player, mut outbox))) =
+        // no one signed in reacts as no one
+        let (Some((tile, emoji)), Some(_), Ok((player, mut outbox))) =
             (reaction, wallet.address(), local.single_mut())
         else {
             debug!("no reaction for {picked:?}");
@@ -137,11 +144,7 @@ fn accept_local_reactions(
             continue;
         };
         outbox.push(tile);
-        played.write(ReactionPlayed {
-            player,
-            from,
-            emoji,
-        });
+        played.write(ReactionPlayed { player, emoji });
         stats.played += 1;
         reacted.write(PlayerReacted { emoji_index: tile });
     }
@@ -153,9 +156,11 @@ fn receive_reactions(
     mut commands: Commands,
     mut events: EventReader<ReactionEvent>,
     ban_block: BanBlock,
+    wallet: Res<Wallet>,
     mut senders: Query<(
         &mut ReactionGuard,
         Option<&mut ReactionQueue>,
+        Option<&ForeignPlayer>,
         Has<BlockedOrBanned>,
     )>,
     time: Res<Time<Real>>,
@@ -168,14 +173,15 @@ fn receive_reactions(
     for event in events.read() {
         stats.received += 1;
         // a sender who has already gone has no avatar to react
-        let Ok((mut guard, queue, blocked)) = senders.get_mut(event.sender) else {
+        let Ok((mut guard, queue, peer, blocked)) = senders.get_mut(event.sender) else {
             continue;
         };
+        let from = address_of(peer, &wallet);
         // the marker follows a block or ban by a frame or two, and a player who has just
         // appeared has none yet: their first message is asked about by address
         if blocked
-            || ban_block.is_blocked_either_way(event.from)
-            || ban_block.is_addr_banned_in_scene(event.from)
+            || ban_block.is_blocked_either_way(from)
+            || ban_block.is_addr_banned_in_scene(from)
         {
             stats.dropped.blocked += 1;
             continue;
@@ -183,7 +189,7 @@ fn receive_reactions(
         let (emoji, count) = match guard.admit(&event.reaction, now) {
             Ok(admitted) => admitted,
             Err(refused) => {
-                debug!("reaction from {:#x} refused: {refused:?}", event.from);
+                debug!("reaction from {from:#x} refused: {refused:?}");
                 match refused {
                     Refused::Duplicate => stats.dropped.duplicate += 1,
                     Refused::UnknownEmoji => stats.dropped.unknown_emoji += 1,
@@ -219,12 +225,7 @@ fn play_queued_reactions(
     mut stats: ResMut<ReactionStats>,
 ) {
     for (player, mut queue, peer, blocked) in &mut queues {
-        // a peer is who comms heard them as; the one other player a queue is put on is the local
-        // user, by the console
-        let from = peer
-            .map(|peer| peer.address)
-            .or_else(|| wallet.address())
-            .unwrap_or_default();
+        let from = address_of(peer, &wallet);
         // blocked or banned since they were queued: asked by address as at intake, as the
         // marker follows by a frame or two
         if blocked
@@ -236,11 +237,7 @@ fn play_queued_reactions(
             continue;
         }
         for emoji in queue.tick(time.delta_secs()) {
-            played.write(ReactionPlayed {
-                player,
-                from,
-                emoji,
-            });
+            played.write(ReactionPlayed { player, emoji });
             stats.played += 1;
         }
         if queue.done() {
@@ -257,26 +254,22 @@ fn flush_reactions(
     transports: Query<&Transport>,
     mut stats: ResMut<ReactionStats>,
 ) {
-    let rooms = BroadcastTarget::WEBSOCKET | BroadcastTarget::LIVEKIT;
-    // with no room to carry it a message goes nowhere, and is not counted as sent
-    let carried = transports
-        .iter()
-        .any(|transport| rooms.includes(&transport.transport_type));
     for mut outbox in &mut outboxes {
         if outbox.waiting() == 0 {
             continue;
         }
         for outgoing in outbox.tick(time.delta_secs(), uptime.elapsed_secs()) {
-            broadcast_to(
+            // a message no room took went nowhere, and is not counted as sent
+            let carried = broadcast_to(
                 transports.iter(),
-                rooms,
+                BroadcastTarget::WEBSOCKET | BroadcastTarget::LIVEKIT,
                 false,
                 &rfc4::Packet {
                     message: Some(rfc4::packet::Message::Reaction(outgoing.into())),
                     protocol_version: 100,
                 },
             );
-            stats.sent += u32::from(carried);
+            stats.sent += u32::from(carried > 0);
         }
     }
 }
@@ -286,6 +279,8 @@ fn pipe_reactions_to_scene(
     mut played: EventReader<ReactionPlayed>,
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ReactionData>>>,
+    players: Query<Option<&ForeignPlayer>>,
+    wallet: Res<Wallet>,
     mut stats: ResMut<ReactionStats>,
 ) {
     senders.extend(requests.read().filter_map(|ev| {
@@ -303,8 +298,12 @@ fn pipe_reactions_to_scene(
         return;
     }
     for reaction in played.read() {
+        // a player who went this frame is not streamed
+        let Ok(peer) = players.get(reaction.player) else {
+            continue;
+        };
         let data = ReactionData {
-            from: format!("{:#x}", reaction.from),
+            from: format!("{:#x}", address_of(peer, &wallet)),
             emoji: reaction.emoji.to_owned(),
         };
         for sender in senders.iter() {
