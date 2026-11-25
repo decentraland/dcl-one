@@ -272,6 +272,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
             "0093_builder_slot_cheques_outlive_collections",
             "0094_builder_uploaded_video_checked",
             "0095_builder_collection_contract_lowercase",
+            "0096_credits_publication_fee_line",
         ])
         .collect();
     let done = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)

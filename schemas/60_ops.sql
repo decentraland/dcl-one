@@ -441,7 +441,9 @@ CREATE INDEX authorizations_address_created_idx ON credits.authorizations (addre
 -- The lines of one credit, in request order: what each line bought (the
 -- payment rule's derivation: `sale_kind`/`asset_kind` are what
 -- shop::policy derived from the mirrors and the decoded order, never a
--- client flag), what it was quoted and charged. SUM(charged_cents) over a
+-- client flag), what it was quoted and charged. A collection's publication
+-- fee is one line (`publication_fee`, `collection`, the contract the
+-- collection deploys at). SUM(charged_cents) over a
 -- credit's lines equals the credit's usd_cents by construction (the
 -- reconciler checks it). Lines share their credit's lifecycle: a group is
 -- settled, retired or expired as one.
@@ -465,8 +467,8 @@ CREATE TABLE credits.authorization_lines (
         REFERENCES credits.authorizations (id) ON DELETE CASCADE,
     CONSTRAINT authorization_lines_quoted_check CHECK (quoted_cents > 0),
     CONSTRAINT authorization_lines_charged_check CHECK (charged_cents >= quoted_cents AND charged_cents % 10 = 0),
-    CONSTRAINT authorization_lines_sale_kind_check CHECK (sale_kind IN ('primary_mint', 'primary_name_registration')),
-    CONSTRAINT authorization_lines_asset_kind_check CHECK (asset_kind IN ('wearable', 'emote', 'name')),
+    CONSTRAINT authorization_lines_sale_kind_check CHECK (sale_kind IN ('primary_mint', 'primary_name_registration', 'publication_fee')),
+    CONSTRAINT authorization_lines_asset_kind_check CHECK (asset_kind IN ('wearable', 'emote', 'name', 'collection')),
     CONSTRAINT authorization_lines_asset_contract_check CHECK (asset_contract ~ '^0x[0-9a-f]{40}$'),
     CONSTRAINT authorization_lines_position_check CHECK (position >= 0 AND position < 30)
 );
