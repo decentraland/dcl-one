@@ -43,6 +43,7 @@ impl Plugin for LivestreamManagerPlugin {
                 .chain(),
         );
         app.add_systems(OnEnter(Receiver::Off), drop_transmissions);
+        app.add_systems(OnEnter(TransmissionKind::Off), clear_automatic_image);
         app.add_systems(
             OnEnter(TransmissionState::Cast),
             enter_transmission_kind::<ManagingAudioCasts>,
@@ -434,6 +435,22 @@ fn drop_transmissions(
     commands
         .entity(*transmission)
         .try_remove::<ActiveTransmitter>();
+}
+
+fn clear_automatic_image(
+    manager: Single<&LivestreamManager>,
+    mut images: ResMut<Assets<Image>>,
+    mut resized: EventWriter<TransmissionImageResized>,
+) {
+    let Some(placeholder) = images.get(&manager.selected_fallback.image).cloned() else {
+        return;
+    };
+    let Some(image) = images.get_mut(&manager.image) else {
+        return;
+    };
+    *image = placeholder;
+    manager.state.send_replace(VideoState::VsLoading);
+    resized.write(TransmissionImageResized);
 }
 
 fn manage_streams(
