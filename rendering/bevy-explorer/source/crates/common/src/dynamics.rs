@@ -3,8 +3,6 @@ use std::f32::consts::PI;
 
 use bevy::math::DVec3;
 
-pub const MAX_CLIMBABLE_INCLINE: f32 = 1.5 * PI / 4.0; // radians from up - equal to 60 degree incline
-pub const MAX_STEP_HEIGHT: f32 = 0.5;
 /// The steepest surface the avatar stands on, in radians from up. Matches `GROUNDED_ANGLE` in the
 /// movement scene.
 pub const MAX_GROUND_INCLINE: f32 = 46.5 * PI / 180.0;
