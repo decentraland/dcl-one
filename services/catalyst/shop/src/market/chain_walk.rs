@@ -64,6 +64,15 @@ pub enum ChainNet {
     Matic,
 }
 
+impl From<super::graph::Network> for ChainNet {
+    fn from(net: super::graph::Network) -> Self {
+        match net {
+            super::graph::Network::Ethereum => Self::Ethereum,
+            super::graph::Network::Matic => Self::Matic,
+        }
+    }
+}
+
 impl ChainNet {
     pub const ALL: [ChainNet; 2] = [ChainNet::Ethereum, ChainNet::Matic];
 
@@ -169,8 +178,8 @@ pub struct IndexSettings {
     /// `MARKETPLACE_COUPON_REFRESH_INTERVAL_SECS` (300): between two coupon state reads.
     pub coupon_refresh_interval: Duration,
     /// `MARKETPLACE_INDEX_CHAIN_ID_{ETHEREUM,MATIC}` (1, 137): the chain the
-    /// trade-events walk of each network reads, its mainnet or its testnet
-    /// (11155111, 80002). The other indexes read mainnet only.
+    /// NFT and trade-event walks of each network read. A catalogue database holds
+    /// the mainnet pair or the Sepolia/Amoy pair.
     pub chain_id_ethereum: i64,
     pub chain_id_matic: i64,
 }
@@ -202,7 +211,7 @@ impl Default for IndexSettings {
 }
 
 impl IndexSettings {
-    /// The chain the trade-events walk of `net` reads.
+    /// The served chain of this network.
     pub fn chain_id(&self, net: ChainNet) -> i64 {
         match net {
             ChainNet::Ethereum => self.chain_id_ethereum,
@@ -234,6 +243,14 @@ impl IndexSettings {
                     allowed[1]
                 ));
             }
+        }
+        if self.nft_enabled
+            && !matches!(
+                (self.chain_id_ethereum, self.chain_id_matic),
+                (1, 137) | (11_155_111, 80_002)
+            )
+        {
+            return Err("the NFT catalogue requires the Ethereum/Polygon mainnet pair (1/137) or Sepolia/Amoy (11155111/80002)".into());
         }
         Ok(())
     }
@@ -877,7 +894,7 @@ pub async fn unpublish(pool: &PgPool, owner: &Owner, block: i64) -> anyhow::Resu
     Ok(())
 }
 
-/// The chain every index but `trade_events` reads on `net` (mainnet only).
+/// The mainnet chain ID of this network.
 pub fn mainnet_chain(net: ChainNet) -> i64 {
     net.chain_id()
 }

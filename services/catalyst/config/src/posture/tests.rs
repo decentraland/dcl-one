@@ -32,6 +32,25 @@ fn parsed(pairs: &[(&str, &str)]) -> Config {
 }
 
 #[test]
+fn the_mirror_sources_follow_the_catalogue_chain_pair() {
+    let cfg = expanded(
+        Posture::Mirror,
+        &[
+            ("MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", "11155111"),
+            ("MARKETPLACE_INDEX_CHAIN_ID_MATIC", "80002"),
+        ],
+    );
+    assert_eq!(
+        cfg["ETH_COLLECTIONS_SUBGRAPH_URL"],
+        "https://subgraph.decentraland.org/collections-ethereum-sepolia"
+    );
+    assert_eq!(
+        cfg["MATIC_COLLECTIONS_SUBGRAPH_URL"],
+        "https://subgraph.decentraland.org/collections-matic-amoy"
+    );
+}
+
+#[test]
 fn every_key_is_one_the_binary_reads_and_appears_once() {
     let known = Config::env_names_for_tests();
     let mut seen = std::collections::HashSet::new();

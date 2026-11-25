@@ -2545,6 +2545,25 @@ fold record, a publish and a rewind; the table stays at a dozen rows.
 `shop.chain_checkpoint` holds each projection's recovery points (see
 "Reorgs").
 
+A catalogue database serves one Ethereum/Polygon pair. The NFT worker uses
+`MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM` and `MARKETPLACE_INDEX_CHAIN_ID_MATIC`
+to select mainnet (1/137) or Sepolia/Amoy (11155111/80002). Its RPC must
+serve that chain. A cursor bound to a different chain is quarantined.
+Step `0070_shop_mirror_chain` records the chain of each collections/items
+mirror pass in `shop.mirror_state.chain_id`. A source URL or chain change
+restarts pagination. An existing unbound pass starts again at the first
+page. The NFT walk waits for a complete collections pass for its chain
+and takes addresses only from collection rows bearing that chain ID.
+A testnet NFT node checks the block hash returned alongside each graph page
+against its chain-checked RPC before saving the page. Graph-only testnet
+passes have no chain binding. An empty verified pass covers the chain's
+fixed contracts.
+
+On Sepolia the NFT and LAND authorization walks start at LAND proxy
+deployment block 3,831,219. On Amoy the NFT walk starts at marketplace V2
+block 5,706,656, before the collection factory. The historical estate
+repair below runs only on Ethereum mainnet.
+
 `shop.land_data` stores the latest parcel Update and the latest valid estate
 document. A malformed parcel Update clears the fields at its log position.
 The Ethereum NFT walk reads estate names at creation and on update. After

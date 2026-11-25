@@ -95,6 +95,7 @@ pub struct Cursor {
     pub mirror: Mirror,
     pub network: Network,
     pub source_url: String,
+    pub chain_id: Option<i64>,
     pub pass_started_at: Option<NaiveDateTime>,
     pub cursor_updated_at: Option<i64>,
     pub cursor_id: Option<String>,
@@ -112,6 +113,7 @@ impl Cursor {
             mirror,
             network,
             source_url: source_url.to_string(),
+            chain_id: None,
             pass_started_at: None,
             cursor_updated_at: None,
             cursor_id: None,
@@ -140,7 +142,7 @@ pub async fn load(
     network: Network,
 ) -> Result<Option<Cursor>, sqlx::Error> {
     let row = sqlx::query(
-        "SELECT source_url, pass_started_at, cursor_updated_at, cursor_id, pages_fetched, rows_upserted, \
+        "SELECT source_url, chain_id, pass_started_at, cursor_updated_at, cursor_id, pages_fetched, rows_upserted, \
                 last_complete_pass_at, last_complete_pass_rows, last_error, updated_at \
          FROM shop.mirror_state WHERE mirror = $1 AND network = $2",
     )
@@ -152,6 +154,7 @@ pub async fn load(
         mirror,
         network,
         source_url: r.get("source_url"),
+        chain_id: r.get("chain_id"),
         pass_started_at: r.get("pass_started_at"),
         cursor_updated_at: r.get("cursor_updated_at"),
         cursor_id: r.get("cursor_id"),
@@ -168,10 +171,10 @@ pub async fn save(pool: &PgPool, c: &Cursor) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO shop.mirror_state \
              (mirror, network, source_url, pass_started_at, cursor_updated_at, cursor_id, pages_fetched, \
-              rows_upserted, last_complete_pass_at, last_complete_pass_rows, last_error, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, timezone('UTC', now())) \
+              rows_upserted, last_complete_pass_at, last_complete_pass_rows, last_error, chain_id, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, timezone('UTC', now())) \
          ON CONFLICT (mirror, network) DO UPDATE SET \
-             source_url = EXCLUDED.source_url, pass_started_at = EXCLUDED.pass_started_at, \
+             source_url = EXCLUDED.source_url, chain_id = EXCLUDED.chain_id, pass_started_at = EXCLUDED.pass_started_at, \
              cursor_updated_at = EXCLUDED.cursor_updated_at, cursor_id = EXCLUDED.cursor_id, \
              pages_fetched = EXCLUDED.pages_fetched, rows_upserted = EXCLUDED.rows_upserted, \
              last_complete_pass_at = EXCLUDED.last_complete_pass_at, \
@@ -189,9 +192,63 @@ pub async fn save(pool: &PgPool, c: &Cursor) -> Result<(), sqlx::Error> {
     .bind(c.last_complete_pass_at)
     .bind(c.last_complete_pass_rows)
     .bind(&c.last_error)
+    .bind(c.chain_id)
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// Testnet NFT workers need the chain behind the collections graph, including
+/// when it returns no collections. Prove the block in the page against the
+/// same chain-checked RPC the NFT walk uses.
+fn verify_testnet(state: &MarketplaceState, net: super::chain_walk::ChainNet) -> bool {
+    state.settings.market.indexes.nft_enabled
+        && state.settings.market.indexes.chain_id(net) != net.chain_id()
+}
+
+pub(super) async fn read_catalogue_page(
+    state: &MarketplaceState,
+    network: Network,
+    url: &str,
+    query: &str,
+    from: Option<String>,
+) -> Result<Value, String> {
+    let net = network.into();
+    let verify = verify_testnet(state, net);
+    let data = super::readers::query(
+        state,
+        url,
+        query,
+        serde_json::json!({
+            "idFrom": from.unwrap_or_default(), "first": PAGE_SIZE, "verifyChain": verify,
+        }),
+    )
+    .await?;
+    if verify {
+        let block = &data["_meta"]["block"];
+        let number = block["number"]
+            .as_u64()
+            .ok_or("collections graph has no block number")?;
+        let hash = block["hash"]
+            .as_str()
+            .ok_or("collections graph has no block hash")?;
+        let endpoint = state
+            .catalogue_rpc_url(net)
+            .ok_or("no RPC for the configured catalogue chain")?;
+        let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &endpoint);
+        let source = super::chain_walk::RpcSource::new(rpc);
+        super::ensure_chain(&source, state.settings.market.indexes.chain_id(net))
+            .await
+            .map_err(|e| e.to_string())?;
+        use super::chain_walk::LogSource;
+        let header = source.header(number).await.map_err(|e| e.to_string())?;
+        if !header.value.hash.eq_ignore_ascii_case(hash) {
+            return Err(format!(
+                "collections graph block {number} differs from the configured chain"
+            ));
+        }
+    }
+    Ok(data)
 }
 
 /// The cursor a pass starts from: the persisted row for this source, a fresh
@@ -202,11 +259,12 @@ async fn cursor_for(
     mirror: Mirror,
     network: Network,
     url: &str,
+    chain_id: Option<i64>,
 ) -> Result<Cursor, sqlx::Error> {
     Ok(match load(pool, mirror, network).await? {
-        Some(c) if c.source_url == url => c,
+        Some(c) if c.source_url == url && c.chain_id == chain_id => c,
         Some(c) => {
-            tracing::warn!(mirror = mirror.name(), network = network.db_name(), old = %c.source_url, "mirror source changed; the cursor restarts");
+            tracing::warn!(mirror = mirror.name(), network = network.db_name(), old = %c.source_url, "mirror source or chain changed; the cursor restarts");
             Cursor::fresh(mirror, network, url)
         }
         None => Cursor::fresh(mirror, network, url),
@@ -245,7 +303,12 @@ where
     UF: std::future::Future<Output = Result<i64, sqlx::Error>>,
 {
     let pool = &state.pool;
-    let mut c = cursor_for(pool, mirror, network, url).await?;
+    let net = super::chain_walk::ChainNet::from(network);
+    let configured = state.settings.market.indexes.chain_id(net);
+    let binding =
+        (configured == net.chain_id() || verify_testnet(state, net)).then_some(configured);
+    let mut c = cursor_for(pool, mirror, network, url, binding).await?;
+    c.chain_id = binding;
     if !c.in_progress() {
         c.pass_started_at = Some(now_utc());
         c.pages_fetched = 0;

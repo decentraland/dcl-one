@@ -141,6 +141,28 @@ fn mainnet(lookup: &Lookup) -> bool {
     lookup("ETH_NETWORK").is_none_or(|n| n.trim().is_empty() || n.trim() == "mainnet")
 }
 
+fn eth_collections_source(lookup: &Lookup) -> Option<String> {
+    Some(
+        if set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM").as_deref() == Some("11155111") {
+            "https://subgraph.decentraland.org/collections-ethereum-sepolia"
+        } else {
+            "https://subgraph.decentraland.org/collections-ethereum-mainnet"
+        }
+        .into(),
+    )
+}
+
+fn matic_collections_source(lookup: &Lookup) -> Option<String> {
+    Some(
+        if set(lookup, "MARKETPLACE_INDEX_CHAIN_ID_MATIC").as_deref() == Some("80002") {
+            "https://subgraph.decentraland.org/collections-matic-amoy"
+        } else {
+            "https://subgraph.decentraland.org/collections-matic-mainnet"
+        }
+        .into(),
+    )
+}
+
 fn third_party_registry_subgraph(lookup: &Lookup) -> Option<String> {
     (!mainnet(lookup)).then(|| "https://subgraph.decentraland.org/tpr-matic-mainnet".into())
 }
@@ -292,15 +314,25 @@ const ROWS: &[Row] = &[
     ),
     // Development only: no posture serves an order book before its first complete pass.
     same("mirrors", "TRADES_SERVE_PARTIAL", "false"),
-    upstream(
+    row(
         "mirrors",
         "ETH_COLLECTIONS_SUBGRAPH_URL",
-        "https://subgraph.decentraland.org/collections-ethereum-mainnet",
+        From(
+            "collections subgraph of the served ethereum chain",
+            eth_collections_source,
+        ),
+        Is(""),
+        Is(""),
     ),
-    upstream(
+    row(
         "mirrors",
         "MATIC_COLLECTIONS_SUBGRAPH_URL",
-        "https://subgraph.decentraland.org/collections-matic-mainnet",
+        From(
+            "collections subgraph of the served matic chain",
+            matic_collections_source,
+        ),
+        Is(""),
+        Is(""),
     ),
     upstream(
         "mirrors",

@@ -52,8 +52,8 @@
 //! the market federation's signed-action log and its feeds
 //! (`federation.rs`: `/v1/federation/*`, `/federation/market/*`).
 
-pub use crate::chain_index::source::{Source, unavailable};
 pub use crate::chain_index::graph;
+pub use crate::chain_index::source::{Source, unavailable};
 
 pub mod accounts;
 pub mod activity;
@@ -868,6 +868,31 @@ impl MarketplaceState {
             .map(str::to_string)
     }
 
+    /// The catalogue's explicitly bound endpoint, or its network's node RPC
+    /// when ETH_NETWORK selects the same pair. The walker verifies eth_chainId.
+    pub fn catalogue_rpc_url(&self, net: chain_walk::ChainNet) -> Option<String> {
+        let id = self.settings.market.indexes.chain_id(net);
+        if let Some(url) = self.settings.market.trade_rpc_urls.for_chain(id) {
+            return Some(url.to_string());
+        }
+        let land = self.land_network()?;
+        let expected = if land == crate::land_authz::LAND_SEPOLIA {
+            match net {
+                chain_walk::ChainNet::Ethereum => 11_155_111,
+                chain_walk::ChainNet::Matic => 80_002,
+            }
+        } else {
+            net.chain_id()
+        };
+        if expected != id {
+            return None;
+        }
+        match net {
+            chain_walk::ChainNet::Ethereum => self.settings.eth_rpc_url.clone(),
+            chain_walk::ChainNet::Matic => self.settings.polygon_rpc_url.clone(),
+        }
+    }
+
     /// The endpoint the trade-events walk of `net` reads: the
     /// `TRADE_RPC_URLS` entry of the chain it indexes
     /// (`MARKETPLACE_INDEX_CHAIN_ID_*`), and for Ethereum `ETH_RPC_URL`.
@@ -996,7 +1021,7 @@ async fn get_index_status(
     axum::extract::State(state): axum::extract::State<SharedState>,
 ) -> Json<Value> {
     Json(json!({
-        "nft": nft_index::status(&state.pool).await,
+        "nft": nft_index::status(&state.pool, &state.settings.market.indexes).await,
         "tradeEvents": trade_events::status(&state.pool, &state.settings.market.indexes).await,
         "manaTransfers": mana_transfers::status(&state.pool).await,
         "sales": sales_index::status(&state.pool).await,

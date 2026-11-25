@@ -1386,6 +1386,181 @@ fn estate_document(
 }
 
 #[tokio::test]
+async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
+    let chain = FakeChain::new(100, vec![], 100, 100);
+    chain.chain_id.store(80_002, Ordering::SeqCst);
+    let rpc = serve(chain.clone()).await;
+    let good = chain.hash_of(90);
+    let hash = Arc::new(Mutex::new(format!("0x{:064x}", 12345)));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let graph = format!("http://{}/", listener.local_addr().unwrap());
+    let app = Router::new().route("/", post(|State(hash): State<Arc<Mutex<String>>>| async move {
+        axum::Json(json!({"data":{"collections":[],"_meta":{"block":{"number":90,"hash":hash.lock().clone()}}}}))
+    })).with_state(hash.clone());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut state = super::tests::support::state_without_db();
+    state.index.allow_loopback_for_tests();
+    let settings = &mut Arc::get_mut(&mut state).unwrap().settings;
+    settings.market.indexes.nft_enabled = true;
+    settings.market.indexes.chain_id_matic = 80_002;
+    settings.market.trade_rpc_urls = RpcEndpoints::from_env(Some(&format!("80002={rpc}")));
+    let read = || {
+        super::mirrors::read_catalogue_page(
+            &state,
+            super::graph::Network::Matic,
+            &graph,
+            "{collections {id} _meta {block {number hash}}}",
+            None,
+        )
+    };
+    assert!(
+        read()
+            .await
+            .unwrap_err()
+            .contains("differs from the configured chain")
+    );
+    *hash.lock() = good;
+    assert_eq!(read().await.unwrap()["collections"], json!([]));
+    chain.chain_id.store(137, Ordering::SeqCst);
+    assert!(read().await.unwrap_err().contains("serves chain 137"));
+}
+
+#[tokio::test]
+async fn testnet_nft_walks_publish_only_their_catalogue_and_chain() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let settings = IndexSettings {
+        chain_id_ethereum: 11_155_111,
+        chain_id_matic: 80_002,
+        ..index_settings(120, 100)
+    };
+    for (net, chain_id, addr, first) in [
+        (
+            ChainNet::Ethereum,
+            11_155_111,
+            "0x7518456ae93eb98f3e64571b689c626616bb7f30",
+            3_831_219,
+        ),
+        (
+            ChainNet::Matic,
+            80_002,
+            "0x0c8ad1f6aadf89d2eb19f01a100a6143108fe2b0",
+            5_706_656,
+        ),
+    ] {
+        let ix = NftIndex::for_chain(net, chain_id).unwrap();
+        assert_eq!(ix.start_block(), first);
+        sqlx::query("INSERT INTO shop.mirror_state (mirror,network,source_url,chain_id,last_complete_pass_at) VALUES ('collections',$1,'source',$2,timezone('UTC',now()))")
+            .bind(net.db_name()).bind(net.chain_id()).execute(&db.pool).await.unwrap();
+        assert!(!nft_index::mirror_complete(&db.pool, net, chain_id).await);
+        sqlx::query(
+            "UPDATE shop.mirror_state SET chain_id=$2 WHERE network=$1 AND mirror='collections'",
+        )
+        .bind(net.db_name())
+        .bind(chain_id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert!(nft_index::mirror_complete(&db.pool, net, chain_id).await);
+        let at = first + 25;
+        let token = U256::from(12);
+        let other = "0x00000000000000000000000000000000000000e2";
+        seed_collection(
+            &db.pool,
+            net.db_name(),
+            other,
+            first,
+            "unused",
+            "Other chain",
+        )
+        .await;
+        let mut logs = vec![
+            transfer(addr, ZERO, BOB, token, at, 2),
+            transfer(other, ZERO, CARL, token, at, 3),
+            transfer(nft_index::DCL_REGISTRAR, ZERO, CARL, token, at, 4),
+        ];
+        if net == ChainNet::Ethereum {
+            for (pos, create, data) in [(0, true, "0,\"named\",\"desc\""), (1, false, "0")] {
+                let mut doc = estate_document(at, pos, 12, create, data);
+                doc.address = crate::land_authz::ESTATE_REGISTRY_SEPOLIA.into();
+                logs.push(doc);
+            }
+        }
+        let chain = FakeChain::new(at + net.confirmations(), logs, 100, 100);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, settings.clone(), false);
+        chain
+            .chain_id
+            .store(net.chain_id() as u64, Ordering::SeqCst);
+        let source = chain_walk::RpcSource::new(Rpc::at(&st.http, &url));
+        let holdings = chain_walk::Holdings::default();
+        let run = || {
+            chain_walk::job_pass(
+                &db.pool,
+                &source,
+                &ix,
+                &settings,
+                &holdings,
+                None,
+                None,
+                &|_| {},
+            )
+        };
+        let error = run().await.unwrap_err();
+        assert!(
+            error.downcast_ref::<chain_walk::WrongChain>().is_some(),
+            "{error:#}"
+        );
+        chain.chain_id.store(chain_id as u64, Ordering::SeqCst);
+        assert!(run().await.unwrap().published);
+        let c = chain_walk::cursor(&db.pool, INDEXER_NFT, net)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (c.chain_id, c.folded_block),
+            (Some(chain_id), Some(at as i64))
+        );
+        assert_eq!(
+            owner_of(&db.pool, net.db_name(), addr, token).await,
+            Some(Some(BOB.to_string()))
+        );
+        assert_eq!(owner_of(&db.pool, net.db_name(), other, token).await, None);
+        assert_eq!(
+            owner_of(&db.pool, net.db_name(), nft_index::DCL_REGISTRAR, token).await,
+            None
+        );
+        if net == ChainNet::Ethereum {
+            let fields: (String, String, i32) = sqlx::query_as("SELECT name, description, updated_log FROM shop.land_data WHERE token_address=$1 AND token_id=12")
+                .bind(crate::land_authz::ESTATE_REGISTRY_SEPOLIA).fetch_one(&db.pool).await.unwrap();
+            assert_eq!(fields, ("named".into(), "desc".into(), 0));
+            let repairs: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM shop.worker_progress WHERE worker='nft_estate_creations'",
+            )
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+            assert_eq!(repairs, 0);
+        }
+        chain
+            .chain_id
+            .store(net.chain_id() as u64, Ordering::SeqCst);
+        assert!(
+            pass(&st, &url, &NftIndex::new(net))
+                .await
+                .quarantined
+                .is_some()
+        );
+        assert_eq!(
+            owner_of(&db.pool, net.db_name(), addr, token).await,
+            Some(Some(BOB.to_string()))
+        );
+    }
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_resumes() {
     let Some(db) = ScratchDb::create().await else {
         return;
@@ -3158,6 +3333,7 @@ async fn the_land_data_read_is_one_bounded_index_scan() {
     )))
     .bind(23_900_000_i64)
     .bind(None::<&str>)
+    .bind(crate::land_authz::ESTATE_REGISTRY_MAINNET)
     .fetch_all(&mut *conn)
     .await
     .unwrap();

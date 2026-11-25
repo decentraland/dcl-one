@@ -1447,6 +1447,7 @@ fn visit_projections(
             .with_jitter(Duration::from_secs(1))
             .with_error_backoff(Duration::from_secs(30))
     };
+    let chain_id = settings.chain_id(net);
     if settings.nft_enabled {
         let gate: Gate = {
             let state = state.clone();
@@ -1454,7 +1455,7 @@ fn visit_projections(
                 let state = state.clone();
                 async move {
                     Ok(
-                        (!super::nft_index::mirror_complete(&state.pool, net).await).then(|| {
+                        (!super::nft_index::mirror_complete(&state.pool, net, chain_id).await).then(|| {
                             format!(
                                 "nft {}: waiting for the collections mirror's first complete pass",
                                 net.db_name()
@@ -1467,8 +1468,13 @@ fn visit_projections(
         };
         add(
             "nft-index",
-            state.chain_rpc_url(net),
-            Arc::new(move || Arc::new(super::nft_index::NftIndex::new(net))),
+            state.catalogue_rpc_url(net),
+            Arc::new(move || {
+                Arc::new(
+                    super::nft_index::NftIndex::for_chain(net, chain_id)
+                        .expect("validated NFT index chain"),
+                )
+            }),
             Some(gate),
             market_cfg(),
         );
@@ -1487,7 +1493,7 @@ fn visit_projections(
                         super::sales_index::check_venues(&rpc, &state.pool).await?;
                         venues_checked.store(true, Ordering::SeqCst);
                     }
-                    Ok((!super::nft_index::mirror_complete(&state.pool, net).await).then(|| {
+                    Ok((!super::nft_index::mirror_complete(&state.pool, net, net.chain_id()).await).then(|| {
                         "sales matic: waiting for the collections mirror's first complete pass".to_string()
                     }))
                 }
@@ -1699,7 +1705,7 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
         (
             settings.nft_enabled,
             "nft-index",
-            any_url(&|n| state.chain_rpc_url(n)),
+            any_url(&|n| state.catalogue_rpc_url(n)),
         ),
         (
             settings.trade_events_enabled,

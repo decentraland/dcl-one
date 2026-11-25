@@ -13,11 +13,10 @@ use crate::jobs::JobContext;
 use super::super::MarketplaceState;
 use super::super::graph::Network;
 use super::super::readers::{bool_of, int_of, opt_int_of, str_of, strings_of};
-use super::super::wire;
-use super::{Mirror, PAGE_SIZE, Page, walk};
+use super::{Mirror, Page, walk};
 
 const QUERY: &str = r#"
-query collections($idFrom: ID!, $first: Int!) {
+query collections($idFrom: ID!, $first: Int!, $verifyChain: Boolean!) {
   collections(first: $first, orderBy: id, orderDirection: asc, where: { id_gt: $idFrom }) {
     id
     name
@@ -38,6 +37,7 @@ query collections($idFrom: ID!, $first: Int!) {
     searchIsStoreMinter
     searchText
   }
+  _meta @include(if: $verifyChain) { block { number hash } }
 }"#;
 
 pub(super) async fn run_pass(
@@ -47,7 +47,7 @@ pub(super) async fn run_pass(
     url: &str,
 ) -> anyhow::Result<()> {
     let pool = state.pool.clone();
-    let chain_id: i32 = u64::from(wire::Network::from(network).chain_id()) as i32;
+    let chain_id = state.settings.market.indexes.chain_id(network.into()) as i32;
     walk(
         state,
         ctx,
@@ -56,13 +56,7 @@ pub(super) async fn run_pass(
         url,
         false,
         |_, id| async move {
-            let data = super::super::readers::query(
-                state,
-                url,
-                QUERY,
-                json!({ "idFrom": id.unwrap_or_default(), "first": PAGE_SIZE }),
-            )
-            .await?;
+            let data = super::read_catalogue_page(state, network, url, QUERY, id).await?;
             let rows = super::super::readers::rows(&data, "collections");
             let last_id = rows
                 .last()
