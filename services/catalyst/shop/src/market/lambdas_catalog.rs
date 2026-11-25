@@ -1210,12 +1210,53 @@ async fn read_outfits(
     if !has_outfits {
         return Ok((entity, None));
     }
-    // `owned_names` answers empty without a marketplace subgraph or for an
-    // id that is not an address.
-    let (sanitized, names) = tokio::join!(
-        sanitize_outfits(state, address, &mut entity),
-        super::graph::owned_names(&state.index, address)
-    );
+    // A node that walks the nft index reads the NAMEs in the items'
+    // snapshot, Ethereum always, so the answer is filed under one
+    // observation.
+    if super::owned_items::walks_here(state)
+        && state.name_authority.as_ref().is_some_and(|a| a.observes())
+    {
+        let owner = address.to_lowercase();
+        let requested = outfit_requested(
+            &owner,
+            entity
+                .pointer("/metadata/outfits")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        );
+        let (owned, mut names, observed) = super::owned_items::owned_tokens_and_names(
+            &state.pool,
+            &requested,
+            std::slice::from_ref(&owner),
+            super::owned_items::Rule::Fresh,
+        )
+        .await
+        .map_err(|e| e.into_response(|m| super::third_party::fetch_error(address, m)))?;
+        sanitize_outfits(state, address, &mut entity, Some(owned)).await?;
+        let owned_names: Vec<String> = names
+            .remove(&owner)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|n| n.name)
+            .collect();
+        apply_names(&mut entity, &owned_names);
+        return Ok((entity, Some(observed)));
+    }
+    // One that does not reads them from the subgraph beside the items, or
+    // owns none, as it serves the items as deployed.
+    let names = async {
+        match state.name_authority.as_ref() {
+            Some(authority) if !authority.observes() => authority
+                .owned_names(address, crate::chain_index::names::Purpose::Display)
+                .await
+                .map(|answer| answer.value)
+                .map_err(|e| e.to_string()),
+            _ => Ok(std::sync::Arc::new(Vec::new())),
+        }
+    };
+    let (sanitized, names) =
+        tokio::join!(sanitize_outfits(state, address, &mut entity, None), names);
     let observed = sanitized?;
     let owned_names: Vec<String> = names
         .map_err(|e| super::third_party::fetch_error(address, &e))?
@@ -1241,10 +1282,37 @@ async fn read_outfits(
 /// 502 `FetcherError`; a
 /// failed third-party check lamb2's bare 500, as its checker's error is not
 /// one `errorHandler` maps.
+/// The `(owner, URN)` pairs of the on-chain items the outfits wear.
+fn outfit_requested(owner: &str, outfits: &[Value]) -> HashSet<(String, String)> {
+    outfits
+        .iter()
+        .filter_map(|outfit| {
+            outfit
+                .pointer("/outfit/wearables")
+                .and_then(Value::as_array)
+        })
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|w| {
+            !w.contains("off-chain")
+                && !w.contains("base-avatars")
+                && !super::third_party::is_third_party_urn(w)
+        })
+        .map(|w| {
+            let (urn, _) = super::profiles::split_urn_and_token_id(w);
+            (owner.to_string(), urn.to_string())
+        })
+        .collect()
+}
+
+/// `given`: the owner's tokens already read in the caller's snapshot (the
+/// composite read); `None` reads them here, and returns what that read
+/// observed.
 async fn sanitize_outfits(
     state: &MarketplaceState,
     address: &str,
     entity: &mut Value,
+    given: Option<super::owned_items::OwnedTokens>,
 ) -> Result<Option<super::owned_items::Observed>, Response> {
     let Some(outfits) = entity
         .pointer_mut("/metadata/outfits")
@@ -1271,32 +1339,19 @@ async fn sanitize_outfits(
         return Ok(None);
     }
     let owner = address.to_lowercase();
-    let requested: HashSet<(String, String)> = outfits
-        .iter()
-        .filter_map(|outfit| {
-            outfit
-                .pointer("/outfit/wearables")
-                .and_then(Value::as_array)
-        })
-        .flatten()
-        .filter_map(Value::as_str)
-        .filter(|w| {
-            !w.contains("off-chain")
-                && !w.contains("base-avatars")
-                && !super::third_party::is_third_party_urn(w)
-        })
-        .map(|w| {
-            let (urn, _) = super::profiles::split_urn_and_token_id(w);
-            (owner.clone(), urn.to_string())
-        })
-        .collect();
-    let (mut owned, observed) = super::owned_items::owned_tokens_observed(
-        &state.pool,
-        &requested,
-        super::owned_items::Rule::Fresh,
-    )
-    .await
-    .map_err(|e| e.into_response(|m| super::third_party::fetch_error(address, m)))?;
+    let (mut owned, observed) = match given {
+        Some(owned) => (owned, None),
+        None => {
+            let requested = outfit_requested(&owner, outfits);
+            super::owned_items::owned_tokens_observed(
+                &state.pool,
+                &requested,
+                super::owned_items::Rule::Fresh,
+            )
+            .await
+            .map_err(|e| e.into_response(|m| super::third_party::fetch_error(address, m)))?
+        }
+    };
     let held = owned.remove(&owner).unwrap_or_default();
     let tokens: HashMap<&str, Vec<&str>> = held
         .iter()
@@ -1837,6 +1892,7 @@ mod tests {
             &state,
             "0x0000000000000000000000000000000000000001",
             &mut entity,
+            None,
         )
         .await
         .unwrap_err();

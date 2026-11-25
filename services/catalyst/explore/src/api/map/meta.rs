@@ -5,8 +5,8 @@
 //! `/v2/addresses/{address}/contributions`) and the probes (`/ping`,
 //! `/ready`). The old handlers read the squid `parcel`/`estate`/`data`
 //! tables; v2 has no squid database, so the token id, the name and the
-//! estate membership come from the mirrored tile grid (upstream fills a
-//! tile's `name` and `tokenId` from the same LAND data), the token id is
+//! estate membership come from the built tile grid (which fills a tile's
+//! `name` and `tokenId` from the same LAND data), the token id is
 //! derived from the coordinates when the grid carries none, and the
 //! description is empty (the grid has no description column). An estate the
 //! grid does not hold answers from the LAND index when that index proves it
@@ -172,10 +172,6 @@ fn finalize(mut resp: Response, last: i64) -> Response {
     resp
 }
 
-fn not_ready() -> Response {
-    (StatusCode::SERVICE_UNAVAILABLE, "Not ready").into_response()
-}
-
 fn not_found() -> Response {
     (
         StatusCode::NOT_FOUND,
@@ -311,12 +307,13 @@ fn validated(headers: &HeaderMap, last: i64, resp: impl FnOnce() -> Response) ->
     }
 }
 
+/// A grid answer, or, without a grid, the unavailable envelope as it is:
+/// never a 304 or a cache policy, which would keep it past the first grid.
 fn with_grid(state: &Shared, headers: &HeaderMap, f: impl FnOnce(&Grid) -> Response) -> Response {
-    let last = state.map.last_updated_at();
-    validated(headers, last, || match state.map.snapshot() {
-        Some(grid) => f(&grid),
-        None => not_ready(),
-    })
+    let Some(grid) = state.map.snapshot() else {
+        return state.map.unavailable();
+    };
+    validated(headers, grid.last_updated_at, || f(&grid))
 }
 
 /// An estate id as the grid and the LAND index both spell it: the decimal
@@ -386,10 +383,10 @@ pub async fn get_estate(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
-    let last = state.map.last_updated_at();
     let Some(grid) = state.map.snapshot() else {
-        return validated(&headers, last, not_ready);
+        return state.map.unavailable();
     };
+    let last = grid.last_updated_at;
     let Some(id) = canonical_estate_id(&id) else {
         return validated(&headers, last, || {
             (StatusCode::FORBIDDEN, "Invalid id").into_response()
@@ -405,10 +402,10 @@ pub async fn get_token(
     headers: HeaderMap,
     Path((address, id)): Path<(String, String)>,
 ) -> Response {
-    let last = state.map.last_updated_at();
     let Some(grid) = state.map.snapshot() else {
-        return validated(&headers, last, not_ready);
+        return state.map.unavailable();
     };
+    let last = grid.last_updated_at;
     let addr = address.to_lowercase();
     if addr == state.settings.estate_contract_address
         && let Some(id) = canonical_estate_id(&id)
@@ -508,7 +505,7 @@ pub async fn ready(State(state): State<Shared>) -> Response {
     if state.map.is_ready() {
         (StatusCode::OK, "ok").into_response()
     } else {
-        not_ready()
+        state.map.unavailable()
     }
 }
 
@@ -655,7 +652,6 @@ mod tests {
         Grid::from_tiles(
             [("1,1".to_string(), tile)].into(),
             1,
-            None,
             chrono::Utc::now().naive_utc(),
         )
     }
@@ -817,7 +813,6 @@ mod tests {
                 db.pool.clone(),
                 crate::http::Outbound::for_tests(),
                 land_settings.clone(),
-                None,
             )
         )));
         for (status, _) in estate_and_token(&state, "501").await {

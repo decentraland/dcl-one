@@ -126,9 +126,16 @@ impl Host {
         let bind_addr = config.bind_addr;
 
         let server_config = server_config(certs, key, config.idle_timeout)?;
+        let endpoint_config = quinn::EndpointConfig::default();
+        let socket =
+            std::net::UdpSocket::bind(bind_addr).map_err(|e| HostError::Endpoint(e.to_string()))?;
         // Binding a quinn endpoint needs a runtime context.
         let endpoint = runtime
-            .block_on(async move { quinn::Endpoint::server(server_config, bind_addr) })
+            .block_on(async move {
+                let runtime = quinn::default_runtime()
+                    .ok_or_else(|| std::io::Error::other("no async runtime found"))?;
+                quinn::Endpoint::new(endpoint_config, Some(server_config), socket, runtime)
+            })
             .map_err(|e| HostError::Endpoint(e.to_string()))?;
         let server = web_transport_quinn::Server::new(endpoint);
 
@@ -359,16 +366,14 @@ fn server_config(
     key: rustls_pki_types::PrivateKeyDer<'static>,
     idle_timeout: Duration,
 ) -> Result<quinn::ServerConfig, HostError> {
-    let mut tls = rustls::ServerConfig::builder_with_provider(
-        web_transport_quinn::crypto::default_provider(),
-    )
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .map_err(|e| HostError::Cert(e.to_string()))?
-    .with_no_client_auth()
-    .with_single_cert(certs, key)
-    .map_err(|e| HostError::Cert(e.to_string()))?;
+    let mut tls = rustls::ServerConfig::builder_with_provider(super::tls_provider())
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(|e| HostError::Cert(e.to_string()))?
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| HostError::Cert(e.to_string()))?;
     tls.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
-    let tls = quinn::crypto::rustls::QuicServerConfig::try_from(tls)
+    let tls = web_transport_quinn::crypto::QuicServerConfig::try_from(tls)
         .map_err(|e| HostError::Cert(e.to_string()))?;
     let mut config = quinn::ServerConfig::with_crypto(Arc::new(tls));
     config.transport_config(Arc::new(transport_config(idle_timeout)));

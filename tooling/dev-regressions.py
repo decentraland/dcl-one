@@ -41,11 +41,13 @@ EXTERNAL = [
     ("sockets_3", "test", "archipelago_socket_bounds::orderly_shutdown_drains_authenticated_disconnect_to_live_pulse"),
     ("sockets_3", "test", "archipelago_socket_bounds::idle_transport_retires_no_pong_but_preserves_pong_and_data_activity"),
 ]
-# The isolated V8 process must keep exactly one initializer. Ordinary target
-# inventories remain subsets so unrelated tests can grow without a manifest edit.
-EXACT_ARCHIPELAGO = {("stats_metrics_engine", "test")}
 MANDATORY_ARCHIPELAGO = {
     ("catalyst_comms", "lib"): [
+        "stats::tests::http_tests::method_admission_preserves_the_stats_response_and_bounds_process_labels",
+        "stats::tests::http_tests::process_http_metrics_cover_claimed_routes_nested_services_and_retired_scrapes",
+        "stats::tests::http_tests::retired_scrapes_follow_the_stats_fallback_and_lifecycle_probes_keep_their_values",
+        "archipelago::handlers::tests::diagnostics_record_into_the_process_and_the_connector_scrape_is_gone",
+        "stats::runtime::tests::lifecycle_reports_real_listener_start_and_shutdown_without_dependency_probes",
         "archipelago::ws::io::bounds_tests::congestion_requires_ten_continuously_full_seconds_and_emits_1013_at_a_frame_boundary",
         "archipelago::ws::io::bounds_tests::full_queue_preserves_accepted_frames_and_rejects_later_assignments",
         "archipelago::registry::mailbox::tests::occupancy_deadline_survives_handoff_and_resets_only_after_release",
@@ -100,14 +102,7 @@ MANDATORY_ARCHIPELAGO = {
         "pulse::cluster::nats::statistics_tests::statistics_publisher_preserves_checkpoint_prefix_during_continuous_backlog",
         "pulse::statistics::tests::overflow_and_failed_transfer_discard_pending_checkpoint_for_complete_recovery",
         "archipelago::ws::io::tests::legacy_heartbeat_encodings_receive_identical_rate_accounting",
-        "stats::tests::http_tests::root_bypasses_non_candidates_and_records_exact_selection_paths",
-        "stats::tests::http_tests::root_collision_suppresses_claim_and_matcher_fault_is_not_a_nonmatch",
-        "stats::tests::http_tests::configured_metrics_auth_scrapes_and_actual_lifecycle_values_are_used",
-        "stats::tests::http_tests::metrics_observe_route_templates_skip_probes_and_keep_request_semantics",
         "stats::tests::http_tests::standalone_normalizes_dot_segments_without_collapsing_slashes",
-        "stats::tests::http_tests::standalone_selection_duration_includes_match_and_nonmatch",
-        "stats::tests::http_tests::claimed_root_duration_includes_raw_and_normalized_selection",
-        "stats::tests::http_tests::normalized_selection_failure_keeps_raw_selection_duration",
         "archipelago::auth::tests::contract_challenge_is_verified_by_configured_validator",
         "archipelago::auth::tests::pending_contract_verifications_release_lock_and_commit_only_current_issuance_once",
         "archipelago::auth::tests::discarded_or_cancelled_contract_verification_cannot_consume_a_challenge",
@@ -116,26 +111,6 @@ MANDATORY_ARCHIPELAGO = {
         "archipelago::auth::tests::delegated_and_mixed_contract_chains_preserve_binding_expiry_and_ten_link_limit",
         "archipelago::auth::tests::a_cached_delegation_cannot_authorize_a_new_challenge_after_revocation",
         "archipelago::ws::tests::dedup_preserves_fractional_infinite_and_number_subtraction_boundaries",
-        "archipelago::handlers::tests::connector_metrics_native_segments_preserve_separators_and_bytes",
-        "archipelago::handlers::tests::connector_metrics_native_segment_limit_terminates_registration_and_traversal",
-        "archipelago::handlers::tests::connector_metrics_http_selection_preserves_native_precedence_and_methods",
-        "archipelago::handlers::tests::connector_metrics_observes_selected_handlers_and_skips_rejected_scrapes",
-        "archipelago::handlers::tests::connector_metrics_socket_yield_uses_http_selection_and_one_observation",
-        "archipelago::handlers::tests::connector_metrics_socket_claim_keeps_non_key_header_rejections",
-        "archipelago::handlers::tests::connector_metrics_socket_upgrade_bypasses_colliding_scrapes_and_challenges",
-        "stats::runtime::tests::midnight_reset_resolves_gaps_with_pre_gap_offset_and_ambiguity_with_earlier_instant",
-        "stats::runtime::tests::midnight_reset_bounds_unresolved_timezone_lookups_without_claiming_a_gap",
-        "stats::runtime::tests::scrape_reads_clocks_after_render_and_uses_fresh_reset_date",
-        "stats::runtime::tests::scrape_clock_history_keeps_strict_boundary_and_feed_baseline_with_one_delayed_reset",
-        "stats::runtime::tests::scrape_without_rotation_does_not_read_reset_clocks",
-        "stats::runtime::process::tests::registry_cpu_ordinary_missing_sample_retains_measured_origin_on_recovery",
-        "stats::runtime::process::tests::registry_missing_cpu_at_reset_starts_recovery_at_first_known_sample",
-        "stats::runtime::process::tests::registry_measured_cpu_reset_serializes_old_interval_before_starting_new_interval",
-        "stats::runtime::process::tests::registry_unavailable_initial_cpu_sample_waits_for_measured_origin",
-        "stats::runtime::process::tests::registry_memory_and_fd_failures_omit_only_unavailable_families_and_recover",
-        "stats::runtime::process::tests::registry_disabled_default_collection_never_samples_before_or_after_reset",
-        "stats::runtime::process::tests::registry_unavailable_initial_soft_limit_stays_omitted_in_its_isolated_cache",
-        "stats::runtime::tests::rejected_scrape_keeps_reset_boundary_and_success_is_observed_after_old_body",
         "stats::tests::http_tests::selected_sql_metadata_order_reaches_hot_scenes_http",
         "stats::tests::content_tests::selected_sql_content_applies_shared_denylist_before_top_100",
         "archipelago::tests::mounted_hot_scenes_share_local_content_policy_for_get_and_head",
@@ -178,7 +153,6 @@ MANDATORY_ARCHIPELAGO = {
         "stats::tests::render_tests::f32_position_extremes_and_receipt_rounding_keep_exact_public_bytes",
         "stats::tests::render_tests::discovery_uses_absolute_strict_age_and_advertised_count",
         "stats::tests::content_tests::selected_metadata_keeps_index_key_order_and_distinguishes_omitted_fields",
-        "stats::tests::http_tests::method_admission_bounds_labels_without_relabeling_accepted_extensions",
         "stats::tests::content_tests::thumbnail_only_sql_matches_full_projection_for_metadata_and_selection_variants",
         "gatekeeper::bus::broker::tests::terminal_submission_waits_for_capacity_without_admission_readiness",
         "gatekeeper::bus::broker::tests::cancelled_terminal_heads_cannot_publish_after_a_link_rebuild",
@@ -186,8 +160,6 @@ MANDATORY_ARCHIPELAGO = {
         "gatekeeper::bus::broker::tests::retained_capability_rejects_every_non_disconnect_payload",
         "archipelago::observations::tests::shutdown_deadline_cancels_unsubmitted_disconnect_and_counts_all_forced_loss_once",
         "gatekeeper::bus::broker::tests::retained_sdk_deadline_and_link_changes_leave_submission_unconfirmed",
-        "archipelago::handlers::tests::connector_method_flood_preserves_http_without_creating_metric_series",
-        "stats::runtime::tests::connector_observer_bounds_method_labels_and_preserves_known_lowercase_labels",
         "archipelago::observations::tests::producer_registration_is_lazy_and_recovers_restart_without_replaying_events",
         "pulse::statistics::tests::invalid_observations_are_counted_without_changing_population",
         "pulse::statistics::tests::capacity_refuses_registration_without_forgetting_any_cursor",
@@ -233,15 +205,11 @@ MANDATORY_ARCHIPELAGO = {
         "presence::tests::module_sources::numeric_statistics_reach_about_and_realm_routes_without_signed_narrowing",
         "presence::tests::module_sources::archive_retains_one_statistics_snapshot_while_content_awaits",
         "presence::tests::module_sources::archive_reads_selected_sql_metadata_and_omits_non_string_fields",
-        "metrics_matcher::tests::canceled_queued_and_running_matchers_keep_single_submission",
-        "metrics_matcher::tests::panicked_work_returns_error_and_releases_admission",
         "presence::tests::module_sources::selected_sql_archive_observes_shared_content_policy",
     ],
-    ("stats_metrics_engine", "test"): [
-        "configured_stats_engine_and_http_contract",
-    ],
     ("node_2", "test"): [
-        "stats_metrics_startup::stats_compilation_is_serve_only_and_follows_cli_refusals",
+        "stats_metrics_startup::cli_preflight_precedes_role_startup",
+        "stats_metrics_startup::serve_warns_once_with_only_the_names_of_retired_metrics_settings",
         "comms_v4_assignment_fence::selected_identity_domains_survive_production_assignment_json_postgres_roundtrip",
         "comms_v4_assignment_fence::selected_realm_ownership_tracks_native_without_ws_and_borrows_external_rows_read_only",
         "comms_v4_assignment_fence::lost_selected_claim_and_publication_acknowledgments_reconcile_without_restoring_a_predecessor",
@@ -426,14 +394,6 @@ def verify(required, normal, ignored, label):
         require(all_names[name] == 1, f"{label}: required test absent/renamed: {name}")
         require(ignored_names[name] == 0, f"{label}: required test ignored: {name}")
     print(f"{label}: {len(required)} mandatory tests present once, zero ignored", flush=True)
-
-
-def verify_exact(required, normal, ignored, label):
-    require(len(required) == 1, f"{label}: isolated engine manifest must require exactly one test")
-    verify(required, normal, ignored, label)
-    require(Counter(inventory_entries(normal)) == Counter((name, "test") for name in required),
-            f"{label}: isolated engine inventory must contain only its required tests; remove extra tests/benchmarks")
-    require(not inventory_entries(ignored), f"{label}: isolated engine inventory must have no ignored entries")
 
 
 def validate_invocation(output, environ):
@@ -645,8 +605,7 @@ def check_external():
     for (target, kind), names in MANDATORY_ARCHIPELAGO.items():
         require(target in targets[kind], f"missing provisioned {kind} target: {target}")
         # The broad runner executes these normally; guard their presence without a second run.
-        options = {"exact": True} if (target, kind) in EXACT_ARCHIPELAGO else {}
-        check_executable(names, targets[kind][target], f"mandatory {target} corpus/transitions", **options)
+        check_executable(names, targets[kind][target], f"mandatory {target} corpus/transitions")
     for target, kind, name in EXTERNAL:
         require(target in targets[kind], f"missing provisioned {kind} target: {target}")
         if execute:
@@ -681,10 +640,10 @@ def verify_targets(required, targets):
         check_executable(names, targets[target], target)
 
 
-def check_executable(required, executable, label, required_ignored=(), *, exact=False):
+def check_executable(required, executable, label, required_ignored=()):
     normal = run([executable, "--list", "--format", "terse"])
     ignored = run([executable, "--list", "--ignored", "--format", "terse"])
-    (verify_exact if exact else verify)(required, normal, ignored, label)
+    verify(required, normal, ignored, label)
     for name in required_ignored:
         require(inventory(normal)[name] == 1 and inventory(ignored)[name] == 1, f"{label}: provisioned external test must remain ignored by default: {name}")
 

@@ -925,20 +925,15 @@ mod module_sources {
             async fn probe(&self, _: bool) -> stats::http::Lifecycle {
                 Default::default()
             }
-            async fn metrics(&self) -> Result<String, stats::content::Error> {
-                Ok(String::new())
-            }
             async fn diagnostics(&self) -> Result<String, stats::content::Error> {
                 Ok(String::new())
             }
-            fn observe(&self, _: stats::http::Observation) {}
         }
         let app = stats::http::standalone(stats::http::State::new(
             reader,
             source,
             Arc::new(Hooks),
             Default::default(),
-            stats::http::test_support::matcher(),
         ));
         async fn request(
             app: axum::Router,
