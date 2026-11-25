@@ -57,4 +57,129 @@
   .clear:hover {
     color: rgb(240, 240, 240);
   }
+
+  /* A visual before the field: over its left padding, which the caller widens through `inputClassName`. */
+  .leading {
+    position: absolute;
+    top: 50%;
+    left: var(--dcl-space-12);
+    display: flex;
+    color: rgba(255, 255, 255, 0.5);
+    pointer-events: none;
+    transform: translateY(-50%);
+  }
+}
+
+/* Not in Figma: the Explorer HUD's field (`appearance="hud"`). Its black wash, its 45% white ink, its muted
+   placeholder, its 140ms and its 9.6px corners have no token. A host sets --search-light-width and
+   --search-light-bg for the light field. */
+@layer dcl.components {
+  .hud {
+    display: flex;
+    align-items: center;
+    gap: var(--dcl-space-8);
+    min-width: 0;
+    height: 38px;
+    padding: 0 14px;
+    border: 1px solid var(--dcl-transparencies-white-10);
+    border-radius: var(--dcl-radius-full);
+    background: rgba(0, 0, 0, 0.157);
+    transition: border-color 140ms ease;
+  }
+
+  .hud:focus-within {
+    border-color: var(--dcl-brand-ruby);
+  }
+
+  .hudLeading {
+    display: contents;
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .hudLeading > * {
+    flex: 0 0 auto;
+  }
+
+  .hudInput {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: none;
+    color: var(--dcl-neutrals-white);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .hudInput::placeholder {
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  :where(.hud)[data-variant='light'] {
+    gap: 9px;
+    width: var(--search-light-width, 396px);
+    max-width: 100%;
+    height: 42px;
+    padding: 0 var(--dcl-space-8) 0 11.5px;
+    border: none;
+    border-radius: var(--dcl-radius-md);
+    background: var(--search-light-bg, var(--dcl-neutrals-snow));
+  }
+
+  :where(.hud)[data-variant='light']:focus-within {
+    border: none;
+  }
+
+  :where(.hud)[data-variant='light'] .hudLeading {
+    color: var(--dcl-neutrals-shadow);
+  }
+
+  :where(.hud)[data-variant='light'] .hudLeading > svg {
+    width: 19px;
+    height: 18px;
+  }
+
+  :where(.hud)[data-variant='light'] .hudInput {
+    color: var(--dcl-neutrals-shadow);
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  :where(.hud)[data-variant='light'] .hudInput::placeholder {
+    color: var(--dcl-neutrals-cloudy-sky);
+    font-weight: 400;
+  }
+
+  .hudClear {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: none;
+    border-radius: var(--dcl-radius-full);
+    background: rgba(0, 0, 0, 0.157);
+    color: var(--dcl-neutrals-black);
+    cursor: pointer;
+  }
+
+  :where(.hud)[data-size='sm'] {
+    width: 100%;
+    height: 36px;
+    border-radius: 9.6px;
+  }
+
+  :where(.hud)[data-size='sm'] .hudInput {
+    font-size: var(--dcl-font-size-body-sm);
+  }
+
+  :where(.hud)[data-variant='dark'] > .hudClear {
+    width: 22px;
+    height: 22px;
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-neutrals-snow);
+  }
 }

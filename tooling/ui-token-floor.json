@@ -729,7 +729,7 @@
   },
   "library/ui/components/SearchBar/SearchBar.module.css": {
     "primitives": 0,
-    "tokens": 9
+    "tokens": 26
   },
   "library/ui/components/ShopCard/ShopCard.module.css": {
     "primitives": 0,

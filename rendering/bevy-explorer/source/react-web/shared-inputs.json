@@ -3273,10 +3273,6 @@
           "kind": "regular"
         },
         {
-          "name": "SearchField.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "SearchField.tsx",
           "kind": "regular"
         },
@@ -12328,12 +12324,8 @@
       "sha256": "74be17a15f971de4f70204805368358e4bade69fd1243a17246c8e730787b9e2"
     },
     {
-      "path": "library/ui/apps/hud/design/SearchField.module.css",
-      "sha256": "b4963829aac8b2c95b4664abdb03537c6aed991e1f26b7c914d94d9d58e988e8"
-    },
-    {
       "path": "library/ui/apps/hud/design/SearchField.tsx",
-      "sha256": "a88cd47709e027bf877e9df06ee368fd0b99027403872b27b63b82206aa26260"
+      "sha256": "75645745248fdeea5fa0a48d23741ebe92e0add267249ce17e5f54bb99e4b3ef"
     },
     {
       "path": "library/ui/apps/hud/design/Select.module.css",
@@ -16325,11 +16317,11 @@
     },
     {
       "path": "library/ui/components/SearchBar/SearchBar.module.css",
-      "sha256": "73cb23f91e845695fdf333eee8f253aa2f3f2bbea1acf4923cfcccf2c21e5d55"
+      "sha256": "6629d1b4b574409b92a613f1c6eccac5110e935bd9fcdd5b9ac10baa292f4838"
     },
     {
       "path": "library/ui/components/SearchBar/SearchBar.tsx",
-      "sha256": "d3d56e38ef4649c510a5078da1630aadf9ab535e5dd61507d91496b49ff1c36f"
+      "sha256": "a9ac5d2505466e2ebe5ee1a0b677bbffb760719939eab6e25915125d9fc6e444"
     },
     {
       "path": "library/ui/components/ShopCard/ShopCard.module.css",
@@ -21428,17 +21420,47 @@
     },
     {
       "from": "library/ui/apps/hud/design/SearchField.tsx",
-      "to": "library/ui/apps/hud/design/SearchField.module.css",
+      "to": "library/ui/apps/hud/assets/backpack/icon-close.webp",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/SearchField.tsx",
-      "to": "library/ui/apps/hud/design/SearchField.module.css",
+      "to": "library/ui/apps/hud/assets/backpack/icon-close.webp",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/SearchField.tsx",
-      "to": "library/ui/apps/hud/design/SearchField.module.css",
+      "to": "library/ui/apps/hud/assets/backpack/icon-close.webp",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SearchField.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SearchField.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SearchField.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SearchField.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SearchField.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SearchField.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {

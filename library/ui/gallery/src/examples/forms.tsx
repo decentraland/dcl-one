@@ -31,6 +31,36 @@ function SearchBarDemo({ initial }: { initial: string }) {
   )
 }
 
+function HudSearchBarDemo({
+  variant,
+  fieldSize,
+  initial
+}: {
+  variant: 'dark' | 'light'
+  fieldSize: 'md' | 'sm'
+  initial: string
+}) {
+  const [value, setValue] = useState(initial)
+  return (
+    <SearchBar
+      appearance="hud"
+      variant={variant}
+      fieldSize={fieldSize}
+      label="Search places"
+      placeholder="Search places"
+      value={value}
+      onValueChange={setValue}
+      onClear={() => setValue('')}
+      leading={
+        <svg viewBox="0 0 16 16" width="15" height="15">
+          <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      }
+    />
+  )
+}
+
 const networks = [
   { value: 'ethereum', label: 'Ethereum' },
   { value: 'polygon', label: 'Polygon' },
@@ -360,6 +390,17 @@ export const formEntries: GalleryEntry[] = [
         id: 'value',
         title: 'With a value and the clear button',
         render: () => <SearchBarDemo initial="Genesis" />
+      },
+      {
+        id: 'hud',
+        title: 'Explorer HUD: the dark pill, the light field and the small field',
+        render: () => (
+          <div className={`${layout.stack} ${layout.field}`}>
+            <HudSearchBarDemo variant="dark" fieldSize="md" initial="Genesis" />
+            <HudSearchBarDemo variant="light" fieldSize="md" initial="Genesis" />
+            <HudSearchBarDemo variant="dark" fieldSize="sm" initial="" />
+          </div>
+        )
       }
     ]
   }
