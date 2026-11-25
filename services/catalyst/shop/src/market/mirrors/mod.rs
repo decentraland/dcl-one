@@ -121,7 +121,6 @@ pub struct Cursor {
     pub cursor_id: Option<String>,
     pub pages_fetched: i64,
     pub rows_upserted: i64,
-    pub last_complete_pass_started_at: Option<NaiveDateTime>,
     pub last_complete_pass_at: Option<NaiveDateTime>,
     pub last_complete_pass_rows: Option<i64>,
     pub last_error: Option<String>,
@@ -141,7 +140,6 @@ impl Cursor {
             cursor_id: None,
             pages_fetched: 0,
             rows_upserted: 0,
-            last_complete_pass_started_at: None,
             last_complete_pass_at: None,
             last_complete_pass_rows: None,
             last_error: None,
@@ -173,7 +171,7 @@ pub async fn load(
 ) -> Result<Option<Cursor>, sqlx::Error> {
     let row = sqlx::query(
         "SELECT source_url, chain_id, pass_block_hash, pass_started_at, cursor_updated_at, cursor_id, pages_fetched, rows_upserted, \
-                last_complete_pass_started_at, last_complete_pass_at, last_complete_pass_rows, last_error, updated_at \
+                last_complete_pass_at, last_complete_pass_rows, last_error, updated_at \
          FROM shop.mirror_state WHERE mirror = $1 AND network = $2",
     )
     .bind(mirror.name())
@@ -191,7 +189,6 @@ pub async fn load(
         cursor_id: r.get("cursor_id"),
         pages_fetched: r.get("pages_fetched"),
         rows_upserted: r.get("rows_upserted"),
-        last_complete_pass_started_at: r.get("last_complete_pass_started_at"),
         last_complete_pass_at: r.get("last_complete_pass_at"),
         last_complete_pass_rows: r.get("last_complete_pass_rows"),
         last_error: r.get("last_error"),
@@ -203,13 +200,12 @@ pub async fn save(pool: &PgPool, c: &Cursor) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO shop.mirror_state \
              (mirror, network, source_url, pass_started_at, cursor_updated_at, cursor_id, pages_fetched, \
-              rows_upserted, last_complete_pass_started_at, last_complete_pass_at, last_complete_pass_rows, last_error, chain_id, pass_block_hash, marks_item_rows, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, timezone('UTC', now())) \
+              rows_upserted, last_complete_pass_at, last_complete_pass_rows, last_error, chain_id, pass_block_hash, marks_item_rows, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, timezone('UTC', now())) \
          ON CONFLICT (mirror, network) DO UPDATE SET \
              source_url = EXCLUDED.source_url, marks_item_rows = EXCLUDED.marks_item_rows, chain_id = EXCLUDED.chain_id, pass_block_hash = EXCLUDED.pass_block_hash, pass_started_at = EXCLUDED.pass_started_at, \
              cursor_updated_at = EXCLUDED.cursor_updated_at, cursor_id = EXCLUDED.cursor_id, \
              pages_fetched = EXCLUDED.pages_fetched, rows_upserted = EXCLUDED.rows_upserted, \
-             last_complete_pass_started_at = EXCLUDED.last_complete_pass_started_at, \
              last_complete_pass_at = EXCLUDED.last_complete_pass_at, \
              last_complete_pass_rows = EXCLUDED.last_complete_pass_rows, \
              last_error = EXCLUDED.last_error, updated_at = EXCLUDED.updated_at",
@@ -222,7 +218,6 @@ pub async fn save(pool: &PgPool, c: &Cursor) -> Result<(), sqlx::Error> {
     .bind(&c.cursor_id)
     .bind(c.pages_fetched)
     .bind(c.rows_upserted)
-    .bind(c.last_complete_pass_started_at)
     .bind(c.last_complete_pass_at)
     .bind(c.last_complete_pass_rows)
     .bind(&c.last_error)
@@ -668,7 +663,6 @@ where
         }
         if short {
             c.chain_id = binding;
-            c.last_complete_pass_started_at = c.pass_started_at;
             c.last_complete_pass_at = Some(now_utc());
             c.last_complete_pass_rows = Some(c.rows_upserted);
             if !incremental {

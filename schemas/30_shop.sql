@@ -261,6 +261,23 @@ CREATE TABLE shop.mirror_state (
     CONSTRAINT mirror_state_network_known CHECK (network IN ('ethereum', 'matic'))
 );
 
+-- Keep both completed-pass bounds in sync even with an older mirror writer.
+CREATE OR REPLACE FUNCTION shop.remember_mirror_completed_pass_start() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'INSERT' OR NEW.last_complete_pass_at IS DISTINCT FROM OLD.last_complete_pass_at THEN
+        NEW.last_complete_pass_started_at := CASE
+            WHEN NEW.pass_started_at <= NEW.last_complete_pass_at THEN NEW.pass_started_at
+        END;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER remember_mirror_completed_pass_start
+BEFORE INSERT OR UPDATE OF last_complete_pass_at ON shop.mirror_state
+FOR EACH ROW EXECUTE FUNCTION shop.remember_mirror_completed_pass_start();
+
 -- ── Stage 5: local authority (behind DATA_WRITES_ENABLED) ───────────────────
 --
 -- Favorites (the old `favorites` schema of the marketplace favorites
