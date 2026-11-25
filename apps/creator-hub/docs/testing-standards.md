@@ -233,9 +233,10 @@ the CI form (packages with `electron-builder --dir` but skips the Vite rebuild t
 `@live` against the app `test:e2e:ci` already packaged. `e2e.yml` runs that step on `main`, on a
 manual run, and on a pull request whose changes touch the deploy flow or what the live specs run on
 (`creator-hub-live` and `every-suite` in `apps/creator-hub/e2e-selection.json`) only once a maintainer adds the `ci:creator-hub-e2e` label:
-real `.zone` deploys never run on a pull request without that admission, a fork's pull request has
-no secrets and skips it (a run without the secrets warns that live did not run), and the offline
-step is given no secrets at all. The live step reads `CREATOR_HUB_E2E_PRIVATE_KEY`,
+real `.zone` deploys never run on a pull request without that admission, a Dependabot run has no
+secrets and only warns that live did not run, any other run that selects live without
+`CREATOR_HUB_E2E_PRIVATE_KEY` in its environment fails, and the offline step is given no secrets
+at all. The live step reads `CREATOR_HUB_E2E_PRIVATE_KEY`,
 `CREATOR_HUB_E2E_NAME` and `CREATOR_HUB_E2E_LAND` from a GitHub environment: `creator-hub-e2e` on
 `main` (restricted to `main` in its deployment branch rules) and `creator-hub-e2e-pr` everywhere
 else, each with its own world and LAND, so a pull request never deploys to `main`'s targets; a

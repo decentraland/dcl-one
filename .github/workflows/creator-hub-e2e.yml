@@ -103,8 +103,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
 
-  # Cold-launches the real Electron app via Playwright _electron (drives the
-  # app's own Chromium — no browser download); runs the prebuilt dist.
   e2e-creator-hub:
     if: inputs.creator-hub-offline
     timeout-minutes: 45
@@ -140,9 +138,15 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           E2E_CONTENT_URL: https://builder-items.decentraland.zone
 
-      - name: No live secrets, so the live tier is skipped
+      - name: No live secrets
         if: inputs.creator-hub-live && env.HAS_LIVE_SECRETS != 'true'
-        run: echo "::warning::CREATOR_HUB_E2E_PRIVATE_KEY is not available to this run, so the @live specs did not run."
+        run: |
+          if [ "$GITHUB_ACTOR" = 'dependabot[bot]' ]; then
+            echo "::warning::Dependabot runs get no CREATOR_HUB_E2E_PRIVATE_KEY, so the @live specs did not run."
+          else
+            echo "::error::CREATOR_HUB_E2E_PRIVATE_KEY is not set in this run's environment, so the @live specs cannot run."
+            exit 1
+          fi
       - name: e2e live tier (reuses the app packaged above)
         if: inputs.creator-hub-live && env.HAS_LIVE_SECRETS == 'true'
         run: make test-creator-hub-e2e-ci-live
