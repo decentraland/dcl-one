@@ -18,6 +18,8 @@ on:
       # the node never links the scene CLI, but the workspace reads its manifest
       - 'apps/dcl-scene-cli/Cargo.toml'
       - 'library/**'
+      # the SDK is TypeScript nothing here builds; sdk.yml tests it
+      - '!library/js-sdk-toolchain/**'
       - '.cargo/**'
       - 'apps/sites/**'
       - 'apps/ui3/**'

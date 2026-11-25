@@ -281,7 +281,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 81] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 82] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -379,6 +379,10 @@ impl Config {
             (
                 "CATALYRST_EVENTS_ADMIN_TOKEN",
                 &mut self.explore.catalyrst_events_admin_token,
+            ),
+            (
+                "EVENTS_FEATURE_FLAGS_USER_ID",
+                &mut self.explore.events_feature_flags_user_id,
             ),
             (
                 "CATALYRST_BUILDER_ADMIN_TOKEN",
@@ -796,6 +800,8 @@ mod tests {
         // Inbound HMAC key, but Segment issues it: its length is Segment's.
         "SEGMENT_SIGNING_KEY",
         "ETH_RPC_URL",
+        // Outbound flag targeting id the flags service defines.
+        "EVENTS_FEATURE_FLAGS_USER_ID",
         "LIVEKIT_API_KEY",
         "LIVEKIT_API_SECRET",
         "SLACK_BOT_TOKEN",
