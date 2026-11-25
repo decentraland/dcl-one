@@ -2233,27 +2233,28 @@ async fn testnet_item_verification_requires_a_new_complete_pass_after_upgrade() 
                ('items','ethereum','mainnet',1,now(),NULL,'eth-key'),
                ('collections','matic','amoy',80002,now(),'old-hash','collection-key')").execute(&db.pool).await.unwrap();
     sqlx::raw_sql(MIGRATION).execute(&db.pool).await.unwrap();
-    let rows: Vec<(String,String,Option<i64>,Option<String>,bool)> = sqlx::query_as("SELECT mirror,network,chain_id,cursor_id,last_complete_pass_at IS NOT NULL FROM shop.mirror_state ORDER BY mirror,network").fetch_all(&db.pool).await.unwrap();
-    assert_eq!(
-        rows,
-        vec![
-            (
-                "collections".into(),
-                "matic".into(),
-                Some(80002),
-                Some("collection-key".into()),
-                true
-            ),
-            (
-                "items".into(),
-                "ethereum".into(),
-                Some(1),
-                Some("eth-key".into()),
-                true
-            ),
-            ("items".into(), "matic".into(), None, None, true)
-        ]
-    );
+    use super::{
+        graph::Network,
+        mirrors::{self, Mirror},
+    };
+    for (mirror, network, expected_chain, expected_key) in [
+        (
+            Mirror::Collections,
+            Network::Matic,
+            Some(80002),
+            Some("collection-key"),
+        ),
+        (Mirror::Items, Network::Ethereum, Some(1), Some("eth-key")),
+        (Mirror::Items, Network::Matic, None, None),
+    ] {
+        let row = mirrors::load(&db.pool, mirror, network)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.chain_id, expected_chain);
+        assert_eq!(row.cursor_id.as_deref(), expected_key);
+        assert!(row.last_complete_pass_at.is_some());
+    }
     // The old writer's conflict insert cannot mark an unverified copy ready.
     let old = sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url,chain_id,pass_block_hash) VALUES ('items','matic','amoy',80002,'pin')
         ON CONFLICT (mirror,network) DO UPDATE SET chain_id=EXCLUDED.chain_id, pass_block_hash=EXCLUDED.pass_block_hash").execute(&db.pool).await.unwrap_err();
