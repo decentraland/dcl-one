@@ -575,9 +575,7 @@ fn push_filters(b: &mut Builder, f: &NftFilters, wheres: &mut Vec<String>) {
         if f.unclaimed_land.is_empty() {
             wheres.push(format!("c.owner = {p}"));
         } else {
-            let ids = b.bind_strings(&f.unclaimed_land);
-            let venue = crate::rentals::index::RENTALS_MAINNET;
-            wheres.push(format!("(c.owner = {p} OR (c.network = 'ethereum' AND c.owner = '{venue}' AND c.category IN ('parcel','estate') AND (c.contract_address || '-' || c.token_id::text) = ANY({ids})))"));
+            wheres.push(format!("(c.owner = {p} OR c.held_for_lessor)"));
         }
     }
     match f.category {
@@ -859,22 +857,36 @@ fn candidate_legs(
             Candidates::ListedWhenFiltered => on_sale_only(f),
             Candidates::Listed => true,
         };
-    // Each source, and whether it already keeps only the listed tokens.
-    let mut parts: Vec<(String, bool)> = Vec::new();
+    // On a lessor page only the LAND leg evaluates the extra custody match.
+    // FALSE simplifies the other legs to their indexed owner equality.
+    let (other_custody, land_custody) = if f.unclaimed_land.is_empty() {
+        ("", String::new())
+    } else {
+        let ids = b.bind_strings(&f.unclaimed_land);
+        let venue = crate::rentals::index::RENTALS_MAINNET;
+        (
+            ", FALSE AS held_for_lessor",
+            format!(
+                ", (b.owner = '{venue}' AND (b.contract_address || '-' || b.token_id::text) = ANY({ids})) AS held_for_lessor"
+            ),
+        )
+    };
+    let mut parts = Vec::new();
     if sources.collections {
         parts.extend(
             collection_networks(f)
                 .into_iter()
-                .map(|net| (collection_source(net), false)),
+                .map(|net| (collection_source(net), false, other_custody)),
         );
     }
     if sources.names {
-        parts.push((names_source(), false));
+        parts.push((names_source(), false, other_custody));
     }
     if sources.land {
         parts.push((
             land_source(land, reads_geography(f), restricted),
             restricted,
+            land_custody.as_str(),
         ));
     }
     let now_ms_p = b.bind_i64(now_ms);
@@ -929,10 +941,10 @@ fn candidate_legs(
     };
     let legs = parts
         .into_iter()
-        .map(|(source, listed_only)| {
+        .map(|(source, listed_only, custody)| {
             let restrict = if listed_only { "" } else { restrict };
             format!(
-                "SELECT b.*, lo.order_id, lo.marketplace_address AS order_marketplace, lo.price AS legacy_price, lo.expires_at AS legacy_expires_at, \
+                "SELECT b.*{custody}, lo.order_id, lo.marketplace_address AS order_marketplace, lo.price AS legacy_price, lo.expires_at AS legacy_expires_at, \
                         lo.created_at AS legacy_created_at, lo.updated_at AS legacy_updated_at, {columns} \
                  FROM ({source}) b {legacy}{v3}{restrict}"
             )

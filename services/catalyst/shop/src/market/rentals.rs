@@ -54,6 +54,10 @@ pub(super) async fn unclaimed_land(
     .await
     .map_err(super::nft_reads::read_error)?;
     if behind {
+        tracing::debug!(
+            rentals_folded_block = head,
+            "owner page waiting for Rentals to publish a transfer into custody"
+        );
         return Err(unavailable(
             Source::RentalsIndex,
             "The rentals index has not reached the transfer into custody",
