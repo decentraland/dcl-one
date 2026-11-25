@@ -29,7 +29,7 @@
   "name": "Basic Controller",
   "portableExperiences": "enabled",
   "worldConfiguration": {
-    "name": "basiccontroller.dcl.eth"
+    "name": "movecontroller.dcl.eth"
   },
   "creator": "",
   "skyboxConfig": {},

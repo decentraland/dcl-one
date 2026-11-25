@@ -32,11 +32,16 @@ scene (`source/react-web/bridge-scene`).
   It is not part of the Cargo workspace.
 - **No pin file.** This is not a vendored component. The tree's copy is the source of truth, so
   there is no `upstream.lock.json` or patch series.
+- **World.** The scene in this tree is deployed as its own world, `movecontroller.dcl.eth`,
+  which the engine loads by default (`DEFAULT_PORTABLES` in `system_api_types`). The upstream
+  scene stays on `basiccontroller.dcl.eth` for released clients: each client version loads the
+  scene its default names, and installed desktop clients update late, so the two worlds cannot
+  be switched together.
 
 ## Consequences
 
 - Movement changes are reviewed with the engine changes and the measurements that motivate them.
-- Deploying the world `basiccontroller.dcl.eth` from this directory is a separate step; clients
+- Deploying the world `movecontroller.dcl.eth` from this directory is a separate step; clients
   load whatever that world has deployed. For local testing, serve the scene and pass
   `?portables=` on web or `--portables` on native.
 - The upstream repository may keep changing. Anything wanted from it is ported here by hand.
