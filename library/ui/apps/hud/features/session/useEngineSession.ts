@@ -768,6 +768,8 @@ export interface PermissionsState {
   /** The permission types whose effect acts on the player now in the scene they stand in, such as
    *  a camera the scene holds: the list's "In force now" rows. */
   inForce: string[]
+  /** The hash of the scene the player stands in, which the lists above are for. */
+  scene: string | undefined
   /** Refusals the player did not click themselves — the HUD answering from a visit deny, or a stored
    *  rule — by type, that the player has not opened the list for yet: the rail badge. */
   unseenDenied: number
@@ -5606,6 +5608,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       visit: visitAnswers.filter((e) => e.scene === sceneHash),
       triggered: triggeredPermissions,
       inForce: permissionsInForce.filter((e) => e.scene === sceneHash).map((e) => e.ty),
+      scene: sceneHash,
       unseenDenied,
       markSeen: markPermissionsSeen,
       rules: permissionRules,

@@ -109,9 +109,9 @@ pub struct PlayerModifiers {
     pub block_jump: bool,
     pub block_emote: bool,
     pub areas: Vec<ActiveAvatarArea>,
-    /// The scenes whose areas hide this player's avatar, passport or nametag now.
+    /// The scenes whose areas hide the primary player's avatar, passport or nametag now.
     pub hide_scenes: Vec<Entity>,
-    /// The scenes whose areas or input modifiers change or block this player's movement now.
+    /// The scenes whose areas or input modifiers change or block the primary player's movement now.
     pub locomotion_scenes: Vec<Entity>,
 }
 

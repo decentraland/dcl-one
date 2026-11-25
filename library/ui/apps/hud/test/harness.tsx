@@ -247,7 +247,7 @@ export function fakeSession(): EngineSession {
     shop: { open: false, toggle: vi.fn() },
     gallery: { open: false, toggle: vi.fn(), fetchPage: vi.fn(async () => ({ ok: true, photos: [], total: 0, max: 0 })), metas: {}, loadPhoto: vi.fn(), loadWearables: vi.fn(async () => []), setPublic: vi.fn(async () => ({ ok: true })), remove: vi.fn(async () => ({ ok: true })) },
     photoMode: { snapshot: null, active: false, capture: null, set: vi.fn(), take: vi.fn() },
-    permissions: { pending: [], visit: [], triggered: [], inForce: [], unseenDenied: 0, markSeen: vi.fn(), rules: null, loadRules: vi.fn(), setRule: vi.fn(), clearRule: vi.fn(), resetDefaults: vi.fn(), resolve: vi.fn() },
+    permissions: { pending: [], visit: [], triggered: [], inForce: [], scene: 'bafkscenehash', unseenDenied: 0, markSeen: vi.fn(), rules: null, loadRules: vi.fn(), setRule: vi.fn(), clearRule: vi.fn(), resetDefaults: vi.fn(), resolve: vi.fn() },
     worldPassword: { pending: null, resolve: vi.fn() },
     portables: { list: [], stop: vi.fn(), restart: vi.fn() },
     create: { open: false, toggle: vi.fn(), show: vi.fn() },

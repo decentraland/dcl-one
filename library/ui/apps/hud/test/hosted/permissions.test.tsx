@@ -542,7 +542,8 @@ describe('sidebar permissions button', () => {
   it('lists what is in force first; a click opens the review on the scene rule without clearing anything', async () => {
     const session = fakeSession()
     session.permissions.inForce = ['ForceCamera']
-    session.permissions.rules = { scene: 'bafkscenehash', realm: USED.realm, rules: { scene: [], realm: [], global: [] } }
+    session.permissions.visit = [{ ...SUBJECT, allowed: false }]
+    session.permissions.rules = { scene: 'bafkscenehash', realm: USED.realm, rules: RULES }
     await renderSettled(
       <>
         <Sidebar session={session} />
@@ -550,13 +551,20 @@ describe('sidebar permissions button', () => {
       </>
     )
     await userEvent.click(screen.getByRole('button', { name: 'Scene permissions' }))
-    expect(screen.getByText('In force now')).toBeInTheDocument()
-    expect(screen.queryByText(/Nothing decided for this scene yet/)).toBeNull()
+    const list = screen.getByRole('dialog', { name: 'Scene permissions' }).textContent ?? ''
+    const at = (text: string): number => list.indexOf(text)
+    expect(at('In force now')).toBeGreaterThan(-1)
+    expect(at('In force now')).toBeLessThan(at('This visit'))
+    expect(at('This visit')).toBeLessThan(at('SAVED ANSWERS'))
+    expect(screen.getByText(/from your next visit/)).toBeInTheDocument()
     const row = screen.getByRole('button', { name: /active$/ })
     expect(row).toHaveAttribute('data-in-force')
     await userEvent.click(row)
     expect(session.permissions.clearRule).not.toHaveBeenCalled()
     expect(screen.getByRole('alertdialog', { name: 'Scene permission review' })).toBeInTheDocument()
+    // a stored rule only: "This visit" would forget the rules of every level
+    expect(screen.queryByRole('radio', { name: 'This visit' })).toBeNull()
+    expect(screen.getByRole('radio', { name: 'Always for Scene' })).toBeChecked()
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }))
     const subject = { ty: 'ForceCamera', sceneName: '', scene: 'bafkscenehash', realm: USED.realm, scope: 'scene', value: 'Allow' }
     expect(session.permissions.setRule).toHaveBeenCalledWith(subject, false, 'scene')
@@ -579,15 +587,26 @@ describe('sidebar permissions button', () => {
     expect(session.permissions.setRule).toHaveBeenCalledWith(subject, true, 'scene')
   })
 
-  it('asks for the rules again when the player crosses into another scene with the list open', async () => {
+  it('asks for the rules again on every crossing into another scene with the list open', async () => {
     const session = fakeSession()
     session.permissions.inForce = ['ForceCamera']
     session.permissions.rules = { scene: 'bafkscenehash', realm: USED.realm, rules: { scene: [], realm: [], global: [] } }
     const { rerender } = await renderSettled(<Sidebar session={session} />)
     await userEvent.click(screen.getByRole('button', { name: 'Scene permissions' }))
     expect(session.permissions.loadRules).toHaveBeenCalledTimes(1)
-    rerender(<Sidebar session={{ ...session, permissions: { ...session.permissions, rules: null } }} />)
+    const inScene = (scene: string): void => rerender(<Sidebar session={{ ...session, permissions: { ...session.permissions, rules: null, scene } }} />)
+    inScene('bafksecond')
     expect(session.permissions.loadRules).toHaveBeenCalledTimes(2)
+    // a second crossing before the first answer: the rules are still missing, and asked for again
+    inScene('bafkthird')
+    expect(session.permissions.loadRules).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not ask for the rules on a crossing while the list is closed', async () => {
+    const session = fakeSession()
+    const { rerender } = await renderSettled(<Sidebar session={session} />)
+    rerender(<Sidebar session={{ ...session, permissions: { ...session.permissions, scene: 'bafksecond' } }} />)
+    expect(session.permissions.loadRules).not.toHaveBeenCalled()
   })
 
   it('an in-force row waits for the scene rules before it can be opened', async () => {
@@ -596,6 +615,9 @@ describe('sidebar permissions button', () => {
     await renderSettled(<Sidebar session={session} />)
     await userEvent.click(screen.getByRole('button', { name: 'Scene permissions' }))
     expect(screen.getByRole('button', { name: /active$/ })).toBeDisabled()
+    // nothing to click yet, and the hint says why
+    expect(screen.getByText(/Loading this scene/)).toBeInTheDocument()
+    expect(screen.queryByText(/Click one to choose/)).toBeNull()
   })
 
   it('closes on a pointerdown outside, the event the engine canvas lets through', async () => {

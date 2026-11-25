@@ -59,9 +59,9 @@ export function PermissionsPopover({
   // scene's answers and rules.
   const { ref, style } = useRailPopover(anchor, onClose)
 
-  const review = (subject: PermissionSubject, initial?: PermissionRuleLevel): void => {
+  const review = (subject: PermissionSubject, initial?: PermissionRuleLevel, storedOnly?: boolean): void => {
     onClose()
-    openPermissionReview(subject, setRule, initial)
+    openPermissionReview(subject, setRule, initial, storedOnly)
   }
   const hit = (ty: string, level: Level): boolean => triggered.some((t) => t.ty === ty) && levelInForce(ty, visit, rules) === level
   const row = (key: string, ty: string, level: Level, value: 'Allow' | 'Deny' | 'Ask', onClick: () => void): React.JSX.Element => (
@@ -105,7 +105,8 @@ export function PermissionsPopover({
                 if (rules == null) return
                 // a rule stored for the scene may already refuse it, from the next visit on
                 const value = rules.rules.scene.find((r) => r.ty === ty)?.allow ?? 'Allow'
-                review({ ty, sceneName, scene: rules.scene, realm: rules.realm, scope: 'scene', value }, 'scene')
+                // a stored rule only: "This visit" would forget every scene's rule and not end it
+                review({ ty, sceneName, scene: rules.scene, realm: rules.realm, scope: 'scene', value }, 'scene', true)
               }}
             >
               {describePermission(ty)}
@@ -114,7 +115,9 @@ export function PermissionsPopover({
               </span>
             </button>
           ))}
-          <div className={styles.hint}>Click one to choose whether this scene may do it.</div>
+          <div className={styles.hint}>
+            {rules == null ? 'Loading this scene’s rules…' : 'Click one to choose whether this scene may do it, from your next visit.'}
+          </div>
           <div className={styles.divider} />
         </>
       )}

@@ -85,10 +85,12 @@ export function registerPermissions(ctx: Ctx): void {
   })
   const openUsed = async (): Promise<AsyncIterable<PermissionUsedRaw>> => {
     // A stream opened again may have missed an end. The engine sends what is in force to a
-    // stream that attaches, so everything held is ended first and the engine's list restores it.
+    // stream that attaches, so everything held is ended and the engine's list restores it. Only
+    // once the stream is open: while opening fails, what is held still shows.
+    const stream = await BevyApi.getPermissionUsedStream()
     for (const msg of inForce.values()) ctx.send({ ...msg, inForce: false })
     inForce.clear()
-    return await BevyApi.getPermissionUsedStream()
+    return stream
   }
   relay('permissionsUsed', openUsed, async (use) => {
     if (use.inForce != null) {

@@ -262,7 +262,10 @@ pub(crate) fn update_avatar_modifier_area(
                     ]
                     .iter()
                     .any(|modifier| area.0.modifiers.contains(&(*modifier as i32)));
-                    if acts && !modifiers.hide_scenes.contains(&scene_ent.root) {
+                    if acts
+                        && maybe_foreign.is_none()
+                        && !modifiers.hide_scenes.contains(&scene_ent.root)
+                    {
                         modifiers.hide_scenes.push(scene_ent.root);
                     }
                     modifiers.hide |= area
@@ -299,7 +302,18 @@ pub(crate) fn update_avatar_modifier_area(
                     };
 
                 if permit {
-                    if maybe_foreign.is_none()
+                    // listed only while it changes something: an area with nothing set does not
+                    let changes = movement.control_mode.is_some()
+                        || movement.run_speed.is_some()
+                        || movement.friction.is_some()
+                        || movement.gravity.is_some()
+                        || movement.jump_height.is_some()
+                        || movement.max_fall_speed.is_some()
+                        || movement.turn_speed.is_some()
+                        || movement.walk_speed.is_some()
+                        || !movement.allow_weighted_movement.unwrap_or(true);
+                    if changes
+                        && maybe_foreign.is_none()
                         && !modifiers.locomotion_scenes.contains(&scene_ent.root)
                     {
                         modifiers.locomotion_scenes.push(scene_ent.root);
@@ -346,7 +360,15 @@ pub(crate) fn update_avatar_modifier_area(
                     };
 
                 if permit {
-                    if maybe_foreign.is_none()
+                    // a scene lifts its block by setting every flag off, which keeps the
+                    // component: listed only while one is on
+                    let blocks = modifier.disable_all()
+                        || modifier.disable_walk()
+                        || modifier.disable_run()
+                        || modifier.disable_jump()
+                        || modifier.disable_emote();
+                    if blocks
+                        && maybe_foreign.is_none()
                         && !modifiers.locomotion_scenes.contains(&scene_ent.root)
                     {
                         modifiers.locomotion_scenes.push(scene_ent.root);
@@ -608,15 +630,17 @@ mod tests {
         assert_eq!(visibility(&app), Visibility::Inherited);
     }
 
-    #[test]
-    fn a_neighbours_nametag_area_is_in_force_under_the_neighbour() {
+    /// The two systems on a player standing in the parcel scene, a step from the neighbour's
+    /// parcel, with `area` belonging to the neighbour and reaching over the border. Returns
+    /// what is in force after a few frames, and whether the player's nametag is hidden.
+    fn in_force_with_a_neighbours_area(
+        area: PbAvatarModifierArea,
+    ) -> (Vec<(String, common::structs::PermissionType)>, bool) {
         use crate::{
             initialize_scene::{LiveScenes, PointerResult, PortableScenes, ScenePointers},
             permissions::{publish_permissions_in_force, PermissionManager, PermissionsInForce},
         };
-        use common::structs::{
-            AppConfig, PermissionType, PermissionUsed, PrimaryCamera, PrimaryUser,
-        };
+        use common::structs::{AppConfig, PermissionUsed, PrimaryCamera, PrimaryUser};
         use dcl_types::SceneId;
 
         let mut app = App::new();
@@ -633,7 +657,6 @@ mod tests {
                 Update,
                 (update_avatar_modifier_area, publish_permissions_in_force).chain(),
             );
-        // the player stands in the parcel scene, a step from the neighbour's parcel
         let at = GlobalTransform::from_xyz(15.9, 0.0, -8.0);
         let player = app.world_mut().spawn((PrimaryUser::default(), at)).id();
         app.insert_resource(PrimaryPlayerRes(player));
@@ -676,7 +699,6 @@ mod tests {
         };
         scene("parcel", IVec2::ZERO);
         let neighbour = scene("neighbour", IVec2::new(1, 0));
-        // the neighbour's area hides nametags only, and reaches over the border
         app.world_mut().spawn((
             SceneEntity {
                 root: neighbour,
@@ -689,8 +711,7 @@ mod tests {
                     y: 4.0,
                     z: 4.0,
                 }),
-                modifiers: vec![AvatarModifierType::AmtHideNametags as i32],
-                ..Default::default()
+                ..area
             }),
             at,
         ));
@@ -698,10 +719,48 @@ mod tests {
         for _ in 0..4 {
             app.update();
         }
-        assert!(app.world().entity(player).contains::<HiddenNametag>());
+        (
+            app.world().resource::<PermissionsInForce>().0.clone(),
+            app.world().entity(player).contains::<HiddenNametag>(),
+        )
+    }
+
+    #[test]
+    fn a_neighbours_nametag_area_is_in_force_under_the_neighbour() {
+        use common::structs::PermissionType;
+        // the neighbour's area hides nametags only
+        let (in_force, nametag_hidden) = in_force_with_a_neighbours_area(PbAvatarModifierArea {
+            modifiers: vec![AvatarModifierType::AmtHideNametags as i32],
+            ..Default::default()
+        });
+        assert!(nametag_hidden);
         assert_eq!(
-            app.world().resource::<PermissionsInForce>().0,
+            in_force,
             [("neighbour".to_owned(), PermissionType::HideAvatarsNametags)]
+        );
+    }
+
+    #[test]
+    fn movement_settings_are_in_force_only_while_they_change_something() {
+        use common::structs::PermissionType;
+        use dcl_component::proto_components::sdk::components::AvatarMovementSettings;
+        // granted, and nothing set: nothing acts on the player
+        let (in_force, _) = in_force_with_a_neighbours_area(PbAvatarModifierArea {
+            movement_settings: Some(AvatarMovementSettings::default()),
+            ..Default::default()
+        });
+        assert_eq!(in_force, []);
+
+        let (in_force, _) = in_force_with_a_neighbours_area(PbAvatarModifierArea {
+            movement_settings: Some(AvatarMovementSettings {
+                run_speed: Some(1.0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        assert_eq!(
+            in_force,
+            [("neighbour".to_owned(), PermissionType::SetLocomotion)]
         );
     }
 }

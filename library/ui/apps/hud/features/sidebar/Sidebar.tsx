@@ -163,13 +163,17 @@ export function Sidebar({
   const closeVoice = useCallback(() => setVoiceAnchor(null), [])
   const closePermissions = useCallback(() => setPermissionsAnchor(null), [])
   // The rules are the current scene's and are dropped when the player crosses into another one:
-  // with the list open they are asked for again, or its "In force now" rows would stay off.
-  const { rules: permissionRules, loadRules: loadPermissionRules } = session.permissions
-  const hadPermissionRules = useRef(permissionRules != null)
+  // with the list open they are asked for again on every crossing, or its "In force now" rows
+  // would stay off. Keyed on the scene, so a second crossing before the first answer asks again.
+  const { scene: permissionsScene, loadRules: loadPermissionRules } = session.permissions
+  const permissionsOpen = useRef(false)
+  permissionsOpen.current = permissionsAnchor != null
+  const rulesScene = useRef(permissionsScene)
   useEffect(() => {
-    if (permissionsAnchor != null && hadPermissionRules.current && permissionRules == null) loadPermissionRules()
-    hadPermissionRules.current = permissionRules != null
-  }, [permissionsAnchor, permissionRules, loadPermissionRules])
+    if (rulesScene.current === permissionsScene) return
+    rulesScene.current = permissionsScene
+    if (permissionsOpen.current) loadPermissionRules()
+  }, [permissionsScene, loadPermissionRules])
   const closePortables = useCallback(() => setPortablesAnchor(null), [])
   const isOpen = (id: PanelId): boolean => panel?.id === id
   const [shopPanel] = useState(() => IN_WORLD_SHOP || mockHud())

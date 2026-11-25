@@ -61,6 +61,7 @@
 /* an "In force now" row before the scene's rules have loaded */
 .row:disabled {
   cursor: default;
+  opacity: 0.6;
 }
 .row:disabled:hover {
   background: none;

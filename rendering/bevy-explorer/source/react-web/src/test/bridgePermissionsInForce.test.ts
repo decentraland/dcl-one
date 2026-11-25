@@ -7,9 +7,8 @@ import type { PermissionUsedRaw } from '../../bridge-scene/src/bevy-api'
 const { relay } = vi.hoisted(() => ({ relay: vi.fn() }))
 vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay }))
 vi.mock('~system/Runtime', () => ({ getRealm: async () => ({ realmInfo: { baseUrl: 'https://realm.example' } }) }))
-vi.mock('../../bridge-scene/src/bevy-api', () => ({
-  BevyApi: { liveSceneInfo: async () => [{ hash: 'bafkscene', title: 'Plaza' }], getPermissionUsedStream: vi.fn() }
-}))
+const api = vi.hoisted(() => ({ liveSceneInfo: async () => [{ hash: 'bafkscene', title: 'Plaza' }], getPermissionUsedStream: vi.fn() }))
+vi.mock('../../bridge-scene/src/bevy-api', () => ({ BevyApi: api }))
 
 const { registerPermissions } = await import('../../bridge-scene/src/domains/permissions')
 
@@ -72,6 +71,17 @@ describe('bridge permissions in force', () => {
     b.sent.length = 0
     b.on.get('hello')?.()
     expect(b.sent).toEqual([])
+  })
+
+  it('keeps what it holds while the stream cannot be opened again', async () => {
+    const b = bridge()
+    await b.use(camera(true))
+    b.sent.length = 0
+    api.getPermissionUsedStream.mockRejectedValueOnce(new Error('closed'))
+    await expect(b.open()).rejects.toThrow('closed')
+    expect(b.sent).toEqual([])
+    b.on.get('hello')?.()
+    expect(b.sent).toEqual([message(true)])
   })
 
   it('sends nothing on hello while nothing is in force', () => {

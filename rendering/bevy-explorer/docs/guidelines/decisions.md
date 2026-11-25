@@ -702,6 +702,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     (`PrimaryCamera.scene_override_owner`, `PlayerModifiers.hide_scenes` and
     `locomotion_scenes`), so the row's rule is the one that controls it. A hidden nametag
     counts like a hidden avatar or passport.
+  - Movement is listed only while a setting or a block is on: an area with nothing set, or an
+    input modifier whose flags are all off, lists nothing.
+  - A row opens a stored rule, never "This visit": that answer forgets the rules of every
+    level and would not end what the scene is doing.
   - The popover lists the scene the player stands in. What a portable experience or a
     neighbouring scene's area does to the player is reported under that scene and is not
     shown there; `/permissions_in_force` has it.
