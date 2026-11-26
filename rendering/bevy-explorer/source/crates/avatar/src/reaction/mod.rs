@@ -153,6 +153,8 @@ fn address_of(peer: Option<&ForeignPlayer>, wallet: &Wallet) -> Address {
 /// What has happened to reactions this session, for the debug panel.
 #[derive(Resource, Default)]
 struct ReactionStats {
+    /// The local user's picks that played: no peer's reaction moves this.
+    picked: u32,
     /// The local user's picks that were no emoji the wire can carry, or had no one to send them.
     refused_picks: u32,
     /// Messages put on a room's transport, one per emoji per send.
@@ -350,6 +352,7 @@ fn accept_local_reactions(
         };
         outbox.push(tile);
         played.write(ReactionPlayed { player, emoji });
+        stats.picked += 1;
         stats.played += 1;
         reacted.write(PlayerReacted { emoji_index: tile });
     }

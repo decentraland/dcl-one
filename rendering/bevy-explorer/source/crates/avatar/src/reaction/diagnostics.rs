@@ -26,6 +26,7 @@ pub const SECTION: DebugSection = DebugSection {
     query: "/reaction_state",
     fields: &[
         ("Shown over avatars (chat bubbles setting)", "world"),
+        ("Picks played", "picked"),
         ("Picks waiting to be sent", "outbox"),
         ("Picks refused", "refusedPicks"),
         ("Messages sent", "sent"),
@@ -61,7 +62,8 @@ pub const SECTION: DebugSection = DebugSection {
 };
 
 /// Report the reactions as JSON: `world` (the chat bubbles setting lets them show over
-/// avatars), `outbox` (the local user's picks not yet sent), `refusedPicks` (their picks that
+/// avatars), `picked` (the local user's picks that played, which no peer's reaction moves),
+/// `outbox` (the local user's picks not yet sent), `refusedPicks` (their picks that
 /// were no emoji the wire carries, or had no wallet to send them), `sent` (messages put on a
 /// room's transport, one per emoji per send: none with no room to carry it), `received` (peers'
 /// messages), `queued` (the reactions waiting to play, and the senders with any waiting or
@@ -98,6 +100,7 @@ pub fn reaction_state(
     cmd.reply_ok(
         json!({
             "world": config.chat_bubble_visibility != ChatBubbleVisibility::None,
+            "picked": stats.picked,
             "outbox": outboxes.iter().map(ReactionOutbox::waiting).sum::<u32>(),
             "refusedPicks": stats.refused_picks,
             "sent": stats.sent,

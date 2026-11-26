@@ -200,6 +200,7 @@ fn a_pick_with_no_room_to_carry_it_plays_and_is_not_counted_as_sent() {
     let mut island = harness.transport(TransportType::Archipelago);
     harness.pick("👍");
     harness.run(0.5);
+    assert_eq!(harness.stats().picked, 1);
     assert_eq!(harness.stats().played, 1);
     assert_eq!(harness.stats().sent, 0);
     assert!(sent(&mut island).is_empty());
@@ -232,6 +233,7 @@ fn an_emoji_the_wire_does_not_carry_does_nothing_anywhere() {
     assert!(sent(&mut wire).is_empty());
     assert!(harness.reported().is_empty());
     assert_eq!(harness.stats().refused_picks, 4);
+    assert_eq!(harness.stats().picked, 0);
     assert_eq!(harness.stats().played, 0);
 }
 
@@ -285,6 +287,8 @@ fn a_peers_reactions_play_one_at_a_time() {
         ["🔥"; 3]
     );
     assert_eq!(harness.stats().played, 3);
+    // a peer's reactions are no pick of the local user's
+    assert_eq!(harness.stats().picked, 0);
     // nothing is kept on a peer once the gap after their last has run out
     harness.run(0.3);
     assert!(harness.app.world().get::<ReactionQueue>(peer).is_none());

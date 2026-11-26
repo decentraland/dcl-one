@@ -44,6 +44,8 @@ const REACTIONS_BAR = { name: 'Reactions', role: 'dialog' } as const
 
 /** `/reaction_state`, as far as these scenarios read it. */
 interface ReactionState {
+  /** The player's own picks that played this session; no peer's reaction moves it. */
+  picked: number
   /** Reactions played this session, the player's own and their peers'. */
   played: number
 }
@@ -230,11 +232,13 @@ scenario('a reaction picked from the Reactions button plays and leaves its bar o
   await explorer.hud.wait(REACTIONS_BAR, { timeoutMs: TEXT_TIMEOUT_MS })
   assert.equal((await explorer.hud.get(REACTIONS)).checked, true, 'the Reactions button should read pressed while its bar is open')
   await explorer.hud.click(FIRST_REACTION)
-  // at least: a player nearby may react too
-  await until(() => reactionState(explorer), (state) => state.played >= before.played + 1, { timeoutMs: TEXT_TIMEOUT_MS, what: 'the reaction to play' })
+  // `picked` is the player's alone; `played` is at least that, as a player nearby may react too
+  const first = await until(() => reactionState(explorer), (state) => state.picked === before.picked + 1, { timeoutMs: TEXT_TIMEOUT_MS, what: 'the pick to play' })
+  assert.ok(first.played >= before.played + 1, 'the pick should count among the reactions played')
   assert.ok(await explorer.hud.isVisible(REACTIONS_BAR), 'the bar should stay open after a pick')
   await explorer.hud.click(FIRST_REACTION)
-  await until(() => reactionState(explorer), (state) => state.played >= before.played + 2, { timeoutMs: TEXT_TIMEOUT_MS, what: 'the second reaction to play' })
+  const second = await until(() => reactionState(explorer), (state) => state.picked === before.picked + 2, { timeoutMs: TEXT_TIMEOUT_MS, what: 'the second pick to play' })
+  assert.ok(second.played >= before.played + 2, 'the second pick should count among the reactions played')
 
   await explorer.hud.click(REACTIONS)
   await explorer.hud.waitHidden(REACTIONS_BAR, TEXT_TIMEOUT_MS)
