@@ -74,3 +74,28 @@ describe("when searching featured assets", () => {
     });
   });
 });
+
+describe("when a featured asset is already selected", () => {
+  let user: ReturnType<typeof userEvent.setup>;
+  let onChange: ReturnType<typeof vi.fn<(urn: string) => void>>;
+  const urn = "urn:decentraland:matic:collections-v2:0x1111111111111111111111111111111111111111:2";
+  beforeEach(() => {
+    user = userEvent.setup();
+    onChange = vi.fn();
+    vi.mocked(searchFeaturedAssets).mockResolvedValue([]);
+    render(<FeaturedAssetPicker value={urn} onChange={onChange} />);
+  });
+  afterEach(() => { cleanup(); vi.resetAllMocks(); });
+
+  it("should draw Remove featured asset as an outlined button", () => {
+    expect(screen.getByRole("button", { name: "Remove featured asset" }).dataset).toMatchObject({ variant: "outline", size: "md" });
+  });
+
+  it("should clear the selection and the search when Remove featured asset is pressed", async () => {
+    const search = screen.getByRole<HTMLInputElement>("textbox", { name: "Search featured items or collections" });
+    expect(search.value).toBe(urn);
+    await user.click(screen.getByRole("button", { name: "Remove featured asset" }));
+    expect(onChange).toHaveBeenCalledWith("");
+    expect(search.value).toBe("");
+  });
+});

@@ -431,10 +431,6 @@
     "primitives": 0,
     "tokens": 11
   },
-  "apps/sites/src/features/social/submit-hangout/DeleteEventDialog.module.css": {
-    "primitives": 0,
-    "tokens": 6
-  },
   "apps/sites/src/features/social/submit-hangout/FeaturedAssetPicker.module.css": {
     "primitives": 2,
     "tokens": 0

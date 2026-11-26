@@ -484,6 +484,12 @@ describe("when editing a hangout through its route", () => {
         expect(authoring.deleteHangout).not.toHaveBeenCalled();
       });
 
+      it("should start focus on Cancel and offer no close button", () => {
+        const dialog = within(screen.getByRole("dialog"));
+        expect(document.activeElement).toBe(dialog.getByRole("button", { name: "Cancel" }));
+        expect(dialog.queryByRole("button", { name: "Close" })).toBeNull();
+      });
+
       it("should keep the event and the editor when the owner cancels", async () => {
         await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
         expect(screen.queryByRole("dialog")).toBeNull();
@@ -511,16 +517,24 @@ describe("when editing a hangout through its route", () => {
         await act(async () => finish());
       });
 
-      it("should keep focus inside the dialog while the delete is in flight", async () => {
+      it("should keep focus on the dialog while the delete is in flight", async () => {
         let fail: (reason: Error) => void = () => {};
         vi.mocked(authoring.deleteHangout).mockImplementationOnce(() => new Promise<void>((_, reject) => { fail = reject; }));
         await user.click(screen.getByRole("button", { name: "Delete event" }));
         const dialog = screen.getByRole("dialog");
+        expect(dialog.tagName).toBe("DIALOG");
         expect(within(dialog).getByRole<HTMLButtonElement>("button", { name: "Deleting…" }).disabled).toBe(true);
         expect(document.activeElement).toBe(dialog);
         await user.tab();
-        expect(dialog.contains(document.activeElement)).toBe(true);
+        expect(document.activeElement).toBe(dialog);
         await act(async () => fail(new Error("Delete denied")));
+      });
+
+      it("should close on Escape while no delete is in flight", async () => {
+        await user.keyboard("{Escape}");
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(authoring.deleteHangout).not.toHaveBeenCalled();
+        expect(router.state.location.pathname).toBe(EDIT_PATH);
       });
 
       it("should hand focus back to Delete when the delete fails", async () => {

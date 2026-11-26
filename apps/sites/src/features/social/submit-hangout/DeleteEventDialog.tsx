@@ -1,7 +1,5 @@
-import { Dialog, Notice, useEventsCopy, Button } from "@dcl/one-ui";
-import { useEffect, useId, useRef, type MouseEvent } from "react";
-
-import styles from "./DeleteEventDialog.module.css";
+import { Modal, Notice, useEventsCopy, Button } from "@dcl/one-ui";
+import { useEffect, useRef, type MouseEvent } from "react";
 
 /** Why the last delete did not happen: the request failed, or the signed-in account is no longer the editor's. */
 export type DeleteEventError = "failed" | "session";
@@ -18,7 +16,8 @@ export default function DeleteEventDialog({ busy, error, onCancel, onConfirm }: 
   onConfirm: () => void;
 }) {
   const { text } = useEventsCopy();
-  const titleId = useId();
+  /** Focus starts on Cancel, the action that keeps the event. */
+  const cancelButton = useRef<HTMLButtonElement | null>(null);
   /** The Delete button that started the delete, set by its click. */
   const deleteButton = useRef<HTMLButtonElement | null>(null);
   const wasBusy = useRef(busy);
@@ -26,23 +25,28 @@ export default function DeleteEventDialog({ busy, error, onCancel, onConfirm }: 
     if (wasBusy.current && !busy) deleteButton.current?.focus();
     wasBusy.current = busy;
   }, [busy]);
-  const cancel = () => { if (!busy) onCancel(); };
   const confirm = (event: MouseEvent<HTMLButtonElement>) => {
     deleteButton.current = event.currentTarget;
-    event.currentTarget.closest<HTMLElement>("[role=dialog]")?.focus();
+    event.currentTarget.closest("dialog")?.focus();
     onConfirm();
   };
   return (
-    <Dialog labelledBy={titleId} onClose={cancel} maxWidth={540}>
-      <div className={styles.body}>
-        <h2 id={titleId} className={styles.title}>{text("Are you sure you want to delete your event?")}</h2>
-        <p className={styles.copy}>{text("This event will be permanently removed from your events. This action can’t be undone.")}</p>
-        {error && <Notice tone="error">{text(error === "session" ? "Your session changed. Sign in again to delete this event." : "We couldn't delete your event. Please try again.")}</Notice>}
-        <div className={styles.actions}>
-          <Button size="lg" variant="inverse" disabled={busy} onClick={cancel}>{text("Cancel")}</Button>
-          <Button size="lg" disabled={busy} aria-busy={busy || undefined} onClick={confirm}>{busy ? text("Deleting…") : text("Delete event")}</Button>
-        </div>
-      </div>
-    </Dialog>
+    <Modal
+      title={text("Are you sure you want to delete your event?")}
+      description={text("This event will be permanently removed from your events. This action can’t be undone.")}
+      onClose={onCancel}
+      dismissible={!busy}
+      closeButton={false}
+      tabIndex={-1}
+      initialFocusRef={cancelButton}
+      // Every action is disabled meanwhile: Tab would leave focus on the page behind.
+      onKeyDown={(event) => { if (busy && event.key === "Tab") event.preventDefault(); }}
+      actions={<>
+        <Button ref={cancelButton} size="lg" variant="inverse" disabled={busy} onClick={onCancel}>{text("Cancel")}</Button>
+        <Button size="lg" disabled={busy} aria-busy={busy || undefined} onClick={confirm}>{busy ? text("Deleting…") : text("Delete event")}</Button>
+      </>}
+    >
+      {error && <Notice tone="error">{text(error === "session" ? "Your session changed. Sign in again to delete this event." : "We couldn't delete your event. Please try again.")}</Notice>}
+    </Modal>
   );
 }
