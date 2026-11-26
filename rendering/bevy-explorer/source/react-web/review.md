@@ -298,7 +298,8 @@ Run through this on every diff (it encodes `AGENTS.md`):
       `alert`/`confirm`/`prompt`. On native the HUD is rendered offscreen and CEF paints popup
       widgets as a separate surface the engine never composites (`update_hud_texture` takes whatever
       paint arrives), so opening one replaces the whole HUD with the widget's bitmap. Use `Select`,
-      `DateField` and `showConfirm`/`showDialog` from `@hud/design`.
+      `ColorPicker` and `showConfirm`/`showDialog` from `@hud/design`, and `DateField` from
+      `@dcl/one-ui`.
 
 ---
 

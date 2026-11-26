@@ -1,4 +1,5 @@
 //! The explorer actor without an explorer: what happens when the child is not one.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 mod support;
 

@@ -1,6 +1,7 @@
 //! A Pulse server inside the test process, on a loopback port of its own: the tests of this crate
 //! need no stack.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each test target uses part of it")]
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 pub mod content;
 

@@ -11,6 +11,7 @@
 //! `testdata/sdk7-scene-template` holds the build inputs of
 //! decentraland/sdk7-scene-template at 7c2a0285, the scene every new project
 //! starts from; it is built in both modes.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 use dcl_scene_cli::build::BuildOptions;
 use dcl_scene_build::{MainCrdt, Options, build, install_sdk};

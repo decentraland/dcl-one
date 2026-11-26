@@ -224,7 +224,10 @@ pub(super) async fn delete(ctx: &Ctx<'_>, id: &str) -> Response {
 /// one on the same member was logged first. `None` refuses a grant to a
 /// banned member: under the membership lock the REST writers take, a ban
 /// committed after the handler's pre-check is still seen.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the role change needs the signed message, its parties and the extra write"
+)]
 async fn apply_role_action<T: TypedMessage>(
     state: &CommunitiesState,
     signed: &Signed<T>,

@@ -86,6 +86,11 @@ fn init_tracing(default_filter: &str) {
         .init();
 }
 
+#[allow(
+    clippy::print_stderr,
+    clippy::print_stdout,
+    reason = "the binary writes to the terminal"
+)]
 fn handle_standard_args(service_name: &str, env_docs: &[(&str, &str)]) {
     let Some(first) = std::env::args().nth(1) else {
         return;
@@ -111,6 +116,7 @@ fn handle_standard_args(service_name: &str, env_docs: &[(&str, &str)]) {
     }
 }
 
+#[allow(clippy::print_stdout, reason = "the binary writes to the terminal")]
 fn print_help(service_name: &str, env_docs: &[(&str, &str)]) {
     println!("{} \u{2014} env-configured service", service_name);
     println!();

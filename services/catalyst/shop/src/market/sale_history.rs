@@ -444,6 +444,12 @@ async fn repair_window(
     }
     validate_window(ix, &window.logs, &times.value)?;
     let mut tx = pool.begin().await?;
+    // Book repair and folding share the cursor-first order. Trade-events
+    // recovery locks its event rows before the cursor.
+    let book = matches!(owner.indexer, INDEXER_NFT | INDEXER_SALES);
+    if book {
+        owner.check(&mut tx).await?;
+    }
     if owner.indexer == INDEXER_NFT {
         // An NFT write also commits its pending collection discoveries. A
         // repair of legacy orders only ever enriches the named order rows.
@@ -498,7 +504,9 @@ async fn repair_window(
         .bind(owner.indexer).bind(owner.net.db_name()).bind(VERSION).bind(window.reached as i64)
         .bind(anchor as i64).bind(hash).bind(next).execute(&mut *tx).await?.rows_affected();
     ensure!(count == 1, "sales repair coverage changed");
-    owner.check(&mut tx).await?;
+    if !book {
+        owner.check(&mut tx).await?;
+    }
     tx.commit().await?;
     Ok(())
 }

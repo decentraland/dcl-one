@@ -8,7 +8,7 @@ overrides:
   "react@^18.2.0": "18.3.1"
   "react-reconciler@^0.29.0": "0.29.0"
   "scheduler@^0.23.0": "0.23.0"
-  "@dcl/asset-packs": "2.17.2"
+  "@dcl/asset-packs": "2.30.2"
   '@dcl/hashing': workspace:*
   "protobufjs": "7.6.6"
   "semver@<7.5.2": "^7.5.4"
@@ -25,6 +25,9 @@ overrides:
   # The inspector's entry point calls only merge.withOptions, which version 8 keeps.
   '@dcl/inspector>ts-deepmerge': '^8.0.0'
 minimumReleaseAge: 1440
+# First-party release published by apps/creator-hub; the Admin Tools build needs the asset-packs it brings.
+minimumReleaseAgeExclude:
+  - '@dcl/inspector@7.73.1'
 allowBuilds:
   '@dcl/sdk-commands': false
   esbuild: false

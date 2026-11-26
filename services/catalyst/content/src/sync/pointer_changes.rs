@@ -304,7 +304,10 @@ fn page_entity_ids(page: &[serde_json::Value]) -> HashSet<String> {
 /// [`settled_cursor`], the overlap behind the high-water mark. A batch that reaches the page cap
 /// checkpoints its acknowledged prefix and resumes at its exact keyset within this run.
 /// `settled_polls` counts the boundaries this run settled.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the sync run threads its target, progress and stop signal through"
+)]
 pub async fn deploy_entities_from_pointer_changes<S>(
     client: &Client,
     server: &str,
@@ -331,7 +334,10 @@ where
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the paging loop takes the same inputs as its caller"
+)]
 async fn deploy_pointer_pages<S, const PAGE_LIMIT: usize>(
     client: &Client,
     server: &str,
