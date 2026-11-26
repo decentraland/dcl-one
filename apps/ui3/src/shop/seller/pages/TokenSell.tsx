@@ -1,9 +1,9 @@
-import { ShopManaMark } from "@dcl/one-ui";
 // from: marketplace@3bf3662f:webapp/src/components/SellPage (SellPage.tsx, SellPage.css, SellModal/SellModal.tsx),
 //       webapp/src/components/ConfirmInputValueModal, webapp/src/modules/order/utils.ts (getDefaultExpirationDate),
 //       webapp/src/modules/translation/locales/en.json (sell_page.*); shop@2d3bf62:app/src/lib/trades.ts;
 //       catalyrst-v2 sites/src/features/stories/marketplace/sell-list (the v2 sell wizard's steps)
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
+import { ShopManaMark } from "@dcl/one-ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useId, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";

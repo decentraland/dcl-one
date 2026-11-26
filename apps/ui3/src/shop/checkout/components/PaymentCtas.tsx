@@ -1,10 +1,10 @@
-import { ShopManaMark } from "@dcl/one-ui";
 // from: shop@3a322cf9:app/src/components/PaymentCtas/PaymentCtas.tsx
 // The purchase CTAs, one per payment rail the buyer's balances support. Each button IS the payment: the
 // credits rail (the buy gradient), the MANA rail (dark, with its amount). When no rail covers the
 // purchase, the credits fallback stays on screen and opens the flow that offers a top-up, so the way to
 // buy more credits never depends on the MANA balance. MANA the buyer holds that cannot pay is shown on a
 // disabled button with its reason, never hidden.
+import { ShopManaMark } from "@dcl/one-ui";
 import { useId } from "react";
 
 import { isEthereum } from "@shop/model/chain";

@@ -1,9 +1,9 @@
-import { ShopManaMark } from "@dcl/one-ui";
 // from: marketplace@3bf3662f:webapp/src/components/AssetAction (AssetAction.css), ManaField, ConfirmInputValueModal,
 //       Wallet (the signed-out redirect of ProtectedRoute), lib/date (formatDistanceToNow);
 //       decentraland-ui Field / Button (dark theme)
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace, decentraland-ui), Apache-2.0.
 
+import { ShopManaMark } from "@dcl/one-ui";
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
 import { useState } from "react";
 

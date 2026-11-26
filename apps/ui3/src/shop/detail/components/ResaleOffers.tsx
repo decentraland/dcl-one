@@ -1,7 +1,7 @@
-import { ShopManaMark } from "@dcl/one-ui";
 // from: shop@94584a5c:app/src/components/ResellersModal/ResellersModal.tsx (the resale list, its sort and paging,
 //       the seller and mint number resolved for the visible rows only, the classic-order section)
 
+import { ShopManaMark } from "@dcl/one-ui";
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 

@@ -1,4 +1,3 @@
-import { ShopManaMark } from "@dcl/one-ui";
 // from: shop@3a322cf9:app/src/components/PaymentMethodStep/PaymentMethodStep.tsx, app/src/assets/payment/credits-coin.webp,
 //       app/src/intl/en.json (buyModal)
 // "Choose your payment method": Buy now's payment step for a buyer holding MANA. Two rows, Credits and MANA, and one
@@ -13,6 +12,7 @@ import { ShopManaMark } from "@dcl/one-ui";
 // option would read as a bug next to the balances shown. Buy stays disabled until the ticks are a rail that settles.
 // Ticking the second row when the two cannot pay together (the Credits cover it alone, so there is no split) moves the
 // pick to that row instead of leaving both ticked over a disabled Buy.
+import { ShopManaMark } from "@dcl/one-ui";
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { formatCredits, formatCreditsFull } from "@shop/checkout/lib/currency";

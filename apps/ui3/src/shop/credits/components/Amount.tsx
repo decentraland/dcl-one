@@ -1,8 +1,8 @@
-import { ShopManaMark } from "@dcl/one-ui";
 // The two money figures the Shop shows, each in its own unit and never summed across units: whole
 // credits (with the mark and a screen-reader unit), and MANA to two decimals, rounded up, with its
 // network (the exact amount in its title).
 
+import { ShopManaMark } from "@dcl/one-ui";
 import { isPolygon } from "@shop/model/chain";
 import { formatMana, formatManaPrice, type ManaWei } from "@shop/model/money";
 import { creditsUnit, formatCreditsFull } from "@shop/checkout/lib/currency";

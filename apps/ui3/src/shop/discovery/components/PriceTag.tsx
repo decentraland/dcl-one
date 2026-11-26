@@ -1,6 +1,6 @@
-import { ShopManaMark } from "@dcl/one-ui";
 // from: shop@2d3bf62:app/src/components/Price/Price.tsx, app/src/components/CurrencyIcon/CurrencyIcon.tsx, app/src/lib/currency.ts (formatCredits)
 
+import { ShopManaMark } from "@dcl/one-ui";
 import { formatMana, type ManaWei } from "@shop/model/money";
 import type { CardPrice } from "@shop/discovery/cardPrice";
 import { t } from "@shop/discovery/intl";

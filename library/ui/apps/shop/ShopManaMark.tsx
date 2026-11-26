@@ -7,6 +7,6 @@ type ShopManaMarkProps = {
 }
 
 export function ShopManaMark({ network = 'ethereum', size = 16, className }: ShopManaMarkProps) {
-  const Icon = network === 'ethereum' ? GeneralMana : GeneralPolygonMana
+  const Icon = network === 'polygon' || network === 'matic' ? GeneralPolygonMana : GeneralMana
   return <Icon size={size} className={className} aria-hidden="true" />
 }

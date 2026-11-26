@@ -1,4 +1,3 @@
-import { ShopManaMark } from "@dcl/one-ui";
 // from: marketplace@3bf3662f:webapp/src/components/AssetPage/BidsTable (BidsTable.tsx, BidsTable.module.css, utils.tsx,
 //       BidsTableContent/BidsTableContent.{tsx,module.css}), webapp/src/components/Table/TableContainer/TableContainer.{tsx,css},
 //       webapp/src/components/Table/TableContent/TableContent.css, webapp/src/components/AssetPage/OnBack/OnBack.{tsx,css},
@@ -6,6 +5,7 @@ import { ShopManaMark } from "@dcl/one-ui";
 //       webapp/src/modules/bid/sagas.ts (ACCEPT_BID, CANCEL_BID); catalyrst-v2 ui3/src/marketplace/workflows/MkAcceptBidWizardView.tsx
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
+import { ShopManaMark } from "@dcl/one-ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatEther } from "viem";
 import { useEffect, useId, useRef, useState } from "react";

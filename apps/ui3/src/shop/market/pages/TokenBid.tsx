@@ -1,10 +1,10 @@
-import { ShopManaMark } from "@dcl/one-ui";
 // from: marketplace@3bf3662f:webapp/src/components/BidPage (BidPage.tsx, BidModal/BidModal.{tsx,css}),
 //       webapp/src/components/ConfirmInputValueModal, webapp/src/modules/bid/sagas.ts (PLACE_BID),
 //       webapp/src/components/Routes/Routes.tsx (ProtectedRoute: signed out goes to sign-in);
 //       catalyrst-v2 ui3/src/marketplace/pages/{MkBidPage,MkBidPage2}.tsx
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
+import { ShopManaMark } from "@dcl/one-ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";

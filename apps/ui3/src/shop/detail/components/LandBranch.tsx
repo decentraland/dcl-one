@@ -1,4 +1,3 @@
-import { ShopManaMark } from "@dcl/one-ui";
 // from: marketplace@3bf3662f:webapp/src/components/AssetPage/{AssetPage.tsx (renderNFTAssetPage),
 // BaseDetail/BaseDetail.tsx, ParcelDetail/ParcelDetail.tsx, EstateDetail/EstateDetail.tsx,
 // EstateDetail/ParcelCoordinates/ParcelCoordinates.tsx, OnBack/OnBack.tsx, Title/Title.tsx, JumpIn/JumpIn.tsx,
@@ -11,6 +10,7 @@ import { ShopManaMark } from "@dcl/one-ui";
 // components/Table/{TableContainer,TableContent}/*.tsx; icons vendored from webapp/src/images into landbranch-assets/.
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
+import { ShopManaMark } from "@dcl/one-ui";
 import { useContext, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { QueryClientContext } from "@tanstack/react-query";

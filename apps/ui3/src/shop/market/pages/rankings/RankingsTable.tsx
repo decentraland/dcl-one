@@ -1,4 +1,3 @@
-import { ShopManaMark } from "@dcl/one-ui";
 // from: marketplace@3bf3662f:webapp/src/components/RankingsTable/{RankingsTable.tsx,RankingsTable.css,utils.ts},
 //       RankingsTable/RankingItemRow, RankingsTable/RankingCreatorRow, RankingsTable/RankingCollectorRow,
 //       components/Rankings/TimeframeSelector, components/InfoTooltip, the translations under
@@ -6,6 +5,7 @@ import { ShopManaMark } from "@dcl/one-ui";
 //       decentraland-ui@RarityBadge (small) and AssetImage's rarity wash; @dcl/schemas rarity colours.
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace, decentraland-ui, schemas), Apache-2.0.
 
+import { ShopManaMark } from "@dcl/one-ui";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";

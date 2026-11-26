@@ -1,4 +1,3 @@
-import { ShopManaMark } from "@dcl/one-ui";
 // Moved from catalyrst-v2 ui3/src/marketplace/components/EnsCard.tsx (since removed).
 // from: marketplace@f3956826:webapp/src/components/AssetImage/EnsImage/{EnsImage.tsx,utils.ts} (the
 // length-banded gradients of a NAME's art)
@@ -6,6 +5,7 @@ import { ShopManaMark } from "@dcl/one-ui";
 // One NAME as a card: its art, `name.dcl.eth`, the network and, when it is on resale, its MANA price.
 // A NAME resale is MANA only, so a card never shows a credit price.
 
+import { ShopManaMark } from "@dcl/one-ui";
 import { Link } from "react-router";
 
 import DclLogomark from "../../atoms/DclLogomark";

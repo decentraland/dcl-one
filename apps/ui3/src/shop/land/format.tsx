@@ -1,8 +1,8 @@
-import { ShopManaMark } from "@dcl/one-ui";
 // Money and dates as the LAND and NAME screens print them. MANA is always its exact token amount
 // (SHOP.md: a displayed conversion never changes a charge); these screens never print a credit price
 // for LAND, an estate, a rental or a resale.
 
+import ManaMark from "../../atoms/ManaMark";
 import { formatMana, manaWei, type ManaWei } from "@shop/model/money";
 import "./land.css";
 
@@ -18,7 +18,7 @@ export function Mana({ wei, text, network = "ethereum", suffix }: { wei?: bigint
   const value = wei !== undefined ? manaText(wei) : (text ?? "");
   return (
     <span className="shop-land-mana" title={`${value} MANA${network === "polygon" ? " on Polygon" : " on Ethereum"}`}>
-      <ShopManaMark size={14} network={network} />
+      <ManaMark size={14} network={network} />
       <span className="shop-land-mana__value">{value}</span>
       {suffix ? <span className="shop-land-mana__suffix">{suffix}</span> : null}
     </span>
