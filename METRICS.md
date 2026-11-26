@@ -77,6 +77,31 @@ On the heavy wallet each side read its 2,500 rows through its index (a bitmap sc
 
 The repair, with every transfer due: the next due row took 4.1 ms; one 50,000-block window's `UPDATE` of 1,111 rows took 20 ms; the check for an unfilled row took 0.4 ms. The fixture's history is about 322 windows. Each costs two header reads and at least one `eth_getLogs`. At the defaults (`LAND_AUTHZ_INDEX_REQUESTS_PER_PASS` 50, which counts the repair's header reads, a pass every 120 s), an idle pass leaves room for about 15 windows. The repair then takes about 22 passes, some 45 minutes, unless the endpoint narrows the ranges. That estimate is not a measurement against a real endpoint. Other agents' builds were running during these measurements.
 
+## Sepolia LAND authorization replay
+
+On 2026-11-26, a single leased `catalyst index` worker at
+`bb10e59289e1311ed88476c8692534334963de5c` replayed Sepolia LAND and Estate
+into an empty PostgreSQL 17.6 database using Decentraland's public Sepolia
+RPC. The first publication took 2.70 s from worker launch, excluding
+compilation and initial schema application. The completed job pass took
+1.99 s. It ran immediately on startup with 12 confirmations and a
+200-request per-pass budget.
+
+| Measurement | Result |
+| --- | ---: |
+| First block | 3,831,219 |
+| Published block | 12,217,105 |
+| Blocks covered, inclusive | 8,385,887 |
+| Authorization events | 6,658 |
+| Estate metadata events | 52 |
+| Token rights | 4,116 |
+| Account rights | 51 |
+| Estate memberships | 851 |
+
+The published cursor hash matched the Sepolia header at 12,217,105
+(`0x3b4a18568ecdfb3989f148294617774906ae5db307118e560094b173b9f45e53`).
+Separate measurements depend on RPC range limits and latency.
+
 ## Latest sale per token
 
 The fixtures below are synthetic, measured on a laptop with PostgreSQL 17.6 while other builds were running. Treat the ranges as an order of magnitude.
