@@ -2838,6 +2838,7 @@ dependencies = [
  "dcl_component",
  "futures-lite",
  "hex",
+ "image",
  "pin-project",
  "platform",
  "reqwest",
