@@ -2971,6 +2971,67 @@ fn item_order_json(signer: &str, contract: &str) -> String {
     )
 }
 
+/// On a network the collections index owns, a public item order's signer
+/// is checked against the item's creator under the index's authorizing
+/// publication, read in the statement that reads the creator.
+#[tokio::test]
+async fn on_an_owned_network_an_item_order_needs_an_authorizing_publication() {
+    let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+        return;
+    };
+    use super::catalogue::owning;
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let contract = contract_of(&tag(), 9);
+    let marketplace = listings::offchain_marketplace_v3(137).unwrap();
+    let mut trade = listings::test_support::parse(&item_order_json(
+        &listings::test_support::signer().address().to_checksum(None),
+        &contract,
+    ));
+    listings::test_support::sign(&mut trade, &marketplace);
+    let signer = trade.signer.clone();
+    seed_item_row(&pool, &contract, "1", WALLET_A).await;
+    sqlx::query("UPDATE shop.items SET creator = lower($2) WHERE contract_address = $1")
+        .bind(&contract)
+        .bind(&signer)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let unavailable = |e: listings::TradeCreationError| match e {
+        listings::TradeCreationError::CatalogueUnavailable(why) => why,
+        other => panic!("expected the index to refuse: {other}"),
+    };
+
+    // A creatorship transfer walked past the publication, a stale
+    // publication, a rewind: no order is authorized on them.
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    owning::walk_past(&pool, "matic", 101, &contract).await;
+    let why = unavailable(
+        listings::create_trade(&pool, None, &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+    );
+    assert!(why.contains("walked"), "{why}");
+    owning::own(&pool, "matic", 137, 101, 31 * 60).await;
+    unavailable(
+        listings::create_trade(&pool, None, &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+    );
+    owning::rewind(&pool, "matic").await;
+    unavailable(
+        listings::create_trade(&pool, None, &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+    );
+
+    // Published a minute ago: the creator signs it.
+    owning::own(&pool, "matic", 137, 101, 60).await;
+    let id = listings::create_trade(&pool, None, &trade, &signer, 1_000)
+        .await
+        .unwrap();
+    assert!(open_item_order_ids(&pool).await.contains(&id));
+}
+
 #[tokio::test]
 async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     use alloy::signers::SignerSync;

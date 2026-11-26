@@ -8,8 +8,8 @@
 //!
 //! | fact | source | reader |
 //! | --- | --- | --- |
-//! | a contract's role | the static registry of the LAND, estate and NAME registrars per chain, then `shop.collections` (the collections mirror, only after a complete pass) | [`item_facts`], [`contract_role`] |
-//! | a collection item | `shop.items` (the items mirror, only after a complete pass) | [`item_facts`] |
+//! | a contract's role | the static registry of the LAND, estate and NAME registrars per chain, then `shop.collections` (the collections mirror, only after a complete pass; on a network the collections index owns, only while it answers the read's purpose) | [`item_facts`], [`contract_role`] |
+//! | a collection item | `shop.items` (the items mirror, only after a complete pass; on an owned network, as for the role) | [`item_facts`] |
 //! | a signed trade | `shop.trades` (+ its typed asset rows) or the decoded calldata | [`signed_trade_from_trade_in`], [`signed_trade_from_sol`], [`decode_use_credits`] |
 //! | a NAME's registration | `DCLRegistrar.ownerOf(tokenId)` on the NAMEs chain | [`name_token_from_owner_call`] |
 //! | the CreditsManager's typed routes | the pinned deployment (docs/shop/CONTRACTS.md, "Addresses") | [`manager_routes`] |
@@ -21,8 +21,11 @@
 //! call whose `data` the contract never decodes, and neither do we
 //! ([`CustomEffect::Opaque`]).
 
+use std::sync::LazyLock;
+
 use alloy_primitives::{Address, U256, address};
 use alloy_sol_types::{SolCall, SolValue};
+use chrono::Utc;
 use sqlx::PgPool;
 use sqlx::Row;
 
@@ -33,6 +36,7 @@ use super::types::{
 };
 use crate::checkout::trade::{SolTrade, TradeIn};
 use crate::evm::abi::{ItemToBuy, buyCall, executeOrderCall, offchain};
+use crate::market::catalogue::{self, NetworkState, Purpose};
 
 /// `useCredits(UseCreditsArgs)` (tests/fixtures/shop/offchain-marketplace-contract@87350c63e/derived/selectors.json).
 pub const USE_CREDITS_SELECTOR: [u8; 4] = [0x18, 0x63, 0x57, 0x2d];
@@ -212,61 +216,83 @@ fn item_kind(item_type: &str) -> ItemKind {
     }
 }
 
-/// One statement: both mirrors' pass markers, the collection row and the
-/// item row, by their primary keys (schemas/30_shop.sql; no new index).
-const ITEM_FACTS_SQL: &str = "SELECT \
-     (SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'collections' AND network = $1) AS collections_ready, \
-     (SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state WHERE mirror = 'items' AND network = $1) AS items_ready, \
-     EXISTS (SELECT 1 FROM shop.collections WHERE network = $1 AND contract_address = $2) AS is_collection, \
-     i.item_type, i.creator, i.available::text AS available \
-     FROM (SELECT 1) AS one \
-     LEFT JOIN shop.items i ON i.network = $1 AND i.contract_address = $2 AND i.item_id = $3::numeric";
+/// One statement, so one snapshot decides and reads: the network's state as
+/// the catalogue gate reads it (ownership, the index's cursor and
+/// projection, both mirrors' passes), the collection row and the item row,
+/// by their primary keys (schemas/30_shop.sql; no new index).
+static ITEM_FACTS_SQL: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "SELECT {columns}, \
+         EXISTS (SELECT 1 FROM shop.collections WHERE network = n.network AND contract_address = $2) AS is_collection, \
+         i.item_type, i.creator, i.available::text AS available, \
+         CASE WHEN i.search_is_store_minter AND i.search_is_collection_approved THEN i.price::text END AS store_price \
+         FROM (SELECT $1::text AS network) AS n {joins} \
+         LEFT JOIN shop.items i ON i.network = n.network AND i.contract_address = $2 AND i.item_id = $3::numeric",
+        columns = catalogue::STATE_COLUMNS,
+        joins = *catalogue::STATE_JOINS,
+    )
+});
 
-/// What the collections and items mirrors of `network` say about
-/// `(collection, item_id)`, with the item's remaining supply when the record
-/// is found. Each answer is `Unknown` until its mirror's first complete pass.
+/// What the catalogue of `network` says about `(collection, item_id)`, with
+/// the item's remaining supply and its CollectionStore price when the record
+/// is found. On a network the mirrors serve, each answer is `Unknown` until
+/// its mirror's first complete pass. On one the collections index owns,
+/// both are `Unknown` while the index refuses `purpose` on `chain_id`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirrorFacts {
     pub contract: Lookup<ContractRole>,
     pub item: Lookup<ItemRecord>,
     pub available: Option<i64>,
+    /// The item's price while the CollectionStore sells it (a store minter
+    /// of an approved collection).
+    pub store_price: Option<String>,
+    /// Whether the collections index owns the network (it answered, or
+    /// refused), rather than the mirrors.
+    pub by_index: bool,
 }
 
-/// The mirrors' answer alone, without the static registry. Both payment
+/// The catalogue's answer alone, without the static registry. Both payment
 /// paths read contract roles and item records through this one statement,
 /// so the credits guards and the MANA resolver cannot judge the same item
-/// on different facts.
+/// on different facts; `purpose` only decides whether an owned network may
+/// answer (the guards authorize a spend, the resolver prices a quote).
 pub async fn mirror_facts(
     pool: &PgPool,
     chain_id: ChainId,
     network: &str,
     collection: EvmAddress,
     item_id: U256,
+    purpose: Purpose,
 ) -> Result<MirrorFacts, sqlx::Error> {
-    let row = sqlx::query(ITEM_FACTS_SQL)
+    let row = sqlx::query(sqlx::AssertSqlSafe(ITEM_FACTS_SQL.as_str()))
         .bind(network)
         .bind(collection.to_string())
         .bind(item_id.to_string())
         .fetch_one(pool)
         .await?;
-    let collections_ready: Option<bool> = row.get("collections_ready");
-    let items_ready: Option<bool> = row.get("items_ready");
+    let state = NetworkState::from_row(&row)?;
+    let (collections_ready, items_ready) =
+        match state.owned_verdict(chain_id.0 as i64, purpose, Utc::now()) {
+            Some(verdict) => {
+                if let Err(why) = &verdict {
+                    tracing::debug!(network, why, "collections index refuses the item facts");
+                }
+                (verdict.is_ok(), verdict.is_ok())
+            }
+            None => (state.collections_pass.is_some(), state.items_pass.is_some()),
+        };
     let is_collection: bool = row.get("is_collection");
     let item_type: Option<String> = row.get("item_type");
     let creator: Option<String> = row.get("creator");
     let available: Option<String> = row.get("available");
-    let contract = match collections_ready {
-        Some(true) => {
-            if is_collection {
-                Lookup::Found(ContractRole::Collection)
-            } else {
-                Lookup::Absent
-            }
-        }
-        _ => Lookup::Unknown,
+    let store_price: Option<String> = row.get("store_price");
+    let contract = match (collections_ready, is_collection) {
+        (true, true) => Lookup::Found(ContractRole::Collection),
+        (true, false) => Lookup::Absent,
+        (false, _) => Lookup::Unknown,
     };
-    let (item, available) = match (items_ready, item_type) {
-        (Some(true), Some(item_type)) => {
+    let (item, available, store_price) = match (items_ready, item_type) {
+        (true, Some(item_type)) => {
             match creator.as_deref().and_then(|c| EvmAddress::parse(c).ok()) {
                 Some(creator) => (
                     Lookup::Found(ItemRecord {
@@ -277,38 +303,44 @@ pub async fn mirror_facts(
                         creator,
                     }),
                     available.and_then(|a| a.parse::<i64>().ok()),
+                    store_price,
                 ),
-                None => (Lookup::Unknown, None),
+                None => (Lookup::Unknown, None, None),
             }
         }
-        (Some(true), None) => (Lookup::Absent, None),
-        _ => (Lookup::Unknown, None),
+        (true, None) => (Lookup::Absent, None, None),
+        (false, _) => (Lookup::Unknown, None, None),
     };
     Ok(MirrorFacts {
         contract,
         item,
         available,
+        store_price,
+        by_index: state.owned,
     })
 }
 
-/// The collections mirror's answer alone about `collection`'s role: the
-/// contract part of [`mirror_facts`]. The statement's item lookup is
-/// ignored, so any item id gives the same answer.
+/// The catalogue's answer alone about `collection`'s role: the contract
+/// part of [`mirror_facts`]. The statement's item lookup is ignored, so any
+/// item id gives the same answer.
 pub async fn mirror_contract_role(
     pool: &PgPool,
     chain_id: ChainId,
     network: &str,
     collection: EvmAddress,
+    purpose: Purpose,
 ) -> Result<Lookup<ContractRole>, sqlx::Error> {
     Ok(
-        mirror_facts(pool, chain_id, network, collection, U256::ZERO)
+        mirror_facts(pool, chain_id, network, collection, U256::ZERO, purpose)
             .await?
             .contract,
     )
 }
 
 /// The contract's role and the item record of `(collection, item_id)` on
-/// `chain_id`, from the static registry and the two mirrors.
+/// `chain_id`, from the static registry and the catalogue. The credits
+/// guards read it to authorize a spend, so an owned network answers only
+/// [`Purpose::Authorize`]'s publication.
 pub async fn item_facts(
     pool: &PgPool,
     chain_id: ChainId,
@@ -327,7 +359,15 @@ pub async fn item_facts(
             item: Lookup::Absent,
         });
     };
-    let facts = mirror_facts(pool, chain_id, network, collection, item_id).await?;
+    let facts = mirror_facts(
+        pool,
+        chain_id,
+        network,
+        collection,
+        item_id,
+        Purpose::Authorize,
+    )
+    .await?;
     Ok(ItemFacts {
         contract: facts.contract,
         item: facts.item,

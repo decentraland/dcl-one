@@ -1625,7 +1625,7 @@ fn source_of(net: ChainNet, contract: &str, chain_id: i64) -> String {
 /// [`asset_meta`] of many `(contract, token_id)` at once, one query per
 /// source, keyed as asked; non-numeric token ids describe nothing.
 pub async fn asset_metas(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     land_image_base: &str,
     network: &str,
     chain_id: i64,
@@ -1653,7 +1653,7 @@ pub async fn asset_metas(
         )))
         .bind(&contracts)
         .bind(&tokens)
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await?;
         for r in &rows {
             out.insert(

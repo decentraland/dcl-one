@@ -35,7 +35,7 @@
 //! page's notifications in one transaction; ids are reorg-stable
 //! (`notice_cursor::tx_log_key`), so a retried page inserts nothing twice.
 //! A bid on a collection token no index describes yet holds the cursor
-//! while `item_awaited`, as the sale producers do.
+//! while [`ItemWait::awaited`], as the sale producers do.
 
 use std::time::Duration;
 
@@ -44,11 +44,12 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use super::catalogue::{self, ItemWait};
 use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_SALES};
 use super::notice_cursor;
 use super::trade_events::{self, AssetMeta};
 use crate::jobs::{Jobs, PeriodicCfg};
-use crate::shared::collections::{ITEM_HOLD_MAX_SECS, item_awaited};
+use crate::shared::collections::ITEM_HOLD_MAX_SECS;
 use crate::shared::identity::Address;
 use crate::shared::notifications::{NewNotification, format_mana, insert_notifications};
 
@@ -129,18 +130,19 @@ fn rows_sql() -> String {
 }
 
 /// Whether a bid holds the cursor at `now`: its collection item may still
-/// be mirrored, or its owner at the bid awaits the contract's backfill.
+/// reach the catalogue, or its owner at the bid awaits the contract's
+/// backfill.
 fn holds(
     row: &BidRow,
     described: bool,
     items_mirror_enabled: bool,
-    items_pass: Option<i64>,
+    wait: ItemWait,
     now: i64,
 ) -> bool {
     if !row.collection {
         return false;
     }
-    (!described && item_awaited(items_mirror_enabled, items_pass, row.block_time, now))
+    (!described && wait.awaited(items_mirror_enabled, row.block_number, row.block_time, now))
         || (row.backfill_owed && now.saturating_sub(row.block_time) < ITEM_HOLD_MAX_SECS)
 }
 
@@ -245,21 +247,26 @@ async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow
             .filter(|r| r.collection)
             .map(|r| (r.contract_address.clone(), r.token_id.clone()))
             .collect();
-        let metas =
-            trade_events::nft_metas(pool, &settings.land_images, network, NET.chain_id(), &keys)
-                .await?;
-        let items_pass: Option<i64> = sqlx::query_scalar(
-            "SELECT extract(epoch FROM last_complete_pass_at)::bigint FROM shop.mirror_state \
-             WHERE mirror = 'items' AND network = $1",
-        )
-        .bind(network)
-        .fetch_optional(&mut *txn)
-        .await?
-        .flatten();
+        // The tokens' descriptions and the item wait from one snapshot, so a
+        // publication that covers a bid's block never meets an older copy of
+        // its item.
+        let (metas, wait) = {
+            let mut snap = catalogue::read_snapshot(pool).await?;
+            let metas = trade_events::nft_metas(
+                &mut snap,
+                &settings.land_images,
+                network,
+                NET.chain_id(),
+                &keys,
+            )
+            .await?;
+            let wait = ItemWait::read(&mut snap, NET, NET.chain_id(), now).await?;
+            (metas, wait)
+        };
         let ts = now.timestamp();
         let held = rows.iter().position(|r| {
             let described = metas.contains_key(&(r.contract_address.clone(), r.token_id.clone()));
-            holds(r, described, settings.items_mirror_enabled, items_pass, ts)
+            holds(r, described, settings.items_mirror_enabled, wait, ts)
         });
         let ready = &rows[..held.unwrap_or(rows.len())];
         let Some(last) = ready.last() else {
@@ -361,17 +368,41 @@ mod tests {
     #[test]
     fn only_a_collection_bid_holds_and_never_past_the_bound() {
         let t = T0;
-        assert!(holds(&row(true, false, t), false, true, None, t + 60));
+        assert!(holds(
+            &row(true, false, t),
+            false,
+            true,
+            ItemWait::Mirror(None),
+            t + 60
+        ));
         assert!(
-            !holds(&row(true, false, t), true, true, None, t + 60),
+            !holds(
+                &row(true, false, t),
+                true,
+                true,
+                ItemWait::Mirror(None),
+                t + 60
+            ),
             "described"
         );
         assert!(
-            !holds(&row(false, true, t), false, true, None, t + 60),
+            !holds(
+                &row(false, true, t),
+                false,
+                true,
+                ItemWait::Mirror(None),
+                t + 60
+            ),
             "another contract never holds"
         );
         assert!(
-            holds(&row(true, true, t), true, false, None, t + 60),
+            holds(
+                &row(true, true, t),
+                true,
+                false,
+                ItemWait::Mirror(None),
+                t + 60
+            ),
             "a backfill holds with the mirror off"
         );
         assert!(
@@ -379,10 +410,44 @@ mod tests {
                 &row(true, true, t),
                 true,
                 false,
-                None,
+                ItemWait::Mirror(None),
                 t + ITEM_HOLD_MAX_SECS
             ),
             "a stalled backfill"
+        );
+        // On a network the collections index owns, a bid on a token no index
+        // describes holds until the publication covers its block.
+        let bid = row(true, false, t);
+        assert!(holds(&bid, false, false, ItemWait::Index(None), t + 60));
+        assert!(
+            holds(
+                &bid,
+                false,
+                false,
+                ItemWait::Index(Some(bid.block_number - 1)),
+                t + 60
+            ),
+            "published below the bid"
+        );
+        assert!(
+            !holds(
+                &bid,
+                false,
+                false,
+                ItemWait::Index(Some(bid.block_number)),
+                t + 60
+            ),
+            "published through the bid: the item never comes"
+        );
+        assert!(
+            !holds(
+                &bid,
+                false,
+                true,
+                ItemWait::Index(None),
+                t + ITEM_HOLD_MAX_SECS
+            ),
+            "a stalled index"
         );
         assert_ne!(
             notification_id("matic", "0xa:0:k"),

@@ -35,14 +35,18 @@
 //! projection (every one raises the generation, a same-height repair and a
 //! hand-back too) or an ownership change gives a new key.
 
+use std::sync::LazyLock;
+
 use axum::response::Response;
 use chrono::{DateTime, NaiveDateTime, Utc};
-use sqlx::{Postgres, Row, Transaction};
+use sqlx::postgres::PgRow;
+use sqlx::{PgConnection, Postgres, Row, Transaction};
 
 use super::chain_walk::{ChainNet, INDEXER_COLLECTIONS, MAX_CLOCK_SKEW, READY_WINDOW};
 use super::graph::Network;
 use super::mirrors::{self, Mirror};
 use super::{MarketplaceState, Source, unavailable};
+use crate::shared::collections::{ITEM_HOLD_MAX_SECS, item_awaited};
 
 /// What a read of the catalogue is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -509,56 +513,175 @@ fn mirror_verdict(
     Ok(copy)
 }
 
+/// The columns of one network's state, over a source that names the network
+/// `n.network` and the joins in [`STATE_JOINS`], which alias their tables
+/// `st_*` so a reader's own aliases never meet them. A reader outside the gate
+/// selects them in the statement that reads its rows, so one snapshot decides
+/// both, and reads them back with [`NetworkState::from_row`].
+pub(crate) const STATE_COLUMNS: &str = "n.network, st_p.owned_at IS NOT NULL AS owned, st_p.projected_through, \
+     COALESCE(st_p.pending, 0) AS pending, COALESCE(st_p.generation, 0) AS generation, \
+     st_c.last_block, st_c.chain_id, st_c.quarantined_at IS NOT NULL AS quarantined, \
+     st_c.diverged_at IS NOT NULL AS diverged, COALESCE(st_c.full_history, false) AS full_history, \
+     st_c.folded_block, st_c.folded_at, \
+     EXISTS (SELECT 1 FROM shop.collection_event e \
+             WHERE e.network = n.network AND e.block_number > st_c.folded_block \
+               AND e.block_number <= st_c.last_block) AS walked_past, \
+     (EXISTS (SELECT 1 FROM shop.collections r WHERE r.network = n.network) \
+      OR EXISTS (SELECT 1 FROM shop.items r WHERE r.network = n.network)) AS has_rows, \
+     st_mc.last_complete_pass_at AS collections_pass, st_mc.chain_id AS collections_chain, \
+     st_mi.last_complete_pass_at AS items_pass, st_mi.chain_id AS items_chain";
+
+/// The joins [`STATE_COLUMNS`] read, by primary key.
+pub(crate) static STATE_JOINS: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "LEFT JOIN shop.collection_projection st_p ON st_p.network = n.network \
+         LEFT JOIN shop.chain_cursor st_c ON st_c.indexer = '{INDEXER_COLLECTIONS}' AND st_c.network = n.network \
+         LEFT JOIN shop.mirror_state st_mc ON st_mc.mirror = 'collections' AND st_mc.network = n.network \
+         LEFT JOIN shop.mirror_state st_mi ON st_mi.mirror = 'items' AND st_mi.network = n.network"
+    )
+});
+
+impl NetworkState {
+    /// The state [`STATE_COLUMNS`] selected in `row`.
+    pub(crate) fn from_row(r: &PgRow) -> Result<Self, sqlx::Error> {
+        Ok(NetworkState {
+            network: r.try_get("network")?,
+            owned: r.try_get("owned")?,
+            projected_through: r.try_get("projected_through")?,
+            pending: r.try_get("pending")?,
+            generation: r.try_get("generation")?,
+            last_block: r.try_get("last_block")?,
+            chain_id: r.try_get("chain_id")?,
+            quarantined: r.try_get("quarantined")?,
+            diverged: r.try_get("diverged")?,
+            full_history: r.try_get("full_history")?,
+            folded_block: r.try_get("folded_block")?,
+            folded_at: r.try_get("folded_at")?,
+            walked_past: r.try_get("walked_past")?,
+            has_rows: r.try_get("has_rows")?,
+            collections_pass: r.try_get("collections_pass")?,
+            items_pass: r.try_get("items_pass")?,
+            collections_chain: r.try_get("collections_chain")?,
+            items_chain: r.try_get("items_chain")?,
+        })
+    }
+
+    /// The index's verdict for `purpose` at `now` when it owns this network,
+    /// on `chain` (the chain the reader serves the network on); `None` when
+    /// the mirrors serve it, and the reader keeps its own mirror check.
+    pub(crate) fn owned_verdict(
+        &self,
+        chain: i64,
+        purpose: Purpose,
+        now: DateTime<Utc>,
+    ) -> Option<Result<Publication, String>> {
+        if !self.owned {
+            return None;
+        }
+        let Some(net) = ChainNet::parse(&self.network) else {
+            return Some(Err(format!(
+                "the collections index owns an unknown network {}",
+                self.network
+            )));
+        };
+        Some(index_verdict(self, net, Some(chain), purpose, now))
+    }
+}
+
+/// The items mirror's last complete pass in unix seconds, as the sale
+/// producers have always read it, selected beside [`STATE_COLUMNS`] for
+/// [`ItemWait::from_row`].
+pub(crate) const ITEM_WAIT_COLUMNS: &str =
+    "extract(epoch FROM st_mi.last_complete_pass_at)::bigint AS items_pass_epoch";
+
+/// What a sale whose item the catalogue lacks waits for on its network, by
+/// the source that serves the network, read in the snapshot that read the
+/// sale's description.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemWait {
+    /// The mirrors: the items mirror's last complete pass, unix seconds.
+    Mirror(Option<i64>),
+    /// The collections index owns the network: the block its descriptive
+    /// publication covers, `None` while it refuses one.
+    Index(Option<i64>),
+}
+
+impl ItemWait {
+    /// The wait of the network whose state (with [`ITEM_WAIT_COLUMNS`]) `row`
+    /// holds, on `chain`.
+    pub(crate) fn from_row(row: &PgRow, chain: i64, now: DateTime<Utc>) -> sqlx::Result<Self> {
+        let state = NetworkState::from_row(row)?;
+        Ok(match state.owned_verdict(chain, Purpose::Describe, now) {
+            Some(verdict) => ItemWait::Index(verdict.ok().map(|p| p.folded_block)),
+            None => ItemWait::Mirror(row.try_get("items_pass_epoch")?),
+        })
+    }
+
+    /// The wait on `net` (served on `chain`) in `conn`'s snapshot.
+    pub async fn read(
+        conn: &mut PgConnection,
+        net: ChainNet,
+        chain: i64,
+        now: DateTime<Utc>,
+    ) -> sqlx::Result<Self> {
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {STATE_COLUMNS}, {ITEM_WAIT_COLUMNS} FROM (SELECT $1::text AS network) AS n {}",
+            *STATE_JOINS
+        )))
+        .bind(net.db_name())
+        .fetch_one(conn)
+        .await?;
+        Self::from_row(&row, chain, now)
+    }
+
+    /// Whether a sale at `block_number` and `block_time` whose item is not in
+    /// the catalogue still waits at `now` (unix seconds):
+    /// - the mirrors: while the items mirror runs and no complete pass ran
+    ///   an hour after the sale ([`item_awaited`]);
+    /// - the index: until its publication covers the sale's block (every
+    ///   item added by then is in the catalogue, so a missing one never
+    ///   comes).
+    ///
+    /// Either way, never past [`ITEM_HOLD_MAX_SECS`], so a stalled source
+    /// never freezes a cursor.
+    pub fn awaited(
+        self,
+        mirror_enabled: bool,
+        block_number: i64,
+        block_time: i64,
+        now: i64,
+    ) -> bool {
+        match self {
+            ItemWait::Mirror(pass) => item_awaited(mirror_enabled, pass, block_time, now),
+            ItemWait::Index(covered) => {
+                now.saturating_sub(block_time) < ITEM_HOLD_MAX_SECS
+                    && !covered.is_some_and(|b| b >= block_number)
+            }
+        }
+    }
+}
+
+/// A `REPEATABLE READ, READ ONLY` transaction: the snapshot a job reads a
+/// catalogue verdict and the rows it decides in.
+pub async fn read_snapshot(pool: &sqlx::PgPool) -> sqlx::Result<Transaction<'static, Postgres>> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    Ok(tx)
+}
+
 /// The networks' states in the snapshot `tx` holds.
 async fn read_states(
     tx: &mut Transaction<'static, Postgres>,
 ) -> Result<Vec<NetworkState>, sqlx::Error> {
-    let rows = sqlx::query(
-        "SELECT n.network, p.owned_at IS NOT NULL AS owned, p.projected_through, \
-                COALESCE(p.pending, 0) AS pending, COALESCE(p.generation, 0) AS generation, \
-                c.last_block, c.chain_id, c.quarantined_at IS NOT NULL AS quarantined, \
-                c.diverged_at IS NOT NULL AS diverged, COALESCE(c.full_history, false) AS full_history, \
-                c.folded_block, c.folded_at, \
-                EXISTS (SELECT 1 FROM shop.collection_event e \
-                        WHERE e.network = n.network AND e.block_number > c.folded_block \
-                          AND e.block_number <= c.last_block) AS walked_past, \
-                (EXISTS (SELECT 1 FROM shop.collections r WHERE r.network = n.network) \
-                 OR EXISTS (SELECT 1 FROM shop.items r WHERE r.network = n.network)) AS has_rows, \
-                mc.last_complete_pass_at AS collections_pass, mc.chain_id AS collections_chain, \
-                mi.last_complete_pass_at AS items_pass, mi.chain_id AS items_chain \
-         FROM unnest(ARRAY['ethereum', 'matic']) AS n(network) \
-         LEFT JOIN shop.collection_projection p ON p.network = n.network \
-         LEFT JOIN shop.chain_cursor c ON c.indexer = $1 AND c.network = n.network \
-         LEFT JOIN shop.mirror_state mc ON mc.mirror = 'collections' AND mc.network = n.network \
-         LEFT JOIN shop.mirror_state mi ON mi.mirror = 'items' AND mi.network = n.network",
-    )
-    .bind(INDEXER_COLLECTIONS)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {STATE_COLUMNS} FROM unnest(ARRAY['ethereum', 'matic']) AS n(network) {}",
+        *STATE_JOINS
+    )))
     .fetch_all(&mut **tx)
     .await?;
-    rows.iter()
-        .map(|r| {
-            Ok(NetworkState {
-                network: r.try_get("network")?,
-                owned: r.try_get("owned")?,
-                projected_through: r.try_get("projected_through")?,
-                pending: r.try_get("pending")?,
-                generation: r.try_get("generation")?,
-                last_block: r.try_get("last_block")?,
-                chain_id: r.try_get("chain_id")?,
-                quarantined: r.try_get("quarantined")?,
-                diverged: r.try_get("diverged")?,
-                full_history: r.try_get("full_history")?,
-                folded_block: r.try_get("folded_block")?,
-                folded_at: r.try_get("folded_at")?,
-                walked_past: r.try_get("walked_past")?,
-                has_rows: r.try_get("has_rows")?,
-                collections_pass: r.try_get("collections_pass")?,
-                items_pass: r.try_get("items_pass")?,
-                collections_chain: r.try_get("collections_chain")?,
-                items_chain: r.try_get("items_chain")?,
-            })
-        })
-        .collect()
+    rows.iter().map(NetworkState::from_row).collect()
 }
 
 /// [`begin_checked`], answering a refusal with its envelope.
@@ -714,6 +837,89 @@ pub async fn preflight(
     open(state, purpose, needs, scope, Access::ReadOnly)
         .await
         .map_err(Refusal::into_response)
+}
+
+/// Fixtures that hand a network to the collections index, for the tests of
+/// the readers that follow it.
+#[cfg(test)]
+pub(crate) mod owning {
+    use sqlx::PgPool;
+
+    /// Hands `network` (walked on `chain`) to the collections index,
+    /// published at `block` `age_secs` ago. The mirrors' passes stay as a
+    /// takeover leaves them: recorded, and no longer written.
+    pub async fn own(pool: &PgPool, network: &str, chain: i64, block: i64, age_secs: i64) {
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, \
+                    full_history, chain_id, folded_block, folded_at) \
+             VALUES ('collections', $1, 1, $3, '0xabababababababababababababababababababababababababababababababab', true, $2, $3, \
+                     timezone('UTC', now()) - make_interval(secs => $4)) \
+             ON CONFLICT (indexer, network) DO UPDATE SET last_block = EXCLUDED.last_block, chain_id = EXCLUDED.chain_id, \
+                 full_history = true, folded_block = EXCLUDED.folded_block, folded_at = EXCLUDED.folded_at, \
+                 quarantined_at = NULL, diverged_at = NULL",
+        )
+        .bind(network)
+        .bind(chain)
+        .bind(block)
+        .bind(age_secs as f64)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.collection_projection (network, owned_at, projected_through, pending, generation) \
+             VALUES ($1, timezone('UTC', now()), $2, 0, 1) \
+             ON CONFLICT (network) DO UPDATE SET owned_at = EXCLUDED.owned_at, \
+                 projected_through = EXCLUDED.projected_through, pending = 0, \
+                 generation = shop.collection_projection.generation + 1",
+        )
+        .bind(network)
+        .bind(block)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// A rewind withdraws `network`'s publication and clears its projection.
+    pub async fn rewind(pool: &PgPool, network: &str) {
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL \
+             WHERE indexer = 'collections' AND network = $1",
+        )
+        .bind(network)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE shop.collection_projection SET projected_through = NULL WHERE network = $1",
+        )
+        .bind(network)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// The walk reads a collections event at `block`, past the publication,
+    /// before it folds it.
+    pub async fn walk_past(pool: &PgPool, network: &str, block: i64, contract: &str) {
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block = $2 WHERE indexer = 'collections' AND network = $1",
+        )
+        .bind(network)
+        .bind(block)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.collection_event (network, block_number, log_index, block_time, kind, contract_address) \
+             VALUES ($1, $2, 0, 0, 'set_approved', $3)",
+        )
+        .bind(network)
+        .bind(block)
+        .bind(contract)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
 }
 
 /// A read of the mirrors' copy that skips readiness, for a test of what a

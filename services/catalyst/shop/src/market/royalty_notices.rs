@@ -24,6 +24,7 @@ use serde_json::{Value, json};
 use sqlx::{FromRow, PgPool, Row};
 use uuid::Uuid;
 
+use super::catalogue::{self, ItemWait};
 use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_SALES};
 use super::notice_cursor;
 use crate::jobs::{Jobs, PeriodicCfg};
@@ -36,7 +37,7 @@ pub const KIND: &str = notice_cursor::ROYALTIES_EARNED;
 pub const MARKETPLACE_V2: &str = "0x480a0f4e360e8964e68858dd231c2922f1df45ef";
 /// `royaltiesCutPerMillion()` of MarketplaceV2 and ERC721BidV2: 25000 on chain (2026-11-05, `shop.sale_venue`) and on every royalty sale the subgraph recorded since their deployment.
 pub const ROYALTIES_CUT_PER_MILLION: i64 = 25_000;
-use crate::shared::collections::{ITEM_SHIFT, item_awaited};
+use crate::shared::collections::ITEM_SHIFT;
 const NET: ChainNet = ChainNet::Matic;
 const PAGE_SIZE: i64 = 200;
 const POLL_SECS: u64 = 60;
@@ -117,8 +118,9 @@ impl Venue {
         format!(
             "WITH bound AS (SELECT LEAST(c.folded_block, $4::bigint) AS upto FROM shop.chain_cursor c \
                 WHERE c.network = $1 AND c.indexer = $10 AND {ready} \
-                  AND c.folded_block <= c.last_block AND c.folded_at <= $9) \
-             SELECT bound.upto, page.* FROM bound LEFT JOIN LATERAL ( \
+                  AND c.folded_block <= c.last_block AND c.folded_at <= $9), \
+             st AS (SELECT {state}, {wait} FROM (SELECT $1::text AS network) AS n {joins}) \
+             SELECT st.*, bound.upto, page.* FROM bound CROSS JOIN st LEFT JOIN LATERAL ( \
              SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.contract_address, e.token_id::text AS token_id, \
                     div({price} * $6, 1000000)::text AS cut, \
                     lower(CASE WHEN i.beneficiary IS NOT NULL AND i.beneficiary <> $7 THEN i.beneficiary ELSE i.creator END) AS collector, \
@@ -135,6 +137,9 @@ impl Venue {
                 ChainNet::Ethereum.chain_id(),
                 NET.chain_id()
             ),
+            state = catalogue::STATE_COLUMNS,
+            wait = catalogue::ITEM_WAIT_COLUMNS,
+            joins = *catalogue::STATE_JOINS,
         )
     }
 }
@@ -265,22 +270,16 @@ async fn drain(
                 .map(SaleRow::from_row)
                 .collect::<Result<Vec<_>, _>>()?
         };
-        // A bid sale of an item the mirror lacks holds the cursor, as the
-        // badge processor's do, while `item_awaited`.
-        let items_pass: Option<i64> = sqlx::query_scalar(
-            "SELECT extract(epoch FROM last_complete_pass_at)::bigint FROM shop.mirror_state \
-             WHERE mirror = 'items' AND network = $1",
-        )
-        .bind(NET.db_name())
-        .fetch_optional(&mut *txn)
-        .await?
-        .flatten();
+        // A bid sale of an item the catalogue lacks holds the cursor, as the
+        // badge processor's do, while `ItemWait::awaited`: the wait comes from
+        // the statement that joined the items.
+        let wait = ItemWait::from_row(first, NET.chain_id(), now)?;
         let held = rows.iter().position(|row| {
             venue == Venue::Bids
                 && !row.mirrored
-                && item_awaited(
+                && wait.awaited(
                     items_mirror_enabled,
-                    items_pass,
+                    row.block_number,
                     row.block_time,
                     now.timestamp(),
                 )
@@ -635,6 +634,63 @@ mod tests {
     /// An ERC721BidV2 acceptance pays its item's beneficiary (else creator)
     /// the pinned cut, also when they sold it themselves; only after the sales
     /// index publishes, never for history, never twice.
+    /// On a network the collections index owns, a bid sale of an item the
+    /// catalogue lacks waits for the publication over its block, read in the
+    /// statement that joined the items; the items mirror's recorded pass
+    /// never stands in for it.
+    #[tokio::test]
+    async fn on_an_owned_network_a_bid_sale_waits_for_the_publication_over_its_block() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        use super::super::catalogue::owning;
+        let token = |item: u32| (alloy_primitives::U256::from(item) << 216usize).to_string();
+        let seller = "0x00000000000000000000000000000000000000aa";
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('sales', 'matic', 0, 100, 100, 100, timezone('UTC', now()), true, 137)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            run_bids_once(&pool, BASE, true).await.unwrap(),
+            Pass::Emitted(0)
+        );
+        sqlx::query(
+            "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) \
+             VALUES ('items', 'matic', 'https://items.example', timezone('UTC', now()) + interval '2 hours')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        bid_sale(&pool, 105, &token(7), seller, "4000000000000000000").await;
+        sqlx::query("UPDATE shop.chain_cursor SET last_block = 110, fold_through = 106, folded_block = 106 WHERE indexer = 'sales'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let cursor = || async {
+            sqlx::query_as::<_, (i64, i32)>(
+                "SELECT block_number, log_index FROM shop.notification_cursor WHERE producer = 'royalties:bid_accepted:matic'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        owning::own(&pool, "matic", 137, 104, 60).await;
+        run_bids_once(&pool, BASE, true).await.unwrap();
+        assert_eq!(cursor().await, (100, i32::MAX), "published below the sale");
+        owning::rewind(&pool, "matic").await;
+        run_bids_once(&pool, BASE, true).await.unwrap();
+        assert_eq!(cursor().await, (100, i32::MAX), "rewound");
+        owning::own(&pool, "matic", 137, 105, 60).await;
+        assert_eq!(
+            run_bids_once(&pool, BASE, true).await.unwrap(),
+            Pass::Emitted(0)
+        );
+        assert_eq!(cursor().await, (106, i32::MAX), "passed without effect");
+    }
+
     #[tokio::test]
     async fn published_bid_sales_notify_their_royalty_collector_once() {
         let Ok(base_url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
