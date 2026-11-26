@@ -708,6 +708,9 @@ pub struct AppConfig {
     pub sysinfo_visible: bool,
     pub scene_log_to_console: bool,
     pub max_avatars: usize,
+    /// Shows every nearby avatar, whatever `max_avatars` says; that value is kept for when this
+    /// goes off again.
+    pub max_avatars_unlimited: bool,
     pub constrain_scene_ui: bool,
     /// "Allow overriding scene controls": the player may change what the scene they stand in
     /// controls, today the time of day.
@@ -787,6 +790,7 @@ impl Default for AppConfig {
             sysinfo_visible: false,
             scene_log_to_console: false,
             max_avatars: 20,
+            max_avatars_unlimited: false,
             constrain_scene_ui: false,
             allow_scene_control_override: false,
             player_settings: Default::default(),
@@ -1268,7 +1272,8 @@ pub struct SessionGraphics {
     pub fps_target: Option<usize>,
     pub parcel_grass: Option<ParcelGrassSetting>,
     pub render_scale: Option<f32>,
-    /// Set by the preview's `/avatar_demo cap`, which takes values past the setting's range.
+    /// Set by the preview's `/avatar_demo cap`, which takes values past the setting's range and
+    /// wins over the player's setting, Unlimited Avatars included.
     pub max_avatars: Option<usize>,
 }
 
@@ -1282,8 +1287,17 @@ impl SessionGraphics {
         self.fps_target.unwrap_or(config.graphics.fps_target)
     }
 
+    /// The value of "no cap" in a Max Avatars count.
+    pub const NO_AVATAR_CAP: usize = usize::MAX;
+
+    /// The session's cap if it set one, else no cap when the player turned Max Avatars off, else
+    /// the player's count.
     pub fn max_avatars(&self, config: &AppConfig) -> usize {
-        self.max_avatars.unwrap_or(config.max_avatars)
+        self.max_avatars.unwrap_or(if config.max_avatars_unlimited {
+            Self::NO_AVATAR_CAP
+        } else {
+            config.max_avatars
+        })
     }
 
     /// The frame rate the explorer paces to: the session's target, else the player's, and with
@@ -3173,6 +3187,18 @@ mod tests {
         config.graphics.vsync = false;
         config.graphics.fps_target = UNCAPPED_FPS;
         assert_eq!(shown(&config, Some(61)), UNCAPPED_FPS);
+    }
+
+    #[test]
+    fn unlimited_avatars_lifts_the_cap_but_keeps_the_count_and_yields_to_the_session() {
+        let mut config = AppConfig::default();
+        let mut session = SessionGraphics::default();
+        assert_eq!(session.max_avatars(&config), 20);
+        config.max_avatars_unlimited = true;
+        assert_eq!(session.max_avatars(&config), SessionGraphics::NO_AVATAR_CAP);
+        assert_eq!(config.max_avatars, 20);
+        session.max_avatars = Some(5);
+        assert_eq!(session.max_avatars(&config), 5);
     }
 
     #[test]

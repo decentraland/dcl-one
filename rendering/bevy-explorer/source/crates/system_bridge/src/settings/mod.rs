@@ -42,6 +42,7 @@ use frame_rate::FpsTargetSetting;
 use language_setting::LanguageSetting;
 use load_distance::{LoadDistanceSetting, UnloadDistanceSetting};
 use max_avatars::MaxAvatarsSetting;
+use max_avatars_unlimited::UnlimitedAvatarsSetting;
 use max_downloads::MaxDownloadsSetting;
 use max_lods::{MaxFarLodsSetting, MaxNearLodsSetting};
 use mute_mic_in_background_setting::MuteMicInBackgroundSetting;
@@ -76,6 +77,7 @@ pub mod language_setting;
 pub mod lens_flare_setting;
 pub mod load_distance;
 pub mod max_avatars;
+pub mod max_avatars_unlimited;
 pub mod max_downloads;
 pub mod max_lods;
 pub mod mute_mic_in_background_setting;
@@ -240,6 +242,8 @@ impl Plugin for SettingBridgePlugin {
             &config,
         );
         add_int_setting::<SceneThreadsSetting>(app, &mut settings, &mut schedule, &config);
+        // before the slider it overrides, so the panel lists the switch first
+        add_enum_setting::<UnlimitedAvatarsSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<MaxAvatarsSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<MasterVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<SceneVolumeSetting>(app, &mut settings, &mut schedule, &config);
