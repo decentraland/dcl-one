@@ -983,7 +983,10 @@ mod tests {
             SyncSettings::from_config(&config(&args))
         };
         let defaults = with(&[]).unwrap().unwrap();
-        assert_eq!(defaults.item_replay_interval, None);
+        assert_eq!(
+            defaults.item_replay_interval,
+            Some(Duration::from_secs(1200))
+        );
         assert_eq!(defaults.item_replay_page_pause, Duration::from_millis(200));
         assert_eq!(defaults.item_replay_concurrency, 8);
         let off = with(&["--sync-item-replay-interval-secs", "0"])

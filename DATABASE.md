@@ -5922,10 +5922,10 @@ Workload and invariants:
   `content.processed_snapshots` or the sync properties in
   `content.system_properties`. Existing deployment rows are never rewritten.
 - A pass starts `SYNC_ITEM_REPLAY_INTERVAL_SECS` after the previous one
-  started, or as soon as it ends when it took longer. The setting takes 0,
-  the default, which turns the replay off and leaves item coverage unknown,
-  or 600 to 1440; the node refuses to start with any other value. A pass
-  never starts while another runs.
+  started, or as soon as it ends when it took longer (default 1200, 20
+  minutes). The setting takes 0, which turns the replay off and leaves item
+  coverage unknown, or 600 to 1440; the node refuses to start with any other
+  value. A pass never starts while another runs.
 - Every pass starts from the floor again, so a deployment a peer commits
   after a pass read past it is recovered by the next pass. Coverage stays
   continuous while the next pass completes within 30 minutes of the previous
@@ -6041,9 +6041,9 @@ daily `/pointer-changes` traffic pulled from each source catalyst is:
 | `SYNC_ITEM_REPLAY_INTERVAL_SECS` | Passes a day | Traffic a day | Requests a day |
 | --- | --- | --- | --- |
 | 600 (smallest) | 144 | about 11.6 GB | about 23,000 |
-| 1200 | 72 | about 5.8 GB | about 11,500 |
+| 1200 (default) | 72 | about 5.8 GB | about 11,500 |
 | 1440 (largest) | 60 | about 4.9 GB | about 9,600 |
-| 0 (off, default) | 0 | 0 | 0 |
+| 0 (off) | 0 | 0 | 0 |
 
 A node that syncs from several catalysts reads each of them in every pass, so
 its total is that times the number of sources. The page pause changes the
