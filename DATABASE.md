@@ -2117,8 +2117,14 @@ up to 100 pending facts and up to 100 due timers per pass. An indexed
 progress, fact acknowledgement, signed grants and completion notices
 commit together under the same wallet lock used by opt-out and claims.
 
-`credits.goal_login_days` deduplicates login by UTC date, wallet, season, and
-week. A join in the scheduled world completes that week's location goal.
+`credits.goal_login_days` deduplicates login by UTC date, wallet, season and
+week. Enrollment commits the date as pending with the signed enrollment.
+Processing it separately lets flags or signing recover without rejecting
+enrollment. A new login step and its grant and notice clear the pending date
+in one transaction. The room worker retries up to 100 pending dates per
+pass through the partial pending index. Reads include the counted dates
+from the same read-only snapshot as progress and balance. A join in the
+scheduled world completes that week's location goal.
 Room joins pin the approved Explore event occurrence against the canonical
 world or the parcel set of the verified scene deployment. A mirrored event
 must have been observed in a complete scan from the configured source that

@@ -59,6 +59,7 @@ the player report routes under the gatekeeper's own mount (the intake is the
 | `interfaces::NameOwnerReader` | root `serve_adapters::ShopNameOwners` over shop `MarketplaceState::name_owner` | name ownership for Admin Toolkit targets |
 | `gatekeeper::events::RoomEventSink` | `worlds::core::CoreState` | worlds' join/leave access log |
 | `gatekeeper::events::RoomEventStore` | `social::badges::presence::EventSink`, root `serve_adapters::CreditsRoomEvents` | verified joins and leaves, durably offered to each enabled consumer before the webhook answers (503 on failure) |
+| `presence::Presence::session_observed_at` | root `serve` passes it to the Shop seasonal goal worker | fresh, complete roster evidence of a specific room, wallet and participant session |
 | `interfaces::PulseGeneration` | root `pulse_generation`, using `jobs::Leases` | immutable committed audience/epoch/source UUID and local lease-loss cancellation; no assignment persistence |
 
 | Comms offers | Consumers |

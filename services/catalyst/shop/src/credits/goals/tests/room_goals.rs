@@ -114,12 +114,13 @@ async fn joins_deduplicate_utc_dates_and_only_the_weekly_world_completes_locatio
     assert_eq!(room_steps(&db.pool, "log-in").await, 1);
     assert_eq!(room_steps(&db.pool, "visit-location").await, 0);
 
+    let scheduled_world = WEEKLY_WORLD.to_ascii_uppercase();
     enqueue(
         &state,
         world(
             "next-date",
             "sid5",
-            WEEKLY_WORLD,
+            &scheduled_world,
             first + TimeDelta::days(1),
         ),
     )
@@ -265,7 +266,7 @@ async fn short_visits_accumulate_by_event_and_only_a_verified_session_can_fire_t
 }
 
 #[tokio::test]
-async fn enrollment_records_today_and_a_single_step_goal_grants_and_notifies_atomically() {
+async fn enrollment_succeeds_and_retries_the_same_date_through_flags_and_signer_outages() {
     let Some(db) = OwnDatabase::create("room_goal_enrollment").await else {
         return;
     };
@@ -288,22 +289,74 @@ async fn enrollment_records_today_and_a_single_step_goal_grants_and_notifies_ato
         .unwrap();
 
     let unsigned_state = fixture_state(db.pool.clone(), false);
-    assert!(reads::enroll_at(&unsigned_state, OWNER, now).await.is_err());
+    unsigned_state.goal_flags.set_documents(None, None);
+    reads::enroll_at(&unsigned_state, OWNER, now).await.unwrap();
     assert_eq!(
         status(&unsigned_state, OWNER).await.unwrap()["data"]["status"],
-        "not_registered"
+        "enrolled"
     );
     assert_eq!(
-        count(&db.pool, "SELECT count(*) FROM credits.goal_login_days").await,
+        count(
+            &db.pool,
+            "SELECT count(*) FROM credits.goal_login_days WHERE pending_at IS NOT NULL"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count(&db.pool, "SELECT count(*) FROM credits.goal_grants").await,
         0
     );
 
+    let before = reads::progress_at(&unsigned_state, OWNER, now)
+        .await
+        .unwrap();
+    let login = before.goals.iter().find(|g| g.id == "log-in").unwrap();
+    assert_eq!(
+        serde_json::to_value(&login.progress.metadata).unwrap(),
+        json!({"dates":[]})
+    );
+    assert_eq!(login.progress.completed_steps, 0);
+    unsigned_state.goal_flags.set_documents(
+        Some(json!({"flags":{"dapps-credits-server":true},"variants":{}})),
+        Some(json!({"flags":{},"variants":{}})),
+    );
+    let after_flags = now + TimeDelta::seconds(30);
+    assert_eq!(
+        login::process_pending(&unsigned_state, &|| after_flags)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        count(
+            &db.pool,
+            "SELECT count(*) FROM credits.goal_login_days WHERE pending_at IS NOT NULL"
+        )
+        .await,
+        1,
+        "the missing signer still leaves enrollment intact and the original day queued"
+    );
+    assert!(notice_ids(&db.pool).await.is_empty());
+
     let state = fixture_state(db.pool.clone(), true);
-    reads::enroll_at(&state, OWNER, now).await.unwrap();
-    reads::enroll_at(&state, OWNER, now).await.unwrap();
-    enqueue(&state, world("same-date", "sid1", "any.dcl.eth", now)).await;
-    rooms::process_batch(&state, || now, None).await.unwrap();
-    let report = reads::progress_at(&state, OWNER, now).await.unwrap();
+    let recovered = now + TimeDelta::seconds(60);
+    assert_eq!(
+        login::process_pending(&state, &|| recovered - TimeDelta::seconds(1))
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        login::process_pending(&state, &|| recovered).await.unwrap(),
+        1
+    );
+    reads::enroll_at(&state, OWNER, recovered).await.unwrap();
+    enqueue(&state, world("same-date", "sid1", "any.dcl.eth", recovered)).await;
+    rooms::process_batch(&state, || recovered, None)
+        .await
+        .unwrap();
+    let report = reads::progress_at(&state, OWNER, recovered).await.unwrap();
     let login = report.goals.iter().find(|g| g.id == "log-in").unwrap();
     assert!(login.is_completed);
     assert_eq!(login.progress.completed_steps, 1);
@@ -635,7 +688,7 @@ async fn a_stale_event_from_the_previous_mirror_cannot_authorize_a_stay() {
 }
 
 #[tokio::test]
-async fn a_progress_read_waits_for_the_claim_before_reading_balance_and_goal_status() {
+async fn a_progress_read_keeps_balance_and_goal_status_in_one_snapshot_during_claim() {
     let Some(db) = OwnDatabase::create("room_goal_progress_snapshot").await else {
         return;
     };
@@ -660,27 +713,25 @@ async fn a_progress_read_waits_for_the_claim_before_reading_balance_and_goal_sta
         .execute(&mut *claim)
         .await
         .unwrap();
-    let reader =
-        tokio::spawn(async move { reads::progress_at(&state, OWNER, first).await.unwrap() });
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let blocked: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted
-                   AND database=(SELECT oid FROM pg_database WHERE datname=current_database()))",
-            )
-            .fetch_one(&db.pool)
-            .await
-            .unwrap();
-            if blocked {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
+    let before = tokio::time::timeout(
+        Duration::from_secs(5),
+        reads::progress_at(&state, OWNER, first),
+    )
     .await
+    .expect("the progress snapshot does not wait for the wallet lock")
     .unwrap();
+    assert!(
+        !before
+            .goals
+            .iter()
+            .find(|g| g.id == "log-in")
+            .unwrap()
+            .is_claimed
+    );
+    assert_eq!(before.credits.available, 0.0);
+
     claim.commit().await.unwrap();
-    let report = reader.await.unwrap();
+    let report = reads::progress_at(&state, OWNER, first).await.unwrap();
     assert!(
         report
             .goals
@@ -690,4 +741,39 @@ async fn a_progress_read_waits_for_the_claim_before_reading_balance_and_goal_sta
             .is_claimed
     );
     assert_eq!(report.credits.available, 1.0);
+}
+
+#[tokio::test]
+async fn opting_out_after_a_join_prevents_a_due_timer_from_granting() {
+    let Some(db) = OwnDatabase::create("room_goal_active_opt_out").await else {
+        return;
+    };
+    let first = seed_room_goals(&db.pool).await;
+    seed_events(&db.pool, first).await;
+    sqlx::query(
+        "UPDATE credits.season_goals SET total_steps=1 WHERE goal_id='visit-event-and-stay'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let state = fixture_state(db.pool.clone(), true);
+    enqueue(&state, world("arrival", "sid1", EVENT_WORLD, first)).await;
+    assert_eq!(
+        rooms::process_batch(&state, || first, None).await.unwrap(),
+        1
+    );
+    opt_out(&state, OWNER).await.unwrap();
+
+    let checked_at = first + TimeDelta::minutes(5);
+    stays::process_due(&state, || checked_at, &move |room, sid, wallet| {
+        (room == EVENT_WORLD && sid == "sid1" && wallet == OWNER).then_some(checked_at)
+    })
+    .await
+    .unwrap();
+    assert_eq!(room_steps(&db.pool, "visit-event-and-stay").await, 0);
+    assert_eq!(
+        count(&db.pool, "SELECT count(*) FROM credits.goal_grants").await,
+        0
+    );
+    assert!(notice_ids(&db.pool).await.is_empty());
 }

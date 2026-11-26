@@ -103,8 +103,12 @@ pending) and 20,000 visits (101 with timers). After `ANALYZE`, `EXPLAIN (ANALYZE
 BUFFERS)` selected the partial pending index to take 100 facts (0.044 ms), the
 session index to find a matching leave (0.025 ms), and the partial due index
 to take 100 timers (0.032 ms). The pending and due indexes were 16 KiB each,
-and the session index was 26 MiB. These synthetic queries measured local
-read paths. Production event volume and write cost remain unmeasured.
+and the session index was 26 MiB. In a second fixture with 30,000 event and
+30,000 deployment rows, the webhook venue query used the world index
+(0.076 ms) or the deployment and coordinate indexes (0.173 ms). The partial
+enrollment index returned 100 pending dates from 200,100 login rows in
+0.035 ms. These synthetic queries measured local read paths. Production event
+volume and write cost remain unmeasured.
 
 ## Social notification polling and oversized-event expiry
 

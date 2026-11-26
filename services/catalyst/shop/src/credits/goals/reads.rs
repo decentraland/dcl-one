@@ -39,8 +39,11 @@ async fn enroll_with_clock(
         .bind(address)
         .execute(&mut *tx)
         .await?;
-    login::record_enrollment(&mut tx, state, address, clock()).await?;
+    let day = login::enqueue_enrollment(&mut tx, address, clock()).await?;
     tx.commit().await?;
+    if let Some(day) = day {
+        login::advance_enrollment(state, &day, &clock).await;
+    }
     Ok(())
 }
 pub async fn status(state: &SharedState, address: &str) -> Result<Value, ApiError> {
@@ -266,16 +269,18 @@ pub(super) async fn progress_at(
     now: NaiveDateTime,
 ) -> Result<CreditsProgramProgressResponse, ApiError> {
     let is_paused = paused(state).await;
-    let mut tx = state.credits.pool.begin().await?;
-    // Progress, grant status and its metadata must agree if a goal finishes
-    // while the response is being assembled.
     if state.settings.writes_enabled {
-        wallet_lock(&mut tx, address).await?;
-    } else {
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await?;
+        // Assignment initialization is idempotent. Finish it before opening
+        // the response snapshot, which needs no claim or worker locks.
+        let mut conn = state.credits.pool.acquire().await?;
+        if let Some(season) = current(&mut conn, now).await? {
+            initialize(&mut conn, address, season.id, season.week(now).0).await?;
+        }
     }
+    let mut tx = state.credits.pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
     let (has_started, wallet) = Credits::user_progress_on(&mut *tx, address).await?;
     let opted: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM credits.program_opt_outs WHERE address=$1)",
@@ -288,10 +293,6 @@ pub(super) async fn progress_at(
     let mut goals = Vec::new();
     let (season, current_week) = if let Some(s) = season {
         let (week, _, end) = s.week(now);
-        // Reads initialize only registered identities; unregistered users get the same definition as a default.
-        if state.settings.writes_enabled {
-            initialize(&mut tx, address, s.id, week).await?;
-        }
         let rows = sqlx::query("SELECT d.goal_id,COALESCE(p.title,d.title) AS title,CASE WHEN p.address IS NULL THEN d.description ELSE p.description END AS description,COALESCE(p.thumbnail,d.thumbnail) AS thumbnail,COALESCE(p.total_steps,d.total_steps) AS total_steps,COALESCE(p.reward_wei,d.reward_wei)::text AS reward,COALESCE(p.completed_steps,0) AS completed_steps,p.completed_at,g.claimed_at FROM credits.season_goals d LEFT JOIN credits.goal_progress p ON p.address=$1 AND p.season_id=d.season_id AND p.week_id=$3 AND p.goal_id=d.goal_id LEFT JOIN credits.goal_grants g ON g.address=p.address AND g.season_id=p.season_id AND g.week_id=p.week_id AND g.goal_id=p.goal_id WHERE d.season_id=$2 AND (p.address IS NOT NULL OR $3 BETWEEN d.start_week AND d.end_week) ORDER BY d.position")
             .bind(address).bind(s.id).bind(week).fetch_all(&mut *tx).await?;
         for row in rows {
@@ -315,7 +316,7 @@ pub(super) async fn progress_at(
                 login::GOAL => {
                     let dates: Vec<chrono::NaiveDate> = sqlx::query_scalar(
                         "SELECT day FROM credits.goal_login_days
-                         WHERE address=$1 AND season_id=$2 AND week_id=$3 ORDER BY day",
+                         WHERE address=$1 AND season_id=$2 AND week_id=$3 AND pending_at IS NULL ORDER BY day",
                     )
                     .bind(address)
                     .bind(s.id)

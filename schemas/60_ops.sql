@@ -681,8 +681,12 @@ CREATE TABLE credits.goal_login_days (
     season_id integer NOT NULL REFERENCES credits.seasons(id),
     week_id integer NOT NULL CHECK (week_id > 0),
     day date NOT NULL,
+    pending_at timestamp without time zone,
     PRIMARY KEY (address, season_id, week_id, day)
 );
+CREATE INDEX goal_login_enrollment_pending_idx
+    ON credits.goal_login_days (pending_at, address, season_id, week_id, day)
+    WHERE pending_at IS NOT NULL;
 
 -- Verified LiveKit facts, keyed by the webhook event ID across retries.
 CREATE TABLE credits.goal_room_events (

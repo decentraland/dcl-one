@@ -172,7 +172,7 @@ async fn apply(
         week,
         goal: login::GOAL,
     };
-    login::record(conn, state, assignment, event.occurred_at, now).await?;
+    login::record(conn, state, assignment, event.occurred_at.date(), now).await?;
     if event.world
         && weekly_world(week).is_some_and(|world| world.eq_ignore_ascii_case(&event.realm))
     {
@@ -294,12 +294,14 @@ where
             async move {
                 let clock = crate::credits::store::now;
                 // Run due timers even if an unrelated fact remains retryable.
+                let enrollments = login::process_pending(&state, &clock).await;
                 let facts = process_batch(&state, clock, mirror.as_deref()).await;
                 let timers = stays::process_due(&state, clock, observe.as_ref()).await;
+                let enrollments = enrollments?;
                 let facts = facts?;
                 let timers = timers?;
                 ctx.progress(format!(
-                    "{facts} room events applied, {timers} stay timers checked"
+                    "{enrollments} enrollments applied, {facts} room events applied, {timers} stay timers checked"
                 ));
                 Ok(())
             }
