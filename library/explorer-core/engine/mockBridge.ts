@@ -1142,6 +1142,12 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
 
+    if (msg.kind === 'watchSkyTime') {
+      // ?mocksky=1 → a scene holds the time of day at 22:00, so the Skybox menu shows locked.
+      const held = new URLSearchParams(location.search).get('mocksky') === '1'
+      if (msg.on) reply({ kind: 'skyTime', state: held ? { hours: 22, locked: true, speed: 12, followsClock: false } : { hours: 10, locked: false, speed: 12, followsClock: true } })
+      return
+    }
     if (msg.kind === 'watchMapPlayers') {
       if (msg.on) reply({ kind: 'mapPlayers', players: MOCK_NEARBY_PLAYERS })
       return

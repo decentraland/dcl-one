@@ -22,7 +22,7 @@ async fn continuous_publication(backlog: bool) {
     use crate::stats::Reader;
     let shared = super::tests::feed_shared(1);
     let grant = {
-        let mut stats = shared.statistics.lock().unwrap();
+        let mut stats = shared.statistics.lock();
         let ProducerReply::Grant(grant) = stats.control(ProducerRequest::Begin {
             incarnation: shared.statistics_epoch,
             producer: uuid::Uuid::nil(),
@@ -117,7 +117,7 @@ async fn continuous_publication(backlog: bool) {
                 }
                 // Refill while the actual publisher awaits its send. A one-item queue
                 // empties on every pop; the other schedule always retains a backlog.
-                let mut stats = shared.statistics.lock().unwrap();
+                let mut stats = shared.statistics.lock();
                 let count = if backlog && sequence == 0 { 4 } else { 1 };
                 for _ in 0..count {
                     sequence += 1;
@@ -492,7 +492,7 @@ async fn statistics_topology_is_retained_even_above_the_old_single_frame_cap() {
         });
     }
     feed.publish_topology(&pass, 30_000);
-    let view = shared.statistics.lock().unwrap().snapshot();
+    let view = shared.statistics.lock().snapshot();
     assert!(view.islands.len() > crate::protocol::bus::topology::MAX_ISLANDS_BYTES);
     let islands = IslandStatusMessage::decode(view.islands.as_slice()).unwrap();
     assert_eq!(islands.data[0].peers.len(), 30_000);

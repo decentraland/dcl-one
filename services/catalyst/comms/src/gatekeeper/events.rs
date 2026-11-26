@@ -51,10 +51,10 @@ mod tests {
     use crate::protocol::bus::room_events::RoomEvent;
 
     #[derive(Default)]
-    struct Recording(std::sync::Mutex<Vec<String>>);
+    struct Recording(parking_lot::Mutex<Vec<String>>);
     impl RoomEventSink for Recording {
         fn observe_room_event(&self, event: &RoomEvent) {
-            self.0.lock().unwrap().push(event.event_id.clone());
+            self.0.lock().push(event.event_id.clone());
         }
     }
 
@@ -71,7 +71,7 @@ mod tests {
                 ..RoomEvent::default()
             });
         }
-        assert_eq!(*a.0.lock().unwrap(), ["EV_1", "EV_2"]);
-        assert_eq!(*b.0.lock().unwrap(), ["EV_1", "EV_2"]);
+        assert_eq!(*a.0.lock(), ["EV_1", "EV_2"]);
+        assert_eq!(*b.0.lock(), ["EV_1", "EV_2"]);
     }
 }
