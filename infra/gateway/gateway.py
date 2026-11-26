@@ -421,6 +421,9 @@ def render(table, cfg, mime):
     # The hosted component gallery: static files the Sites image carries (infra/packages/sites.nix),
     # with no route file to claim the prefix.
     locations += pair("/ui-gallery", "sites", True)
+    # The avatar preview page from the Explorer build (infra/packages/sites.nix); its
+    # content-hashed files are under /assets/ above.
+    locations += pair("/avatar-preview", "sites", True)
     locations += location("/content/", proxy("apis", "limit_req zone=content burst=1000 nodelay;"))
     # Matched after host rewrites, so every storage host form shares this budget.
     storage_limits = ("limit_req zone=storage burst=400 nodelay; "

@@ -2,8 +2,13 @@
 // options from the URL and `update` messages, `controller_request`s, and `ready`, `load`,
 // `error`, `emote_event` and `controller_response` back to the host. Profiles resolve here, so
 // the engine only ever receives urns.
-// The module is imported by build id (`pkg/build.json`, written by build.sh and always
-// revalidated): a browser that cached an earlier module keeps it for other urls only.
+// While developing, the modules and the preview's own files sit next to this script
+// (tools/serve.py makes the browser revalidate them). The published build replaces FILES with
+// their content-hashed names (tools/package.py), so a browser keeps each one for good.
+const FILES = null;
+function file(name) {
+  return new URL(FILES?.[name] ?? `./${name}`, import.meta.url).href;
+}
 let start;
 let preview_command;
 // The browser backend: one module per backend, as the engine cannot hold both. WebGPU where the
@@ -17,18 +22,11 @@ async function backend() {
   return 'webgl2';
 }
 async function loadModule() {
-  const dir = (await backend()) === 'webgl2' ? './pkg-gl/' : './pkg/';
-  let build = 'dev';
-  try {
-    const response = await fetch(new URL(`${dir}build.json`, import.meta.url), { cache: 'no-store' });
-    if (response.ok) build = String((await response.json()).build);
-  } catch { /* no build id: the module loads by its plain url */ }
-  const glue = new URL(`${dir}dcl_avatar_preview.js?v=${build}`, import.meta.url);
-  const wasm = new URL(`${dir}dcl_avatar_preview_bg.wasm?v=${build}`, import.meta.url);
-  const cache = await import(new URL(`${dir}content_cache.js?v=${build}`, import.meta.url).href);
+  const dir = file((await backend()) === 'webgl2' ? 'pkg-gl/' : 'pkg/');
+  const cache = await import(new URL('content_cache.js', dir).href);
   cache.installContentCachePageFunctions();
-  const module = await import(glue.href);
-  await module.default(wasm);
+  const module = await import(new URL('dcl_avatar_preview.js', dir).href);
+  await module.default(new URL('dcl_avatar_preview_bg.wasm', dir));
   ({ start, preview_command } = module);
 }
 
@@ -308,14 +306,14 @@ function registerCollectible(kind, urn, metadata, files) {
 // in the builder
 function registerPose(name, loop) {
   const urn = `${POSE_COLLECTION}:preview-${name}${loop ? '-loop' : ''}`;
-  const file = `${name}.glb`;
+  const glb = `${name}.glb`;
   registerCollectible('emote', urn, {
     id: urn, name, description: '', thumbnail: '',
     emoteDataADR74: {
-      representations: [{ bodyShapes: [BODY.male, BODY.female], mainFile: file, contents: [file] }],
+      representations: [{ bodyShapes: [BODY.male, BODY.female], mainFile: glb, contents: [glb] }],
       loop,
     },
-  }, { [file]: new URL(`./emotes/${file}`, import.meta.url).href });
+  }, { [glb]: file(`emotes/${glb}`) });
   return urn;
 }
 
