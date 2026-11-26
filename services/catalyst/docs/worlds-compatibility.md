@@ -300,13 +300,16 @@ A difference not listed here is a gap, not a decision.
   only when it covers that scene's whole footprint. A read-through fill never
   replaces a local publish
   ([ADR](../../../docs/adr/2026-11-23-worlds-mirror-last-deploy-wins.md)).
-- **Forwarded publishes are handed over.** A local scene the forward target
-  accepted (`worlds.forward_outbox` `accepted`) and still lists is no longer a
-  local publish for the mirror: when no other local scene stands, the pass
-  takes the world, the scene staying as the same entity, and the world then
-  follows the upstream, which manages its undeploys, settings and access. A
-  publish the upstream rejected, or one waiting to be sent, keeps the world
-  local.
+- **Forwarded Worlds publishes.** The local publish response acknowledges
+  the local write. The Worlds admin forwarding endpoint reports whether
+  the configured upstream accepted the deployment. When no other local
+  scene stands, the scheduled pass converts an accepted, listed scene to
+  a mirror row of the same entity, or retires an accepted scene whose
+  absence the source confirms. A handed-over scene stops running on the
+  local authoritative SDK7 host. Local collaborator and `logsPermissions`
+  eligibility end and mirrored scenes stop counting toward the local
+  personal-world quota. The pass copies upstream access and settings
+  subject to the current owner's local overrides.
 - **Validation errors** report the first failure only, and scene schema
   errors name the failing path.
 - **Scene pointers** are capped at 90,601 (every in-bounds parcel once); a

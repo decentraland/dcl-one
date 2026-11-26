@@ -35,13 +35,12 @@
 //! time) nor than now, and a tie goes to the byte-wise greater entity id; the
 //! same entity on both sides keeps the world local, as does an upstream scene
 //! listed without a deploy time, a blocked world and one with a publish queued
-//! for forwarding. A local scene the upstream accepted from this node's forward
-//! (`worlds.forward_outbox` `accepted`) and still lists is handed over: it holds
-//! no world local and no comparison applies to it. When no other local scene
-//! stands, the pass takes the world, the handed-over rows becoming mirrored rows
-//! in place (the upsert sets `mirror_source`, the place identity and storage
-//! stay, as it is the same entity), and from then on the world follows the
-//! upstream. A newer upstream otherwise
+//! for forwarding to this source. A scene with a matching accepted receipt leaves
+//! the timestamp comparison. When no other local scene stands, the pass converts
+//! a listed accepted scene to a mirror row in place and retires one whose absence
+//! the source confirms. This includes a world removed before its first catalogue
+//! entry. A handed-over scene keeps its identity and storage and loses local host
+//! authority, collaborator and log eligibility, and its local quota charge. A newer upstream otherwise
 //! takes the world as a newer publish takes a mirrored one: every local scene
 //! not listed is retired (`worlds.retired_world_scenes`, its place identity kept only by
 //! an upstream scene covering its whole footprint) and the world row is marked
@@ -159,7 +158,7 @@ pub struct ScenesOutcome {
     pub synced: usize,
     pub unchanged: usize,
     pub refused: usize,
-    /// Local scenes a newer upstream deployment retired.
+    /// Local scenes retired after replacement or confirmed upstream removal.
     pub superseded_local: u64,
     /// Local scenes handed over to the mirror: published here, accepted by the upstream and
     /// listed by it.
@@ -241,7 +240,7 @@ enum Outcome {
     Synced {
         scenes: usize,
         new_blobs: usize,
-        /// Local scenes the upstream's newer deployment retired.
+        /// Local scenes retired after replacement or confirmed upstream removal.
         superseded: u64,
         /// Local scenes the upstream accepted from this node and lists, now mirrored rows.
         handed_over: u64,
@@ -303,13 +302,23 @@ async fn scenes_pass(
         }
     };
 
-    let total: i64 = due_total(pool, settings).await?;
+    let uncatalogued = uncatalogued_forwards(pool, settings).await?;
+    let total = due_total(pool, settings).await? + uncatalogued.len() as i64;
     loop {
         if ctx.is_cancelled() {
             out.interrupted = true;
             break;
         }
-        let batch = due_batch(pool, settings, &cursor).await?;
+        let mut batch = due_batch(pool, settings, &cursor).await?;
+        let next = uncatalogued.partition_point(|name| name <= &cursor);
+        batch.extend(
+            uncatalogued[next..]
+                .iter()
+                .take(settings.concurrency)
+                .map(|name| (name.clone(), Vec::new())),
+        );
+        batch.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        batch.truncate(settings.concurrency);
         if batch.is_empty() {
             break;
         }

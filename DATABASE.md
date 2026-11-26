@@ -121,15 +121,17 @@ or several creates a new identity. When the worlds mirror takes over a local
 world, a retired local scene's identity passes only to a scene covering its
 whole footprint (below). Retired identities keep their storage rows.
 
-The worlds mirror decides whether a local scene holds its world
-(`core::store::local_scene_stands`): a blocked world, a queued or sending
-`worlds.forward_outbox` row of the world, and a local scene newer than the
-upstream's newest (or the same entity) hold it. A local scene whose outbox row is
-`accepted` and whose entity id the upstream's `/scenes` listing names is handed
-over and holds nothing: the pass takes the world and its row becomes the mirrored
-row of the same entity. The probe is `forward_outbox_entity_id_key`
-(`entity_id` is unique), one key lookup per local scene of a world, once per
-mirror pass and again under the world lock, for worlds that hold a local scene only.
+The worlds mirror compares the local scene set with the source's current
+listing (`core::store::local_scene_stands`). A block, an active scene queued or
+sending to this source, or a local scene newer than the source's newest (or
+the same entity) holds the local world. Before reading the source, the pass
+captures matching accepted receipt ids. Under the world lock it rechecks
+those ids to fence a re-publish of the same entity. Each probe uses
+`forward_outbox_entity_id_key`, one key lookup per local scene. A captured
+scene still listed becomes a mirror row. Confirmed absence allows retirement.
+Once per scenes pass, the mirror joins retained accepted receipts to local
+scenes and the catalogue to find worlds that were removed before the first
+catalogue entry. The outbox retains 30 days of terminal rows.
 
 Partial batches for one entity hold a session advisory lock from their first
 pending-upload/replay read through the staging or committed-publication decision.

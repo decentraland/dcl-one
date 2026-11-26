@@ -297,6 +297,59 @@ async fn refresh_listed_scenes(
     Ok(())
 }
 
+/// Accepted receipts held here before the upstream reads, tied to this source and publication.
+async fn accepted_forwards(pool: &PgPool, world: &str, source: &str) -> Result<Vec<(i64, String)>> {
+    Ok(sqlx::query_as(
+        "SELECT o.id, s.entity_id FROM worlds.world_scenes s \
+         JOIN worlds.forward_outbox o USING (world_name, entity_id) \
+         WHERE s.world_name = $1 AND s.mirror_source IS NULL AND o.target = $2 AND o.status = 'accepted'",
+    )
+    .bind(world)
+    .bind(source)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// An empty listing can retire accepted forwards even if the upstream never catalogued the
+/// world. Retain local settings and grants. Without a usable listing there is no retirement.
+async fn retire_empty_forwarded_world(
+    client: &crate::http::Outbound,
+    pool: &PgPool,
+    source: &str,
+    world: &str,
+    accepted: &[(i64, String)],
+) -> Result<Outcome> {
+    for (_, entity_id) in accepted {
+        if source_lists_scene(client, source, world, entity_id).await? {
+            bail!(
+                "the scene listing of {world} changed while it was read ({entity_id} is still listed)"
+            );
+        }
+    }
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT name FROM worlds.worlds WHERE name = $1 FOR UPDATE")
+        .bind(world)
+        .execute(&mut *tx)
+        .await?;
+    let receipts: Vec<_> = accepted.iter().map(|(receipt, _)| *receipt).collect();
+    if crate::core::store::local_scene_stands(&mut tx, world, None, source, &receipts).await? {
+        return Ok(Outcome::RefusedLocalPublish { retired: 0 });
+    }
+    let retired = crate::core::store::retire_local_scenes(&mut tx, world, &[]).await?;
+    if retired.is_empty() {
+        return Ok(Outcome::Unchanged);
+    }
+    crate::explore::places::derive::mark_world_dirty(&mut tx, world).await?;
+    scene_identity::retire_orphans(&mut tx, &[world.to_owned()]).await?;
+    tx.commit().await?;
+    Ok(Outcome::Synced {
+        scenes: 0,
+        new_blobs: 0,
+        superseded: retired.len() as u64,
+        handed_over: 0,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn mirror_world(
     client: &crate::http::Outbound,
@@ -385,6 +438,12 @@ pub(super) async fn mirror_world(
         }
     }
 
+    let accepted = if verify.is_none() && locally_published {
+        accepted_forwards(pool, &world_key, source).await?
+    } else {
+        Vec::new()
+    };
+    let receipts: Vec<_> = accepted.iter().map(|(receipt, _)| *receipt).collect();
     let url = world_url(source, name, "about")?;
     let resp = client
         .get(&url)
@@ -392,21 +451,36 @@ pub(super) async fn mirror_world(
         .await
         .with_context(|| format!("GET {url}"))?;
     if !resp.status().is_success() {
+        if resp.status() == reqwest::StatusCode::NOT_FOUND
+            && !accepted.is_empty()
+            && listed_scenes(client, source, name).await?.is_empty()
+        {
+            return retire_empty_forwarded_world(client, pool, source, &world_key, &accepted).await;
+        }
         return Ok(Outcome::NothingUpstream(
             "upstream /about did not answer 2xx",
         ));
     }
     let about: Value = serde_json::from_slice(&read_body_capped(resp, MAX_ABOUT_BYTES).await?)
         .with_context(|| format!("parsing {url}"))?;
-    let Some((_, base)) = scene_refs(&about).first().cloned() else {
+    let base = scene_refs(&about).into_iter().next().map(|(_, base)| base);
+    if base.is_none() && accepted.is_empty() {
         return Ok(Outcome::NothingUpstream("upstream world has no scenes"));
-    };
+    }
     // `/about` lists the newest scene only; `/scenes` lists them all, under the same `baseUrl`.
     // The listing decides what is retired below, so any doubt about it stops this world's sync.
     let listed = listed_scenes(client, source, name).await?;
     if listed.is_empty() {
+        if !accepted.is_empty() {
+            return retire_empty_forwarded_world(client, pool, source, &world_key, &accepted).await;
+        }
         return Ok(Outcome::NothingUpstream("upstream world has no scenes"));
     }
+    let Some(base) = base else {
+        return Ok(Outcome::NothingUpstream(
+            "upstream /about has no scene base URL",
+        ));
+    };
     // A local publish the listing does not outdate keeps the world before anything is fetched;
     // the write decides again on the fetched entities, under the world row's lock.
     if locally_published {
@@ -418,9 +492,8 @@ pub(super) async fn mirror_world(
                 scene.id.as_str(),
             )
         }));
-        let listed_ids: Vec<&str> = listed.iter().map(|scene| scene.id.as_str()).collect();
         let mut conn = pool.acquire().await?;
-        if crate::core::store::local_scene_stands(&mut conn, &world_key, newest, &listed_ids)
+        if crate::core::store::local_scene_stands(&mut conn, &world_key, newest, source, &receipts)
             .await?
         {
             drop(conn);
@@ -433,6 +506,7 @@ pub(super) async fn mirror_world(
     // every later row), so the world waits for the next pass instead.
     for cid in held
         .iter()
+        .chain(accepted.iter().map(|(_, cid)| cid))
         .filter(|cid| !listed.iter().any(|scene| &scene.id == *cid))
     {
         if source_lists_scene(client, source, name, cid).await? {
@@ -672,7 +746,8 @@ pub(super) async fn mirror_world(
                     r.cid.as_str(),
                 )
             }));
-            crate::core::store::local_scene_stands(&mut tx, &world_key, newest, &cids).await
+            crate::core::store::local_scene_stands(&mut tx, &world_key, newest, source, &receipts)
+                .await
         }
     }
     .with_context(|| format!("re-checking local publish for {name}"))?;
@@ -684,18 +759,21 @@ pub(super) async fn mirror_world(
     // A local scene the upstream lists too (one it accepted from this node's forward, or a
     // row the import wrote) becomes the mirrored row below, in place.
     let handed_over: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM worlds.world_scenes \
-         WHERE world_name = $1 AND mirror_source IS NULL AND entity_id = ANY($2::text[])",
+        "SELECT count(*) FROM worlds.world_scenes s \
+         JOIN worlds.forward_outbox o USING (world_name, entity_id) \
+         WHERE s.world_name = $1 AND s.mirror_source IS NULL \
+           AND s.entity_id = ANY($2::text[]) AND o.id = ANY($3::bigint[]) AND o.status = 'accepted'",
     )
     .bind(&world_key)
     .bind(&cids)
+    .bind(&receipts)
     .fetch_one(&mut *tx)
     .await
     .with_context(|| format!("counting the local scenes of {name} the upstream lists"))?;
     let superseded = crate::core::store::retire_local_scenes(&mut tx, &world_key, &cids)
         .await
         .with_context(|| format!("retire the local scenes of {name}"))?;
-    if !superseded.is_empty() {
+    if handed_over > 0 || !superseded.is_empty() {
         crate::explore::places::derive::mark_world_dirty(&mut tx, &world_key).await?;
     }
     // Read before the assignments below rebind them.

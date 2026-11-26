@@ -2770,13 +2770,14 @@ async fn a_forwarding_or_blocked_local_world_is_not_superseded() {
         now - 3_600_000,
     )
     .await;
-    sqlx::query(
-        "INSERT INTO worlds.forward_outbox (entity_id, world_name, target) \
-         VALUES ('bafkreilocalq', 'q.dcl.eth', 'https://upstream.example')",
+    forwarded(
+        &node.pool,
+        &fake.base,
+        "q.dcl.eth",
+        "bafkreilocalq",
+        "sending",
     )
-    .execute(&node.pool)
-    .await
-    .unwrap();
+    .await;
     sqlx::query(
         "UPDATE worlds.worlds SET blocked_since = timezone('UTC', now()) WHERE name = 'b.dcl.eth'",
     )
@@ -2822,13 +2823,14 @@ async fn a_forwarding_or_blocked_local_world_is_not_superseded() {
 }
 
 /// A forwarding record of `id` in `world` with `status`, as the worker leaves it.
-async fn forwarded(pool: &PgPool, world: &str, id: &str, status: &str) {
+async fn forwarded(pool: &PgPool, target: &str, world: &str, id: &str, status: &str) {
     sqlx::query(
         "INSERT INTO worlds.forward_outbox (entity_id, world_name, target, status) \
-         VALUES ($1, $2, 'https://upstream.example', $3)",
+         VALUES ($1, $2, $3, $4)",
     )
     .bind(id)
     .bind(world)
+    .bind(target)
     .bind(status)
     .execute(pool)
     .await
@@ -2856,7 +2858,7 @@ async fn an_accepted_and_listed_publish_is_handed_over_to_the_mirror() {
         (kept, other, file)
     };
     let identity = publish_here(&node.pool, world, &kept, &["0,0"], at).await;
-    forwarded(&node.pool, world, &kept, "accepted").await;
+    forwarded(&node.pool, &fake.base, world, &kept, "accepted").await;
 
     let ctx = node.ctx().await;
     let summary = node.pass(&ctx).await;
@@ -2881,7 +2883,8 @@ async fn an_accepted_and_listed_publish_is_handed_over_to_the_mirror() {
     expected.sort();
     assert_eq!(ids, expected, "the upstream's whole world is here");
     assert!(
-        rows.iter().all(|(_, _, source)| source.as_ref() == Some(&fake.base)),
+        rows.iter()
+            .all(|(_, _, source)| source.as_ref() == Some(&fake.base)),
         "the handed-over row is a mirrored row: {rows:?}"
     );
     assert_eq!(
@@ -2895,7 +2898,12 @@ async fn an_accepted_and_listed_publish_is_handed_over_to_the_mirror() {
         retired_ids(&node.pool, world).await.is_empty(),
         "nothing is retired: the local scene is the same entity"
     );
-    assert!(node.storage.exist(&hash_bytes_v1(&other_file)).await.unwrap());
+    assert!(
+        node.storage
+            .exist(&hash_bytes_v1(&other_file))
+            .await
+            .unwrap()
+    );
 
     let stamps = |pool: PgPool| async move {
         sqlx::query_as::<_, (String, chrono::NaiveDateTime)>(
@@ -2933,7 +2941,9 @@ async fn an_accepted_and_listed_publish_is_handed_over_to_the_mirror() {
     node.pass(&ctx).await;
     let rows = node.scene_rows(world).await;
     assert_eq!(
-        rows.iter().map(|(id, _, _)| id.as_str()).collect::<Vec<_>>(),
+        rows.iter()
+            .map(|(id, _, _)| id.as_str())
+            .collect::<Vec<_>>(),
         vec![kept.as_str()],
         "{rows:?}"
     );
@@ -2942,6 +2952,112 @@ async fn an_accepted_and_listed_publish_is_handed_over_to_the_mirror() {
         active_identity(&node.pool, world, &kept).await,
         Some(identity)
     );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// The upstream's older, disjoint scene survives a forward that it accepted and removed
+/// before the first mirror pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_accepted_publish_removed_before_handover_is_retired() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "removed-before-handover").await;
+    let world = "removed-before-handover.dcl.eth";
+    let at = now_ms() - 3_600_000;
+    let (removed, other) = {
+        let mut st = fake.state.lock();
+        let (removed, _) = deploy_upstream(&mut st, world, "Stage", &["0,0"], at);
+        let (other, _) = deploy_upstream(&mut st, world, "Museum", &["5,5"], at - 1_800_000);
+        (removed, other)
+    };
+    publish_here(&node.pool, world, &removed, &["0,0"], at).await;
+    forwarded(&node.pool, &fake.base, world, &removed, "accepted").await;
+    let ctx = node.ctx().await;
+    // A moving paginated listing cannot retire a scene that still resolves by entity id.
+    fake.state.lock().scenes_hide = Some(removed.clone());
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.failed, 1, "{summary:?}");
+    assert_eq!(node.scene_rows(world).await[0].0, removed);
+
+    {
+        let mut st = fake.state.lock();
+        st.scenes_hide = None;
+        st.worlds
+            .get_mut(world)
+            .unwrap()
+            .retain(|scene| scene.id != removed);
+        st.permissions
+            .insert(world.into(), json!({"permissions": {}}));
+    }
+    // An unreadable access setting cannot let a takeover publish the museum as open.
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.failed, 1, "{summary:?}");
+    assert_eq!(node.scene_rows(world).await[0].0, removed);
+    fake.state.lock().permissions.insert(
+        world.into(),
+        json!({"permissions": {"access": {"type": "shared-secret"}}}),
+    );
+
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 1, "{summary:?}");
+    assert_eq!(summary.scenes.handed_over, 0, "{summary:?}");
+    let rows = node.scene_rows(world).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, other);
+    assert_eq!(rows[0].2.as_ref(), Some(&fake.base));
+    assert_eq!(active_identity(&node.pool, world, &removed).await, None);
+    assert_eq!(retired_ids(&node.pool, world).await, vec![removed]);
+    assert_eq!(access_type(&node, world).await, json!("shared-secret"));
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_world_removed_before_its_first_catalogue_entry_retires_only_accepted_forwards() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "unlisted-before-handover").await;
+    let at = now_ms() - 3_600_000;
+    let one = "one.dcl.eth";
+    let foreign = "foreign.dcl.eth";
+    let (accepted, other_target) = {
+        let mut st = fake.state.lock();
+        deploy_upstream(&mut st, "anchor.dcl.eth", "Anchor", &["0,0"], at);
+        let (accepted, _) = deploy_upstream(&mut st, one, "One", &["0,0"], at);
+        let (foreign_id, _) = deploy_upstream(&mut st, foreign, "Foreign", &["0,0"], at);
+        st.worlds.remove(one);
+        st.worlds.remove(foreign);
+        (accepted, foreign_id)
+    };
+    let identity = publish_here(&node.pool, one, &accepted, &["0,0"], at).await;
+    forwarded(&node.pool, &fake.base, one, &accepted, "accepted").await;
+    publish_here(&node.pool, foreign, &other_target, &["0,0"], at).await;
+    forwarded(
+        &node.pool,
+        "https://other.example",
+        foreign,
+        &other_target,
+        "accepted",
+    )
+    .await;
+
+    node.pass(&node.ctx().await).await;
+    assert!(node.scene_rows(one).await.is_empty());
+    assert_eq!(retired_ids(&node.pool, one).await, vec![accepted]);
+    assert!(!identity_active(&node.pool, identity).await);
+    assert_eq!(node.scene_rows(foreign).await[0].0, other_target);
+    assert_eq!(world_mirror_source(&node.pool, one).await, None);
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);
@@ -2969,10 +3085,17 @@ async fn only_an_accepted_listed_publish_is_handed_over() {
         (rejected, bare, beside)
     };
     publish_here(&node.pool, "rej.dcl.eth", &rejected, &["0,0"], at).await;
-    forwarded(&node.pool, "rej.dcl.eth", &rejected, "rejected").await;
+    forwarded(&node.pool, &fake.base, "rej.dcl.eth", &rejected, "rejected").await;
     publish_here(&node.pool, "bare.dcl.eth", &bare, &["0,0"], at).await;
     publish_here(&node.pool, "beside.dcl.eth", &beside, &["0,0"], at).await;
-    forwarded(&node.pool, "beside.dcl.eth", &beside, "accepted").await;
+    forwarded(
+        &node.pool,
+        &fake.base,
+        "beside.dcl.eth",
+        &beside,
+        "accepted",
+    )
+    .await;
     // Newer than the upstream's newest scene, never forwarded.
     publish_here(
         &node.pool,
@@ -3007,7 +3130,10 @@ async fn only_an_accepted_listed_publish_is_handed_over() {
         rows.iter().all(|(_, _, source)| source.is_none()),
         "the world stays local: {rows:?}"
     );
-    assert_eq!(world_mirror_source(&node.pool, "beside.dcl.eth").await, None);
+    assert_eq!(
+        world_mirror_source(&node.pool, "beside.dcl.eth").await,
+        None
+    );
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

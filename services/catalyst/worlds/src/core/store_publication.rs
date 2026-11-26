@@ -463,41 +463,42 @@ pub async fn newer_scene_deployed(
 /// row's write, its write alone without a numeric timestamp (as [`newer_scene_deployed`]
 /// stores it); it stands when that is later, on a tie when its entity id is byte-wise greater
 /// or equal, and always when it is the same entity. A local world also stands while it is
-/// blocked or a publish of it waits in `worlds.forward_outbox`. A local scene the upstream
-/// accepted (its outbox row is `accepted`) and still lists (`listed`, the ids of the upstream's
-/// current scenes) is handed over: it does not hold the world, and the mirror keeps it as the
-/// mirrored row of the same entity.
+/// blocked or a publish of it waits in `worlds.forward_outbox`. An accepted forward to this
+/// source holds the world until its receipt is in the mirror's snapshot. An outbox id fences a
+/// re-publish of the same entity during the upstream reads.
 pub(crate) async fn local_scene_stands(
     conn: &mut sqlx::PgConnection,
     world: &str,
     upstream: Option<(f64, &str)>,
-    listed: &[&str],
+    source: &str,
+    accepted: &[i64],
 ) -> Result<bool, sqlx::Error> {
     let (timestamp, entity_id) = upstream.unzip();
     sqlx::query_scalar(
         r#"WITH local AS (
-             SELECT entity_id,
-                    LEAST(CASE WHEN jsonb_typeof(entity->'timestamp') = 'number'
-                               THEN (entity->>'timestamp')::float8 END,
-                          (extract(epoch FROM updated_at) * 1000)::float8) AS ts
-             FROM worlds.world_scenes
-             WHERE world_name = $1 AND mirror_source IS NULL)
+             SELECT s.entity_id, o.status, CASE WHEN o.status = 'accepted' THEN o.id END AS receipt,
+                    LEAST(CASE WHEN jsonb_typeof(s.entity->'timestamp') = 'number'
+                               THEN (s.entity->>'timestamp')::float8 END,
+                          (extract(epoch FROM s.updated_at) * 1000)::float8) AS ts
+             FROM worlds.world_scenes s
+             LEFT JOIN worlds.forward_outbox o
+               ON o.entity_id = s.entity_id AND o.world_name = s.world_name
+              AND o.target = $4
+             WHERE s.world_name = $1 AND s.mirror_source IS NULL)
            SELECT EXISTS (SELECT 1 FROM local) AND (
              EXISTS (SELECT 1 FROM worlds.worlds WHERE name = $1 AND blocked_since IS NOT NULL)
-             OR EXISTS (SELECT 1 FROM worlds.forward_outbox
-                        WHERE world_name = $1 AND status IN ('queued', 'sending'))
+             OR EXISTS (SELECT 1 FROM local WHERE status IN ('queued', 'sending'))
              OR EXISTS (SELECT 1 FROM local
-                        WHERE NOT (entity_id = ANY($4::text[])
-                                   AND EXISTS (SELECT 1 FROM worlds.forward_outbox o
-                                               WHERE o.entity_id = local.entity_id
-                                                 AND o.status = 'accepted'))
-                          AND ($2::float8 IS NULL OR entity_id = $3 OR ts > $2::float8
-                               OR (ts = $2::float8 AND entity_id COLLATE "C" > $3))))"#,
+                        WHERE CASE WHEN receipt IS NOT NULL THEN receipt <> ALL($5::bigint[])
+                                   ELSE $2::float8 IS NULL OR entity_id = $3 OR ts > $2::float8
+                                        OR (ts = $2::float8 AND entity_id COLLATE "C" > $3)
+                              END))"#,
     )
     .bind(world)
     .bind(timestamp)
     .bind(entity_id)
-    .bind(listed)
+    .bind(source)
+    .bind(accepted)
     .fetch_one(conn)
     .await
 }

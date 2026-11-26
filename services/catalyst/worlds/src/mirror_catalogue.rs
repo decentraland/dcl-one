@@ -172,6 +172,28 @@ pub(super) async fn catalogue_pass(
     Ok(outcome)
 }
 
+/// Local scenes accepted by the configured source in worlds missing from its catalogue.
+pub(super) async fn uncatalogued_forwards(
+    pool: &PgPool,
+    settings: &MirrorSettings,
+) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar(
+        r#"SELECT DISTINCT o.world_name
+           FROM worlds.forward_outbox o
+           JOIN worlds.world_scenes s USING (world_name, entity_id)
+           WHERE o.target = $1 AND o.status = 'accepted' AND s.mirror_source IS NULL
+             AND (cardinality($2::text[]) = 0 OR o.world_name = ANY($2))
+             AND NOT EXISTS (
+                 SELECT 1 FROM worlds.remote_worlds r
+                 WHERE r.world_name = o.world_name AND r.unlisted_at IS NULL)
+           ORDER BY o.world_name"#,
+    )
+    .bind(&settings.source)
+    .bind(&settings.names)
+    .fetch_all(pool)
+    .await?)
+}
+
 /// The scope of a pass: listed worlds, optionally only `names`, optionally
 /// only the first `limit` in name order (a bounded, restart-stable run).
 pub(super) async fn due_total(pool: &PgPool, settings: &MirrorSettings) -> Result<i64> {

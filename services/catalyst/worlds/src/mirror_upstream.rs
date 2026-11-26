@@ -709,7 +709,11 @@ pub(super) async fn source_lists_scene(
     let rows = listing["scenes"]
         .as_array()
         .with_context(|| format!("{url} answered no scenes"))?;
-    Ok(rows.iter().any(|row| row["entityId"] == cid))
+    match (listing["total"].as_u64(), rows.as_slice()) {
+        (Some(0), []) => Ok(false),
+        (Some(1), [scene]) if scene["entityId"] == cid => Ok(true),
+        _ => bail!("{url} did not return a valid listing for {cid}"),
+    }
 }
 
 /// `(entity id, baseUrl)` per `scenesUrn` entry:
