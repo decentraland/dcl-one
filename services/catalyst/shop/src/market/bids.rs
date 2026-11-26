@@ -34,12 +34,12 @@
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, Postgres, Row, Transaction};
 
-use super::chain_walk::{self, ChainNet, Cursor, INDEXER_NFT, INDEXER_SALES, READY_WINDOW};
+use super::chain_walk::{self, ChainNet, Cursor, INDEXER_NFT, INDEXER_SALES};
 use super::graph;
 use super::owned_items::{self, Rule};
 use super::readers::{self, GraphPage, Ttl, seconds_to_ms};
@@ -420,6 +420,12 @@ async fn legacy_leg(
     graph_leg(state, f, window, networks, now_ms).await
 }
 
+/// Native legacy bids refer to NFTs, and the unsupported networks have
+/// no bid rows on either legacy source.
+fn legacy_bids_possible(f: &BidFilters) -> bool {
+    f.item_id.is_none() && !f.network_db_filter.as_ref().is_some_and(|n| n.is_empty())
+}
+
 /// The subgraph reader's legacy bids of `networks` unexpired at `now_ms`
 /// over the merged window and their capped total (a node that does not walk
 /// the indexes).
@@ -430,7 +436,7 @@ async fn graph_leg(
     networks: Vec<graph::Network>,
     now_ms: i64,
 ) -> Result<(Vec<Bid>, i64), Response> {
-    if f.item_id.is_some() || f.network_db_filter.as_ref().is_some_and(|n| n.is_empty()) {
+    if !legacy_bids_possible(f) {
         return Ok((Vec::new(), 0));
     }
     let where_ = legacy_where(f, now_ms);
@@ -481,27 +487,10 @@ pub fn book_here(state: &MarketplaceState) -> bool {
     owned_items::walks_here(state) && state.settings.market.indexes.sales_enabled
 }
 
-/// Whether the sales cursor `c` is published at `now` as the bid book
-/// trusts it: its whole history walked and a fold published within
-/// [`READY_WINDOW`], bound to `chain_id` (the chain the node serves on its
-/// network, `Settings::catalogue`) and out of quarantine.
-/// `shop.nft_bid` changes only in a fold's commit and in a rewind, which
-/// clears the marker, so, as `owned_items::fresh` for the nft index, this
-/// does not compare `folded_block` with `last_block`: each pass advances
-/// `last_block` before it folds, so that equality is false for part of
-/// every pass while the table holds a published fold.
-pub fn sales_published(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
-    let Some(folded_at) = c.folded_at else {
-        return false;
-    };
-    let age = now.naive_utc().signed_duration_since(folded_at);
-    c.indexer == INDEXER_SALES
-        && c.full_history
-        && c.folded_block.is_some()
-        && c.quarantined_at.is_none()
-        && c.chain_id == Some(chain_id)
-        && age >= ChronoDuration::zero()
-        && age <= READY_WINDOW
+/// Whether a network's sales cursor has a fresh published fold on the
+/// served chain. A forward walk can advance without changing that fold.
+fn sales_published(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
+    c.indexer == INDEXER_SALES && chain_walk::fresh_fold_on(c, chain_id, now).is_some()
 }
 
 /// What a network's bid sellers are read against on a [`bids_snapshot`].
@@ -523,7 +512,7 @@ pub(super) struct SellerBounds {
 /// for an item (the contracts bid on tokens) or a network the filter cannot
 /// name.
 fn book_nets(f: &BidFilters) -> Vec<ChainNet> {
-    if f.item_id.is_some() || f.network_db_filter.as_ref().is_some_and(|n| n.is_empty()) {
+    if !legacy_bids_possible(f) {
         return Vec::new();
     }
     match f.network {
@@ -533,8 +522,8 @@ fn book_nets(f: &BidFilters) -> Vec<ChainNet> {
     }
 }
 
-/// The read-only snapshot the bids of a node that walks the indexes are read
-/// on, and the request's instant: taken once the snapshot is established,
+/// The bids' read-only snapshot and request instant, taken after the
+/// snapshot is established,
 /// so a fold the snapshot sees was published before it, and shared by the
 /// checks and the reads. The trades mirror and its verdicts must be ready on
 /// it, and for each of `nets` the bid book: the sales cursor and the nft
@@ -590,10 +579,7 @@ pub(super) async fn bids_snapshot(
         let sales = chain_walk::cursor(&mut *tx, INDEXER_SALES, net)
             .await
             .map_err(db)?;
-        let Some(published) = sales
-            .filter(|c| sales_published(c, chain, now))
-            .and_then(|c| c.folded_block)
-        else {
+        let Some(sales) = sales.filter(|c| sales_published(c, chain, now)) else {
             return Err(unavailable(
                 Source::SalesIndex,
                 &format!(
@@ -611,7 +597,7 @@ pub(super) async fn bids_snapshot(
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?;
-        if book != Some(published) {
+        if !chain_walk::holds_published_fold(book, &sales) {
             return Err(unavailable(
                 Source::SalesIndex,
                 &format!(
@@ -634,6 +620,7 @@ pub(super) async fn bids_snapshot(
         owned_items::check(&mut tx, catalogue, &[net], Rule::Fresh, false, now)
             .await
             .map_err(|e| e.into_response(|m| ApiError::internal(m.to_string()).into_response()))?;
+        super::catalogue::require_collections_on(&mut tx, state, net, now).await?;
         let nft = chain_walk::cursor(&mut *tx, INDEXER_NFT, net)
             .await
             .map_err(db)?
@@ -817,14 +804,14 @@ impl Book {
 }
 
 /// The filters of `f` but its seller over `shop.nft_bid b` of `net` at
-/// `now_ms`, from `$4` (`$1` is `now_ms`, `$2` and `$3` the
-/// [`SellerBounds`]); `None` when no bid can match (a token id that is not a
+/// `now_ms`, from `$4` (`$1` is the cutoff in whole seconds, `$2` and `$3`
+/// the [`SellerBounds`]); `None` when no bid can match (a token id that is not a
 /// decimal). Each read adds the catalogue ([`Book::catalogued`]).
 fn scope(net: ChainNet, f: &BidFilters, now_ms: i64, binds: &mut Vec<String>) -> Option<String> {
     binds.clear();
-    binds.push(now_ms.to_string());
+    binds.push(now_ms.div_euclid(1000).to_string());
     let mut sql = format!(
-        "b.network = '{}' AND b.expires_at * 1000 > $1::bigint",
+        "b.network = '{}' AND b.expires_at > $1::bigint",
         net.db_name()
     );
     let next = |binds: &mut Vec<String>, v: String| {
@@ -1038,12 +1025,12 @@ pub fn sort_bids(rows: &mut [Bid], sort_by: Option<BidSortBy>) {
         let id = a.id.cmp(&b.id);
         match sort_by {
             Some(BidSortBy::RecentlyUpdated) => b.updated_at.cmp(&a.updated_at).then(id),
-            Some(BidSortBy::MostExpensive) => b
-                .price
-                .parse::<u128>()
-                .unwrap_or(0)
-                .cmp(&a.price.parse::<u128>().unwrap_or(0))
-                .then(id),
+            Some(BidSortBy::MostExpensive) => {
+                let price = |bid: &Bid| {
+                    alloy_primitives::U256::from_str_radix(&bid.price, 10).unwrap_or_default()
+                };
+                price(b).cmp(&price(a)).then(id)
+            }
             _ => b.created_at.cmp(&a.created_at).then(id),
         }
     });
@@ -1215,7 +1202,7 @@ mod tests {
             last_block_time: None,
             fold_through: Some(100),
             folded_block: Some(100),
-            folded_at: Some(now.naive_utc() - ChronoDuration::minutes(1)),
+            folded_at: Some(now.naive_utc() - chrono::Duration::minutes(1)),
             full_history: true,
             reorg_rewinds: 0,
             updated_at: now.naive_utc(),
@@ -1256,7 +1243,7 @@ mod tests {
             ..published.clone()
         }));
         assert!(not(Cursor {
-            folded_at: Some(now.naive_utc() - ChronoDuration::minutes(31)),
+            folded_at: Some(now.naive_utc() - chrono::Duration::minutes(31)),
             ..published.clone()
         }));
         assert!(not(Cursor {

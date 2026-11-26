@@ -406,7 +406,7 @@ pub async fn insert_events(
 /// key sets: the planner estimates `created` at one row, and as a join it
 /// rescanned every key per key, which a full fold of Polygon's history
 /// (about 66k bids) did not finish within the hour.
-const FOLD_BIDS_SQL: &str = "
+pub(super) const FOLD_BIDS_SQL: &str = "
 WITH nft AS (
     SELECT COALESCE(max(last_block), -1) AS indexed FROM shop.chain_cursor
     WHERE indexer = $4 AND network = $1 AND chain_id = $3 AND quarantined_at IS NULL AND diverged_at IS NULL

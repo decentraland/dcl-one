@@ -215,12 +215,14 @@ fn world_batch(state: &CommsState, rooms: &[String]) -> Vec<WorldName> {
         .take(WORLD_BATCH)
         .cloned()
         .collect();
-    if selected.len() < WORLD_BATCH && after.is_some() {
+    if selected.len() < WORLD_BATCH
+        && let Some(after) = after.as_deref()
+    {
         let remaining = WORLD_BATCH - selected.len();
         selected.extend(
             worlds
                 .values()
-                .filter(|world| world.key() <= after.as_deref().unwrap())
+                .filter(|world| world.key() <= after)
                 .take(remaining)
                 .cloned(),
         );

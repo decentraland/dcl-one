@@ -1022,6 +1022,37 @@ pub(crate) async fn published_block<'e>(
         .and_then(|c| fresh_fold_on(&c, chain_id, now)))
 }
 
+/// Whether a projection holds exactly the fold its cursor `c` published,
+/// judged by `marker`: the block the projection's own fold wrote with its
+/// rows, in the fold's transaction (`None` before its first such fold).
+///
+/// The walk commits a fold, then records it ([`record_fold`]) and publishes
+/// it ([`mark_folded`]) after reading the head, each in a transaction of its
+/// own. Between the fold's commit and its publication the projection's rows
+/// already hold the next fold while `folded_block` still names the previous
+/// one, and a stalled head read stretches that interval; `fold_through` and
+/// `folded_block` do not move with the rows, so they cannot tell. A marker
+/// written with the rows can: a reader serves the projection only while it
+/// equals the published block, read on the same snapshot as the rows. A walk
+/// that advanced without folding leaves both at the published block, still
+/// served.
+pub fn holds_published_fold(marker: Option<i64>, c: &Cursor) -> bool {
+    marker.is_some() && marker == c.folded_block
+}
+
+/// [`holds_published_fold`] for the cursor of `indexer` on `net`, read on
+/// `conn` (the reader's snapshot); false without a cursor.
+pub async fn holds_published_fold_on(
+    conn: &mut PgConnection,
+    indexer: &str,
+    net: ChainNet,
+    marker: Option<i64>,
+) -> Result<bool, sqlx::Error> {
+    Ok(cursor(&mut *conn, indexer, net)
+        .await?
+        .is_some_and(|c| holds_published_fold(marker, &c)))
+}
+
 /// [`is_ready_on`] for the indexes that read mainnet only: every index but
 /// `trade_events`, whose readers pass the chain they configured.
 pub fn is_ready(c: &Cursor, now: DateTime<Utc>) -> bool {
@@ -2321,8 +2352,8 @@ async fn walk(
                     out.requests += spent.requests;
                 }
                 Ok(_) => break,
-                Err(e) if e.downcast_ref::<Diverged>().is_some() => {
-                    out.requests += e.downcast_ref::<Diverged>().unwrap().requests;
+                Err(e) if let Some(requests) = e.downcast_ref::<Diverged>().map(|d| d.requests) => {
+                    out.requests += requests;
                     return diverged(
                         pool,
                         source,
@@ -2557,6 +2588,24 @@ mod tests {
                 "{ethereum} / {matic}"
             );
         }
+    }
+
+    /// A projection is served only at the fold its cursor published: a
+    /// marker its fold wrote ahead of the publication (committed, not yet
+    /// published), behind it (folded by a writer that kept no marker), or
+    /// missing does not stand; a walk advanced past an unchanged fold does.
+    #[test]
+    fn a_projection_holds_only_the_published_fold() {
+        let now = Utc::now();
+        let published = cursor_row(100, Some(100), Some(now), true);
+        assert!(holds_published_fold(Some(100), &published));
+        assert!(!holds_published_fold(Some(101), &published));
+        assert!(!holds_published_fold(Some(99), &published));
+        assert!(!holds_published_fold(None, &published));
+        let advanced = cursor_row(120, Some(100), Some(now), true);
+        assert!(holds_published_fold(Some(100), &advanced));
+        let unpublished = cursor_row(120, None, None, true);
+        assert!(!holds_published_fold(Some(120), &unpublished));
     }
 
     fn cursor_row(last: i64, folded: Option<i64>, at: Option<DateTime<Utc>>, full: bool) -> Cursor {

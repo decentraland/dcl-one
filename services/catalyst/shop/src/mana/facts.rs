@@ -1083,8 +1083,11 @@ pub(crate) async fn resolve_trade(
             let token =
                 token_record(pool, &chain, &role, asset.contract.address(), token_id).await?;
             let item = match &token {
-                Lookup::Found(t) if t.item_id.is_some() => {
-                    item_record(pool, &chain, asset.contract.address(), t.item_id.unwrap())
+                Lookup::Found(TokenRecord {
+                    item_id: Some(item_id),
+                    ..
+                }) => {
+                    item_record(pool, &chain, asset.contract.address(), *item_id)
                         .await?
                         .0
                 }

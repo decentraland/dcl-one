@@ -88,6 +88,8 @@ fn expected_pending_steps() -> Vec<&'static str> {
             "0070_shop_mirror_chain",
             "0071_shop_testnet_sale_and_trade_venues",
             "0072_shop_verified_item_rows",
+            "0078_shop_nft_last_sale",
+            "0079_credits_seasonal_visit_goals",
         ])
         .collect()
 }
@@ -872,7 +874,8 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             .await
             .unwrap();
     assert_eq!(worlds, 1);
-    let marked: Vec<(String, bool, Option<String>, bool, Option<String>)> = sqlx::query_as(
+    type Marked = (String, bool, Option<String>, bool, Option<String>);
+    let marked: Vec<Marked> = sqlx::query_as(
         "SELECT name, access_set_here, access_set_by, settings_set_here, settings_set_by \
          FROM worlds.worlds WHERE name IN ('owner-set.dcl.eth', 'as-mirrored.dcl.eth') ORDER BY name",
     )
