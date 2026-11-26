@@ -847,6 +847,19 @@ test('the fake newsletter service records each subscription as sent and fails on
   assert.deepEqual(newsletterRecord(received), { newsletter: received })
 })
 
+test('a draft save sends the initialize calldata its creator\'s capture recorded, byte for byte', () => {
+  const { CASES, initializeCalldata } = require(script)
+  const folder = path.resolve(__dirname, '../../services/catalyst/tests/fixtures/conformance/builder/source')
+  const saves = CASES.filter(item => String(item.body?.data).startsWith('0xd14fee77'))
+  assert.equal(saves.length, 15)
+  const recorded = saves.map(item => JSON.parse(fs.readFileSync(path.join(folder, `${item.name}.json`), 'utf8')).request.body.data)
+  assert.deepEqual(saves.map(item => item.body.data), recorded)
+  assert.deepEqual([...new Set(recorded)].sort(), [
+    initializeCalldata('0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e'),
+    initializeCalldata('0xcd6884d4258edc833f31ac773e24affe6a7d3154')
+  ].sort())
+})
+
 test('every committed capture and the seed parse into the shape the replay reads', () => {
   const { CASES, readSeed } = require(script)
   const folder = path.resolve(__dirname, '../../services/catalyst/tests/fixtures/conformance/builder')
