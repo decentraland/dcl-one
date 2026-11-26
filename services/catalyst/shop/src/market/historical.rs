@@ -15,7 +15,7 @@ use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 
-use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_THIRD_PARTY_REGISTRY};
+use super::chain_walk::{ChainNet, INDEXER_NFT, INDEXER_THIRD_PARTY_REGISTRY};
 use super::wire::{ApiError, NftCategory};
 use super::{MarketplaceState, SharedState, nft_index};
 use crate::auth::admin_bearer;
@@ -319,7 +319,7 @@ async fn position(
         INDEXER_THIRD_PARTY_REGISTRY => "third-party-registry-index",
         _ => "rentals-index",
     };
-    let ready = chain_walk::published_sql_on(
+    let ready = crate::chain_index::catalogue::published_sql_on(
         "c",
         "timezone('UTC', now())",
         ETH.chain_id(),

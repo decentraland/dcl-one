@@ -12,10 +12,18 @@ type NativeCheckboxProps = Omit<
 >
 
 export type CheckboxControlProps = NativeCheckboxProps & {
-  /** Box size: 16, 20 or 24px. The target is 28, 32 or 36px, and 44px on a coarse pointer. */
+  /**
+   * Box size: 16, 20 or 24px. The target is 28, 32 or 36px, and 44px on a coarse pointer. Does not apply to
+   * `appearance="hud"`, whose box and target are 20px.
+   */
   size?: CheckboxSize
   /** `outline`: a bordered box that fills with the primary action colour. `filled`: a snow box. */
   variant?: CheckboxVariant
+  /**
+   * `hud` is the Explorer HUD's box on its sign-in screens: a 20px white square with an orange tick and no
+   * halo, whatever the `variant` and `size`.
+   */
+  appearance?: 'default' | 'hud'
   /** Shows a dash and reports the mixed state. Clicking it hands the next state to the caller. */
   indeterminate?: boolean
   ref?: Ref<HTMLInputElement>
@@ -37,6 +45,7 @@ export type CheckboxProps = CheckboxControlProps &
 export function CheckboxControl({
   size = 'md',
   variant = 'outline',
+  appearance = 'default',
   indeterminate = false,
   className,
   ref: forwardedRef,
@@ -63,6 +72,7 @@ export function CheckboxControl({
       className={[styles.root, className].filter(Boolean).join(' ')}
       data-size={size}
       data-variant={variant}
+      data-appearance={appearance === 'hud' ? 'hud' : undefined}
     >
       <input
         {...input}
@@ -74,7 +84,13 @@ export function CheckboxControl({
       />
       <span className={styles.halo} aria-hidden="true" />
       <span className={styles.box} aria-hidden="true">
-        <GeneralCheck className={styles.check} />
+        {appearance === 'hud' ? (
+          <svg className={styles.check} viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : (
+          <GeneralCheck className={styles.check} />
+        )}
         <GeneralRemove className={styles.dash} />
       </span>
     </span>

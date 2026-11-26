@@ -40,7 +40,9 @@
 //! rule. A held cursor shows as a growing `badges_processor_cursor_lag`
 //! (blocks behind the published block).
 //!
-//! A sale older than `max_event_age` gets no badge, so it never waits.
+//! A sale older than `max_event_age` gets no badge, so it never waits; one
+//! that grows older than it while it waits passes without a badge too, as
+//! under the mirrors.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -54,8 +56,9 @@ use crate::identity::Address;
 
 pub(crate) use crate::shared::collections::ITEM_SHIFT;
 use crate::shared::collections::item_pass_after;
-/// Mainnet, which the publish marker asks of an `ethereum` cursor; the badge
-/// sales read only Polygon's.
+/// The chain the publish marker asks of an `ethereum` cursor. Its value
+/// never matters here: the badge sales read only Polygon's cursors
+/// (`network = 'matic'`).
 const ETHEREUM_CHAIN: i64 = 1;
 const ASSET_TYPE_ERC721: i64 = 3;
 const ASSET_TYPE_COLLECTION_ITEM: i64 = 4;

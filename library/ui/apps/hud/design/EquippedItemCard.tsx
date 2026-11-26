@@ -11,8 +11,8 @@
 // clickable, equip-focused grid tile, which has no caption) — this one is purely for display.
 
 import { useState } from 'react'
-import { Button } from './Button'
 import styles from './EquippedItemCard.module.css'
+import { Button } from '@dcl/one-ui'
 
 export interface EquippedItemCardProps {
   thumbnail?: string
@@ -49,7 +49,7 @@ export function EquippedItemCard({ thumbnail, name, rarity, shopUrl, shopLabel =
       <span className={styles.rarityTag}>{rarity ?? 'base'}</span>
       {price != null && <span className={styles.price}>{price}</span>}
       {shopUrl != null && (
-        <Button href={shopUrl} target="_blank" rel="noopener" size="sm" className={styles.shopBtn}>
+        <Button appearance="hud" href={shopUrl} target="_blank" rel="noopener" size="sm" className={styles.shopBtn}>
           {shopLabel}
         </Button>
       )}
