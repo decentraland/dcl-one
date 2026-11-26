@@ -15,7 +15,8 @@ It reads the TypeScript sources as text and never runs them.
 
 `symbols`: each v1 collection's `symbol()` (immutable, set by its constructor), read from the
 endpoint in ETH_RPC_URL (never an argument: a keyed URL would show in the process list) with one
-batched `eth_call` at the latest block, as {address: symbol} in the order of collections-v1.json.
+batched `eth_call` at the head's block, which it prints for upstream.lock.json, as {address: symbol}
+in the order of collections-v1.json.
 
 Both write two-space indented JSON with a trailing newline.
 """
@@ -101,13 +102,60 @@ def arguments(text, i):
             sys.exit(f"unexpected argument at {text[i:i + 20]!r}")
 
 
-def wearables(path, name):
-    text = path.read_text(encoding="utf-8")
-    if not re.search(rf"export let {name}: Wearable\[\] = \[", text):
-        sys.exit(f"{path}: `export let {name}: Wearable[]` not found")
+def strip_comments(text):
+    """`text` without its `//` and `/* */` comments, string literals kept whole."""
     out = []
-    for match in re.finditer(r"new Wearable\(", text):
-        args, _ = arguments(text, match.end() - 1)
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if c in "'\"`":
+            j = i + 1
+            while j < len(text) and text[j] != c:
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i:j + 1])
+            i = j + 1
+        elif text.startswith("//", i):
+            end = text.find("\n", i)
+            i = len(text) if end < 0 else end
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            if end < 0:
+                sys.exit("unterminated comment")
+            i = end + 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def array_block(text, start):
+    """The text of the `[ ... ]` array whose `[` is at text[start], strings skipped."""
+    depth = 0
+    i = start
+    while i < len(text):
+        c = text[i]
+        if c in "'\"":
+            _, i = string_literal(text, i)
+            continue
+        if c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+        i += 1
+    sys.exit("unterminated array")
+
+
+def wearables(path, name):
+    text = strip_comments(path.read_text(encoding="utf-8"))
+    export = re.search(rf"export let {name}: Wearable\[\] = (\[)", text)
+    if not export:
+        sys.exit(f"{path}: `export let {name}: Wearable[]` not found")
+    block = array_block(text, export.start(1))
+    out = []
+    for match in re.finditer(r"new Wearable\(", block):
+        args, _ = arguments(block, match.end() - 1)
         if len(args) != 6 or not all(isinstance(a, str) for a in args[:5]) or not isinstance(args[5], list):
             sys.exit(f"{path}: a Wearable with unexpected arguments: {args}")
         wid, wname, description, category, rarity, body_shapes = args
@@ -124,29 +172,55 @@ def wearables(path, name):
     return out
 
 
-def eth_call_symbols(rpc, addresses):
-    """`symbol()` of each address, by one JSON-RPC batch."""
-    batch = [
-        {"jsonrpc": "2.0", "id": i, "method": "eth_call", "params": [{"to": a, "data": "0x95d89b41"}, "latest"]}
-        for i, a in enumerate(addresses)
-    ]
+def rpc_post(rpc, payload):
+    """The JSON reply to one JSON-RPC request or batch."""
     request = urllib.request.Request(
         rpc,
-        data=json.dumps(batch).encode(),
+        data=json.dumps(payload).encode(),
         headers={"content-type": "application/json", "user-agent": "collections-v1-data"},
     )
     with urllib.request.urlopen(request, timeout=60) as response:
-        replies = {r["id"]: r for r in json.loads(response.read())}
+        return json.loads(response.read())
+
+
+def abi_string(result, what):
+    """The string an ABI-encoded `string` return value holds; exits on any other shape."""
+    if not isinstance(result, str) or not re.fullmatch(r"0x(?:[0-9a-fA-F]{2})*", result):
+        sys.exit(f"{what}: not a hex result: {result!r}")
+    raw = bytes.fromhex(result[2:])
+    if len(raw) < 64:
+        sys.exit(f"{what}: {len(raw)} bytes, not an ABI string")
+    offset = int.from_bytes(raw[0:32], "big")
+    if offset + 32 > len(raw):
+        sys.exit(f"{what}: string offset {offset} past the {len(raw)} bytes")
+    length = int.from_bytes(raw[offset:offset + 32], "big")
+    if length == 0 or offset + 32 + length > len(raw):
+        sys.exit(f"{what}: string length {length} does not fit the {len(raw)} bytes")
+    return raw[offset + 32:offset + 32 + length].decode("utf-8")
+
+
+def eth_call_symbols(rpc, addresses):
+    """(block, `symbol()` of each address), read at one block by one JSON-RPC batch."""
+    head = rpc_post(rpc, {"jsonrpc": "2.0", "id": 0, "method": "eth_blockNumber", "params": []})
+    if not isinstance(head, dict) or "result" not in head:
+        sys.exit(f"eth_blockNumber: {head.get('error') if isinstance(head, dict) else head!r}")
+    block = int(head["result"], 16)
+    batch = [
+        {"jsonrpc": "2.0", "id": i, "method": "eth_call", "params": [{"to": a, "data": "0x95d89b41"}, hex(block)]}
+        for i, a in enumerate(addresses)
+    ]
+    answer = rpc_post(rpc, batch)
+    if not isinstance(answer, list):
+        error = answer.get("error") if isinstance(answer, dict) else answer
+        sys.exit(f"the endpoint refused the batch: {error!r}")
+    replies = {r.get("id"): r for r in answer if isinstance(r, dict)}
     symbols = {}
     for i, address in enumerate(addresses):
         reply = replies.get(i, {})
         if "result" not in reply:
-            sys.exit(f"symbol() of {address}: {reply.get('error')}")
-        raw = bytes.fromhex(reply["result"][2:])
-        offset = int.from_bytes(raw[0:32], "big")
-        length = int.from_bytes(raw[offset:offset + 32], "big")
-        symbols[address] = raw[offset + 32:offset + 32 + length].decode("utf-8")
-    return symbols
+            sys.exit(f"symbol() of {address}: {reply.get('error', 'no reply')}")
+        symbols[address] = abi_string(reply["result"], f"symbol() of {address}")
+    return block, symbols
 
 
 def main():
@@ -155,7 +229,15 @@ def main():
         revision = subprocess.run(
             ["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
         ).stdout.strip()
-        order = lookup_order((checkout / ORDER_FILE).read_text(encoding="utf-8"))
+        lock = json.loads((output.parent / "upstream.lock.json").read_text(encoding="utf-8"))
+        pinned = [
+            source["revision"]
+            for source in lock["sources"]
+            if source.get("repository", "").endswith("/collections-graph")
+        ]
+        if pinned != [revision]:
+            sys.exit(f"the checkout is at {revision}, but upstream.lock.json pins {pinned}")
+        order = lookup_order(strip_comments((checkout / ORDER_FILE).read_text(encoding="utf-8")))
         catalogue = [
             {"collection": name, "wearables": wearables(checkout / DATA_DIR / f"{name}.ts", name)}
             for name in order
@@ -169,9 +251,9 @@ def main():
             sys.exit("symbols reads the endpoint from ETH_RPC_URL")
         collections, output = Path(sys.argv[2]), Path(sys.argv[3])
         addresses = [c["id"].lower() for c in json.loads(collections.read_text(encoding="utf-8"))]
-        symbols = eth_call_symbols(rpc, addresses)
+        block, symbols = eth_call_symbols(rpc, addresses)
         output.write_text(json.dumps(symbols, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        print(f"{len(symbols)} symbols -> {output}")
+        print(f"{len(symbols)} symbols read at block {block} -> {output}")
     else:
         sys.exit(__doc__)
 

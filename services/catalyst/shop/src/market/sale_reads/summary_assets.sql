@@ -1,10 +1,16 @@
 -- Ethereum v1 sales have token IDs in the ledger. The latest Issue at
--- the sale position must resolve against rows from completed mirror copies.
+-- the sale position must resolve against rows from completed mirror copies,
+-- or, once the collections index owns Ethereum, from its standing projection
+-- (which publishes the v1 royalty catalogue with the rows it writes).
 , v1_markers AS (
     SELECT mirror
     FROM shop.mirror_state
     WHERE network='ethereum' AND last_complete_pass_at IS NOT NULL
       AND (chain_id=1 OR (chain_id IS NULL AND pass_block_hash IS NULL))
+    UNION
+    SELECT copy FROM shop.collection_projection,
+        unnest(ARRAY['collections','items']) AS copy
+    WHERE network='ethereum' AND owned_at IS NOT NULL AND projected_through IS NOT NULL
 ), v1_contracts AS (
     SELECT contract_address FROM candidate_collections WHERE network='ethereum'
     UNION

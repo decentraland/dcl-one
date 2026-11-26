@@ -1785,10 +1785,13 @@ an adjustment. Each writes one `ops.admin_audit` row in its own transaction
 `studio.operator.remove`, `studio.budget`). A studio's own operators grant
 Credits to players out of its budget, signed fetch with no admin gate
 (`POST /credits/operator/studios/{id}/grants` and its `/shop-api` twin, paced
-at 60 per operator wallet a minute). Its signature counts over the mount's
-path or the credits host's own route, never a foreign prefix ending with it;
-a contract wallet's is checked with the uncached EIP-1654 validator; and a
-signed `bodySha256` must be the body's. A grant writes, in one transaction, the
+at 60 a minute per operator wallet and per process, counting only wallets
+that act for the studio). Its signature counts over the mount's path or the
+credits host's own route, never a foreign prefix ending with it; a contract
+wallet's is checked with the uncached EIP-1654 validator; a signed
+`bodySha256` must be the body's, and one that signs none is refused while
+`CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` is on, as an admin write is. A grant
+writes, in one transaction, the
 player's paid credit as an admin grant does (`credits.wallets`,
 `credits.ledger` with its `ops.admin_audit` row, the operator as actor, and
 the "A gift from {studio}" notice) and the `grant` entry naming that ledger
@@ -1802,9 +1805,9 @@ studios (`GET /credits/operator/studios`, by `studio_operators_address_idx`)
 and one of them with its grants (`GET /credits/operator/studios/{id}`, from one
 REPEATABLE READ, READ ONLY snapshot), and a player's gifts (the `gifts` block of
 `GET /credits/users/{address}/credit-orders`: the wallet's ledger `grant` rows
-with an admin `grant` audit row or named by a budget entry, by
-`ledger_address_id_idx`, the total and the page from one REPEATABLE READ, READ
-ONLY snapshot; a gift that is not a whole number of cents within
+with an admin `grant` audit row or named by a budget entry, the wallet's rows
+found by `ledger_address_id_idx` and sorted by time, newest first, the total
+and the page from one REPEATABLE READ, READ ONLY snapshot; a gift that is not a whole number of cents within
 `Number.MAX_SAFE_INTEGER` cannot take that shape and is left out of both,
 counted in a warning; a migrated Decentraland grant has neither link and is not
 listed until #2473). The credits report calls a grant `studio_grant` only on
@@ -1819,12 +1822,14 @@ Locks: a change that adds budget first takes the service-wide advisory lock
 `studio-budget-deposits`, credits-server's), then the studio's row
 (`FOR UPDATE`); any other budget change, and adding or removing an operator,
 takes the studio's row alone, and so does a grant, which then takes the
-player's wallet row (no path takes a wallet row before a studio row). Each
-transaction pins READ COMMITTED whatever the session default, so each statement
-after a lock reads a snapshot taken after it was granted, and a balance, the
-day's total, a grant's operators or its studio's status is never read from
-before the previous holder committed: of two grants racing for the last of a
-budget, the second waits for the row and sees the first's entry.
+player's wallet row (no path takes a wallet row before a studio row). A budget
+change and a grant, the writes that judge what they read under the lock, pin
+READ COMMITTED whatever the session default, so each statement after the lock
+reads a snapshot taken after it was granted, and a balance, the day's total, a
+grant's operators or its studio's status is never read from before the
+previous holder committed: of two grants racing for the last of a budget, the
+second waits for the row and sees the first's entry. Renaming, pausing and
+operator changes judge nothing they read and run at the session's level.
 
 Invariants: a studio's balance never goes below zero (checked under its row
 lock before the entry is written). The new budget written in one UTC day of
@@ -3294,10 +3299,9 @@ acquisition. A lost lease ends the projection's pass at once, even inside a
 fold; transactions it had already committed stay, and the generation fences
 any later one.
 
-Every transaction that writes the projection ends by locking the row
-(`SELECT … FOR UPDATE`) and comparing that generation, the chain binding and
-the quarantine. On a mismatch it rolls back, so a job that lost the
-projection commits nothing. This covers:
+A transaction that writes the projection locks the cursor row
+(`SELECT … FOR UPDATE`) and checks the generation, chain binding and
+quarantine. On a mismatch the transaction rolls back. This covers:
 - the window's rows with the cursor advance (which also requires the
   checkpoint it read, height and hash);
 - a reorg rewind, and the withdrawal of a diverged checkpoint's publication;
@@ -3305,11 +3309,20 @@ projection commits nothing. This covers:
 - each fold, including each trade-events digest batch;
 - the fold record, the publish and its withdrawal.
 
-The lock is taken last, so it lasts only as long as the commit. A writer
-that also moves the notification producers' cursors (a rewind, a rebuild,
-the nft lane) moves them before it locks this row. A fenced
-job drops its generation, and its next pass claims again, which only works
-while it still holds the lease.
+NFT and sales writers lock the chain cursor before their projection
+writes. A writer that also moves the notification producers' cursors
+(a rewind, a rebuild, the nft lane) takes those locks first. A fenced
+job drops its generation and claims again on its next pass while it
+still holds the lease.
+
+The NFT and legacy bid folds hold the chain cursor lock through commit or
+rollback. Their 3,600 s `statement_timeout` applies to individual fold SQL
+statements, so a rebuild spanning several statements can hold the lock
+longer. A lease takeover's claim times out after 1.5 s waiting on the row
+and can keep failing until the fold ends. Before publishing, the sales
+ledger locks `collections`, `nft`, `sales` and `trade_events` cursors in
+that order. It can block on a fold while holding earlier cursor locks,
+which delays those walkers as well.
 
 **Binding.** `chain_id` is the chain the history was read from, as the
 source proved it at the claim. The walk checks the source's chain every
@@ -3389,11 +3402,13 @@ member that diverged withdraws and recovers in a pass alone, which runs
 under no member deadline, and walks with others again once its checkpoint
 matches theirs.
 
-The rewind is one transaction: the notification producers' replay plan,
-the projection's own cleanup past the point, the producers' moves, the
-cursor's compare-and-set from the checkpoint it read, the pruning of the
-recovery points past the point, then the owner check. The next fold is a
-rebuild, as after any rewind.
+One transaction rewinds the projection and prunes recovery points past
+the retained block. It plans the notification replay before cleanup.
+For NFT and sales, it moves the notification cursors, then locks and
+checks the chain cursor before cleaning up projection rows. Other
+indexes run their cleanup before moving the notification cursors and
+checking the owner. The cursor moves from the checkpoint the recovery
+read. The next fold rebuilds the projection.
 
 A sales fold may have inferred a bid's seller from an nft transfer before
 the nft walk saw the fork. So the nft walk's rewind on every network (also a
@@ -3435,7 +3450,9 @@ pass claims the projection again and acts.
   at once. In one transaction, the owner's next pass:
   1. plans the notification producers' replay from the state before the
      cleanup;
-  2. runs the projection's own cleanup down to `start_block - 1`;
+  2. rewinds the notification cursors, then locks and checks the chain cursor.
+     The cleanup down to `start_block - 1` runs after that chain cursor
+     lock for NFT and sales, and before it for other indexes;
   3. restarts the cursor there, bound to the chain it proved and out of
      quarantine, and drops the projection's recovery points.
 
@@ -3789,19 +3806,28 @@ follows the collections subgraph's v1 handlers:
 An `AddWearable` whose wearable id has no representation is left out of
 `shop.items` and logged. The collection still counts it, and the next item
 is numbered after it. `catalyst_index_collections_v1_unrepresented_items`
-reports how many this process's last projection left out. That count
-depends only on the log up to the projected block and the vendored data:
-a publication rolled back after counting is retried and counts the same,
-and a walk's first publication (each process or lease) sets it again, so
-the gauge is absent only until then. It never holds the publication. On
-mainnet every one of the 438 items has a representation.
+reports how many the committed projection leaves out. It is recounted from
+the log up to the projected block after each committed publication
+(`ChainIndex::published`, which `chain_walk::close` calls after the commit),
+so a publication rolled back sets nothing, and a process's first
+publication, an event-free one included, restores it. It is absent only
+until then. It never holds the publication. On mainnet every one of the
+438 items has a representation.
 
 A publication projects Ethereum when an event was walked past the block its
 rows stand at, or none stand. It then rebuilds the network's rows, about 480,
-from the whole log; otherwise it writes nothing. A walk's first publication
-(each process or lease, and again after a failed pass) rebuilds them
-whatever was walked, so a change to the fold or a re-pinned vendored file
-reaches the rows, and the unrepresented gauge is set again.
+from the whole log; otherwise it writes nothing. Each process or lease
+rebuilds them at every publication, whatever was walked, until one that
+rebuilt them has committed (`ChainIndex::published`, which
+`chain_walk::close` calls after the commit). A change to the fold or a
+re-pinned vendored file therefore reaches the rows, and a publication rolled
+back (a failed close included) leaves the next one to rebuild. A rebuild
+also publishes the v1 royalty catalogue (`shop.v1_royalty_collection`,
+`shop.v1_royalty_item`) from the rows it wrote, through
+`shop.publish_v1_royalty_catalogue`, as a completed Ethereum mirror pass
+does. While the index owns Ethereum and its projection stands, the sales
+summary's v1 royalty attribution reads that copy in place of the mirror's
+pass markers.
 
 **Projection.** A network the operator hands the index
 (`MARKETPLACE_COLLECTIONS_INDEX_OWNS`: `matic`, `ethereum` or empty,
@@ -4072,14 +4098,17 @@ hold:
 Deploys are manual, one process at a time:
 
 1. Run the enabled walk (`MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true` in the mirror posture) on the
-   process that runs the mirror, and wait until the `collections` cursor on
-   `matic` publishes. That is the catch-up, from block 15,202,000. The
-   mirror keeps serving meanwhile.
-2. Stop that process, set `MARKETPLACE_COLLECTIONS_INDEX_OWNS=matic`, and
-   start it again. Two processes must never write the catalogue under
-   different settings. The mirror switch stays as it was: the mirror keeps
-   walking Ethereum. The next pass's publication rebuilds Polygon's rows from
-   the log and takes the network.
+   process that runs the mirror, and wait until the `collections` cursor of
+   each network to hand over publishes. That is the catch-up: on `matic`
+   (chain 137) from block 15,202,000; on `ethereum` (chain 1, the 42
+   collections-v1 contracts) from block 8,828,687, about 37 minutes
+   (`METRICS.md`). The mirror keeps serving meanwhile.
+2. Stop that process, set `MARKETPLACE_COLLECTIONS_INDEX_OWNS` to the networks
+   (`matic`, `ethereum`, or both), and start it again. Two processes must
+   never write the catalogue under different settings. The mirror switch
+   stays as it was: the mirror keeps walking any network not listed. The
+   next pass's publication on each listed network rebuilds its rows from the
+   log and takes the network (on Ethereum, with the v1 royalty catalogue).
 3. Check `SELECT owned_at, projected_through, pending, generation FROM
    shop.collection_projection`.
 
@@ -4088,7 +4117,9 @@ Deploys are manual, one process at a time:
    `MARKETPLACE_COLLECTIONS_INDEX_OWNS`, and start it again. Its fold keeps
    the log alone from then.
 2. Run this transaction. It takes the exclusive catalogue lock, and removes
-   the network's rows, the mirror's pass markers and the ownership together:
+   the network's rows, the mirror's pass markers and the ownership together.
+   It is shown for `matic`; for `ethereum`, write `'ethereum'` for the
+   network and `1` for the lock's second key (the chain id):
 
    ```sql
    BEGIN;
@@ -4112,7 +4143,8 @@ Deploys are manual, one process at a time:
 Every read of the network then answers the unavailable envelope until the
 mirror's next complete collections and items passes, which rewrite it with
 the mirror's rows alone (`collections_projection::hand_back` runs the same
-statements).
+statements). On Ethereum, deleting the pass markers also empties the v1
+royalty catalogue (the markers' trigger), and those passes publish it again.
 
 ## Auth API relay state workload
 

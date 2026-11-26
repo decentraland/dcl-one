@@ -52,7 +52,7 @@ export const SHOWCASE_INDEX = [
   { name: 'Avatar', title: 'Avatar', components: ['Avatar'] },
   { name: 'WearableCard', title: 'WearableCard (backpack)', components: ['WearableCard'] },
   { name: 'WearableCardPick', title: 'WearableCard pick (gift picker)', components: ['WearableCard'] },
-  { name: 'EquippedItemCard', title: 'EquippedItemCard (passport)', components: ['EquippedItemCard', 'Icon'] },
+  { name: 'EquippedItemCard', title: 'EquippedItemCard (passport)', components: ['Icon'] },
   { name: 'Toast', title: 'Toast (plain · error · keyed progress · action + dismiss)', components: ['ToastHost'] },
   { name: 'Chat', title: 'Chat components', components: [] }
 ] as const satisfies readonly ShowcaseEntry[]
