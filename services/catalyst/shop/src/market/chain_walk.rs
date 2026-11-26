@@ -160,7 +160,8 @@ pub struct IndexSettings {
     pub committee_enabled: bool,
     /// `MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED`: Polygon providers and slots.
     pub third_party_registry_enabled: bool,
-    /// `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`: the Polygon collection factories and collections.
+    /// `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`: the Polygon collection factories and collections,
+    /// and Ethereum's collections-v1 contracts.
     pub collections_enabled: bool,
     /// `MARKETPLACE_COLLECTIONS_INDEX_OWNS`: the networks whose catalogue rows that walk's fold
     /// takes from the collections mirror and writes.

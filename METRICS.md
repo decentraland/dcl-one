@@ -8,6 +8,10 @@ A local Polygon refold fixture replayed 288 legacy sales in 288 distinct blocks 
 
 The index process increments `catalyst_index_sales_repair_failures_total` by indexer and network when a historical sales repair fails. The error log includes the starting block and requests spent. The cursor keeps its last verified boundary.
 
+## Ethereum collections-v1 first walk
+
+On 2026-11-26 the Ethereum `collections` walk (`shop::market::collections_v1`) ran its first history over `rpc.decentraland.org/mainnet`, which takes at most 10,000 blocks per `eth_getLogs`, with the default settings (10,000-block windows, 100 requests per pass) and an empty scratch database. It walked from block 8,828,687 to the head, 17,671,095 blocks, in 18 passes run back to back, with 7,108 RPC requests in all (`eth_getLogs`, and the headers of each window's bracket and of the blocks holding logs). It took 2,198 s, plus the pause between passes a job adds (`MARKETPLACE_INDEX_INTERVAL_SECS`, 5 s, or 30 s under the mirror posture). It kept 438 `add_item`, 73,506 `issue` and 52 `ownership_transferred` rows. The 438 items and the 73,506 mints equal the collections subgraph's v1 items and their total supply at block 26,499,473. After the catch-up, each pass reads the same 42-address filter over the new blocks only. The command is in the `measure_the_first_walk` test.
+
 ## Marketplace catalogue mirror proof
 
 `catalyst_catalogue_mirror_proof_outcomes_total` counts mainnet proof

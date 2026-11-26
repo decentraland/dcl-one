@@ -191,13 +191,13 @@ pub struct CollectionEvent {
     pub content_hash: Option<String>,
 }
 
-fn address(a: Address) -> String {
+pub(super) fn address(a: Address) -> String {
     format!("{a:#x}")
 }
 
 /// A string as Postgres `text` stores it: NUL removed (the contracts take
 /// any bytes; `decode_raw_log` already read them as lossy UTF-8).
-fn text(s: String) -> String {
+pub(super) fn text(s: String) -> String {
     if s.contains('\0') {
         s.replace('\0', "")
     } else {

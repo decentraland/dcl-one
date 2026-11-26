@@ -1573,6 +1573,21 @@ fn visit_projections(
             market_cfg(),
         );
     }
+    if settings.collections_enabled && net == ChainNet::Ethereum && mainnet {
+        // The closed collections-v1 set: a static filter, no gate.
+        let project = settings.collections_owned.contains(&ChainNet::Ethereum);
+        add(
+            "collections-index",
+            state.chain_rpc_url(net),
+            Arc::new(move || {
+                Arc::new(super::collections_v1::CollectionsV1Index::projecting(
+                    project,
+                ))
+            }),
+            None,
+            market_cfg(),
+        );
+    }
     if settings.third_party_registry_enabled && net == ChainNet::Matic && mainnet {
         add(
             "third-party-registry-index",

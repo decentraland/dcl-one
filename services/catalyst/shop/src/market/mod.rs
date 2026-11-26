@@ -74,6 +74,7 @@ pub mod collections;
 pub mod collections_fold;
 pub mod collections_index;
 pub mod collections_projection;
+pub mod collections_v1;
 pub mod committee_index;
 pub mod compare_sources;
 pub mod contracts;

@@ -3653,11 +3653,55 @@ log of a walked topic that does not decode fails its window instead of
 being skipped. A `ProxyCreated` from any contract other than the two
 factories fails it too. Strings are read as lossy UTF-8, with NUL removed.
 
+**Ethereum v1.** On Ethereum mainnet the same switch walks the closed
+collections-v1 catalogue (`shop::market::collections_v1`) over the
+`TRADE_RPC_URLS` 1 entry (else `ETH_RPC_URL`), from block 8,828,687: no v1 collection has code
+before it. Ethereum holds no collections v2. The filter is static: the 42
+contracts of `content/src/validator/onchain/contracts/collections-v1.json`,
+with `AddWearable`, `Issue` and `OwnershipTransferred`. There is no gate, no
+factory list and no creation read. The logs go to `shop.collection_event`
+under the shared kinds:
+- `add_item`: the wearable id in `metadata`, the maximum issuance in
+  `max_supply`, no item id;
+- `issue`: the wearable id, the issued id in `amount`, the beneficiary;
+- `ownership_transferred`.
+
+A log of a walked topic from any other contract fails its window. The fold
+follows the collections subgraph's v1 handlers:
+- a collection has a row from its first `AddWearable`. Its name and symbol
+  come from the vendored data (`collections-v1.json`,
+  `collections-v1-symbols.json`). Its owner at that block (after the whole
+  block, as the subgraph's `owner()` call read it) is its owner and creator.
+  It is completed and approved, never editable;
+- each `AddWearable` is the next item, numbered from 1, created by the owner
+  at its block. Its rarity, name, description, category and body shapes
+  come from the static representation of its wearable id
+  (`wearables-v1.json`, from `decentraland/collections-graph`
+  `src/data/wearablesV1`, the first in the subgraph's search order). It has
+  no price and no beneficiary;
+- an item's supply is its count of `Issue` logs, and `available` is the rest
+  of its maximum issuance. `sold_at` is 0: there is no primary sale, and
+  secondary sales come with the sales index;
+- `created_at` is the `AddWearable`'s block time. The subgraph's
+  `dcl://halloween_2019` values (1572278498) predate that contract's
+  deployment block (1572280351); the fold keeps the chain's.
+
+An `AddWearable` whose wearable id has no representation is left out of
+`shop.items` and logged. The collection still counts it, and the next item
+is numbered after it. `catalyst_index_collections_v1_unrepresented_items`
+reports how many the last projection left out. It never holds the
+publication. On mainnet every one of the 438 items has a representation.
+
+A publication projects Ethereum when an event was walked past the block its
+rows stand at, or none stand. It then rebuilds the network's rows, about 480,
+from the whole log; otherwise it writes nothing.
+
 **Projection.** A network the operator hands the index
-(`MARKETPLACE_COLLECTIONS_INDEX_OWNS`, `matic` or empty, independent of
-`MARKETPLACE_MIRRORS_ENABLED`) is projected. When a pass publishes its fold,
-the projection writes Polygon's catalogue rows from the log and the creation
-reads in the transaction that publishes it (`chain_walk::mark_folded`, through
+(`MARKETPLACE_COLLECTIONS_INDEX_OWNS`: `matic`, `ethereum` or empty,
+independent of `MARKETPLACE_MIRRORS_ENABLED`) is projected. When a pass
+publishes its fold, the projection writes the network's catalogue rows from
+the log (and, on Polygon, the creation reads) in the transaction that
+publishes it (`chain_walk::mark_folded`, through
 `ChainIndex::publish`), fenced by the walk's owner. A reader's snapshot
 therefore sees the rows, the block they stand at and the publication
 together, and a pass that does not publish projects nothing. Without that
