@@ -28,15 +28,33 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **The toon outline is a screen-space line, not an inverted hull.** It keeps Unity's colour,
   width falloff and 8 m cutoff. Kept differences: the cutoff is per mesh, not per avatar; an
   overlap shallower than the edge threshold gets no line, so a curved surface draws none on
-  itself; creases inside the silhouette darken, which the look relies on; and an orthographic
-  view (the Backpack) skips the cutoff, in place of Unity's preview flag.
+  itself; creases inside the silhouette darken, which the look relies on; an orthographic
+  view (the Backpack) skips the cutoff, in place of Unity's preview flag; an alpha-blended
+  mesh draws no line, since the line reads the depth and normal prepass and a blended mesh is not
+  in it (it would trace the edges of the scene behind); and a single-sided mesh seen from its
+  back draws nothing, where Unity's hull, made of back faces, fills its shape with the outline
+  colour (the Epic Arrival Shield's particles, seen from the front). As with Unity's hull, the
+  line never covers a mesh's emission, so a glowing mesh glows to its edge.
 - **A hovered avatar glows through the shared highlight pass.** Unity's colour, opacity, width
   and 0.1 s fade, through the pass scene entities use, so the glow shows through what stands in
   front and ignores the camera dither and the ghost reveal. Kept differences: every opaque or
   alpha-tested mesh under the player glows, an emote's props included, where Unity lists the
   wearables only; an avatar shown with `ShowOnlyWearables` glows like any other.
-- **Day and night (#1467).** An explicit, stopped HUD time beats scene time; restarting the
-  clock hands control back to the scene. No HUD lock while a scene controls the sky.
+- **Day and night (#1467).** The time of the scene the player stands in holds the sky: over
+  the running clock, over a time set from the HUD and over `/time`, which still move the clock
+  and show once no scene sets the time. The HUD's Skybox menu is locked meanwhile and says
+  why. The "Allow overriding scene controls" setting (off by default) unlocks it: the scene's
+  time still takes the sky when it arrives, a time the player stops the clock at after that
+  wins, and the scene's time is back when it arrives again (on return, in another scene, or
+  when the scene changes it) or when the clock runs again, the menu's Auto included. No
+  override is kept for a scene. `~system/Runtime.getWorldTime` tells every scene, next to the
+  time, whether a scene holds it, the clock's speed and whether the clock sets the sky, so
+  that the menu and a scene that shows the time of day read one source. Two exceptions.
+  `/time --force` beats a
+  scene's time whatever the setting, until the next `/time` that sets a time or a speed: the
+  scene editor lights a stopped scene with it. A portable's time comes after the scene's, wins
+  only over a running clock and never locks the menu: a portable follows the player
+  everywhere, so the player's own stopped time beats it.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
   direction; SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
 - **Scene environment components.** Skybox cloud speed accepts finite negative values for
@@ -69,9 +87,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   no direct light; at most a tenth of a light unit points upward. It is not clamped to the
   horizon.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
-  it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
-  the extension is not the fix; the long-term answer is still open. A glTF emissive factor of 1
-  draws five times as bright as a lit white surface, and the strength multiplies that.
+  it, spec-correctly, on scene glTFs. Content authored against Unity can glow (the Nekko cat at
+  65x). Dropping the extension is not the fix for scenes; the long-term answer is still open. A
+  glTF emissive factor of 1 draws five times as bright as a lit white surface, and the strength
+  multiplies that. Wearables are the exception: an avatar drops the strength, as Unity does, and
+  draws a factor of 1 at 12.5 times a lit white surface, so a wearable glows as its creator saw
+  it in Unity.
 - **A Material that names a glTF keeps the glTF's rules.** An SDK unlit material is opaque
   unless it has an alpha texture, whose brightness scales the alpha, and an SDK PBR emissive
   colour is drawn as it is, as in Unity. A glTF's own unlit material cuts out or blends through
@@ -86,15 +107,93 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   channel pointing down the image and a glTF's normal map up, so the glTF's own normal map
   keeps its orientation when it comes back, and a bump texture the scene puts in its place is
   read as the SDK's.
-- **High bloom scatters at 0.5.** Unity's settings name 0.3; at 0.3 the glow around a bright
-  surface here is about half as strong as Unity draws it, and 0.5 matches its captures
-  (`BLOOM_SCATTER`).
+- **Bloom is off or on, and scatters at 0.5.** Unity's quality presets name 0.3 (Low, where
+  bloom is off), 0.5 (Medium) and 0.6 (High). At 0.3 the glow around a bright surface here is
+  about half as strong as Unity draws it, and 0.5 matches its captures (`BLOOM_SCATTER`). The
+  setting has one level: a saved config that names an earlier one (Low or High) reads as On.
 - **Alpha test and blend premultiplies the whole base colour.** The alpha multiplies the base
   colour before lighting, and a metal's reflectance is its base colour, so a transparent metal's
   reflections thin with it where Unity keeps them. Keeping them needs the diffuse and specular
   terms split inside the lighting functions.
 - **Sky preset curves are linear.** The fog colour, light colour, light intensity and Trilight
   ambient keys are interpolated linearly; Unity's curve tangents are not carried.
+- **The sky below the horizon is the horizon colour.** The sky is Unity's lookup by day
+  phase and elevation (`stylized_sky.wgsl`), and as in Unity the elevation clamps at the
+  horizon, so the sky holds the horizon colour from a few degrees below the horizon down; the
+  horizon noise can lift directions just under it (direction y above about -0.1), as in Unity.
+  The sky does not fade to black there. A scene's authored sky colours blend over that colour,
+  not over black. The reflection map is unaffected: it reads directions under the horizon from
+  their mirror image above it unless a scene authors a nadir. One difference from Unity: the
+  horizon noise is sampled at its full resolution: the image has no mip chain, and the cube's
+  compute shader has no screen derivatives to choose a mip from.
+- **The screen draws the sky per pixel; the cube serves the rest.** As Unity's skybox, the
+  sky material (`StylizedSkyMaterial`) evaluates the sky for every pixel, so the cloud strips
+  and the disc keep their detail; it replaces bevy_atmosphere's skybox material, which shows the
+  cube, on every skybox. The compute model draws the same sky into the 1024 cube, one texel in
+  64 a frame, for the reflections, the ambient and the stars' cloud cover: its refresh smears
+  scrolling cloud and its texels soften the disc's edge, which those uses do not show. The
+  strips ship at 1024 by 128, a quarter of their authored 4096 by 512 (about 2.8
+  texels a degree around the sky, against 11): the wasm build resizes any image over 1024 to fit
+  (`reduce_image_sizes`), so larger files would only add to the download and to startup, and
+  the clouds look right at that size on web. Native uses the same files; it is not released, so
+  its sharper strips are not worth a second set.
+- **The stylized sky is the sky for every scene, `PBSkybox` ones included.** Unity switches a
+  sky that a scene controls (any `PBSun`, `PBSkybox` or fog) to its Legacy look; here the
+  scene's values override the StylizedV1 lookup instead, and a scene with none sees the preset.
+  Each `PBSkybox` field maps as follows:
+  - `zenith`, `horizon`, `nadir`, `rim` replace the lookup's colour in their band, with
+    pole, horizon and rim weights; the rim follows the horizon when unset, and an authored nadir
+    colours the lower sky.
+  - `clouds.color` is the lit colour of the three cloud strips. The shadowed colour is that
+    colour times one number: the luminance (Rec. 709) of the preset's shadow over that of its
+    lit colour at that phase, at most 1. The strips keep the preset's contrast and the authored
+    hue, and a shadow is never brighter than the lit colour; the preset's own shadow tint
+    (blue at sunrise) is not carried over.
+  - `clouds.opacity` scales every strip.
+  - `clouds.speed`, in radians per second around the sky, replaces the three preset speeds:
+    one speed turns every strip together, backwards when negative, and the strips carry on from
+    where they were.
+  - `stars.brightness` scales the stars (see "Stars are added over the sky").
+  - `PBSun.visible = false` hides the sun and the moon; the stars stay.
+  - `skybox_texture` shows the panorama instead, with no clouds or stars.
+
+  Unity's environment profile at `0a8bafca9e62ced7f34ac182158b11edd0c842a4` writes the cloud
+  values to the old cloud cubemap's material, which the strips do not read. The strips are
+  fixed art sampled at their full resolution: they have no mip chain. That loses nothing at
+  1024 wide: the screen magnifies the strips, even about 70 degrees up, as far as the overhead
+  strip is seen (about 8 texels a degree of arc there). The horizon noise is still minified,
+  about 8 times in V, with no mips; Unity samples it with gradients and mips, so it aliases a
+  little more here. The growth flow the preset switches off is not
+  ported. `/cloud <cover> [speed]` is the user's own setting on top: cover multiplies every
+  strip's opacity (the scene's opacity times it), speed scales the strips' scroll and the horizon
+  noise's drift, so `/cloud 0 0` clears the strips and holds them and the horizon noise in a
+  fixed pose (the shader time is 0 and every scroll 0). A non-finite value is refused, and cover
+  is held to 0 to 1. The shader time wraps at 500 s, one repeat of the horizon noise at the
+  preset's speed. A scene's values still apply while it is active; the star twinkle ignores the
+  speed.
+- **A scene's sun direction draws the sun's whole disc.** Unity switches a sky that a scene
+  controls (any `PBSun`, `PBSkybox` or fog) to its Legacy look, which computes no celestial
+  path. Here a scene-controlled sky stays on StylizedV1. A scene that fixes the sun's direction
+  gets the sun's disc, the sun's colour and the halo at that direction at every hour: no moon
+  crescent, where Unity's Legacy look draws a sun-coloured crescent there at midnight, and no
+  Legacy sun opacity curve. The disc still dips out through the two windows in which the light
+  swings between the sun's arc and the moon's.
+  A scene's `PBSun.color` tints the disc: the authored hue at the brightness the disc has
+  without it (the sun's ramp at the phase, or the moon's along its rise to set), times the
+  authored colour's brightest channel when that is above 1. Unity feeds the colour raw, but the
+  preset's disc is HDR (about 10 at noon), so a raw white would dim the sun about tenfold; a
+  black colour gives a black disc.
+- **Stars are added over the sky, not drawn under it.** The stars are Unity's Stars v2 and
+  shooting stars (`SkyLut_Stars`), with the preset's values. Unity draws them inside its sky
+  shader, so the clouds and the disc cover them. Here they stay a pass of their own at screen
+  resolution, added over the frame wherever nothing was drawn and faded by the sky cube's
+  alpha, its cloud cover: the disc and its halo do not hide a star behind them. The dim patches
+  read the horizon noise with Unity's seam-safe derivatives, but the image has no mip chain
+  here, so every sample is its top level. A scene's `PBSkybox` star brightness scales the
+  preset's stars from the protocol's default of 4.62; below that default it thins the shooting
+  stars by the same factor, down to none at 0, and above it their rate stays the preset's. A
+  scene that shows a panorama gets neither. Unity gives a scene-controlled sky its Legacy look,
+  which has no Stars v2.
 - **Render scale compositor.** At scale 1 the world camera draws to the window and carries the
   UI, at no extra cost. Below it, the world renders to an image that a 2D camera composites onto
   the window with FSR EASU; bevy's CAS at 0.92 stands in for RCAS; the UI rides the compositor
@@ -232,6 +331,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **A scene can turn nearby voice off.** `featureToggles.nearbyVoiceChat` in `scene.json` is on
   when absent, not a string, empty or `enabled` (any case); any other string turns nearby voice off for a player
   standing in that parcel scene. An empty parcel and a portable experience never do.
+  - The setting is the scene's request for the `DisableVoice` permission, asked once per visit.
+    The permission allows by default; a player who refuses it for the scene, the realm or
+    everywhere keeps nearby voice there, and the use shows in the HUD's permissions popover
+    like any other. Nothing is turned off while the player has not answered. A question the
+    player leaves the scene without answering is withdrawn, and records no use. A teleport
+    that lands in the same scene is the same visit.
   - Don't leave the mic open: entering closes it, the `Microphone` key and the HUD cannot open it,
     and leaving does not reopen it. Each refused open counts in `MicState.refusals`, and the HUD
     toasts "Nearby voice chat unavailable in this scene." when the count goes up.
@@ -325,6 +430,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer stores no community history. A new DM or DM reaction from them is not stored,
   since a DM history is never trimmed. A DM thread stored before the block is read back whole:
   hiding it would reveal that the other side blocked you, who is otherwise shown as offline.
+- **Situational reactions.** An emoji a player reacts with travels as unity-explorer's rfc4
+  `Reaction` and is sent, limited and played one at a time as unity-explorer does, with these
+  differences. Only the indices that name an emoji are taken (unity-explorer takes any under 4096
+  and draws the blank tiles), and an emoji with no index is not sent or shown. A message's copy
+  by the other room is told by its stamp and its index together, and the stamps sent only move
+  on: the sender's uptime as a float stops telling two messages of one send apart after a few
+  hours. What a sender may send is counted on the sender's own entity, so a player who leaves or
+  is blocked takes their waiting reactions with them; unity-explorer plays them out. A sender's
+  reactions play 0.2 s apart whichever messages they came in; unity-explorer starts the gap
+  afresh for a message that finds none of theirs waiting, which lets a sender of one-reaction
+  messages play twenty a second.
 - **Community creation and editing.** The form follows unity-explorer's (fields, limits, texts,
   the content check's two refusal screens, every HTTP 400 read as the check's answer), with
   these differences. CANCEL on the refusal screen asks "Discard this community?" first, as the
@@ -510,9 +626,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
-  When a peer's Pulse membership ends, its avatar and nametag disappear. LiveKit can keep the peer
-  in the room for voice and room messages. The next Pulse join places the avatar at its new pose
-  immediately.
+  When a peer's Pulse membership ends, its avatar and nametag disappear, its avatar collider is
+  removed, and it leaves Nearby and the map's People layer. Overlapping SDK player triggers see
+  an exit when the collider is removed and an enter if it overlaps again on rejoin. Peers can
+  stay in the LiveKit room for voice and Nearby chat. Nearby resolves @mention links
+  through its roster, so an @mention of a room-only peer
+  cannot open that peer's profile. Chat lines look up sender names by wallet in the profile store
+  and fall back to a shortened address when no name is available. The next Pulse join places the
+  avatar at its new pose immediately.
 - **Pulse refusals set a floor under the next wait.** Server full (disconnect code 6) waits at least
   60 s, the pre-auth limits (7, 8) and the per-IP connection cap (17) at least 10 s, the per-IP
   scene-listener cap (18) 10 s doubling to 5 minutes, and all five are retried, as the Pulse
@@ -590,6 +711,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   cover in the saved image, as unity-explorer computes it; the catalyst's camera-reel service parses
   the metadata into a struct without that field, so it is not stored. Kept for parity with the
   upstream service's clients.
+- **The photo viewer (#2073).** Its layout and numbers follow unity-explorer's, with four
+  differences. The info panel shows a loading view while a photo's details load; unity-explorer
+  never shows one. The owner's name opens their passport; unity-explorer's owner button cannot be
+  reached. A person's row is disabled for guests, because the
+  profile store cannot tell a profile that is missing from one still loading, which is the case
+  unity-explorer disables. Jump In treats a photo as taken in a World when the HUD's `worldOfRealm`
+  accepts its realm, so hyphenated ENS names and Worlds-server realm URLs count, where
+  unity-explorer's test is `^[a-zA-Z0-9.]+\.eth$` and sends those photos to a Genesis City parcel.
 - **The photo camera stops at scene geometry instead of sliding.** unity-explorer moves a capsule
   character controller, which slides along walls; here the move is swept and refused whole when
   the camera's sphere would cross a scene collider. A collider the camera starts inside (the player
@@ -605,6 +734,26 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer scales the scroll delta by 50 everywhere but macOS, per frame; here a wheel line
   (16 pixels of a trackpad's scroll, on every platform including web) zooms as Unity's 60 fps frame
   would, and a held bumper zooms at Unity's per-second rate, so neither depends on the frame rate.
+- **What a scene is doing to the player is listed with its permissions.** A held camera, a
+  hidden avatar or passport and changed movement all happen under a permission that allows by
+  default, so nothing asks. The permissions popover lists them under "In force now" for the
+  scene the player stands in, and each row opens that scene's rule, so the player can refuse
+  it there. There is no separate restrictions list.
+  - The engine reports a start and an end on the permission-used stream (`inForce`), read
+    from the effect itself, not from the grant: a granted camera permission with no camera
+    held lists nothing. A stream that attaches is sent everything in force.
+  - Each effect is reported under the scene that causes it, recorded where it is applied
+    (`PrimaryCamera.scene_override_owner`, `PlayerModifiers.hide_scenes` and
+    `locomotion_scenes`), so the row's rule is the one that controls it. A hidden nametag
+    counts like a hidden avatar or passport.
+  - Movement is listed only while a setting or a block is on: an area with nothing set, or an
+    input modifier whose flags are all off, lists nothing.
+  - A row opens a stored rule, never "This visit": that answer forgets the rules of every
+    level and would not end what the scene is doing.
+  - The popover lists the scene the player stands in. What a portable experience or a
+    neighbouring scene's area does to the player is reported under that scene and is not
+    shown there; `/permissions_in_force` has it.
+  - A rule changed from the row applies from the next visit to the scene.
 - **Smart wearable permissions are asked on use, not at equip.** unity-explorer asks once, when a
   smart wearable is equipped (or at login for one already worn), to allow the permissions its
   `requiredPermissions` declares, and refuses what it did not declare. Here a smart wearable is a
@@ -745,7 +894,7 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   to 100 characters. The pin doesn't pulse.
   This explorer loads no global portable experience at startup: unity-explorer loads the quests'
   one (`globalpx.dcl.eth`) from `alfa-global-portable-experiences`; here it is loaded with the
-  launch option (`--portables` or `?portables=`, e.g. `basiccontroller.dcl.eth;globalpx.dcl.eth`).
+  launch option (`--portables` or `?portables=`, e.g. `movecontroller.dcl.eth;globalpx.dcl.eth`).
 - **Arrival is checked on every position report.** unity-explorer checks the route only after
   the player's squared distance from the map's origin has changed by 300 map units, which can
   skip the arrival spot when the player stops on it or reaches it sideways, so the route never
@@ -871,8 +1020,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   carry Unity's values for the frame rate, VSync, render scale, avatar outline, jiggle bones, sun
   shadow quality, the Low and High shadow distances and scene lights; Medium is the default and
   the one every saved config migrates to, except jiggle bones, which stay off by default (see the
-  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Bloom is Low in every
-  preset, closer to Unity's look than High. Medium's sun shadow distance is 20 m, not 60 m: Medium
+  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Every preset keeps
+  bloom on, as Unity's Medium and High do; Unity turns bloom off on
+  Low. Medium's sun shadow distance is 20 m, not 60 m: Medium
   has one cascade (above), which stops at 40 m, and at 20 m its texels are half as large as at
   40 m. The presets leave out Unity's scene distance (in parcels, where far scenes load as
   LODs; here imposters draw them and the load distance stays the player's), the landscape
@@ -927,6 +1077,18 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   lookup and the photo camera are not cut. Neither is collider data without bounds: portables,
   the terrain, and scenes in a run that draws out-of-bounds geometry. The whole-collider test
   (below) still turns off a collider that leaves the scene's rectangle.
+- **A scene's `AvatarNametag` plate is bounded before it is laid out.** unity-explorer draws
+  the label and the colours as the scene wrote them. Here the label is cut to its first 128
+  characters, a control character in it reads as a space, and a colour channel is kept between
+  0 and 1 (one that is not a number reads 0), so no scene sets the cost of shaping its label or
+  draws outside the tag. Do not pass them through to match.
+- **One scene entity plates an avatar.** In unity-explorer two entities can ask for a plate on
+  the same avatar: the last write shows, and the plate goes when either entity does. Here a
+  scene has one entity for each player id and only the scene the local player stands in plates
+  anyone, so the case does not arise.
+- **A plate stands clear of the mention ring.** The plate floats 2 units over the name's box,
+  as in unity-explorer, and the ring of a mention reaches 3 units out of that box. While the
+  ring shows, the plate rises by the ring's width, so it never covers the ring's top edge.
 
 ## Deliberate choices that look like mistakes
 
@@ -935,6 +1097,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   thicken with a shorter scene load distance, so the edge of the loaded scenes shows through it,
   and a scene's global light does not tint it. A scene sets fog colour and density with its fog
   component. The Off setting is no fog at all.
+- **Scene labels lay out as in the Unity client, not as in CSS (#1976).** A label with an `auto`
+  axis (every react-ecs node since `@dcl/sdk` 7.5.0) sizes to its text, and its entity's
+  `justifyContent` and `alignItems` place it; `textAlign` acts only inside the text's own box, so
+  an unstyled label stretched across a row is not centred. A label sized in px or % on an axis is
+  a box its text aligns inside by `textAlign`. A label with no size draws over its entity and
+  takes no space. Every label's text box has the margin (top 4, right 4, bottom 2, left 2 px)
+  and padding (top 4, right 2, bottom 4, left 1 px) that the Unity client's default runtime UI
+  theme gives scene labels; CSS adds none. They are logical pixels like every other scene size,
+  so on a display with a scale factor of 2 they are twice the size the Unity client draws, which
+  counts them in device pixels. Scenes are authored against the Unity client, so its label
+  spacing is kept. A scene input's text is inset 2 px from its sides, CSS's default
+  `padding-inline`, not the Unity theme's 12 px; a larger inset belongs in react-ecs, where a
+  scene can see and override it. The label spacing is an engine default that a scene cannot
+  override; if react-ecs starts sending a default label margin and padding, both clients drop
+  theirs at the same time, or new scenes get the spacing twice.
 - **glTF occlusion textures are ignored.** Scene materials drop a glTF's occlusion texture, so
   baked ambient occlusion does not darken the ambient light. The Unity client's scene shader
   does not sample it either, and content is authored against that look.

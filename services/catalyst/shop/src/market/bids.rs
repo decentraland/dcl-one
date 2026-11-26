@@ -1,7 +1,9 @@
 //! `/v1/bids`: off-chain bids from the trades mirror (`type = 'bid'`, open
 //! unless expired or cancelled here; `sold` or `cancelled` by the chain's
-//! verdict once the network's trade-events index is published,
-//! `trade_events::chain_status_sql`) merged with the legacy on-chain `bids`
+//! verdict, `trade_events::chain_status_sql`; only while the network's
+//! trade-events index is current, and never a V3 bid whose cancellation
+//! digest could not be established, `trade_events::unverifiable_sql`) merged
+//! with the legacy on-chain `bids`
 //! of the collections subgraph reader (first ≤ 100, 30 s; a window past the
 //! graph's 5,000 skip is read by keyset up to `readers::DEEP_WINDOW`). A
 //! mirror bid's seller is the item's creator when the bid is on an item and
@@ -195,7 +197,7 @@ const TRADES_BIDS_SQL: &str = "SELECT t.id::text AS id, t.contract AS trade_cont
  LEFT JOIN shop.nft n ON recv_erc721.token_id IS NOT NULL AND n.network = lower(t.network) AND n.contract_address = recv.contract_address \
       AND n.token_id = TOKEN_NUM \
  LEFT JOIN land_authz.token_right tr ON recv_erc721.token_id IS NOT NULL AND tr.token_address = recv.contract_address AND tr.token_id = TOKEN_NUM \
- WHERE t.type = 'bid' AND t.expires_at > $1 AND COUNTED AND SERVED_CHAIN \
+ WHERE t.type = 'bid' AND t.expires_at > $1 AND COUNTED AND SERVED_CHAIN AND CHAIN_CURRENT \
    AND (recv_erc721.asset_id IS NULL OR TOKEN_NUM IS NOT NULL) AND (recv_item.asset_id IS NULL OR ITEM_NUM IS NOT NULL)";
 
 /// The bids leg's `(id, status)` over every mirrored bid, for the index tests.
@@ -221,6 +223,14 @@ fn trades_bids_sql(extra: &str) -> String {
         .replace(
             "CHAIN_STATUS",
             &super::trade_events::chain_status_sql("t", "$1"),
+        )
+        .replace(
+            "CHAIN_CURRENT",
+            &format!(
+                "{} AND NOT {}",
+                super::trade_events::verdicts_current_sql("t", "$1"),
+                super::trade_events::unverifiable_sql("t")
+            ),
         );
     format!("SELECT * FROM ({sql}) b WHERE TRUE{extra} ORDER BY b.created_at DESC LIMIT 1000")
 }

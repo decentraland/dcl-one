@@ -1,5 +1,5 @@
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// first_wear re-reads `last_fetch_at` every 60 s (its POLL_SECS), so one
@@ -27,7 +27,7 @@ impl SeenDebounce {
     }
 
     pub fn claim(&self, address: &str, now: Instant) -> bool {
-        let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut map = self.inner.lock();
         if let Some(at) = map.get(address)
             && now.duration_since(*at) < SEEN_WINDOW
         {
@@ -44,14 +44,11 @@ impl SeenDebounce {
     }
 
     pub fn release(&self, address: &str) {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(address);
+        self.inner.lock().remove(address);
     }
 
     pub fn len(&self) -> usize {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).len()
+        self.inner.lock().len()
     }
 
     pub fn is_empty(&self) -> bool {

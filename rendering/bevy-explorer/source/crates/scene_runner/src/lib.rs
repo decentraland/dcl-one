@@ -27,8 +27,8 @@ use common::{
     rpc::{RpcCall, RpcCallEvent, RpcOrigin},
     sets::{SceneLoopSets, SceneSets},
     structs::{
-        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, MicState, NearbyVoiceDisabled,
-        NoRenderApp, PreviewMode, PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
+        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, NoRenderApp, PreviewMode,
+        PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
     },
     util::{dcl_assert, TryPushChildrenEx},
 };
@@ -82,6 +82,7 @@ pub mod asset_preload;
 pub mod automatic_testing;
 mod loop_pacing;
 pub mod visible_content_bytes;
+mod voice_block;
 /// Region decomposition, in `common` so `comms` can reach it too; re-exported here because this is
 /// where it has always lived for callers.
 pub use common::bounds_calc;
@@ -491,9 +492,17 @@ impl Plugin for SceneRunnerPlugin {
         app.add_plugins(AssetPreloadPlugin);
         app.add_plugins(scene_spawn_slice::SceneSpawnSlicePlugin);
 
+        app.init_resource::<permissions::PermissionsInForce>();
         app.add_systems(
             Update,
-            (update_scene_room, update_scene_voice_block).in_set(SceneSets::PostLoop),
+            (
+                update_scene_room,
+                voice_block::update_scene_voice_block,
+                permissions::publish_permissions_in_force
+                    .after(update_world::camera_mode_area::update_camera_mode_area)
+                    .after(update_world::avatar_modifier_area::update_avatar_modifier_area),
+            )
+                .in_set(SceneSets::PostLoop),
         );
         app.init_resource::<load_timing::FirstRingTiming>();
         app.add_systems(
@@ -820,11 +829,7 @@ pub struct ContainingScene<'w, 's> {
     portable_scenes: Res<'w, PortableScenes>,
 }
 
-pub fn vec3_to_parcel(position: Vec3) -> IVec2 {
-    (position.xz() * Vec2::new(1.0, -1.0) / PARCEL_SIZE)
-        .floor()
-        .as_ivec2()
-}
+pub use common::partition::vec3_to_parcel;
 
 /// The parcels within Chebyshev ring `ring` of `center`, `center` included: a square `2 * ring + 1`
 /// parcels a side. A negative ring gives none.
@@ -1345,7 +1350,7 @@ mod player_scenes_tests {
         // a scene host's subscription: without one nothing is sent
         let (_, _host) = crdt.subscribe(Vec3::ZERO);
         for _ in 0..GLOBAL_UPDATE_BACKLOG_DUE - 1 {
-            crdt.update_time(0.5);
+            crdt.update_time(TimeOfDay::default());
         }
         let crdt = world.spawn(crdt).id();
         scene_loop_resources(&mut world);
@@ -2321,26 +2326,6 @@ fn update_scene_room(
     writer.write(ev);
 }
 
-/// Only the parcel scene under the player counts: a portable experience never blocks.
-fn update_scene_voice_block(
-    mic_state: Option<ResMut<MicState>>,
-    containing_scene: ContainingScene,
-    player: Query<Entity, With<PrimaryUser>>,
-    disabling_scenes: Query<(), With<NearbyVoiceDisabled>>,
-) {
-    let Some(mut mic_state) = mic_state else {
-        return;
-    };
-    let disabled = player
-        .single()
-        .ok()
-        .and_then(|player| containing_scene.get_parcel(player))
-        .is_some_and(|scene| disabling_scenes.contains(scene));
-    if mic_state.scene_disabled() != disabled {
-        mic_state.set_scene_disabled(disabled);
-    }
-}
-
 fn log_app_errors(mut toaster: Toaster, mut errors: EventReader<AppError>, frame: Res<FrameCount>) {
     for (i, error) in errors.read().enumerate() {
         toaster.add_toast(format!("app-error {}-{i}", frame.0), format!("{error:?}"));
@@ -2367,7 +2352,7 @@ fn set_ui_constraints(
 
 fn push_time_to_crdt(time_of_day: Res<TimeOfDay>, mut contexts: Query<&mut GlobalCrdtState>) {
     for mut global_crdt_state in contexts.iter_mut() {
-        global_crdt_state.update_time(time_of_day.time);
+        global_crdt_state.update_time(*time_of_day);
     }
 }
 

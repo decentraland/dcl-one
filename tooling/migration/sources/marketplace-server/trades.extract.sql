@@ -2,6 +2,9 @@
 -- land in one batch. Hex and addresses are lowercased as the node's insert
 -- paths store them (keccak of the decoded bytes is case-blind); `checks` is
 -- copied as stored. `extra` follows the mirror's convention: '' / '0x' -> ''.
+-- `trade_digest` (the V3 cancellation key upstream stored at creation) is
+-- copied lowercase when it is a 32-byte hex value, else NULL: the node's
+-- trade-events fold verifies it against the signature, or rebuilds it.
 -- A trade without assets is refused by the mirror and skipped here too.
 SELECT t.id,
        t.network,
@@ -15,6 +18,7 @@ SELECT t.id,
        t.effective_since,
        t.contract,
        t.created_at,
+       CASE WHEN lower(t.trade_digest) ~ '^0x[0-9a-f]{64}$' THEN lower(t.trade_digest) END AS trade_digest,
        a.assets
 FROM marketplace.trades t
 JOIN LATERAL (

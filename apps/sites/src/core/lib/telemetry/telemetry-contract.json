@@ -3156,46 +3156,9 @@
       "props": {
         "community_id": {
           "kind": "string",
-          "optional": true
-        },
-        "stub": {
-          "kind": "unknown",
           "optional": false
         }
       }
-    },
-    "lp_community_gate_viewed": {
-      "loose": false,
-      "props": {}
-    },
-    "lp_community_review_reached": {
-      "loose": false,
-      "props": {
-        "places": {
-          "kind": "number",
-          "optional": false
-        },
-        "privacy": {
-          "kind": "enum-string",
-          "values": [
-            "private",
-            "public"
-          ],
-          "optional": false
-        },
-        "visibility": {
-          "kind": "enum-string",
-          "values": [
-            "all",
-            "unlisted"
-          ],
-          "optional": false
-        }
-      }
-    },
-    "lp_community_started": {
-      "loose": false,
-      "props": {}
     },
     "lp_community_submit_attempted": {
       "loose": false,
@@ -3223,7 +3186,7 @@
       "props": {
         "error": {
           "kind": "string",
-          "optional": true
+          "optional": false
         }
       }
     },

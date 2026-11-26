@@ -36,7 +36,8 @@ import { portableKey, toastPortableChanges } from '../portables/portableToasts'
 import { showTextureOptimization } from '../preview/textureOptimizationToast'
 import { bootMode, IN_WORLD_SHOP, unattendedRun } from '@hud-host'
 import { notificationTimeMs } from '@explorer-core/lib/notificationTime'
-import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
+import { showHideUiToast, type UiHidden } from '../hideUi/hideUiToast'
+import { getBindingsSnapshot, isCancelKey, isEditableTarget, keyHintFor, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
 import { applyProfileEdit } from '@explorer-core/engine/profileEdit'
@@ -101,6 +102,7 @@ import type {
   GalleryPhoto,
   GalleryPhotoMeta,
   GalleryWriteMessage,
+  GalleryWearablesMessage,
   ExternalUrlOpenedMessage,
   SatelliteTileMessage,
   PlaceMessage,
@@ -191,18 +193,14 @@ function memberProfiles(members: CommunityMember[]): Parameters<typeof seedProfi
 }
 
 // The engine's clock starts at 10:00 and runs at 12× (crates/visuals/src/day_night.rs start_clock).
-// Fallbacks only: the menu reads the live clock with `/time` when it opens.
+// Fallbacks only: the engine reports the time of day while the menu is open.
 const SKYBOX_START_HOURS = 10
 const SKYBOX_DAY_SPEED = 12
 
 const NEARBY_VOICE_RESTRICTION = 'Nearby voice disabled'
 
-// The engine's `/time` reply (day_night.rs timeofday_console_command) ends with
-// "speed <S> (elapsed: <seconds since midnight>)".
-function parseTimeReply(reply: string): { hours: number; speed: number } | null {
-  const m = /speed (-?[\d.]+) \(elapsed: ([\d.]+)\)/.exec(reply)
-  return m ? { hours: Number(m[2]) / 3600, speed: Number(m[1]) } : null
-}
+// How long after this menu sent a `/time` a report of the time of day may still predate it.
+const SKYBOX_SETTLE_MS = 300
 
 // Unity's wording (BackpackEquipStatusController's in-world warning) when a profile deploy fails.
 export const SAVE_FAILED_MESSAGE = 'There was an error updating your avatar profile. Please try again.'
@@ -577,6 +575,8 @@ export interface SkyboxState {
   hours: number
   /** The sky follows the engine's day cycle; the slider is locked while on. */
   progressing: boolean
+  /** The scene the player stands in holds the time of day: the menu shows it and changes nothing. */
+  sceneLocked: boolean
   setHours: (hours: number) => void
   setProgressing: (on: boolean) => void
 }
@@ -632,6 +632,8 @@ export interface GalleryState {
   metas: Record<string, GalleryPhotoMeta | null | undefined>
   /** Fetch one photo's full metadata (populates `metas`). */
   loadPhoto: (id: string) => void
+  /** Resolve the wearables a person in a photo had on (urns from its metadata); null on failure. */
+  loadWearables: (urns: string[]) => Promise<Wearable[] | null>
   setPublic: (id: string, isPublic: boolean) => Promise<ReelWrite>
   remove: (id: string) => Promise<ReelWrite>
 }
@@ -761,6 +763,11 @@ export interface PermissionsState {
   /** Permissions the scene used this visit, by type, with the engine's latest outcome. The list
    *  highlights the row that decided each: a visit answer, or the stored rule in force. */
   triggered: TriggeredPermission[]
+  /** The permission types whose effect acts on the player now in the scene they stand in, such as
+   *  a camera the scene holds: the list's "In force now" rows. */
+  inForce: string[]
+  /** The hash of the scene the player stands in, which the lists above are for. */
+  scene: string | undefined
   /** Refusals the player did not click themselves — the HUD answering from a visit deny, or a stored
    *  rule — by type, that the player has not opened the list for yet: the rail badge. */
   unseenDenied: number
@@ -1035,7 +1042,7 @@ export const SIGNING_IN_PICK = 'Still signing in. Try again in a moment.'
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
-type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage | SatelliteTileMessage | PlaceMessage | WorldAccessMessage | GiftingPageMessage
+type BridgeReply = GalleryMessage | GalleryWriteMessage | GalleryWearablesMessage | ExternalUrlOpenedMessage | SatelliteTileMessage | PlaceMessage | WorldAccessMessage | GiftingPageMessage
 
 export type LoginStatus =
   | 'loading'
@@ -1273,6 +1280,8 @@ export interface EngineSession {
   logout: () => void
   /** A full scene menu page is open → the React HUD (sidebar + chat) hides. */
   menuOpen: boolean
+  /** The HideUi key (U) hid the Explorer HUD (its first press; the second hides the scene UI too). */
+  hudHidden: boolean
   closeAllPanels: () => void
 }
 
@@ -1546,6 +1555,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // requestFocusChat from a callback that would otherwise close over a stale value. Popups aren't in
   // here — they live in their own module store, so requestFocusChat asks it directly.
   const chatCoveredRef = useRef(false)
+  // Brings back the UI the HideUi key hid (assigned below, once setUiHidden exists).
+  const showUiRef = useRef<() => void>(() => {})
   // Open + (re)focus chat — the engine's "Chat" system action (Enter, relayed by the bridge as
   // focusChat) funnels here, wherever keyboard focus sat when it fired.
   const requestFocusChat = useCallback(() => {
@@ -1560,6 +1571,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     // `!document.pointerLockElement`. No-op on native (no DOM pointer lock; the engine frees its own OS
     // cursor grab from the Chat action).
     document.exitPointerLock?.()
+    // the chat is part of the HUD: Enter brings back a UI the HideUi key hid
+    showUiRef.current()
     // Friends is the only panel Enter closes: it shares the chat's bottom-left dock, so Chat renders
     // null behind it (App's `hidden`) and focusing without closing it would do nothing on screen.
     // The rest (profile, notifications, emotes) sit clear of the chat, so leave them open.
@@ -1569,6 +1582,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   }, [])
   const [pendingMention, setPendingMention] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  // The HideUi cycle: everything shown → Explorer HUD hidden → scene UI hidden too → shown.
+  const [uiHidden, setUiHiddenState] = useState<UiHidden>('none')
+  const uiHiddenRef = useRef<UiHidden>('none')
   const [friendsData, setFriendsData] = useState<{
     available: boolean
     friends: Friend[]
@@ -1628,6 +1644,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [skyboxOpen, setSkyboxOpen] = useState(false)
   const [skyboxHours, setSkyboxHoursState] = useState(SKYBOX_START_HOURS)
   const [skyboxProgressing, setSkyboxProgressingState] = useState(true)
+  const [skyboxSceneLocked, setSkyboxSceneLocked] = useState(false)
   const [emotes, setEmotes] = useState<Emote[]>([])
   const [emotesOpen, setEmotesOpen] = useState(false)
   const [mic, setMic] = useState({ enabled: false, available: false, sceneBlocked: false, refusals: 0 })
@@ -1756,6 +1773,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [visitAnswers, setVisitAnswers] = useState<VisitAnswer[]>([])
   // the engine's latest outcome per permission the scene used this visit (scene hash + type)
   const [triggeredPermissions, setTriggeredPermissions] = useState<(TriggeredPermission & { scene: string })[]>([])
+  // Kept for every scene, not the current one only: a start can arrive before the scene message
+  // that says the player stands there, and the engine sends it once.
+  const [permissionsInForce, setPermissionsInForce] = useState<{ scene: string; ty: string }[]>([])
   // types the scene was refused without the player clicking Deny — by a visit deny or a stored rule
   // — and those the player has seen. The engine reports the refusal of the request the player did
   // click Deny (or Escape) on too: that one report is skipped.
@@ -1797,6 +1817,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const chatAccountRef = useRef<string | null>(null)
   // The speed to restore when Time progression is turned back on (the last running speed seen).
   const skyboxDaySpeed = useRef(SKYBOX_DAY_SPEED)
+  // The player dragged the slider of a stopped clock: the menu keeps that hour over the reports.
+  const skyboxDragged = useRef(false)
+  // When this menu last sent a `/time`.
+  const skyboxSentAt = useRef(0)
   // Catalog fetches done once per session (cache; relays re-emit on change).
   const fetchedRef = useRef<Set<string>>(new Set())
 
@@ -2182,6 +2206,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'bridgeReady':
           setBridgeAnswered(true)
+          // a bridge that starts again reports what is in force from scratch
+          setPermissionsInForce([])
           break
         case 'bridgeUnavailable':
           // no answer is coming: Verifying's clock runs, so a sign-in waiting on it gives up
@@ -2266,6 +2292,20 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         case 'emotes':
           setEmotes(msg.emotes)
           break
+        case 'skyTime': {
+          // read before the engine applied what this menu just sent
+          if (Date.now() - skyboxSentAt.current < SKYBOX_SETTLE_MS) break
+          const { hours, locked, speed, followsClock } = msg.state
+          setSkyboxSceneLocked(locked)
+          setSkyboxProgressingState(speed !== 0)
+          if (speed !== 0) skyboxDaySpeed.current = speed
+          // The menu shows the time the sky shows, except an hour the player dragged a stopped
+          // clock to: the sky is still on its way there.
+          const playersClock = followsClock && speed === 0 && !locked
+          if (!playersClock) skyboxDragged.current = false
+          if (!skyboxDragged.current) setSkyboxHoursState(hours)
+          break
+        }
         case 'mic':
           setMic((m) => ({ enabled: msg.enabled, available: msg.available, sceneBlocked: msg.sceneBlocked === true, refusals: msg.refusals ?? m.refusals }))
           break
@@ -2762,6 +2802,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'gallery':
         case 'galleryWrite':
+        case 'galleryWearables':
         case 'externalUrlOpened':
         case 'satelliteTile':
         case 'place':
@@ -2788,6 +2829,14 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           setPermissionQueue((q) => q.filter((r) => r.id !== msg.id))
           break
         case 'permissionUsed':
+          if (msg.inForce != null) {
+            setPermissionsInForce((f) => {
+              const rest = f.filter((e) => !(e.scene === msg.scene && e.ty === msg.ty))
+              if (!msg.inForce) return rest.length === f.length ? f : rest
+              return rest.length === f.length ? [...f, { scene: msg.scene, ty: msg.ty }] : f
+            })
+            break
+          }
           // a neighbouring scene's or a portable's use is not this scene's
           if (msg.scene !== currentScene.current) break
           setTriggeredPermissions((t) => {
@@ -3444,66 +3493,37 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const runDebugCommand = useCallback((line: string) =>
     driverRef.current?.command?.(line) ?? Promise.reject(new Error('Engine console unavailable')), [])
 
-  // The engine clock as `/time` (no args) reports it; null when there is no engine console.
-  const readClock = useCallback(async (): Promise<{ hours: number; speed: number } | null> => {
-    const reply = await driverRef.current?.command?.('/time').catch(() => undefined)
-    const clock = reply != null ? parseTimeReply(reply) : null
-    if (clock != null && clock.speed !== 0) skyboxDaySpeed.current = clock.speed
-    return clock
-  }, [])
   const setClock = useCallback((hours: number, speed: number) => {
+    skyboxSentAt.current = Date.now()
     driverRef.current
       ?.command?.(`/time ${hours.toFixed(2)} ${speed}`)
       .catch((e: unknown) => console.warn('[hud] /time failed:', e))
   }, [])
-  const toggleSkybox = useCallback(
-    () =>
-      exclusive(setSkyboxOpen, () => {
-        void readClock().then((clock) => {
-          if (clock == null) return
-          setSkyboxHoursState(clock.hours)
-          setSkyboxProgressingState(clock.speed !== 0)
-        })
-      }),
-    [exclusive, readClock]
-  )
+  const toggleSkybox = useCallback(() => exclusive(setSkyboxOpen), [exclusive])
   const setSkyboxHours = useCallback(
     (hours: number) => {
       setSkyboxHoursState(hours)
-      if (!skyboxProgressing) setClock(hours, 0)
+      if (skyboxProgressing) return
+      skyboxDragged.current = true
+      setClock(hours, 0)
     },
     [skyboxProgressing, setClock]
   )
   const setSkyboxProgressing = useCallback(
     (on: boolean) => {
       setSkyboxProgressingState(on)
-      if (on) {
-        setClock(skyboxHours, skyboxDaySpeed.current)
-        return
-      }
-      // Freeze where the running clock is now, not where the slider last was.
-      void readClock().then((clock) => {
-        const hours = clock?.hours ?? skyboxHours
-        setSkyboxHoursState(hours)
-        setClock(hours, 0)
-      })
+      // Off freezes the clock at the hour shown, which follows the engine while the menu is open.
+      setClock(skyboxHours, on ? skyboxDaySpeed.current : 0)
     },
-    [skyboxHours, readClock, setClock]
+    [skyboxHours, setClock]
   )
-  // While the day cycle runs, the open menu follows the engine clock (Unity's slider tracks it too).
+  // While the menu is open the engine reports the time of day: at once, then once a second.
   useEffect(() => {
-    if (!skyboxOpen || !skyboxProgressing) return
-    let live = true
-    const id = setInterval(() => {
-      void readClock().then((clock) => {
-        if (live && clock != null && clock.speed !== 0) setSkyboxHoursState(clock.hours)
-      })
-    }, 1000)
-    return () => {
-      live = false
-      clearInterval(id)
-    }
-  }, [skyboxOpen, skyboxProgressing, readClock])
+    if (!skyboxOpen) return
+    skyboxDragged.current = false
+    driverRef.current?.send({ kind: 'watchSkyTime', on: true })
+    return () => driverRef.current?.send({ kind: 'watchSkyTime', on: false })
+  }, [skyboxOpen])
   const toggleGallery = useCallback(() => exclusive(setGalleryOpen), [exclusive])
   const setPhotoModeEnabled = useCallback((enable: boolean, source: PhotoModeSource) => {
     driverRef.current?.send({ kind: 'setPhotoMode', enable, source })
@@ -3572,6 +3592,13 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     async (path: string): Promise<string | null> => {
       const msg = await bridgeCall('satelliteTile', (requestId) => ({ kind: 'getSatelliteTile', requestId, path }))
       return msg?.ok === true && typeof msg.data === 'string' ? msg.data : null
+    },
+    [bridgeCall]
+  )
+  const loadGalleryWearables = useCallback(
+    async (urns: string[]): Promise<Wearable[] | null> => {
+      const msg = await bridgeCall('galleryWearables', (requestId) => ({ kind: 'getGalleryWearables', requestId, urns }))
+      return msg?.ok === true ? msg.wearables : null
     },
     [bridgeCall]
   )
@@ -3743,6 +3770,19 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     ownConsoleCommands.current.push([command, ...args].join(' '))
     driverRef.current?.send({ kind: 'consoleCommand', command, args })
   }, [])
+  // The scene UI is the engine's: its hiding goes through the engine's `show_ui all` command.
+  const setUiHidden = useCallback(
+    (next: UiHidden) => {
+      const prev = uiHiddenRef.current
+      if (prev === next) return
+      uiHiddenRef.current = next
+      setUiHiddenState(next)
+      if ((prev === 'all') !== (next === 'all')) ownConsoleCommand('show_ui', ['all', next === 'all' ? 'false' : 'true'])
+      showHideUiToast(next, keyHintFor(getBindingsSnapshot(), 'HideUi') ?? 'U')
+    },
+    [ownConsoleCommand]
+  )
+  showUiRef.current = () => setUiHidden('none')
   const stopPortable = useCallback((hash: string) => ownConsoleCommand('stop_portable', [hash]), [ownConsoleCommand])
   const restartSmartWearable = useCallback((urn: string) => ownConsoleCommand('smart_wearable', ['restart', urn]), [ownConsoleCommand])
   const resolveWorldPassword = useCallback((password: string | null) => {
@@ -4502,6 +4542,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     signOuts.current += 1
     // a /goto still waiting for its answer has no chat of this session to post it in
     gotoReplies.current.clear()
+    // the next sign-in starts with the whole UI shown; sent before the logout, while the engine listens
+    setUiHidden('none')
     driverRef.current?.logout(forget).catch((e: Error) => console.error('[session] logout failed', e))
     if (forget) {
       clearLogins() // drop the same-domain SSO identity for this origin
@@ -4604,7 +4646,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     setBanRefusedTravel(false)
     travelSeq.current++
     setTravellingTo(null)
-  }, [closeAllPanels, resetEvents])
+  }, [closeAllPanels, resetEvents, setUiHidden])
   const logout = useCallback(() => signOut(true), [signOut])
   // Cancel on Verifying, or a sign-in that took too long (`error`): the first screen, the stored
   // sign-in kept, and the error shown there.
@@ -5328,6 +5370,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       if (emote) playEmote(emote.urn)
       return
     }
+    if (action === 'HideUi') {
+      setUiHidden(uiHiddenRef.current === 'none' ? 'explorer' : uiHiddenRef.current === 'explorer' ? 'all' : 'none')
+      return
+    }
     switch (action) {
       case 'Map': toggleMap(); break
       case 'Places': togglePlaces(); break
@@ -5340,12 +5386,15 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       case 'Friends': toggleFriends(); break
       case 'ChatPanel': toggleChat(); break
       case 'Emote': toggleEmotes(); break
+      default: return
       // 'Microphone' is NOT handled here: MicUiPlugin isn't NativeUi-gated, so the engine
       // itself opens the mic on press and closes it on release (the mic relay updates the
       // HUD icon).
       // 'Chat' (Enter) is NOT handled here: the bridge's chat domain turns it into the
       // dedicated 'focusChat' message (releasing the engine pointer lock scene-side too).
     }
+    // a panel shortcut brings the whole UI back with the panel it opens
+    setUiHidden('none')
   }
 
   // Stable slices let memoized surfaces (the minimap) skip HUD re-renders they don't depend on.
@@ -5499,6 +5548,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       toggle: toggleSkybox,
       hours: skyboxHours,
       progressing: skyboxProgressing,
+      sceneLocked: skyboxSceneLocked,
       setHours: setSkyboxHours,
       setProgressing: setSkyboxProgressing
     },
@@ -5538,6 +5588,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       fetchPage: fetchGalleryPage,
       metas: galleryMetas,
       loadPhoto: loadGalleryPhoto,
+      loadWearables: loadGalleryWearables,
       setPublic: setGalleryPhotoPublic,
       remove: removeGalleryPhoto
     },
@@ -5545,6 +5596,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       pending: permissionQueue,
       visit: visitAnswers.filter((e) => e.scene === sceneHash),
       triggered: triggeredPermissions,
+      inForce: permissionsInForce.filter((e) => e.scene === sceneHash).map((e) => e.ty),
+      scene: sceneHash,
       unseenDenied,
       markSeen: markPermissionsSeen,
       rules: permissionRules,
@@ -5568,6 +5621,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     setInteractableArea,
     logout,
     menuOpen,
+    hudHidden: uiHidden !== 'none',
     closeAllPanels,
     login: {
       status,

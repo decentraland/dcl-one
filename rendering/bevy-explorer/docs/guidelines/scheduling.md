@@ -207,7 +207,7 @@ index of every ordering point around the avatar, camera and collider transform p
 
 | Variant | Purpose |
 |---|---|
-| `EarlyTransformPropagate` | A first propagation so the sets below see current globals |
+| `EarlyTransformPropagate` | A first propagation so the sets below see current globals: bevy's `PropagateTransforms` schedule, which `TransformPropagate` runs again for what changed in between |
 | `EarlyBillboard` | Re-applies billboard rotations a scene transform write replaced, facing the previous frame's camera, so local transforms read below (a virtual camera parented to a billboard) are billboarded. Globals keep the scene's write until `TransformPropagate` |
 | `ColliderUpdate` | Collider transforms and the scene qbvh |
 | `PlayerUpdate` | Player movement and ground resolution |

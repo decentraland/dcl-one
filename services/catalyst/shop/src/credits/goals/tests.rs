@@ -205,7 +205,16 @@ async fn photo_completion_claim_signature_consumption_and_usd_isolation() {
     assert_eq!(report.credits.available, 100.0);
     assert!(report.goals[0].is_claimed);
     assert!(report.goals[0].is_completed);
-    assert_eq!(report.goals[0].progress.metadata.photos_taken.len(), 2);
+    assert_eq!(
+        report.goals[0]
+            .progress
+            .metadata
+            .photos_taken
+            .as_ref()
+            .unwrap()
+            .len(),
+        2
+    );
     sqlx::query("INSERT INTO credits.usages(chain_id,block_number,log_index,contract,tx_hash,sender,credit_id,salt,credit_value,credit_expires_at,value_wei) SELECT chain_id,1,1,contract,$1,address,credit_hash,salt,amount_wei,extract(epoch FROM expires_at),40000000000000000000 FROM credits.goal_grants")
         .bind(format!("0x{}","12".repeat(32))).execute(&db.pool).await.unwrap();
     let (items, total, _) = user_credits(&state, OWNER, None).await.unwrap();
@@ -1465,3 +1474,5 @@ async fn backlog_diagnostic_timeout_is_bounded_and_keeps_the_pool_usable() {
     );
     db.drop().await;
 }
+
+mod room_goals;

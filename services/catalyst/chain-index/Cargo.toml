@@ -15,9 +15,10 @@ serde_json.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
-metrics.workspace = true
+dcl-metrics.workspace = true
 thiserror.workspace = true
 reqwest.workspace = true
+sqlx.workspace = true
 url.workspace = true
 
 [features]
@@ -27,3 +28,6 @@ test-support = ["catalyst-shared/test-support"]
 [dev-dependencies]
 catalyst-shared = { path = "../shared", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
+
+[lints.clippy]
+unwrap_used = "deny"

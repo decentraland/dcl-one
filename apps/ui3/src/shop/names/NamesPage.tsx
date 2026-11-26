@@ -8,7 +8,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
 import { useMarketplace } from "../market/access";
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import { useMediaQuery } from "../../data/hooks/useMediaQuery";
 import Icon from "../discovery/components/Icon";
 import { SHOP_BASE } from "../routes";
@@ -300,7 +300,7 @@ export default function NamesPage({ client, offerSource, loadBanned, debounceMs 
                   {status.kind === "error" ? (
                     <>
                       <span>We couldn’t check that NAME right now.</span>
-                      <Button size="sm" variant="ghost" onClick={() => setRetry((r) => r + 1)}>
+                      <Button size="sm" variant="outline" onClick={() => setRetry((r) => r + 1)}>
                         Try again
                       </Button>
                     </>

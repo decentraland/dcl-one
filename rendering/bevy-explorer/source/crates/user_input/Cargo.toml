@@ -28,3 +28,4 @@ clap = { workspace = true }
 
 [dev-dependencies]
 scene_material = { workspace = true }
+web-time = { workspace = true }

@@ -1,5 +1,6 @@
 """Development CI keeps platform coverage and reusable, isolated build snapshots."""
 from pathlib import Path
+import fnmatch
 import json
 import os
 import re
@@ -21,7 +22,7 @@ CREATOR_HUB = WORKFLOW.with_name('creator-hub-ci.yml')
 
 def jobs():
     source = WORKFLOW.read_text().split('jobs:\n', 1)[1]
-    return dict(re.findall(r'(?ms)^  (\w+):\n(.*?)(?=^  \w+:|\Z)', source))
+    return dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)', source))
 
 
 def disk_steps():
@@ -371,7 +372,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         policy = WORKFLOW.parents[2] / 'tooling/repo-actions-policy.sh'
         self.assertIn("patterns_allowed[]=nix-community/cache-nix-action@*", policy.read_text())
         installs = 0
-        for name in ('development.yml', 'social-voice-release.yml'):
+        for name in ('development.yml', 'social-voice-release.yml', 'sdk.yml'):
             jobs = WORKFLOW.with_name(name).read_text().split('\njobs:\n', 1)[1]
             for job in re.split(r'(?m)^  (?=[\w-]+:\n)', jobs):
                 steps = re.split(r'(?m)^      - ', job)
@@ -380,7 +381,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                         continue
                     installs += 1
                     snapshot, roots = steps[i + 1], steps[i + 2]
-                    shell = 'ci' if 'dev-test.sh rust' in job or 'social-voice-release-test.sh' in job else 'default'
+                    shell = 'ci' if 'dev-test.sh rust' in job or 'cargo clippy' in job or 'social-voice-release-test.sh' in job else 'default'
                     key = 'nix-store-${{ runner.os }}-${{ runner.arch }}-' + shell + '-'
                     self.assertTrue(snapshot.startswith('uses: nix-community/cache-nix-action@'), name)
                     self.assertIn('primary-key: ' + key + "${{ hashFiles('flake.nix', 'flake.lock', ", snapshot)
@@ -395,7 +396,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertIn('nix flake archive --json', roots)
                     for command in re.findall(r'nix develop(?: \.#\w+)?', job):
                         self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
-        self.assertEqual(installs, 5)
+        self.assertEqual(installs, 7)
 
     def test_smoke_snapshots_are_saved_only_from_passing_main_pushes(self):
         def allowed(event, ref, platform, passed=True, hit=False):
@@ -461,6 +462,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         prefix = 'foundation-dev-v2-smoke-decentraland/dcl-one-Linux-X64-'
         deps = 'v0-rust-dev-tests-'
         bevy = 'v0-rust-bevy-explorer-native-ci-test-test-Linux-x64-'
+
+        def native(lane, generation):
+            return f'bevy-native-v1-{lane}-Linux-X64-' + '-'.join(['0' * 16] * 3 + [generation * 16])
         caches = [
             {'id': 1, 'ref': 'refs/heads/main', 'key': prefix + 'old'},
             {'id': 2, 'ref': 'refs/heads/main', 'key': prefix + 'new'},
@@ -486,6 +490,14 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 22, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
             {'id': 23, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'c' * 64},
             {'id': 24, 'ref': 'refs/pull/10/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
+            # A hyphenated lane is one family per ref, apart from the other lanes of the same platform.
+            {'id': 25, 'ref': 'refs/heads/main', 'key': native('relay-wake', '1')},
+            {'id': 26, 'ref': 'refs/heads/main', 'key': native('relay-wake', '2')},
+            {'id': 27, 'ref': 'refs/heads/main', 'key': native('relay-wake', '3')},
+            {'id': 28, 'ref': 'refs/heads/main', 'key': native('test', '1')},
+            {'id': 29, 'ref': 'refs/heads/main', 'key': native('test', '2')},
+            {'id': 30, 'ref': 'refs/pull/11/merge', 'key': native('relay-wake', '1')},
+            {'id': 31, 'ref': 'refs/pull/11/merge', 'key': native('relay-wake', '2')},
         ]
         with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule', 'PR_NUMBER': '',
                                      'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
@@ -502,6 +514,10 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/20',
             'repos/decentraland/dcl-one/actions/caches/22',
             'repos/decentraland/dcl-one/actions/caches/24',
+            'repos/decentraland/dcl-one/actions/caches/25',
+            'repos/decentraland/dcl-one/actions/caches/26',
+            'repos/decentraland/dcl-one/actions/caches/28',
+            'repos/decentraland/dcl-one/actions/caches/30',
         ])
         self.assertEqual(sum('graphql' in call.args[0] for call in cli.call_args_list), 1)
 
@@ -545,6 +561,39 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertNotEqual(previous, current)
                     previous = current
 
+    def test_creator_hub_workflows_track_shared_tooltip_sources(self):
+        ci = CREATOR_HUB.read_text()
+        push_patterns = re.findall(r"^      - '([^']+)'$", ci, re.M)
+        pr_pattern = re.search(r"grep -qE '([^']+)'", ci)[1]
+        shared_filter = {'library/ui/components/Tooltip/**', 'library/ui/package.json'}
+        def ui_paths(paths):
+            return {path for path in paths if path.startswith('library/ui/')}
+
+        self.assertEqual(ui_paths(push_patterns), shared_filter)
+        for path in ['library/ui/components/Tooltip/Tooltip.tsx',
+                     'library/ui/components/Tooltip/Tooltip.module.css', 'library/ui/package.json']:
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatch(path, pattern) for pattern in push_patterns))
+                self.assertRegex(path, pr_pattern)
+        for unrelated in ['docs/ui-components.md', 'library/ui/components/Button/Button.tsx',
+                          'library/ui/index.ts', 'library/ui/pnpm-lock.yaml']:
+            self.assertNotRegex(unrelated, pr_pattern)
+
+        for workflow in ['build', 'e2e']:
+            source = CREATOR_HUB.with_name(f'creator-hub-{workflow}.yml').read_text()
+            cached = re.findall(r"'(library/ui/[^']+)'", source)
+            self.assertEqual(set(cached), shared_filter, workflow)
+        sources = {path.removesuffix('/**') for path in shared_filter}
+        for workflow in ['inspector', 'desktop']:
+            source = CREATOR_HUB.with_name(f'creator-hub-{workflow}.yml').read_text()
+            version_paths = re.search(r'change_path: "([^"]+)"', source)[1].split()
+            self.assertEqual(ui_paths(version_paths), sources, workflow)
+            if workflow == 'inspector':
+                note_paths = re.search(r"paths: '([^']+)'", source)[1].split(',')
+                sections = re.search(r"section_names: '([^']+)'", source)[1].split(',')
+                self.assertEqual(set(version_paths), set(note_paths))
+                self.assertEqual(len(note_paths), len(sections))
+
     def test_creator_hub_desktop_builds_need_the_label_on_pull_requests(self):
         source = CREATOR_HUB.read_text().split('jobs:\n', 1)[1]
         found = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)', source))
@@ -580,6 +629,17 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(dry_run, found[name])
                 self.assertRegex(found[name], r'(?m)^    needs: \[ changes, ')
+
+    def test_every_pull_request_runs_the_workflow_tests(self):
+        changes = jobs()['changes']
+        self.assertNotIn('continue-on-error', changes)
+        last = re.split(r'(?m)^      - ', changes)[-1]
+        self.assertEqual([line for line in last.splitlines() if line.strip() and not line.lstrip().startswith('#')],
+                         ['name: Run the workflow tests',
+                          '        run: python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local '
+                          'tooling.tests.test_ui_gallery_receipt.WorkflowTest '
+                          'tooling.tests.test_image_cache.CompileWorkflowTest'],
+                         msg='Changes must end with exactly this step, after the steps that set its outputs')
 
     def test_only_unit_suites_are_gated_by_web_selection(self):
         web = jobs()['web']

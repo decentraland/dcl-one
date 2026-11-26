@@ -24,12 +24,13 @@ use collectibles::{
 #[cfg(feature = "explorer")]
 use common::rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin};
 use common::{
+    dynamics::landed,
     sets::SceneSets,
     structs::{
         AudioEmitter, AudioType, AvatarDynamicState, Clips, EmoteCommand, EmoteLifecycle,
         EmoteLifecycleEvent, EmoteLifecycleSource, EmoteMask, ForeignAvatar, MoveKind,
-        OneShotAudio, PlayerModifiers, PrimaryUser, SceneDrivenAnim, SceneDrivenAnimationFeedback,
-        SceneDrivenAnimationFeedbackState,
+        OneShotAudio, PlayerEmoteTriggered, PlayerModifiers, PrimaryUser, SceneDrivenAnim,
+        SceneDrivenAnimationFeedback, SceneDrivenAnimationFeedbackState,
     },
     util::TryPushChildrenEx,
 };
@@ -158,6 +159,7 @@ pub struct AvatarAnimationPlugin;
 
 impl Plugin for AvatarAnimationPlugin {
     fn build(&self, app: &mut App) {
+        app.add_event::<PlayerEmoteTriggered>();
         app.add_systems(
             Update,
             (
@@ -334,10 +336,19 @@ fn handle_trigger_emotes(
     mut commands: Commands,
     mut emote_cmds: EventReader<RpcCallEvent>,
     player: Query<(Entity, Option<&EmoteCommand>), With<PrimaryUser>>,
-    mut perms: Permission<EmoteCommand>,
+    mut perms: Permission<(EmoteCommand, &'static str)>,
+    mut triggered: EventWriter<PlayerEmoteTriggered>,
 ) {
     let Ok((player, maybe_prev)) = player.single() else {
         return;
+    };
+    // the HUD plays the player's own emotes through a super-user system scene
+    let source = |perms: &Permission<(EmoteCommand, &'static str)>, hash: &str| {
+        if perms.is_system_scene(hash) {
+            "self"
+        } else {
+            "scene"
+        }
     };
     let timestamp = maybe_prev
         .map(|prev| prev.timestamp + 1)
@@ -347,25 +358,40 @@ fn handle_trigger_emotes(
         // a stop is an empty command; `animate` reports the interruption
         let (scene, command) = match (&ev.origin, &ev.call) {
             (
-                RpcOrigin::Scene { entity: scene, .. },
+                RpcOrigin::Scene {
+                    entity: scene,
+                    hash,
+                },
                 RpcCall::TriggerEmote { urn, r#loop, mask },
             ) => (
                 scene,
-                EmoteCommand {
-                    urn: urn.clone(),
-                    r#loop: *r#loop,
-                    timestamp,
-                    mask: *mask,
-                },
+                (
+                    EmoteCommand {
+                        urn: urn.clone(),
+                        r#loop: *r#loop,
+                        timestamp,
+                        mask: *mask,
+                    },
+                    source(&perms, hash),
+                ),
             ),
-            (RpcOrigin::Scene { entity: scene, .. }, RpcCall::StopEmote) => (
-                scene,
-                EmoteCommand {
-                    urn: String::new(),
-                    r#loop: false,
-                    timestamp,
-                    mask: EmoteMask::FullBody,
+            (
+                RpcOrigin::Scene {
+                    entity: scene,
+                    hash,
                 },
+                RpcCall::StopEmote,
+            ) => (
+                scene,
+                (
+                    EmoteCommand {
+                        urn: String::new(),
+                        r#loop: false,
+                        timestamp,
+                        mask: EmoteMask::FullBody,
+                    },
+                    source(&perms, hash),
+                ),
             ),
             _ => continue,
         };
@@ -378,8 +404,14 @@ fn handle_trigger_emotes(
         );
     }
 
-    for emote in perms.drain_success(common::structs::PermissionType::PlayEmote) {
-        commands.entity(player).try_insert(emote.clone());
+    for (emote, source) in perms.drain_success(common::structs::PermissionType::PlayEmote) {
+        if !emote.urn.is_empty() {
+            triggered.write(PlayerEmoteTriggered {
+                urn: emote.urn.clone(),
+                source,
+            });
+        }
+        commands.entity(player).try_insert(emote);
     }
 
     for _ in perms.drain_fail(common::structs::PermissionType::PlayEmote) {}
@@ -871,7 +903,8 @@ fn animate(
                     MoveKind::DoubleJump,
                 )
             } else if dynamic_state.move_kind == MoveKind::Glide {
-                // Set on foreign avatars from rfc4::Movement.glide_state ∈ {OPENING_PROP, GLIDING}.
+                // Set on foreign avatars from rfc4::Movement.glide_state ∈ {OPENING_PROP, GLIDING},
+                // or CLOSING_PROP in the air.
                 // Frozen at the neutral (straight) pose since we have no tilt input available.
                 (
                     ActiveEmote {
@@ -887,7 +920,7 @@ fn animate(
                     },
                     MoveKind::Glide,
                 )
-            } else if dynamic_state.ground_height > 0.2
+            } else if !landed(dynamic_state.ground_height)
                 || (dynamic_state.velocity.y > 0.0 && just_jumped)
             {
                 let move_kind = if just_jumped {
@@ -2283,6 +2316,7 @@ fn emote_console_command(
     mut input: ConsoleCommand<EmoteConsoleCommand>,
     player: Query<(Entity, Option<&EmoteCommand>), With<PrimaryUser>>,
     profile: Res<CurrentUserProfile>,
+    mut triggered: EventWriter<PlayerEmoteTriggered>,
 ) {
     if let Some(Ok(command)) = input.take() {
         if let Ok((player, maybe_prev)) = player.single() {
@@ -2301,6 +2335,10 @@ fn emote_console_command(
             info!("anim {} -> {}", command.urn, urn);
             let timestamp = maybe_prev.map(|p| p.timestamp + 1).unwrap_or_default();
 
+            triggered.write(PlayerEmoteTriggered {
+                urn: urn.clone(),
+                source: "self",
+            });
             commands.entity(player).try_insert(EmoteCommand {
                 urn: urn.clone(),
                 timestamp,
@@ -2366,6 +2404,166 @@ fn play_scene_driven_sounds(
     }
     // Drop tracked state for avatars that no longer have the component.
     last_sounds.retain(|e, _| seen.contains(e));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::animation::{
+        graph::AnimationNodeIndex,
+        transition::{advance_transitions, expire_completed_transitions},
+    };
+
+    const IDLE: usize = 1;
+    const WALK: usize = 2;
+    const JUMP: usize = 3;
+    /// Seconds. A step of 1/8 of `FADE` keeps the expected shares exact in `f32`.
+    const FRAME: f32 = 0.0625;
+    const FADE: f32 = 0.5;
+
+    fn crossfade() -> (App, Entity) {
+        let mut app = App::new();
+        app.init_resource::<Time>().add_systems(
+            Update,
+            (advance_transitions, expire_completed_transitions).chain(),
+        );
+        let avatar = app
+            .world_mut()
+            .spawn((AnimationPlayer::default(), AnimationTransitions::new()))
+            .id();
+        (app, avatar)
+    }
+
+    fn play(app: &mut App, avatar: Entity, clip: usize, seconds: f32) {
+        let mut query = app
+            .world_mut()
+            .query::<(&mut AnimationPlayer, &mut AnimationTransitions)>();
+        let (mut player, mut transitions) = query.get_mut(app.world_mut(), avatar).unwrap();
+        transitions.play(
+            &mut player,
+            AnimationNodeIndex::new(clip),
+            Duration::from_secs_f32(seconds),
+        );
+    }
+
+    fn step(app: &mut App, seconds: f32) {
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(seconds));
+        app.update();
+    }
+
+    /// Each playing clip's share of the pose. Asserts that the weights sum to 1, because the
+    /// upper-body overlays rely on it.
+    fn shares(app: &App, avatar: Entity) -> Vec<(usize, f32)> {
+        let player = app.world().get::<AnimationPlayer>(avatar).unwrap();
+        let total: f32 = player.playing_animations().map(|(_, a)| a.weight()).sum();
+        assert!((total - 1.0).abs() < 1e-5, "weights sum to {total}");
+        let mut shares: Vec<_> = player
+            .playing_animations()
+            .map(|(clip, a)| (clip.index(), a.weight() / total))
+            .collect();
+        shares.sort_by_key(|(clip, _)| *clip);
+        shares
+    }
+
+    #[track_caller]
+    fn assert_shares(app: &App, avatar: Entity, expected: &[(usize, f32)]) {
+        let shares = shares(app, avatar);
+        let matches = shares.len() == expected.len()
+            && shares
+                .iter()
+                .zip(expected)
+                .all(|((clip, share), (want_clip, want))| {
+                    clip == want_clip && (share - want).abs() < 1e-5
+                });
+        assert!(matches, "shares {shares:?}, expected {expected:?}");
+    }
+
+    #[test]
+    fn a_transition_hands_the_pose_over_linearly() {
+        let (mut app, avatar) = crossfade();
+        play(&mut app, avatar, IDLE, 0.2);
+        step(&mut app, FRAME);
+        assert_shares(&app, avatar, &[(IDLE, 1.0)]);
+
+        play(&mut app, avatar, WALK, FADE);
+        for frame in 1..8 {
+            step(&mut app, FRAME);
+            let walk = frame as f32 * FRAME / FADE;
+            assert_shares(&app, avatar, &[(IDLE, 1.0 - walk), (WALK, walk)]);
+        }
+        // the outgoing clip stops when the transition ends
+        step(&mut app, FRAME);
+        assert_shares(&app, avatar, &[(WALK, 1.0)]);
+    }
+
+    #[test]
+    fn a_zero_transition_cuts() {
+        let (mut app, avatar) = crossfade();
+        play(&mut app, avatar, IDLE, 0.2);
+        step(&mut app, FRAME);
+        play(&mut app, avatar, WALK, 0.0);
+        step(&mut app, FRAME);
+        assert_shares(&app, avatar, &[(WALK, 1.0)]);
+    }
+
+    #[test]
+    fn a_transition_started_mid_way_fades_in_over_the_running_one() {
+        let (mut app, avatar) = crossfade();
+        play(&mut app, avatar, IDLE, 0.2);
+        step(&mut app, FRAME);
+        play(&mut app, avatar, WALK, FADE);
+        for _ in 0..4 {
+            step(&mut app, FRAME);
+        }
+        assert_shares(&app, avatar, &[(IDLE, 0.5), (WALK, 0.5)]);
+
+        // the frame the jump starts, nothing has moved yet
+        play(&mut app, avatar, JUMP, FADE / 2.0);
+        step(&mut app, 0.0);
+        assert_shares(&app, avatar, &[(IDLE, 0.5), (WALK, 0.5), (JUMP, 0.0)]);
+
+        // the jump rises linearly over its own duration, and idle to walk carries on under it
+        for frame in 1..4 {
+            step(&mut app, FRAME);
+            let jump = frame as f32 * FRAME / (FADE / 2.0);
+            let walk = (4 + frame) as f32 * FRAME / FADE;
+            assert_shares(
+                &app,
+                avatar,
+                &[
+                    (IDLE, (1.0 - jump) * (1.0 - walk)),
+                    (WALK, (1.0 - jump) * walk),
+                    (JUMP, jump),
+                ],
+            );
+        }
+        step(&mut app, FRAME);
+        assert_shares(&app, avatar, &[(JUMP, 1.0)]);
+    }
+
+    #[test]
+    fn returning_to_a_clip_fading_out_resumes_from_its_share() {
+        let (mut app, avatar) = crossfade();
+        play(&mut app, avatar, IDLE, 0.2);
+        step(&mut app, FRAME);
+        play(&mut app, avatar, WALK, FADE);
+        for _ in 0..4 {
+            step(&mut app, FRAME);
+        }
+
+        play(&mut app, avatar, IDLE, FADE);
+        step(&mut app, 0.0);
+        assert_shares(&app, avatar, &[(IDLE, 0.5), (WALK, 0.5)]);
+        for frame in 1..4 {
+            step(&mut app, FRAME);
+            let idle = 0.5 + frame as f32 * FRAME / FADE;
+            assert_shares(&app, avatar, &[(IDLE, idle), (WALK, 1.0 - idle)]);
+        }
+        step(&mut app, FRAME);
+        assert_shares(&app, avatar, &[(IDLE, 1.0)]);
+    }
 }
 
 #[cfg(all(test, feature = "explorer"))]

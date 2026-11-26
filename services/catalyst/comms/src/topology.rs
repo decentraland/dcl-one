@@ -5,6 +5,8 @@
 //! never union publisher state. World presence applies every replica's LiveKit room
 //! events as they arrive; this replica's complete LiveKit reads correct missed ones.
 
+use crate::metrics::declarations;
+
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -63,7 +65,8 @@ type Transition = (String, bool);
 impl WorldSessions {
     fn add(&mut self, sid: &str, wallet: String, at: Instant, out: &mut Vec<Transition>) {
         if self.live.len() >= MAX_WORLD_LIVE {
-            metrics::counter!("comms_world_presence_dropped_total", "reason" => "live_cap")
+            declarations::WORLD_PRESENCE_DROPPED
+                .handle(["live_cap"])
                 .increment(1);
             return;
         }
@@ -119,17 +122,22 @@ impl WorldSessions {
                 break;
             };
             self.left.remove(&oldest);
-            metrics::counter!("comms_world_presence_dropped_total", "reason" => "left_cap")
+            declarations::WORLD_PRESENCE_DROPPED
+                .handle(["left_cap"])
                 .increment(1);
         }
     }
 
     /// Ends sessions past their TTL and forgets old leaves.
     fn collect(&mut self, now: Instant, out: &mut Vec<Transition>) {
-        while let Some(Reverse((deadline, incarnation, _))) = self.expiry.peek()
-            && *deadline <= now
-        {
-            let (incarnation, sid) = (*incarnation, self.expiry.pop().unwrap().0.2);
+        loop {
+            let Some(top) = self.expiry.peek_mut() else {
+                break;
+            };
+            if top.0.0 > now {
+                break;
+            }
+            let Reverse((_, incarnation, sid)) = std::collections::binary_heap::PeekMut::pop(top);
             let Some(session) = self.live.get(&sid).filter(|s| s.incarnation == incarnation) else {
                 continue;
             };
@@ -140,10 +148,12 @@ impl WorldSessions {
                 self.end(&sid, out);
             }
         }
-        while let Some((at, _)) = self.left_order.front()
-            && now.saturating_duration_since(*at) >= WORLD_LEFT_TTL
+        while self
+            .left_order
+            .front()
+            .is_some_and(|(at, _)| now.saturating_duration_since(*at) >= WORLD_LEFT_TTL)
+            && let Some((_, sid)) = self.left_order.pop_front()
         {
-            let (_, sid) = self.left_order.pop_front().unwrap();
             self.left.remove(&sid);
         }
     }
@@ -317,8 +327,12 @@ impl Topology {
                 wallets.remove(&wallet)
             };
         }
-        metrics::gauge!("comms_world_presence_sessions").set(state.world.live.len() as f64);
-        metrics::gauge!("comms_world_presence_wallets").set(view.world.len() as f64);
+        declarations::WORLD_PRESENCE_SESSIONS
+            .handle([])
+            .set(state.world.live.len() as f64);
+        declarations::WORLD_PRESENCE_WALLETS
+            .handle([])
+            .set(view.world.len() as f64);
         if changed {
             self.bump(view);
         } else {

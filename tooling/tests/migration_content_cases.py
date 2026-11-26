@@ -1,6 +1,9 @@
 """Builder, camera-reel, badges and events imports against the schema."""
 import contextlib
 import io
+import os
+import shutil
+from unittest.mock import patch
 
 from tooling.tests import migration_harness as harness
 
@@ -201,6 +204,109 @@ class ContentMigrationCases:
             self.assertEqual(self.sql(db, f"SELECT metadata->>'name' FROM social.notifications "
                                           f"WHERE id='{source_id}';").strip(), 'Newer node')
         self.assertEqual(self.sql(db, 'SELECT count(*) FROM social.notification_deliveries;').strip(), '0')
+
+    def test_when_copying_event_posters_it_should_index_the_named_ones_and_keep_the_nodes(self):
+        db = self.content_db('event_posters')
+        patcher = patch.dict(os.environ, {'TARGET_DATABASE_URL': self.url(db)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.sql(db, """INSERT INTO explore.event(id,name,raw,origin,approved) VALUES
+            ('a','A','{"image":"/poster/a.png","image_vertical":"/poster-vertical/v.webp"}','local',true),
+            ('b','B','{"image":"/poster/a.png","image_vertical":null}','local',true),
+            ('c','C','{"image":"/poster/own.png"}','local',true),
+            ('d','D','{"image":"/poster/gone.png"}','local',true),
+            ('e','E','{"image":"https://elsewhere.example/poster/x.png"}','local',true),
+            ('f','F','{"image_vertical":"https://events-assets-099ac00.decentraland.org/poster-vertical/full_name.png"}',
+             'upstream',true);
+            INSERT INTO explore.poster VALUES
+            ('poster','own.png','bafkreinodeown','image/png',1,'local',now());""")
+        upstream, node = self.tmp / 'event-bucket', self.tmp / 'event-node'
+        self.addCleanup(shutil.rmtree, upstream, True)
+        self.addCleanup(shutil.rmtree, node, True)
+        png, webp = harness.blobs.PNG_MAGIC + b'poster', b'RIFF\0\0\0\0WEBPvertical'
+        full = harness.blobs.PNG_MAGIC + b'full'
+        for key, data in (('poster/a.png', png), ('poster-vertical/v.webp', webp), ('poster/own.png', png),
+                          ('poster-vertical/full_name.png', full)):
+            (upstream / key).parent.mkdir(parents=True, exist_ok=True)
+            (upstream / key).write_bytes(data)
+        copy = ('blobs', 'events', '--from-dir', str(upstream), '--to', str(node))
+        code, out = self.migrate(*copy, sources_dir=harness.migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertIn('4 posters named by events and not served here', out)
+        self.assertIn('poster/gone.png: missing', out)
+        self.assertIn('posters copied 3, already in the store 0, absent upstream 1', out)
+        self.assertEqual(self.sql(db, "SELECT kind, file, blob_cid, content_type, byte_size, origin FROM explore.poster"
+                                      " ORDER BY kind, file;").strip().splitlines(),
+                         [f'poster\ta.png\t{harness.blobs.hash_bytes_v1(png)}\timage/png\t{len(png)}\tupstream',
+                          'poster\town.png\tbafkreinodeown\timage/png\t1\tlocal',
+                          f'poster-vertical\tfull_name.png\t{harness.blobs.hash_bytes_v1(full)}\timage/png\t{len(full)}'
+                          '\tupstream',
+                          f'poster-vertical\tv.webp\t{harness.blobs.hash_bytes_v1(webp)}\timage/webp\t{len(webp)}'
+                          '\tupstream'])
+        self.assertEqual(harness.blobs.Store(node).path(harness.blobs.hash_bytes_v1(png)).read_bytes(), png)
+        code, out = self.migrate('blobs', 'events', '--verify', '--to', str(node), sources_dir=harness.migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertIn('poster/gone.png: not indexed', out)
+        self.assertIn('poster/own.png: indexed, blob missing', out)
+        self.assertIn('5 posters named, 1 not indexed, 1 with their blob missing', out)
+        code, out = self.migrate(*copy, '--allow-missing', sources_dir=harness.migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn('1 posters named by events and not served here', out)
+        self.assertIn('absent upstream 1', out)
+        (upstream / 'poster/gone.png').write_bytes(b'<html>not found</html>')
+        code, out = self.migrate(*copy, sources_dir=harness.migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertIn('1 posters named by events and not served here', out)
+        self.assertIn('not an image 1', out)
+
+    def test_when_an_upstream_posters_blob_is_gone_it_should_copy_it_again_and_repoint_the_row(self):
+        db = self.content_db('event_poster_repair')
+        patcher = patch.dict(os.environ, {'TARGET_DATABASE_URL': self.url(db)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.sql(db, """INSERT INTO explore.event(id,name,raw,origin,approved) VALUES
+            ('a','A','{"image":"/poster/a.png"}','local',true),
+            ('b','B','{"image":"/poster/own.png"}','local',true);
+            INSERT INTO explore.poster VALUES
+            ('poster','a.png','bafkreistale','image/png',1,'upstream',now()),
+            ('poster','own.png','bafkreinodeown','image/png',1,'local',now());""")
+        upstream, node = self.tmp / 'event-repair-bucket', self.tmp / 'event-repair-node'
+        self.addCleanup(shutil.rmtree, upstream, True)
+        self.addCleanup(shutil.rmtree, node, True)
+        png = harness.blobs.PNG_MAGIC + b'repaired'
+        for key in ('poster/a.png', 'poster/own.png'):
+            (upstream / key).parent.mkdir(parents=True, exist_ok=True)
+            (upstream / key).write_bytes(png)
+        code, out = self.migrate('blobs', 'events', '--from-dir', str(upstream), '--to', str(node),
+                                 sources_dir=harness.migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn('1 posters named by events and not served here', out)
+        self.assertEqual(self.sql(db, "SELECT file, blob_cid, byte_size, origin FROM explore.poster ORDER BY file;")
+                         .strip().splitlines(),
+                         [f'a.png\t{harness.blobs.hash_bytes_v1(png)}\t{len(png)}\tupstream',
+                          'own.png\tbafkreinodeown\t1\tlocal'])
+
+    def test_when_extracting_events_it_should_rewrite_bucket_posters_to_node_paths(self):
+        src = self.fresh_db('event_extract_posters')
+        self.sql(src, """CREATE TABLE events (id uuid, name text, start_at timestamptz, finish_at timestamptz,
+            next_start_at timestamptz, next_finish_at timestamptz, duration bigint, x int, y int,
+            recurrent_until timestamptz, created_at timestamptz, updated_at timestamptz, deleted_at timestamp,
+            recurrent_dates timestamptz[], image text, image_vertical text, highlighted boolean, trending boolean,
+            approved boolean, community_id text, "user" text, description text, all_day boolean, server text,
+            url text, user_name text, estate_id text, estate_name text, scene_name text, rejected boolean,
+            world boolean, recurrent boolean, recurrent_frequency text, recurrent_setpos int,
+            recurrent_monthday int, recurrent_weekday_mask int, recurrent_month_mask int, recurrent_interval int,
+            recurrent_count int, categories text[], schedules text[], contact text, details text, place_id text,
+            featured_item text, approved_by text, rejected_by text, rejection_reason text,
+            deleted_by_user boolean, deleted_by_admin boolean, deleted_by text, deleted_reason text,
+            previous_place_id text);
+            INSERT INTO events (id, name, start_at, duration, updated_at, image, image_vertical) VALUES
+            ('00000000-0000-4000-8000-000000000001', 'E', '2026-01-01Z', 1, '2026-01-01Z',
+             'https://events-assets-099ac00.decentraland.org/poster/with_underscore.png',
+             'https://elsewhere.example/poster-vertical/x.png');""")
+        extract = harness.migrate.SOURCES / 'events' / 'event.extract.sql'
+        self.assertEqual(self.sql(src, f"SELECT raw->>'image', raw->>'image_vertical' FROM ({extract.read_text()}) x;")
+                         .strip(), '/poster/with_underscore.png\thttps://elsewhere.example/poster-vertical/x.png')
 
     def test_event_attendance_reconcile_preserves_later_local_changes(self):
         db = self.content_db('event_attendance_reconcile')

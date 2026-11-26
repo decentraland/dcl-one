@@ -93,6 +93,7 @@ fn coupon_error_response(e: CouponError) -> Response {
     match e {
         CouponError::Duplicate => error_response(409, message),
         CouponError::NotFound(_) => error_response(404, message),
+        CouponError::CatalogueUnavailable(_) => error_response(503, message),
         CouponError::Db(_) | CouponError::Internal(_) => {
             tracing::error!(error = %message, "coupon request failed");
             error_response(500, COULD_NOT_CREATE.to_string())
@@ -126,7 +127,14 @@ pub async fn add_coupon(
     ) {
         return e.into_response();
     }
-    let recovered = match require_signer(&headers, "post", "/v1/coupons").await {
+    let recovered = match require_signer(
+        crate::market::signed::fresh(state.eip1654.as_deref()),
+        &headers,
+        "post",
+        "/v1/coupons",
+    )
+    .await
+    {
         Ok(r) => r,
         Err(e) => return e.into_response(),
     };

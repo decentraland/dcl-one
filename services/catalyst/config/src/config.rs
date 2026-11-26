@@ -1,3 +1,4 @@
+use catalyst_shared::network::ChainPair;
 use clap::Args;
 
 use crate::posture::Posture::Mirror;
@@ -32,11 +33,9 @@ pub const DEFAULT_CHECKOUT_FULFILLMENT_MODE: &str = "primary";
 /// rpc.decentraland.org's request logs. It names no node: an operator that
 /// wants its own tag sets both URLs.
 pub fn default_rpc_urls(eth_network: &str) -> (String, String) {
-    let (l1, l2) = if eth_network.trim() == "mainnet" {
-        ("mainnet", "polygon")
-    } else {
-        ("sepolia", "amoy")
-    };
+    let (l1, l2) = ChainPair::from_eth_network(eth_network)
+        .unwrap_or(ChainPair::Testnet)
+        .names();
     let url = |chain: &str| format!("https://rpc.decentraland.org/{chain}?project=dcl-one");
     (url(l1), url(l2))
 }
@@ -124,6 +123,9 @@ impl Config {
             Self::read_secret_file(name, slot)?;
             Self::refuse_short_operator_secret(name, slot.as_deref())?;
         }
+        if let Some(pair) = ChainPair::from_eth_network(&self.node.eth_network) {
+            self.node.eth_network = pair.names().0.into();
+        }
         self.default_rpc_urls();
         self.derive_trade_rpc_urls();
         crate::posture::refuse_remote_secrets(self)
@@ -168,9 +170,14 @@ impl Config {
     /// makes the list. An explicit value, empty included, wins; off mainnet
     /// the chain ids name other chains, so nothing is derived.
     pub fn derive_trade_rpc_urls(&mut self) {
-        if self.node.node_posture.as_deref() != Some("mirror")
+        let mirror = self
+            .node
+            .node_posture
+            .as_deref()
+            .is_some_and(|p| crate::posture::Posture::parse(p).ok() == Some(Mirror));
+        if !mirror
             || self.marketplace.trade_rpc_urls.is_some()
-            || self.node.eth_network != "mainnet"
+            || ChainPair::from_eth_network(&self.node.eth_network) != Some(ChainPair::Mainnet)
         {
             return;
         }
@@ -193,7 +200,7 @@ impl Config {
     /// bearers, service tokens, the console's session key): a short one is
     /// guessable or brute-forced offline, so startup refuses it. Bearers this
     /// node sends elsewhere keep their issuer's length.
-    pub const OPERATOR_SECRETS: [&'static str; 27] = [
+    pub const OPERATOR_SECRETS: [&'static str; 25] = [
         "SESSION_SECRET",
         "CATALYRST_CONTENT_ADMIN_TOKEN",
         "COMMUNITIES_ADMIN_TOKEN",
@@ -203,7 +210,6 @@ impl Config {
         "CATALYRST_EVENTS_ADMIN_TOKEN",
         "CATALYRST_BUILDER_ADMIN_TOKEN",
         "CATALYRST_CAMERA_REEL_ADMIN_TOKEN",
-        "CAMERA_REEL_METRICS_BEARER_TOKEN",
         "CATALYRST_WORLDS_ADMIN_TOKEN",
         "SCENE_HOST_ADMIN_TOKEN",
         "MARKET_ADMIN_TOKEN",
@@ -220,7 +226,6 @@ impl Config {
         "NOTIFICATIONS_REWARDS_TOKEN",
         "ONBOARDING_API_KEY",
         "DATA_TEAM_AUTH_TOKEN",
-        "WKC_METRICS_BEARER_TOKEN",
     ];
 
     pub fn is_operator_secret(name: &str) -> bool {
@@ -276,7 +281,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 83] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 82] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -302,10 +307,6 @@ impl Config {
             (
                 "CATALYRST_SOCIAL_RPC_ADMIN_TOKEN",
                 &mut self.social.catalyrst_social_rpc_admin_token,
-            ),
-            (
-                "WKC_METRICS_BEARER_TOKEN",
-                &mut self.social.wkc_metrics_bearer_token,
             ),
             ("MODERATOR_TOKEN", &mut self.social.moderator_token),
             (
@@ -380,6 +381,10 @@ impl Config {
                 &mut self.explore.catalyrst_events_admin_token,
             ),
             (
+                "EVENTS_FEATURE_FLAGS_USER_ID",
+                &mut self.explore.events_feature_flags_user_id,
+            ),
+            (
                 "CATALYRST_BUILDER_ADMIN_TOKEN",
                 &mut self.create.catalyrst_builder_admin_token,
             ),
@@ -394,10 +399,6 @@ impl Config {
             (
                 "CATALYRST_CAMERA_REEL_ADMIN_TOKEN",
                 &mut self.create.catalyrst_camera_reel_admin_token,
-            ),
-            (
-                "CAMERA_REEL_METRICS_BEARER_TOKEN",
-                &mut self.create.camera_reel_metrics_bearer_token,
             ),
             (
                 "CATALYRST_WORLDS_ADMIN_TOKEN",
@@ -799,6 +800,8 @@ mod tests {
         // Inbound HMAC key, but Segment issues it: its length is Segment's.
         "SEGMENT_SIGNING_KEY",
         "ETH_RPC_URL",
+        // Outbound flag targeting id the flags service defines.
+        "EVENTS_FEATURE_FLAGS_USER_ID",
         "LIVEKIT_API_KEY",
         "LIVEKIT_API_SECRET",
         "SLACK_BOT_TOKEN",
