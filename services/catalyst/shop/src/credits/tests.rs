@@ -11272,7 +11272,10 @@ async fn the_balance_stream_follows_the_signers_balance() {
 /// change to a credit announces nothing.
 #[tokio::test]
 async fn a_balance_change_is_announced_on_its_channel() {
-    let Some(pool) = pool().await else { return };
+    let Some(db) = OwnDatabase::create("balance_channel").await else {
+        return;
+    };
+    let pool = db.pool.clone();
     let mut listener = sqlx::postgres::PgListener::connect_with(&pool)
         .await
         .unwrap();
@@ -11347,10 +11350,305 @@ async fn a_balance_change_is_announced_on_its_channel() {
         Some("unflag"),
         "an unflag"
     );
+    let (goal_salt, goal_hash, goal_contract) = goal_credit_fixture(&pool, &wallet).await;
+    assert_eq!(
+        heard("granted").await.as_deref(),
+        Some("granted"),
+        "a goal credit granted"
+    );
+    sqlx::query(
+        "UPDATE credits.goal_grants SET claimed_at = timezone('UTC', now()) WHERE salt = $1",
+    )
+    .bind(&goal_salt)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        heard("claimed").await.as_deref(),
+        Some("claimed"),
+        "a goal credit claimed"
+    );
+    sqlx::query(
+        "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, credit_value, credit_expires_at, value_wei) \
+         VALUES (137, 1, 0, $1, $2, $3, $4, $5, 1, 0, 1)",
+    )
+    .bind(&goal_contract)
+    .bind(format!("0x{}", "cd".repeat(32)))
+    .bind(&wallet)
+    .bind(&goal_hash)
+    .bind(&goal_salt)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        heard("used").await.as_deref(),
+        Some("used"),
+        "its use on chain, by sender"
+    );
     sqlx::query("DELETE FROM credits.authorizations WHERE id = $1")
         .bind(&salt)
         .execute(&pool)
         .await
         .unwrap();
-    cleanup(&pool, &wallet).await;
+    // The listener holds one of the pool's connections, which closing the pool waits for.
+    drop(heard);
+    drop(listener);
+    db.drop().await;
+}
+
+/// A signed request to open `wallet`'s balance stream on `app`: the data
+/// stream of its body.
+async fn open_balance_stream(
+    app: &Router,
+    wallet: &Wallet,
+) -> (StatusCode, axum::body::BodyDataStream) {
+    let path = format!("/credits/users/{}/credits/stream", wallet.address);
+    let mut request = Request::builder().uri(&path);
+    for (k, v) in signed_headers(wallet, "get", &path).await.iter() {
+        request = request.header(k, v);
+    }
+    let response = app
+        .clone()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    (response.status(), response.into_body().into_data_stream())
+}
+
+/// A state over `pool` whose balance streams read again every 200 ms.
+fn fast_refresh_state(pool: PgPool) -> SharedState {
+    let mut state = test_state(pool, StateCfg::default());
+    Arc::get_mut(&mut state)
+        .expect("an unshared state")
+        .balance_changes =
+        super::stream::BalanceChanges::with_refresh(std::time::Duration::from_millis(200));
+    state
+}
+
+/// Season 1's photo goal completed by `wallet` (which must hold a wallet row)
+/// and its goal credit of 10 MANA, unclaimed, expiring in four seconds:
+/// `(salt, credit hash, contract)`.
+async fn goal_credit_fixture(pool: &PgPool, wallet: &str) -> (String, String, String) {
+    sqlx::raw_sql(
+        "INSERT INTO credits.seasons (id, name, start_date, end_date, max_mana_wei) \
+             VALUES (1, 'Test', timezone('UTC', now()) - interval '1 day', timezone('UTC', now()) + interval '21 days', 1000000000000000000000000); \
+         INSERT INTO credits.season_goals (season_id, goal_id, title, thumbnail, total_steps, reward_wei, start_week, end_week) \
+             VALUES (1, 'take-photo', 'Take a photo', 'photo.png', 1, 10000000000000000000, 1, 20);",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO credits.goal_progress (address, season_id, week_id, goal_id, title, thumbnail, total_steps, reward_wei, completed_steps, completed_at) \
+         VALUES ($1, 1, 1, 'take-photo', 'Take a photo', 'photo.png', 1, 10000000000000000000, 1, timezone('UTC', now()))",
+    )
+    .bind(wallet)
+    .execute(pool)
+    .await
+    .unwrap();
+    let (salt, hash, contract) = (
+        format!("0x{}", super::handlers::random_32_hex()),
+        format!("0x{}", super::handlers::random_32_hex()),
+        scratch_wallet().address,
+    );
+    // Expires in a few seconds: long enough for the claim and the use below.
+    sqlx::query(
+        "INSERT INTO credits.goal_grants (address, season_id, week_id, goal_id, salt, chain_id, contract, credit_hash, amount_wei, signature, created_at, expires_at) \
+         VALUES ($1, 1, 1, 'take-photo', $2, 137, $3, $4, 10000000000000000000, 'sig', timezone('UTC', now()), timezone('UTC', now()) + interval '4 seconds')",
+    )
+    .bind(wallet)
+    .bind(&salt)
+    .bind(&contract)
+    .bind(&hash)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    (salt, hash, contract)
+}
+
+/// What reaches an open stream with no write to the wallet's row: a goal
+/// credit claimed, its use on chain, and its expiry, which only the clock
+/// changes.
+#[tokio::test]
+async fn the_balance_stream_follows_goal_credits_their_use_and_their_expiry() {
+    let Some(db) = OwnDatabase::create("stream_goals").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let app = app(fast_refresh_state(pool.clone()));
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    let (salt, hash, contract) = goal_credit_fixture(&pool, &wallet.address).await;
+
+    let (status, mut body) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut buffer = String::new();
+    let wait = std::time::Duration::from_secs(10);
+    let first = next_sse_event(&mut body, &mut buffer, wait).await.unwrap();
+    assert_eq!(
+        first["totalCredits"].as_f64(),
+        Some(0.0),
+        "an unclaimed goal credit counts nothing: {first}"
+    );
+
+    sqlx::query(
+        "UPDATE credits.goal_grants SET claimed_at = timezone('UTC', now()) WHERE salt = $1",
+    )
+    .bind(&salt)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let claimed = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the claim");
+    assert_eq!(
+        claimed["totalCredits"].as_f64(),
+        Some(1e19),
+        "in wei: {claimed}"
+    );
+
+    sqlx::query(
+        "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, credit_value, credit_expires_at, value_wei) \
+         VALUES (137, 1, 0, $1, $2, $3, $4, $5, 1, 0, 4000000000000000000)",
+    )
+    .bind(&contract)
+    .bind(format!("0x{}", "cd".repeat(32)))
+    .bind(&wallet.address)
+    .bind(&hash)
+    .bind(&salt)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let used = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the use on chain");
+    assert_eq!(used["totalCredits"].as_f64(), Some(6e18), "{used}");
+
+    let expired = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the expiry");
+    assert_eq!(expired["totalCredits"].as_f64(), Some(0.0), "{expired}");
+    db.drop().await;
+}
+
+/// The stream's listener holds its own connection: on a request pool of one
+/// connection, a balance read still answers while a stream is open and after
+/// it closes.
+#[tokio::test]
+async fn the_balance_streams_listener_leaves_the_request_pool_alone() {
+    let Some(scratch) = pool().await else { return };
+    let one = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(3))
+        .connect_with((*scratch.connect_options()).clone())
+        .await
+        .unwrap();
+    let app = app(test_state(one.clone(), StateCfg::default()));
+    let wallet = scratch_wallet();
+    seed_paid_credits(&scratch, &wallet.address, "10").await;
+    let read = format!("/credits/users/{}/credits", wallet.address);
+
+    let (status, mut body) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut buffer = String::new();
+    next_sse_event(&mut body, &mut buffer, std::time::Duration::from_secs(10))
+        .await
+        .expect("the first balance");
+    // Long enough for the listener to have connected.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let (status, v) = call(&app, &wallet, "get", &read, &[], None).await;
+    assert_eq!(status, StatusCode::OK, "a read with the stream open: {v}");
+    drop(body);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let (status, v) = call(&app, &wallet, "get", &read, &[], None).await;
+    assert_eq!(status, StatusCode::OK, "a read after it closed: {v}");
+    one.close().await;
+    cleanup(&scratch, &wallet.address).await;
+}
+
+/// A read that fails is retried: the stream sends the balance once the
+/// database answers again, with no further write to prompt it.
+#[tokio::test]
+async fn a_balance_stream_retries_a_failed_read() {
+    let Some(db) = OwnDatabase::create("stream_retry").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let app = app(fast_refresh_state(pool.clone()));
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    let (status, mut body) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut buffer = String::new();
+    let first = next_sse_event(&mut body, &mut buffer, std::time::Duration::from_secs(10))
+        .await
+        .unwrap();
+    // Every read fails while the pledges' table is away.
+    sqlx::raw_sql("ALTER TABLE credits.authorizations RENAME TO authorizations_away")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE credits.wallets SET available = available + 5 WHERE address = $1")
+        .bind(&wallet.address)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        next_sse_event(
+            &mut body,
+            &mut buffer,
+            std::time::Duration::from_millis(700)
+        )
+        .await,
+        None,
+        "nothing to send while the read fails"
+    );
+    sqlx::raw_sql("ALTER TABLE credits.authorizations_away RENAME TO authorizations")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let recovered = next_sse_event(&mut body, &mut buffer, std::time::Duration::from_secs(10))
+        .await
+        .expect("the retry sends the balance");
+    assert_eq!(
+        recovered["usd"]["balanceCents"].as_i64().unwrap()
+            - first["usd"]["balanceCents"].as_i64().unwrap(),
+        50
+    );
+    db.drop().await;
+}
+
+/// Each balance frame is one snapshot: while pledges are committed, the
+/// spendable balance and the hold always add up to the wallet's funds.
+#[tokio::test]
+async fn a_balance_frame_is_one_snapshot_while_pledges_commit() {
+    let Some(db) = OwnDatabase::create("stream_snapshot").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let state = test_state(pool.clone(), StateCfg::default());
+    let wallet = scratch_wallet().address;
+    seed_paid_credits(&pool, &wallet, "1000").await;
+    let writer = {
+        let pool = pool.clone();
+        let wallet = wallet.clone();
+        tokio::spawn(async move {
+            for _ in 0..60 {
+                let salt = format!("0x{}", super::handlers::random_32_hex());
+                authorization_fixture(&pool, &salt, &wallet, 10, "authorized", 0, 0).await;
+            }
+        })
+    };
+    let mut frames = 0;
+    while frames == 0 || !writer.is_finished() {
+        let body = super::handlers::users::user_credits_body(&state, &wallet, None)
+            .await
+            .unwrap();
+        let held = body.usd.held.as_ref().map_or(0, |h| h.cents);
+        assert_eq!(body.usd.balance_cents + held, 10_000, "frame {frames}");
+        frames += 1;
+    }
+    writer.await.unwrap();
+    db.drop().await;
 }

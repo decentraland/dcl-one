@@ -430,6 +430,14 @@ impl Credits {
 
     /// The balance at the peg, the live pledges and their count, in one read.
     pub async fn spendable(&self, address: &str) -> Result<Spendable, ApiError> {
+        Self::spendable_on(&self.pool, address).await
+    }
+
+    /// [`Self::spendable`] on `executor`, for a read within one snapshot.
+    pub(crate) async fn spendable_on<'e, E: sqlx::PgExecutor<'e>>(
+        executor: E,
+        address: &str,
+    ) -> Result<Spendable, ApiError> {
         let row = sqlx::query(
             "SELECT COALESCE((SELECT floor(available * $2::numeric)::bigint FROM credits.wallets WHERE address = $1), 0) AS balance, \
                     COALESCE((SELECT SUM(usd_cents) FROM credits.authorizations WHERE address = $1 AND status IN ('authorized', 'retired')), 0)::bigint AS held, \
@@ -437,7 +445,7 @@ impl Credits {
         )
         .bind(address)
         .bind(UsdCents::CENTS_PER_CREDIT)
-        .fetch_one(&self.pool)
+        .fetch_one(executor)
         .await?;
         Ok(Spendable {
             balance_cents: row.get("balance"),

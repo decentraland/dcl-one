@@ -32,6 +32,7 @@ use sqlx::postgres::PgListener;
 use tokio::sync::broadcast;
 
 use super::SharedState;
+use super::dto::UserCreditsResponse;
 use super::errors::ApiError;
 use super::handlers::signer_from;
 use super::handlers::users::user_credits_body;
@@ -41,6 +42,10 @@ pub const CHANNEL: &str = "credits_balance";
 /// How often an idle stream sends a `: heartbeat` comment (credits-server's
 /// 30 seconds), so proxies keep the connection open.
 pub const HEARTBEAT: Duration = Duration::from_secs(30);
+/// How often a stream reads its balance again with no change announced: what
+/// only the clock changes (a credit or a pledge expiring) reaches it within
+/// this, and so does a read that failed.
+pub const REFRESH: Duration = Duration::from_secs(60);
 /// Changes a slow stream may fall behind by before it reads its balance again.
 const BACKLOG: usize = 1024;
 
@@ -57,18 +62,25 @@ pub enum BalanceChange {
 pub struct BalanceChanges {
     sender: broadcast::Sender<BalanceChange>,
     started: AtomicBool,
+    refresh: Duration,
 }
 
 impl Default for BalanceChanges {
     fn default() -> Self {
-        Self {
-            sender: broadcast::channel(BACKLOG).0,
-            started: AtomicBool::new(false),
-        }
+        Self::with_refresh(REFRESH)
     }
 }
 
 impl BalanceChanges {
+    /// Streams that read their balance again every `refresh` with no change.
+    pub fn with_refresh(refresh: Duration) -> Self {
+        Self {
+            sender: broadcast::channel(BACKLOG).0,
+            started: AtomicBool::new(false),
+            refresh,
+        }
+    }
+
     /// A stream's subscription; the first one starts the listener over `pool`.
     pub fn subscribe(&self, pool: &PgPool) -> broadcast::Receiver<BalanceChange> {
         let receiver = self.sender.subscribe();
@@ -80,8 +92,14 @@ impl BalanceChanges {
 }
 
 /// Listens on [`CHANNEL`] for as long as the process runs, reconnecting with
-/// backoff; after every (re)connect every stream reads its balance again.
-async fn listen(pool: PgPool, sender: broadcast::Sender<BalanceChange>) {
+/// backoff; after every (re)connect every stream reads its balance again. The
+/// listener holds its connection for good, so it gets its own, outside the
+/// request pool: it never takes a slot a request needs.
+async fn listen(requests: PgPool, sender: broadcast::Sender<BalanceChange>) {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .min_connections(0)
+        .connect_lazy_with((*requests.connect_options()).clone());
     let mut backoff = Duration::from_secs(1);
     loop {
         let connected = async {
@@ -119,14 +137,15 @@ async fn listen(pool: PgPool, sender: broadcast::Sender<BalanceChange>) {
     }
 }
 
-/// credits-server's refusal of a flagged wallet's stream.
-fn flagged(wallet: &str, at: &str, reason: impl serde::Serialize) -> Response {
+/// credits-server's refusal of a flagged wallet's stream, with the balance
+/// read's own flag.
+fn flagged(body: &UserCreditsResponse) -> Response {
     (
         StatusCode::UNAUTHORIZED,
         Json(json!({
             "ok": false,
-            "message": format!("User {wallet} was flagged for multi-accounting at {at} UTC"),
-            "reason": reason,
+            "message": body.message,
+            "reason": body.reason,
             "isBlockedForClaiming": true,
         })),
     )
@@ -157,21 +176,24 @@ pub async fn credits_stream(
         )
             .into_response());
     }
-    {
-        let mut conn = state.credits.pool.acquire().await?;
-        if let Some((at, reason)) = super::goals::flag_reason(&mut conn, &wallet).await? {
-            return Ok(flagged(&wallet, &at, reason));
-        }
-    }
-    // Subscribed before the first read, so a change between the two is heard.
+    // Subscribed before the first read, so a change between the two is heard;
+    // the first read's own flag decides the admission.
     let changes = state.balance_changes.subscribe(&state.credits.pool);
-    let first = body_of(&state, &wallet).await?;
+    let refresh = state.balance_changes.refresh;
+    let first = user_credits_body(&state, &wallet, None).await?;
+    if first.is_blocked_for_claiming == Some(true) {
+        return Ok(flagged(&first));
+    }
+    let first = serde_json::to_string(&first).map_err(|e| ApiError::Internal(e.to_string()))?;
     let follow = Follow {
         state,
         wallet: wallet.into(),
         changes,
         last: None,
         first: Some(first),
+        refresh,
+        retry: None,
+        read_by: tokio::time::Instant::now() + refresh,
     };
     let events = futures::stream::unfold(follow, Follow::next);
     Ok((
@@ -188,38 +210,58 @@ async fn body_of(state: &SharedState, wallet: &str) -> Result<String, ApiError> 
     serde_json::to_string(&body).map_err(|e| ApiError::Internal(e.to_string()))
 }
 
-/// One stream's state: what it last sent and what it hears.
+/// One stream's state: what it last sent, what it hears and when it reads
+/// again unprompted.
 struct Follow {
     state: SharedState,
     wallet: Arc<str>,
     changes: broadcast::Receiver<BalanceChange>,
     last: Option<String>,
     first: Option<String>,
+    refresh: Duration,
+    /// The backoff after a failed read, until one succeeds.
+    retry: Option<Duration>,
+    /// When the stream reads its balance again if nothing is announced: the
+    /// refresh, or the retry of a failed read. A deadline, not a timer reset
+    /// by every announcement, so other wallets' changes never put it off.
+    read_by: tokio::time::Instant,
 }
 
 impl Follow {
-    /// The next balance to send: the first at once, then each change that
-    /// concerns this wallet and differs from the last one sent.
+    /// The next balance to send: the first at once, then whenever a read
+    /// (prompted by a change to this wallet, a missed change, the refresh or
+    /// the retry of a failed read) differs from the last one sent.
     async fn next(mut self) -> Option<(Result<Event, Infallible>, Self)> {
         if let Some(first) = self.first.take() {
             self.last = Some(first.clone());
             return Some((Ok(Event::default().data(first)), self));
         }
         loop {
-            match self.changes.recv().await {
-                Ok(BalanceChange::Wallet(wallet)) if wallet != self.wallet => continue,
-                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
-                Err(broadcast::error::RecvError::Closed) => return None,
+            tokio::select! {
+                change = self.changes.recv() => match change {
+                    Ok(BalanceChange::Wallet(wallet)) if wallet != self.wallet => continue,
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => return None,
+                },
+                () = tokio::time::sleep_until(self.read_by) => {}
             }
             match body_of(&self.state, &self.wallet).await {
-                Ok(body) if self.last.as_deref() != Some(body.as_str()) => {
-                    self.last = Some(body.clone());
-                    return Some((Ok(Event::default().data(body)), self));
+                Ok(body) => {
+                    self.retry = None;
+                    self.read_by = tokio::time::Instant::now() + self.refresh;
+                    if self.last.as_deref() != Some(body.as_str()) {
+                        self.last = Some(body.clone());
+                        return Some((Ok(Event::default().data(body)), self));
+                    }
                 }
-                Ok(_) => {}
-                // The next change reads it again.
                 Err(error) => {
-                    tracing::warn!(wallet = %self.wallet, %error, "a balance stream could not read the balance");
+                    let backoff = self
+                        .retry
+                        .map_or(Duration::from_secs(1), |b| b * 2)
+                        .min(self.refresh);
+                    self.retry = Some(backoff);
+                    self.read_by = tokio::time::Instant::now() + backoff;
+                    tracing::warn!(wallet = %self.wallet, %error, retry_in = ?backoff, "a balance stream could not read the balance; retrying");
                 }
             }
         }
