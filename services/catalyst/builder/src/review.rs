@@ -114,26 +114,6 @@ pub struct EventsPage {
     pub results: Vec<EventOut>,
 }
 
-/// A query parameter read as JavaScript's `parseInt` reads it: optional
-/// space and sign, then the leading digits; none without a digit.
-pub fn js_int(raw: &str) -> Option<i64> {
-    let trimmed = raw.trim_start();
-    let (negative, digits) = match trimmed.as_bytes().first() {
-        Some(b'-') => (true, &trimmed[1..]),
-        Some(b'+') => (false, &trimmed[1..]),
-        _ => (false, trimmed),
-    };
-    let digits: String = digits.chars().take_while(char::is_ascii_digit).collect();
-    if digits.is_empty() {
-        return None;
-    }
-    let value = digits.chars().fold(0i64, |n, d| {
-        n.saturating_mul(10)
-            .saturating_add(i64::from(d as u8 - b'0'))
-    });
-    Some(if negative { -value } else { value })
-}
-
 /// The page and length a query asks for, as builder-server reads and bounds
 /// them.
 pub fn pagination(query: Option<&str>) -> (i64, i64) {
@@ -146,10 +126,13 @@ pub fn pagination(query: Option<&str>) -> (i64, i64) {
             _ => {}
         }
     }
-    let page = page.as_deref().and_then(js_int).unwrap_or(1);
+    let page = page
+        .as_deref()
+        .and_then(crate::collections::listing::js_int)
+        .unwrap_or(1);
     let limit = limit
         .as_deref()
-        .and_then(js_int)
+        .and_then(crate::collections::listing::js_int)
         .filter(|l| *l < 100_000)
         .unwrap_or(DEFAULT_EVENTS);
     (page.clamp(1, MAX_PAGE), limit.clamp(1, MAX_EVENTS))

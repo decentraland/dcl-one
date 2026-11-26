@@ -11,13 +11,28 @@ use crate::publication_store::PublicationState;
 
 use crate::auth::Signed;
 
+/// The most characters of a publication's `revision`.
+pub const MAX_REVISION: usize = 128;
+
+/// The body that begins or claims a publication: the revision it reviewed.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BeginPublication {
     revision: String,
 }
+
+/// The body that records a publication's transaction.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PublicationTransaction {
     tx_hash: String,
+}
+
+fn bounded(body: BeginPublication) -> Result<BeginPublication, ApiError> {
+    if body.revision.chars().count() > MAX_REVISION {
+        return Err(ApiError::bad_request("Invalid request body"));
+    }
+    Ok(body)
 }
 
 fn rpc_url(state: &SharedState) -> Result<&str, ApiError> {
@@ -34,6 +49,7 @@ pub async fn begin(
     Path(id): Path<Uuid>,
     Json(body): Json<BeginPublication>,
 ) -> Result<Json<ApiData<PublicationState>>, ApiError> {
+    let body = bounded(body)?;
     let publisher = access::publisher(&state, &owner, id).await?;
     rpc_url(&state)?;
     Ok(Json(ApiData::ok(
@@ -89,6 +105,7 @@ pub async fn claim(
     Path(id): Path<Uuid>,
     Json(body): Json<BeginPublication>,
 ) -> Result<Json<ApiData<bool>>, ApiError> {
+    let body = bounded(body)?;
     let publisher = access::publisher(&state, &owner, id).await?;
     rpc_url(&state)?;
     state

@@ -2704,6 +2704,72 @@ async fn without_a_polygon_verifier_publication_answers_503_after_the_refusals()
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// The node's own publication and item status bodies take only their
+/// fields, and a revision of at most 128 characters; a refused body writes
+/// nothing.
+#[tokio::test]
+async fn the_publication_and_item_status_bodies_refuse_unknown_fields_and_long_revisions() {
+    let committee = FakeCommittee::with(&[&Committee.address()]);
+    let Some(m) = matrix(&committee).await else {
+        return;
+    };
+    let f = fixture(&m.pool, Draft).await;
+    let invalid = json!({ "ok": false, "data": {}, "error": "Invalid request body" });
+    let tx_hash = format!("0x{}", "1".repeat(64));
+    for (op, caller, body) in [
+        (
+            Op::PublicationBegin,
+            Owner,
+            json!({ "revision": "r", "extra": 1 }),
+        ),
+        (
+            Op::PublicationBegin,
+            Owner,
+            json!({ "revision": "r".repeat(129) }),
+        ),
+        (
+            Op::PublicationClaim,
+            Owner,
+            json!({ "revision": "r".repeat(129) }),
+        ),
+        (
+            Op::PublicationTransaction,
+            Owner,
+            json!({ "tx_hash": tx_hash, "extra": 1 }),
+        ),
+        (
+            Op::ItemStatus,
+            Admin,
+            json!({ "status": "approved", "extra": 1 }),
+        ),
+        (
+            Op::ItemsStatus,
+            Admin,
+            json!({ "status": "approved", "itemIds": [f.item_id(Draft)], "extra": 1 }),
+        ),
+    ] {
+        let (method, path, _) = op.request(Draft, &f);
+        let before = snapshot(&m.pool).await;
+        let answer = call(&m.app, caller, method, &path, Payload::Json(body.clone())).await;
+        assert_eq!(
+            answer,
+            (StatusCode::BAD_REQUEST, invalid.clone()),
+            "{op:?} {body}"
+        );
+        assert_eq!(snapshot(&m.pool).await, before, "{op:?} {body}");
+    }
+    let (method, path, _) = Op::PublicationBegin.request(Draft, &f);
+    let (status, body) = call(
+        &m.app,
+        Owner,
+        method,
+        &path,
+        Payload::Json(json!({ "revision": "r".repeat(128) })),
+    )
+    .await;
+    assert_ne!(body["error"], "Invalid request body", "{status} {body}");
+}
+
 /// A collection with its topic: who may post gets the link back and the
 /// forum is not asked again; only the committee replies in it.
 #[tokio::test]
