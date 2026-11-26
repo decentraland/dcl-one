@@ -158,12 +158,12 @@ across workers:
   bytes reads back from the same path.
 - Every compressed decode (basis, dds, ktx2) gets the caller's asset usage, which upstream
   leaves at the default: a cached dds loads with `RENDER_WORLD` as its first load did.
-- The patched crates' tests (`bevy_image`, `bevy_gltf`, `bevy_pbr`) run in the explorer's CI ("Test the
-  patched Bevy crates"): they are git dependencies, so `cargo test --all` never runs them. Write
-  the tree with `python3 tooling/patched-sources.py materialise bevy`. Then, from `source`, seed
-  its workspace with this lock file and run them there: `cp Cargo.lock ../bevy/Cargo.lock`, then
-  `cargo test --manifest-path ../bevy/Cargo.toml -p
-  bevy_image -p bevy_gltf --lib --features
+- The patched crates' tests (`bevy_image`, `bevy_gltf`, `bevy_animation`, `bevy_pbr`) run in the
+  explorer's CI ("Test the patched Bevy crates"): they are git dependencies, so `cargo test --all`
+  never runs them. Write the tree with `python3 tooling/patched-sources.py materialise bevy`. Then,
+  from `source`, seed its workspace with this lock file and run them there: `cp Cargo.lock
+  ../bevy/Cargo.lock`, then `cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p
+  bevy_gltf -p bevy_animation --lib --features
   bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd`, and `cargo test
   --manifest-path ../bevy/Cargo.toml -p bevy_pbr --lib` for the skinning tests.
 - Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets). When a
@@ -266,6 +266,10 @@ across workers:
   global.
 - `bevy_animation`: newly added graphs are threaded the same frame (no one-frame T-pose);
   evaluator hash maps replaced with dense index lists; the evaluator stack is cleared.
+  `AnimationTransitions` fades a new clip in linearly over the current pose, also over a
+  transition that is still running, so the pose does not jump. A paused main clip leaves the
+  blend at once: its weight drops to 0 and it stays in the player at its position, so the
+  weights still sum to 1. The tests in `transition.rs` cover each case.
 - `bevy_text`: faces of removed `Font` assets are evicted from the cosmic font system;
   `TextFont` is `PartialEq`.
 - `bevy_winit`: modifier transitions reported only via `ModifiersChanged` are synthesised as key

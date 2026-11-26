@@ -50,6 +50,7 @@ pub(super) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
         read_admin_addresses: config.shop.credits_read_admin_addresses.clone(),
         captcha_secret: non_empty(&config.shop.credits_captcha_secret),
         captcha_verify_url: config.shop.credits_captcha_verify_url.clone(),
+        alerts_slack_webhook: non_empty(&config.shop.credits_alerts_slack_webhook),
         stripe_secret_key: non_empty(&config.shop.stripe_secret_key),
         stripe_webhook_secret: non_empty(&config.shop.stripe_webhook_secret),
         stripe_api_base: config.shop.stripe_api_base.clone(),
