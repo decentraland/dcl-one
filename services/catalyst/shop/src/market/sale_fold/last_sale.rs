@@ -88,21 +88,47 @@ pub(super) async fn advance(
     Ok(written.rows_affected())
 }
 
+/// Invalidates latest-sale rows at changed executions. The covered prefix
+/// stays valid for other tokens. Refresh can then restore an earlier sale.
+pub(super) async fn remove_changed(
+    c: &mut PgConnection,
+    net: ChainNet,
+    changed: &[(i64, i32)],
+) -> sqlx::Result<()> {
+    if changed.is_empty() {
+        return Ok(());
+    }
+    let (blocks, logs): (Vec<_>, Vec<_>) = changed.iter().copied().unzip();
+    sqlx::query(
+        "DELETE FROM shop.nft_last_sale l USING shop.sale_asset a,
+         unnest($2::bigint[], $3::int[]) k(block_number,log_index)
+         WHERE l.network=$1
+           AND (l.network,l.contract_address,l.token_id,l.block_number)=
+               (a.network,a.contract_address,a.token_id,a.block_number)
+           AND (a.block_number,a.log_index)=(k.block_number,k.log_index)",
+    )
+    .bind(net.db_name())
+    .bind(blocks)
+    .bind(logs)
+    .execute(c)
+    .await?;
+    Ok(())
+}
+
 /// Recomputes, from the ledger through `through`, the latest sale of each
-/// token minted by the executions `minted` (block, log index): a retried
-/// receipt sets a mint's token id after its block is already covered. A
-/// token's later sale stays.
+/// token at the given executions (block, log index). A token's later
+/// qualifying sale stays.
 pub(super) async fn refresh(
     c: &mut PgConnection,
     net: ChainNet,
-    minted: &[(i64, i32)],
+    changed: &[(i64, i32)],
     through: i64,
     mana: &str,
 ) -> sqlx::Result<u64> {
-    if minted.is_empty() {
+    if changed.is_empty() {
         return Ok(0);
     }
-    let (blocks, logs): (Vec<i64>, Vec<i32>) = minted.iter().copied().unzip();
+    let (blocks, logs): (Vec<i64>, Vec<i32>) = changed.iter().copied().unzip();
     let written = sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO shop.nft_last_sale AS l (network, contract_address, token_id, sold_at, block_number) \
          SELECT DISTINCT ON (a.contract_address, a.token_id) a.network, a.contract_address, a.token_id, e.block_time, a.block_number \
