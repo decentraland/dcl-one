@@ -7314,11 +7314,14 @@ async fn ethereum_bids_come_from_the_bid_book_with_land_sellers_from_the_land_in
     let (wearables, stray) = (contract_of(&t, 1), contract_of(&t, 2));
     const CARL: &str = "0xdddddddddddddddddddddddddddddddddddddddd";
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started)
-         VALUES ('ethereum-mainnet','{land}','{estate}',100,100,timezone('UTC',now()),true);
+        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block,last_block_hash,folded_block,folded_at,full_replay_started)
+         VALUES ('ethereum-mainnet','{land}','{estate}',100,'0x' || repeat('a', 64),100,timezone('UTC',now()),true);
          INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id)
          VALUES ('sales', 'ethereum', 1, 200, '0x' || repeat('0', 64), 200, 200, timezone('UTC', now()), true, 1),
                 ('nft', 'ethereum', 1, 200, '0x' || repeat('0', 64), 200, 200, timezone('UTC', now()), true, 1);
+         -- The sales walk, ahead at 200, hashed block 100 as the land walk did.
+         INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time)
+         VALUES ('sales', 'ethereum', 100, '0x' || repeat('a', 64), 100);
          INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at)
          VALUES ('ethereum', '{wearables}', 1, 'Halloween', '{CREATOR}', '{CREATOR}', 'urn:decentraland:ethereum:collections-v1:halloween', true, true, false, 1, 1, 1, timezone('UTC', now()));
          INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account)
@@ -7417,6 +7420,86 @@ async fn ethereum_bids_come_from_the_bid_book_with_land_sellers_from_the_land_in
     );
     let (_, body) = get(app(), &format!("{uri}&seller={CARL}")).await;
     assert_eq!(body["data"]["total"], 1, "{body}");
+    // A fork: the sales walk holds block 100 on another branch than the land
+    // walk, so the parcel's transfer at 40 may not be on the bid's branch.
+    // The bid's seller is not read from it, and the read fails closed.
+    let sales_branch = |hash: char| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "UPDATE shop.chain_checkpoint SET block_hash = '0x' || repeat($1, 64) \
+                 WHERE indexer = 'sales' AND network = 'ethereum' AND block_number = 100",
+            )
+            .bind(hash.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    sales_branch('b').await;
+    let (status, body) = get(app(), uri).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
+        "{body}"
+    );
+    let (status, body) = get(app(), &format!("{uri}&seller={CARL}")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    // A read whose scope holds no LAND bid lacking a seller still serves.
+    let (status, body) = get(app(), &format!("{uri}&contractAddress={wearables}")).await;
+    assert_eq!(
+        (status, body["data"]["total"].as_i64()),
+        (StatusCode::OK, Some(1)),
+        "{body}"
+    );
+    // The land walk rewinds onto the sales branch: both hash 100 alike again.
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block_hash = '0x' || repeat('b', 64) \
+         WHERE network = 'ethereum-mainnet'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), &format!("{uri}&seller={CARL}")).await;
+    assert_eq!(
+        (status, body["data"]["total"].as_i64()),
+        (StatusCode::OK, Some(1)),
+        "{body}"
+    );
+    // The land walk moves ahead of every block the sales walk hashed. Its
+    // checkpoint at 100 still matches the sales walk, so the bid at 50 is
+    // still read; without it, nothing proves the land log.
+    let land_walk = |last: i64, checkpoint: Option<i64>| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "UPDATE land_authz.index_cursor SET last_block = $1, \
+                   last_block_hash = '0x' || repeat(CASE WHEN $1 = 100 THEN 'b' ELSE 'e' END, 64), \
+                   checkpoint_block = $2, checkpoint_hash = CASE WHEN $2 IS NULL THEN NULL ELSE '0x' || repeat('b', 64) END \
+                 WHERE network = 'ethereum-mainnet'",
+            )
+            .bind(last)
+            .bind(checkpoint)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    land_walk(210, Some(100)).await;
+    let (status, body) = get(app(), &format!("{uri}&seller={CARL}")).await;
+    assert_eq!(
+        (status, body["data"]["total"].as_i64()),
+        (StatusCode::OK, Some(1)),
+        "{body}"
+    );
+    land_walk(210, None).await;
+    let (status, body) = get(app(), uri).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
+        "{body}"
+    );
+    land_walk(100, None).await;
     // A parcel bid past the land index's published block.
     bid(land.clone(), 7, None, 150, None).await;
     publish_bids(&pool, "ethereum", 200).await;

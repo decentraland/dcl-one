@@ -4949,7 +4949,12 @@ and no backfill of the contract below its walk is owed
 to add may be the latest.
 A LAND or estate bid's is the token's latest transfer before the bid in
 `land_authz.authz_event`, when the land index's published block reaches the
-bid's block (the nft walk does not read their transfers).
+bid's block (the nft walk does not read their transfers) and the land log is
+proven on the sales walk's branch through it: the highest block at which
+the land cursor's block or checkpoint hash equals the sales cursor's or one
+of its `shop.chain_checkpoint` hashes (two point lookups on their primary
+keys). The two walks trail the head by their confirmations only, so after a
+fork they can publish the same height on different branches.
 A bid with neither fails the read closed with the envelope of the index it
 waits on (`nft-index` or `land-authz-index`), rather than being served
 without its seller or left out of a `seller` filter. That happens while the

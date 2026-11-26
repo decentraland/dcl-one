@@ -503,10 +503,31 @@ pub(super) struct SellerBounds {
     /// yet (`shop.bid_seller_recheck`): a seller the fold inferred for a bid
     /// created past it may name an owner the rewind took away.
     recheck_from: Option<i64>,
-    /// On Ethereum, the land-authz index's published block: a LAND or
-    /// estate seller can be read from the transfers of a bid at or below it.
-    land_folded: i64,
+    /// On Ethereum, how far the land-authz log is proven on the sales
+    /// walk's branch, at most the land index's published block: a LAND or
+    /// estate seller can be read from the transfers of a bid at or below it
+    /// ([`LAND_ON_SALES_BRANCH_SQL`]); -1 when nothing is proven.
+    land_through: i64,
 }
+
+/// The highest block at which the land-authz index and the Ethereum sales
+/// walk hold the same block hash, for the land index of `$1`: the land
+/// cursor's block or its checkpoint, against the sales cursor's block or one
+/// of its checkpoints (`shop.chain_checkpoint`, the newest 64 window ends).
+/// The two walks are independent and each trails the head by its
+/// confirmations only, so after a fork each can publish the same height on
+/// another branch. A common hash proves their logs equal up to that block;
+/// a LAND transfer read for a bid at or below it is on the bid's branch.
+/// NULL when no height agrees: a land walk ahead of every block the sales
+/// walk has hashed, or the two on different branches.
+const LAND_ON_SALES_BRANCH_SQL: &str = "SELECT max(l.block) FROM land_authz.index_cursor c \
+     CROSS JOIN LATERAL (VALUES (c.last_block, c.last_block_hash), (c.checkpoint_block, c.checkpoint_hash)) l(block, hash) \
+     WHERE c.network = $1 AND l.hash IS NOT NULL AND EXISTS ( \
+       SELECT 1 FROM shop.chain_cursor s \
+       WHERE s.indexer = 'sales' AND s.network = 'ethereum' AND s.last_block = l.block AND lower(s.last_block_hash) = lower(l.hash) \
+       UNION ALL \
+       SELECT 1 FROM shop.chain_checkpoint k \
+       WHERE k.indexer = 'sales' AND k.network = 'ethereum' AND k.block_number = l.block AND k.block_hash = lower(l.hash))";
 
 /// The networks whose legacy bids a read of `f` takes from the book: none
 /// for an item (the contracts bid on tokens) or a network the filter cannot
@@ -523,16 +544,18 @@ fn book_nets(f: &BidFilters) -> Vec<ChainNet> {
 }
 
 /// The bids' read-only snapshot and request instant, taken after the
-/// snapshot is established,
-/// so a fold the snapshot sees was published before it, and shared by the
-/// checks and the reads. The trades mirror and its verdicts must be ready on
-/// it, and for each of `nets` the bid book: the sales cursor and the nft
-/// index published on the chain the node serves there; on Ethereum mainnet
-/// the bid history repair complete (`ethereum_bid_history::complete_on`);
-/// and on Ethereum the land-authz index ready, whose snapshot the read then
-/// runs on, since LAND and estate sellers come from its log. What each
-/// network's sellers are read against comes back. `Err` is the unavailable
-/// envelope naming the index that is not ready, or a 500.
+/// snapshot is established, so a fold the snapshot sees was published
+/// before it, and shared by the checks and the reads. The trades mirror and
+/// its verdicts must be ready on it, and for each of `nets` the bid book:
+/// the sales cursor and the nft index published on the chain the node
+/// serves there, with the collection membership that supplies the catalogue
+/// (`catalogue::require_collections_on`); on Ethereum mainnet the bid
+/// history repair complete (`ethereum_bid_history::complete_on`); and on
+/// Ethereum the land-authz index ready, whose snapshot the read then runs
+/// on, since LAND and estate sellers come from its log, as far as that log
+/// is proven on the sales walk's branch ([`LAND_ON_SALES_BRANCH_SQL`]).
+/// What each network's sellers are read against comes back. `Err` is the
+/// unavailable envelope naming the index that is not ready, or a 500.
 pub(super) async fn bids_snapshot(
     state: &MarketplaceState,
     nets: &[ChainNet],
@@ -545,20 +568,21 @@ pub(super) async fn bids_snapshot(
     Response,
 > {
     let db = |e: sqlx::Error| ApiError::internal(e.to_string()).into_response();
-    let (mut tx, land_folded) = if nets.contains(&ChainNet::Ethereum) {
+    let (mut tx, land) = if nets.contains(&ChainNet::Ethereum) {
         let snapshot = match state.land_network() {
             Some(net) => super::nft_reads::land_snapshot(&state.pool, net).await,
             None => None,
         }
         .ok_or_else(super::nft_reads::land_unavailable)?;
-        (snapshot.tx, snapshot.cursor.folded_block.unwrap_or(-1))
+        let folded = snapshot.cursor.folded_block.unwrap_or(-1);
+        (snapshot.tx, Some((snapshot.cursor.network, folded)))
     } else {
         let mut tx = state.pool.begin().await.map_err(db)?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        (tx, -1)
+        (tx, None)
     };
     sqlx::query("SELECT set_config('statement_timeout', $1, true)")
         .bind(format!(
@@ -632,11 +656,22 @@ pub(super) async fn bids_snapshot(
         .fetch_one(&mut *tx)
         .await
         .map_err(db)?;
+        let land_through = match (&land, net) {
+            (Some((network, folded)), ChainNet::Ethereum) => {
+                let shared: Option<i64> = sqlx::query_scalar(LAND_ON_SALES_BRANCH_SQL)
+                    .bind(network)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(db)?;
+                shared.map_or(-1, |block| block.min(*folded))
+            }
+            _ => -1,
+        };
         bounds.push(SellerBounds {
             net,
             nft_last: nft.last_block,
             recheck_from,
-            land_folded,
+            land_through,
         });
     }
     Ok((tx, bounds, now))
@@ -754,8 +789,10 @@ impl Book {
     /// A bid's seller now: the one the fold stored while it stands
     /// ([`STORED_SELLER_STANDS`]), else the token's latest transfer before
     /// the bid. For LAND and estates that is the land-authz log, when the
-    /// land index's published block reaches the bid's block (the nft walk
-    /// does not read their transfers); for any other token the nft walk's
+    /// land index's published block reaches the bid's block and that log is
+    /// proven on the sales walk's branch through it
+    /// ([`SellerBounds::land_through`]; the nft walk does not read their
+    /// transfers); for any other token the nft walk's
     /// log, when it reaches the bid's block (`$2`) and holds the contract's
     /// whole history: no backfill of the contract below its walk is owed
     /// (`FOLD_BIDS_SQL`'s rule), since a transfer the backfill has yet to add
@@ -784,7 +821,7 @@ impl Book {
                  ELSE {nft} END",
                 land = self.land,
                 estate = self.estate,
-                folded = bounds.land_folded,
+                folded = bounds.land_through,
             )
         };
         format!("COALESCE(CASE WHEN {STORED_SELLER_STANDS} THEN b.seller END, {inferred})")

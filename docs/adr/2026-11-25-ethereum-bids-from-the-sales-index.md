@@ -27,6 +27,14 @@ catalogue scope, the seller rule, the statuses), with these differences:
   index's published block reaches the bid's block. The nft walk does not
   read those transfers. One past it fails the read closed with the
   `land-authz-index` envelope.
+- The land-authz walk and the sales walk are independent and each trails
+  the head by its confirmations only, so after a fork each can publish the
+  same height on another branch. The land log is read for a bid only up to
+  the highest block both walks hashed alike: the land cursor's block or its
+  checkpoint, against the sales cursor's block or one of its checkpoints
+  (`shop.chain_checkpoint`). A common hash proves the two logs equal up to
+  it. A bid past it fails the read closed with the `land-authz-index`
+  envelope, as one past the land index's publication does.
 - The wire is the marketplace subgraph's: `fingerprint` 0x-prefixed hex
   (`0x` when empty or not kept), `bidAddress` the chain's ERC721Bid.
 - Each network's total is capped as the subgraph reader capped it, and the
@@ -40,3 +48,10 @@ catalogue scope, the seller rule, the statuses), with these differences:
   envelope until the bid history repair completes.
 - A read that could include an Ethereum bid needs the land-authz index
   ready.
+- The sales walk records a checkpoint at each window end and keeps the
+  newest 64. On Ethereum it passes every few seconds, about one block per
+  window, so the land cursor's block is normally one of them. While the land
+  walk is ahead of every block the sales walk has hashed, and its own
+  checkpoint is older than the sales walk's oldest, an open LAND or estate
+  bid in a read's scope answers `land-authz-index` until the sales walk
+  catches up, typically within one pass.
