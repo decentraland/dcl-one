@@ -276,10 +276,10 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   showing that message; replies with nothing), `/nametag_official <address> [bool]` (reads or
   sets, for the session, whether a wallet's nametag carries the official badge; replies with
   `address` and `official`),
-  `/reaction_state` (the situational reactions: whether they show in the `world`, the `picked`,
-  `outbox`, `refusedPicks`, `sent`, `received`, `queued`, `played` and `streamed` counts, the `subscribers`
-  streams, the `particles` alive, drawn and waiting for glyphs, the glyph `atlas` page size, and
-  those `dropped` by cause),
+  `/reaction_state` (the situational reactions: whether they show in the `world` and on the
+  `screenLane`, the `picked`, `outbox`, `refusedPicks`, `sent`, `received`, `queued`, `played`
+  and `streamed` counts, the `subscribers` streams, the `particles` alive, drawn and waiting for
+  glyphs, the glyph `atlas` page size, and those `dropped` by cause),
   `/reaction_simulate <local|nearest|address> <emoji> [count]` (takes a message of reactions as if
   that player had sent it, on this client only; replies with the `target` taken and the emoji's
   wire `index`), `/reaction_atlas_rebuild` (has the reactions' glyph atlas rebuilt at its next

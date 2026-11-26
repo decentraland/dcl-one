@@ -213,6 +213,7 @@ impl CatalogueRead {
         super::trades::ready_checked_on(state, &mut self.tx, self.now)
             .await
             .map(|_| ())
+            .map_err(super::trades::CheckError::refusal)
     }
 }
 

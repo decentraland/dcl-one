@@ -655,7 +655,9 @@ pub(super) async fn bids_snapshot(
         .map_err(read_error)?;
     // The statement above established the snapshot.
     let now = Utc::now();
-    super::trades::ready_on(state, &mut tx, now).await?;
+    super::trades::ready_checked_on(state, &mut tx, now)
+        .await
+        .map_err(|error| error.into_response(read_error))?;
     if !polygon {
         return Ok((tx, None, now));
     }

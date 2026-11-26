@@ -19,7 +19,7 @@
 //! capped at 5,000 or at the deep window for a deeper page. The routes
 //! parse `nftName` for compatibility with the legacy query builder.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -30,7 +30,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, Postgres, Row, Transaction};
 
-use super::catalog::{ITEM_ID_SHIFT, unified_trades_cte};
+use super::catalog::{ITEM_ID_SHIFT, unified_trades_cte, unified_trades_cte_of};
 use super::chain_walk::ChainNet;
 use super::graph;
 use super::owned_items::{self, Rule};
@@ -111,7 +111,7 @@ pub struct Order {
 #[derive(Debug, Clone)]
 pub struct Keyed {
     pub order: Order,
-    pub sort_price: u128,
+    pub sort_price: String,
     pub sort_token_id: String,
 }
 
@@ -204,14 +204,13 @@ pub(crate) fn parse_open_by_items(
     Ok((items, per_contract))
 }
 
-/// Open `public_nft_order` trades with the filters that apply to the leg;
-/// `$1` binds the snapshot clock used by the shared trade query.
-const TRADES_LEG_SQL: &str = "SELECT u.id::text AS id, u.trade_contract AS marketplace_address, u.contract_address_sent AS nft_address, u.token_id, \
+const TRADE_ORDER_COLUMNS: &str = "u.id::text AS id, u.trade_contract AS marketplace_address, u.contract_address_sent AS nft_address, u.token_id, \
         u.amount_received::text AS price, u.signer AS owner, u.beneficiary AS payee, \
         (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint AS created_at, (EXTRACT(EPOCH FROM u.expires_at) * 1000)::bigint AS expires_at, \
-        upper(u.network) AS network, u.chain_id::bigint AS chain_id, mod(u.token_id::numeric, SHIFT::numeric)::text AS issued_id, u.item_id::text AS item_id \
- FROM unified_trades u \
- WHERE u.type = 'public_nft_order' AND u.token_id IS NOT NULL";
+        upper(u.network) AS network, u.chain_id::bigint AS chain_id, mod(u.token_id::numeric, SHIFT::numeric)::text AS issued_id";
+const TRADE_ORDER_CAP: i64 = 1000;
+const TRADE_ORDER_FROM: &str =
+    "FROM unified_trades u WHERE u.type = 'public_nft_order' AND u.token_id IS NOT NULL";
 
 /// The response header naming how the v3 listings were checked.
 pub const OWNER_CHECK_HEADER: &str = "x-listings-owner-check";
@@ -227,13 +226,13 @@ fn stamp_owner_check(mut response: Response) -> Response {
 /// `$1` is now, `$2` the trades floor; `extra` binds from `$3`.
 fn trades_leg_sql(extra: &str) -> String {
     format!(
-        "WITH {} {} {extra} ORDER BY u.created_at DESC, u.id::text ASC LIMIT 1000",
+        "WITH {} SELECT {} {TRADE_ORDER_FROM} {extra} ORDER BY u.created_at DESC, u.id::text ASC LIMIT {TRADE_ORDER_CAP}",
         unified_trades_cte("$1", "$2"),
-        TRADES_LEG_SQL.replace("SHIFT", ITEM_ID_SHIFT),
+        TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT),
     )
 }
 
-/// An open v3 listing ([`TRADES_LEG_SQL`]'s row) as an order: its id is the
+/// An open v3 listing ([`TRADE_ORDER_COLUMNS`]' row) as an order: its id is the
 /// trade's, and `tradeId` names it so a client cancels that trade.
 pub(super) fn trade_row_order(r: &sqlx::postgres::PgRow) -> Order {
     let (network, _) = network_and_chain(&r.get::<String, _>("network"));
@@ -269,7 +268,7 @@ pub(super) fn trade_row_order(r: &sqlx::postgres::PgRow) -> Order {
 pub async fn open_trade_orders(
     state: &MarketplaceState,
     wanted: &[(String, String, String, String)],
-) -> Result<std::collections::HashMap<(String, String, String), Order>, Response> {
+) -> Result<HashMap<(String, String, String), Order>, Response> {
     if wanted.is_empty() {
         return Ok(Default::default());
     }
@@ -284,18 +283,18 @@ pub(super) async fn open_trade_orders_on<'e>(
     conn: impl sqlx::PgExecutor<'e>,
     wanted: &[(String, String, String, String)],
     now: chrono::NaiveDateTime,
-) -> Result<std::collections::HashMap<(String, String, String), Order>, sqlx::Error> {
-    let mut out = std::collections::HashMap::new();
+) -> Result<HashMap<(String, String, String), Order>, sqlx::Error> {
+    let mut out = HashMap::new();
     if wanted.is_empty() {
         return Ok(out);
     }
     let sql = format!(
-        "WITH {} SELECT DISTINCT ON (x.network, x.nft_address, x.token_id) x.* FROM ({} \
+        "WITH {} SELECT DISTINCT ON (x.network, x.nft_address, x.token_id) x.* FROM (SELECT {} {TRADE_ORDER_FROM} \
            AND (lower(u.network), u.contract_address_sent, u.token_id, u.signer) IN \
                (SELECT * FROM unnest($3::text[], $4::text[], $5::text[], $6::text[]))) x \
          ORDER BY x.network, x.nft_address, x.token_id, x.created_at DESC, x.id ASC",
         unified_trades_cte("$1", "$2"),
-        TRADES_LEG_SQL.replace("SHIFT", ITEM_ID_SHIFT)
+        TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT)
     );
     let column = |i: usize| {
         wanted
@@ -332,7 +331,12 @@ pub(super) async fn open_trade_orders_on<'e>(
 }
 
 fn keyed(order: Order, sort_token_id: String) -> Keyed {
-    let sort_price = order.price.parse::<u128>().unwrap_or(0);
+    let price = order.price.strip_prefix('+').unwrap_or(&order.price);
+    let sort_price = if price.bytes().all(|digit| digit.is_ascii_digit()) {
+        price.trim_start_matches('0').to_string()
+    } else {
+        String::new()
+    };
     Keyed {
         order,
         sort_price,
@@ -347,7 +351,9 @@ async fn trade_snapshot(
     nets: &[ChainNet],
 ) -> Result<(Transaction<'static, Postgres>, DateTime<Utc>), Response> {
     let (mut tx, now) = order_snapshot(state).await?;
-    super::trades::ready_for_networks_on(state, &mut tx, nets, now).await?;
+    super::trades::ready_checked_for_networks_on(state, &mut tx, nets, now)
+        .await
+        .map_err(|error| error.into_response(read_error))?;
     Ok((tx, now))
 }
 
@@ -401,16 +407,40 @@ fn reads_land(state: &MarketplaceState, f: &OrderFilters) -> bool {
     open_possible && land_possible && f.network != Some(Network::Matic)
 }
 
-/// Order-book reads refused because the nft index holds a write no
-/// publication has acknowledged yet (`chain_walk::rows_published_on`): a
-/// fold committed before the walk, having read the head, publishes it.
-pub const UNPUBLISHED_FOLD_READS: dcl_metrics::CounterFamily<1> = dcl_metrics::CounterFamily::new(
-    "catalyst_shop_order_book_unpublished_fold_reads_total",
-    "Order-book reads refused because the nft index holds a fold it has not published yet, by network.",
+#[derive(Clone, Copy)]
+pub(super) enum BookRoute {
+    Orders,
+    OpenByItems,
+    Activity,
+}
+
+impl BookRoute {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Orders => "orders",
+            Self::OpenByItems => "open_by_items",
+            Self::Activity => "activity",
+        }
+    }
+}
+
+/// Order-book checks of fold publication, including reads refused there.
+pub const FOLD_READ_CHECKS: dcl_metrics::CounterFamily<2> = dcl_metrics::CounterFamily::new(
+    "catalyst_shop_order_book_fold_read_checks_total",
+    "Order-book checks of the NFT fold publication, by network and route.",
     Some(dcl_metrics::Unit::Count),
-    &["network"],
+    &["network", "route"],
 );
-pub const FAMILIES: &[dcl_metrics::Descriptor] = &[UNPUBLISHED_FOLD_READS.descriptor];
+pub const UNPUBLISHED_FOLD_READS: dcl_metrics::CounterFamily<2> = dcl_metrics::CounterFamily::new(
+    "catalyst_shop_order_book_unpublished_fold_reads_total",
+    "Order-book reads refused because the NFT fold has unpublished writes, by network and route.",
+    Some(dcl_metrics::Unit::Count),
+    &["network", "route"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[
+    FOLD_READ_CHECKS.descriptor,
+    UNPUBLISHED_FOLD_READS.descriptor,
+];
 
 /// The scope of the book and listings on their shared snapshot.
 pub(super) struct BookRead {
@@ -503,6 +533,7 @@ pub(super) async fn book_snapshot(
     contracts: &[String],
     land_possible: bool,
     trades: bool,
+    route: BookRoute,
 ) -> Result<BookRead, Response> {
     let (mut tx, now) = order_snapshot(state).await?;
     let nets = book_networks(
@@ -536,6 +567,8 @@ pub(super) async fn book_snapshot(
     // but not published yet, whichever binary wrote it, is not read.
     let projections: &[&str] = &["nft", "legacy_order"];
     for &net in &nets {
+        let labels = [net.db_name(), route.label()];
+        FOLD_READ_CHECKS.handle(labels).increment(1);
         if !super::chain_walk::rows_published_on(
             &mut tx,
             super::chain_walk::INDEXER_NFT,
@@ -545,7 +578,7 @@ pub(super) async fn book_snapshot(
         .await
         .map_err(read_error)?
         {
-            UNPUBLISHED_FOLD_READS.handle([net.db_name()]).increment(1);
+            UNPUBLISHED_FOLD_READS.handle(labels).increment(1);
             return Err(owned_items::not_ready(&format!(
                 "the {} nft index holds a fold it has not published yet",
                 net.db_name()
@@ -564,7 +597,9 @@ pub(super) async fn book_snapshot(
         }
     }
     if trades {
-        super::trades::ready_for_networks_on(state, &mut tx, &nets, now).await?;
+        super::trades::ready_checked_for_networks_on(state, &mut tx, &nets, now)
+            .await
+            .map_err(|error| error.into_response(read_error))?;
     }
     Ok(BookRead {
         tx,
@@ -881,6 +916,39 @@ fn book_order_by(sort_by: Option<OrderSortBy>) -> &'static str {
     }
 }
 
+/// A legacy row's columns, with the names it shares with a v3 order.
+fn book_order_columns(land: bool) -> String {
+    format!(
+        "o.order_id AS id, o.marketplace_address, o.contract_address AS nft_address, o.token_id::text AS token_id,
+         o.seller AS owner, o.buyer, o.price::text AS price, {} AS status, o.expires_at, o.created_at, o.updated_at,
+         upper(o.network) AS network,
+         CASE WHEN o.network = 'matic' THEN mod(o.token_id, {ITEM_ID_SHIFT}::numeric)::text ELSE n.issued_id::text END AS issued_id",
+        book_status(land)
+    )
+}
+
+fn book_row(served: &Served, r: &sqlx::postgres::PgRow) -> Order {
+    let (network, _) = network_and_chain(&r.get::<String, _>("network"));
+    Order {
+        id: r.get("id"),
+        marketplace_address: r.get("marketplace_address"),
+        contract_address: r.get("nft_address"),
+        token_id: Some(r.get("token_id")),
+        owner: r.get("owner"),
+        buyer: r.get("buyer"),
+        price: r.get("price"),
+        status: r.get("status"),
+        expires_at: r.get("expires_at"),
+        created_at: seconds_to_ms(r.get("created_at")),
+        updated_at: seconds_to_ms(r.get("updated_at")),
+        network,
+        chain_id: served.chain_id(network),
+        issued_id: r.get("issued_id"),
+        trade_id: Some(String::new()),
+        payee: None,
+    }
+}
+
 /// The legacy orders of `f` over the merged `window` from
 /// `shop.legacy_order` on a [`book_snapshot`].
 async fn book_rows(
@@ -896,11 +964,8 @@ async fn book_rows(
         return Ok(Vec::new());
     };
     let sql = format!(
-        "SELECT o.order_id, o.marketplace_address, o.contract_address, o.token_id::text AS token_id, o.seller, o.buyer, \
-                o.price::text AS price, {} AS status, o.expires_at, o.created_at, o.updated_at, upper(o.network) AS network, \
-                CASE WHEN o.network = 'matic' THEN mod(o.token_id, {ITEM_ID_SHIFT}::numeric)::text ELSE n.issued_id::text END AS issued_id \
-         {from} ORDER BY {} LIMIT {}",
-        book_status(land),
+        "SELECT {} {from} ORDER BY {} LIMIT {}",
+        book_order_columns(land),
         book_order_by(f.sort_by),
         window.max(0)
     );
@@ -912,25 +977,7 @@ async fn book_rows(
     Ok(rows
         .iter()
         .map(|r| {
-            let (network, _) = network_and_chain(&r.get::<String, _>("network"));
-            let order = Order {
-                id: r.get("order_id"),
-                marketplace_address: r.get("marketplace_address"),
-                contract_address: r.get("contract_address"),
-                token_id: Some(r.get("token_id")),
-                owner: r.get("seller"),
-                buyer: r.get("buyer"),
-                price: r.get("price"),
-                status: r.get("status"),
-                expires_at: r.get("expires_at"),
-                created_at: seconds_to_ms(r.get("created_at")),
-                updated_at: seconds_to_ms(r.get("updated_at")),
-                network,
-                chain_id: served.chain_id(network),
-                issued_id: r.get("issued_id"),
-                trade_id: Some(String::new()),
-                payee: None,
-            };
+            let order = book_row(&served, r);
             let token = order.token_id.clone().unwrap_or_default();
             keyed(order, token)
         })
@@ -1117,7 +1164,7 @@ pub fn sort_merged(rows: &mut [Keyed], sort_by: Option<OrderSortBy>) {
             Some(OrderSortBy::RecentlyUpdated) => {
                 b.order.updated_at.cmp(&a.order.updated_at).then(id)
             }
-            Some(OrderSortBy::Cheapest) => a.sort_price.cmp(&b.sort_price).then(id),
+            Some(OrderSortBy::Cheapest) => numeric_cmp(&a.sort_price, &b.sort_price).then(id),
             Some(OrderSortBy::IssuedIdAsc) => {
                 numeric_cmp(&a.sort_token_id, &b.sort_token_id).then(id)
             }
@@ -1133,6 +1180,14 @@ pub async fn list_orders(
     state: &MarketplaceState,
     f: &OrderFilters,
 ) -> Result<(Vec<Order>, i64), Response> {
+    list_orders_for(state, f, BookRoute::Orders).await
+}
+
+pub(super) async fn list_orders_for(
+    state: &MarketplaceState,
+    f: &OrderFilters,
+    route: BookRoute,
+) -> Result<(Vec<Order>, i64), Response> {
     let limit = clamp_first(f.first, 1000).min(readers::READER_MAX_FIRST);
     let offset = clamp_skip(f.skip);
     readers::check_window(limit, offset)?;
@@ -1144,6 +1199,7 @@ pub async fn list_orders(
             f.contract_address.as_slice(),
             reads_land(state, f),
             reads_trades(f),
+            route,
         )
         .await?;
         let f = read.scoped_filter(f.clone());
@@ -1212,9 +1268,98 @@ pub fn item_of_token(token_id: &str) -> Option<String> {
     Some((token >> 216u32).to_string())
 }
 
-/// Open orders of `(contract, item)` pairs within each contract's
-/// cheapest-first window: the mirror leg ranks in SQL, the reader leg reads
-/// one cheapest page (≤ 1000) per contract and keeps the wanted items.
+/// The local candidates for a batch on one snapshot. Legacy orders take the
+/// cheapest window per contract. V3 listings take the same newest-first cap
+/// as the single-contract query before they compete on price.
+async fn open_candidates(
+    conn: &mut PgConnection,
+    state: &MarketplaceState,
+    contracts: &[String],
+    network: Option<Network>,
+    now: DateTime<Utc>,
+    land: bool,
+    legacy_limit: Option<i64>,
+) -> Result<HashMap<String, Vec<Keyed>>, sqlx::Error> {
+    let served = served(state);
+    let (legacy_from, legacy_binds) = if legacy_limit.is_some() {
+        let filter = OrderFilters {
+            status: Some("open".into()),
+            network,
+            ..Default::default()
+        };
+        book_from(&served, &filter, now.timestamp_millis(), land).expect("open order filter")
+    } else {
+        (String::new(), Vec::new())
+    };
+    let [contracts_p, now_p, since_p, network_p] =
+        [1, 2, 3, 4].map(|offset| format!("${}", legacy_binds.len() + offset));
+    let columns = "id, marketplace_address, nft_address, token_id, price, owner, payee,
+                   created_at, expires_at, network, chain_id, issued_id, buyer, status, updated_at";
+    let mut sql = format!(
+        "WITH {}, ranked_trades AS (
+             SELECT {}, NULL::text AS buyer, 'open'::text AS status, NULL::bigint AS updated_at,
+                    row_number() OVER (PARTITION BY u.contract_address_sent ORDER BY u.created_at DESC, u.id::text ASC) AS row_num
+             {TRADE_ORDER_FROM}
+             AND ({network_p}::text IS NULL OR lower(u.network) = {network_p})
+         )",
+        unified_trades_cte_of(&now_p, &since_p, Some(&contracts_p)),
+        TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT),
+    );
+    if let Some(limit) = legacy_limit {
+        sql.push_str(&format!(
+            ", legacy_batch AS (
+                SELECT picked.* FROM unnest({contracts_p}::text[]) AS requested(address)
+                CROSS JOIN LATERAL (
+                    SELECT {}, NULL::text AS payee, NULL::bigint AS chain_id
+                    {legacy_from} AND o.contract_address = requested.address
+                    ORDER BY o.price, o.order_id LIMIT {}
+                ) picked
+            )",
+            book_order_columns(land),
+            limit.max(0)
+        ));
+    }
+    sql.push_str(&format!(
+        " SELECT {columns}, true AS is_trade FROM ranked_trades WHERE row_num <= {TRADE_ORDER_CAP}"
+    ));
+    if legacy_limit.is_some() {
+        sql.push_str(&format!(
+            " UNION ALL SELECT {columns}, false AS is_trade FROM legacy_batch"
+        ));
+    }
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+    for bind in legacy_binds {
+        q = q.bind(bind);
+    }
+    let now = now.naive_utc();
+    let rows = q
+        .bind(contracts)
+        .bind(now)
+        .bind(super::trades::mirrored_since(&state.settings, now))
+        .bind(network.map(|n| n.db_name()))
+        .fetch_all(conn)
+        .await?;
+    let mut per = HashMap::<String, Vec<Keyed>>::new();
+    for r in rows
+        .iter()
+        .filter(|r| !r.get::<bool, _>("is_trade"))
+        .chain(rows.iter().filter(|r| r.get::<bool, _>("is_trade")))
+    {
+        let order = if r.get("is_trade") {
+            trade_row_order(r)
+        } else {
+            book_row(&served, r)
+        };
+        let token = order.token_id.clone().unwrap_or_default();
+        per.entry(order.contract_address.clone())
+            .or_default()
+            .push(keyed(order, token));
+    }
+    Ok(per)
+}
+
+/// Open orders of `(contract, item)` pairs within each contract's cheapest
+/// window. An order for another item still takes its place in that window.
 pub async fn open_orders_by_items(
     state: &MarketplaceState,
     items: &[(String, String)],
@@ -1222,66 +1367,58 @@ pub async fn open_orders_by_items(
 ) -> Result<Vec<Order>, Response> {
     let contracts: Vec<String> = items
         .iter()
-        .map(|(c, _)| c.clone())
+        .map(|(c, _)| c.to_ascii_lowercase())
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
-    let wanted: HashSet<(String, String)> = items.iter().cloned().collect();
-    let filters = |contract: &String| OrderFilters {
-        contract_address: Some(contract.clone()),
-        status: Some("open".to_string()),
-        sort_by: Some(OrderSortBy::Cheapest),
-        ..Default::default()
-    };
-    let mut per: Vec<(String, Vec<Keyed>)> = Vec::with_capacity(contracts.len());
-    if owned_items::walks_here(state) {
+    let wanted: HashSet<(String, String)> = items
+        .iter()
+        .map(|(c, i)| (c.to_ascii_lowercase(), i.clone()))
+        .collect();
+    let per = if owned_items::walks_here(state) {
         let land = contracts.iter().any(|c| is_land_registry(state, c));
-        let mut read = book_snapshot(state, None, &contracts, land, true).await?;
-        for contract in &contracts {
-            let f = read.scoped_filter(filters(contract));
-            let rows = async {
-                let mut rows = book_rows(
-                    &mut read.tx,
-                    state,
-                    &f,
-                    per_contract,
-                    read.land,
-                    read.now.timestamp_millis(),
-                )
-                .await?;
-                rows.extend(read_trades(&mut read.tx, state, &f, read.now).await?);
-                Ok::<_, sqlx::Error>(rows)
-            }
-            .await
-            .map_err(read_error)?;
-            per.push((contract.clone(), rows));
-        }
+        let mut read =
+            book_snapshot(state, None, &contracts, land, true, BookRoute::OpenByItems).await?;
+        let network = read.scoped_filter(OrderFilters::default()).network;
+        let per = open_candidates(
+            &mut read.tx,
+            state,
+            &contracts,
+            network,
+            read.now,
+            read.land,
+            Some(per_contract),
+        )
+        .await
+        .map_err(read_error)?;
         read.tx.rollback().await.ok();
+        per
     } else {
         readers::require_both_collections(state)?;
-        let fs: Vec<OrderFilters> = contracts.iter().map(filters).collect();
         let (mut tx, now) = trade_snapshot(state, &ChainNet::ALL).await?;
-        let mut trades = Vec::with_capacity(fs.len());
-        for f in &fs {
-            trades.push(
-                read_trades(&mut tx, state, f, now)
-                    .await
-                    .map_err(read_error)?,
-            );
-        }
+        let mut per = open_candidates(&mut tx, state, &contracts, None, now, false, None)
+            .await
+            .map_err(read_error)?;
         drop(tx);
-        for ((contract, f), trades) in contracts.iter().zip(&fs).zip(trades) {
+        for contract in &contracts {
+            let f = OrderFilters {
+                contract_address: Some(contract.clone()),
+                status: Some("open".into()),
+                sort_by: Some(OrderSortBy::Cheapest),
+                ..Default::default()
+            };
             let (mut rows, _) = legacy_leg(
                 state,
-                f,
+                &f,
                 per_contract.min(graph::THE_GRAPH_PAGE_SIZE),
                 now.timestamp_millis(),
             )
             .await?;
-            rows.extend(trades);
-            per.push((contract.clone(), rows));
+            rows.extend(per.remove(contract).unwrap_or_default());
+            per.insert(contract.clone(), rows);
         }
-    }
+        per
+    };
     let mut all: Vec<Keyed> = Vec::new();
     for (contract, mut rows) in per {
         sort_merged(&mut rows, Some(OrderSortBy::Cheapest));
@@ -1298,7 +1435,7 @@ pub async fn open_orders_by_items(
         a.order
             .contract_address
             .cmp(&b.order.contract_address)
-            .then(a.sort_price.cmp(&b.sort_price))
+            .then(numeric_cmp(&a.sort_price, &b.sort_price))
             .then(a.order.id.cmp(&b.order.id))
     });
     Ok(all.into_iter().map(|k| k.order).collect())

@@ -583,6 +583,70 @@ async fn run_script(
     Ok(result?)
 }
 
+/// The `~system/*` modules any scene can require.
+const SYSTEM_MODULES: &[(&str, &str)] = &[
+    (
+        "~system/CommunicationsController",
+        include_str!("../../../dcl_js/src/modules/CommunicationsController.js"),
+    ),
+    (
+        "~system/CommsApi",
+        include_str!("../../../dcl_js/src/modules/CommsApi.js"),
+    ),
+    (
+        "~system/EngineApi",
+        include_str!("../../../dcl_js/src/modules/EngineApi.js"),
+    ),
+    (
+        "~system/EnvironmentApi",
+        include_str!("../../../dcl_js/src/modules/EnvironmentApi.js"),
+    ),
+    (
+        "~system/EthereumController",
+        include_str!("../../../dcl_js/src/modules/EthereumController.js"),
+    ),
+    (
+        "~system/Players",
+        include_str!("../../../dcl_js/src/modules/Players.js"),
+    ),
+    (
+        "~system/PortableExperiences",
+        include_str!("../../../dcl_js/src/modules/PortableExperiences.js"),
+    ),
+    (
+        "~system/RestrictedActions",
+        include_str!("../../../dcl_js/src/modules/RestrictedActions.js"),
+    ),
+    (
+        "~system/Runtime",
+        include_str!("../../../dcl_js/src/modules/Runtime.js"),
+    ),
+    (
+        "~system/Scene",
+        include_str!("../../../dcl_js/src/modules/Scene.js"),
+    ),
+    (
+        "~system/SignedFetch",
+        include_str!("../../../dcl_js/src/modules/SignedFetch.js"),
+    ),
+    (
+        "~system/Testing",
+        include_str!("../../../dcl_js/src/modules/Testing.js"),
+    ),
+    (
+        "~system/UserActionModule",
+        include_str!("../../../dcl_js/src/modules/UserActionModule.js"),
+    ),
+    (
+        "~system/UserIdentity",
+        include_str!("../../../dcl_js/src/modules/UserIdentity.js"),
+    ),
+    (
+        "~system/AdaptationLayerHelper",
+        include_str!("../../../dcl_js/src/modules/AdaptationLayerHelper.js"),
+    ),
+];
+
 // synchronously returns a string containing JS code from the file system
 #[op2]
 #[string]
@@ -604,44 +668,11 @@ fn op_require(
             }
         }
         // core module load
-        "~system/CommunicationsController" => {
-            Ok(include_str!("../../../dcl_js/src/modules/CommunicationsController.js").to_owned())
-        }
-        "~system/CommsApi" => {
-            Ok(include_str!("../../../dcl_js/src/modules/CommsApi.js").to_owned())
-        }
-        "~system/EngineApi" => {
-            Ok(include_str!("../../../dcl_js/src/modules/EngineApi.js").to_owned())
-        }
-        "~system/EnvironmentApi" => {
-            Ok(include_str!("../../../dcl_js/src/modules/EnvironmentApi.js").to_owned())
-        }
-        "~system/EthereumController" => {
-            Ok(include_str!("../../../dcl_js/src/modules/EthereumController.js").to_owned())
-        }
-        "~system/Players" => Ok(include_str!("../../../dcl_js/src/modules/Players.js").to_owned()),
-        "~system/PortableExperiences" => {
-            Ok(include_str!("../../../dcl_js/src/modules/PortableExperiences.js").to_owned())
-        }
-        "~system/RestrictedActions" => {
-            Ok(include_str!("../../../dcl_js/src/modules/RestrictedActions.js").to_owned())
-        }
-        "~system/Runtime" => Ok(include_str!("../../../dcl_js/src/modules/Runtime.js").to_owned()),
-        "~system/Scene" => Ok(include_str!("../../../dcl_js/src/modules/Scene.js").to_owned()),
-        "~system/SignedFetch" => {
-            Ok(include_str!("../../../dcl_js/src/modules/SignedFetch.js").to_owned())
-        }
-        "~system/Testing" => Ok(include_str!("../../../dcl_js/src/modules/Testing.js").to_owned()),
-        "~system/UserActionModule" => {
-            Ok(include_str!("../../../dcl_js/src/modules/UserActionModule.js").to_owned())
-        }
-        "~system/UserIdentity" => {
-            Ok(include_str!("../../../dcl_js/src/modules/UserIdentity.js").to_owned())
-        }
-        "~system/AdaptationLayerHelper" => {
-            Ok(include_str!("../../../dcl_js/src/modules/AdaptationLayerHelper.js").to_owned())
-        }
-        _ => Err(generic_error(format!("invalid module request `{module_spec}`")).into()),
+        _ => SYSTEM_MODULES
+            .iter()
+            .find(|(name, _)| *name == module_spec)
+            .map(|(_, source)| (*source).to_owned())
+            .ok_or_else(|| generic_error(format!("invalid module request `{module_spec}`")).into()),
     }
 }
 
@@ -709,12 +740,22 @@ mod tests {
     /// is evaluated (`op_require("~scene.js")` -> `evalContext`). A `throw` in the scene
     /// surfaces as `Err`.
     fn run_scene(is_server: bool, scene_js: &str) -> Result<(), String> {
-        let (mut runtime, _) = create_runtime(false, false, "test-scene-realm", Default::default());
+        run_scene_as(is_server, false, scene_js)
+    }
+
+    /// [`run_scene`], optionally as the super-user scene.
+    fn run_scene_as(is_server: bool, super_user: bool, scene_js: &str) -> Result<(), String> {
+        let (mut runtime, _) =
+            create_runtime(false, super_user, "test-scene-realm", Default::default());
+        let (host, _inbox) = tokio::sync::mpsc::unbounded_channel();
         {
             let state = runtime.op_state();
             let mut state = state.borrow_mut();
             state.put(context(is_server));
             state.put(SceneJsFile(Arc::new(scene_js.to_owned())));
+            if super_user {
+                state.put(dcl_js::SuperUserScene(host));
+            }
         }
         runtime
             .execute_script("<test>", ascii_str!("require(\"~scene.js\")"))
@@ -826,6 +867,62 @@ mod tests {
             "#,
         )
         .unwrap();
+    }
+
+    /// A module's `module.exports.x = ...` runs a scene setter on `Object.prototype`, and a
+    /// non-strict wrapper would hand that setter its `Deno` argument through `caller`.
+    #[test]
+    fn a_scene_setter_cannot_read_the_module_wrapper_arguments() {
+        run_scene(
+            true,
+            r#"
+            let seen = "the setter did not run";
+            Object.defineProperty(Object.prototype, "getRealm", {
+                set: function (value) {
+                    try {
+                        seen = typeof arguments.callee.caller.arguments[5];
+                    } catch (e) {
+                        seen = "refused";
+                    }
+                    Object.defineProperty(this, "getRealm", { value, writable: true });
+                },
+                configurable: true,
+            });
+            const runtime = require("~system/Runtime");
+            if (seen !== "refused") { throw new Error("the wrapper's arguments are reachable: " + seen); }
+            if (typeof runtime.getRealm !== "function") { throw new Error("Runtime did not load"); }
+            "#,
+        )
+        .unwrap();
+    }
+
+    /// Every module a scene can require loads under the strict wrapper, sealed or not.
+    #[test]
+    fn every_system_module_loads() {
+        let names: Vec<&str> = super::SYSTEM_MODULES
+            .iter()
+            .map(|(name, _)| *name)
+            .collect();
+        let scene = format!(
+            r#"
+            for (const name of {names:?}) {{
+                if (Object.keys(require(name)).length === 0) {{
+                    throw new Error(name + " exports nothing");
+                }}
+            }}
+            "#
+        );
+        for server in [true, false] {
+            run_scene(server, &scene).unwrap();
+        }
+    }
+
+    /// The HUD's module is the largest one; it loads only for a super-user scene.
+    #[test]
+    fn the_super_user_module_loads() {
+        let scene = r#"if (Object.keys(require("~system/BevyExplorerApi")).length === 0) { throw new Error("no exports"); }"#;
+        run_scene_as(false, true, scene).unwrap();
+        assert!(run_scene(false, scene).is_err());
     }
 
     /// Each module is evaluated under its own name, so a stack trace says where an error is.
