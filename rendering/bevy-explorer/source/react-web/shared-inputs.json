@@ -5776,6 +5776,14 @@
           "kind": "regular"
         },
         {
+          "name": "ShopManaMark.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopManaMark.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "ShopSearch.module.css",
           "kind": "regular"
         },
@@ -14891,6 +14899,10 @@
       "sha256": "e57083e759c3f00ca541d96f97d526efa9bc2d0094ff036606e60b9c1bd86280"
     },
     {
+      "path": "library/ui/apps/shop/ShopManaMark.tsx",
+      "sha256": "9d46b40cdfe49cce98f4cbcff7f6b0e84a64525e8d067d3df442a697fbf5f275"
+    },
+    {
       "path": "library/ui/apps/shop/ShopSearch.module.css",
       "sha256": "33d378fd988c41d72800902b55ff5f33b3416a4b6454628ff349d4b3afa87745"
     },
@@ -14900,7 +14912,7 @@
     },
     {
       "path": "library/ui/apps/shop/index.ts",
-      "sha256": "b11110d174b5ce44ffc1e7af3ef4a7da7e3446d238fb94b83194f06ae878d940"
+      "sha256": "78fea0d8cb717e865f9756e0c6107115a190b16884840e75c8f9f322278f3206"
     },
     {
       "path": "library/ui/apps/sites/CopyAddress.module.css",
@@ -52025,6 +52037,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/shop/ShopManaMark.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopManaMark.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopManaMark.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/shop/ShopSearch.tsx",
       "to": "library/shop/discovery/intl.ts",
       "kind": "native:runtime"
@@ -52127,6 +52154,21 @@
     {
       "from": "library/ui/apps/shop/index.ts",
       "to": "library/ui/apps/shop/ShopHeldCredits.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopManaMark.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopManaMark.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopManaMark.tsx",
       "kind": "test:runtime"
     },
     {
@@ -69077,6 +69119,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/shop/ShopHeldCredits.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/shop/ShopManaMark.tsx",
       "kind": "type"
     },
     {
