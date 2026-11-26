@@ -132,6 +132,18 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "WERT_API_KEY", hide_env_values = true)]
     pub wert_api_key: Option<String>,
 
+    /// Extra Wert contract tuples as comma-separated `network:address:target`
+    /// entries. Networks are ethereum, polygon, amoy and sepolia. Targets
+    /// are default and publicationFees.
+    #[arg(long, env = "WERT_EXTRA_CONTRACTS")]
+    pub wert_extra_contracts: Option<String>,
+
+    /// Wert session attempts per verified wallet per minute on each replica.
+    /// Sets both the initial burst and the continuous refill rate. Both route
+    /// mounts share the same per-replica bucket.
+    #[arg(long, env = "WERT_SIGNER_REQUESTS_PER_MINUTE", default_value = "10")]
+    pub wert_signer_requests_per_minute: std::num::NonZeroU32,
+
     // The Transak card on-ramp (`/v1/transak/*`): all six, or none (the routes
     // then answer 503 naming them).
     /// Transak's partner API (`/v2/refresh-token`, `/v2/order/{id}`).
@@ -941,6 +953,37 @@ mod tests {
         assert_eq!(
             c.marketplace.trade_rpc_urls.as_deref(),
             Some("137=https://rpc.example/polygon")
+        );
+    }
+
+    #[test]
+    fn wert_signer_requests_per_minute_defaults_to_ten_and_must_be_positive() {
+        let default = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
+        assert_eq!(
+            default.marketplace.wert_signer_requests_per_minute.get(),
+            10
+        );
+        let configured = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--wert-signer-requests-per-minute",
+            "20",
+        ])
+        .unwrap();
+        assert_eq!(
+            configured.marketplace.wert_signer_requests_per_minute.get(),
+            20
+        );
+        assert!(
+            parse(&[
+                "x",
+                "--database-url",
+                "postgres:///catalyst",
+                "--wert-signer-requests-per-minute",
+                "0"
+            ])
+            .is_err()
         );
     }
 
