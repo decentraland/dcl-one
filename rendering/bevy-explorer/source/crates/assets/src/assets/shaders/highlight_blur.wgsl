@@ -6,8 +6,9 @@
 
 @group(0) @binding(0) var source: texture_2d<f32>;
 @group(0) @binding(1) var source_sampler: sampler;
-// the blur's axis: (1, 0) across, (0, 1) down
-@group(0) @binding(2) var<uniform> axis: vec2<f32>;
+// the blur's axis in xy: (1, 0) across, (0, 1) down. A vec4, since WebGL2 takes no uniform
+// buffer whose size is not a multiple of 16 bytes
+@group(0) @binding(2) var<uniform> axis: vec4<f32>;
 
 @fragment
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
@@ -22,7 +23,7 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         bitcast<f32>(#{BLUR_WEIGHT_2}u),
     );
     // one target texel in uv, from the fullscreen triangle's constant uv derivatives
-    let step = axis * abs(vec2<f32>(dpdx(in.uv).x, dpdy(in.uv).y));
+    let step = axis.xy * abs(vec2<f32>(dpdx(in.uv).x, dpdy(in.uv).y));
 
     var sum = textureSample(source, source_sampler, in.uv + step * offsets.x) * weights.x;
     sum += textureSample(source, source_sampler, in.uv + step * offsets.y) * weights.y;

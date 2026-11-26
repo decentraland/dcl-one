@@ -1,9 +1,7 @@
-﻿import {
+﻿import type { PBMaterial_PbrMaterial, PBMaterial, PBMaterial_UnlitMaterial } from '../../../packages/@dcl/ecs/src'
+import {
   Engine,
   components,
-  PBMaterial_PbrMaterial,
-  PBMaterial,
-  PBMaterial_UnlitMaterial,
   TextureWrapMode,
   TextureFilterMode,
   MaterialTransparencyMode

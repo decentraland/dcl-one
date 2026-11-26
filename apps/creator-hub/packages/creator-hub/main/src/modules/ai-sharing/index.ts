@@ -5,7 +5,7 @@ import type { AiSendParams } from '/shared/types/ai';
 import { consentFor, hasSharingConsent, type AiTurnRecord } from '/shared/types/ai-sharing';
 
 import { getAppVersion, getUserDataPath } from '../electron';
-import { Outbox } from './outbox';
+import { Outbox, OUTBOX_LIMITS } from './outbox';
 import {
   buildTurnRecord,
   readTurnInfo,
@@ -16,10 +16,18 @@ import {
 
 export { readTurnInfo, type TurnInfo };
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 let outbox: Outbox | null = null;
 
 export function getOutbox(): Outbox {
-  outbox ??= new Outbox(path.join(getUserDataPath(), 'ai-sharing', 'outbox'));
+  outbox ??= new Outbox(
+    path.join(getUserDataPath(), 'ai-sharing', 'outbox'),
+    ({ expired, overLimit }) =>
+      log.warn(
+        `[AI sharing] dropped queued turns that were never shared: ${expired} older than ${OUTBOX_LIMITS.maxAgeMs / DAY_MS} days, ${overLimit} past the queue's limits`,
+      ),
+  );
   return outbox;
 }
 

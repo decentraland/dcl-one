@@ -1,7 +1,7 @@
-import { Entity } from '../engine'
-import { IEngine } from '../engine'
-import { Vector3Type } from '../schemas'
-import { createPhysicsImpulseHelper, KnockbackFalloff } from './physics-impulse'
+import type { Entity, IEngine } from '../engine'
+import type { Vector3Type } from '../schemas'
+import type { KnockbackFalloff } from './physics-impulse'
+import { createPhysicsImpulseHelper } from './physics-impulse'
 import { createPhysicsForceHelper } from './physics-force'
 
 export { KnockbackFalloff } from './physics-impulse'

@@ -130,7 +130,8 @@ TOOLING_TESTS = Step('tooling tests', 'python3 -m unittest discover -s tooling/t
 # every library/ui module ui3 imports falls under one of these.
 UI3_SOURCES = ('apps/ui3/*', 'library/catalyst-api/*', 'library/shop/*', 'library/web-core/*', 'library/explorer-core/*',
                'library/ui/index.ts', 'library/ui/components/*', 'library/ui/foundations/*',
-               'library/ui/apps/hud/*', 'library/ui/apps/shop/*', 'library/ui/apps/sites/*')
+               'library/ui/apps/hud/*', 'library/ui/apps/shop/*', 'library/ui/apps/sites/*',
+               'library/ui/figma/review/scripts/*')
 
 
 def pre_commit_steps(changed):

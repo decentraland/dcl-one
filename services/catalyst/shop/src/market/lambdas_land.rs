@@ -27,7 +27,7 @@ use crate::shared::query_params::{
     parse_pagination_with, parse_query_string,
 };
 
-use super::chain_walk::{ChainNet, INDEXER_NFT, cursor, is_ready};
+use super::chain_walk::{ChainNet, INDEXER_NFT, cursor, fresh_fold_on};
 use super::graph::{self, OwnedLand};
 use super::nft_reads::land_snapshot;
 use super::{SharedState, Source, bad_request, unavailable};
@@ -67,10 +67,11 @@ fn land_index_unavailable() -> Response {
 /// LAND read already holds, so the check takes no second connection from the
 /// pool and sees the state the read does. A database error is an error, not
 /// an index that is not ready.
-async fn nft_index_ready_on(conn: &mut PgConnection) -> Result<bool, sqlx::Error> {
+async fn nft_index_ready_on(conn: &mut PgConnection, chain_id: i64) -> Result<bool, sqlx::Error> {
     Ok(cursor(conn, INDEXER_NFT, ChainNet::Ethereum)
         .await?
-        .is_some_and(|c| is_ready(&c, Utc::now())))
+        .and_then(|c| fresh_fold_on(&c, chain_id, Utc::now()))
+        .is_some())
 }
 
 /// The owner's parcels and estates, newest transfer first (the old
@@ -209,7 +210,12 @@ pub async fn user_lands(
     };
     let land_ready = land.is_some();
     let nft_ready = match land.as_mut() {
-        Some(snapshot) => match nft_index_ready_on(&mut snapshot.tx).await {
+        Some(snapshot) => match nft_index_ready_on(
+            &mut snapshot.tx,
+            state.settings.market.indexes.chain_id_ethereum,
+        )
+        .await
+        {
             Ok(ready) => ready,
             Err(e) => {
                 tracing::error!(error = %e, "user lands: cannot read the nft index cursor");

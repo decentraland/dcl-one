@@ -375,6 +375,7 @@ async fn verify_identity_post(
             signed_fetch::SignedFetchError::CatalystUnavailable(detail) => {
                 Some(AuthError::Eip1654ValidationFailed(detail.clone()))
             }
+            signed_fetch::SignedFetchError::RateLimited => Some(AuthError::Eip1654RateLimited),
             _ => None,
         };
         if let Some(undecided) = undecided {
