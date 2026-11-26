@@ -3,8 +3,17 @@ use std::{
     time::Duration,
 };
 
-use bevy::{text::cosmic_text::fontdb::Source, time::TimeUpdateStrategy};
-use common::{rpc::RpcStreamReceiver, structs::PrimaryPlayerRes};
+use bevy::{
+    text::{cosmic_text::fontdb::Source, CosmicFontSystem, TextPipeline},
+    time::TimeUpdateStrategy,
+};
+use common::{
+    rpc::RpcStreamReceiver,
+    structs::{PlayerModifiers, PrimaryPlayerRes},
+};
+use scene_runner::update_world::text_shape::{GlyphAtlases, Page};
+
+use crate::BeyondMaxAvatars;
 use comms::{chat_reaction::emoji_to_atlas_index, NetworkMessage, TransportType};
 use tokio::sync::mpsc;
 
@@ -506,6 +515,40 @@ impl Harness {
         self.app.world().get::<Visibility>(particle) != Some(&Visibility::Hidden)
     }
 
+    /// Run frames with time standing still until `particle` is drawn: its emoji's glyph is
+    /// rastered on the task pool, which takes as long as the machine is busy.
+    fn wait_until_drawn(&mut self, particle: Entity) {
+        self.app
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while !self.drawn(particle) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the glyph was never rastered"
+            );
+            std::thread::yield_now();
+            self.app.update();
+        }
+    }
+
+    /// The reactions' glyph atlas: its generation, and its colour page.
+    fn atlas(&mut self) -> (u32, Option<AssetId<Image>>) {
+        let world = self.app.world_mut();
+        world.resource_scope(|world, mut atlases: Mut<GlyphAtlases>| {
+            let atlas =
+                atlases.get_or_create(ATLAS.key, &mut world.resource_mut::<Assets<Image>>());
+            (
+                atlas.generation(),
+                atlas.page_image(Page::Color).map(|(image, _)| image.id()),
+            )
+        })
+    }
+
+    fn set_camera_distance(&mut self, distance: f32) {
+        let mut cameras = self.app.world_mut().query::<&mut PrimaryCamera>();
+        cameras.single_mut(self.app.world_mut()).unwrap().distance = distance;
+    }
+
     /// A particle over the local player, its glyphs landed and a frame on.
     fn local_particle(&mut self) -> Entity {
         self.pick("👍");
@@ -561,24 +604,13 @@ fn a_reaction_rises_from_over_its_players_nametag_and_is_gone_within_a_second() 
 fn an_emoji_is_rastered_into_the_atlas_and_its_particle_drawn_from_it() {
     let mut harness = Harness::with_avatars();
     harness.load_emoji_font();
-    // time stands still while the glyph is rastered
-    harness
-        .app
-        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
     harness.pick("🔥");
     harness.app.update();
     let particle = harness.particle();
-    for _ in 0..2000 {
-        if harness.drawn(particle) {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(1));
-        harness.app.update();
-    }
-    assert!(harness.drawn(particle), "the glyph was never rastered");
+    harness.wait_until_drawn(particle);
 
     let assets = harness.app.world().resource::<ReactionAssets>();
-    let (page, size) = assets.bound.expect("the atlas has a colour page");
+    let (page, size) = assets.page().expect("the atlas has a colour page");
     assert!(size > 0);
     let material = harness
         .app
@@ -611,6 +643,85 @@ fn an_emoji_is_rastered_into_the_atlas_and_its_particle_drawn_from_it() {
     }
 }
 
+#[test]
+fn a_particle_alive_through_an_atlas_rebuild_is_drawn_from_the_new_page() {
+    let mut harness = Harness::with_avatars();
+    harness.load_emoji_font();
+    harness.pick("🔥");
+    harness.app.update();
+    let kept = harness.particle();
+    harness.wait_until_drawn(kept);
+    // a glyph no particle uses any more, for the rebuild to free: with none there is none
+    harness.pick("👍");
+    harness.app.update();
+    let gone = harness
+        .particles()
+        .into_iter()
+        .find(|particle| *particle != kept)
+        .unwrap();
+    harness.wait_until_drawn(gone);
+    harness.app.world_mut().despawn(gone);
+
+    let (generation, page) = harness.atlas();
+    let mesh = harness.app.world().get::<Mesh3d>(kept).unwrap().0.clone();
+    let is_mesh = |harness: &Harness, mesh: &Handle<Mesh>| {
+        harness
+            .app
+            .world()
+            .resource::<Assets<Mesh>>()
+            .get(mesh)
+            .is_some()
+    };
+    assert!(is_mesh(&harness, &mesh));
+
+    harness
+        .app
+        .world_mut()
+        .resource_scope(|world, mut atlases: Mut<GlyphAtlases>| {
+            atlases
+                .get_or_create(ATLAS.key, &mut world.resource_mut::<Assets<Image>>())
+                .request_rebuild();
+        });
+    harness.app.update();
+
+    // the atlas was rebuilt: a generation on, in a new texture
+    let (rebuilt, new_page) = harness.atlas();
+    assert_eq!(rebuilt, generation + 1);
+    assert!(new_page.is_some() && new_page != page);
+    // the particle's mesh was made again for it in the frame of the rebuild, so it is never
+    // drawn from where its glyph was
+    let particle = harness.app.world().get::<ReactionParticle>(kept).unwrap();
+    assert_eq!(particle.built, Some(rebuilt));
+    let remade = harness.app.world().get::<Mesh3d>(kept).unwrap().0.clone();
+    assert_ne!(remade, mesh);
+    assert!(is_mesh(&harness, &remade));
+    assert!(harness.drawn(kept));
+    // and the material draws from the new texture
+    let assets = harness.app.world().resource::<ReactionAssets>();
+    assert_eq!(assets.generation, rebuilt);
+    assert_eq!(assets.page().map(|(page, _)| page), new_page);
+    let material = harness
+        .app
+        .world()
+        .resource::<Assets<ReactionMaterial>>()
+        .get(&assets.material)
+        .unwrap();
+    assert_eq!(material.bitmap.as_ref().map(Handle::id), new_page);
+
+    // the freed emoji is placed again when it is next picked
+    harness.pick("👍");
+    harness.app.update();
+    let again = harness
+        .particles()
+        .into_iter()
+        .find(|particle| *particle != kept)
+        .unwrap();
+    harness.wait_until_drawn(again);
+    assert!(harness.drawn(kept));
+}
+
+/// The guard behind the rebuild: a particle whose mesh is not of the atlas' generation (its
+/// glyph having to be rastered again) waits undrawn.
 #[test]
 fn a_mesh_built_for_an_atlas_since_rebuilt_is_not_drawn() {
     let mut harness = Harness::with_avatars();
@@ -777,20 +888,20 @@ fn a_particle_shows_where_its_players_nametag_would() {
 #[test]
 fn far_from_the_camera_only_the_local_users_show() {
     let mut harness = Harness::with_avatars();
-    let peer = harness.peer_at(Vec3::new(0.0, 0.0, -(DRAW_DISTANCE + 5.0)));
+    let peer = harness.peer_at(Vec3::new(0.0, 0.0, -(DRAW_DISTANCE - 5.0)));
     harness.hear(peer, "🔥", 1.0, 1);
     harness.app.update();
     harness.glyphs_land();
     harness.app.update();
     let theirs = harness.particle();
-    assert!(!harness.drawn(theirs));
-    // nearer, it shows
+    assert!(harness.drawn(theirs));
+    // farther, it is hidden
     harness.move_avatar(
         peer,
-        GlobalTransform::from_xyz(0.0, 0.0, -(DRAW_DISTANCE - 5.0)),
+        GlobalTransform::from_xyz(0.0, 0.0, -(DRAW_DISTANCE + 5.0)),
     );
     harness.app.update();
-    assert!(harness.drawn(theirs));
+    assert!(!harness.drawn(theirs));
 
     // the local user's show however far the camera has gone from them
     let local = harness.local;
@@ -807,6 +918,77 @@ fn far_from_the_camera_only_the_local_users_show() {
         .into_iter()
         .find(|particle| *particle != theirs)
         .unwrap();
+    assert!(harness.drawn(mine));
+}
+
+#[test]
+fn a_reaction_of_a_player_not_shown_plays_with_no_particle_and_no_glyphs() {
+    let mut harness = Harness::with_avatars();
+    let far = harness.peer_at(Vec3::new(0.0, 0.0, -(DRAW_DISTANCE + 5.0)));
+    let hidden = harness.peer_at(Vec3::new(3.0, 0.0, 0.0));
+    harness
+        .app
+        .world_mut()
+        .entity_mut(hidden)
+        .insert(PlayerModifiers {
+            hide: true,
+            ..Default::default()
+        });
+    harness.hear(far, "🔥", 1.0, 1);
+    harness.hear(hidden, "👍", 1.0, 1);
+    harness.run(0.5);
+    assert!(harness.particles().is_empty());
+    assert_eq!(harness.stats().dropped.not_shown, 2);
+    // nothing was laid out for them, so nothing of theirs is asked of the atlas
+    assert!(harness
+        .app
+        .world()
+        .resource::<ReactionGlyphs>()
+        .emoji
+        .is_empty());
+    // they played all the same
+    assert_eq!(harness.streamed().len(), 2);
+
+    // one who comes near gets a particle for the next
+    harness.move_avatar(far, GlobalTransform::from_xyz(0.0, 0.0, -5.0));
+    harness.hear(far, "🔥", 2.0, 1);
+    harness.run(0.1);
+    assert_eq!(harness.particles().len(), 1);
+}
+
+#[test]
+fn in_first_person_the_local_users_own_are_not_drawn() {
+    let mut harness = Harness::with_avatars();
+    let peer = harness.peer_at(Vec3::new(3.0, 0.0, 0.0));
+    let mine = harness.local_particle();
+    assert!(harness.drawn(mine));
+
+    // one alive as the camera goes into the player's head is hidden
+    harness.set_camera_distance(0.0);
+    harness.app.update();
+    assert!(!harness.drawn(mine));
+    // and the next gets no particle, while it is passed to the HUD as any is
+    harness.streamed();
+    harness.pick("👍");
+    harness.app.update();
+    assert_eq!(harness.particles().len(), 1);
+    assert_eq!(harness.stats().dropped.not_shown, 1);
+    assert_eq!(harness.streamed().len(), 1);
+
+    // other players' are drawn as ever
+    harness.hear(peer, "🔥", 1.0, 1);
+    harness.app.update();
+    harness.glyphs_land();
+    harness.app.update();
+    let theirs = harness
+        .particles()
+        .into_iter()
+        .find(|particle| *particle != mine)
+        .unwrap();
+    assert!(harness.drawn(theirs));
+
+    harness.set_camera_distance(1.0);
+    harness.app.update();
     assert!(harness.drawn(mine));
 }
 

@@ -45,6 +45,10 @@ pub const SECTION: DebugSection = DebugSection {
             "Played with no particle: too many alive",
             "dropped.particleCap",
         ),
+        (
+            "Played with no particle: player not shown",
+            "dropped.notShown",
+        ),
     ],
     actions: &[
         ("React with a heart", "/reaction_send \u{2665}\u{fe0f}"),
@@ -71,8 +75,10 @@ pub const SECTION: DebugSection = DebugSection {
 /// reactions passed to the HUD) to `subscribers` streams, and `dropped`, by cause: `blocked`
 /// (messages and waiting reactions of a sender blocked or banned), `duplicate` (a message's
 /// copy by another room), `unknownEmoji`, `rateLimited` (messages), `queueFull` (reactions that
-/// gave way to newer ones) and `particleCap` (reactions that played with no particle, as many
-/// as may be being alive). The counts are of this session.
+/// gave way to newer ones), `particleCap` (reactions that played with no particle, as many as
+/// may be alive) and `notShown` (reactions that played with no particle, their player having
+/// no avatar or a hidden one, being far from the camera, or being the local user in first
+/// person). The counts are of this session.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/reaction_state")]
 pub struct ReactionStateCommand;
@@ -112,7 +118,7 @@ pub fn reaction_state(
                 count(|_, visibility, _| *visibility != Visibility::Hidden),
                 count(|particle, _, generation| particle.built != Some(generation)),
             ],
-            "atlas": assets.bound.map_or(0, |(_, size)| size),
+            "atlas": assets.page().map_or(0, |(_, size)| size),
             "streamed": stats.streamed,
             "subscribers": stats.subscribers,
             "dropped": {
@@ -122,6 +128,7 @@ pub fn reaction_state(
                 "rateLimited": stats.dropped.rate_limited,
                 "queueFull": stats.dropped.queue_full,
                 "particleCap": stats.dropped.particle_cap,
+                "notShown": stats.dropped.not_shown,
             },
         })
         .to_string(),

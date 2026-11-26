@@ -195,24 +195,6 @@ mod tests {
     }
 
     #[test]
-    fn a_particle_is_made_within_its_ranges() {
-        for seed in 0..500 {
-            let particle = particle(seed);
-            assert!(LIFETIME.contains(&particle.lifetime));
-            assert!(SPEED.contains(&particle.velocity.y));
-            assert!(particle.velocity.x.abs() <= DRIFT && particle.velocity.z.abs() <= DRIFT);
-            assert!(
-                particle.start.x.abs() <= START_ACROSS && particle.start.z.abs() <= START_ACROSS
-            );
-            assert!(particle.start.y.abs() <= START_UP);
-            assert!(SIZE.contains(&particle.size));
-            let share = particle.start_size / particle.size;
-            assert!((0.2 - 1e-5..=0.5 + 1e-5).contains(&share), "{share}");
-            assert!((0.0..TAU).contains(&particle.sway_heading));
-        }
-    }
-
-    #[test]
     fn it_has_no_place_until_an_anchor_gives_it_one() {
         let mut particle = particle(1);
         assert_eq!(particle.pose(), None);

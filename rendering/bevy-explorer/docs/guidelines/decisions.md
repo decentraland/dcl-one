@@ -416,9 +416,16 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer's numbers (lifetimes, speeds, sizes, the follow, the sway, the size curve) and
   travels as its rfc4 `Reaction`, with these differences. The particle fades by alpha, as it is
   drawn in the blended pass; unity-explorer dithers. It is drawn over blended meshes too, so its
-  place against the nametag does not flip as it sways. None is drawn over an avatar that is
-  hidden (by a scene, by the avatar limit, by a block or with nametags off): it would show where
-  the avatar stands. The emoji is the engine's colour font's, not unity-explorer's atlas tile.
+  place against the nametag does not flip as it sways. As in unity-explorer it is drawn over
+  solid geometry with no depth test, so a player who reacts behind a wall shows where they
+  stand; other players' are drawn within 25 m of the camera and the local player's at any
+  distance. None is drawn over an avatar that is hidden (by a scene, by the avatar limit, by a
+  block or with nametags off): it would show where the avatar stands. Nor is the local player's
+  own in first person, where it would rise from inside the camera and cover the view. A
+  reaction that plays while none would be drawn over its player gets no particle, and so asks
+  nothing of the glyph atlas; it still reaches the HUD. The Chat bubbles setting at None turns
+  the particles off with the bubbles; unity-explorer's reactions read no setting. The emoji is
+  the engine's colour font's, not unity-explorer's atlas tile.
   Only the indices that name an emoji are taken (unity-explorer takes any under 4096 and draws
   the blank tiles), and an emoji with no index is not sent or shown. A message's copy by the
   other room is told by its stamp and its index together, and the stamps sent only move on: the

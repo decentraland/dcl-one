@@ -214,10 +214,11 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       nametag: it pops in small, rises about a metre while it sways, swells once and is gone within
       a second, drawn over the nametag and over whatever stands in front of it. Sent one after
       another, each rises. Another player's rise over their avatar, a burst of them one every
-      0.2 s. None shows over an avatar a scene hides, over a blocked player, with nametags off, or,
-      for other players, farther than 25 m from the camera; with the Chat bubbles and reactions
-      setting at None none shows over anyone. The debug panel's "Situational reactions" section
-      counts them and its buttons play one.
+      0.2 s. None shows over an avatar a scene hides, over a blocked player, with nametags off,
+      over your own head in first person, or, for other players, farther than 25 m from the
+      camera; with the Chat bubbles and reactions setting at None none shows over anyone. The
+      debug panel's "Situational reactions" section counts them (those with nothing to show
+      over as "player not shown") and its buttons play one.
 - [ ] **Voice badges**: a talking player's tag shows three green bars swinging; your own shows three
       dots while your microphone is open and you are quiet. While a player whose nearby voice you muted
       (profile menu, Hush) is talking, their tag shows the red hushed icon in place of the bars, and

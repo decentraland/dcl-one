@@ -310,7 +310,9 @@ State, in every build:
   frame, and waiting for their emoji's glyphs), `atlas` (the size in pixels of the glyph atlas
   page the emoji are drawn from), `streamed` (the reactions passed to the HUD) to `subscribers`
   streams, and `dropped` by cause: `blocked`, `duplicate`, `unknownEmoji`, `rateLimited`,
-  `queueFull` and `particleCap`. The counts are of the session.
+  `queueFull`, `particleCap` and `notShown` (reactions that played with no particle, nothing
+  being drawn over their player: no avatar or a hidden one, far from the camera, or the local
+  user in first person). The counts are of the session.
   `/reaction_send <emoji>` reacts as the local user, the way the system API's `sendReaction` does:
   the reaction is sent to the players nearby and reported to analytics as a pick is, and an emoji
   the wire has no index for does nothing. The debug panel's "React with a heart" runs it.
