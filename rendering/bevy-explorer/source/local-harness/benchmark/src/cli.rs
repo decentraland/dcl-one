@@ -332,14 +332,19 @@ impl Settings {
         })
     }
 
-    /// These settings with `extra` appended to the page parameters.
+    /// These settings with `extra` appended to the page parameters, in place of every parameter
+    /// of a key `extra` also sets.
     pub(crate) fn with_extra_query(&self, extra: Option<&str>) -> Self {
         let mut settings = self.clone();
         if let Some(extra) = extra {
-            settings.query = Some(match &self.query {
-                Some(query) => format!("{query}&{extra}"),
-                None => extra.to_owned(),
-            });
+            let key = |parameter: &str| parameter.split('=').next().unwrap_or_default().to_owned();
+            let extra_keys: Vec<String> = extra.split('&').map(key).collect();
+            let kept = self
+                .query
+                .iter()
+                .flat_map(|query| query.split('&'))
+                .filter(|parameter| !parameter.is_empty() && !extra_keys.contains(&key(parameter)));
+            settings.query = Some(kept.chain([extra]).collect::<Vec<_>>().join("&"));
         }
         settings
     }
@@ -470,6 +475,21 @@ mod tests {
             Some("bevyVariants=off")
         );
         assert_eq!(settings.with_extra_query(None).query, None);
+        // a key the base query sets replaces the query's
+        let args = measure(&[
+            "--query",
+            "bevyVariants=on&position=1,2",
+            "--base-query",
+            "bevyVariants=off",
+        ]);
+        let settings = Settings::from(&args.machine).unwrap();
+        assert_eq!(
+            settings
+                .with_extra_query(given(&args.base_query))
+                .query
+                .as_deref(),
+            Some("position=1,2&bevyVariants=off")
+        );
     }
 
     #[test]

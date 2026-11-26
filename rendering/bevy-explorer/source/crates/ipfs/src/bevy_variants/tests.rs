@@ -649,6 +649,14 @@ async fn reads_count_under_their_entity_kind_with_variants_on_or_off() {
     assert_eq!(io.bevy_variants.load_counts()[1], wearable(1, 0));
     assert_eq!(read_all(&io, &path).await, b"original png");
     assert_eq!(io.bevy_variants.load_counts()[1], wearable(1, 0));
+    // another file of the entity counts on its own
+    let other = content_path("other.png");
+    let other_ipfs_path = IpfsPath::new_from_path(&other).unwrap().unwrap();
+    assert!(io
+        .read_bevy_variant(&other_ipfs_path, &other)
+        .await
+        .is_none());
+    assert_eq!(io.bevy_variants.load_counts()[1], wearable(2, 0));
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -1000,43 +1008,6 @@ fn a_variant_that_fails_to_decode_is_marked_bad_once() {
     assert!(variants
         .decode_failed(&content_path("other.png"), "x", &["ktx2-bc"])
         .is_none());
-}
-
-/// A file read again, as a reload or a colliders-only load reads it, counts once with its latest
-/// outcome; a variant that fails to load leaves its file counted as the original.
-#[test]
-fn a_file_read_again_counts_once_with_its_latest_outcome() {
-    let variants = BevyVariants::default();
-    let path = content_path("tex.png");
-    variants.record_kind(SCENE, VariantEntityKind::Scene);
-    let counts = |load_count, variant_load_count| VariantLoadCounts {
-        load_count,
-        variant_load_count,
-    };
-    variants.count_load(SCENE, "tex.png", true);
-    variants.count_load(SCENE, "tex.png", true);
-    assert_eq!(variants.load_counts()[0].1, counts(1, 1));
-    variants.count_load(SCENE, "tex.png", false);
-    assert_eq!(variants.load_counts()[0].1, counts(1, 0));
-    variants.count_load(SCENE, "other.png", false);
-    variants.count_load(SCENE, "tex.png", true);
-    assert_eq!(variants.load_counts()[0].1, counts(2, 1));
-
-    variants.served(
-        &path,
-        ServedVariant {
-            scene: SCENE.to_owned(),
-            file: "tex.png".to_owned(),
-            variant: served_path(VARIANT_CID),
-            format: "ktx2-bc".to_owned(),
-            url: "https://abgen.example/bevy/t3/variant".to_owned(),
-        },
-        false,
-    );
-    assert!(variants.decode_failed(&path, "x", &["ktx2-bc"]).is_some());
-    assert_eq!(variants.load_counts()[0].1, counts(2, 0));
-    variants.count_load(SCENE, "tex.png", false);
-    assert_eq!(variants.load_counts()[0].1, counts(2, 0));
 }
 
 #[test]

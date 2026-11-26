@@ -510,10 +510,19 @@ struct Session {
     reloading: HashMap<PathBuf, web_time::Instant>,
     /// The kind each entity's manifest was first asked for as, kept with variants off too.
     entity_kinds: HashMap<String, VariantEntityKind>,
-    /// The latest read of each (entity, content file) a variant could stand in for.
-    counted_loads: HashMap<(String, String), CountedLoad>,
+    /// The latest read of each content file a variant could stand in for, by the hash of its
+    /// (entity, file).
+    counted_loads: HashMap<u64, CountedLoad>,
     /// `counted_loads` totalled by kind.
     loads: BTreeMap<VariantEntityKind, VariantLoadCounts>,
+}
+
+/// The key of an entity's content file in `Session::counted_loads`.
+fn entity_file_key(entity: &str, file: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (entity, file).hash(&mut hasher);
+    hasher.finish()
 }
 
 /// An entity's content file as counted: its entity's kind and whether a variant answered its
@@ -525,9 +534,12 @@ struct CountedLoad {
 }
 
 impl Session {
-    /// Sets the counted outcome of `(entity, file)`, replacing its earlier one in the totals.
-    fn count_load(&mut self, entity_file: (String, String), load: CountedLoad) {
-        if let Some(earlier) = self.counted_loads.insert(entity_file, load) {
+    /// Sets the counted outcome of an entity's file, replacing its earlier one in the totals.
+    fn count_load(&mut self, entity: &str, file: &str, load: CountedLoad) {
+        if let Some(earlier) = self
+            .counted_loads
+            .insert(entity_file_key(entity, file), load)
+        {
             let counts = self.loads.entry(earlier.kind).or_default();
             counts.load_count -= 1;
             counts.variant_load_count -= u64::from(earlier.from_variant);
@@ -666,10 +678,7 @@ impl BevyVariants {
         let Some(kind) = session.entity_kinds.get(entity).copied() else {
             return;
         };
-        session.count_load(
-            (entity.to_owned(), file.to_owned()),
-            CountedLoad { kind, from_variant },
-        );
+        session.count_load(entity, file, CountedLoad { kind, from_variant });
     }
 
     /// The session's load counts of every entity kind, in [`VariantEntityKind::ALL`] order.
@@ -749,15 +758,15 @@ impl BevyVariants {
         }
         let served = session.served.remove(path)?;
         // the variant never rendered: the file counts as its original
-        let entity_file = (served.scene.clone(), served.file.clone());
         if let Some(load) = session
             .counted_loads
-            .get(&entity_file)
+            .get(&entity_file_key(&served.scene, &served.file))
             .copied()
             .filter(|load| load.from_variant)
         {
             session.count_load(
-                entity_file,
+                &served.scene,
+                &served.file,
                 CountedLoad {
                     from_variant: false,
                     ..load
