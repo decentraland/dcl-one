@@ -82,20 +82,19 @@ fn network_name<T: Serialize>(network: &T) -> String {
         .unwrap_or_default()
 }
 
-/// Collect the paged bid and order legs up to the internal cap, and the
-/// source an unavailable envelope named when a page failed with one.
+/// Collect the paged bid and order legs up to the internal cap, one page
+/// after another, and the source an unavailable envelope named when a page
+/// failed with one.
 async fn pages<T, F, Fut>(fetch: F) -> (Vec<T>, Option<String>)
 where
     F: Fn(i64) -> Fut,
     Fut: std::future::Future<Output = Result<(Vec<T>, i64), Response>>,
 {
-    let skips: Vec<i64> = (0..INTERNAL_FETCH_CAP)
-        .step_by(READER_MAX_FIRST as usize)
-        .collect();
-    let results = futures::future::join_all(skips.into_iter().map(&fetch)).await;
+    // One page at a time: a leg read from the shop's indexes holds a pooled
+    // read snapshot per page, and a page that comes back short ends the leg.
     let mut out = Vec::new();
-    for result in results {
-        match result {
+    for skip in (0..INTERNAL_FETCH_CAP).step_by(READER_MAX_FIRST as usize) {
+        match fetch(skip).await {
             Ok((rows, _)) => {
                 let short = (rows.len() as i64) < READER_MAX_FIRST;
                 out.extend(rows);

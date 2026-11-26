@@ -2508,6 +2508,27 @@ async fn each_ownership_route_follows_the_nft_index_state() {
         return;
     };
     let dance = format!("urn:decentraland:matic:collections-v2:{COFFEE}:2");
+    // The order route's other readiness: the trades mirror, and the order
+    // book folded at the nft cursor's block (100) on its recovery point.
+    super::trade_events::tests::publish_cursors(&db.pool).await;
+    for network in ["ethereum", "matic"] {
+        sqlx::query(
+            "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) \
+             VALUES ('nft', $1, 100, '0x' || repeat('0', 64), 0) ON CONFLICT DO NOTHING",
+        )
+        .bind(network)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash) \
+             VALUES ($1, 100, '0x' || repeat('0', 64)) ON CONFLICT DO NOTHING",
+        )
+        .bind(network)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
     let set_cursor = |network: &'static str, published: Option<i64>| {
         let pool = db.pool.clone();
         async move { set_nft_cursor(&pool, network, published).await }
@@ -2681,24 +2702,26 @@ async fn each_ownership_route_follows_the_nft_index_state() {
                 assert_eq!(body["source"], "nft-index", "{label}: {uri}: {body}");
             }
         }
-        // The open listings' leg follows the same rule on a walking node:
-        // the envelope until the networks it reads are published and
-        // recent, never unguarded; a node that does not walk the index
-        // serves it unguarded.
+        // `/v1/orders` follows the same rule on a walking node: the
+        // envelope until the networks it reads are published and recent,
+        // never unguarded.
         for (network, published) in [
             (None, expect.nfts),
             (Some(super::wire::Network::Matic), expect.nfts_matic),
         ] {
+            if !super::owned_items::walks_here(state) {
+                continue;
+            }
             let f = super::orders::OrderFilters {
                 status: Some("open".into()),
                 network,
                 ..Default::default()
             };
-            let answered = super::orders::trades_leg(state, &f).await.is_ok();
+            let answered = super::orders::list_orders_checked(state, &f).await.is_ok();
             assert_eq!(
                 answered,
-                !super::owned_items::walks_here(state) || published == ok,
-                "{label}: the orders leg on {network:?}"
+                published == ok,
+                "{label}: the orders on {network:?}"
             );
         }
     }

@@ -4745,6 +4745,33 @@ timeout:
 - open-by-items: per contract, its open orders cheapest first
   (`legacy_order_open_idx`), up to `perContract`.
 
+Writers that predate the book's marker (an earlier binary's nft fold during
+a rollout) write `shop.nft` all the same. So readiness also reads
+`shop.projection_write` (below, "Fold-written projections and their
+publication"): a write to `shop.nft` or `shop.legacy_order` that no
+publication has acknowledged refuses the read, whichever binary wrote it and
+at whatever height. Reads refused that way are counted by
+`catalyst_shop_order_book_unpublished_fold_reads_total` (serve); they fall in
+each pass's window between the fold's commit and its publication.
+
+### Fold-written projections and their publication
+
+`shop.projection_write` holds, per cursor (`indexer`, `network`) and
+projection table, whether the projection holds a write no publication has
+acknowledged (`pending`), and the cursor's last block at the latest write.
+Statement-level triggers with transition tables on `shop.nft` and
+`shop.legacy_order` (the `nft` cursor) and `shop.nft_bid` (the `sales`
+cursor) set `pending` for the networks a statement wrote; a no-op upsert or
+an empty statement sets nothing. A trigger on `shop.chain_cursor` clears it
+when a publication commits (`folded_block` and `folded_at` set by any
+binary's `mark_folded`, at the same height too). The table is created by the
+object pass and seeded pending for every existing cursor, so an upgraded
+node serves again from its next publication. Workload: one row per
+(cursor, projection), rewritten by each fold statement that writes and each
+publication; the triggers add one transition table per write statement,
+sized by the rows it changed. A reader calls
+`chain_walk::rows_published_on` on its snapshot.
+
 Indexes: `legacy_order_token_idx` (`(contract_address, token_id)`: the
 fold's and the rewind's per-token rewrite, and a token filter, which names
 no network), `legacy_order_seller_idx` (an owner's orders newest first),

@@ -78,7 +78,19 @@ it stands and its block, written in the fold's transaction, is the published
 nft fold's: between a fold's commit and its publication (which waits on the
 walk's head reads and can stall) the rows already hold an unpublished fold,
 and the read answers the envelope; a walk that advanced without folding
-leaves the book at the published block, still read. A database that
+leaves the book at the published block, still read.
+
+The same holds for every writer, an earlier binary's included: the schema
+marks a write to `shop.nft` or `shop.legacy_order` pending, by a statement
+trigger, and a trigger on the nft cursor acknowledges it when a publication
+commits (`shop.projection_write`, read through
+`chain_walk::rows_published_on`). So an earlier writer's transfer cannot
+reopen or close an order before its fold is published, nor can a write at
+the published height. The cost is a window on each pass, from the fold's
+commit until the walk, having read the head, publishes it: order reads in it
+answer the `nft-index` envelope rather than an unpublished fold, and
+`catalyst_shop_order_book_unpublished_fold_reads_total` counts them. A
+database that
 predates the table fills it in the schema run that creates it: the fold's
 rules over every token, bounded by what the nft fold had folded
 (`fold_through`), which becomes the book's marker with its recovery point's

@@ -419,15 +419,26 @@ fn reads_land(state: &MarketplaceState, f: &OrderFilters) -> bool {
     open_possible && land_possible && f.network != Some(Network::Matic)
 }
 
+/// Order-book reads refused because the nft index holds a write no
+/// publication has acknowledged yet (`chain_walk::rows_published_on`): a
+/// fold committed before the walk, having read the head, publishes it.
+pub const UNPUBLISHED_FOLD_READS: dcl_metrics::CounterFamily<1> = dcl_metrics::CounterFamily::new(
+    "catalyst_shop_order_book_unpublished_fold_reads_total",
+    "Order-book reads refused because the nft index holds a fold it has not published yet, by network.",
+    Some(dcl_metrics::Unit::Count),
+    &["network"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[UNPUBLISHED_FOLD_READS.descriptor];
+
 /// The read-only snapshot a walking node's order book reads on: the
 /// land-authz index ready on it when `land` (its own snapshot, which the
 /// LAND/estate reads share), the nft index published and recent on `nets`
 /// at `now` ([`Rule::Fresh`]) on the chain the node serves on each (its
-/// catalogue, `Settings::catalogue`), with no write to its owners (or, with
-/// `book`, to the book) past that publication by any writer
-/// (`chain_walk::rows_published_on`) and, with `book`, the legacy order book caught
-/// up with that publication on each (`legacy_orders::caught_up`) and the
-/// trades mirror and its verdicts ready (`trades::ready_on`), each statement
+/// catalogue, `Settings::catalogue`), with no write to its owners or to the
+/// book that a publication has not acknowledged, by any writer
+/// (`chain_walk::rows_published_on`), the legacy order book caught up with
+/// that publication on each (`legacy_orders::caught_up`), and the trades
+/// mirror and its verdicts ready (`trades::ready_on`), each statement
 /// bounded by `nft_reads::READ_STATEMENT_TIMEOUT`, and the request's instant:
 /// taken once the snapshot is established, so a fold the snapshot sees was
 /// published before it (a fold published while the request waited for a
@@ -438,7 +449,6 @@ pub(crate) async fn book_snapshot(
     state: &MarketplaceState,
     nets: &[ChainNet],
     land: bool,
-    book: bool,
 ) -> Result<(Transaction<'static, Postgres>, DateTime<Utc>), Response> {
     let db = |e: sqlx::Error| ApiError::internal(e.to_string()).into_response();
     let mut tx = if land {
@@ -479,11 +489,7 @@ pub(crate) async fn book_snapshot(
     // The owners the book's statuses and the listings' guard read (and the
     // book itself) as the published fold left them: a fold committed past it
     // but not published yet, whichever binary wrote it, is not read.
-    let projections: &[&str] = if book {
-        &["nft", "legacy_order"]
-    } else {
-        &["nft"]
-    };
+    let projections: &[&str] = &["nft", "legacy_order"];
     for &net in nets {
         if !super::chain_walk::rows_published_on(
             &mut tx,
@@ -494,26 +500,25 @@ pub(crate) async fn book_snapshot(
         .await
         .map_err(db)?
         {
+            UNPUBLISHED_FOLD_READS.handle([net.db_name()]).increment(1);
             return Err(owned_items::not_ready(&format!(
                 "the {} nft index holds a fold it has not published yet",
                 net.db_name()
             )));
         }
     }
-    if book {
-        for &net in nets {
-            if !super::legacy_orders::caught_up(&mut tx, net)
-                .await
-                .map_err(db)?
-            {
-                return Err(owned_items::not_ready(&format!(
-                    "the {} legacy order book has not caught up with the published nft fold",
-                    net.db_name()
-                )));
-            }
+    for &net in nets {
+        if !super::legacy_orders::caught_up(&mut tx, net)
+            .await
+            .map_err(db)?
+        {
+            return Err(owned_items::not_ready(&format!(
+                "the {} legacy order book has not caught up with the published nft fold",
+                net.db_name()
+            )));
         }
-        super::trades::ready_on(state, &mut tx, now).await?;
     }
+    super::trades::ready_on(state, &mut tx, now).await?;
     Ok((tx, now))
 }
 
@@ -602,35 +607,6 @@ pub(super) async fn read_trades(
             keyed(order, token_id)
         })
         .collect())
-}
-
-/// The open v3 listings matching `f`, and how they were checked. A node
-/// that walks the nft index reads them behind the guard on a
-/// [`book_snapshot`] of the networks `f` names (the unavailable envelope
-/// while the index is not published and recent there); a node that does
-/// not has no ownership source and serves them unguarded.
-pub async fn trades_leg(
-    state: &MarketplaceState,
-    f: &OrderFilters,
-) -> Result<(Vec<Keyed>, OwnerCheck), Response> {
-    if owned_items::walks_here(state) {
-        let (mut tx, now) = book_snapshot(state, nets_of(f.network), false, false).await?;
-        let rows = read_trades(&mut tx, state, f, OwnerCheck::Checked, now)
-            .await
-            .map_err(read_error)?;
-        tx.rollback().await.ok();
-        Ok((rows, OwnerCheck::Checked))
-    } else {
-        let mut conn = state
-            .pool
-            .acquire()
-            .await
-            .map_err(|e| ApiError::from(e).into_response())?;
-        let rows = read_trades(&mut conn, state, f, OwnerCheck::Unchecked, Utc::now())
-            .await
-            .map_err(read_error)?;
-        Ok((rows, OwnerCheck::Unchecked))
-    }
 }
 
 /// The v3 listings of each of `fs` on a node that does not walk the nft
@@ -1200,7 +1176,7 @@ pub async fn list_orders_checked(
     let window = offset + limit;
     let (mut merged, legacy_total, trades, check) = if owned_items::walks_here(state) {
         let land = reads_land(state, f);
-        let (mut tx, now) = book_snapshot(state, nets_of(f.network), land, true).await?;
+        let (mut tx, now) = book_snapshot(state, nets_of(f.network), land).await?;
         let now_ms = now.timestamp_millis();
         let (rows, total, trades) = async {
             let rows = book_rows(&mut tx, state, f, window, land, now_ms).await?;
@@ -1297,7 +1273,7 @@ pub async fn open_orders_by_items_checked(
     let mut per: Vec<(String, Vec<Keyed>)> = Vec::with_capacity(contracts.len());
     let check = if owned_items::walks_here(state) {
         let land = contracts.iter().any(|c| is_land_registry(state, c));
-        let (mut tx, now) = book_snapshot(state, &ChainNet::ALL, land, true).await?;
+        let (mut tx, now) = book_snapshot(state, &ChainNet::ALL, land).await?;
         for contract in &contracts {
             let f = filters(contract);
             let rows = async {

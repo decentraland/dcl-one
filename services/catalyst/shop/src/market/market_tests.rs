@@ -1349,6 +1349,8 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         .execute(&pool)
         .await
         .unwrap();
+    // The nft rows above are the published fold.
+    republish_nft(&pool).await;
 
     let (status, body) = get(
         app(),
@@ -4111,17 +4113,21 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         ..Default::default()
     };
     use super::orders::OwnerCheck;
-    let ids_of = |rows: Vec<super::orders::Keyed>| {
-        let mut ids: Vec<String> = rows.into_iter().map(|k| k.order.id).collect();
-        ids.sort();
-        ids
+    // The listings `/v1/orders` serves (no legacy order is in this book).
+    let listings = |state: SharedState, f: super::orders::OrderFilters| async move {
+        super::orders::list_orders_checked(&state, &f)
+            .await
+            .map(|(page, _, check)| {
+                let mut ids: Vec<String> = page.into_iter().map(|o| o.id).collect();
+                ids.sort();
+                (ids, check)
+            })
     };
-    let unavailable = |r: Result<
-        (Vec<super::orders::Keyed>, OwnerCheck),
-        axum::response::Response,
-    >| { r.err().map(|resp| resp.status()) };
+    let unavailable = |r: Result<(Vec<String>, OwnerCheck), axum::response::Response>| {
+        r.err().map(|resp| resp.status())
+    };
     assert_eq!(
-        unavailable(super::orders::trades_leg(&state, &open).await),
+        unavailable(listings(state.clone(), open.clone()).await),
         Some(StatusCode::SERVICE_UNAVAILABLE),
         "an unpublished index answers the envelope"
     );
@@ -4131,11 +4137,11 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         market_settings(&url, &url, true),
     ));
     assert!(!super::owned_items::walks_here(&not_walking));
-    let (rows, check) = super::orders::trades_leg(&not_walking, &open)
-        .await
-        .unwrap();
+    not_walking
+        .test_allow_loopback
+        .store(true, Ordering::Relaxed);
+    let (ids, check) = listings(not_walking.clone(), open.clone()).await.unwrap();
     assert_eq!(check, OwnerCheck::Unchecked);
-    let ids = ids_of(rows);
     let mut want = vec![
         held.clone(),
         sold.clone(),
@@ -4157,7 +4163,7 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
     )
     .await;
     assert_eq!(
-        unavailable(super::orders::trades_leg(&state, &open).await),
+        unavailable(listings(state.clone(), open.clone()).await),
         Some(StatusCode::SERVICE_UNAVAILABLE),
         "a read of both networks waits for Ethereum"
     );
@@ -4169,6 +4175,17 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
     polygon.sort();
     let mut both = vec![held, elsewhere, land];
     both.sort();
+    // A read of both networks could answer an open LAND order: the route
+    // reads it on the land-authz index's snapshot.
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
+         VALUES ('ethereum-mainnet', $1, $2, 1, 1, timezone('UTC', now()), true) ON CONFLICT DO NOTHING",
+    )
+    .bind(crate::land_authz::LAND_REGISTRY_MAINNET)
+    .bind(crate::land_authz::ESTATE_REGISTRY_MAINNET)
+    .execute(&pool)
+    .await
+    .unwrap();
     for (label, filters, nets, want) in [
         (
             "Polygon alone",
@@ -4179,11 +4196,10 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         ("both", &open, &super::chain_walk::ChainNet::ALL[..], &both),
     ] {
         super::owned_items::test_support::publish(&pool, nets, false, Duration::ZERO).await;
-        let (rows, check) = super::orders::trades_leg(&state, filters).await.unwrap();
+        let (ids, check) = listings(state.clone(), filters.clone()).await.unwrap();
         assert_eq!(check, OwnerCheck::Checked, "{label}");
         assert_eq!(
-            &ids_of(rows),
-            want,
+            &ids, want,
             "{label}: the sold ({sold}) and burned ({burned}) tokens' listings drop out"
         );
     }

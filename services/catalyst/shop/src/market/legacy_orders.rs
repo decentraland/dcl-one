@@ -126,12 +126,29 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
         Some(through) if since >= 0 => since.min(through),
         _ => -1,
     };
-    if since < 0 {
+    // A whole refold reads every token: the nft fold may have turned hash
+    // and merge joins off for its own few touched rows (a transaction-local
+    // setting), so they are on for this statement and restored after it.
+    let planner: Option<(String, String)> = if since < 0 {
         sqlx::query("DELETE FROM shop.legacy_order WHERE network = $1")
             .bind(net.db_name())
             .execute(&mut *conn)
             .await?;
-    }
+        let saved = sqlx::query_as(
+            "SELECT current_setting('enable_hashjoin'), current_setting('enable_mergejoin')",
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        sqlx::query("SET LOCAL enable_hashjoin = on")
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("SET LOCAL enable_mergejoin = on")
+            .execute(&mut *conn)
+            .await?;
+        Some(saved)
+    } else {
+        None
+    };
     let written = sqlx::query(FOLD_SQL)
         .bind(net.db_name())
         .bind(since)
@@ -139,6 +156,13 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
         .execute(&mut *conn)
         .await?
         .rows_affected();
+    if let Some((hash, merge)) = planner {
+        sqlx::query("SELECT set_config('enable_hashjoin', $1, true), set_config('enable_mergejoin', $2, true)")
+            .bind(hash)
+            .bind(merge)
+            .execute(&mut *conn)
+            .await?;
+    }
     sqlx::query(
         "INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash) \
          SELECT network, last_block, last_block_hash FROM shop.chain_cursor WHERE indexer = $2 AND network = $1 \
