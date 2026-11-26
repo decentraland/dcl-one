@@ -688,10 +688,6 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
     // 4. A local publish is refused, never overwritten, and stays served; the
     //    mirrored scene written before it is retired, since the mirror never
     //    refreshes the world again.
-    sqlx::query("UPDATE worlds.worlds SET spawn_coordinates = '9,9' WHERE name = 'a.dcl.eth'")
-        .execute(&node.pool)
-        .await
-        .unwrap();
     sqlx::query(
         r#"INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size, mirror_source)
            VALUES ('a.dcl.eth', 'bafkreilocal', '[]', '{"pointers":["9,9"],"metadata":{"scene":{"base":"9,9"}}}', '0xabc', '{9,9}', 1, NULL)"#,
@@ -709,6 +705,10 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
         st.settings
             .insert("a.dcl.eth".into(), json!({"spawn_coordinates": "0,0"}));
     }
+    sqlx::query("UPDATE worlds.worlds SET spawn_coordinates = '9,9' WHERE name = 'a.dcl.eth'")
+        .execute(&node.pool)
+        .await
+        .unwrap();
     let summary = node.pass(&ctx).await;
     assert_eq!((summary.scenes.refused, summary.scenes.unchanged), (1, 2));
     let rows = node.scene_rows("a.dcl.eth").await;
