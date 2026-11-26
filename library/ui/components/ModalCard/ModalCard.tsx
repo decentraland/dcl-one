@@ -329,6 +329,9 @@ export interface ModalBackdropProps extends Omit<HTMLAttributes<HTMLDivElement>,
  * Not in Figma: the layer the Explorer HUD's dialog cards open on. It covers the screen at the host's `--ui-scale`
  * (1 without one), so content sized in reference pixels is centred and scaled with the rest of the HUD. It is
  * presentational: its host owns the stack, the focus trap, Escape and what a click on it does.
+ *
+ * Any host's `--ui-scale` applies, not only the HUD's: `apps/ui3`'s `primitives.css` sets 0.85 on `:root`, so a page
+ * under it that wants the scrim and its content unscaled passes `fixed`.
  */
 export function ModalBackdrop({ children, tone = 'dim', fixed = false, className = '', ref, ...rest }: ModalBackdropProps) {
   const scrim = tone !== 'clear'

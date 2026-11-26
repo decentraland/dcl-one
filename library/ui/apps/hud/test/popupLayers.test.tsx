@@ -88,7 +88,7 @@ describe('stacked dialogs', () => {
     expect(hasOpenPopup()).toBe(false)
   })
 
-  it('a press on a lower scrim does not reach it through the dialog above', () => {
+  it('a press on the top card closes nothing, and a press on the top scrim closes only the top dialog', () => {
     render(<PopupHost />)
     act(() => {
       void showDialog({ title: 'Below', actions: [{ id: 'ok', label: 'OK' }] })
@@ -318,6 +318,13 @@ describe('a close guard', () => {
     await act(async () => {})
     expect(screen.queryByText('form')).toBeNull()
     expect(onClose).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      openPopup(() => <div>again</div>, { confirmClose: () => true, onClose })
+    })
+    cancel() // a yes at once closes before the next tick
+    expect(screen.queryByText('again')).toBeNull()
+    expect(onClose).toHaveBeenCalledTimes(2)
   })
 
   it("is bypassed by the owner's handle", () => {
