@@ -5,7 +5,7 @@
 
 use axum::Router;
 use axum::http::StatusCode;
-use chrono::{TimeDelta, Utc};
+use chrono::{SubsecRound, TimeDelta, Utc};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
@@ -187,7 +187,7 @@ async fn the_copy_cannot_tell_without_a_complete_pass_and_a_decision_needs_a_fre
         503,
         "another mirror's or network's pass says nothing about Polygon collections"
     );
-    let stale = Utc::now().naive_utc() - STALE_AFTER - TimeDelta::minutes(1);
+    let stale = (Utc::now().naive_utc() - STALE_AFTER - TimeDelta::minutes(1)).trunc_subsecs(6);
     set_pass(&mut tx, Some(stale)).await;
     let view = chain_state::for_read(&mut tx)
         .await
