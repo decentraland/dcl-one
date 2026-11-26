@@ -3,6 +3,7 @@ use dcl_metrics::{Descriptor, Unit};
 
 pub const FAMILIES: &[Descriptor] = &[
     super::ALLOWANCE_READ_FAILURES.descriptor,
+    super::CHANGE_FEED_WITHHELD.descriptor,
     Descriptor::counter(
         super::MULTIPART_UPLOAD_REJECTIONS,
         "Multipart uploads rejected by route and reason.",

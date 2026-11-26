@@ -828,6 +828,7 @@ mod tests {
                 replacement: &Deploy::Owner,
                 forward_to: None,
                 quota: None,
+                public_base: "https://worlds.example/worlds-content-server",
             },
         )
         .await
@@ -1789,6 +1790,7 @@ mod stream_access {
                 replacement: &Deploy::Owner,
                 forward_to: None,
                 quota: None,
+                public_base: "https://worlds.example/worlds-content-server",
             },
         )
         .await
@@ -1970,6 +1972,7 @@ mod stream_access {
                     replacement: &Deploy::Owner,
                     forward_to: None,
                     quota: None,
+                    public_base: "https://worlds.example/worlds-content-server",
                 },
             )
             .await
@@ -2422,6 +2425,7 @@ mod stream_access {
                 replacement: &catalyst::worlds::policy::Deploy::Owner,
                 forward_to: None,
                 quota: None,
+                public_base: "https://worlds.example/worlds-content-server",
             };
             store::deploy_scene(&pool, &storage, deployment)
                 .await

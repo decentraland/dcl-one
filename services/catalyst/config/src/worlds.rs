@@ -98,6 +98,18 @@ pub struct WorldsConfig {
     #[arg(long, env = "WORLDS_FORWARD_UPSTREAM_URL")]
     pub worlds_forward_upstream_url: Option<String>,
 
+    /// This node's public worlds content server base as consumers reach it
+    /// (such as a `worlds-content-server.<domain>` host): the content server
+    /// the worlds change feed names (`/changes`). Unset is
+    /// `<PUBLIC_URL>/worlds-content-server`.
+    #[arg(long, env = "WORLDS_PUBLIC_URL")]
+    pub worlds_public_url: Option<String>,
+
+    /// Bearer of the worlds change feed (`GET /worlds-content-server/changes`)
+    /// and of nothing else (or WORLDS_CHANGE_FEED_TOKEN_FILE); unset refuses the feed.
+    #[arg(long, env = "WORLDS_CHANGE_FEED_TOKEN", hide_env_values = true)]
+    pub worlds_change_feed_token: Option<String>,
+
     /// Bearer of the worlds `/admin/*` routes and the federation refresh/veto
     /// routes (or CATALYRST_WORLDS_ADMIN_TOKEN_FILE); unset refuses them.
     #[arg(long, env = "CATALYRST_WORLDS_ADMIN_TOKEN", hide_env_values = true)]

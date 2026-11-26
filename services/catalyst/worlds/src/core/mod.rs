@@ -31,6 +31,7 @@ pub mod active;
 mod active_entity;
 pub mod admin;
 pub mod auth;
+pub mod change_log;
 pub mod deploy;
 mod deploy_form;
 mod deploy_validate;
@@ -101,6 +102,9 @@ pub const DEFAULT_SCENE_EVICTION_TTL: std::time::Duration =
 pub struct Settings {
     /// `CATALYRST_WORLDS_ADMIN_TOKEN`: the bearer of the `/admin/*` routes; unset refuses them.
     pub admin_token: Option<String>,
+    /// `WORLDS_CHANGE_FEED_TOKEN`: the bearer of `GET /changes` and nothing
+    /// else; unset refuses it.
+    pub change_feed_token: Option<String>,
     /// `MAX_IN_FLIGHT_UPLOAD_BYTES`, `MAX_CONCURRENT_UPLOADS`,
     /// `MAX_IN_FLIGHT_UPLOAD_FILES`, `MULTIPART_UPLOAD_TIMEOUT_MS`,
     /// `DEPLOYMENT_PROCESSING_TIMEOUT_MS`, `MAX_CONCURRENT_UPLOADS_PER_SOURCE`,
@@ -113,6 +117,10 @@ pub struct Settings {
     pub scene_eviction_ttl: std::time::Duration,
     /// This node's root URL, the realm a deploy's success message links.
     pub public_url: String,
+    /// This node's public worlds content server base (`WORLDS_PUBLIC_URL`, else
+    /// `<public_url>/worlds-content-server`): the change log's
+    /// `contentServerUrls` and thumbnail links.
+    pub worlds_public_url: String,
     /// `MAX_FILE_COUNT`: entries a deployed entity's `content` may list.
     pub max_file_count: usize,
     /// The partial (multi-request) upload limits (`PENDING_DEPLOYMENT_TTL`, `MAX_PENDING_*`, ...).
@@ -129,6 +137,10 @@ impl std::fmt::Debug for Settings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Settings")
             .field("admin_token", &self.admin_token.as_ref().map(|_| "<set>"))
+            .field(
+                "change_feed_token",
+                &self.change_feed_token.as_ref().map(|_| "<set>"),
+            )
             .field("upload_limits", &self.upload_limits)
             .finish()
     }
@@ -143,10 +155,12 @@ impl Settings {
     ) -> anyhow::Result<Self> {
         Ok(Self {
             admin_token: admin_token.filter(|t| !t.trim().is_empty()),
+            change_feed_token: None,
             upload_limits: upload_limits.validate(deploy::MAX_UPLOAD_SIZE_BYTES as u64)?,
             global_scenes_urn: Vec::new(),
             scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
             public_url: String::new(),
+            worlds_public_url: String::new(),
             max_file_count: deploy::DEFAULT_MAX_FILE_COUNT,
             partial_uploads: PartialUploadLimits::default(),
             owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
@@ -166,8 +180,24 @@ impl Settings {
         self
     }
 
+    /// `WORLDS_CHANGE_FEED_TOKEN`; `None` or blank leaves the feed refused.
+    pub fn with_change_feed_token(mut self, token: Option<String>) -> Self {
+        self.change_feed_token = token.filter(|t| !t.trim().is_empty());
+        self
+    }
+
     pub fn with_public_url(mut self, public_url: &str) -> Self {
         self.public_url = public_url.trim_end_matches('/').to_string();
+        self
+    }
+
+    /// `WORLDS_PUBLIC_URL`, after [`Self::with_public_url`]; `None` or blank is
+    /// `<public_url>/worlds-content-server`.
+    pub fn with_worlds_public_url(mut self, url: Option<&str>) -> Self {
+        match url.map(str::trim).filter(|u| !u.is_empty()) {
+            Some(url) => self.worlds_public_url = url.trim_end_matches('/').to_string(),
+            None => self.worlds_public_url = worlds_base_of(&self.public_url),
+        }
         self
     }
 
@@ -204,16 +234,28 @@ impl Settings {
     pub fn for_tests(admin_token: Option<&str>) -> Self {
         Self {
             admin_token: admin_token.map(str::to_string),
+            change_feed_token: None,
             upload_limits: UploadLimits::default(),
             global_scenes_urn: Vec::new(),
             scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
             public_url: "https://worlds.example".to_string(),
+            worlds_public_url: "https://worlds.example/worlds-content-server".to_string(),
             max_file_count: deploy::DEFAULT_MAX_FILE_COUNT,
             partial_uploads: PartialUploadLimits::default(),
             owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
             access_caps: store::AccessCaps::default(),
             realm_name: crate::comms::world_identity::GENESIS_CITY_REALM.to_string(),
         }
+    }
+}
+
+/// `<public_url>/worlds-content-server`, or `public_url` when it already names the prefix.
+fn worlds_base_of(public_url: &str) -> String {
+    const PREFIX: &str = "/worlds-content-server";
+    if public_url.ends_with(PREFIX) {
+        public_url.to_string()
+    } else {
+        format!("{public_url}{PREFIX}")
     }
 }
 
@@ -580,6 +622,21 @@ impl CoreState {
                 }
             },
         );
+        let pool = self.pool.clone();
+        jobs.spawn_periodic_leased(
+            "worlds-change-log-retention",
+            crate::jobs::PeriodicCfg::every(change_log::RETENTION_INTERVAL)
+                .with_jitter(std::time::Duration::from_secs(60)),
+            move |ctx| {
+                let pool = pool.clone();
+                async move {
+                    let cutoff = chrono::Utc::now().naive_utc() - change_log::RETENTION;
+                    let deleted = change_log::delete_expired(&pool, cutoff).await?;
+                    ctx.progress(format!("{deleted} expired change log rows deleted"));
+                    Ok(())
+                }
+            },
+        );
         let state = self.clone();
         jobs.spawn_periodic_leased(
             "worlds-quota",
@@ -641,6 +698,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/gc", post(admin::garbage_collect))
         .route("/admin/gc", post(admin::garbage_collect))
         .route("/reprocess-ab", post(reprocess::reprocess_ab))
+        .route("/changes", get(change_log::changes))
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
         .layer(axum::middleware::from_fn(cors::cors_middleware))
         .with_state(state)
@@ -773,6 +831,35 @@ async fn request_timeout(
 #[cfg(test)]
 mod redaction_tests {
     use super::*;
+
+    #[test]
+    fn the_public_worlds_base_derives_from_the_public_url_unless_set() {
+        let derived = Settings::for_tests(None)
+            .with_public_url("https://node.example/")
+            .with_worlds_public_url(None);
+        assert_eq!(
+            derived.worlds_public_url,
+            "https://node.example/worlds-content-server"
+        );
+        let nested = Settings::for_tests(None)
+            .with_public_url("https://node.example/worlds-content-server")
+            .with_worlds_public_url(None);
+        assert_eq!(
+            nested.worlds_public_url,
+            "https://node.example/worlds-content-server"
+        );
+        let set = Settings::for_tests(None)
+            .with_public_url("https://node.example")
+            .with_worlds_public_url(Some("https://worlds.node.example/"));
+        assert_eq!(set.worlds_public_url, "https://worlds.node.example");
+        let blank = Settings::for_tests(None)
+            .with_public_url("https://node.example")
+            .with_worlds_public_url(Some(" "));
+        assert_eq!(
+            blank.worlds_public_url,
+            "https://node.example/worlds-content-server"
+        );
+    }
 
     #[test]
     fn debug_output_never_carries_the_admin_token() {

@@ -47,8 +47,20 @@ const ALLOWANCE_READ_FAILURES: dcl_metrics::CounterFamily<0> = dcl_metrics::Coun
     &[],
 );
 
+const CHANGE_FEED_WITHHELD: dcl_metrics::GaugeFamily<0> = dcl_metrics::GaugeFamily::new(
+    "worlds_change_feed_withheld_seconds",
+    "Age of the oldest committed change feed row an open transaction still holds back, read on each feed request; 0 when none is.",
+    Some(dcl_metrics::Unit::Seconds),
+    &[],
+);
+
 pub fn register_series() {
     ALLOWANCE_READ_FAILURES.handle([]).increment(0);
+    CHANGE_FEED_WITHHELD.handle([]).set(0.0);
+}
+
+pub(super) fn change_feed_withheld(seconds: f64) {
+    CHANGE_FEED_WITHHELD.handle([]).set(seconds);
 }
 
 pub(super) fn allowance_read_failed() {

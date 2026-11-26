@@ -852,6 +852,13 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
     assert!(node.scene_rows("h.dcl.eth").await.is_empty());
     assert!(!node.storage.exist(&hash_bytes_v1(b"honest")).await.unwrap());
 
+    // 6. The change feed carries only this node's own changes: no mirror pass recorded one.
+    let logged: i64 = sqlx::query_scalar("SELECT count(*) FROM worlds.change_log")
+        .fetch_one(&node.pool)
+        .await
+        .unwrap();
+    assert_eq!(logged, 0, "mirror passes write no change log rows");
+
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);
     scratch.teardown().await;
@@ -1925,6 +1932,7 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
             ..WorldSettingsUpdate::default()
         },
         None,
+        "https://node.example/worlds-content-server",
     )
     .await
     .unwrap();

@@ -200,7 +200,7 @@ impl Config {
     /// bearers, service tokens, the console's session key): a short one is
     /// guessable or brute-forced offline, so startup refuses it. Bearers this
     /// node sends elsewhere keep their issuer's length.
-    pub const OPERATOR_SECRETS: [&'static str; 25] = [
+    pub const OPERATOR_SECRETS: [&'static str; 26] = [
         "SESSION_SECRET",
         "CATALYRST_CONTENT_ADMIN_TOKEN",
         "COMMUNITIES_ADMIN_TOKEN",
@@ -211,6 +211,7 @@ impl Config {
         "CATALYRST_BUILDER_ADMIN_TOKEN",
         "CATALYRST_CAMERA_REEL_ADMIN_TOKEN",
         "CATALYRST_WORLDS_ADMIN_TOKEN",
+        "WORLDS_CHANGE_FEED_TOKEN",
         "SCENE_HOST_ADMIN_TOKEN",
         "MARKET_ADMIN_TOKEN",
         "PRICE_ADMIN_TOKEN",
@@ -403,6 +404,10 @@ impl Config {
             (
                 "CATALYRST_WORLDS_ADMIN_TOKEN",
                 &mut self.worlds.catalyrst_worlds_admin_token,
+            ),
+            (
+                "WORLDS_CHANGE_FEED_TOKEN",
+                &mut self.worlds.worlds_change_feed_token,
             ),
             ("ENCRYPTION_KEY", &mut self.worlds.encryption_key),
             (
