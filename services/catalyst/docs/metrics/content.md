@@ -110,6 +110,10 @@ forwarding engine of both lanes (`lane` = `content-forward`, `worlds-forward`).
 | `upstream_forward_oldest_open_age_seconds` | gauge `lane` | emitted | `content/src/forward.rs` `Forwarder::observe_open` | Seconds since `created_at` of the oldest open row; 0 when none. Alert below the upstream's five-minute (worlds) or twenty-minute (content) window to allow for time between signing and queueing. |
 | `upstream_forward_open_sample_timestamp_seconds` | gauge `lane` | emitted | `content/src/forward.rs` `Forwarder::observe_open` | Unix seconds after a successful queue read; 0 before the first read and after a failed read, lease loss or unwind. Filter count and age to replicas with a positive timestamp no older than 30 s before taking a per-lane maximum. A stale sample cannot establish an empty queue. |
 
+Scrape more frequently than the freshness window (the Worlds collector waits 15 s between scrapes).
+When the lane is expected to run, alert independently if no replica has a fresh queue sample.
+Monitor scraper and publisher health separately so a monitoring outage also raises an alert.
+
 ## Not applicable
 
 | Legacy series | Type and labels | Status | Notes |

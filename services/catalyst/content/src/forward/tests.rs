@@ -323,6 +323,10 @@ impl Lab {
 
     async fn with_lane(max_attempts: i32, lane: Lane) -> Option<Self> {
         let pool = crate::db::scratch::pool(4).await?;
+        Some(Self::with_pool(max_attempts, lane, pool).await)
+    }
+
+    async fn with_pool(max_attempts: i32, lane: Lane, pool: PgPool) -> Self {
         let (storage, dir) = temp_storage().await;
         let upstream = FakeUpstream::start("/content").await;
         let forwarder = forwarder(
@@ -332,7 +336,7 @@ impl Lab {
             &upstream.base,
             max_attempts,
         );
-        Some(Self {
+        Self {
             pool,
             storage,
             dir,
@@ -340,7 +344,7 @@ impl Lab {
             forwarder,
             prefix: uuid::Uuid::new_v4().simple().to_string(),
             entities: parking_lot::Mutex::new(Vec::new()),
-        })
+        }
     }
 
     fn pointer(&self, name: &str) -> String {
@@ -1315,7 +1319,7 @@ fn queue_gauge(scrape: &str, name: &str) -> Option<f64> {
 }
 
 #[test]
-fn a_sampler_unwind_clears_the_queue_metrics() {
+fn open_gauge_scope_clears_queue_metrics_on_unwind() {
     let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
     let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let lane = [CONTENT_LANE.job];
@@ -1471,7 +1475,12 @@ async fn a_late_finish_never_overwrites_a_newer_claim() {
 
 #[tokio::test]
 async fn rows_of_another_upstream_close_once_no_upstream_takes_them() {
-    let Some(lab) = Lab::new(5).await else { return };
+    // The sweep visits other targets, so target-unique fixtures alone cannot
+    // prevent a concurrent test worker from closing this row first.
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let lab = Lab::with_pool(5, CONTENT_LANE, pool).await;
     let ids: Vec<String> = ["old", "recent", "leased"]
         .iter()
         .map(|name| format!("{}-foreign-{name}", lab.prefix))
@@ -1496,8 +1505,6 @@ async fn rows_of_another_upstream_close_once_no_upstream_takes_them() {
         .await
         .unwrap();
     }
-    // Another test's worker may close this row first. Compare the counter with
-    // the number of rows this worker actually closed.
     let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
     let _metrics = dcl_metrics::set_default_local_recorder(&recorder);
     let closed = lab
@@ -1506,17 +1513,16 @@ async fn rows_of_another_upstream_close_once_no_upstream_takes_them() {
         .await
         .unwrap();
     let scrape = recorder.handle().render();
-    if closed > 0 {
-        let count = scrape
-            .lines()
-            .find(|line| {
-                line.starts_with("upstream_forward_sends_total{")
-                    && line.contains("lane=\"content-forward\"")
-                    && line.contains("outcome=\"abandoned\"")
-            })
-            .and_then(|line| line.rsplit_once(' ')?.1.parse::<u64>().ok());
-        assert_eq!(count, Some(closed));
-    }
+    assert_eq!(closed, 1);
+    let count = scrape
+        .lines()
+        .find(|line| {
+            line.starts_with("upstream_forward_sends_total{")
+                && line.contains("lane=\"content-forward\"")
+                && line.contains("outcome=\"abandoned\"")
+        })
+        .and_then(|line| line.rsplit_once(' ')?.1.parse::<u64>().ok());
+    assert_eq!(count, Some(closed));
     assert!(!scrape.contains("outcome=\"failed\""));
     let mut states = Vec::new();
     for id in &ids {
