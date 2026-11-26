@@ -518,6 +518,8 @@ pub mod scratch {
             std::process::id(),
             &uuid::Uuid::new_v4().simple().to_string()[..8]
         );
+        // PostgreSQL truncates longer identifiers, and the URL would then name
+        // a database that does not exist.
         assert!(name.len() <= 63, "test database name {name} is too long");
         match schema {
             Schema::Full => create_with_schema(&admin, &name).await,
@@ -1227,11 +1229,18 @@ mod tests {
         assert!(!scratch::process_alive(u32::MAX));
     }
 
+    /// Once bootstrap verified a database, any connection opened to it
+    /// afterwards (a reconnect after the backends were killed, here a second
+    /// pool on the same URL) re-reads meta.schema and is refused when the
+    /// stamp moved: the shape of a database dropped and recreated underneath
+    /// a running node.
     #[tokio::test]
     async fn a_replaced_schema_stamp_refuses_new_connections() {
         let Some(url) = scratch::url().await else {
             return;
         };
+        // A database of its own: the stamp is per host:port/database and the
+        // shared scratch database must keep working for the other tests.
         let opts: PgConnectOptions = url.parse().unwrap();
         let admin = PgPoolOptions::new()
             .max_connections(1)
@@ -1269,6 +1278,8 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        // sqlx retries a failed after_connect until the acquire timeout, so
+        // the caller sees the timeout and the log the refusal.
         let quick = PoolSettings {
             acquire_timeout_secs: Some(2),
             ..settings

@@ -171,6 +171,7 @@ pub fn record(r: &Value, network: Network) -> Option<Value> {
         "emote_loop": if is_emote { opt_bool_of(&meta, "loop") } else { None },
         "emote_has_sound": if is_emote { opt_bool_of(&meta, "hasSound") } else { None },
         "emote_has_geometry": if is_emote { opt_bool_of(&meta, "hasGeometry") } else { None },
+        // The production collections subgraphs have no `Emote.outcomeType` (probed 2026-09-25); the column stays NULL from this source.
         "emote_outcome_type": if is_emote { opt_str_of(&meta, "outcomeType") } else { None },
         "search_is_store_minter": bool_of(r, "searchIsStoreMinter"),
         "search_is_collection_approved": bool_of(r, "searchIsCollectionApproved"),
