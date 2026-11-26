@@ -16,6 +16,7 @@ pub mod client_ip;
 pub mod collections;
 pub mod cors;
 pub mod drain;
+pub mod eip1654_budget;
 pub mod errors;
 pub mod feature_flags;
 pub mod health;
@@ -27,6 +28,7 @@ pub mod limits;
 pub mod livekit;
 pub mod markup;
 pub mod message_router;
+pub mod network;
 pub mod notifications;
 pub mod nul_guard;
 pub mod openapi;
@@ -40,8 +42,10 @@ pub mod signed_fetch;
 pub mod signed_request;
 pub mod task;
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_http;
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_keys;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_wait;

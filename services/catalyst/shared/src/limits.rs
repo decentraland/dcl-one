@@ -1,13 +1,18 @@
-//! The per-key token bucket the social, comms and shop surfaces throttle with: the
+//! The per-key token buckets the social, comms and shop surfaces throttle with: the
 //! friendship and block RPC mutations
 //! (`social::rpc::limits::FriendshipMutationLimiter`) and the plaintext
 //! direct-message sends (`social::communities::friends`, 60 per signer per
 //! minute, the old `catalyrst-communities` budget), and Shop's federation
-//! ingest and listing writes (`market::federation`, `market::listings`). In-process state that
-//! follows the process's lifetime, never the database.
+//! ingest and listing writes (`market::federation`, `market::listings`); and
+//! [`KeyedLimiter`], the budget of work one client source may start before it
+//! is authenticated ([`preauth_keys`]: Shop's `/forward-blockchain` and every
+//! contract-wallet check, `eip1654_budget`). In-process state that follows the
+//! process's lifetime, never the database.
 
 use dashmap::DashMap;
 use parking_lot::Mutex;
+use std::collections::{BTreeMap, HashMap};
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -150,6 +155,103 @@ impl RateLimiter {
     }
 }
 
+/// Unauthenticated work one client source (IPv6 by /64) may start a minute.
+pub const PREAUTH_PER_MINUTE: u32 = 120;
+/// Unauthenticated work every /64 of one IPv6 /48 may start a minute together.
+pub const PREAUTH_PER_MINUTE_PER_48: u32 = 480;
+
+/// The pre-auth keys of a client address ([`crate::client_ip::source_key`],
+/// and an IPv6 address's /48) and their budgets a minute.
+pub fn preauth_keys(ip: &str) -> Vec<(String, u32)> {
+    let mut keys = vec![(crate::client_ip::source_key(ip), PREAUTH_PER_MINUTE)];
+    if let Ok(IpAddr::V6(v6)) = ip.parse::<IpAddr>()
+        && v6.to_ipv4_mapped().is_none()
+    {
+        let net = Ipv6Addr::from(u128::from(v6) & (u128::MAX << 80));
+        keys.push((format!("{net}/48"), PREAUTH_PER_MINUTE_PER_48));
+    }
+    keys
+}
+
+struct KeyedBucket {
+    tokens: f64,
+    last: Instant,
+    /// Its place in the use order.
+    used: u64,
+}
+
+/// Token buckets, at most `max_keys`, each call naming its keys and their
+/// budgets a minute: a key is stored only when a call spends from it, and
+/// past the cap the least recently used goes, so keys a denied flood invents
+/// never displace the buckets it exhausted (unlike [`RateLimiter`], whose
+/// sweep empties a full map).
+pub struct KeyedLimiter {
+    max_keys: usize,
+    inner: Mutex<KeyedBuckets>,
+}
+
+#[derive(Default)]
+struct KeyedBuckets {
+    clock: u64,
+    map: HashMap<String, KeyedBucket>,
+    order: BTreeMap<u64, String>,
+}
+
+impl KeyedLimiter {
+    pub fn new(max_keys: usize) -> Self {
+        Self {
+            max_keys: max_keys.max(2),
+            inner: Mutex::new(KeyedBuckets::default()),
+        }
+    }
+
+    /// Spends one token of every `(key, budget a minute)`, or none.
+    pub fn allow(&self, keys: &[(String, u32)]) -> bool {
+        let now = Instant::now();
+        let mut b = self.inner.lock();
+        let KeyedBuckets { clock, map, order } = &mut *b;
+        let refilled = |key: &str, per_minute: u32| {
+            let cap = f64::from(per_minute);
+            map.get(key).map_or(cap, |b| {
+                let elapsed = now.saturating_duration_since(b.last).as_secs_f64();
+                (b.tokens + elapsed * cap / 60.0).min(cap)
+            })
+        };
+        let tokens: Vec<f64> = keys.iter().map(|(k, n)| refilled(k, *n)).collect();
+        let ok = tokens.iter().all(|t| *t >= 1.0);
+        for ((key, _), tokens) in keys.iter().zip(tokens) {
+            if !ok && !map.contains_key(key) {
+                continue;
+            }
+            *clock += 1;
+            let bucket = map.entry(key.clone()).or_insert(KeyedBucket {
+                tokens,
+                last: now,
+                used: 0,
+            });
+            order.remove(&bucket.used);
+            bucket.used = *clock;
+            order.insert(*clock, key.clone());
+            if ok {
+                bucket.tokens = tokens - 1.0;
+                bucket.last = now;
+            }
+        }
+        while map.len() > self.max_keys {
+            let Some((_, oldest)) = order.pop_first() else {
+                break;
+            };
+            map.remove(&oldest);
+        }
+        ok
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.inner.lock().map.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +343,34 @@ mod tests {
             limiter.check("0xother"),
             RateLimitDecision::Allow,
             "budgets are per key"
+        );
+    }
+
+    /// Cycling /64s of one /48 hits the /48 budget; denied keys are never
+    /// stored, so a flood of fresh ones cannot reset an exhausted bucket.
+    #[test]
+    fn a_flood_of_fresh_keys_cannot_reset_a_bucket() {
+        let limiter = KeyedLimiter::new(8);
+        let allowed = (0..1_000u32)
+            .filter(|n| limiter.allow(&preauth_keys(&format!("2001:db8:1:{n:x}::1"))))
+            .count();
+        assert_eq!(allowed, PREAUTH_PER_MINUTE_PER_48 as usize);
+        assert!(
+            limiter.len() <= 8,
+            "the least recently used goes past the cap"
+        );
+        for _ in 0..PREAUTH_PER_MINUTE {
+            assert!(limiter.allow(&preauth_keys("203.0.113.5")));
+        }
+        assert!(!limiter.allow(&preauth_keys("203.0.113.5")));
+        let before = limiter.len();
+        for n in 1_000..3_000u32 {
+            assert!(!limiter.allow(&preauth_keys(&format!("2001:db8:1:{n:x}::1"))));
+        }
+        assert_eq!(limiter.len(), before, "denied keys are not stored");
+        assert!(
+            !limiter.allow(&preauth_keys("203.0.113.5")),
+            "still exhausted after a flood of fresh keys"
         );
     }
 }

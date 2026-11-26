@@ -1,13 +1,14 @@
 import path from 'path'
-import { CliComponents } from '../../components'
+import type { CliComponents } from '../../components'
 import { declareArgs } from '../../logic/args'
-import { installDependencies, needsDependencies, SceneProject, WearableProject } from '../../logic/project-validations'
+import type { SceneProject, WearableProject } from '../../logic/project-validations'
+import { installDependencies, needsDependencies } from '../../logic/project-validations'
 import { getBaseCoords } from '../../logic/scene-validations'
 import { b64HashingFunction } from '../../logic/project-files'
 import { bundleProject } from '../../logic/bundle'
 import { printCurrentProjectStarting } from '../../logic/beautiful-logs'
 import { getValidWorkspace } from '../../logic/workspace-validations'
-import { Result } from 'arg'
+import type { Result } from 'arg'
 
 interface Options {
   args: Result<typeof args>

@@ -135,6 +135,8 @@ pub struct SaleEvent {
     /// The bid's expiry, unix seconds.
     pub expires_at: Option<i64>,
     pub tx_hash: String,
+    /// A creation's `_fingerprint`, 0x-prefixed hex (`0x` when empty).
+    pub fingerprint: Option<String>,
 }
 
 fn seconds(v: U256) -> i64 {
@@ -208,6 +210,7 @@ fn decode_sale(
         bid_fee: None,
         expires_at: None,
         tx_hash: tx_hash.clone(),
+        fingerprint: None,
     };
     let event = match kind {
         KIND_MINT => {
@@ -223,7 +226,7 @@ fn decode_sale(
             }
         }
         KIND_BID_CREATED => {
-            let (id, price, expires, _fingerprint) = <(
+            let (id, price, expires, fingerprint) = <(
                 sol_data::FixedBytes<32>,
                 sol_data::Uint<256>,
                 sol_data::Uint<256>,
@@ -234,6 +237,7 @@ fn decode_sale(
                 bid_id: Some(format!("{id:#x}")),
                 price: Some(price.to_string()),
                 expires_at: Some(seconds(expires)),
+                fingerprint: Some(format!("{fingerprint}")),
                 ..base(addr(1)?, word(2)?, addr(3)?)
             }
         }
@@ -337,15 +341,17 @@ pub async fn insert_events(
     for chunk in rows.chunks(1_000) {
         let r = sqlx::query(
             "INSERT INTO shop.sale_event \
-                 (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, item_id, bid_id, buyer, seller, price, expires_at, tx_hash, bid_fee) \
-             SELECT $1, b, i, t, k, em, c, tok::numeric, it::numeric, bid, by, se, p::numeric, x, h, fee::numeric \
-             FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::text[], $13::text[], $14::bigint[], $15::text[], $16::text[]) \
-                  AS u(b, i, t, k, em, c, tok, it, bid, by, se, p, x, h, fee) \
+                 (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, item_id, bid_id, buyer, seller, price, expires_at, tx_hash, bid_fee, fingerprint) \
+             SELECT $1, b, i, t, k, em, c, tok::numeric, it::numeric, bid, by, se, p::numeric, x, h, fee::numeric, fp \
+             FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::text[], $13::text[], $14::bigint[], $15::text[], $16::text[], $17::text[]) \
+                  AS u(b, i, t, k, em, c, tok, it, bid, by, se, p, x, h, fee, fp) \
              ON CONFLICT (network, block_number, log_index) DO UPDATE \
-             SET bid_fee = COALESCE(sale_event.bid_fee, EXCLUDED.bid_fee), price = COALESCE(sale_event.price, EXCLUDED.price) \
+             SET bid_fee = COALESCE(sale_event.bid_fee, EXCLUDED.bid_fee), price = COALESCE(sale_event.price, EXCLUDED.price), \
+                 fingerprint = COALESCE(sale_event.fingerprint, EXCLUDED.fingerprint) \
              WHERE sale_event.tx_hash = EXCLUDED.tx_hash AND sale_event.kind = EXCLUDED.kind \
                AND ((sale_event.bid_fee IS NULL AND EXCLUDED.bid_fee IS NOT NULL) \
-                 OR (sale_event.price IS NULL AND EXCLUDED.price IS NOT NULL))",
+                 OR (sale_event.price IS NULL AND EXCLUDED.price IS NOT NULL) \
+                 OR (sale_event.fingerprint IS NULL AND EXCLUDED.fingerprint IS NOT NULL))",
         )
         .bind(net.db_name())
         .bind(chunk.iter().map(|r| r.block_number).collect::<Vec<_>>())
@@ -363,6 +369,7 @@ pub async fn insert_events(
         .bind(chunk.iter().map(|r| r.expires_at).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.tx_hash.clone()).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.bid_fee.clone()).collect::<Vec<_>>())
+        .bind(chunk.iter().map(|r| r.fingerprint.clone()).collect::<Vec<_>>())
         .execute(&mut *conn)
         .await?;
         written += r.rows_affected() as usize;
@@ -418,14 +425,14 @@ WITH nft AS (
 ), created AS (
     SELECT DISTINCT ON (e.contract_address, e.token_id, e.buyer)
         e.contract_address, e.token_id, e.buyer AS bidder, e.bid_id, e.price, e.expires_at,
-        e.block_number, e.log_index, e.block_time
+        e.block_number, e.log_index, e.block_time, e.fingerprint
     FROM touched t
     JOIN shop.sale_event e ON e.network = $1 AND e.contract_address = t.contract_address
         AND e.token_id = t.token_id AND e.buyer = t.bidder AND e.kind = 'bid_created'
     ORDER BY e.contract_address, e.token_id, e.buyer, e.block_number DESC, e.log_index DESC
 )
 INSERT INTO shop.nft_bid (network, contract_address, token_id, bidder, bid_id, seller, price, expires_at, status,
-    created_block, created_log_index, created_at, updated_block, updated_log_index, updated_at)
+    created_block, created_log_index, created_at, updated_block, updated_log_index, updated_at, fingerprint)
 SELECT $1, c.contract_address, c.token_id, c.bidder, c.bid_id,
     COALESCE(l.seller, (
         SELECT n.to_address FROM shop.nft_event n
@@ -444,7 +451,7 @@ SELECT $1, c.contract_address, c.token_id, c.bidder, c.bid_id,
             WHERE a.network = $1 AND a.contract_address = c.contract_address AND a.token_id = c.token_id
               AND a.kind = 'bid_accepted' AND (a.block_number, a.log_index) > (c.block_number, c.log_index)) THEN 'invalidated'
          ELSE 'open' END,
-    c.block_number, c.log_index, c.block_time, l.block_number, l.log_index, l.block_time
+    c.block_number, c.log_index, c.block_time, l.block_number, l.log_index, l.block_time, c.fingerprint
 FROM created c
 CROSS JOIN LATERAL (
     SELECT e.kind, e.seller, e.block_number, e.log_index, e.block_time
@@ -459,9 +466,9 @@ ON CONFLICT (network, contract_address, token_id, bidder) DO UPDATE SET
     bid_id = EXCLUDED.bid_id, seller = EXCLUDED.seller, price = EXCLUDED.price, expires_at = EXCLUDED.expires_at,
     status = EXCLUDED.status, created_block = EXCLUDED.created_block, created_log_index = EXCLUDED.created_log_index,
     created_at = EXCLUDED.created_at, updated_block = EXCLUDED.updated_block,
-    updated_log_index = EXCLUDED.updated_log_index, updated_at = EXCLUDED.updated_at
-WHERE (nft_bid.bid_id, nft_bid.seller, nft_bid.status, nft_bid.updated_block, nft_bid.updated_log_index)
-    IS DISTINCT FROM (EXCLUDED.bid_id, EXCLUDED.seller, EXCLUDED.status, EXCLUDED.updated_block, EXCLUDED.updated_log_index)";
+    updated_log_index = EXCLUDED.updated_log_index, updated_at = EXCLUDED.updated_at, fingerprint = EXCLUDED.fingerprint
+WHERE (nft_bid.bid_id, nft_bid.seller, nft_bid.status, nft_bid.updated_block, nft_bid.updated_log_index, nft_bid.fingerprint)
+    IS DISTINCT FROM (EXCLUDED.bid_id, EXCLUDED.seller, EXCLUDED.status, EXCLUDED.updated_block, EXCLUDED.updated_log_index, EXCLUDED.fingerprint)";
 
 /// The fold in one transaction: the keys a bid event past `since` touched
 /// (`None`: every key), each over its whole history; the rows written.
@@ -470,8 +477,22 @@ pub async fn fold(
     since: Option<i64>,
     owner: &chain_walk::Owner,
 ) -> anyhow::Result<u64> {
-    let since = since.unwrap_or(-1);
     let mut tx = pool.begin().await?;
+    let bids = fold_in(&mut tx, since, owner).await?;
+    owner.check(&mut tx).await?;
+    tx.commit().await?;
+    Ok(bids)
+}
+
+/// [`fold`]'s statements in the caller's transaction, which ends with
+/// `owner.check`: the Ethereum bid history repair refolds every key in the
+/// transaction that completes it.
+pub async fn fold_in(
+    tx: &mut PgConnection,
+    since: Option<i64>,
+    owner: &chain_walk::Owner,
+) -> anyhow::Result<u64> {
+    let since = since.unwrap_or(-1);
     // The nft walk's rewinds since the last fold, read before the fold's own
     // statement (whose newer snapshot sees each one's rows); only these are
     // deleted after it, so one recorded meanwhile waits for the next fold.
@@ -484,7 +505,7 @@ pub async fn fold(
     sqlx::query("SET LOCAL statement_timeout = '3600s'")
         .execute(&mut *tx)
         .await?;
-    chain_walk::analyze_if_stale(&mut tx, "shop", "sale_event", since < 0).await?;
+    chain_walk::analyze_if_stale(&mut *tx, "shop", "sale_event", since < 0).await?;
     let bids = sqlx::query(FOLD_BIDS_SQL)
         .bind(owner.net.db_name())
         .bind(since)
@@ -500,8 +521,6 @@ pub async fn fold(
             .execute(&mut *tx)
             .await?;
     }
-    owner.check(&mut tx).await?;
-    tx.commit().await?;
     Ok(bids)
 }
 
@@ -1109,6 +1128,7 @@ pub(crate) mod tests {
                 bid_fee: None,
                 expires_at: None,
                 tx_hash: format!("0x{:064x}", 10_001),
+                fingerprint: None,
             }
         );
         assert_eq!(
@@ -1127,6 +1147,42 @@ pub(crate) mod tests {
         let mut no_hash = issue_log(COLLECTION, ALICE, token, 3, STORE_MATIC, 100, 1);
         no_hash.transaction_hash = None;
         assert!(decode_log(&no_hash, 5).is_err());
+    }
+
+    /// A creation keeps its fingerprint as the marketplace subgraph spelled
+    /// `Bytes`: 0x-prefixed lowercase hex, `0x` when empty. No other event
+    /// carries one.
+    #[test]
+    fn a_bid_creation_keeps_its_fingerprint() {
+        let token = U256::from(9u8);
+        let with = |fingerprint: Vec<u8>| {
+            log(
+                BID_V2_MATIC,
+                vec![
+                    TOPIC_BID_CREATED.into(),
+                    nft_index::tests::topic_addr(COLLECTION),
+                    nft_index::tests::topic_word(token),
+                    nft_index::tests::topic_addr(BOB),
+                ],
+                (
+                    FixedBytes::<32>::repeat_byte(0x11),
+                    U256::from(700u64),
+                    U256::from(1_700_000_000u64),
+                    Bytes::from(fingerprint),
+                )
+                    .abi_encode_params(),
+                200,
+                0,
+            )
+        };
+        for (bytes, expected) in [(vec![0xAB, 0xCD], "0xabcd"), (vec![], "0x")] {
+            let created = decode_log(&with(bytes), 6).unwrap().unwrap();
+            assert_eq!(created.fingerprint.as_deref(), Some(expected));
+        }
+        let cancelled = decode_log(&bid_cancelled_log(COLLECTION, token, BOB, 0x11, 201, 0), 6)
+            .unwrap()
+            .unwrap();
+        assert_eq!(cancelled.fingerprint, None);
     }
 
     #[test]

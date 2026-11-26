@@ -1,12 +1,12 @@
 import path from 'path'
-import { CliComponents } from '../../components'
+import type { CliComponents } from '../../components'
 import { declareArgs } from '../../logic/args'
 import { assertValidProjectFolder } from '../../logic/project-validations'
 import { CliError } from '../../logic/error'
 import { drainResponse } from '../../logic/fetch'
 import i18next from 'i18next'
 
-import { Result } from 'arg'
+import type { Result } from 'arg'
 const GITHUB_API_BASE = 'https://api.github.com/repos/decentraland/documentation/contents/ai-sdk-context'
 interface GitHubFile {
   name: string

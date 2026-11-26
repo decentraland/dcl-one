@@ -13,7 +13,8 @@
 //! earlier ones. Consumers: the content deploy validator and `worlds::policy`
 //! through [`can_deploy`] / [`can_deploy_batch`] / [`owns_land_at`], comms'
 //! scene permissions and the `lands-permissions` route through the old
-//! lambdas paths.
+//! lambdas paths. Shop's `/v1/activity` reads the log's transfers, with their
+//! senders and transactions, by shared SQL.
 //!
 //! Where each consumer reads: the **index** alone, once it is ready
 //! ([`indexer::index_ready`]); before that, or with no published fold, no

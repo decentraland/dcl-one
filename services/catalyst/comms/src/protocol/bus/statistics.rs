@@ -399,10 +399,10 @@ impl Assembler {
         }
         self.retired_order.push_back(producer);
         // Each call adds at most one fence, so the queue is at most one over capacity.
-        if self.retired_order.len() > MAX_PRODUCERS {
-            if let Some(oldest) = self.retired_order.pop_front() {
-                self.retired.remove(&oldest);
-            }
+        if self.retired_order.len() > MAX_PRODUCERS
+            && let Some(oldest) = self.retired_order.pop_front()
+        {
+            self.retired.remove(&oldest);
         }
     }
 }

@@ -1,5 +1,7 @@
-import { CrdtMessageType, Entity, Schemas } from '../../packages/@dcl/ecs/src'
-import { ByteBuffer, ReadWriteByteBuffer } from '../../packages/@dcl/ecs/src/serialization/ByteBuffer'
+import type { Entity } from '../../packages/@dcl/ecs/src'
+import { CrdtMessageType, Schemas } from '../../packages/@dcl/ecs/src'
+import type { ByteBuffer } from '../../packages/@dcl/ecs/src/serialization/ByteBuffer'
+import { ReadWriteByteBuffer } from '../../packages/@dcl/ecs/src/serialization/ByteBuffer'
 import { TransformSchema } from '../../packages/@dcl/ecs/src/components/manual/Transform'
 import { createValueSetComponentDefinitionFromSchema } from '../../packages/@dcl/ecs/src/engine/grow-only-value-set-component-definition'
 

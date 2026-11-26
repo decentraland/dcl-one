@@ -1,13 +1,15 @@
-import { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
-import {
-  ParticleSystem,
+import type { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
+import type {
   PBParticleSystem,
-  PBParticleSystem_BlendMode,
-  PBParticleSystem_PlaybackState,
   PBParticleSystem_Point,
   PBParticleSystem_Sphere,
   PBParticleSystem_Cone,
   PBParticleSystem_Box
+} from '../generated/index.gen'
+import {
+  ParticleSystem,
+  PBParticleSystem_BlendMode,
+  PBParticleSystem_PlaybackState
 } from '../generated/index.gen'
 import {} from '../generated/ParticleSystem.gen'
 

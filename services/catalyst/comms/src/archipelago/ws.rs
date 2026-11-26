@@ -54,6 +54,10 @@ pub(super) fn connector_routes(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "takes the upgrade route's extractors as-is"
+)]
 async fn connector_upgrade(
     method: axum::http::Method,
     uri: axum::http::Uri,
@@ -159,18 +163,21 @@ fn upgrade(
         raw.arm();
     }
     let ws = ws.protocols(protocols);
-    ws.read_buffer_size(16 * 1024)
-        .write_buffer_size(0)
-        .max_write_buffer_size(MAX_ASSIGNMENT_BYTES + 1024)
-        .max_message_size(MAX_CLIENT_MESSAGE_BYTES)
-        .max_frame_size(MAX_CLIENT_MESSAGE_BYTES)
-        .on_upgrade(move |socket| async move {
+    // The signed challenge is verified after the upgrade, in the task it
+    // spawns: it keeps the request's client source for the EIP-1654 budget.
+    crate::shared::eip1654_budget::on_upgrade(
+        ws.read_buffer_size(16 * 1024)
+            .write_buffer_size(0)
+            .max_write_buffer_size(MAX_ASSIGNMENT_BYTES + 1024)
+            .max_message_size(MAX_CLIENT_MESSAGE_BYTES)
+            .max_frame_size(MAX_CLIENT_MESSAGE_BYTES),
+        move |socket| async move {
             let _ip_slot = ip_slot;
             let socket = io::WebSocket::new(socket, state.clone(), permit, raw);
             handle_socket(socket, state, pending).await;
             drop(handler);
-        })
-        .into_response()
+        },
+    )
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -381,6 +388,7 @@ async fn handle_socket(
                                     Err(_) => break,
                                 };
                                 let Some(issued) = issuance.as_ref() else { break };
+                                crate::shared::eip1654_budget::debug_assert_scoped("the archipelago socket");
                                 let Some(verified) = handshake_operation(
                                     &mut socket, &state, handshake_deadline, &evicted, true,
                                     state.challenges.redeem_and_verify_payload(
@@ -509,7 +517,7 @@ async fn handle_socket(
                 let current = registration.as_mut().expect("registered fenced socket");
                 if !matches!(tokio::time::timeout(
                     AUTHORITY_OPERATION_TIMEOUT,
-                    current.fence.as_mut().unwrap().poll(&state, &mut socket, &current.link, &current.address, &current.session),
+                    current.fence.as_mut().expect("guarded by the fenced-socket precondition").poll(&state, &mut socket, &current.link, &current.address, &current.session),
                 ).await, Ok(true)) {
                     state.registry.detach_selected_realm(&current.link);
                     state.gatekeeper.announce_session(&current.address, &current.session);
@@ -540,6 +548,9 @@ async fn handle_socket(
         tracing::info!(addr = %current.address, session = %current.session, "archipelago ws closed");
     }
 }
+
+#[cfg(feature = "test-support")]
+pub use io::assignment_test_support;
 
 #[cfg(test)]
 mod tests {
@@ -656,6 +667,3 @@ mod tests {
         ));
     }
 }
-
-#[cfg(feature = "test-support")]
-pub use io::assignment_test_support;
