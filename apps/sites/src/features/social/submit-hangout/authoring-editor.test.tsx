@@ -43,10 +43,12 @@ describe("when a signed-in creator opens the single-page Events editor", () => {
     vi.resetAllMocks();
   });
 
-  it("should keep each field's limits and type", () => {
+  it("should keep each field's limits, type and rows", () => {
     expect(screen.getByRole("textbox", { name: "Event Name" })).toHaveProperty("maxLength", 150);
     expect(screen.getByRole("textbox", { name: "Event Description" })).toHaveProperty("maxLength", 5000);
     expect(screen.getByRole("textbox", { name: "Details for moderators" })).toHaveProperty("maxLength", 5000);
+    expect(screen.getByRole("textbox", { name: "Event Description" })).toHaveProperty("rows", 3);
+    expect(screen.getByRole("textbox", { name: "Details for moderators" })).toHaveProperty("rows", 3);
     expect(screen.getByRole("textbox", { name: "Contact email" })).toHaveProperty("type", "email");
     const duration = screen.getByRole("spinbutton", { name: "Duration (hours)" });
     expect([duration.getAttribute("min"), duration.getAttribute("max"), duration.getAttribute("step")]).toEqual(["0.25", "24", "0.25"]);

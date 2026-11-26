@@ -559,7 +559,7 @@ function StepFields({
         {privateFieldsEditable && <>
           <InputWebCreatorTools className={styles.field} label={text("Contact email")} type="email" value={draft.contact} onChange={(event) => onEdit({ contact: event.target.value })} />
           <FormField className={styles.field} label={text("Details for moderators")}>
-            {(id) => <WebTextarea id={id} value={draft.details} maxLength={5000} onChange={(event) => onEdit({ details: event.target.value })} />}
+            {(id) => <WebTextarea id={id} rows={inline ? 3 : 2} value={draft.details} maxLength={5000} onChange={(event) => onEdit({ details: event.target.value })} />}
           </FormField>
         </>}
       </div>
