@@ -80,7 +80,7 @@ fn metric(body: &mut String, name: &str, kind: &str, help: &str, value: f64) {
             body,
             "# HELP {name} {help}\n# TYPE {name} {kind}\n{name} {value}\n"
         )
-        .unwrap();
+        .expect("writing to a String cannot fail");
     }
 }
 #[cfg(any(windows, test))]
