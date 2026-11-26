@@ -1053,6 +1053,36 @@ pub async fn holds_published_fold_on(
         .is_some_and(|c| holds_published_fold(marker, &c)))
 }
 
+/// Whether every projection named in `projections` holds the fold the
+/// cursor of `indexer` on `net` published, read on `conn` (the reader's
+/// snapshot): its `folded_block` is set and none of them holds a write that
+/// no publication has acknowledged since. `shop.projection_write` marks each
+/// write pending through statement triggers in the schema, and a trigger on
+/// the cursor clears it when a publication commits, whichever binary wrote
+/// or published. This holds also against a writer that predates a
+/// projection's own fold marker ([`holds_published_fold`]), as an earlier
+/// binary is during a rollout, and against a write at the published height.
+/// A raw walk advance writes nothing and stays served.
+pub async fn rows_published_on(
+    conn: &mut PgConnection,
+    indexer: &str,
+    net: ChainNet,
+    projections: &[&str],
+) -> Result<bool, sqlx::Error> {
+    let published: Option<bool> = sqlx::query_scalar(
+        "SELECT c.folded_block IS NOT NULL AND NOT EXISTS ( \
+             SELECT 1 FROM shop.projection_write w \
+             WHERE w.indexer = c.indexer AND w.network = c.network AND w.projection = ANY($3) AND w.pending) \
+         FROM shop.chain_cursor c WHERE c.indexer = $1 AND c.network = $2",
+    )
+    .bind(indexer)
+    .bind(net.db_name())
+    .bind(projections)
+    .fetch_optional(conn)
+    .await?;
+    Ok(published.unwrap_or(false))
+}
+
 /// [`is_ready_on`] for the indexes that read mainnet only: every index but
 /// `trade_events`, whose readers pass the chain they configured.
 pub fn is_ready(c: &Cursor, now: DateTime<Utc>) -> bool {

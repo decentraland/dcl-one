@@ -4733,6 +4733,133 @@ async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
     own.drop().await;
 }
 
+/// The auditor's rollout case: an earlier binary's nft fold, which knows
+/// nothing of the book's marker, returns a token to its order's seller at
+/// 101 while the book and the published fold both still say 100. The order
+/// must not read open (in the page or its total) before that fold is
+/// published; a raw walk advance alone still serves the book at 100; once
+/// published, the order is open.
+#[tokio::test]
+async fn an_earlier_writers_unpublished_transfer_never_reopens_an_order() {
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
+    let pool = state.pool.clone();
+    let c = contract_of(&tag(), 1);
+    let token = (alloy_primitives::U256::from(3u64) << 216u32 | alloy_primitives::U256::from(1u64))
+        .to_string();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at)
+         VALUES ('matic', '{c}', 137, 'Pirates', '{CREATOR}', '{CREATOR}', 'urn:decentraland:matic:collections-v2:{c}', true, true, false, 1, 1, 1, timezone('UTC', now()));
+         INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+         VALUES ('matic', '{c}', {token}, '{WALLET_B}', 3, 1, 1, 1, 50, 0, 50);
+         INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, price, expires_at, status,
+             created_block, created_log, created_at, updated_block, updated_log, updated_at)
+         VALUES ('matic', '0xmarket', 'returned', '{c}', {token}, '{WALLET_A}', 10, {far}, 'open', 60, 0, 60, 60, 0, 60)",
+        far = (chrono::Utc::now().timestamp() + 86_400) * 1000,
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // The fixtures are the published fold at 100.
+    super::owned_items::test_support::publish(
+        &state.pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        std::time::Duration::ZERO,
+    )
+    .await;
+    let app = || market_router(state.clone());
+    let read = |status: &'static str| {
+        let router = app();
+        async move {
+            let (code, body) =
+                get(router, &format!("/v1/orders?network=MATIC&status={status}")).await;
+            (
+                code,
+                body["total"].as_str().map(str::to_string),
+                body["source"].as_str().map(str::to_string),
+            )
+        }
+    };
+    let served = |total: &str| (StatusCode::OK, Some(total.to_string()), None);
+    let refused = (
+        StatusCode::SERVICE_UNAVAILABLE,
+        None,
+        Some("nft-index".to_string()),
+    );
+    assert_eq!(
+        read("open").await,
+        served("0"),
+        "the token left its seller at 50"
+    );
+    assert_eq!(read("transferred").await, served("1"));
+    // The walk advanced to 120 without folding: the book at 100 is served.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = 120 WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(read("open").await, served("0"));
+    // The earlier binary's fold through 120 returns the token to its seller
+    // at 101; nothing of it is published, and the book's marker is untouched.
+    sqlx::query("UPDATE shop.nft SET owner = $1, transferred_block = 101 WHERE network = 'matic' AND contract_address = $2")
+        .bind(WALLET_A)
+        .bind(&c)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        read("open").await,
+        refused,
+        "the reopened order is not exposed"
+    );
+    assert_eq!(read("transferred").await, refused);
+    // Published at 120 (with the book folded there): the order is open.
+    sqlx::query(
+        "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) \
+         VALUES ('nft', 'matic', 120, '0x' || repeat('0', 64), 0) ON CONFLICT DO NOTHING",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE shop.legacy_order_cursor SET folded_through = 120 WHERE network = 'matic'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET fold_through = 120, folded_block = 120, folded_at = timezone('UTC', now()) \
+         WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        read("open").await,
+        served("1"),
+        "published: the order is open"
+    );
+    assert_eq!(read("transferred").await, served("0"));
+    own.drop().await;
+}
+
+/// Publishes the nft cursors again where they stand: fixtures written after
+/// a publication are pending writes (`shop.projection_write`) until one
+/// commits after them.
+async fn republish_nft(pool: &PgPool) {
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) \
+         WHERE indexer = 'nft' AND folded_block IS NOT NULL",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// One event of a token's history, for the subgraph model below.
 #[derive(Clone, Copy, Debug)]
 enum TokenEvent {
@@ -4943,6 +5070,7 @@ async fn the_order_book_agrees_with_the_subgraph_on_transfers_away_and_back() {
         .await
         .unwrap();
     tx.commit().await.unwrap();
+    republish_nft(&pool).await;
     for (token, (label, events)) in traces.iter().enumerate() {
         let (status, body) = get(
             market_router(state.clone()),
@@ -5346,6 +5474,7 @@ async fn the_order_book_reads_the_served_testnet_pair() {
         .await
         .unwrap();
     }
+    republish_nft(&pool).await;
     let read = |uri: String| {
         let router = app();
         async move {
@@ -5407,6 +5536,7 @@ async fn the_order_book_reads_the_served_testnet_pair() {
     .execute(&pool)
     .await
     .unwrap();
+    republish_nft(&pool).await;
     for (chain, checked, expected) in [(11_155_111, false, 0), (1, true, 0), (11_155_111, true, 1)]
     {
         sqlx::query(

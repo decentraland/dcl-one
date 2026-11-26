@@ -17361,6 +17361,94 @@ CREATE INDEX nft_bid_seller_unknown_idx ON shop.nft_bid (network) WHERE seller I
 -- The fold's "open bids a later acceptance invalidated".
 CREATE INDEX nft_bid_open_idx ON shop.nft_bid (network) WHERE status = 'open';
 
+-- Whether a fold-written projection holds a write its cursor has not
+-- published yet, whichever binary wrote it. A statement trigger on the
+-- projection (`note_projection_write`) marks it `pending` for the networks a
+-- write touched; a trigger on the cursor (`acknowledge_projection_writes`)
+-- clears it when a publication commits (`folded_block` and `folded_at` set,
+-- even at the same height). The walk publishes a fold only after it commits
+-- and reads the head, so a reader serves a projection only while it is not
+-- pending (`chain_walk::rows_published_on`). That binds a writer that
+-- predates a reader's own fold marker (an earlier binary during a rollout),
+-- and a write at the published height (a seller filled, an owner corrected)
+-- as much as one past it. A raw walk advance writes nothing and stays
+-- served; a rewind's deletes wait for the next publication on whatever
+-- branch, at whatever height. `written_through` is the cursor's last block
+-- at the latest write, for an operator. Written in the writer's transaction.
+CREATE TABLE shop.projection_write (
+    indexer text NOT NULL,
+    network text NOT NULL,
+    projection text NOT NULL,
+    pending boolean NOT NULL,
+    written_through bigint NOT NULL,
+    PRIMARY KEY (indexer, network, projection),
+    CONSTRAINT projection_write_network_known CHECK (network IN ('ethereum', 'matic'))
+);
+-- A database that gains the table may hold a fold an existing writer has
+-- committed and not published: every projection starts pending, and the
+-- next publication serves it again.
+INSERT INTO shop.projection_write (indexer, network, projection, pending, written_through)
+SELECT c.indexer, c.network, p.projection, true, c.last_block
+FROM shop.chain_cursor c
+JOIN (VALUES ('nft', 'nft'), ('nft', 'legacy_order'), ('sales', 'nft_bid')) AS p (indexer, projection)
+  ON p.indexer = c.indexer;
+
+-- The trigger of every projection `shop.projection_write` follows: its
+-- argument names the cursor's indexer, its transition table (`written`) the
+-- rows the statement inserted, updated or deleted, so a no-op upsert or an
+-- empty statement marks nothing.
+CREATE FUNCTION shop.note_projection_write() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO shop.projection_write AS w (indexer, network, projection, pending, written_through)
+    SELECT c.indexer, c.network, TG_TABLE_NAME, true, c.last_block
+    FROM shop.chain_cursor c
+    WHERE c.indexer = TG_ARGV[0] AND EXISTS (SELECT 1 FROM written r WHERE r.network = c.network)
+    ON CONFLICT (indexer, network, projection) DO UPDATE
+        SET pending = true, written_through = EXCLUDED.written_through
+    WHERE NOT w.pending OR w.written_through IS DISTINCT FROM EXCLUDED.written_through;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER nft_written_insert AFTER INSERT ON shop.nft
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_written_update AFTER UPDATE ON shop.nft
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_written_delete AFTER DELETE ON shop.nft
+REFERENCING OLD TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER legacy_order_written_insert AFTER INSERT ON shop.legacy_order
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER legacy_order_written_update AFTER UPDATE ON shop.legacy_order
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER legacy_order_written_delete AFTER DELETE ON shop.legacy_order
+REFERENCING OLD TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_bid_written_insert AFTER INSERT ON shop.nft_bid
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('sales');
+CREATE TRIGGER nft_bid_written_update AFTER UPDATE ON shop.nft_bid
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('sales');
+CREATE TRIGGER nft_bid_written_delete AFTER DELETE ON shop.nft_bid
+REFERENCING OLD TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('sales');
+
+-- A publication of a cursor (its `folded_block` and `folded_at` set, by any
+-- binary's `mark_folded`) acknowledges every pending write to its
+-- projections: the published fold is the one they hold.
+CREATE FUNCTION shop.acknowledge_projection_writes() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.folded_block IS NOT NULL AND NEW.folded_at IS NOT NULL
+       AND (TG_OP = 'INSERT' OR NEW.folded_at IS DISTINCT FROM OLD.folded_at
+            OR NEW.folded_block IS DISTINCT FROM OLD.folded_block) THEN
+        UPDATE shop.projection_write SET pending = false
+        WHERE indexer = NEW.indexer AND network = NEW.network AND pending;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER chain_cursor_publication AFTER INSERT OR UPDATE OF folded_block, folded_at ON shop.chain_cursor
+FOR EACH ROW EXECUTE FUNCTION shop.acknowledge_projection_writes();
+
 -- The nft walk's rewinds, for the bids fold: a seller inferred from the nft
 -- walk's transfers may name an owner the rewind took away, so the next fold
 -- infers again the seller of every bid created past `from_block` (a seller

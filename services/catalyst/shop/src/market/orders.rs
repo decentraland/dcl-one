@@ -423,7 +423,9 @@ fn reads_land(state: &MarketplaceState, f: &OrderFilters) -> bool {
 /// land-authz index ready on it when `land` (its own snapshot, which the
 /// LAND/estate reads share), the nft index published and recent on `nets`
 /// at `now` ([`Rule::Fresh`]) on the chain the node serves on each (its
-/// catalogue, `Settings::catalogue`) and, with `book`, the legacy order book caught
+/// catalogue, `Settings::catalogue`), with no write to its owners (or, with
+/// `book`, to the book) past that publication by any writer
+/// (`chain_walk::rows_published_on`) and, with `book`, the legacy order book caught
 /// up with that publication on each (`legacy_orders::caught_up`) and the
 /// trades mirror and its verdicts ready (`trades::ready_on`), each statement
 /// bounded by `nft_reads::READ_STATEMENT_TIMEOUT`, and the request's instant:
@@ -474,6 +476,30 @@ pub(crate) async fn book_snapshot(
     )
     .await
     .map_err(|e| e.into_response(|m| ApiError::internal(m.to_string()).into_response()))?;
+    // The owners the book's statuses and the listings' guard read (and the
+    // book itself) as the published fold left them: a fold committed past it
+    // but not published yet, whichever binary wrote it, is not read.
+    let projections: &[&str] = if book {
+        &["nft", "legacy_order"]
+    } else {
+        &["nft"]
+    };
+    for &net in nets {
+        if !super::chain_walk::rows_published_on(
+            &mut tx,
+            super::chain_walk::INDEXER_NFT,
+            net,
+            projections,
+        )
+        .await
+        .map_err(db)?
+        {
+            return Err(owned_items::not_ready(&format!(
+                "the {} nft index holds a fold it has not published yet",
+                net.db_name()
+            )));
+        }
+    }
     if book {
         for &net in nets {
             if !super::legacy_orders::caught_up(&mut tx, net)

@@ -735,6 +735,88 @@ mod tests {
         db.drop().await;
     }
 
+    /// The schema's write record binds every writer of a projection to the
+    /// cursor's publications: a write (by this binary or an earlier one, past
+    /// the published block or at it) is not served until a publication
+    /// commits after it, at whatever height (a rebuild below the old tip
+    /// included); a raw walk advance writes nothing and stays served; no
+    /// publication serves nothing.
+    #[tokio::test]
+    async fn a_projection_written_since_its_publication_is_not_served() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("projection_write").await
+        else {
+            return;
+        };
+        let published = || async {
+            let mut tx = db.pool.begin().await.unwrap();
+            let held = crate::market::chain_walk::rows_published_on(
+                &mut tx,
+                crate::market::chain_walk::INDEXER_NFT,
+                ChainNet::Matic,
+                &["nft"],
+            )
+            .await
+            .unwrap();
+            tx.rollback().await.unwrap();
+            held
+        };
+        let owner = |to: Option<&'static str>| {
+            let pool = db.pool.clone();
+            async move {
+                match to {
+                    Some(to) => sqlx::query(
+                        "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+                         VALUES ('matic', '0x00000000000000000000000000000000000000c1', 1, $1, 1, 1, 1, 1, 1, 0, 1) \
+                         ON CONFLICT (network, contract_address, token_id) DO UPDATE SET owner = EXCLUDED.owner \
+                         WHERE shop.nft.owner IS DISTINCT FROM EXCLUDED.owner",
+                    )
+                    .bind(to),
+                    None => sqlx::query("DELETE FROM shop.nft WHERE network = 'matic'"),
+                }
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        let raw_advance = |last: i64| {
+            let pool = db.pool.clone();
+            async move {
+                sqlx::query("UPDATE shop.chain_cursor SET last_block = $1 WHERE indexer = 'nft' AND network = 'matic'")
+                    .bind(last)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+        nft_cursor(&db.pool, 100, None, None).await;
+        assert!(!published().await, "no publication");
+        nft_cursor(&db.pool, 100, Some(100), Some(100)).await;
+        assert!(published().await, "published, nothing written");
+        owner(Some(SELLER)).await;
+        assert!(!published().await, "a write at the published height");
+        nft_cursor(&db.pool, 100, Some(100), Some(100)).await;
+        assert!(published().await, "republished at the same height");
+        owner(Some(SELLER)).await;
+        assert!(published().await, "a no-op upsert writes nothing");
+        raw_advance(120).await;
+        assert!(published().await, "a raw walk advance writes nothing");
+        owner(Some(OTHER)).await;
+        assert!(
+            !published().await,
+            "a fold through 120 written, 100 published"
+        );
+        nft_cursor(&db.pool, 120, Some(120), Some(120)).await;
+        assert!(published().await, "published at 120");
+        owner(None).await;
+        assert!(!published().await, "a rewind's deletes");
+        nft_cursor(&db.pool, 110, Some(110), Some(110)).await;
+        assert!(
+            published().await,
+            "the rebuilt branch published below the old tip"
+        );
+        db.drop().await;
+    }
+
     #[tokio::test]
     async fn a_rewind_deletes_the_orders_of_its_tokens_and_the_rebuild_restores_what_remains() {
         let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_rewind").await
