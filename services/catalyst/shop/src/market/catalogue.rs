@@ -465,7 +465,6 @@ pub(super) async fn require_collections_on(
     if catalogue.owned {
         return index_verdict(
             catalogue,
-            net,
             state.settings.catalogue_chain(net),
             Purpose::Describe,
             now,
