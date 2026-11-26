@@ -134,7 +134,7 @@ pub struct ProcessLauncher {
     pub binary: PathBuf,
 }
 
-type Pending = Arc<std::sync::Mutex<HashMap<u64, oneshot::Sender<Result<(), String>>>>>;
+type Pending = Arc<parking_lot::Mutex<HashMap<u64, oneshot::Sender<Result<(), String>>>>>;
 
 struct ProcessLink {
     stdin: Mutex<Option<ChildStdin>>,
@@ -203,9 +203,9 @@ impl ProcessLink {
     /// Writes command `id`'s line and waits for its answer.
     async fn request(&self, id: u64, line: &[u8]) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id, tx);
+        self.pending.lock().insert(id, tx);
         if let Err(e) = write_line(&self.stdin, line).await {
-            self.pending.lock().unwrap().remove(&id);
+            self.pending.lock().remove(&id);
             return Err(e);
         }
         match tokio::time::timeout(COMMAND_TIMEOUT, rx).await {
@@ -213,7 +213,7 @@ impl ProcessLink {
             Ok(Ok(Err(why))) => Err(anyhow::anyhow!(why)),
             Ok(Err(_)) => Err(anyhow::anyhow!("bot exited")),
             Err(_) => {
-                self.pending.lock().unwrap().remove(&id);
+                self.pending.lock().remove(&id);
                 Err(anyhow::anyhow!("bot did not answer in time"))
             }
         }
@@ -291,12 +291,12 @@ fn spawn_reader(
                     }
                 }
                 ("ack", Some(id)) => {
-                    if let Some(tx) = pending.lock().unwrap().remove(&id) {
+                    if let Some(tx) = pending.lock().remove(&id) {
                         let _ = tx.send(Ok(()));
                     }
                 }
                 ("error", Some(id)) => {
-                    if let Some(tx) = pending.lock().unwrap().remove(&id) {
+                    if let Some(tx) = pending.lock().remove(&id) {
                         let _ = tx.send(Err(line.message.unwrap_or_default()));
                     }
                 }
@@ -348,7 +348,7 @@ fn spawn_reader(
             )));
         }
         // Fail what is still waiting; dropping the senders tells the session.
-        pending.lock().unwrap().clear();
+        pending.lock().clear();
     });
 }
 

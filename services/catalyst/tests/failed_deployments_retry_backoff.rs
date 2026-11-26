@@ -9,8 +9,7 @@ use catalyst::content::failed_deployments_store::prune_failed_deployments;
 use catalyst::content::sync::{AuthChain, AuthLink, AuthLinkType};
 use catalyst::content::sync::{FailedDeployment, FailureReason};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 fn auth_chain() -> AuthChain {
     vec![AuthLink {
