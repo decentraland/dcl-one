@@ -414,7 +414,7 @@ fn a_sender_who_leaves_takes_their_waiting_reactions() {
 const NAMETAG_HEIGHT: f32 = 2.2;
 
 /// The colour font every text falls back to for emoji, as the Explorer loads it.
-static EMOJI_FONT: LazyLock<Arc<Vec<u8>>> = LazyLock::new(|| {
+static EMOJI_BYTES: LazyLock<Arc<Vec<u8>>> = LazyLock::new(|| {
     let path = concat!(
         env!("DCL_ONE_ROOT"),
         "/rendering/bevy-explorer/source/crates/ui_core/src/NotoColorEmoji.ttf"
@@ -423,20 +423,18 @@ static EMOJI_FONT: LazyLock<Arc<Vec<u8>>> = LazyLock::new(|| {
 });
 
 impl Harness {
-    /// Text shaping with a font of the test's own and the camera at the origin. The local
-    /// player gets an avatar where they stand.
+    /// The emoji laid out in the colour emoji font, as the Explorer does, and the camera at
+    /// the origin. The local player gets an avatar where they stand.
     fn with_avatars() -> Self {
         let mut harness = harness();
         let app = &mut harness.app;
-        let font = std::fs::read(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/nametag/fonts/Inter_18pt-SemiBold.ttf"
-        ))
-        .expect("the nametag font is in the tree");
-        let font = app
-            .world_mut()
-            .resource_mut::<Assets<Font>>()
-            .add(Font::try_from_bytes(font).expect("the nametag font is a font"));
+        app.world_mut()
+            .resource_mut::<CosmicFontSystem>()
+            .db_mut()
+            .load_font_source(Source::Binary(EMOJI_BYTES.clone()));
+        let font = app.world_mut().resource_mut::<Assets<Font>>().add(Font {
+            data: EMOJI_BYTES.clone(),
+        });
         app.world_mut().resource_mut::<ReactionGlyphs>().font = Some(font);
 
         app.world_mut()
@@ -446,13 +444,19 @@ impl Harness {
         harness
     }
 
-    /// Real emoji glyphs, for the tests that draw one.
-    fn load_emoji_font(&mut self) {
-        self.app
+    /// Lay the emoji out in a text font, the nametags', with the emoji font to fall back to.
+    fn lay_out_in_a_text_font(&mut self) {
+        let font = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/nametag/fonts/Inter_18pt-SemiBold.ttf"
+        ))
+        .expect("the nametag font is in the tree");
+        let font = self
+            .app
             .world_mut()
-            .resource_mut::<CosmicFontSystem>()
-            .db_mut()
-            .load_font_source(Source::Binary(EMOJI_FONT.clone()));
+            .resource_mut::<Assets<Font>>()
+            .add(Font::try_from_bytes(font).expect("the nametag font is a font"));
+        self.app.world_mut().resource_mut::<ReactionGlyphs>().font = Some(font);
     }
 
     fn give_avatar(&mut self, player: Entity, at: Vec3) {
@@ -603,7 +607,6 @@ fn a_reaction_rises_from_over_its_players_nametag_and_is_gone_within_a_second() 
 #[test]
 fn an_emoji_is_rastered_into_the_atlas_and_its_particle_drawn_from_it() {
     let mut harness = Harness::with_avatars();
-    harness.load_emoji_font();
     harness.pick("🔥");
     harness.app.update();
     let particle = harness.particle();
@@ -646,7 +649,6 @@ fn an_emoji_is_rastered_into_the_atlas_and_its_particle_drawn_from_it() {
 #[test]
 fn a_particle_alive_through_an_atlas_rebuild_is_drawn_from_the_new_page() {
     let mut harness = Harness::with_avatars();
-    harness.load_emoji_font();
     harness.pick("🔥");
     harness.app.update();
     let kept = harness.particle();
@@ -718,6 +720,56 @@ fn a_particle_alive_through_an_atlas_rebuild_is_drawn_from_the_new_page() {
         .unwrap();
     harness.wait_until_drawn(again);
     assert!(harness.drawn(kept));
+}
+
+#[test]
+fn an_emoji_a_text_font_has_the_base_character_of_is_drawn_in_colour() {
+    let mut harness = Harness::with_avatars();
+    // each is a character a text font has, followed by the selector that asks for the emoji
+    for emoji in ["©️", "®️", "™️", "‼️", "⁉️", "ℹ️"] {
+        harness.pick(emoji);
+        harness.app.update();
+        let particle = *harness.particles().last().unwrap();
+        harness.wait_until_drawn(particle);
+    }
+    assert_eq!(harness.particles().len(), 6);
+    assert_eq!(harness.stats().dropped.no_glyphs, 0);
+    assert!(harness
+        .app
+        .world()
+        .resource::<ReactionAssets>()
+        .page()
+        .is_some());
+}
+
+#[test]
+fn an_emoji_with_no_glyph_in_colour_loses_its_particle_and_gets_no_other() {
+    let mut harness = Harness::with_avatars();
+    // in a text font the copyright sign is that font's, in one colour
+    harness.lay_out_in_a_text_font();
+    harness
+        .app
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
+    harness.pick("©️");
+    harness.app.update();
+    // its glyph is rastered, and is none of the colour page's
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while !harness.particles().is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the particle was never given up"
+        );
+        std::thread::yield_now();
+        harness.app.update();
+    }
+    assert_eq!(harness.stats().dropped.no_glyphs, 1);
+
+    // the next takes no slot and asks nothing of the atlas
+    harness.pick("©️");
+    harness.app.update();
+    assert!(harness.particles().is_empty());
+    assert_eq!(harness.stats().dropped.no_glyphs, 2);
+    assert_eq!(harness.streamed().len(), 2);
 }
 
 #[test]

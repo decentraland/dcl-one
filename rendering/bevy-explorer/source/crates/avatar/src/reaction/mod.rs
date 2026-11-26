@@ -47,7 +47,7 @@ use console::{AddDebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::kernel::comms::rfc4;
 use scene_runner::update_world::text_shape::{AtlasGlyphUse, AtlasKey, GlyphAtlasMaintenance};
 use system_bridge::{ReactionData, SystemApi};
-use ui_core::{FontName, WeightName, FONTS};
+use ui_core::EMOJI_FONT;
 use wallet::Wallet;
 
 use self::{
@@ -112,7 +112,9 @@ impl Plugin for ReactionPlugin {
                 spawn_reaction_particles.run_if(on_event::<ReactionPlayed>),
                 pipe_reactions_to_scene,
                 // a rebuilt atlas has moved every glyph: build from where they are now
-                build_reaction_glyphs.after(GlyphAtlasMaintenance),
+                build_reaction_glyphs
+                    .run_if(any_with_component::<ReactionParticle>)
+                    .after(GlyphAtlasMaintenance),
             )
                 .chain()
                 .in_set(SceneSets::PostLoop)
@@ -184,8 +186,8 @@ struct Dropped {
     particle_cap: u32,
     /// Reactions that played with no particle: nothing shows over their player.
     not_shown: u32,
-    /// Reactions that played with no particle: their emoji could not be laid out, or there was
-    /// no font yet to lay it out in.
+    /// Reactions that played with no particle, or lost it: their emoji could not be laid out,
+    /// or there was no font yet to lay it out in, or it has no glyph in colour.
     no_glyphs: u32,
 }
 
@@ -210,6 +212,7 @@ struct ReactionAssets {
 
 impl ReactionAssets {
     /// The atlas page the material binds, and its size.
+    #[cfg(test)]
     fn page(&self) -> Option<(AssetId<Image>, u32)> {
         self.bound[1]
     }
@@ -230,8 +233,9 @@ impl FromWorld for ReactionAssets {
 /// What drawing each emoji played so far takes.
 #[derive(Resource, Default)]
 struct ReactionGlyphs {
-    /// The font the emoji are laid out in: any does, as each is drawn from the colour font
-    /// every text falls back to. The built-in fonts are made at startup, after this is.
+    /// The font the emoji are laid out in, the colour emoji font: in a text font, an emoji
+    /// whose base character that font has (©, ™, ‼) is drawn from it, in one colour. It is
+    /// made at startup, after this is.
     font: Option<Handle<Font>>,
     emoji: HashMap<&'static str, EmojiGlyphs>,
 }
@@ -240,6 +244,17 @@ struct EmojiGlyphs {
     text: Shaped,
     /// Its mesh, and the generation of the atlas the mesh samples.
     mesh: Option<(Handle<Mesh>, u32)>,
+    /// Its glyphs came with none in colour, so there is nothing of it to draw.
+    colourless: bool,
+}
+
+/// Why an emoji has no mesh.
+#[derive(Debug, PartialEq, Eq)]
+enum NoMesh {
+    /// Its glyphs are still being rastered: ask again next frame.
+    Pending,
+    /// Its glyphs are in the atlas and none is in colour: it is never drawn.
+    Colourless,
 }
 
 /// Lays emoji out and makes their meshes from the reactions' atlas.
@@ -257,12 +272,9 @@ impl EmojiShaper<'_> {
         let Self { shaper, glyphs, .. } = self;
         let ReactionGlyphs { font, emoji: laid } = &mut **glyphs;
         if font.is_none() {
-            *font = FONTS
-                .get()
-                .and_then(|fonts| fonts.get(&(FontName::Sans, WeightName::Regular)))
-                .cloned();
+            *font = EMOJI_FONT.get().cloned();
         }
-        // nothing is laid out before the built-in fonts are made
+        // nothing is laid out before the emoji font is made
         let font = font.as_ref()?;
         if !laid.contains_key(emoji) {
             // one that can't be laid out now is tried again the next time it plays
@@ -274,26 +286,49 @@ impl EmojiShaper<'_> {
                 ATLAS.raster_font_size,
                 None,
             )?;
-            laid.insert(emoji, EmojiGlyphs { text, mesh: None });
+            laid.insert(
+                emoji,
+                EmojiGlyphs {
+                    text,
+                    mesh: None,
+                    colourless: false,
+                },
+            );
         }
         laid.get(emoji)
+            .filter(|glyphs| !glyphs.colourless)
             .map(|glyphs| glyph_use(&ATLAS, [&glyphs.text]))
     }
 
-    /// The emoji's mesh for the atlas as it is now. `None` while its glyphs are being
-    /// rastered (as `budget` allows them to be sent), and for an emoji with nothing to draw.
-    fn mesh(&mut self, emoji: &'static str, budget: &mut GlyphBudget) -> Option<Handle<Mesh>> {
+    /// The emoji's mesh for the atlas as it is now, its glyphs sent to be rastered as
+    /// `budget` allows.
+    fn mesh(
+        &mut self,
+        emoji: &'static str,
+        budget: &mut GlyphBudget,
+    ) -> Result<Handle<Mesh>, NoMesh> {
         let generation = self.shaper.atlas(&ATLAS).generation();
-        let glyphs = self.glyphs.emoji.get_mut(emoji)?;
+        let glyphs = self.glyphs.emoji.get_mut(emoji).ok_or(NoMesh::Colourless)?;
+        if glyphs.colourless {
+            return Err(NoMesh::Colourless);
+        }
         if let Some((mesh, built)) = &glyphs.mesh {
             if *built == generation {
-                return Some(mesh.clone());
+                return Ok(mesh.clone());
             }
         }
-        let (_, colour) = self.shaper.glyphs(&ATLAS, &glyphs.text, budget).ok()?;
-        let mesh = self.meshes.add(emoji_mesh(&colour)?);
+        let (_, colour) = self
+            .shaper
+            .glyphs(&ATLAS, &glyphs.text, budget)
+            .map_err(|_| NoMesh::Pending)?;
+        // the glyphs are all in the atlas: with none in colour, there never will be one
+        let Some(mesh) = emoji_mesh(&colour) else {
+            glyphs.colourless = true;
+            return Err(NoMesh::Colourless);
+        };
+        let mesh = self.meshes.add(mesh);
         glyphs.mesh = Some((mesh.clone(), generation));
-        Some(mesh)
+        Ok(mesh)
     }
 }
 
@@ -497,8 +532,9 @@ fn flush_reactions(
     }
 }
 
-/// Each reaction played gets a particle, unless the user has chat bubbles and reactions off, or nothing shows over its player as it plays, or as many particles as may be are
-/// alive already. One with no particle takes no room in the glyph atlas.
+/// Each reaction played gets a particle, unless the user has chat bubbles and reactions off,
+/// or nothing shows over its player as it plays, or as many particles as may be are alive
+/// already. One with no particle takes no room in the glyph atlas.
 fn spawn_reaction_particles(
     mut commands: Commands,
     mut played: EventReader<ReactionPlayed>,
@@ -513,8 +549,12 @@ fn spawn_reaction_particles(
         played.clear();
         return;
     }
-    let mut alive = particles.iter().count();
+    let mut alive = 0;
     let mut alive_over = HashMap::<Entity, usize>::default();
+    for owner in &particles {
+        alive += 1;
+        *alive_over.entry(owner.0).or_default() += 1;
+    }
     let mut rng = rand::thread_rng();
     let view = places.view();
     for reaction in played.read() {
@@ -527,12 +567,7 @@ fn spawn_reaction_particles(
             stats.dropped.not_shown += 1;
             continue;
         }
-        let over_player = alive_over.entry(reaction.player).or_insert_with(|| {
-            particles
-                .iter()
-                .filter(|owner| owner.0 == reaction.player)
-                .count()
-        });
+        let over_player = alive_over.entry(reaction.player).or_default();
         if alive >= MAX_PARTICLES || *over_player >= MAX_PARTICLES_PER_PLAYER {
             stats.dropped.particle_cap += 1;
             continue;
@@ -607,27 +642,35 @@ fn pipe_reactions_to_scene(
 }
 
 /// Give each particle the mesh of its emoji for the glyph atlas as it is now, and the material
-/// the atlas' page. A particle whose glyphs are still being rastered waits, undrawn.
+/// the atlas' page. A particle whose glyphs are still being rastered waits, undrawn; one whose
+/// glyphs came with none in colour has nothing to draw, and goes.
 fn build_reaction_glyphs(
+    mut commands: Commands,
     mut shaper: EmojiShaper,
     mut assets: ResMut<ReactionAssets>,
     mut materials: ResMut<Assets<ReactionMaterial>>,
-    mut particles: Query<(&mut ReactionParticle, &mut Mesh3d)>,
+    mut particles: Query<(Entity, &mut ReactionParticle, &mut Mesh3d)>,
+    mut stats: ResMut<ReactionStats>,
 ) {
-    if particles.is_empty() {
-        return;
-    }
     let generation = shaper.shaper.atlas(&ATLAS).generation();
     assets.generation = generation;
 
     let mut budget = GlyphBudget::of(RASTERS_PER_FRAME);
-    for (mut particle, mut mesh) in &mut particles {
+    for (entity, mut particle, mut mesh) in &mut particles {
         if particle.built == Some(generation) {
             continue;
         }
-        if let Some(built) = shaper.mesh(particle.emoji, &mut budget) {
-            mesh.0 = built;
-            particle.built = Some(generation);
+        match shaper.mesh(particle.emoji, &mut budget) {
+            Ok(built) => {
+                mesh.0 = built;
+                particle.built = Some(generation);
+            }
+            Err(NoMesh::Pending) => {}
+            Err(NoMesh::Colourless) => {
+                debug!("no colour glyph for the reaction {:?}", particle.emoji);
+                stats.dropped.no_glyphs += 1;
+                commands.entity(entity).try_despawn();
+            }
         }
     }
 

@@ -436,9 +436,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   block or with nametags off): it would show where the avatar stands. Nor is the local player's
   own in first person, where it would rise from inside the camera and cover the view. A
   reaction that plays while none would be drawn over its player gets no particle, and so asks
-  nothing of the glyph atlas; it still reaches the HUD. The Chat bubbles and reactions setting at
-  None turns the particles off with the bubbles, those in flight too; unity-explorer's reactions read no setting. The emoji is
-  the engine's colour font's, not unity-explorer's atlas tile.
+  nothing of the glyph atlas; it still reaches the HUD. The Chat bubbles and reactions setting
+  at None turns the particles off with the bubbles, those in flight too; unity-explorer's
+  reactions read no setting. The emoji is the engine's colour font's, not unity-explorer's
+  atlas tile, and is laid out in that font: in a text font an emoji whose base character the
+  font has (©, ™, ‼) would come out in one colour.
   Only the indices that name an emoji are taken (unity-explorer takes any under 4096 and draws
   the blank tiles), and an emoji with no index is not sent or shown. A message's copy by the
   other room is told by its stamp and its index together, and the stamps sent only move on: the

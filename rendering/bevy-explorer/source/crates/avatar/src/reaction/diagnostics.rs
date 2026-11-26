@@ -12,7 +12,7 @@ use comms::{
 };
 use console::DebugSection;
 use dcl_component::proto_components::kernel::comms::rfc4;
-use scene_runner::update_world::text_shape::GlyphAtlases;
+use scene_runner::update_world::text_shape::{GlyphAtlases, Page};
 use serde_json::json;
 use system_bridge::SystemApi;
 use wallet::Wallet;
@@ -54,7 +54,7 @@ pub const SECTION: DebugSection = DebugSection {
             "dropped.notShown",
         ),
         (
-            "Played with no particle: emoji not laid out",
+            "Played with no particle: no colour glyph",
             "dropped.noGlyphs",
         ),
     ],
@@ -87,8 +87,9 @@ pub const SECTION: DebugSection = DebugSection {
 /// gave way to newer ones), `particleCap` (reactions that played with no particle, as many as
 /// may be alive) and `notShown` (reactions that played with no particle, their player having
 /// no avatar or a hidden one, being far from the camera, or being the local user in first
-/// person) and `noGlyphs` (reactions that played with no particle, their emoji not laid out:
-/// it has no glyph, or the fonts are not made yet). The counts are of this session.
+/// person) and `noGlyphs` (reactions that played with no particle, their emoji not laid out,
+/// the emoji font not made yet, or the emoji having no glyph in colour). The counts are of
+/// this session.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/reaction_state")]
 pub struct ReactionStateCommand;
@@ -101,6 +102,8 @@ pub fn reaction_state(
     queues: Query<&ReactionQueue>,
     assets: Res<ReactionAssets>,
     particles: Query<(&ReactionParticle, &Visibility)>,
+    mut atlases: ResMut<GlyphAtlases>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let Some(Ok(_)) = cmd.take() else {
         return;
@@ -128,7 +131,11 @@ pub fn reaction_state(
                 count(|_, visibility, _| *visibility != Visibility::Hidden),
                 count(|particle, _, generation| particle.built != Some(generation)),
             ],
-            "atlas": assets.page().map_or(0, |(_, size)| size),
+            // read from the atlas: the assets follow it only while a particle is alive
+            "atlas": atlases
+                .get_or_create(ATLAS.key, &mut images)
+                .page_image(Page::Color)
+                .map_or(0, |(_, size)| size),
             "streamed": stats.streamed,
             "subscribers": stats.subscribers,
             "dropped": {

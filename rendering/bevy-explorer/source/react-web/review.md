@@ -205,7 +205,8 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       ring. A message said in a **community** chat by a player standing nearby shows the community's
       name on a smaller, dimmer row above their name, cut short with an ellipsis (and over your own
       head for your own); a **DM** shows a green `DM` tag after the name, and your own names who it is
-      for when they are around. The Chat bubbles and reactions setting (All / Nearby only / None) picks which show.
+      for when they are around. The Chat bubbles and reactions setting (All / Nearby only / None)
+      picks which show.
       A translated message replaces the bubble's text. `<b>` and `<i>` tags are left out of the
       bubble, which shows the words between them unstyled; a tag that styles no text (`<b></b>`, a
       closing tag with nothing open) is shown as typed, in the bubble and in chat, and a link next

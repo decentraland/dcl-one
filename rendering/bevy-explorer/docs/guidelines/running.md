@@ -323,7 +323,7 @@ State, in every build:
   `queueFull`, `particleCap`, `notShown` (reactions that played with no particle, nothing
   being drawn over their player: no avatar or a hidden one, far from the camera, or the local
   user in first person) and `noGlyphs` (reactions that played with no particle, their emoji not
-  laid out). The counts are of the session.
+  laid out or with no glyph in colour). The counts are of the session.
   `/reaction_send <emoji>` reacts as the local user, the way the system API's `sendReaction` does:
   the reaction is sent to the players nearby and reported to analytics as a pick is, and an emoji
   the wire has no index for does nothing. The debug panel's "React with a heart" runs it.
