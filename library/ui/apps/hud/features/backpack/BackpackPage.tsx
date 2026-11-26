@@ -87,6 +87,7 @@ const HINTS = [
   { icon: <MaskIcon src={leftClickIcon} size={20} />, text: 'Click items x1 to view their info. x2 to equip/unequip.' },
   { icon: <KeyCap label="1" />, text: 'Hover an emote, then press the numeral key of the slot where you want to equip it.' }
 ]
+const HINTS_MODAL = [HINTS[0], { icon: <MaskIcon src={leftClickIcon} size={20} />, text: 'Double-click items to equip.' }, HINTS[2]]
 
 const RARITIES: Rarity[] = ['base', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic']
 const RARITY_RANK: Record<string, number> = Object.fromEntries(RARITIES.map((r, i) => [r, i]))
@@ -214,8 +215,7 @@ function EmptyResults({ search }: { search: boolean }): React.JSX.Element {
   )
 }
 
-// `onClose` is set where the panel lies over the avatar (the lobby's modal): it puts the selection away.
-function DetailPanel({ item, onClose }: { item: Wearable | Emote | null; onClose?: () => void }): React.JSX.Element {
+function DetailPanel({ item }: { item: Wearable | Emote | null }): React.JSX.Element {
   if (!item) {
     return (
       <aside className={`${styles.detail} ${styles.detailEmpty}`} style={{ '--panel-art': `url(${rarityPanel(null)})` } as React.CSSProperties}>
@@ -227,11 +227,6 @@ function DetailPanel({ item, onClose }: { item: Wearable | Emote | null; onClose
   const category = 'category' in item ? item.category : 'emote'
   return (
     <aside className={styles.detail} style={{ '--panel-art': `url(${rarityPanel(rarity)})` } as React.CSSProperties}>
-      {onClose != null && (
-        <Button appearance="hud" size="bare" radius="md" variant="shade" className={styles.detailClose} aria-label="Close item details" onClick={onClose}>
-          <MaskIcon src={closeIcon} size={10} />
-        </Button>
-      )}
       <div className={styles.detailImage}>
         <CatalystImg src={item.thumbnail} urn={item.urn} />
       </div>
@@ -688,7 +683,7 @@ export function BackpackPage({
             <div className={styles.avatarDrag}>
               <AvatarDragSurface onRotate={backpack.rotate} onZoom={backpack.zoom} view={() => previewBox.current?.getBoundingClientRect() ?? null} />
             </div>
-            <HintsButton className={styles.hints} hints={HINTS} />
+            <HintsButton className={styles.hints} hints={modal ? HINTS_MODAL : HINTS} />
             <RandomizeBar
               history={backpack.outfitHistory}
               locked={tab !== 'wearables' || backpack.bodyShape == null}
@@ -899,8 +894,8 @@ export function BackpackPage({
               </div>
             )}
 
-          {/* Right: the selected wearable/emote. Not in Saved Outfits, nor beside an empty wearables grid. */}
-          {!inOutfits && !(tab === 'wearables' && !backpack.loading && pageItems.length === 0) && <DetailPanel item={selected} onClose={modal ? () => setSelected(null) : undefined} />}
+          {/* Right: the selected wearable/emote. Not in the lobby's modal, which has no room for it, nor in Saved Outfits, nor beside an empty wearables grid. */}
+          {!modal && !inOutfits && !(tab === 'wearables' && !backpack.loading && pageItems.length === 0) && <DetailPanel item={selected} />}
           </section>
           </div>
         </div>

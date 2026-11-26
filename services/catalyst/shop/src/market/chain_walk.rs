@@ -1118,8 +1118,6 @@ pub fn ready_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: 
     )
 }
 
-pub use crate::chain_index::catalogue::published_sql_on;
-
 pub(crate) use crate::chain_index::catalogue::MAX_CLOCK_SKEW;
 
 /// A liveness heuristic for whether cursor `c` serves its index at `now`:

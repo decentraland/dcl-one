@@ -2590,13 +2590,23 @@ The published sales readers use a 10-second PostgreSQL statement timeout. Recent
 
 `/v1/owners/top` ranks a creator's current holders using the NFT folds and current item and collection metadata. Both mainnet sales publications must be ready. The same snapshot supplies MANA spend from the published sales of the creator's items. Ethereum v1 Issue logs identify an item within its collection and Polygon v2 token IDs encode the item ID. The query aggregates and ranks holders before paging, within a five-second statement timeout. The 30-second page cache is keyed by both NFT publications, the sales generations and heights, and the metadata proofs, including native catalogue projection generations and heights. Every request rechecks the publications on its snapshot. One cold owner-ranking request can run concurrently on its own permit. `/v1/items` reads distinct pickers for the returned item IDs using `picks_item_idx`. Picks by the same wallet on multiple lists count once.
 
-Accounts, rankings and volume cache successful answers for 30 seconds across append-only advances. Each request checks the current publication and auxiliary sources in one snapshot. A rewind, replaced source identity, backfilled history or correction to a published sale changes the cache key. A withdrawn or expired required publication returns HTTP 503 even for a cached query. Warm hits bypass the query limits. Cold accounts and other analytics have separate limits of one and two concurrent reads. Sales pages have four. Seller summary, store stats, proceeds and the sales leg of activity share four slots. A request waits up to 250 milliseconds for a seller slot before opening the read transaction. Excess read requests receive HTTP 503. Activity logs when the wait expires and returns its available legs. The accounts address selector accepts up to 50 distinct wallets. Lifetime creator rankings require seller and settlement evidence for every relevant mint in the requested history.
+Accounts, rankings and volume cache successful answers for 30 seconds across append-only advances. Each request checks the current publication and auxiliary sources in one snapshot. A rewind, replaced source identity, backfilled history or correction to a published sale changes the cache key. A withdrawn or expired required publication returns HTTP 503 even for a cached query. Warm hits bypass the query limits. Cold accounts and other analytics have separate limits of one and two concurrent reads. Sales pages have four. Seller summary, store stats, proceeds and the sales leg of activity share four slots. A request waits up to 250 milliseconds for a seller slot before opening the read transaction. Excess read requests receive HTTP 503. Activity logs when the wait expires and returns its available legs. The accounts address selector accepts up to 50 distinct wallets. Creator rankings check the items and Polygon collections catalogue copies and the Polygon collection log in the published sales snapshot. Each mirror's freshness budget and the index publication deadlines bound cached answers.
+
+Period creator rankings attribute mint counts and net mint amounts to the collection creator at the execution position. An indexed earlier transfer supplies the creator, or the first later transfer in the published prefix proves the previous creator. When the prefix has no transfer, the query uses a verified seed in that prefix or a catalogue row updated by the time of the latest published execution. A rewind deletes seeds beyond its retained block. A store mint uses the seller proved at Issue. Collectors and collections remain cumulative and use distinct buyer addresses and network/contract pairs. Settlement evidence is required for mints in the earnings period. Creatorship evidence also covers the older mints contributing to the cumulative relationships.
+
+Lifetime primary sorts include a collection founder with delegated mints even when their seller sales are zero. They sort on attributed mint count or net mint amount and display the account's own lifetime seller sales, collections and earnings on networks where it founded a collection. The default lifetime earnings ranking requires seller sales. Founder attribution can use a Polygon catalogue row whose update time is covered by the published collection fold. While the walk is ahead of the fold, the latest event in the fold supplies that time bound.
 
 Accounts read `shop.sale_account_total` for monetary totals. The sale fold credits net proceeds to the public seller, including the first consideration beneficiary of a mediated bid. Payout recipients retain their separate fee and royalty amounts. The publication upgrade repairs the UTC days containing affected bids from stored evidence before readers use those totals.
 
-The special-execution index supports scans of store, trade and NAME-fee executions by network, kind and published block. The unresolved-asset index bounds the seller-evidence scans to priced bids and assets whose seller is missing. Token history uses the priced token lookup, with contract as a further constraint, and sale-type pages use the priced kind and block lookup.
+The special-execution index supports scans of store, trade and NAME-fee executions by network, kind and published block. The unresolved-asset index bounds the seller-evidence scans to priced bids and assets whose seller is missing. Token history uses the priced token lookup, with contract as a further constraint, and sale-type pages use the priced kind and block lookup. The creator ranking uses `collection_event_creatorship_position_idx` to find the transfer before or after a mint. The index adds one entry per creatorship transfer.
 
 The schema object pass creates the sales read indexes. On an existing large ledger, prebuild the definitions in `schemas/30_shop.sql` with `CREATE INDEX CONCURRENTLY` outside a transaction before running `catalyst schema migrate`. Inspect `pg_index.indisvalid` and `pg_get_indexdef(indexrelid)` for each prebuilt index. If a build was interrupted, drop its invalid index concurrently and rebuild it before the migration's name-based check.
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS collection_event_creatorship_position_idx
+    ON shop.collection_event (network, contract_address, block_number, log_index)
+    WHERE kind = 'creatorship_transferred';
+```
 
 ### Wallet activity transfers
 
@@ -2691,7 +2701,9 @@ default, and social writes are), each a reader of tables other areas own, with o
   waits instead until the index's publication covers its block, row or not,
   however long that takes (the notices' rule, `ItemWait::decide` in
   `catalyst_chain_index::catalogue`); a sale older than
-  `BADGES_EVENT_MAX_AGE_SECS` gets no badge and never waits. The page,
+  `BADGES_EVENT_MAX_AGE_SECS` gets no badge and never waits, and one that
+  grows older than it while it waits passes without a badge, as under the
+  mirrors. The page,
   its goods' item types and the wait come from one snapshot. Without
   `MARKETPLACE_MIRRORS_ENABLED` no pass ever completes, so the sales job is
   not started (logged at startup);
@@ -3083,15 +3095,22 @@ owner routes answer their source's unavailable envelope. A legacy database
 bound to mainnet needs a separate testnet database or, for the eligible
 legacy default mirrors, the rebind described above.
 
-On Sepolia the NFT and LAND authorization walks start at LAND proxy
-deployment block 3,831,219. On Amoy the NFT walk starts at marketplace V2
-block 5,706,656, before the collection factory. The historical estate
-repair below runs only on Ethereum mainnet.
+The testnet walks select the contract sets for the configured chain pair.
 
-The Sepolia bid walk and the Amoy bid and mint walk publish raw sale
-events. Economic routes on testnet keep their configured authority. Raw
-coverage cannot establish sale prices, aggregates, tax, royalties or
-historical settlement terms. The separate sales accounting publication
+| Walk | Sepolia (11155111) | Amoy (80002) |
+| --- | --- | --- |
+| NFT | LAND and Estate, legacy Marketplace, DCLRegistrar and verified collections. Starts at 3,831,219. | Both legacy Marketplace contracts and verified collections. Starts at 5,706,656. |
+| Sales events | ERC721Bid creation, acceptance and cancellation from 3,831,237. | Collection Issue and CollectionStore Bought from the walk start at 5,706,656. ERC721BidV2 events from 5,706,662. |
+| Rentals | Rentals from 3,831,254. | No Rentals deployment. |
+| Trade events | Off-chain Marketplace V1, V2 and V3, starting at 6,770,056. | Off-chain Marketplace V1, V2 and V3, starting at 12,490,079. |
+
+Sepolia LAND authorization starts at the same LAND proxy deployment block
+as the NFT walk. The historical estate repair below runs only on Ethereum
+mainnet. See [the Sepolia LAND replay measurement](METRICS.md#sepolia-land-authorization-replay).
+
+The testnet sales walk publishes raw events. Economic routes on testnet
+keep their configured authority for sale prices, aggregates, tax, royalties
+and historical settlement terms. The separate sales accounting publication
 runs on mainnet.
 
 On Amoy the sales projection reads BidV2 and prices CollectionStore mints
@@ -3551,7 +3570,7 @@ deleted past a rewind. A process that runs the collections mirror
 also projects it into `shop.collections` and `shop.items` (see
 "Projection"). Either way, the publication means everything the fold wrote
 is complete to `folded_block`.
-Account inventory and lifetime creator rankings require the Polygon log
+Account inventory and creator rankings require the Polygon log
 publication. Creatorship transitions are indexed by contract and by both
 wallet roles.
 
@@ -3860,8 +3879,10 @@ its current check (a mirror pass, or none):
     `MARKETPLACE_COLLECTIONS_INDEX_OWNS`; they then drain under whichever
     rule applies. A frozen producer shows as a growing lag:
     `shop_notification_cursor_lag{producer}` for the sale, bid and royalty
-    notices (blocks between the cursor and the published block it reads up
-    to, set each time a pass locks the cursor) and
+    notices (set after each page: 0 once a page reads everything up to the
+    published block, for bids the lower of the sales and nft indexes',
+    otherwise the blocks still ahead of the cursor; a pass whose index is
+    not published leaves it as it was) and
     `badges_processor_cursor_lag{source}` for the badge sales logs.
   - A sale's description, its collection membership and its wait come from
     one snapshot (the royalty notices' from the statement that joins the
