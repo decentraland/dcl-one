@@ -782,7 +782,6 @@ fn pipe_chats_to_scene(
     mut senders: Local<Vec<RpcStreamSender<ChatMessage>>>,
     mut bubbles: EventWriter<ChatBubbleRequest>,
     players: Query<(Entity, &PlayerAddress, Has<ForeignPlayer>)>,
-    primary_player: Res<PrimaryPlayerRes>,
 ) {
     // a community's name for the bubble of one of its messages
     #[cfg(feature = "livekit")]
@@ -837,7 +836,9 @@ fn pipe_chats_to_scene(
 
             #[cfg(feature = "livekit")]
             if chat_event.channel == "Nearby"
-                && chat_event.sender != primary_player.0
+                && players
+                    .get(chat_event.sender)
+                    .is_ok_and(|(_, _, is_foreign)| is_foreign)
                 && ban_block.is_addr_banned_in_scene(player_address)
             {
                 continue;

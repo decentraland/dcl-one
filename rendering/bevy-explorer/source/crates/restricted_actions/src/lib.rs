@@ -1439,7 +1439,7 @@ impl ScenePresence<'_, '_> {
 }
 
 fn get_connected_players(
-    me: Res<Wallet>,
+    me: Query<&PlayerAddress, With<PrimaryUser>>,
     others: Query<&ForeignPlayer>,
     mut events: EventReader<RpcCallEvent>,
     presence: ScenePresence,
@@ -1460,7 +1460,7 @@ fn get_connected_players(
         // a headless server has no real local player — don't report its fake player as
         // a connected peer (it would appear as a ghost to every scene)
         let own = (!server_mode())
-            .then(|| me.address().map(|address| format!("{address:#x}")))
+            .then(|| me.single().ok().map(|address| format!("{:#x}", address.0)))
             .flatten();
         let results = others.chain(own).collect();
         response.send(results);
@@ -1468,8 +1468,7 @@ fn get_connected_players(
 }
 
 fn get_players_in_scene(
-    me: Query<Entity, With<PrimaryUser>>,
-    wallet: Res<Wallet>,
+    me: Query<(Entity, &PlayerAddress), With<PrimaryUser>>,
     others: Query<(Entity, &ForeignPlayer)>,
     mut events: EventReader<RpcCallEvent>,
     containing_scene: ContainingScene,
@@ -1484,11 +1483,9 @@ fn get_players_in_scene(
         let mut results = Vec::default();
         // skip the fake local player in server mode (see get_connected_players)
         if !server_mode() {
-            if let Ok(player) = me.single() {
+            if let Ok((player, &PlayerAddress(address))) = me.single() {
                 if containing_scene.get(player).contains(scene) {
-                    if let Some(address) = wallet.address() {
-                        results.push(format!("{address:#x}"));
-                    }
+                    results.push(format!("{address:#x}"));
                 }
             }
         }
