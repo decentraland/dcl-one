@@ -15,13 +15,13 @@
 //! `listings`/`minListingPrice`/`maxListingPrice` on v1 are the no-orders
 //! shape; the `owners` count and the `suggested` sort (per-item nft owners,
 //! `wearable_last_seen`) are deferred with the nft indexer, `owners` reads
-//! null and `sortBy=suggested` orders as `newest`. Both routes answer the
-//! unavailable envelope until the items mirror has a complete pass for
-//! every configured network, and v2 until the trades mirror has one too
+//! null and `sortBy=suggested` orders as `newest`. Both routes carry prices,
+//! so they read the catalogue through its priced gate
+//! ([`super::catalogue::begin`]: the items mirror's pass within its money
+//! budget, or the collections index's fresh publication where it owns the
+//! network), and v2 also waits for the trades mirror's pass
 //! (`trades::require_ready`): its `price`, `isOnSale`, `tradeId` and listing
-//! counts come from `shop.trades`. Both carry prices, so a copy of the
-//! items past its money budget answers the envelope too
-//! (`mirrors::require_priced`).
+//! counts come from `shop.trades`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
@@ -31,7 +31,6 @@ use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
 use serde::Serialize;
 use serde::ser::{SerializeSeq, SerializeStruct, Serializer};
 use sqlx::Arguments;
@@ -40,8 +39,9 @@ use sqlx::postgres::PgArguments;
 
 use crate::shared::cache::TtlMap;
 
+use super::catalogue::{self, CatalogueRead, Purpose};
 use super::lists::{PickStats, picks_stats};
-use super::mirrors::require_priced;
+use super::mirrors::Mirror;
 use super::signed::optional_signer;
 use super::wire::{
     ApiError, ChainId, MAX_PAGE_LIMIT, NETWORK_VALUES, NFT_CATEGORY_VALUES, Network, NftCategory,
@@ -207,14 +207,14 @@ const SORT_BY_VALUES: &[&str] = &[
     "suggested",
 ];
 
-pub fn parse_catalog_filters(pairs: &[(String, String)]) -> CatalogFilters {
+pub fn parse_catalog_filters(pairs: &[(String, String)]) -> Result<CatalogFilters, ApiError> {
     let p = Params::new(pairs);
     let is_on_sale = if p.get_boolean("isOnSale") {
         Some(p.get_string("isOnSale", None).as_deref() == Some("true"))
     } else {
         None
     };
-    CatalogFilters {
+    Ok(CatalogFilters {
         first: p
             .get_number("first", Some(DEFAULT_PAGE_SIZE as f64))
             .map(|n| n as i64),
@@ -257,18 +257,14 @@ pub fn parse_catalog_filters(pairs: &[(String, String)]) -> CatalogFilters {
         network: p
             .get_value("network", NETWORK_VALUES, None)
             .and_then(|s| Network::parse(&s)),
-        max_price: p
-            .get_string("maxPrice", None)
-            .filter(|s| !s.trim().is_empty()),
-        min_price: p
-            .get_string("minPrice", None)
-            .filter(|s| !s.trim().is_empty()),
+        max_price: super::items::parse_price_param(&p, "maxPrice")?,
+        min_price: super::items::parse_price_param(&p, "minPrice")?,
         urns: p.get_list("urn", &[]),
         ids: p.get_list("id", &[]),
         include_social_emotes: Some(
             p.get_string("includeSocialEmotes", None).as_deref() != Some("false"),
         ),
-    }
+    })
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -388,11 +384,12 @@ impl Serialize for CatalogPage {
 
 type Page = Arc<(Vec<CatalogItem>, i64)>;
 
-/// Pages keyed by `(is_v2, filters)` and anonymous pick stats keyed by the
-/// page's ids, under `MARKETPLACE_CATALOG_CACHE_TTL_SECS` (0 disables).
+/// Pages keyed by `(is_v2, filters, the catalogue read's copy)`
+/// ([`CatalogueRead::key`]) and anonymous pick stats keyed by the page's
+/// ids, under `MARKETPLACE_CATALOG_CACHE_TTL_SECS` (0 disables).
 pub struct Cache {
     enabled: bool,
-    pages: TtlMap<(bool, CatalogFilters), Page>,
+    pages: TtlMap<(bool, CatalogFilters, String), Page>,
     picks: TtlMap<Vec<String>, Arc<Vec<PickStats>>>,
 }
 
@@ -422,19 +419,23 @@ impl Cache {
         self.picks.clear();
     }
 
-    async fn page_or_fetch<F, Fut>(
+    /// A page read through the caller's catalogue read, which only the
+    /// fetching request keeps
+    /// ([`crate::shared::cache::TtlMap::get_or_fetch_holding`]).
+    async fn page_or_fetch_holding<F>(
         &self,
-        key: (bool, CatalogFilters),
+        key: (bool, CatalogFilters, String),
+        held: &mut Option<CatalogueRead>,
         fetch: F,
-    ) -> Result<Page, ApiError>
+    ) -> Result<Option<Page>, ApiError>
     where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<Page, ApiError>>,
+        F: AsyncFnOnce(&mut CatalogueRead) -> Result<Page, ApiError>,
     {
         if !self.enabled {
-            return fetch().await;
+            let read = held.as_mut().expect("a request holds its read");
+            return fetch(read).await.map(Some);
         }
-        self.pages.get_or_fetch(key, fetch).await
+        self.pages.get_or_fetch_holding(key, held, fetch).await
     }
 
     async fn picks_or_fetch<F, Fut>(
@@ -561,8 +562,10 @@ pub fn uint_or_null(expr: &str) -> String {
 /// one row per trade with its sent asset resolved to `(contract, item_id,
 /// token_id)` and its received amount, asset type and token contract. Open = effective, not expired at
 /// `now_p` (a bound timestamp, never `now()`), not in `trade_cancellations`,
-/// and not closed on chain (`trade_events`: sold or cancelled there) while
-/// that network's trade-events index is published; and counted at
+/// and listable on chain (`trade_events::listable_on_chain_sql`: its
+/// network's trade-events index is current and no verdict sold, cancelled
+/// or left it unverifiable; a trade of a network whose index is behind is
+/// left out, never listed on a stale verdict); and counted at
 /// `since_p` (a bound nullable timestamp, `trades::mirrored_since`). An item
 /// order also needs its creator's signature and its marketplace among the
 /// collection's minters, as no other contract can mint the item.
@@ -596,7 +599,7 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
            WHERE t.type IN ('public_item_order', 'public_nft_order') \
              AND t.expires_at > {now_p} AND t.effective_since <= {now_p} \
              AND NOT EXISTS (SELECT 1 FROM shop.trade_cancellations c WHERE c.target_hashed_signature = t.hashed_signature) \
-             AND NOT {closed} \
+             AND {listable} \
              AND {counted} \
              AND {served} \
              AND (sent_item.asset_id IS NULL OR {item_num} IS NOT NULL) \
@@ -614,7 +617,7 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
         item_num = uint_or_null("sent_item.item_id"),
         token_num = uint_or_null("sent_erc721.token_id"),
         shift = ITEM_ID_SHIFT,
-        closed = super::trade_events::closed_on_chain_sql("t", now_p),
+        listable = super::trade_events::listable_on_chain_sql("t", now_p),
         counted = super::trades::counted_sql("t.", since_p)
     )
 }
@@ -1164,14 +1167,16 @@ fn row_to_item(r: &sqlx::postgres::PgRow) -> CatalogItem {
 
 pub async fn fetch_page(
     state: &MarketplaceState,
+    read: &mut CatalogueRead,
     f: &CatalogFilters,
     is_v2: bool,
 ) -> Result<(Vec<CatalogItem>, i64), ApiError> {
-    let now = Utc::now().naive_utc();
+    // The read's clock: the trades check decided on the same instant.
+    let now = read.now.naive_utc();
     let since = super::trades::mirrored_since(&state.settings, now);
     let (sql, args) = build_catalog_query(f, is_v2, now, since, false);
     let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
-        .fetch_all(&state.pool)
+        .fetch_all(&mut *read.tx)
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, "catalog query failed");
@@ -1182,7 +1187,7 @@ pub async fn fetch_page(
         None if clamp_skip(f.skip) > 0 => {
             let (sql, args) = build_catalog_query(f, is_v2, now, since, true);
             sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
-                .fetch_one(&state.pool)
+                .fetch_one(&mut *read.tx)
                 .await
                 .map(|r| r.get::<i64, _>("total"))
                 .unwrap_or(0)
@@ -1198,30 +1203,56 @@ async fn catalog_inner(
     pairs: Vec<(String, String)>,
     is_v2: bool,
 ) -> Response {
-    // Every row carries the item's minter price: the money rule.
-    if let Err(envelope) = require_priced(&state).await {
-        return envelope;
-    }
-    // The v2 legs (price, isOnSale, tradeId, the listing counts) are computed
-    // from shop.trades: a partial mirror is not the order book.
-    if is_v2 && let Err(envelope) = super::trades::require_ready(&state).await {
-        return envelope;
-    }
-    let filters = parse_catalog_filters(&pairs);
-    let route = if is_v2 { "/v2/catalog" } else { "/v1/catalog" };
-    let picked_by = match optional_signer(&headers, "get", route).await {
-        Ok(s) => s,
+    let filters = match parse_catalog_filters(&pairs) {
+        Ok(filters) => filters,
         Err(e) => return e.into_response(),
     };
-    let key = (is_v2, filters.clone());
-    let page = match state
-        .catalog_cache
-        .page_or_fetch(key, || async {
-            fetch_page(&state, &filters, is_v2).await.map(Arc::new)
-        })
+    // The page memo holds the read only in the request that fetches it: one
+    // that waits on another's fetch drops it first, and starts again if that
+    // fetch failed. The stamp is the copy the page was read from.
+    let page = loop {
+        // Every row carries the item's minter price: the money rule.
+        let mut read = match catalogue::preflight(
+            &state,
+            Purpose::Priced,
+            &[Mirror::Items],
+            filters.network.map(Network::graph),
+        )
         .await
-    {
-        Ok(p) => p,
+        {
+            Ok(read) => read,
+            Err(envelope) => return envelope,
+        };
+        // The v2 legs (price, isOnSale, tradeId, the listing counts) are
+        // computed from shop.trades: a partial mirror is not the order book.
+        if is_v2 && let Err(envelope) = read.trades_ready(&state).await {
+            return envelope;
+        }
+        let (key, stamp) = ((is_v2, filters.clone(), read.key()), read.stamp());
+        let mut held = Some(read);
+        match state
+            .catalog_cache
+            .page_or_fetch_holding(key, &mut held, async |read: &mut CatalogueRead| {
+                fetch_page(&state, read, &filters, is_v2)
+                    .await
+                    .map(Arc::new)
+            })
+            .await
+        {
+            Ok(Some(page)) => {
+                stamp.note(&state);
+                break page;
+            }
+            Ok(None) => continue,
+            Err(e) => return e.into_response(),
+        }
+    };
+    // The picks are no catalogue rows, and the signer check may call the
+    // chain (EIP-1654): the read went back with the loop's scope, so neither
+    // waits while this request holds a connection.
+    let route = if is_v2 { "/v2/catalog" } else { "/v1/catalog" };
+    let picked_by = match optional_signer(state.eip1654.as_deref(), &headers, "get", route).await {
+        Ok(s) => s,
         Err(e) => return e.into_response(),
     };
     let ids: Vec<String> = page.0.iter().map(|i| i.id.clone()).collect();
@@ -1458,7 +1489,8 @@ mod tests {
             ("first", "34"),
             ("id", "0x7dd2c14796d6a411439f3ed465071fb1626084a8-0"),
             ("id", "0x0bf152a83a6fc55066c2b664b164ca2916ad38f5-2"),
-        ]));
+        ]))
+        .unwrap();
         assert_eq!(f.first, Some(34));
         assert_eq!(f.skip, Some(0));
         assert_eq!(
@@ -1475,13 +1507,26 @@ mod tests {
             ("wearableGender", "male"),
             ("includeSocialEmotes", "false"),
             ("network", "MATIC"),
-        ]));
+        ]))
+        .unwrap();
         assert_eq!(f.is_on_sale, Some(false));
         assert_eq!(f.rarities, vec!["epic"]);
         assert_eq!(f.network, Some(Network::Matic));
         assert_eq!(f.include_social_emotes, Some(false));
-        let f = parse_catalog_filters(&pairs(&[]));
+        let f = parse_catalog_filters(&pairs(&[])).unwrap();
         assert_eq!((f.first, f.skip, f.is_on_sale), (Some(20), Some(0), None));
+        // The price bounds are MANA (the legacy `parseEther`), bound as wei.
+        let f = parse_catalog_filters(&pairs(&[("minPrice", "2"), ("maxPrice", "2.75")])).unwrap();
+        assert_eq!(
+            (f.min_price.as_deref(), f.max_price.as_deref()),
+            (Some("2000000000000000000"), Some("2750000000000000000"))
+        );
+        let f = parse_catalog_filters(&pairs(&[("minPrice", " "), ("maxPrice", "")])).unwrap();
+        assert_eq!((f.min_price, f.max_price), (None, None));
+        for bad in ["abc", "1e18", "0.0000000000000000001"] {
+            let err = parse_catalog_filters(&pairs(&[("minPrice", bad)])).unwrap_err();
+            assert_eq!(err.message(), format!("Invalid minPrice value: {bad}"));
+        }
     }
 
     #[test]
@@ -1601,6 +1646,7 @@ mod tests {
             return;
         };
         let pool = &state.pool;
+        crate::market::trade_events::tests::publish_cursors(pool).await;
         let contract = format!("0xc0ffee00{}", uuid::Uuid::new_v4().simple());
         let signer = test_support::signer().address().to_checksum(None);
         sqlx::query(

@@ -17,9 +17,15 @@ overrides:
   "minimatch@<3.1.4": "^3.1.4"
   "zod@<=3.22.2": "^3.23.8"
   "ajv@<6.14.0": "^6.14.0"
-  "minimatch@>=9.0.0 <9.0.7": "^9.0.7"
+  # typedoc 0.23 calls Minimatch.matchOne, which minimatch 11 removed, so its 7.x range stays out of this.
+  "minimatch@>=8 <11.0.1": "^11.0.1"
   "test-exclude": "^7.0.1"
-  "glob@10": "^13.0.6"
+  "glob@10": "^14.0.2"
+  # asset-packs lists glob for its own build scripts; nothing it ships loads it.
+  '@dcl/asset-packs>glob': '-'
+  '@dcl/asset-packs>@types/glob': '-'
+  # The inspector's entry point calls only merge.withOptions, which version 8 keeps.
+  '@dcl/inspector>ts-deepmerge': '^8.0.0'
 minimumReleaseAge: 1440
 allowBuilds:
   '@dcl/sdk-commands': false

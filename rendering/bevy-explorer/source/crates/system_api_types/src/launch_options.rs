@@ -61,7 +61,7 @@ pub struct LaunchOptions {
     #[arg(long, value_name = "true|false", help_heading = SETTINGS)]
     pub log_fps: Option<bool>,
 
-    /// `;`-separated portable/startup scene sources; absent = `basiccontroller.dcl.eth`
+    /// `;`-separated portable/startup scene sources; absent = `movecontroller.dcl.eth`
     /// (DEFAULT_PORTABLES)
     #[arg(long, value_name = "a;b", help_heading = SYSTEM_SCENES)]
     pub portables: Option<String>,

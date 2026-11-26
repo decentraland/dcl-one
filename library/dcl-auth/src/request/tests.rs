@@ -512,6 +512,35 @@ async fn a_stalled_contract_check_is_unavailable_after_the_deadline() {
     assert_eq!(started.elapsed(), SIGNATURE_VALIDATION_TIMEOUT);
 }
 
+/// A contract wallet whose client source spent its budget of checks.
+struct RateLimited;
+
+#[async_trait]
+impl Eip1654Validator for RateLimited {
+    async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
+        Err(AuthError::Eip1654RateLimited)
+    }
+}
+
+/// A check the client source's budget refused is the 429 with its message,
+/// never an invalid signature nor the 503 of an unreachable contract.
+#[tokio::test]
+async fn a_rate_limited_contract_check_is_a_429() {
+    let options = VerifyOptions::builder()
+        .eip1654(Arc::new(RateLimited))
+        .build()
+        .unwrap();
+    let err = verify_request_at(&contract_parts(), &options, NOW)
+        .await
+        .unwrap_err();
+    assert_eq!(err, RequestAuthError::RateLimited);
+    assert_eq!(err.status(), 429);
+    assert_eq!(
+        err.body(),
+        json!({ "ok": false, "message": "Too many contract-wallet signature checks; retry later" })
+    );
+}
+
 /// Refuses every signature and keeps no history.
 struct RefusesAtLatest;
 

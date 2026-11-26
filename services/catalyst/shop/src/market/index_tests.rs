@@ -8,6 +8,7 @@
 //! after readiness (the envelope, then the answer), plus the neighbours
 //! build and the coupon reads, writes and state refresh.
 
+use super::nft_index::deployments::Deployments;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -33,7 +34,7 @@ use super::chain_walk::{
 };
 use super::listings::{self, RpcEndpoints};
 use super::nft_index::{self, NftIndex};
-use super::sales_index::{self, SalesIndex};
+use super::sales_index::{self, POLYGON as POLYGON_SALES};
 use super::trade_events::{self, TradeEventsIndex};
 use super::{MarketSettings, MarketplaceState, Settings, SharedState};
 use crate::chain_index::rpc::Rpc;
@@ -149,7 +150,11 @@ struct FakeChain {
     finalized_available: std::sync::atomic::AtomicBool,
     reorg_on_logs: std::sync::atomic::AtomicBool,
     logs: Mutex<Vec<Value>>,
+    fail_receipt_batch: std::sync::atomic::AtomicBool,
+    receipts: Mutex<HashMap<String, Value>>,
+    creators_at_hash: Mutex<HashMap<(String, String), String>>,
     max_span: u64,
+    omit_range_hint: std::sync::atomic::AtomicBool,
     max_addresses: usize,
     forks: Mutex<HashMap<u64, String>>,
     requests: AtomicUsize,
@@ -160,6 +165,8 @@ struct FakeChain {
     strip_block_hash: std::sync::atomic::AtomicBool,
     /// `eth_chainId` answers an error.
     fail_chain_id: std::sync::atomic::AtomicBool,
+    /// Refuse every call with HTTP 401/403 or answer HTTP 200 with HTML.
+    invalid_http_response: AtomicUsize,
     /// Text the failing reads echo in their error message (a gateway that
     /// repeats the request it got).
     echo: Mutex<String>,
@@ -240,12 +247,16 @@ impl FakeChain {
         max_addresses: usize,
     ) -> Arc<Self> {
         Arc::new(Self {
+            fail_receipt_batch: Default::default(),
+            receipts: Mutex::default(),
+            creators_at_hash: Mutex::default(),
             head: Mutex::new(head),
             finalized_lag: std::sync::atomic::AtomicU64::new(64),
             finalized_available: std::sync::atomic::AtomicBool::new(true),
             reorg_on_logs: std::sync::atomic::AtomicBool::new(false),
             logs: Mutex::new(logs.iter().map(log_json).collect()),
             max_span,
+            omit_range_hint: Default::default(),
             max_addresses,
             forks: Mutex::new(HashMap::new()),
             requests: AtomicUsize::new(0),
@@ -253,6 +264,7 @@ impl FakeChain {
             strip_timestamps: std::sync::atomic::AtomicBool::new(false),
             strip_block_hash: std::sync::atomic::AtomicBool::new(false),
             fail_chain_id: std::sync::atomic::AtomicBool::new(false),
+            invalid_http_response: AtomicUsize::new(0),
             echo: Mutex::new(String::new()),
             batches: AtomicUsize::new(0),
             drop_in_batch: Mutex::new(Vec::new()),
@@ -328,6 +340,7 @@ fn call_tag(body: &Value) -> String {
         "eth_call" => "call".into(),
         "eth_getBlockByNumber" if p[0] == "finalized" => "finalized".into(),
         "eth_getBlockByNumber" => format!("header {}", hex_u64(&p[0])),
+        "eth_getLogs" if p[0]["blockHash"].is_string() => format!("logs at {}", p[0]["blockHash"]),
         "eth_getLogs" => {
             let f = &p[0];
             let addresses = match &f["address"] {
@@ -351,6 +364,13 @@ async fn rpc(
     axum::Json(body): axum::Json<Value>,
 ) -> axum::response::Response {
     chain.requests.fetch_add(1, Ordering::SeqCst);
+    match chain.invalid_http_response.load(Ordering::SeqCst) {
+        status @ (401 | 403) => return (StatusCode::from_u16(status as u16).unwrap(), axum::Json(json!({
+            "jsonrpc":"2.0", "id":body["id"], "error":{"code":-32000,"message":"authentication failed"}
+        }))).into_response(),
+        200 => return axum::response::Html("<html>gateway response</html>").into_response(),
+        _ => {}
+    }
     if headers.contains_key("x-api-key") {
         chain.api_keys.fetch_add(1, Ordering::SeqCst);
     }
@@ -395,6 +415,22 @@ async fn rpc(
             return axum::Json(json!({ "jsonrpc": "2.0", "id": body["id"], "error": { "code": -32000, "message": "header unavailable" } })).into_response();
         }
     }
+    if chain.fail_receipt_batch.load(Ordering::SeqCst)
+        && body.as_array().is_some_and(|req| {
+            req.iter()
+                .any(|r| r["method"] == "eth_getTransactionReceipt")
+        })
+    {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
+    if chain.fail_receipt_batch.load(Ordering::SeqCst)
+        && body["method"] == "eth_getTransactionReceipt"
+        && body["params"][0]
+            .as_str()
+            .is_some_and(|h| !chain.receipts.lock().contains_key(h))
+    {
+        return StatusCode::BAD_GATEWAY.into_response();
+    }
     match body {
         Value::Array(calls) => {
             chain.batches.fetch_add(1, Ordering::SeqCst);
@@ -403,10 +439,11 @@ async fn rpc(
             let answers: Vec<Value> = calls
                 .iter()
                 .filter(|c| {
-                    !chain
-                        .drop_in_batch
-                        .lock()
-                        .contains(&hex_u64(&c["params"][0]))
+                    c["method"] != "eth_getBlockByNumber"
+                        || !chain
+                            .drop_in_batch
+                            .lock()
+                            .contains(&hex_u64(&c["params"][0]))
                 })
                 .map(|c| answer(&chain, c))
                 .collect();
@@ -430,6 +467,14 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
     let reply = |result: Value| json!({ "jsonrpc": "2.0", "id": id, "result": result });
     let refuse = |message: String| json!({ "jsonrpc": "2.0", "id": body["id"], "error": { "code": -32602, "message": message } });
     match body["method"].as_str() {
+        Some("eth_getTransactionReceipt") => reply(
+            chain
+                .receipts
+                .lock()
+                .get(body["params"][0].as_str().unwrap())
+                .cloned()
+                .unwrap_or(Value::Null),
+        ),
         Some("eth_blockNumber") => {
             if chain.head_reads_left.fetch_sub(1, Ordering::SeqCst) <= 0 {
                 return refuse("the head is unavailable".into());
@@ -446,6 +491,24 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
         // `royaltiesCutPerMillion()` of any venue: the pinned 2.5 %.
         Some("eth_call") if body["params"][0]["data"] == sales_index::ROYALTIES_CUT_SELECTOR => {
             reply(json!(format!("0x{:064x}", 25_000)))
+        }
+        Some("eth_call")
+            if body["params"][0]["data"]
+                == format!(
+                    "0x{}",
+                    hex::encode(&alloy_primitives::keccak256("creator()")[..4])
+                )
+                && body["params"][1]["requireCanonical"] == true =>
+        {
+            let call = &body["params"];
+            let key = (
+                call[0]["to"].as_str().unwrap_or_default().to_owned(),
+                call[1]["blockHash"].as_str().unwrap_or_default().to_owned(),
+            );
+            match chain.creators_at_hash.lock().get(&key) {
+                Some(address) => reply(json!(topic_addr(address))),
+                None => refuse("unknown collection at block hash".into()),
+            }
         }
         Some("eth_getBlockByNumber") => {
             let n = if body["params"][0] == "finalized" {
@@ -497,7 +560,18 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
         Some("eth_getLogs") => {
             chain.get_logs.fetch_add(1, Ordering::SeqCst);
             let f = &body["params"][0];
-            let (from, to) = (hex_u64(&f["fromBlock"]), hex_u64(&f["toBlock"]));
+            let (from, to) = if let Some(hash) = f["blockHash"].as_str() {
+                let Some(block) = hash.get(50..).and_then(|s| u64::from_str_radix(s, 16).ok())
+                else {
+                    return refuse("invalid block hash".into());
+                };
+                if chain.hash_of(block) != hash {
+                    return refuse("unknown block hash".into());
+                }
+                (block, block)
+            } else {
+                (hex_u64(&f["fromBlock"]), hex_u64(&f["toBlock"]))
+            };
             if chain.reorg_on_logs.swap(false, Ordering::SeqCst) {
                 chain
                     .forks
@@ -505,6 +579,9 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
                     .insert(to, format!("0x{}", "ee".repeat(32)));
             }
             if to - from + 1 > chain.max_span {
+                if chain.omit_range_hint.load(Ordering::SeqCst) {
+                    return refuse("range too wide".into());
+                }
                 return refuse(format!(
                     "range {} exceeds limit of {}",
                     to - from + 1,
@@ -1084,6 +1161,21 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
 
     // The routes over the published index.
     let app = super::market_router(st.clone());
+    // The walk can be ahead of the published verdict. Its last execution is
+    // visible only through the published height in the route's snapshot.
+    let sold_block: i64 = sqlx::query_scalar(
+        "SELECT min(block_number) FROM shop.trade_event WHERE hashed_signature = $1",
+    )
+    .bind(&sold.1)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=$1 WHERE indexer='trade_events' AND network='matic'")
+        .bind(sold_block - 1).execute(&db.pool).await.unwrap();
+    let (code, body) = get_json(&app, &format!("/v1/trades/{}/accept", sold.1)).await;
+    assert_eq!(code, StatusCode::NOT_FOUND, "{body}");
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=last_block-1 WHERE indexer='trade_events' AND network='matic'")
+        .execute(&db.pool).await.unwrap();
     let (code, body) = get_json(
         &app,
         &format!("/v1/trades/{}/accept?timestamp=1234&caller={BOB}", sold.1),
@@ -1139,7 +1231,9 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
         "{bids:?}"
     );
 
-    // A stale publish is not trusted: the verdicts fall back to open.
+    // A stale publish is not trusted, and the listings fail closed: no
+    // trade of the network is listed, the sold one never again as open,
+    // and no bid of it is reported.
     sqlx::query("UPDATE shop.chain_cursor SET folded_at = folded_at - interval '31 minutes' WHERE indexer = 'trade_events'").execute(&db.pool).await.unwrap();
     let open_ids: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "WITH {} SELECT id::text FROM unified_trades",
@@ -1151,9 +1245,17 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
     .await
     .unwrap();
     assert!(
-        open_ids.contains(&sold.0) && open_ids.contains(&index_moved.0),
-        "an unpublished verdict is ignored: {open_ids:?}"
+        open_ids.is_empty(),
+        "a stale index lists nothing of its network: {open_ids:?}"
     );
+    let bids: Vec<(String, String)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(super::bids::test_trades_bids_sql()))
+            .bind(chrono::Utc::now().naive_utc())
+            .bind(None::<chrono::NaiveDateTime>)
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert!(bids.is_empty(), "{bids:?}");
     db.drop().await;
 }
 
@@ -1244,6 +1346,479 @@ async fn a_v3_cancellation_names_the_digest_the_fold_recomputes_from_the_stored_
         (Some(digest.clone()), "cancelled".to_string()),
         "the rebuild matches a clean walk"
     );
+    db.drop().await;
+}
+
+/// A V3 trade on `net`'s mainnet signed by the test wallet (`salt` makes it
+/// distinct), stored as `POST /v1/trades` stores it: with its digest.
+async fn stored_v3_trade(pool: &PgPool, net: ChainNet, salt: &str) -> (String, String) {
+    let chain_id = net.chain_id();
+    let v3 = listings::offchain_marketplace_v3(chain_id).unwrap();
+    let wallet = listings::test_support::signer().address().to_checksum(None);
+    let mut trade = listings::test_support::parse(&listings::test_support::trade_json_on(
+        &wallet, "0x00", chain_id,
+    ));
+    trade.checks.salt = salt.to_string();
+    trade.network = net.db_name().to_ascii_uppercase();
+    listings::test_support::sign(&mut trade, &v3);
+    let digest = format!("{:#x}", listings::signing_hash(&trade, &v3).unwrap());
+    let network = trade.network.clone();
+    let id = match listings::insert_trade(pool, &trade, &network, v3.address).await {
+        Ok(id) => id,
+        Err(e) => panic!("the fixture trade is stored: {e}"),
+    };
+    (id, digest)
+}
+
+async fn chain_state(pool: &PgPool, id: &str) -> (Option<String>, String, bool) {
+    sqlx::query_as(
+        "SELECT digest, status, digest_failed_at IS NOT NULL FROM shop.trade_chain_state WHERE trade_id = $1::uuid",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+async fn listed_ids(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "WITH {} SELECT id::text FROM unified_trades",
+        super::catalog::unified_trades_cte("$1", "$2")
+    )))
+    .bind(chrono::Utc::now().naive_utc())
+    .bind(None::<chrono::NaiveDateTime>)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// On both walks, a V3 cancellation applies on the digest the trade stored
+/// at creation even when the row can no longer be rebuilt into the signed
+/// struct; a stored digest the signature does not recover the signer over
+/// is not used (the rebuild is); a V3 trade with no verified digest is
+/// marked, left out of the listings and read `unverifiable` by the MANA
+/// facts; and a row the fold already holds without a digest (an older
+/// failure, or one from before failures were marked) gets its digest on a
+/// later fold, past the backoff, with the cancellation already in the log
+/// applied, without a rebuild.
+#[tokio::test]
+async fn a_v3_cancellation_applies_on_the_stored_digest_and_a_trade_without_one_is_not_listed() {
+    for net in [ChainNet::Matic, ChainNet::Ethereum] {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain_id = net.chain_id();
+        let v3 = listings::offchain_marketplace_v3(chain_id).unwrap();
+        let v3_block = trade_events::deployments(chain_id)
+            .iter()
+            .find(|(_, _, v3)| *v3)
+            .unwrap()
+            .1;
+        let signer = listings::test_support::signer()
+            .address()
+            .to_string()
+            .to_ascii_lowercase();
+        // kept: its checks no longer parse, its stored digest keys the cancellation.
+        let kept = stored_v3_trade(&db.pool, net, "0x1235").await;
+        // bogus: a stored digest the signature does not recover over; the row rebuilds.
+        let bogus = stored_v3_trade(&db.pool, net, "0x1236").await;
+        // late: no stored digest and a row that does not rebuild, until an import brings it.
+        let late = stored_v3_trade(&db.pool, net, "0x1237").await;
+        // open: nothing closes it.
+        let open = stored_v3_trade(&db.pool, net, "0x1238").await;
+        sqlx::query("UPDATE shop.trades SET checks = '{}'::jsonb WHERE id = ANY($1::uuid[])")
+            .bind(vec![kept.0.clone(), late.0.clone()])
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE shop.trades SET trade_digest = NULL WHERE id = $1::uuid")
+            .bind(&late.0)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE shop.trades SET trade_digest = $2 WHERE id = $1::uuid")
+            .bind(&bogus.0)
+            .bind(format!("0x{}", "11".repeat(32)))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let head = v3_block + 200;
+        let chain = FakeChain::new(
+            head,
+            vec![
+                cancelled(v3_block + 10, v3.address, &signer, &kept.1),
+                cancelled(v3_block + 11, v3.address, &signer, &bogus.1),
+                cancelled(v3_block + 12, v3.address, &signer, &late.1),
+            ],
+            1_000_000_000,
+            10,
+        );
+        chain.chain_id.store(chain_id as u64, Ordering::SeqCst);
+        let url = serve(chain).await;
+        let st = state_over(
+            db.pool.clone(),
+            &url,
+            IndexSettings {
+                window_blocks: 20_000_000,
+                requests_per_pass: 50,
+                ..index_settings(50, 20_000_000)
+            },
+            true,
+        );
+        let ix = TradeEventsIndex::mainnet(net);
+        let mut last = PassOutcome::default();
+        for _ in 0..10 {
+            last = pass(&st, &url, &ix).await;
+            if last.published {
+                break;
+            }
+        }
+        assert!(last.published, "{net:?}: {last:?}");
+        assert_eq!(
+            chain_state(&db.pool, &kept.0).await,
+            (Some(kept.1.clone()), "cancelled".to_string(), false),
+            "{net:?}: the stored digest keys the cancellation"
+        );
+        assert_eq!(
+            chain_state(&db.pool, &bogus.0).await,
+            (Some(bogus.1.clone()), "cancelled".to_string(), false),
+            "{net:?}: the rebuilt digest, not the one that does not recover the signer"
+        );
+        assert_eq!(
+            chain_state(&db.pool, &late.0).await,
+            (None, "open".to_string(), true),
+            "{net:?}: no verified digest: marked"
+        );
+        assert_eq!(
+            listed_ids(&db.pool).await,
+            vec![open.0.clone()],
+            "{net:?}: neither the cancelled trades nor the unverifiable one is listed"
+        );
+        let verdict = crate::mana::facts::trade_verdict(&db.pool, net, chain_id, &late.0)
+            .await
+            .unwrap();
+        assert_eq!(
+            verdict,
+            (Some(("unverifiable".to_string(), 0)), true),
+            "{net:?}"
+        );
+
+        // The import brings the late trade's digest; within the backoff the
+        // fold does not try again, past it the digest is verified and the
+        // cancellation already in the log applies.
+        sqlx::query("UPDATE shop.trades SET trade_digest = $2 WHERE id = $1::uuid")
+            .bind(&late.0)
+            .bind(&late.1)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let owner = chain_walk::test_owner(&db.pool, &ix, &st.settings.market.indexes).await;
+        trade_events::fold(
+            &db.pool,
+            net,
+            chain_id,
+            Some(head as i64),
+            head as i64,
+            &owner,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            chain_state(&db.pool, &late.0).await,
+            (None, "open".to_string(), true),
+            "{net:?}: within the backoff"
+        );
+        sqlx::query("UPDATE shop.trade_chain_state SET digest_failed_at = digest_failed_at - interval '11 minutes' WHERE trade_id = $1::uuid")
+            .bind(&late.0)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        trade_events::fold(
+            &db.pool,
+            net,
+            chain_id,
+            Some(head as i64),
+            head as i64,
+            &owner,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            chain_state(&db.pool, &late.0).await,
+            (Some(late.1.clone()), "cancelled".to_string(), false),
+            "{net:?}: past the backoff"
+        );
+
+        // A row held without a digest and never marked (as an older binary
+        // left it) is settled on the next fold.
+        sqlx::query("UPDATE shop.trade_chain_state SET digest = NULL, status = 'open', digest_failed_at = NULL WHERE trade_id = $1::uuid")
+            .bind(&kept.0)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        trade_events::fold(
+            &db.pool,
+            net,
+            chain_id,
+            Some(head as i64),
+            head as i64,
+            &owner,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            chain_state(&db.pool, &kept.0).await,
+            (Some(kept.1.clone()), "cancelled".to_string(), false),
+            "{net:?}: an unmarked row without a digest is retried at once"
+        );
+        db.drop().await;
+    }
+}
+
+/// `POST /v1/trades` stores a V3 trade's cancellation digest, the hash the
+/// signature verified over; a V2 trade, which cancels by signature, none.
+#[tokio::test]
+async fn a_stored_trade_keeps_its_v3_digest_and_a_v2_one_none() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let (v3_id, digest) = stored_v3_trade(&db.pool, ChainNet::Matic, "0x1240").await;
+    let v2 = listings::offchain_marketplace_v2(137).unwrap();
+    let v2_trade = listings::test_support::signed_trade_on(137, &v2);
+    let v2_id = listings::insert_trade(&db.pool, &v2_trade, "MATIC", v2.address)
+        .await
+        .unwrap_or_else(|e| panic!("stored: {e}"));
+    let stored = |id: String| {
+        let pool = db.pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT trade_digest FROM shop.trades WHERE id = $1::uuid",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(stored(v3_id).await, Some(digest));
+    assert_eq!(stored(v2_id).await, None);
+    db.drop().await;
+}
+
+/// The `trades::ready` envelope as `(status, source, message)`.
+async fn listing_gate(st: &MarketplaceState) -> (StatusCode, Option<String>, String) {
+    match super::trades::ready(st).await {
+        Ok(_) => (StatusCode::OK, None, String::new()),
+        Err(response) => {
+            let status = response.status();
+            let body: Value = serde_json::from_slice(
+                &axum::body::to_bytes(response.into_body(), 1 << 16)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap_or(Value::Null);
+            (
+                status,
+                body["source"].as_str().map(str::to_string),
+                body["message"].as_str().unwrap_or_default().to_string(),
+            )
+        }
+    }
+}
+
+/// The routes that list, price or report the status of trades fail closed
+/// until the trade-events index is current on both networks: their gate
+/// (`trades::ready`) answers the envelope naming the index and the networks
+/// behind, and the open-listing read drops a network's trades as soon as
+/// its cursor falls behind, in the same statement. The stored records of
+/// `/v1/trades`, which carry no status, are served on the mirror's pass
+/// alone, whatever the cursors say.
+#[tokio::test]
+async fn the_listing_routes_fail_closed_until_the_trade_events_index_is_current_on_both_networks() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let st = state_over(
+        db.pool.clone(),
+        "http://127.0.0.1:9/",
+        index_settings(1, 1),
+        true,
+    );
+    let app = super::market_router(st.clone());
+    let (id, _) = seed_trade(
+        &db.pool,
+        "public_nft_order",
+        ALICE,
+        "0x00000000000000000000000000000000000000aa",
+        1,
+        0,
+        (3, "0x00000000000000000000000000000000000000c1", "1"),
+        (1, ZERO, "1"),
+    )
+    .await;
+    let records_served = || async {
+        for path in ["/v1/trades?first=1".to_string(), format!("/v1/trades/{id}")] {
+            let (code, body) = get_json(&app, &path).await;
+            assert_eq!(code, StatusCode::OK, "{path}: {body}");
+        }
+    };
+    let (code, source, message) = listing_gate(&st).await;
+    assert_eq!(
+        (code, source.as_deref()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("trade-events-index")),
+        "{message}"
+    );
+    assert!(message.contains("ethereum and matic"), "{message}");
+    assert!(
+        listed_ids(&db.pool).await.is_empty(),
+        "no cursor, no listing"
+    );
+    records_served().await;
+
+    // Polygon current, Ethereum not: still refused, naming Ethereum.
+    sqlx::query("INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) VALUES ('trade_events', 'matic', 0, 10, 10, 10, timezone('UTC', now()), true, 137)")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (code, _, message) = listing_gate(&st).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{message}");
+    assert!(message.contains("fold on ethereum within"), "{message}");
+    assert_eq!(
+        listed_ids(&db.pool).await,
+        vec![id.clone()],
+        "the read itself asks only the trade's network"
+    );
+
+    trade_events::tests::publish_cursors(&db.pool).await;
+    assert_eq!(listing_gate(&st).await.0, StatusCode::OK);
+
+    // A pass in progress (its windows advanced `last_block`, its fold has not
+    // published yet) keeps the previous publish: the routes serve, the trade
+    // stays listed, and a sold one stays closed.
+    let (sold, _) = seed_trade(
+        &db.pool,
+        "public_nft_order",
+        ALICE,
+        "0x00000000000000000000000000000000000000aa",
+        1,
+        0,
+        (3, "0x00000000000000000000000000000000000000c1", "2"),
+        (1, ZERO, "1"),
+    )
+    .await;
+    sqlx::query("INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1::uuid, 'matic', 1, 'sold', 10)")
+        .bind(&sold)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = last_block + 500 WHERE indexer = 'trade_events'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(listing_gate(&st).await.0, StatusCode::OK, "mid-pass");
+    assert_eq!(listed_ids(&db.pool).await, vec![id.clone()], "mid-pass");
+
+    // The walker's clock a few minutes ahead of the reader's still counts;
+    // past the skew allowance it does not.
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) + interval '5 minutes' WHERE indexer = 'trade_events'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(listing_gate(&st).await.0, StatusCode::OK, "within the skew");
+    assert_eq!(listed_ids(&db.pool).await, vec![id.clone()]);
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) + interval '11 minutes' WHERE indexer = 'trade_events'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        listing_gate(&st).await.0,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "past the skew"
+    );
+    assert!(listed_ids(&db.pool).await.is_empty());
+    trade_events::tests::publish_cursors(&db.pool).await;
+
+    // The publish is withdrawn after the gate (a rewind, a divergence): the
+    // statement drops the trade, and the next gate refuses; the records stay
+    // served.
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL WHERE indexer = 'trade_events' AND network = 'matic'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(listed_ids(&db.pool).await.is_empty());
+    assert_eq!(listing_gate(&st).await.0, StatusCode::SERVICE_UNAVAILABLE);
+    records_served().await;
+    db.drop().await;
+}
+
+/// `/v1/bids` reports a bid only while its network's trade-events index is
+/// current, and never a V3 bid whose cancellation digest could not be
+/// established: its cancellation would go unseen. A pass in progress keeps
+/// the previous publish: a sold bid stays `sold`, never `open`.
+#[tokio::test]
+async fn an_unverifiable_v3_bid_is_not_reported() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let mana = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
+    let item = "0x00000000000000000000000000000000000000c1";
+    let bid = |token: &'static str| {
+        let pool = db.pool.clone();
+        async move {
+            seed_trade(
+                &pool,
+                "bid",
+                ALICE,
+                "0x00000000000000000000000000000000000000aa",
+                1,
+                0,
+                (1, mana, "1000"),
+                (3, item, token),
+            )
+            .await
+            .0
+        }
+    };
+    let (kept, unverifiable, sold) = (bid("1").await, bid("2").await, bid("3").await);
+    sqlx::query("INSERT INTO shop.trade_chain_state (trade_id, network, status, folded_block, digest_failed_at) VALUES ($1::uuid, 'matic', 'open', 10, timezone('UTC', now()))")
+        .bind(&unverifiable)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO shop.trade_chain_state (trade_id, network, executions, status, folded_block) VALUES ($1::uuid, 'matic', 1, 'sold', 10)")
+        .bind(&sold)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let reported = || async {
+        let mut rows: Vec<(String, String)> = sqlx::query_as::<_, (String, String)>(
+            sqlx::AssertSqlSafe(super::bids::test_trades_bids_sql()),
+        )
+        .bind(chrono::Utc::now().naive_utc())
+        .bind(None::<chrono::NaiveDateTime>)
+        .fetch_all(&db.pool)
+        .await
+        .unwrap();
+        rows.sort();
+        rows
+    };
+    assert!(reported().await.is_empty(), "no cursor, no bid");
+    trade_events::tests::publish_cursors(&db.pool).await;
+    let mut want = vec![
+        (kept.clone(), "open".to_string()),
+        (sold.clone(), "sold".to_string()),
+    ];
+    want.sort();
+    assert_eq!(reported().await, want);
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = last_block + 500 WHERE indexer = 'trade_events'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(reported().await, want, "mid-pass");
     db.drop().await;
 }
 
@@ -1386,6 +1961,1322 @@ fn estate_document(
 }
 
 #[tokio::test]
+async fn descriptive_mirror_readers_check_the_chain_of_every_recorded_source() {
+    use super::mirrors::Mirror;
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at,chain_id)
+        VALUES ('collections','matic','amoy',now(),80002),('collections','ethereum','other',now(),1)")
+        .execute(&db.pool).await.unwrap();
+    for graph in [None, Some("amoy".to_owned())] {
+        let settings = Settings {
+            eth_network: "sepolia".into(),
+            eth_collections_subgraph_url: None,
+            matic_collections_subgraph_url: graph,
+            ..Settings::for_tests()
+        };
+        let state = MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        );
+        let read = || {
+            super::catalogue::begin(
+                &state,
+                super::catalogue::Purpose::Describe,
+                &[Mirror::Collections],
+                None,
+                super::catalogue::Access::ReadOnly,
+            )
+        };
+        let error = read().await.err().unwrap();
+        assert_eq!(error.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        sqlx::query("UPDATE shop.mirror_state SET chain_id=NULL WHERE network='ethereum'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(read().await.is_ok());
+        sqlx::query("UPDATE shop.mirror_state SET chain_id=1 WHERE network='ethereum'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+    }
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_testnet_graph_page_proves_its_block_even_when_the_page_is_empty() {
+    let chain = FakeChain::new(100, vec![], 100, 100);
+    chain.chain_id.store(80_002, Ordering::SeqCst);
+    let rpc = serve(chain.clone()).await;
+    let good = chain.hash_of(90);
+    let meta = Arc::new(Mutex::new(json!({"number":90,"hash":chain.hash_of(89)})));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let graph = format!("http://{}/", listener.local_addr().unwrap());
+    let app = Router::new().route("/", post(|State(meta): State<Arc<Mutex<Value>>>, axum::Json(body): axum::Json<Value>| async move {
+        let meta = meta.lock().clone();
+        let block = if body["variables"]["number"] == 90 || body["variables"]["block"].is_object() {
+            meta.clone()
+        } else if meta.is_null() {
+            Value::Null
+        } else {
+            json!({"number":90+ChainNet::Matic.confirmations()})
+        };
+        axum::Json(json!({"data":{"collections":[],"_meta":{"block":block}}}))
+    })).with_state(meta.clone());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut state = super::tests::support::state_without_db();
+    state.index.allow_loopback_for_tests();
+    let settings = &mut Arc::get_mut(&mut state).unwrap().settings;
+    settings.market.indexes.nft_enabled = false;
+    settings.market.indexes.chain_id_matic = ChainNet::Matic.testnet_chain_id();
+    settings.market.trade_rpc_urls = RpcEndpoints::from_env(Some(&format!("80002={rpc}")));
+    let prove = || super::mirrors::catalogue_pass_hash(&state, ChainNet::Matic, &graph);
+    assert!(
+        prove()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("differs from the configured chain")
+    );
+    *meta.lock() = Value::Null;
+    assert!(
+        prove()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no block number")
+    );
+    *meta.lock() = json!({"number":90});
+    assert!(
+        prove()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no block hash")
+    );
+    *meta.lock() = json!({"number":90,"hash":good});
+    chain.fail_chain_id.store(true, Ordering::SeqCst);
+    assert!(prove().await.is_err());
+    chain.fail_chain_id.store(false, Ordering::SeqCst);
+    let pinned = prove().await.unwrap();
+    let calls = chain.requests.load(Ordering::SeqCst);
+    for after in [None, Some("next".to_owned())] {
+        let page = super::mirrors::read_catalogue_page(
+            &state,
+            &graph,
+            "{collections{id}}",
+            after,
+            Some(pinned.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(page["collections"], json!([]));
+    }
+    assert_eq!(chain.requests.load(Ordering::SeqCst), calls);
+    for (response, reason) in [
+        (
+            json!({"number":90,"hash":"other"}),
+            "differs from the pinned block",
+        ),
+        (json!({"number":90}), "no block hash"),
+    ] {
+        *meta.lock() = response;
+        let error = super::mirrors::read_catalogue_page(
+            &state,
+            &graph,
+            "{collections{id}}",
+            None,
+            Some(pinned.clone()),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains(reason), "{error}");
+    }
+    *meta.lock() = json!({"number":90,"hash":good});
+    chain.chain_id.store(137, Ordering::SeqCst);
+    assert!(
+        prove()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("serves chain 137")
+    );
+}
+
+#[tokio::test]
+async fn a_lagging_mainnet_rpc_pins_a_matching_confirmed_block() {
+    use super::{
+        graph::Network,
+        mirrors::{self, Mirror},
+    };
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    for (net, network) in [
+        (ChainNet::Ethereum, Network::Ethereum),
+        (ChainNet::Matic, Network::Matic),
+    ] {
+        let chain = FakeChain::new(100 + net.confirmations(), vec![], 100, 100);
+        chain
+            .chain_id
+            .store(net.chain_id() as u64, Ordering::SeqCst);
+        let rpc = serve(chain.clone()).await;
+        let published_hash = Arc::new(Mutex::new(Some(chain.hash_of(99))));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let graph = format!("http://{}/", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route(
+                "/",
+                post(
+                    |State((net, hash)): State<(ChainNet, Arc<Mutex<Option<String>>>)>,
+                     axum::Json(body): axum::Json<Value>| async move {
+                        let hash = hash.lock().clone();
+                        let vars = &body["variables"];
+                        let block = if vars["number"] == 100 || vars["block"].is_object() {
+                            json!({"number":100,"hash":hash})
+                        } else {
+                            json!({"number":200+net.confirmations()})
+                        };
+                        axum::Json(json!({"data":{"collections":[],"_meta":{"block":block}}}))
+                    },
+                ),
+            )
+            .with_state((net, published_hash.clone()));
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut settings = Settings::for_tests();
+        match net {
+            ChainNet::Ethereum => {
+                settings.eth_collections_subgraph_url = Some(graph);
+                settings.eth_rpc_url = Some(rpc);
+            }
+            ChainNet::Matic => {
+                settings.matic_collections_subgraph_url = Some(graph);
+                settings.polygon_rpc_url = Some(rpc);
+            }
+        }
+        let mut state = MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        );
+        state.index.allow_loopback_for_tests();
+        let jobs = crate::jobs::Jobs::new();
+        let ctx = super::market_tests::job_ctx(&jobs).await;
+        let err = mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("differs from the configured chain"));
+        assert_eq!(*chain.calls.lock(), ["chain id", "head", "header 100"]);
+        assert!(!nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+        let hash = chain.hash_of(100);
+        *published_hash.lock() = Some(hash.clone());
+        mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap();
+        let copy = mirrors::load(&db.pool, Mirror::Collections, network)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(copy.pass_block_hash.as_deref(), Some(hash.as_str()));
+        assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+
+        // Starting a replacement pass during an RPC failure keeps the last
+        // completed publication and retries the proof on the next tick.
+        chain.fail_headers.store(true, Ordering::SeqCst);
+        let err = mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("RPC unavailable"));
+        let pending = mirrors::load(&db.pool, Mirror::Collections, network)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(pending.pass_block_hash.is_none());
+        assert_eq!(pending.last_complete_pass_at, copy.last_complete_pass_at);
+        assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+        chain.fail_headers.store(false, Ordering::SeqCst);
+        mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap();
+        let copy = mirrors::load(&db.pool, Mirror::Collections, network)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(copy.pass_block_hash.as_deref(), Some(hash.as_str()));
+        assert!(!copy.in_progress());
+
+        // The next pass had been paged at that hash. Losing its proof clears
+        // its keyset, and leaves the prior completed copy available.
+        sqlx::query("UPDATE shop.mirror_state SET pass_started_at=last_complete_pass_at+interval '1 second',
+                    cursor_id='next-page' WHERE network=$1 AND mirror='collections'")
+            .bind(net.db_name()).execute(&db.pool).await.unwrap();
+        *published_hash.lock() = None;
+        let err = mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("no block hash"));
+        let failed = mirrors::load(&db.pool, Mirror::Collections, network)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(failed.pass_block_hash.is_none() && failed.cursor_id.is_none());
+        assert_eq!(failed.last_complete_pass_at, copy.last_complete_pass_at);
+
+        *published_hash.lock() = Some(hash);
+        mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap();
+        state.settings.eth_rpc_url = None;
+        state.settings.polygon_rpc_url = None;
+        mirrors::run_tick(&state, Mirror::Collections, &ctx)
+            .await
+            .unwrap();
+        let graph_only = mirrors::load(&db.pool, Mirror::Collections, network)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(graph_only.pass_block_hash.is_none());
+        assert!(!graph_only.in_progress());
+        assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+    }
+    db.drop().await;
+}
+
+async fn serve_split_collections_graph(hash: String) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let graph = format!("http://{}/", listener.local_addr().unwrap());
+    let app = Router::new()
+        .route(
+            "/",
+            post(
+                |State(hash): State<String>, axum::Json(body): axum::Json<Value>| async move {
+                    let vars = &body["variables"];
+                    let doc = body["query"].as_str().unwrap();
+                    let data = if vars.get("idFrom").is_some() {
+                        if vars["block"]["hash"] == "orphan" {
+                            return axum::Json(json!({"data":{"collections":[],"_meta":{"block":null}}}));
+                        }
+                        if vars["block"]["hash"] != hash {
+                            return axum::Json(json!({"errors":[{"message":"could not resolve the requested page"}]}));
+                        }
+                        assert!(doc.contains("collections(block: $block"));
+                        let rows = if vars["idFrom"] == "" {
+                            (1..=super::mirrors::PAGE_SIZE)
+                                .map(|i| json!({"id":format!("0x{i:040x}")}))
+                                .collect::<Vec<_>>()
+                        } else {
+                            Vec::new()
+                        };
+                        json!({"_meta":{"block":{"hash":hash}},"collections":rows})
+                    } else if vars["number"] == 100 {
+                        json!({"_meta":{"block":{"number":100,"hash":hash}}})
+                    } else {
+                        json!({"_meta":{"block":{"number":100+ChainNet::Matic.confirmations()}}})
+                    };
+                    axum::Json(json!({"data":data}))
+                },
+            ),
+        )
+        .with_state(hash);
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    graph
+}
+
+#[tokio::test]
+async fn a_mainnet_mirror_keeps_serving_and_finishes_a_pinned_pass_during_an_rpc_failure() {
+    use super::{
+        graph::Network,
+        mirrors::{self, Mirror},
+    };
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Matic;
+    let chain = FakeChain::new(200, vec![], 100, 100);
+    let hash = chain.hash_of(100);
+    let mut config = Settings::for_tests();
+    config.matic_collections_subgraph_url = Some(serve_split_collections_graph(hash.clone()).await);
+    config.polygon_rpc_url = Some(serve(chain.clone()).await);
+    config.market.mirror_pages_per_tick = 2;
+    let mut state =
+        MarketplaceState::new(db.pool.clone(), crate::http::Outbound::for_tests(), config);
+    state.index.allow_loopback_for_tests();
+    let jobs = crate::jobs::Jobs::new();
+    let ctx = super::market_tests::job_ctx(&jobs).await;
+    let read = || mirrors::load(&db.pool, Mirror::Collections, Network::Matic);
+
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let completed = read().await.unwrap().unwrap();
+    assert!(!completed.in_progress());
+
+    state.settings.market.mirror_pages_per_tick = 1;
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let first_page = read().await.unwrap().unwrap();
+    assert!(first_page.in_progress() && first_page.cursor_id.is_some());
+    assert_eq!(first_page.pass_block_hash.as_deref(), Some(hash.as_str()));
+    assert_eq!(
+        first_page.last_complete_pass_at,
+        completed.last_complete_pass_at
+    );
+
+    chain.fail_chain_id.store(true, Ordering::SeqCst);
+    chain.fail_headers.store(true, Ordering::SeqCst);
+    chain.head_reads_left.store(0, Ordering::SeqCst);
+    let calls = chain.requests.load(Ordering::SeqCst);
+    assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    assert_eq!(chain.requests.load(Ordering::SeqCst), calls);
+    let resumed = read().await.unwrap().unwrap();
+    assert_eq!(resumed.pass_started_at, first_page.pass_started_at);
+    assert_eq!(resumed.pass_block_hash, first_page.pass_block_hash);
+    assert!(!resumed.in_progress());
+    assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+
+    chain.fail_chain_id.store(false, Ordering::SeqCst);
+    chain.fail_headers.store(false, Ordering::SeqCst);
+    chain.head_reads_left.store(1, Ordering::SeqCst);
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let first_page = read().await.unwrap().unwrap();
+    assert!(first_page.in_progress());
+    state.settings.polygon_rpc_url = None;
+    let calls = chain.requests.load(Ordering::SeqCst);
+    mirrors::run_tick(&state, Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let resumed = read().await.unwrap().unwrap();
+    assert_eq!(chain.requests.load(Ordering::SeqCst), calls);
+    assert_eq!(resumed.pass_started_at, first_page.pass_started_at);
+    assert_eq!(resumed.pass_block_hash, first_page.pass_block_hash);
+    assert!(!resumed.in_progress());
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage() {
+    use super::{
+        graph::Network,
+        mirrors::{self, Mirror},
+    };
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let chain = FakeChain::new(200, vec![], 100, 100);
+    let hash = chain.hash_of(100);
+    let price = Arc::new(AtomicUsize::new(100));
+    let graph_failure = Arc::new(AtomicUsize::new(0));
+    #[derive(Clone)]
+    struct GraphFixture {
+        hash: String,
+        price: Arc<AtomicUsize>,
+        graph_failure: Arc<AtomicUsize>,
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let graph = format!("http://{}/", listener.local_addr().unwrap());
+    let app = Router::new().route("/", post(
+        |State(graph): State<GraphFixture>, axum::Json(body): axum::Json<Value>| async move {
+            let vars = &body["variables"];
+            let failure = graph.graph_failure.load(Ordering::SeqCst);
+            if failure == 502 {
+                return StatusCode::BAD_GATEWAY.into_response();
+            }
+            let block = if failure == 1 {
+                Value::Null
+            } else if vars["number"] == 100 || vars["block"].is_object() {
+                json!({"number":100,"hash":graph.hash})
+            } else {
+                json!({"number":100+ChainNet::Matic.confirmations()})
+            };
+            let items = if vars["idFrom"] == "" {
+                (1..=mirrors::PAGE_SIZE).map(|id| json!({
+                    "id":format!("item-{id:04}"), "blockchainId":id.to_string(), "itemType":"wearable_v2",
+                    "collection":{"id":format!("0x{:040x}", 1)},
+                    "price":graph.price.load(Ordering::SeqCst).to_string(),
+                })).collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            axum::Json(json!({"data":{"items":items,"_meta":{"block":block}}})).into_response()
+        }
+    )).with_state(GraphFixture { hash, price: price.clone(), graph_failure: graph_failure.clone() });
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut config = Settings::for_tests();
+    config.matic_collections_subgraph_url = Some(graph);
+    config.polygon_rpc_url = Some(serve(chain.clone()).await);
+    config.market.mirror_pages_per_tick = 1;
+    let state = MarketplaceState::new(db.pool.clone(), crate::http::Outbound::for_tests(), config);
+    state.index.allow_loopback_for_tests();
+    let jobs = crate::jobs::Jobs::new();
+    let ctx = super::market_tests::job_ctx(&jobs).await;
+    let tick = || mirrors::run_tick(&state, Mirror::Items, &ctx);
+    let read = || mirrors::load(&db.pool, Mirror::Items, Network::Matic);
+    let stored_price = || {
+        sqlx::query_scalar::<_, String>(
+            "SELECT price::text FROM shop.items WHERE network='matic' AND item_id=1",
+        )
+        .fetch_one(&db.pool)
+    };
+    let recorder = dcl_metrics::Registry::new(&[mirrors::FAMILIES])
+        .unwrap()
+        .builder(dcl_metrics::PrometheusBuilder::new())
+        .unwrap()
+        .build_recorder();
+    let metric_handle = recorder.handle();
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+
+    let age_proof = || {
+        sqlx::query(
+            "UPDATE shop.mirror_state SET
+        pass_started_at=timezone('UTC',now())-interval '11 minutes',
+        last_complete_pass_at=timezone('UTC',now())-interval '29 minutes'
+        WHERE mirror='items' AND network='matic'",
+        )
+        .execute(&db.pool)
+    };
+    tick().await.unwrap();
+    tick().await.unwrap();
+    assert_eq!(stored_price().await.unwrap(), "100");
+
+    // An older graph failure does not count toward the RPC-only window.
+    price.store(200, Ordering::SeqCst);
+    graph_failure.store(1, Ordering::SeqCst);
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no block number")
+    );
+    age_proof().await.unwrap();
+    let earlier = read().await.unwrap().unwrap();
+    graph_failure.store(0, Ordering::SeqCst);
+    chain.invalid_http_response.store(401, Ordering::SeqCst);
+    assert!(tick().await.unwrap_err().to_string().contains("status 401"));
+    let pending = read().await.unwrap().unwrap();
+    assert!(pending.pass_started_at > earlier.pass_started_at);
+    chain.invalid_http_response.store(403, Ordering::SeqCst);
+    assert!(tick().await.unwrap_err().to_string().contains("status 403"));
+    let retried = read().await.unwrap().unwrap();
+    assert_eq!(retried.pass_started_at, pending.pass_started_at);
+    assert_eq!(retried.last_complete_pass_at, earlier.last_complete_pass_at);
+    assert_eq!(stored_price().await.unwrap(), "100");
+    // The catalogue gate still prices from the last complete pass.
+    assert!(
+        super::catalogue::begin(
+            &state,
+            super::catalogue::Purpose::Priced,
+            &[Mirror::Items],
+            None,
+            super::catalogue::Access::ReadOnly,
+        )
+        .await
+        .is_ok()
+    );
+
+    // Advance the persisted RPC outage clock without a wall-clock wait.
+    age_proof().await.unwrap();
+    let aged = read().await.unwrap().unwrap();
+    graph_failure.store(502, Ordering::SeqCst);
+    assert!(tick().await.is_err());
+    let after_graph_error = read().await.unwrap().unwrap();
+    assert_eq!(after_graph_error.pass_started_at, aged.pass_started_at);
+    assert_eq!(after_graph_error.last_error, aged.last_error);
+    graph_failure.store(0, Ordering::SeqCst);
+    tick().await.unwrap();
+    let partial = read().await.unwrap().unwrap();
+    assert!(partial.in_progress() && partial.pass_block_hash.is_none());
+    let calls = chain.requests.load(Ordering::SeqCst);
+    tick().await.unwrap();
+    assert_eq!(chain.requests.load(Ordering::SeqCst), calls);
+    let fallback = read().await.unwrap().unwrap();
+    assert!(!fallback.in_progress() && fallback.pass_block_hash.is_none());
+    assert_eq!(stored_price().await.unwrap(), "200");
+    assert!(
+        mirrors::price_verdict(
+            fallback.last_complete_pass_at.unwrap(),
+            chrono::Utc::now(),
+            mirrors::price_max_age(&state.settings)
+        )
+        .is_ok()
+    );
+    assert!(metric_handle.render().lines().any(|line| {
+        line.starts_with("catalyst_catalogue_mirror_proof_outcomes_total{")
+            && line.contains("outcome=\"rpc_auth_failed\"")
+            && line.ends_with(" 3")
+    }));
+
+    price.store(300, Ordering::SeqCst);
+    chain.invalid_http_response.store(200, Ordering::SeqCst);
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("RPC unavailable")
+    );
+    assert_eq!(stored_price().await.unwrap(), "200");
+    age_proof().await.unwrap();
+    tick().await.unwrap();
+    tick().await.unwrap();
+    assert_eq!(stored_price().await.unwrap(), "300");
+
+    price.store(400, Ordering::SeqCst);
+    chain.invalid_http_response.store(0, Ordering::SeqCst);
+    chain.chain_id.store(80_002, Ordering::SeqCst);
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("serves chain 80002")
+    );
+    age_proof().await.unwrap();
+    let rejected = read().await.unwrap().unwrap();
+    assert!(
+        tick()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("serves chain 80002")
+    );
+    chain.fail_chain_id.store(true, Ordering::SeqCst);
+    assert!(tick().await.is_err());
+    assert_eq!(
+        read().await.unwrap().unwrap().last_complete_pass_at,
+        rejected.last_complete_pass_at
+    );
+    assert_eq!(stored_price().await.unwrap(), "300");
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_split_mirror_resumes_the_pinned_graph_block_without_another_rpc_read() {
+    use super::{
+        graph::Network,
+        mirrors::{self, Mirror},
+    };
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Matic;
+    let chain = FakeChain::new(200, vec![], 100, 100);
+    chain
+        .chain_id
+        .store(net.testnet_chain_id() as u64, Ordering::SeqCst);
+    let rpc = serve(chain.clone()).await;
+    let hash = chain.hash_of(100);
+    let graph = serve_split_collections_graph(hash.clone()).await;
+    let state = || {
+        let mut config = Settings::for_tests();
+        config.matic_collections_subgraph_url = Some(graph.clone());
+        config.eth_collections_subgraph_url = None;
+        config.market.indexes.nft_enabled = false;
+        config.market.indexes.chain_id_matic = net.testnet_chain_id();
+        config.market.mirror_pages_per_tick = 1;
+        config.market.trade_rpc_urls = RpcEndpoints::from_env(Some(&format!("80002={rpc}")));
+        let state =
+            MarketplaceState::new(db.pool.clone(), crate::http::Outbound::for_tests(), config);
+        state.index.allow_loopback_for_tests();
+        state
+    };
+    sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at,pass_started_at,cursor_id,last_complete_pass_rows)
+       VALUES ('collections','matic',$1,timezone('UTC',now())-interval '1 day',timezone('UTC',now())-interval '1 hour','old-source-key',13)")
+        .bind(&graph).execute(&db.pool).await.unwrap();
+    let jobs = crate::jobs::Jobs::new();
+    let ctx = super::market_tests::job_ctx(&jobs).await;
+    mirrors::run_tick(&state(), Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let first = mirrors::load(&db.pool, Mirror::Collections, Network::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(first.in_progress());
+    assert!(first.last_complete_pass_at.is_some());
+    assert_eq!(first.last_complete_pass_rows, Some(13));
+    assert_eq!(first.pass_block_hash.as_deref(), Some(hash.as_str()));
+    assert_eq!(first.chain_id, None);
+    assert!(!nft_index::mirror_complete(&db.pool, net, net.testnet_chain_id()).await);
+    let calls = chain.requests.load(Ordering::SeqCst);
+    assert_eq!(calls, 2);
+    chain.fail_chain_id.store(true, Ordering::SeqCst);
+    mirrors::run_tick(&state(), Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    assert_eq!(chain.requests.load(Ordering::SeqCst), calls);
+    assert!(nft_index::mirror_complete(&db.pool, net, net.testnet_chain_id()).await);
+    let mut disconnected = state();
+    disconnected.settings.market.trade_rpc_urls = RpcEndpoints::from_env(None);
+    assert!(
+        mirrors::run_tick(&disconnected, Mirror::Collections, &ctx)
+            .await
+            .is_err()
+    );
+    assert!(nft_index::mirror_complete(&db.pool, net, net.testnet_chain_id()).await);
+    // A missing hash restarts immediately. Even an old pin survives the
+    // first opaque error after a successful page, but two failures restart it.
+    sqlx::query("UPDATE shop.mirror_state SET last_error=NULL")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    for (pin, age_hours, reset) in [
+        ("orphan", 0, true),
+        ("opaque", 2, false),
+        ("opaque", 2, true),
+    ] {
+        sqlx::query("UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())-interval '3 days',
+            pass_started_at=timezone('UTC',now())-make_interval(hours => $2), pass_block_hash=$1, cursor_id='old'")
+            .bind(pin).bind(age_hours).execute(&db.pool).await.unwrap();
+        assert!(
+            mirrors::run_tick(&state(), Mirror::Collections, &ctx)
+                .await
+                .is_err()
+        );
+        let row = mirrors::load(&db.pool, Mirror::Collections, Network::Matic)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.pass_block_hash.as_deref(), (!reset).then_some(pin));
+        assert_eq!(row.cursor_id.as_deref(), (!reset).then_some("old"));
+        assert!(row.last_complete_pass_at.is_some());
+        if pin == "orphan" {
+            // A successful read of the old pin followed by a real write
+            // failure leaves the first opaque read retry available.
+            sqlx::query("UPDATE shop.mirror_state SET pass_started_at=timezone('UTC',now())-interval '2 hours',
+                         pass_block_hash=$1, cursor_id=NULL")
+                .bind(&hash).execute(&db.pool).await.unwrap();
+            sqlx::query("ALTER TABLE shop.collections ADD CONSTRAINT reject_test_upsert CHECK (false) NOT VALID")
+                .execute(&db.pool).await.unwrap();
+            let error = mirrors::run_tick(&state(), Mirror::Collections, &ctx)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("upsert"));
+            let failed = mirrors::load(&db.pool, Mirror::Collections, Network::Matic)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(failed.last_error.unwrap().contains("reject_test_upsert"));
+            sqlx::query("ALTER TABLE shop.collections DROP CONSTRAINT reject_test_upsert")
+                .execute(&db.pool)
+                .await
+                .unwrap();
+        }
+    }
+    chain.fail_chain_id.store(false, Ordering::SeqCst);
+    mirrors::run_tick(&state(), Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let resumed = mirrors::load(&db.pool, Mirror::Collections, Network::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(resumed.pass_block_hash.as_deref(), Some(hash.as_str()));
+    // Even a hash that the graph still serves expires. The new pass fetches
+    // a confirmed block and starts at the first page again.
+    sqlx::query(
+        "UPDATE shop.mirror_state SET pass_started_at=timezone('UTC',now())-interval '2 days'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let calls = chain.requests.load(Ordering::SeqCst);
+    mirrors::run_tick(&state(), Mirror::Collections, &ctx)
+        .await
+        .unwrap();
+    let restarted = mirrors::load(&db.pool, Mirror::Collections, Network::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(chain.requests.load(Ordering::SeqCst), calls + 2);
+    assert!(restarted.in_progress());
+    assert_eq!(restarted.cursor_id, resumed.cursor_id);
+    assert_eq!(
+        restarted.last_complete_pass_at,
+        resumed.last_complete_pass_at
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn testnet_item_verification_requires_a_new_complete_pass_after_upgrade() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    const MIGRATION: &str = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0072_shop_verified_item_rows.sql"
+    ));
+    sqlx::raw_sql("ALTER TABLE shop.mirror_state DROP CONSTRAINT mirror_state_verified_item_rows;
+        INSERT INTO shop.mirror_state(mirror,network,source_url,chain_id,last_complete_pass_at,pass_block_hash,cursor_id)
+        VALUES ('items','matic','amoy',80002,now(),'old-hash','old-key'),
+               ('items','ethereum','mainnet',1,now(),NULL,'eth-key'),
+               ('collections','matic','amoy',80002,now(),'old-hash','collection-key')").execute(&db.pool).await.unwrap();
+    sqlx::raw_sql(MIGRATION).execute(&db.pool).await.unwrap();
+    use super::{
+        graph::Network,
+        mirrors::{self, Mirror},
+    };
+    for (mirror, network, expected_chain, expected_key) in [
+        (
+            Mirror::Collections,
+            Network::Matic,
+            Some(80002),
+            Some("collection-key"),
+        ),
+        (Mirror::Items, Network::Ethereum, Some(1), Some("eth-key")),
+        (Mirror::Items, Network::Matic, None, None),
+    ] {
+        let row = mirrors::load(&db.pool, mirror, network)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.chain_id, expected_chain);
+        assert_eq!(row.cursor_id.as_deref(), expected_key);
+        assert!(row.last_complete_pass_at.is_some());
+    }
+    // The old writer's conflict insert cannot mark an unverified copy ready.
+    let old = sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url,chain_id,pass_block_hash) VALUES ('items','matic','amoy',80002,'pin')
+        ON CONFLICT (mirror,network) DO UPDATE SET chain_id=EXCLUDED.chain_id, pass_block_hash=EXCLUDED.pass_block_hash").execute(&db.pool).await.unwrap_err();
+    assert_eq!(
+        old.as_database_error().unwrap().constraint(),
+        Some("mirror_state_verified_item_rows")
+    );
+    sqlx::query("UPDATE shop.mirror_state SET chain_id=80002,marks_item_rows=true,pass_block_hash='proven' WHERE mirror='items' AND network='matic'").execute(&db.pool).await.unwrap();
+    sqlx::raw_sql(MIGRATION).execute(&db.pool).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT pass_block_hash FROM shop.mirror_state WHERE mirror='items' AND network='matic'"
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap(),
+        "proven"
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn an_unbound_mirror_keyset_is_adopted_only_for_the_same_mainnet_source() {
+    use super::{
+        graph::Network,
+        mirrors::{self, Mirror},
+    };
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    sqlx::query("INSERT INTO shop.mirror_state (mirror,network,source_url,pass_started_at,cursor_id) VALUES ('items','matic','source',timezone('UTC',now()),'next')")
+        .execute(&db.pool).await.unwrap();
+    let read = |url, chain| {
+        mirrors::cursor_for(
+            &db.pool,
+            Mirror::Items,
+            Network::Matic,
+            url,
+            chain,
+            chain == Some(80002),
+        )
+    };
+    assert_eq!(
+        read("source", Some(137))
+            .await
+            .unwrap()
+            .cursor_id
+            .as_deref(),
+        Some("next")
+    );
+    assert!(
+        read("source", Some(80002))
+            .await
+            .unwrap()
+            .cursor_id
+            .is_none()
+    );
+    assert!(
+        read("different", Some(137))
+            .await
+            .unwrap()
+            .cursor_id
+            .is_none()
+    );
+    sqlx::query("UPDATE shop.mirror_state SET pass_block_hash='pinned', marks_item_rows=true")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(read("source", Some(137)).await.is_err());
+    assert_eq!(
+        read("source", Some(80002))
+            .await
+            .unwrap()
+            .cursor_id
+            .as_deref(),
+        Some("next")
+    );
+    sqlx::query("UPDATE shop.mirror_state SET chain_id=80002, marks_item_rows=true")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(read("source", Some(137)).await.is_err());
+    assert!(read("source", None).await.is_err());
+    // Once RPC proof is configured, a legacy mainnet keyset cannot be
+    // spliced onto a pinned pass.
+    sqlx::query("UPDATE shop.mirror_state SET chain_id=137,pass_block_hash=NULL")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let pinned = mirrors::cursor_for(
+        &db.pool,
+        Mirror::Items,
+        Network::Matic,
+        "source",
+        Some(137),
+        true,
+    )
+    .await
+    .unwrap();
+    assert!(pinned.cursor_id.is_none());
+    sqlx::query("UPDATE shop.mirror_state SET pass_block_hash='mainnet-pin'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let without_rpc = read("source", Some(137)).await.unwrap();
+    assert_eq!(without_rpc.pass_block_hash.as_deref(), Some("mainnet-pin"));
+    assert_eq!(without_rpc.cursor_id.as_deref(), Some("next"));
+    let pinned = mirrors::cursor_for(
+        &db.pool,
+        Mirror::Items,
+        Network::Matic,
+        "source",
+        Some(137),
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(pinned.cursor_id.as_deref(), Some("next"));
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn catalogue_startup_refuses_another_pair_and_allows_independent_rentals() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let main = IndexSettings::default();
+    let test = IndexSettings {
+        chain_id_ethereum: ChainNet::Ethereum.testnet_chain_id(),
+        chain_id_matic: ChainNet::Matic.testnet_chain_id(),
+        ..main.clone()
+    };
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,full_history)
+      VALUES ('rentals_sepolia','ethereum',11155111,1,0,true),('committee','matic',137,1,0,true),('nft','matic',137,1,0,true)")
+        .execute(&db.pool).await.unwrap();
+    assert!(
+        test.check_catalogue_db(&db.pool, true, [None, None])
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("nft/matic")
+    );
+    sqlx::query("DELETE FROM shop.chain_cursor WHERE indexer='nft'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url,chain_id) VALUES ('items','matic','test',137)").execute(&db.pool).await.unwrap();
+    assert!(
+        test.check_catalogue_db(&db.pool, true, [None, None])
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("items/matic")
+    );
+    main.check_catalogue_db(&db.pool, true, [None, None])
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM shop.mirror_state")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    test.check_catalogue_db(&db.pool, false, [None, None])
+        .await
+        .unwrap();
+    assert!(
+        test.check_catalogue_db(&db.pool, true, [None, None])
+            .await
+            .is_err()
+    );
+    sqlx::query("DELETE FROM shop.worker_progress WHERE worker='nft_catalogue_pair'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url) VALUES ('collections','matic','prior')")
+        .execute(&db.pool).await.unwrap();
+    test.check_catalogue_db(&db.pool, false, [None, Some("new")])
+        .await
+        .unwrap();
+    let marker: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM shop.worker_progress WHERE worker='nft_catalogue_pair')",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert!(!marker);
+    assert!(
+        test.check_catalogue_db(&db.pool, true, [None, Some("new")])
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("rebind")
+    );
+    test.check_catalogue_db(&db.pool, true, [None, Some("prior")])
+        .await
+        .unwrap();
+    main.check_catalogue_db(&db.pool, false, [None, None])
+        .await
+        .unwrap();
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn legacy_default_mirrors_require_an_explicit_testnet_rebind() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let test = IndexSettings {
+        chain_id_ethereum: 11_155_111,
+        chain_id_matic: 80_002,
+        ..Default::default()
+    };
+    const REBIND: &str = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/tooling/migration/rebind-legacy-catalogue-to-testnet.sql"
+    ));
+    sqlx::query("INSERT INTO shop.mirror_state(mirror,network,source_url,chain_id,last_complete_pass_at)
+        VALUES ('collections','matic','https://subgraph.decentraland.org/collections-matic-mainnet',137,now())").execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,full_history)
+        VALUES ('rentals_sepolia','ethereum',11155111,4,3,true),('nft','matic',137,1,0,true)").execute(&db.pool).await.unwrap();
+    // Use one connection so that the operator's explicit confirmation applies to the script.
+    let mut conn = db.pool.acquire().await.unwrap();
+    assert!(
+        sqlx::raw_sql(REBIND)
+            .execute(&mut *conn)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("confirm_testnet")
+    );
+    sqlx::query("SET rebind.confirm_testnet='yes'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    assert!(
+        sqlx::raw_sql(REBIND)
+            .execute(&mut *conn)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("Sepolia LAND")
+    );
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block)
+                 VALUES ('ethereum-sepolia',$1,$2,3831219)",
+    )
+    .bind(crate::land_authz::LAND_REGISTRY_SEPOLIA)
+    .bind(crate::land_authz::ESTATE_REGISTRY_SEPOLIA)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    assert!(
+        sqlx::raw_sql(REBIND)
+            .execute(&mut *conn)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("NFT history")
+    );
+    sqlx::query("DELETE FROM shop.chain_cursor WHERE indexer='nft'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    for (setup, reason) in [
+        ("INSERT INTO shop.nft_event(network,block_number,log_index,block_time,kind,emitter,contract_address,token_id)
+            VALUES ('matic',1,0,1,'transfer','asset','asset',1)", "NFT history"),
+        ("UPDATE shop.mirror_state SET source_url='custom'", "legacy mainnet default"),
+        ("UPDATE shop.mirror_state SET pass_block_hash='pin'", "legacy mainnet default"),
+        ("UPDATE shop.mirror_state SET chain_id=80002", "legacy mainnet default"),
+        ("DELETE FROM shop.mirror_state", "legacy mainnet default"),
+    ] {
+        use sqlx::Connection;
+        let mut tx = conn.begin().await.unwrap();
+        sqlx::query(setup).execute(&mut *tx).await.unwrap();
+        let err = sqlx::raw_sql(REBIND).execute(&mut *tx).await.unwrap_err();
+        assert!(err.to_string().contains(reason), "{err}");
+        tx.rollback().await.unwrap();
+    }
+    assert!(
+        test.check_catalogue_db(&db.pool, true, [None, None])
+            .await
+            .is_err()
+    );
+    sqlx::raw_sql(REBIND).execute(&mut *conn).await.unwrap();
+    test.check_catalogue_db(&db.pool, true, [None, None])
+        .await
+        .unwrap();
+    assert!(
+        sqlx::raw_sql(REBIND)
+            .execute(&mut *conn)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("pair binding")
+    );
+    drop(conn);
+    assert!(!nft_index::mirror_complete(&db.pool, ChainNet::Matic, 80_002).await);
+    assert!(
+        chain_walk::cursor(&db.pool, "rentals_sepolia", ChainNet::Ethereum)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn the_rpc_fallback_is_bound_to_the_configured_catalogue_pair() {
+    let mut state = super::tests::support::state_without_db();
+    let settings = &mut Arc::get_mut(&mut state).unwrap().settings;
+    settings.eth_network = "sepolia".into();
+    settings.market.indexes.chain_id_ethereum = 11_155_111;
+    settings.market.indexes.chain_id_matic = 80_002;
+    settings.market.trade_rpc_urls = RpcEndpoints::from_env(None);
+    settings.eth_rpc_url = Some("https://sepolia.example".into());
+    settings.polygon_rpc_url = Some("https://amoy.example".into());
+    assert_eq!(
+        state.catalogue_rpc_url(ChainNet::Ethereum).as_deref(),
+        Some("https://sepolia.example")
+    );
+    assert_eq!(
+        state.catalogue_rpc_url(ChainNet::Matic).as_deref(),
+        Some("https://amoy.example")
+    );
+    Arc::get_mut(&mut state).unwrap().settings.eth_network = "mainnet".into();
+    assert!(state.catalogue_rpc_url(ChainNet::Ethereum).is_none());
+    assert!(state.catalogue_rpc_url(ChainNet::Matic).is_none());
+}
+
+#[tokio::test]
+async fn a_legacy_unbound_collection_copy_can_supply_mainnet_but_not_testnet() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Matic;
+    sqlx::query(
+        "INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
+        VALUES ('collections','matic','custom-mainnet',timezone('UTC',now()))",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert!(nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+    assert!(!nft_index::mirror_complete(&db.pool, net, net.testnet_chain_id()).await);
+    sqlx::query("UPDATE shop.mirror_state SET pass_block_hash='pending-testnet-pin'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(!nft_index::mirror_complete(&db.pool, net, net.chain_id()).await);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn the_sepolia_rentals_rpc_fallback_matches_the_catalogue_network() {
+    let mut state = super::tests::support::state_without_db();
+    let settings = &mut Arc::get_mut(&mut state).unwrap().settings;
+    settings.eth_rpc_url = Some("https://ethereum.example".into());
+    settings.market.trade_rpc_urls = RpcEndpoints::from_env(None);
+    for (network, expected) in [
+        ("sepolia", Some("https://ethereum.example")),
+        (" Ethereum-Sepolia ", Some("https://ethereum.example")),
+        ("mainnet", None),
+    ] {
+        Arc::get_mut(&mut state).unwrap().settings.eth_network = network.into();
+        assert_eq!(state.sepolia_rentals_rpc_url().as_deref(), expected);
+    }
+}
+
+#[tokio::test]
+async fn testnet_nft_walks_publish_only_their_catalogue_and_chain() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let settings = IndexSettings {
+        chain_id_ethereum: 11_155_111,
+        chain_id_matic: 80_002,
+        ..index_settings(120, 100)
+    };
+    for (net, chain_id, addr, first) in [
+        (
+            ChainNet::Ethereum,
+            11_155_111,
+            "0x7518456ae93eb98f3e64571b689c626616bb7f30",
+            3_831_219,
+        ),
+        (
+            ChainNet::Matic,
+            80_002,
+            "0x0c8ad1f6aadf89d2eb19f01a100a6143108fe2b0",
+            5_706_656,
+        ),
+    ] {
+        let ix = NftIndex::for_chain(net, chain_id).unwrap();
+        assert_eq!(ix.start_block(), first);
+        sqlx::query("INSERT INTO shop.mirror_state (mirror,network,source_url,chain_id,last_complete_pass_at) VALUES ('collections',$1,'source',$2,timezone('UTC',now()))")
+            .bind(net.db_name()).bind(net.chain_id()).execute(&db.pool).await.unwrap();
+        assert!(!nft_index::mirror_complete(&db.pool, net, chain_id).await);
+        sqlx::query(
+            "UPDATE shop.mirror_state SET chain_id=$2 WHERE network=$1 AND mirror='collections'",
+        )
+        .bind(net.db_name())
+        .bind(chain_id)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert!(nft_index::mirror_complete(&db.pool, net, chain_id).await);
+        let at = first + 25;
+        let token = U256::from(12);
+        let other = "0x00000000000000000000000000000000000000e2";
+        seed_collection(
+            &db.pool,
+            net.db_name(),
+            other,
+            first,
+            "unused",
+            "Other chain",
+        )
+        .await;
+        // A graph-only writer can have stamped this chain ID before an RPC
+        // was attached. A later proven empty pass cannot admit that address.
+        sqlx::query(
+            "UPDATE shop.collections SET chain_id=$1 WHERE network=$2 AND contract_address=$3",
+        )
+        .bind(chain_id as i32)
+        .bind(net.db_name())
+        .bind(other)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let verified = "0x00000000000000000000000000000000000000e3";
+        seed_collection(
+            &db.pool,
+            net.db_name(),
+            verified,
+            first,
+            "proven",
+            "Verified collection",
+        )
+        .await;
+        sqlx::query("UPDATE shop.collections SET chain_id=$1,testnet_verified=true WHERE network=$2 AND contract_address=$3")
+            .bind(chain_id as i32).bind(net.db_name()).bind(verified).execute(&db.pool).await.unwrap();
+        let mut logs = vec![
+            transfer(addr, ZERO, BOB, token, at, 2),
+            transfer(verified, ZERO, CARL, token, at, 5),
+            transfer(other, ZERO, CARL, token, at, 3),
+            transfer(nft_index::DCL_REGISTRAR, ZERO, CARL, token, at, 4),
+        ];
+        if net == ChainNet::Ethereum {
+            for (pos, create, data) in [(0, true, "0,\"named\",\"desc\""), (1, false, "0")] {
+                let mut doc = estate_document(at, pos, 12, create, data);
+                doc.address = crate::land_authz::ESTATE_REGISTRY_SEPOLIA.into();
+                logs.push(doc);
+            }
+        }
+        let chain = FakeChain::new(at + net.confirmations(), logs, 100, 100);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, settings.clone(), false);
+        chain
+            .chain_id
+            .store(net.chain_id() as u64, Ordering::SeqCst);
+        let source = chain_walk::RpcSource::new(Rpc::at(&st.http, &url));
+        let holdings = chain_walk::Holdings::default();
+        let run = || {
+            chain_walk::job_pass(
+                &db.pool,
+                &source,
+                &ix,
+                &settings,
+                &holdings,
+                None,
+                None,
+                &|_| {},
+            )
+        };
+        let error = run().await.unwrap_err();
+        assert!(
+            error.downcast_ref::<chain_walk::WrongChain>().is_some(),
+            "{error:#}"
+        );
+        chain.chain_id.store(chain_id as u64, Ordering::SeqCst);
+        assert!(run().await.unwrap().published);
+        let c = chain_walk::cursor(&db.pool, INDEXER_NFT, net)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (c.chain_id, c.folded_block),
+            (Some(chain_id), Some(at as i64))
+        );
+        assert_eq!(
+            owner_of(&db.pool, net.db_name(), addr, token).await,
+            Some(Some(BOB.to_string()))
+        );
+        assert_eq!(
+            owner_of(&db.pool, net.db_name(), verified, token)
+                .await
+                .as_ref()
+                .and_then(|o| o.as_deref()),
+            Some(CARL)
+        );
+        assert_eq!(owner_of(&db.pool, net.db_name(), other, token).await, None);
+        assert_eq!(
+            owner_of(&db.pool, net.db_name(), nft_index::DCL_REGISTRAR, token).await,
+            None
+        );
+        if net == ChainNet::Ethereum {
+            let fields: (String, String, i32) = sqlx::query_as("SELECT name, description, updated_log FROM shop.land_data WHERE token_address=$1 AND token_id=12")
+                .bind(crate::land_authz::ESTATE_REGISTRY_SEPOLIA).fetch_one(&db.pool).await.unwrap();
+            assert_eq!(fields, ("named".into(), "desc".into(), 0));
+            let repairs: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM shop.worker_progress WHERE worker='nft_estate_creations'",
+            )
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+            assert_eq!(repairs, 0);
+        }
+        chain
+            .chain_id
+            .store(net.chain_id() as u64, Ordering::SeqCst);
+        assert!(
+            pass(&st, &url, &NftIndex::new(net))
+                .await
+                .quarantined
+                .is_some()
+        );
+        assert_eq!(
+            owner_of(&db.pool, net.db_name(), addr, token).await,
+            Some(Some(BOB.to_string()))
+        );
+    }
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_resumes() {
     let Some(db) = ScratchDb::create().await else {
         return;
@@ -1504,14 +3395,25 @@ async fn an_advanced_nft_cursor_repairs_estate_creations_after_publication_and_r
     // This first window spans the first two event blocks. Its request budget
     // stops before the next creation block; the next owner resumes there.
     let dense = state_over(db.pool.clone(), &url, index_settings(2, 6), false);
+    let rebuilds = || {
+        sqlx::query_scalar::<_, i32>(
+            "SELECT rebuilds FROM shop.chain_cursor WHERE indexer='nft' AND network='ethereum'",
+        )
+        .fetch_one(&db.pool)
+    };
+    let unrepaired = rebuilds().await.unwrap();
     for (position, state) in [(first + 1, &dense), (first + 3, &small), (last, &small)] {
         let out = pass(state, &url, &NftIndex::new(net)).await;
         assert!(out.published, "{out:?}");
         assert_eq!(marker().await.unwrap(), (position as i64, last as i64));
         if position < last {
             assert_eq!(names().await.unwrap(), old);
+            assert_eq!(rebuilds().await.unwrap(), unrepaired);
         }
     }
+    // The final window rewrote names in place: it counts itself in the
+    // cursor, where the explorer map's marks see it.
+    assert_eq!(rebuilds().await.unwrap(), unrepaired + 1);
     assert_eq!(
         names().await.unwrap(),
         [
@@ -1706,6 +3608,7 @@ async fn estate_repair_reconciles_legacy_rows_and_recovers_an_old_writer_interva
             hash: chain.hash_of(j),
             timestamp: time_of(j),
         },
+        false,
     )
     .await
     .unwrap();
@@ -1759,6 +3662,7 @@ async fn estate_repair_reconciles_legacy_rows_and_recovers_an_old_writer_interva
             hash: chain.hash_of(j),
             timestamp: time_of(j),
         },
+        false,
     )
     .await
     .unwrap();
@@ -1868,6 +3772,7 @@ async fn estate_repair_recovers_after_a_legacy_bounded_rewind_to_the_same_tip() 
             hash: chain.hash_of(h),
             timestamp: time_of(h),
         },
+        false,
     )
     .await
     .unwrap();
@@ -2077,11 +3982,12 @@ async fn the_nft_walk_folds_owners_orders_and_resumes_a_kill_backfills_a_late_co
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let s = nft_index::start_block(ChainNet::Matic);
+    trade_events::tests::publish_cursors(&db.pool).await;
+    let s = Deployments::mainnet(ChainNet::Matic).start;
     let c1 = "0x00000000000000000000000000000000000000c1";
     let c2 = "0x00000000000000000000000000000000000000c2";
     let late = "0x00000000000000000000000000000000000000c3";
-    let market = nft_index::legacy_marketplaces(ChainNet::Matic)[0].0;
+    let market = Deployments::mainnet(ChainNet::Matic).markets[0].0;
     seed_collection(
         &db.pool,
         "matic",
@@ -2346,7 +4252,7 @@ async fn a_reorg_past_the_confirmation_depth_rewinds_and_the_refold_follows_the_
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let s = nft_index::start_block(ChainNet::Matic);
+    let s = Deployments::mainnet(ChainNet::Matic).start;
     let c1 = "0x00000000000000000000000000000000000000c1";
     seed_collection(
         &db.pool,
@@ -2456,7 +4362,7 @@ async fn pinned_requests_in_order() -> bool {
     let Some(db) = ScratchDb::create().await else {
         return false;
     };
-    let s = nft_index::start_block(ChainNet::Matic);
+    let s = Deployments::mainnet(ChainNet::Matic).start;
     let c1 = "0x00000000000000000000000000000000000000c1";
     let c2 = "0x00000000000000000000000000000000000000c2";
     let late = "0x00000000000000000000000000000000000000c3";
@@ -2715,7 +4621,7 @@ async fn a_rewind_fails_profile_ownership_until_the_refill_publishes() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let s = nft_index::start_block(ChainNet::Matic);
+    let s = Deployments::mainnet(ChainNet::Matic).start;
     let c1 = "0x00000000000000000000000000000000000000c1";
     seed_collection(
         &db.pool,
@@ -2796,7 +4702,7 @@ async fn a_fold_that_owes_a_backfill_clears_the_marker_when_the_pass_fails_after
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let s = nft_index::start_block(ChainNet::Matic);
+    let s = Deployments::mainnet(ChainNet::Matic).start;
     let c1 = "0x00000000000000000000000000000000000000c1";
     let late = "0x00000000000000000000000000000000000000c3";
     seed_collection(
@@ -3158,6 +5064,7 @@ async fn the_land_data_read_is_one_bounded_index_scan() {
     )))
     .bind(23_900_000_i64)
     .bind(None::<&str>)
+    .bind(crate::land_authz::ESTATE_REGISTRY_MAINNET)
     .fetch_all(&mut *conn)
     .await
     .unwrap();
@@ -3231,16 +5138,73 @@ async fn a_reindexed_order_only_gains_its_missing_transaction_hash() {
     db.drop().await;
 }
 
+/// A transfer indexed before the walk recorded transfers' transactions
+/// gains its hash when the same log is read again, and keeps it after; a
+/// different log at its position never supplies one.
+#[tokio::test]
+async fn a_reindexed_transfer_gains_its_missing_transaction_hash() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let transfer = |token: &str, tx_hash: Option<&str>| nft_index::NftEvent {
+        block_number: 100,
+        log_index: 0,
+        block_time: 1,
+        kind: nft_index::KIND_TRANSFER,
+        emitter: "0xnft".into(),
+        contract_address: "0xnft".into(),
+        token_id: token.into(),
+        from_address: Some("0xseller".into()),
+        to_address: Some("0xbuyer".into()),
+        amount: None,
+        expires_at: None,
+        detail: None,
+        tx_hash: tx_hash.map(str::to_string),
+    };
+    let (a, b) = (
+        format!("0x{}", "a".repeat(64)),
+        format!("0x{}", "b".repeat(64)),
+    );
+    let mut conn = db.pool.acquire().await.unwrap();
+    let mut write = async |row| {
+        nft_index::insert_events(&mut conn, ChainNet::Matic, &[row])
+            .await
+            .unwrap()
+    };
+    assert_eq!(write(transfer("7", None)).await, 1);
+    assert_eq!(
+        write(transfer("8", Some(&b))).await,
+        0,
+        "another token's log at the position"
+    );
+    assert_eq!(
+        write(transfer("7", Some(&a))).await,
+        1,
+        "the hash is filled"
+    );
+    assert_eq!(write(transfer("7", Some(&b))).await, 0, "a kept hash stays");
+    drop(conn);
+    let kept: Option<String> = sqlx::query_scalar(
+        "SELECT tx_hash FROM shop.nft_event WHERE network = 'matic' AND block_number = 100",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, Some(a));
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
+    trade_events::tests::publish_cursors(&db.pool).await;
     // Past the registrar's deployment (9,412,979), the walk's first
     // fixed contracts, so every log below is in the address set.
     let s = 9_420_000u64;
     let v1 = "0x00000000000000000000000000000000000000e1";
-    let market = nft_index::legacy_marketplaces(ChainNet::Ethereum)[0].0;
+    let market = Deployments::mainnet(ChainNet::Ethereum).markets[0].0;
     let (land, estate) = (
         crate::land_authz::LAND_REGISTRY_MAINNET,
         crate::land_authz::ESTATE_REGISTRY_MAINNET,
@@ -3397,13 +5361,20 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
         ),
         (Some("PixelGolf"), Some("PixelGolf"), Some(BOB))
     );
-    // The NAME browse's price range is in wei and bounds the open listing; `cheapest` sorts by it.
-    // A search reads this index (without one the subgraph serves, its `where` checked in nfts.rs).
+    // The NAME browse's price range is in MANA (read as wei, as the legacy `parsePrice`) and
+    // bounds the open listing, here 5000 wei; `cheapest` sorts by it. A search reads this index
+    // (without one the subgraph serves, its `where` checked in nfts.rs).
     for (range, listed) in [
-        ("minPrice=5000&maxPrice=5000", true),
-        ("minPrice=1&maxPrice=9000", true),
-        ("minPrice=5001", false),
-        ("maxPrice=4999", false),
+        (
+            "minPrice=0.000000000000005&maxPrice=0.000000000000005",
+            true,
+        ),
+        (
+            "minPrice=0.000000000000000001&maxPrice=0.000000000000009",
+            true,
+        ),
+        ("minPrice=0.000000000000005001", false),
+        ("maxPrice=0.000000000000004999", false),
     ] {
         let (code, body) = get_json(
             &app,
@@ -3454,6 +5425,10 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
         (wearable.as_deref(), issued.as_deref()),
         (Some("jester_feet"), Some("1"))
     );
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+        SELECT 'rentals',network,start_block,last_block,folded_block,folded_at,true,chain_id
+        FROM shop.chain_cursor WHERE indexer='nft' AND network='ethereum'")
+        .execute(&db.pool).await.unwrap();
     // A read naming no category also answers the owner's names and LAND,
     // their indexes being published.
     let (code, body) = get_json(&app, &format!("/v1/nfts?owner={ALICE}&network=ETHEREUM")).await;
@@ -3598,6 +5573,19 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
         (StatusCode::OK, json!({ "2": 1 })),
         "{body}"
     );
+    // The price bounds are MANA, as the legacy `parseEther`: a decimal amount
+    // reads, one ethers would not parse is a 400 naming the parameter.
+    let (code, body) = get_json(&app, "/v1/stats/estate/size?minPrice=0.5&maxPrice=12").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    for (key, bad) in [("minPrice", "abc"), ("maxPrice", "1e18")] {
+        let (code, body) = get_json(&app, &format!("/v1/stats/estate/size?{key}={bad}")).await;
+        assert_eq!(code, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            body["message"].as_str(),
+            Some(format!("Invalid {key} value: {bad}").as_str()),
+            "{body}"
+        );
+    }
     // The geography filters read the squid's static LAND map (none of these
     // parcels is in it: distance -1, no road), with the squid's semantics:
     // `<= max` keeps a -1, `>= min` and `adjacentToRoad` drop it.
@@ -3697,7 +5685,7 @@ async fn block_times_missing_from_the_logs_come_from_batched_headers() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let s = nft_index::start_block(ChainNet::Matic);
+    let s = Deployments::mainnet(ChainNet::Matic).start;
     let c1 = "0x00000000000000000000000000000000000000c1";
     seed_collection(
         &db.pool,
@@ -3743,7 +5731,7 @@ async fn a_bounded_window_start_is_never_published() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let s = nft_index::start_block(ChainNet::Matic);
+    let s = Deployments::mainnet(ChainNet::Matic).start;
     seed_collection(
         &db.pool,
         "matic",
@@ -4049,11 +6037,642 @@ fn bid_id(byte: u8) -> String {
 }
 
 #[tokio::test]
+async fn sepolia_native_bids_walk_only_the_deployed_venue_and_fold_on_ethereum() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let index = sales_index::SEPOLIA;
+    let start = index.start_block();
+    assert_eq!(start, 3_831_237);
+    let token = v2_token(0, 1);
+    let bid = "0x2c2835b95852fd975e087b3b25297322728792e2";
+    let mut created =
+        sales_index::tests::bid_created_log(ALICE, token, BOB, 17, 19, 1_700_000_000, start, 0);
+    let mut accepted =
+        sales_index::tests::bid_accepted_log(ALICE, token, BOB, CARL, 17, 19, start + 1, 1);
+    let polygon = created.clone();
+    created.address = bid.into();
+    accepted.address = bid.into();
+    let chain = FakeChain::new(start + 100, vec![created, accepted, polygon], 10_000, 100);
+    chain.chain_id.store(11_155_111, Ordering::SeqCst);
+    let url = serve(chain).await;
+    let state = state_over(db.pool.clone(), &url, index_settings(100, 10_000), false);
+    assert!(pass(&state, &url, &index).await.published);
+    let rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT network,status,seller FROM shop.nft_bid")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![("ethereum".into(), "accepted".into(), CARL.into())]
+    );
+    let emitted: Vec<String> =
+        sqlx::query_scalar("SELECT emitter FROM shop.sale_event ORDER BY block_number,log_index")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(emitted, vec![bid, bid]);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn amoy_sales_use_the_local_store_bid_and_collection_chain() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let index = sales_index::AMOY;
+    let block = index.start_block() + 100;
+    let store = "0xe36abc9ec616c83caaa386541380829106149d68";
+    let bid = "0x4b66eab79cc03a96fb6275cfcdf23c0db431606d";
+    let token = v2_token(0, 1);
+    seed_collection(
+        &db.pool,
+        "matic",
+        ALICE,
+        block - 10,
+        "urn:test:amoy",
+        "Amoy",
+    )
+    .await;
+    seed_collection(
+        &db.pool,
+        "matic",
+        CARL,
+        block - 10,
+        "urn:test:polygon",
+        "Polygon",
+    )
+    .await;
+    seed_collection(
+        &db.pool,
+        "matic",
+        DAVE,
+        block - 10,
+        "urn:test:unproven",
+        "Unproven",
+    )
+    .await;
+    sqlx::query("UPDATE shop.collections SET chain_id=80002 WHERE contract_address=$1")
+        .bind(DAVE)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    for (through, deployed) in [(5_706_661, false), (5_706_662, true)] {
+        let groups = index
+            .groups(
+                &db.pool,
+                index.start_block(),
+                through,
+                (through, time_of(through)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            groups
+                .iter()
+                .any(|g| g.addresses.iter().any(|addr| addr == bid)),
+            deployed
+        );
+    }
+    sqlx::query("UPDATE shop.collections SET chain_id = 80002, testnet_verified=true WHERE contract_address = $1")
+        .bind(ALICE)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let mut purchase = sales_index::tests::bought_log(
+        &[(ALICE, 0, 125, BOB)],
+        &format!("0x{:064x}", block * 100),
+        block,
+        1,
+    );
+    purchase.address = store.into();
+    let mut offer =
+        sales_index::tests::bid_created_log(ALICE, token, BOB, 17, 19, 1_700_000_000, block + 1, 0);
+    offer.address = bid.into();
+    let chain = FakeChain::new(
+        block + 1000,
+        vec![
+            sales_index::tests::issue_log(ALICE, BOB, token, 0, store, block, 0),
+            sales_index::tests::issue_log(DAVE, BOB, token, 0, store, block, 4),
+            purchase,
+            offer,
+            sales_index::tests::issue_log(CARL, BOB, token, 0, store, block, 2),
+            sales_index::tests::issue_log(ALICE, BOB, token, 0, sales_index::STORE_MATIC, block, 3),
+            sales_index::tests::bid_created_log(
+                ALICE,
+                token,
+                BOB,
+                18,
+                20,
+                1_700_000_000,
+                block + 2,
+                0,
+            ),
+        ],
+        10_000,
+        100,
+    );
+    chain.chain_id.store(80_002, Ordering::SeqCst);
+    let url = serve(chain).await;
+    let settings = index_settings(100, 10_000);
+    let state = state_over(db.pool.clone(), &url, settings, false);
+    let outcome = pass(&state, &url, &index).await;
+    assert!(outcome.published, "{outcome:?}");
+    let amoy = IndexSettings {
+        chain_id_matic: index.chain_id(),
+        ..IndexSettings::default()
+    };
+    sqlx::query("UPDATE shop.chain_cursor SET last_block=last_block+1 WHERE indexer='sales'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(sales_index::ready(&db.pool, &amoy, ChainNet::Matic, chrono::Utc::now()).await);
+    assert_eq!(
+        sales_index::status(&db.pool, &amoy).await["matic"]["ready"],
+        true
+    );
+    assert_eq!(
+        sales_index::status(&db.pool, &IndexSettings::default()).await["matic"]["ready"],
+        false
+    );
+    // The schema's object pass seeded only the four Polygon venues on an
+    // upgraded node. The Amoy gate installs the missing pins on its first pass.
+    sqlx::query("DELETE FROM shop.sale_venue WHERE address=$1")
+        .bind(bid)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let pins = sales_index::check_venues(&Rpc::at(&state.http, &url), &db.pool, index)
+        .await
+        .unwrap();
+    assert_eq!(pins.len(), 2);
+    assert!(pins.iter().any(|v| v.address == bid && v.pinned == 25_000));
+    let events: Vec<(String, String)> = sqlx::query_as(
+        "SELECT kind, price::text FROM shop.sale_event ORDER BY block_number, log_index",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        events,
+        [
+            ("mint".into(), "125".into()),
+            ("bid_created".into(), "19".into())
+        ]
+    );
+    assert_eq!(
+        bids_of(&db.pool).await,
+        [(
+            token.to_string(),
+            BOB.to_owned(),
+            bid_id(17),
+            None,
+            "19".into(),
+            "open".into()
+        )]
+    );
+    let has_accounting: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT FROM shop.store_sale_line) OR EXISTS(SELECT FROM shop.sale_fee_change)"
+    ).fetch_one(&db.pool).await.unwrap();
+    assert!(
+        !has_accounting,
+        "an Amoy raw sale cannot establish historical settlement terms"
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn sepolia_v1_upgrade_rebuilds_once_and_fences_the_old_trade_writer() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    const MIGRATION: &str = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0071_shop_testnet_sale_and_trade_venues.sql"
+    ));
+    let seed_sql = "INSERT INTO shop.chain_cursor (indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+                      VALUES ('trade_events','ethereum',9455328,9455350,9455350,timezone('UTC',now()),true,$1)
+                      ON CONFLICT (indexer,network) DO UPDATE SET owner_generation = shop.chain_cursor.owner_generation + 1";
+    sqlx::query(seed_sql)
+        .bind(1_i64)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,folded_block,folded_at,full_history,chain_id)
+                 VALUES ('trade_events','matic',12490079,12491000,12491000,timezone('UTC',now()),true,80002)")
+        .execute(&db.pool).await.unwrap();
+    let before: Value = sqlx::query_scalar(
+        "SELECT jsonb_agg(to_jsonb(c) ORDER BY network) FROM shop.chain_cursor c",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    sqlx::raw_sql(MIGRATION).execute(&db.pool).await.unwrap();
+    let after: Value = sqlx::query_scalar(
+        "SELECT jsonb_agg(to_jsonb(c) ORDER BY network) FROM shop.chain_cursor c",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(after, before);
+    sqlx::raw_sql(
+        "ALTER TABLE shop.chain_cursor DROP CONSTRAINT chain_cursor_sepolia_trade_v1;
+                   UPDATE shop.chain_cursor SET chain_id=11155111 WHERE network='ethereum'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::raw_sql(MIGRATION).execute(&db.pool).await.unwrap();
+    let eth = ChainNet::Ethereum;
+    let cur = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (cur.start_block, cur.folded_block, cur.owner_generation),
+        (6_770_056, None, 1)
+    );
+    assert!(cur.rebuild_requested_at.is_some());
+    // Use the exact pre-0071 claim with a conflicting primary key. PostgreSQL
+    // checks the proposed INSERT tuple before it reaches ON CONFLICT.
+    let old_claim = "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, full_history, chain_id, owner_generation) \
+         VALUES ($1, $2, $3, $3 - 1, $4, $5, 1) \
+         ON CONFLICT (indexer, network) DO UPDATE SET owner_generation = shop.chain_cursor.owner_generation + 1 \
+         RETURNING owner_generation";
+    let rejected = sqlx::query(old_claim)
+        .bind(INDEXER_TRADE_EVENTS)
+        .bind(eth.db_name())
+        .bind(9_455_328_i64)
+        .bind(true)
+        .bind(11_155_111_i64)
+        .execute(&db.pool)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        rejected.as_database_error().unwrap().constraint(),
+        Some("chain_cursor_sepolia_trade_v1")
+    );
+
+    assert_eq!(
+        chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+            .await
+            .unwrap()
+            .unwrap()
+            .owner_generation,
+        cur.owner_generation
+    );
+    let ix = TradeEventsIndex {
+        net: eth,
+        chain_id: 11_155_111,
+    };
+    let start = ix.start_block();
+    let v1 = trade_events::deployments(ix.chain_id)[0].0;
+    let chain = FakeChain::new(
+        start + 50,
+        vec![trade_events::tests::traded_log(
+            start + 1,
+            0,
+            v1,
+            ALICE,
+            BOB,
+            "0xabcd",
+            1,
+            false,
+        )],
+        1000,
+        100,
+    );
+    chain.chain_id.store(11_155_111, Ordering::SeqCst);
+    let url = serve(chain).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(100, 1000), false);
+    assert!(pass(&st, &url, &ix).await.rebuilt);
+    assert!(pass(&st, &url, &ix).await.published);
+    let markets: Vec<String> =
+        sqlx::query_scalar("SELECT marketplace_address FROM shop.trade_event")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(markets, [v1]);
+    sqlx::raw_sql(MIGRATION).execute(&db.pool).await.unwrap();
+    let cur = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(cur.folded_block.is_some() && cur.rebuild_requested_at.is_none());
+    // Operator revalidation clears the chain binding. The same canonical
+    // checkpoint proves this already-rebuilt V1 history without a second replay.
+    sqlx::query("UPDATE shop.chain_cursor SET chain_id=NULL WHERE indexer='trade_events' AND network='ethereum'").execute(&db.pool).await.unwrap();
+    let outcome = pass(&st, &url, &ix).await;
+    assert!(outcome.published && !outcome.rebuilt, "{outcome:?}");
+    let rebound = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rebound.chain_id, Some(ix.chain_id));
+    assert!(rebound.rebuild_requested_at.is_none());
+    // An empty legacy pass can have checkpointed its fold at the old start - 1.
+    sqlx::raw_sql("ALTER TABLE shop.chain_cursor DROP CONSTRAINT chain_cursor_sepolia_trade_v1;
+        UPDATE shop.chain_cursor SET sepolia_trade_v1=false, start_block=9455328, last_block=9455327,
+            last_block_hash=NULL, fold_through=9455327, folded_block=NULL, folded_at=NULL
+        WHERE indexer='trade_events' AND network='ethereum'").execute(&db.pool).await.unwrap();
+    sqlx::raw_sql(MIGRATION).execute(&db.pool).await.unwrap();
+    let empty = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (empty.last_block, empty.fold_through),
+        (start as i64 - 1, None)
+    );
+    // A pre-binding cursor is invisible to 0071 until a matching RPC proves
+    // its history (here the legacy cursor is still at its start). Adoption fences the old owner and schedules replay.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET chain_id=NULL, sepolia_trade_v1=false, rebuild_requested_at=NULL, start_block=9455328,
+        last_block=9455327, last_block_hash=NULL, fold_through=9455327, folded_at=NULL, folded_block=NULL
+        WHERE indexer='trade_events' AND network='ethereum'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let error = try_pass(&st, &url, &ix).await.unwrap_err();
+    assert!(
+        error.downcast_ref::<chain_walk::Fenced>().is_some(),
+        "{error:#}"
+    );
+    let adopted = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (adopted.chain_id, adopted.start_block, adopted.last_block),
+        (Some(ix.chain_id), start as i64, start as i64 - 1)
+    );
+    assert!(adopted.rebuild_requested_at.is_some());
+    assert!(pass(&st, &url, &ix).await.rebuilt);
+    assert!(pass(&st, &url, &ix).await.published);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn revalidating_quarantined_sepolia_trades_replays_v1() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let eth = ChainNet::Ethereum;
+    let ix = TradeEventsIndex {
+        net: eth,
+        chain_id: eth.testnet_chain_id(),
+    };
+    let start = ix.start_block();
+    let legacy_start = 9_455_328_u64;
+    let legacy_tip = legacy_start + 10;
+    let v1 = trade_events::deployments(ix.chain_id)[0].0;
+    let chain = FakeChain::new(
+        start + 50,
+        vec![trade_events::tests::traded_log(
+            start + 1,
+            0,
+            v1,
+            ALICE,
+            BOB,
+            "0xabcd",
+            1,
+            false,
+        )],
+        1000,
+        100,
+    );
+    chain.chain_id.store(ix.chain_id as u64, Ordering::SeqCst);
+    let old_hash = chain.hash_of(legacy_tip);
+    let url = serve(chain.clone()).await;
+    let state = state_over(db.pool.clone(), &url, index_settings(100, 1000), false);
+    sqlx::raw_sql("ALTER TABLE shop.chain_cursor DROP CONSTRAINT chain_cursor_sepolia_trade_v1")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
+            fold_through,full_history,quarantined_at,quarantine_reason)
+        VALUES ('trade_events','ethereum',$1,$2,$3,$4,$3,true,timezone('UTC',now()),'wrong endpoint')")
+        .bind(ix.chain_id).bind(legacy_start as i64).bind(legacy_tip as i64).bind(old_hash)
+        .execute(&db.pool).await.unwrap();
+
+    let migration = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0071_shop_testnet_sale_and_trade_venues.sql"
+    ));
+    sqlx::raw_sql(migration).execute(&db.pool).await.unwrap();
+    let cursor = || chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth);
+    let quarantined = cursor().await.unwrap().unwrap();
+    assert_eq!(quarantined.start_block, legacy_start as i64);
+    assert_eq!(quarantined.last_block, legacy_tip as i64);
+    assert!(quarantined.rebuild_requested_at.is_none());
+    assert!(pass(&state, &url, &ix).await.quarantined.is_some());
+    assert_eq!(chain.get_logs.load(Ordering::SeqCst), 0);
+
+    // The documented Revalidate operation keeps the history and its checkpoint.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET quarantined_at=NULL, quarantine_reason=NULL, chain_id=NULL,
+        owner_generation=owner_generation+1
+        WHERE indexer='trade_events' AND network='ethereum' AND quarantined_at IS NOT NULL",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let error = try_pass(&state, &url, &ix).await.unwrap_err();
+    assert!(
+        error.downcast_ref::<chain_walk::Fenced>().is_some(),
+        "{error:#}"
+    );
+    let scheduled = cursor().await.unwrap().unwrap();
+    assert_eq!(scheduled.start_block, start as i64);
+    assert_eq!(scheduled.last_block, legacy_tip as i64);
+    assert!(scheduled.rebuild_requested_at.is_some() && scheduled.folded_block.is_none());
+    assert!(pass(&state, &url, &ix).await.rebuilt);
+    assert!(pass(&state, &url, &ix).await.published);
+    let events: Vec<(String, i64)> =
+        sqlx::query_as("SELECT marketplace_address,block_number FROM shop.trade_event")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(events, [(v1.to_owned(), start as i64 + 1)]);
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn an_operator_can_rebuild_quarantined_legacy_sepolia_trades_with_an_unprovable_hash() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let eth = ChainNet::Ethereum;
+    let ix = TradeEventsIndex {
+        net: eth,
+        chain_id: eth.testnet_chain_id(),
+    };
+    let start = ix.start_block();
+    let v1 = trade_events::deployments(ix.chain_id)[0].0;
+    let chain = FakeChain::new(
+        start + 50,
+        vec![trade_events::tests::traded_log(
+            start + 1,
+            0,
+            v1,
+            ALICE,
+            BOB,
+            "0xabcd",
+            1,
+            false,
+        )],
+        1000,
+        100,
+    );
+    chain.chain_id.store(ix.chain_id as u64, Ordering::SeqCst);
+    let url = serve(chain).await;
+    let state = state_over(db.pool.clone(), &url, index_settings(100, 1000), false);
+    // Revalidate left the old chain unknown and the old checkpoint unproven.
+    sqlx::query("INSERT INTO shop.chain_cursor (indexer,network,start_block,last_block,full_history,
+           last_block_hash,quarantined_at,quarantine_reason)
+        VALUES ('trade_events','ethereum',9455328,9455330,true,$1,timezone('UTC',now()),'unproven history')")
+        .bind(format!("0x{:064x}",42)).execute(&db.pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.chain_cursor (indexer,network,start_block,last_block,full_history,chain_id)
+        VALUES ('trade_events','matic',10,20,true,137)").execute(&db.pool).await.unwrap();
+    const REBUILD: &str = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/tooling/migration/rebuild-quarantined-legacy-sepolia-trades.sql"
+    ));
+    use sqlx::Connection;
+    let mut conn = db.pool.acquire().await.unwrap();
+    let error = sqlx::raw_sql(REBUILD)
+        .execute(&mut *conn)
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("rebuild.confirm_sepolia=yes"),
+        "{error}"
+    );
+    sqlx::query("SET rebuild.confirm_sepolia='yes'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let error = sqlx::raw_sql(REBUILD)
+        .execute(&mut *conn)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("missing Sepolia LAND cursor"));
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block)
+        VALUES ('ethereum-sepolia',$1,$2,3831219)",
+    )
+    .bind(crate::land_authz::LAND_REGISTRY_SEPOLIA)
+    .bind(crate::land_authz::ESTATE_REGISTRY_SEPOLIA)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    sqlx::query(
+        "INSERT INTO shop.worker_progress(worker,scope,key_position)
+        VALUES ('nft_catalogue_pair',0,ARRAY['1','137'])",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    let error = sqlx::raw_sql(REBUILD).execute(&mut *tx).await.unwrap_err();
+    assert!(error.to_string().contains("bound to another chain pair"));
+    tx.rollback().await.unwrap();
+    for change in [
+        "chain_id=1",
+        "sepolia_trade_v1=true",
+        "quarantined_at=NULL, quarantine_reason=NULL",
+        "start_block=9455329",
+    ] {
+        let mut tx = conn.begin().await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE shop.chain_cursor SET {change} WHERE indexer='trade_events' AND network='ethereum'")))
+            .execute(&mut *tx).await.unwrap();
+        let error = sqlx::raw_sql(REBUILD).execute(&mut *tx).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("expected a quarantined Sepolia trade cursor"),
+            "{error}"
+        );
+        tx.rollback().await.unwrap();
+    }
+    sqlx::raw_sql(REBUILD).execute(&mut *conn).await.unwrap();
+    drop(conn);
+    let scheduled = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, eth)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(scheduled.start_block, start as i64);
+    assert_eq!(scheduled.owner_generation, 1);
+    assert!(scheduled.rebuild_requested_at.is_some() && scheduled.quarantined_at.is_some());
+    assert!(pass(&state, &url, &ix).await.rebuilt);
+    assert!(pass(&state, &url, &ix).await.published);
+    let events: Vec<(String, i64)> =
+        sqlx::query_as("SELECT marketplace_address,block_number FROM shop.trade_event")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(events, [(v1.to_owned(), start as i64 + 1)]);
+    let matic = chain_walk::cursor(&db.pool, INDEXER_TRADE_EVENTS, ChainNet::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (matic.start_block, matic.last_block, matic.owner_generation),
+        (10, 20, 0)
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_pending_sepolia_rebuild_binds_an_unbound_cursor_at_its_custom_start() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let eth = ChainNet::Ethereum;
+    let ix = TradeEventsIndex {
+        net: eth,
+        chain_id: eth.testnet_chain_id(),
+    };
+    let start = ix.start_block() - 1;
+    let tip = start + 10;
+    let chain = FakeChain::new(start + 50, vec![], 1000, 100);
+    chain.chain_id.store(ix.chain_id as u64, Ordering::SeqCst);
+    let hash = chain.hash_of(tip);
+    let url = serve(chain).await;
+    let mut settings = index_settings(100, 1000);
+    settings.start_block_ethereum = Some(start);
+    let state = state_over(db.pool.clone(), &url, settings, false);
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,start_block,last_block,last_block_hash,rebuild_requested_at,full_history)
+        VALUES ('trade_events','ethereum',$1,$2,$3,timezone('UTC',now()),true)")
+        .bind(start as i64).bind(tip as i64).bind(hash).execute(&db.pool).await.unwrap();
+
+    let outcome = pass(&state, &url, &ix).await;
+    assert!(outcome.rebuilt, "{outcome:?}");
+    let row: (i64, i64, bool, Option<i64>, bool) = sqlx::query_as(
+        "SELECT start_block,last_block,sepolia_trade_v1,chain_id,full_history FROM shop.chain_cursor WHERE indexer='trade_events' AND network='ethereum'"
+    ).fetch_one(&db.pool).await.unwrap();
+    assert_eq!(
+        row,
+        (
+            start as i64,
+            start as i64 - 1,
+            true,
+            Some(ix.chain_id),
+            true
+        )
+    );
+    assert!(pass(&state, &url, &ix).await.published);
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let s = nft_index::start_block(ChainNet::Matic);
+    let s = Deployments::mainnet(ChainNet::Matic).start;
     let b = sales_index::BID_V2_MATIC_START_BLOCK + 100;
     let c1 = "0x00000000000000000000000000000000000000c1";
     seed_collection(
@@ -4104,7 +6723,7 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
     // The sales walk runs ahead of the nft walk: the bids fold without the
     // owners; the next fold after the nft walk fills exactly the sellers
     // it reached, and the one it never reaches is not revisited.
-    assert!(publish(&st, &url, &SalesIndex).await.published);
+    assert!(publish(&st, &url, &POLYGON_SALES).await.published);
     assert_eq!(
         bids_of(&db.pool)
             .await
@@ -4129,16 +6748,24 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
         sales_index::fold(
             &db.pool,
             Some(folded),
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
         3,
         "the sellers the nft walk reached are filled"
     );
-    assert!(publish(&st, &url, &SalesIndex).await.published);
-    assert!(sales_index::ready(&db.pool, chrono::Utc::now()).await);
-    let status = sales_index::status(&db.pool).await;
+    assert!(publish(&st, &url, &POLYGON_SALES).await.published);
+    assert!(
+        sales_index::ready(
+            &db.pool,
+            &IndexSettings::default(),
+            ChainNet::Matic,
+            chrono::Utc::now()
+        )
+        .await
+    );
+    let status = sales_index::status(&db.pool, &IndexSettings::default()).await;
     assert_eq!(status["matic"]["ready"], true, "{status}");
 
     let kinds: Vec<(String, i64)> = sqlx::query_as(
@@ -4229,7 +6856,7 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
         sales_index::fold(
             &db.pool,
             Some(folded),
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
@@ -4257,7 +6884,7 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
         sales_index::fold(
             &db.pool,
             Some(folded),
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
@@ -4289,7 +6916,9 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
     // The venue check: both charging venues answer the pinned cut; a changed
     // seed row is reported as a difference (and left as it is).
     let rpc = Rpc::at(&st.http, &url);
-    let checks = sales_index::check_venues(&rpc, &db.pool).await.unwrap();
+    let checks = sales_index::check_venues(&rpc, &db.pool, POLYGON_SALES)
+        .await
+        .unwrap();
     assert_eq!(checks.len(), 2, "{checks:?}");
     assert!(
         checks.iter().all(|c| c.pinned == 25_000 && c.matches()),
@@ -4301,7 +6930,9 @@ async fn the_sales_walk_keeps_store_mints_folds_the_bids_and_checks_the_venues()
     .execute(&db.pool)
     .await
     .unwrap();
-    let checks = sales_index::check_venues(&rpc, &db.pool).await.unwrap();
+    let checks = sales_index::check_venues(&rpc, &db.pool, POLYGON_SALES)
+        .await
+        .unwrap();
     let bid_v2 = checks.iter().find(|c| c.kind == "bid_v2").unwrap();
     assert!(
         !bid_v2.matches() && bid_v2.live == Some(U256::from(25_000)),
@@ -4368,7 +6999,7 @@ async fn a_bid_past_the_nft_walk_takes_no_seller_until_the_walk_passes_it() {
         sales_index::fold(
             &db.pool,
             None,
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
@@ -4383,7 +7014,7 @@ async fn a_bid_past_the_nft_walk_takes_no_seller_until_the_walk_passes_it() {
         sales_index::fold(
             &db.pool,
             Some(120),
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
@@ -4409,7 +7040,7 @@ async fn a_bid_past_the_nft_walk_takes_no_seller_until_the_walk_passes_it() {
         sales_index::fold(
             &db.pool,
             Some(120),
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
@@ -4437,7 +7068,7 @@ async fn a_bid_past_the_nft_walk_takes_no_seller_until_the_walk_passes_it() {
         sales_index::fold(
             &db.pool,
             Some(120),
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
@@ -4456,7 +7087,7 @@ async fn a_bid_past_the_nft_walk_takes_no_seller_until_the_walk_passes_it() {
         sales_index::fold(
             &db.pool,
             Some(120),
-            &chain_walk::test_owner(&db.pool, &SalesIndex, &IndexSettings::default()).await
+            &chain_walk::test_owner(&db.pool, &POLYGON_SALES, &IndexSettings::default()).await
         )
         .await
         .unwrap(),
@@ -4471,7 +7102,7 @@ async fn a_sales_reorg_rewinds_and_the_refold_follows_the_new_chain() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let s = nft_index::start_block(ChainNet::Matic);
+    let s = Deployments::mainnet(ChainNet::Matic).start;
     let b = sales_index::BID_V2_MATIC_START_BLOCK + 100;
     let c1 = "0x00000000000000000000000000000000000000c1";
     seed_collection(
@@ -4501,7 +7132,7 @@ async fn a_sales_reorg_rewinds_and_the_refold_follows_the_new_chain() {
             .await
             .published
     );
-    assert!(publish(&st, &url, &SalesIndex).await.published);
+    assert!(publish(&st, &url, &POLYGON_SALES).await.published);
     assert_eq!(
         bids_of(&db.pool).await,
         vec![(
@@ -4543,13 +7174,19 @@ async fn a_sales_reorg_rewinds_and_the_refold_follows_the_new_chain() {
             0,
         )],
     );
-    let rewound = pass(&st, &url, &SalesIndex).await;
+    let rewound = pass(&st, &url, &POLYGON_SALES).await;
     assert_eq!(rewound.reorg_rewound_to, Some(kept), "{rewound:?}");
     assert!(
-        !sales_index::ready(&db.pool, chrono::Utc::now()).await,
+        !sales_index::ready(
+            &db.pool,
+            &IndexSettings::default(),
+            ChainNet::Matic,
+            chrono::Utc::now()
+        )
+        .await,
         "a rewind unpublishes"
     );
-    assert!(publish(&st, &url, &SalesIndex).await.published);
+    assert!(publish(&st, &url, &POLYGON_SALES).await.published);
     assert_eq!(
         bids_of(&db.pool).await,
         vec![(
@@ -4653,7 +7290,8 @@ async fn mana_sync_atomic_replay_and_reorg() {
                 number: 99,
                 hash: chain.hash_of(99),
                 timestamp: time_of(99)
-            }
+            },
+            false,
         )
         .await
         .is_err()
@@ -5161,10 +7799,13 @@ async fn the_rentals_index_attaches_behind_its_switch_and_chain_endpoints() {
     assert_eq!(index.indexer(), "rentals_sepolia");
     assert_eq!(index.chain_id(), 11_155_111);
     assert_eq!(index.start_block(), 3_831_254);
-    assert!(
-        both.iter()
-            .any(|projection| projection.lease == "rentals-index-ethereum")
-    );
+    let mainnet = both
+        .iter()
+        .find(|projection| projection.lease == "rentals-index-ethereum")
+        .unwrap();
+    let longest_retry = mainnet.cfg.wait_after_failure(u32::MAX);
+    assert!(longest_retry <= std::time::Duration::from_secs(30));
+    assert!(longest_retry < chain_walk::READY_WINDOW.to_std().unwrap());
     assert!(
         super::chain_jobs::projections(&with_sepolia, ChainNet::Ethereum, Some(false))
             .iter()
@@ -5310,7 +7951,7 @@ async fn a_reorg_rewind_replays_the_notification_producers() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let s = nft_index::start_block(ChainNet::Matic);
+    let s = Deployments::mainnet(ChainNet::Matic).start;
     let c1 = "0x00000000000000000000000000000000000000c1";
     seed_collection(
         &db.pool,
@@ -5607,7 +8248,7 @@ async fn a_job_that_lost_its_projection_commits_nothing() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let s = nft_index::start_block(ChainNet::Matic);
+    let s = Deployments::mainnet(ChainNet::Matic).start;
     let c1 = "0x00000000000000000000000000000000000000c1";
     seed_collection(
         &db.pool,
@@ -5812,7 +8453,7 @@ async fn a_legacy_cursor_is_adopted_by_proof_or_set_apart() {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
-    let s = nft_index::start_block(ChainNet::Matic);
+    let s = Deployments::mainnet(ChainNet::Matic).start;
     let c1 = "0x00000000000000000000000000000000000000c1";
     seed_collection(
         &db.pool,
@@ -6595,7 +9236,7 @@ mod supervisor {
             Arc::new(move || {
                 made.fetch_add(1, Ordering::SeqCst);
                 Arc::new(Hooked {
-                    inner: Some(Arc::new(super::super::sales_index::SalesIndex)),
+                    inner: Some(Arc::new(super::super::sales_index::POLYGON)),
                     panics: Some(panics.clone()),
                     abandon_panics: true,
                     ..Hooked::default()
@@ -6901,13 +9542,15 @@ mod supervisor {
         .unwrap()
     }
 
-    const PROJECTION_TABLES: [&str; 6] = [
+    const PROJECTION_TABLES: [&str; 8] = [
         "shop.nft",
         "shop.nft_event",
         "shop.nft_contract",
         "shop.nft_order",
         "shop.nft_bid",
         "shop.sale_event",
+        "shop.store_sale_line",
+        "shop.sale_fee_change",
     ];
 
     /// The nft and sales walks standing at one checkpoint read their next
@@ -6949,7 +9592,7 @@ mod supervisor {
         else {
             return false;
         };
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let c1 = "0x00000000000000000000000000000000000000c1";
         for db in [&alone, &together] {
             seed_collection(
@@ -6994,7 +9637,7 @@ mod supervisor {
                     .await
                     .published
             );
-            assert!(publish(st, &url, &SalesIndex).await.published);
+            assert!(publish(st, &url, &POLYGON_SALES).await.published);
         }
         // The next segment: CARL mints t2 and sells it to BOB.
         {
@@ -7011,7 +9654,7 @@ mod supervisor {
         let mark = chain.calls.lock().len();
         let nft = NftIndex::new(ChainNet::Matic);
         pass(&st_alone, &url, &nft).await;
-        pass(&st_alone, &url, &SalesIndex).await;
+        pass(&st_alone, &url, &POLYGON_SALES).await;
         let alone_calls = chain.calls.lock()[mark..].to_vec();
 
         let at = chain_group::Checkpoint::of(
@@ -7025,7 +9668,7 @@ mod supervisor {
             // Each address once, as a coverage answer lists it.
             let mut every = std::collections::BTreeMap::new();
             let nft = NftIndex::new(ChainNet::Matic);
-            for ix in [&nft as &dyn ChainIndex, &SalesIndex] {
+            for ix in [&nft as &dyn ChainIndex, &POLYGON_SALES] {
                 let anchor = (s + 498, time_of(s + 498));
                 for g in ix
                     .groups(&together.pool, s + 499, s + 1_498, anchor)
@@ -7057,7 +9700,7 @@ mod supervisor {
         let mark = chain.calls.lock().len();
         let members: Vec<chain_group::Member> = vec![
             Arc::new(NftIndex::new(ChainNet::Matic)) as Arc<dyn ChainIndex>,
-            Arc::new(SalesIndex),
+            Arc::new(POLYGON_SALES),
         ]
         .into_iter()
         .enumerate()
@@ -7145,6 +9788,8 @@ mod supervisor {
             logs.clone(),
             logs.clone(),
             logs,
+            // Historical fee changes across the configured venues.
+            format!("logs {}..{} x5", s + 499, s + 1_498),
             // The checkpoint both extend, read in the window's bracket.
             format!("header {}", s + 498),
             format!("header {}", s + 1_498),
@@ -7156,8 +9801,8 @@ mod supervisor {
         ]
         .into();
         assert_eq!(together_calls, expected, "{together_calls:#?}");
-        assert_eq!(sent, 9, "the shared walk's own requests");
-        assert_eq!(alone_calls.len(), 19, "{alone_calls:#?}");
+        assert_eq!(sent, 10, "the shared walk's own requests");
+        assert_eq!(alone_calls.len(), 20, "{alone_calls:#?}");
         for table in PROJECTION_TABLES {
             assert_eq!(
                 table_rows(&together.pool, table).await,
@@ -7303,7 +9948,7 @@ mod supervisor {
                 "sales-index",
                 ChainNet::Matic,
                 url,
-                Arc::new(|| Arc::new(SalesIndex)),
+                Arc::new(|| Arc::new(POLYGON_SALES)),
             ),
         ]
     }
@@ -7323,7 +9968,7 @@ mod supervisor {
         let Some(db) = ScratchDb::create().await else {
             return;
         };
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let c1 = "0x00000000000000000000000000000000000000c1";
         seed_collection(
             &db.pool,
@@ -7480,7 +10125,7 @@ mod supervisor {
         );
         Arc::new(move || {
             Arc::new(Hooked {
-                inner: Some(Arc::new(SalesIndex)),
+                inner: Some(Arc::new(POLYGON_SALES)),
                 armed: armed.clone(),
                 write_gate: gate.clone(),
                 write_entered: entered.clone(),
@@ -7498,7 +10143,7 @@ mod supervisor {
         let Some(db) = ScratchDb::create().await else {
             return;
         };
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let c1 = "0x00000000000000000000000000000000000000c1";
         seed_collection(
             &db.pool,
@@ -7700,7 +10345,7 @@ mod supervisor {
         let Some(db) = ScratchDb::create().await else {
             return;
         };
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let c1 = "0x00000000000000000000000000000000000000c1";
         seed_collection(
             &db.pool,
@@ -7732,7 +10377,7 @@ mod supervisor {
             );
             Arc::new(move || {
                 Arc::new(Hooked {
-                    inner: Some(Arc::new(SalesIndex)),
+                    inner: Some(Arc::new(POLYGON_SALES)),
                     armed: armed.clone(),
                     commit_armed: commit_armed.clone(),
                     write_gate: write_gate.clone(),
@@ -7928,7 +10573,7 @@ mod supervisor {
         else {
             return;
         };
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let (c1, c2) = (
             "0x00000000000000000000000000000000000000c1",
             "0x00000000000000000000000000000000000000c2",
@@ -7955,12 +10600,12 @@ mod supervisor {
         );
         let shared: Vec<(Arc<dyn ChainIndex>, Arc<chain_walk::Holdings>)> = vec![
             (Arc::new(NftIndex::new(ChainNet::Matic)), Arc::default()),
-            (Arc::new(SalesIndex), Arc::default()),
+            (Arc::new(POLYGON_SALES), Arc::default()),
         ];
         let solo_nft = NftIndex::new(ChainNet::Matic);
         for st in [&st_alone, &st_together] {
             assert!(publish(st, &url, &solo_nft).await.published);
-            assert!(publish(st, &url, &SalesIndex).await.published);
+            assert!(publish(st, &url, &POLYGON_SALES).await.published);
         }
         let walk_together = |head: u64| {
             let (pool, http, settings, url, shared) = (
@@ -8038,7 +10683,7 @@ mod supervisor {
         *chain.head.lock() = s + 1_500;
         walk_together(s + 1_500).await;
         pass(&st_alone, &url, &solo_nft).await;
-        pass(&st_alone, &url, &SalesIndex).await;
+        pass(&st_alone, &url, &POLYGON_SALES).await;
         for db in [&alone, &together] {
             seed_collection(
                 &db.pool,
@@ -8054,7 +10699,7 @@ mod supervisor {
         *chain.head.lock() = s + 2_500;
         walk_together(s + 2_500).await;
         pass(&st_alone, &url, &solo_nft).await;
-        pass(&st_alone, &url, &SalesIndex).await;
+        pass(&st_alone, &url, &POLYGON_SALES).await;
         for table in PROJECTION_TABLES {
             assert_eq!(
                 table_rows(&together.pool, table).await,
@@ -8081,7 +10726,7 @@ mod supervisor {
         let Some(db) = ScratchDb::create().await else {
             return;
         };
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let b = sales_index::BID_V2_MATIC_START_BLOCK + 100;
         let c1 = "0x00000000000000000000000000000000000000c1";
         seed_collection(
@@ -8159,7 +10804,7 @@ mod supervisor {
         let Some(db) = ScratchDb::create().await else {
             return;
         };
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let c1 = "0x00000000000000000000000000000000000000c1";
         seed_collection(
             &db.pool,
@@ -8188,7 +10833,7 @@ mod supervisor {
             );
             Arc::new(move || {
                 Arc::new(Hooked {
-                    inner: Some(Arc::new(SalesIndex)),
+                    inner: Some(Arc::new(POLYGON_SALES)),
                     armed: armed.clone(),
                     armed_fold_gate: gate.clone(),
                     entered: entered.clone(),
@@ -8248,7 +10893,7 @@ mod supervisor {
         let Some(db) = ScratchDb::create().await else {
             return;
         };
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let (c1, late) = (
             "0x00000000000000000000000000000000000000c1",
             "0x00000000000000000000000000000000000000c9",
@@ -8586,7 +11231,7 @@ mod supervisor {
                         "sales-index",
                         ChainNet::Matic,
                         &url,
-                        Arc::new(|| Arc::new(SalesIndex)),
+                        Arc::new(|| Arc::new(POLYGON_SALES)),
                     ),
                     &panicking,
                 ),
@@ -8638,7 +11283,7 @@ mod supervisor {
         let Some(db) = ScratchDb::create().await else {
             return;
         };
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let c1 = "0x00000000000000000000000000000000000000c1";
         seed_collection(
             &db.pool,
@@ -10083,6 +12728,13 @@ mod recovery {
             .unwrap();
         assert!(pass(&st, &url, &MANA).await.rebuilt);
         assert!(points(&db.pool, INDEXER_MANA).await.is_empty());
+        let rebuilds: i32 = sqlx::query_scalar(
+            "SELECT rebuilds FROM shop.chain_cursor WHERE indexer = 'mana_transfers'",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(rebuilds, 1, "the rebuild counts itself in the cursor");
         db.drop().await;
     }
 
@@ -10369,7 +13021,7 @@ mod recovery {
     /// every 500 blocks), with a producer of notifications reading the nft
     /// index standing at the cursor.
     async fn nft_history(db: &ScratchDb) -> (Arc<FakeChain>, String, SharedState, u64) {
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         seed_collection(
             &db.pool,
             "matic",
@@ -10485,7 +13137,7 @@ mod recovery {
         let Some(db) = ScratchDb::create().await else {
             return;
         };
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let late = "0x00000000000000000000000000000000000000c3";
         let t7 = v2_token(0, 7);
         seed_collection(
@@ -10619,7 +13271,7 @@ mod recovery {
         let Some(db) = ScratchDb::create().await else {
             return;
         };
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let late = "0x00000000000000000000000000000000000000c3";
         let t7 = v2_token(0, 7);
         seed_collection(
@@ -10696,7 +13348,7 @@ mod recovery {
         let Some(db) = ScratchDb::create().await else {
             return;
         };
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let b = sales_index::BID_V2_MATIC_START_BLOCK + 100;
         let t1 = v2_token(0, 1);
         seed_collection(
@@ -10728,7 +13380,7 @@ mod recovery {
         let by_1_5m = state_over(db.pool.clone(), &url, index_settings(100, 1_500_000), false);
         let nft = NftIndex::new(ChainNet::Matic);
         assert!(publish_nft(&by_million, &url, &nft).await.published);
-        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert!(publish(&by_1_5m, &url, &POLYGON_SALES).await.published);
         let seller = async || bids_of(&db.pool).await[0].3.clone();
         assert_eq!(seller().await, Some(ALICE.to_string()));
         // The chain reorganizes from b+200: BOB sold to CARL, not ALICE; the
@@ -10760,13 +13412,13 @@ mod recovery {
             .unwrap();
         assert!(c.diverged_at.is_some(), "the nft cursor is marked diverged");
         // Sales recovers on its own and refolds the bid meanwhile.
-        let recovered = pass(&by_1_5m, &url, &SalesIndex).await;
+        let recovered = pass(&by_1_5m, &url, &POLYGON_SALES).await;
         assert_eq!(
             recovered.reorg_rewound_to,
             Some((s + 5_999_999) as i64),
             "{recovered:?}"
         );
-        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert!(publish(&by_1_5m, &url, &POLYGON_SALES).await.published);
         assert_eq!(seller().await, None, "no seller from an orphaned transfer");
         // The nft walk recovers with the transfer to CARL; the next sales
         // fold sets the seller, with no further sale event.
@@ -10779,7 +13431,7 @@ mod recovery {
             .unwrap();
         assert!(c.diverged_at.is_none(), "the rewind clears the mark");
         assert!(publish_nft(&by_million, &url, &nft).await.published);
-        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert!(publish(&by_1_5m, &url, &POLYGON_SALES).await.published);
         assert_eq!(seller().await, Some(CARL.to_string()));
         db.drop().await;
     }
@@ -10842,7 +13494,7 @@ mod recovery {
         let Some(db) = ScratchDb::create().await else {
             return;
         };
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let b = sales_index::BID_V2_MATIC_START_BLOCK + 100;
         let (t1, t2) = (v2_token(0, 1), v2_token(0, 2));
         seed_collection(
@@ -10899,7 +13551,7 @@ mod recovery {
         let by_1_5m = state_over(db.pool.clone(), &url, index_settings(100, 1_500_000), false);
         let nft = NftIndex::new(ChainNet::Matic);
         assert!(publish_nft(&by_million, &url, &nft).await.published);
-        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert!(publish(&by_1_5m, &url, &POLYGON_SALES).await.published);
         let sellers = async || {
             bids_of(&db.pool)
                 .await
@@ -10923,13 +13575,13 @@ mod recovery {
         );
         // Sales recovers and folds first, while the nft walk has not looked:
         // its cursor still stands, unmarked, past the bid.
-        let recovered = pass(&by_1_5m, &url, &SalesIndex).await;
+        let recovered = pass(&by_1_5m, &url, &POLYGON_SALES).await;
         assert_eq!(
             recovered.reorg_rewound_to,
             Some((s + 5_999_999) as i64),
             "{recovered:?}"
         );
-        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert!(publish(&by_1_5m, &url, &POLYGON_SALES).await.published);
         assert_eq!(
             sellers().await,
             both(ALICE, ALICE),
@@ -10950,7 +13602,7 @@ mod recovery {
             .fetch_one(&db.pool)
             .await
             .unwrap();
-        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert!(publish(&by_1_5m, &url, &POLYGON_SALES).await.published);
         assert_eq!(sellers().await, both(CARL, ALICE));
         let after: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.sale_event")
             .fetch_one(&db.pool)
@@ -11062,7 +13714,7 @@ mod recovery {
         let Some(db) = ScratchDb::create().await else {
             return;
         };
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let late = "0x00000000000000000000000000000000000000c3";
         seed_collection(
             &db.pool,
@@ -11897,7 +14549,7 @@ mod compare_sources_tests {
     /// ones the RPC saw), the events written, and the eth_getLogs sent.
     async fn nft_walk(portal: bool) -> Option<(Vec<String>, Vec<(i64, i64, String)>, usize)> {
         let db = ScratchDb::create().await?;
-        let s = nft_index::start_block(ChainNet::Matic);
+        let s = Deployments::mainnet(ChainNet::Matic).start;
         let contracts: Vec<String> = (1..=7).map(|i| format!("0x{:040x}", 0xd0 + i)).collect();
         for (i, c) in contracts.iter().enumerate() {
             let urn = format!("urn:decentraland:matic:collections-v2:{c}");
@@ -11928,7 +14580,8 @@ mod compare_sources_tests {
             let mut every: Vec<(String, u64)> = contracts.iter().map(|c| (c.clone(), 0)).collect();
             every.push((late.to_string(), 0));
             every.extend(
-                nft_index::fixed_contracts(ChainNet::Matic)
+                Deployments::mainnet(ChainNet::Matic)
+                    .fixed_contracts()
                     .into_iter()
                     .map(|(a, _)| (a.to_ascii_lowercase(), 0)),
             );
@@ -12121,7 +14774,7 @@ mod compare_sources_tests {
             let Some(db) = ScratchDb::create().await else {
                 return;
             };
-            let s = nft_index::start_block(ChainNet::Matic);
+            let s = Deployments::mainnet(ChainNet::Matic).start;
             let c1 = "0x00000000000000000000000000000000000000c1";
             let late = "0x00000000000000000000000000000000000000c3";
             seed_collection(
@@ -12217,3 +14870,9 @@ mod compare_sources_tests {
         );
     }
 }
+
+mod sale_accounting;
+
+mod cancelled_trades;
+mod royalties;
+mod sale_routes;

@@ -1,6 +1,6 @@
-import { FileSystemInterface } from '@dcl/inspector'
+import type { FileSystemInterface } from '@dcl/inspector'
 import path from 'path'
-import { CliComponents } from '../../../components'
+import type { CliComponents } from '../../../components'
 
 /**
  * Convert paths to posix stlye

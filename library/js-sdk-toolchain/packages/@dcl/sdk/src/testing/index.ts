@@ -1,6 +1,6 @@
 import { engine } from '@dcl/ecs'
 import { createTestRuntime } from './runtime'
-import { TestDefinitionFunction, TestingModule } from './types'
+import type { TestDefinitionFunction, TestingModule } from './types'
 
 declare let require: any
 

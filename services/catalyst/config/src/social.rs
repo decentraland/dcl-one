@@ -106,8 +106,12 @@ fn source_body_limit(raw: &str) -> Result<usize, String> {
             }
         } else if value.abs() >= 1e21 || value.abs() < 1e-6 {
             let scientific = format!("{value:e}");
-            let (mantissa, exponent) = scientific.split_once('e').unwrap();
-            let exponent: i32 = exponent.parse().unwrap();
+            let (mantissa, exponent) = scientific
+                .split_once('e')
+                .expect("`{:e}` always writes an exponent");
+            let exponent: i32 = exponent
+                .parse()
+                .expect("an f64 exponent is a small integer");
             format!("{mantissa}e{exponent:+}")
         } else {
             value.to_string()
@@ -555,7 +559,10 @@ pub struct SocialConfig {
     pub comms_gatekeeper_auth_token: Option<String>,
 
     /// Lambdas base whose `/parcels/{x}/{y}/operators` protects LAND
-    /// owners/operators from scene bans (old LAMBDAS_URL); unset protects none.
+    /// owners/operators from scene bans (old LAMBDAS_URL), read only by a
+    /// permission core without the land-authz index. `catalyst serve` always
+    /// attaches the index, whose published fold is then the only LAND
+    /// authority, so the URL is not read there.
     #[arg(long, env = "COMMS_LAND_OPERATORS_URL")]
     pub comms_land_operators_url: Option<String>,
 

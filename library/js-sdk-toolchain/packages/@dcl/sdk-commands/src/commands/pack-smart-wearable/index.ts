@@ -1,13 +1,14 @@
 import path from 'path'
 import archiver from 'archiver'
 
-import { CliComponents } from '../../components'
+import type { CliComponents } from '../../components'
 import { declareArgs } from '../../logic/args'
-import { installDependencies, needsDependencies, WearableProject } from '../../logic/project-validations'
+import type { WearableProject } from '../../logic/project-validations'
+import { installDependencies, needsDependencies } from '../../logic/project-validations'
 import { b64HashingFunction, getProjectPublishableFilesWithHashes } from '../../logic/project-files'
 import { printCurrentProjectStarting } from '../../logic/beautiful-logs'
 import { getValidWorkspace } from '../../logic/workspace-validations'
-import { Result } from 'arg'
+import type { Result } from 'arg'
 import { buildScene } from '../build'
 
 interface Options {

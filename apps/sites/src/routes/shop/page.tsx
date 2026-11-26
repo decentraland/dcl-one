@@ -86,7 +86,7 @@ export function shopMeta(page: ShopPageId) {
   };
 }
 
-/** Shop documents carry the visitor's session in their head (root data), so they are never shared. */
+/** Shop documents carry the visitor's session in their head (root data), so they are private. The cart's shared document (shared-cart.ts) sets its own headers. */
 export function shopHeaders({ loaderHeaders, parentHeaders }: { loaderHeaders: Headers; parentHeaders: Headers }): Headers {
   const headers = new Headers(parentHeaders);
   headers.set("Cache-Control", loaderHeaders.get("Cache-Control") ?? "private, no-store");

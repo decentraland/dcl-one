@@ -14,7 +14,7 @@ use common::{
     structs::{
         AudioDecoderError, EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent, EmoteLifecycleSource,
         EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerLanguage, PointAtSync,
-        SceneDrivenAnimationRequest,
+        SceneDrivenAnimationRequest, TimeOfDay,
     },
     util::{AsH160, ModifyComponentExt},
 };
@@ -148,6 +148,7 @@ impl Plugin for GlobalCrdtPlugin {
         app.add_event::<PlayerSceneAnimEvent>();
         app.add_event::<ProfileEvent>();
         app.add_event::<ChatEvent>();
+        app.add_event::<ReactionEvent>();
     }
 }
 
@@ -512,7 +513,7 @@ impl GlobalCrdtState {
         );
     }
 
-    pub fn update_time(&mut self, time: f32) {
+    pub fn update_time(&mut self, time: TimeOfDay) {
         self.send_update(GlobalCrdtStateUpdate::Time(time), "time");
     }
 
@@ -659,14 +660,14 @@ pub struct PlayerPositionEvent {
     pub rotation: DclQuat,
     pub velocity: Vec3,
     pub grounded: Option<bool>,
-    /// MoveKind inferred from the packet:
+    /// MoveKind inferred from the packet, first match wins:
+    ///   - `glide_state` is `OPENING_PROP` or `GLIDING`, or `CLOSING_PROP` in the air → `Glide`
     ///   - `jump_count >= 2` → `DoubleJump`
-    ///   - `jump_count == 1` → `Jump`
-    ///   - `glide_state` is `OPENING_PROP` or `GLIDING` → `Glide`
-    ///   - `is_jumping` or `is_long_jump` → `Jump`
+    ///   - `jump_count == 1`, `is_jumping` or `is_long_jump` → `Jump`
     ///
     /// `None` means no movement-state indicator — the velocity fallback picks. Drives `jump_time`
-    /// (Jump) and the matching emote (DoubleJump / Glide) on foreign avatars.
+    /// and the matching emote (DoubleJump / Glide) on foreign avatars; a Jump after DoubleJump or
+    /// Glide continues the fall (see `foreign_dynamics::apply_remote_move_kind`).
     pub remote_move_kind: Option<MoveKind>,
     /// This update is a discontinuous reposition, such as a Pulse `TeleportPerformed` or the
     /// first snapshot for a newly observed join. The avatar snaps to this position.
@@ -717,6 +718,14 @@ pub struct ChatEvent {
     pub sender: Entity,
     pub channel: String,
     pub message: String,
+}
+
+/// An rfc4 `Reaction` as a peer sent it: an emoji to show over their avatar, `count` times.
+/// Nothing in it is checked yet.
+#[derive(Event, Debug, Clone)]
+pub struct ReactionEvent {
+    pub sender: Entity,
+    pub reaction: rfc4::Reaction,
 }
 
 /// The rfc4 chat wire timestamp for now. unity-explorer decodes it with DateTime.FromOADate: days
@@ -770,18 +779,19 @@ fn prune_player_map<V>(
 }
 
 /// The movement state a movement packet announces, `None` when it announces none.
-fn remote_move_kind(
+pub(crate) fn remote_move_kind(
     glide_state: rfc4::movement::GlideState,
     jump_count: i32,
     jumping: bool,
+    grounded: bool,
 ) -> Option<MoveKind> {
-    // Glide is checked before DoubleJump because Unity keeps `jump_count`
-    // at its last value (usually 2) through the whole glide — so the
-    // DoubleJump-first ordering would mask an active glide.
+    use rfc4::movement::GlideState::{ClosingProp, Gliding, OpeningProp};
+    // Glide is checked before DoubleJump because senders keep `jump_count` at its last value
+    // (usually 2) through the whole glide, closing included, so the DoubleJump-first ordering
+    // would mask the glide. A glider closing on the ground is the landing, not a glide.
     match (glide_state, jump_count, jumping) {
-        (rfc4::movement::GlideState::OpeningProp | rfc4::movement::GlideState::Gliding, _, _) => {
-            Some(MoveKind::Glide)
-        }
+        (OpeningProp | Gliding, _, _) => Some(MoveKind::Glide),
+        (ClosingProp, _, _) if !grounded => Some(MoveKind::Glide),
         (_, c, _) if c >= 2 => Some(MoveKind::DoubleJump),
         (_, 1, _) | (_, _, true) => Some(MoveKind::Jump),
         _ => None,
@@ -839,6 +849,7 @@ fn apply_foreign_movement(
         m.glide_state(),
         m.jump_count,
         m.is_jumping || m.is_long_jump,
+        m.is_grounded,
     );
     // Set only by the Pulse delta receiver; absent (→ ZERO, exact) for LiveKit and full-state.
     // A symmetric ± box, so the z-axis negation above doesn't affect it.
@@ -870,9 +881,10 @@ pub fn process_transport_updates(
     mut position_events: EventWriter<PlayerPositionEvent>,
     mut anim_events: EventWriter<PlayerSceneAnimEvent>,
     mut emote_events: EventWriter<EmoteLifecycleEvent>,
-    (mut chat_events, mut reaction_events): (
+    (mut chat_events, mut reaction_events, mut situational_events): (
         EventWriter<ChatEvent>,
         EventWriter<ChatReactionEvent>,
+        EventWriter<ReactionEvent>,
     ),
     mut messagebus: SceneMessageBus,
     mut subscribers: EventReader<RpcCallEvent>,
@@ -880,7 +892,10 @@ pub fn process_transport_updates(
     mut remote_anim: Local<RemoteAnimState>,
     (discard_player_updates, transports): (
         Res<DiscardPlayerUpdates>,
-        Query<Option<&crate::room_connection::ConnectionHealth>, With<Transport>>,
+        Query<(
+            &Transport,
+            Option<&crate::room_connection::ConnectionHealth>,
+        )>,
     ),
 ) {
     // gather any event receivers
@@ -927,7 +942,7 @@ pub fn process_transport_updates(
                     // would hold the player forever, as nothing can remove it again
                     if !transports
                         .get(update.transport_id)
-                        .is_ok_and(|health| health.is_none_or(|health| health.is_connected()))
+                        .is_ok_and(|(_, health)| health.is_none_or(|health| health.is_connected()))
                     {
                         debug!(
                             "dropping update from {} on despawned transport {}",
@@ -1191,7 +1206,11 @@ pub fn process_transport_updates(
                             debug!("look at position: {look_at_position:?}");
                         }
                         PlayerMessage::PlayerData(Message::Reaction(reaction)) => {
-                            debug!("reaction: {reaction:?}");
+                            debug!("reaction from {:#x}: {reaction:?}", update.address);
+                            situational_events.write(ReactionEvent {
+                                sender: entity,
+                                reaction,
+                            });
                         }
                         PlayerMessage::PlayerData(Message::ChatReaction(chat_reaction)) => {
                             debug!(
@@ -1218,7 +1237,20 @@ pub fn process_transport_updates(
                     }
                 }
                 NetworkUpdate::NonPlayer(update) => {
-                    if update.address != "authoritative-server" {
+                    let is_presenter_state = update
+                        .address
+                        .strip_prefix("presentation-bot:")
+                        .is_some_and(|id| !id.is_empty())
+                        && transports
+                            .get(update.transport_id)
+                            .is_ok_and(|(transport, health)| {
+                                transport.transport_type == TransportType::Livekit
+                                    && transport.context == context_entity
+                                    && health.is_none_or(|health| health.is_connected())
+                            })
+                        && matches!(&update.message, Message::Scene(scene)
+                            if scene.data.starts_with(b"\x03\x0c\x00presentation"));
+                    if update.address != "authoritative-server" && !is_presenter_state {
                         warn!(
                             "skipping unexpected update from {}: {:?}",
                             update.address, update.message
@@ -1240,7 +1272,13 @@ pub fn process_transport_updates(
                                 }
                             }
 
-                            messagebus.process(scene, update.address, update.transport_id, true);
+                            let authoritative = update.address == "authoritative-server";
+                            messagebus.process(
+                                scene,
+                                update.address,
+                                update.transport_id,
+                                authoritative,
+                            );
                         }
                         // a server resolving a guest profile asks the guest directly — the
                         // only source there is. The request handler reads the requested
@@ -1377,6 +1415,7 @@ fn resolve_remote_anim(
         transition_seconds,
         seek: anim.playback_time,
         sounds: anim.sound_content_hashes,
+        movement_scene: false,
     })
 }
 
@@ -1735,23 +1774,22 @@ mod tests {
 
     #[test]
     fn a_packet_names_the_movement_state_it_announces() {
-        use rfc4::movement::GlideState::{Gliding, OpeningProp, PropClosed};
+        use rfc4::movement::GlideState::{ClosingProp, Gliding, OpeningProp, PropClosed};
+        let kind = |glide, count, jumping| remote_move_kind(glide, count, jumping, false);
 
-        assert_eq!(remote_move_kind(PropClosed, 0, false), None);
+        assert_eq!(kind(PropClosed, 0, false), None);
         // Pulse never sets `is_jumping`; a first jump travels as a jump count of 1
-        assert_eq!(remote_move_kind(PropClosed, 1, false), Some(MoveKind::Jump));
-        assert_eq!(remote_move_kind(PropClosed, 0, true), Some(MoveKind::Jump));
-        assert_eq!(
-            remote_move_kind(PropClosed, 2, false),
-            Some(MoveKind::DoubleJump)
-        );
+        assert_eq!(kind(PropClosed, 1, false), Some(MoveKind::Jump));
+        assert_eq!(kind(PropClosed, 0, true), Some(MoveKind::Jump));
+        assert_eq!(kind(PropClosed, 2, false), Some(MoveKind::DoubleJump));
         // the jump count stays at 2 through a glide, which wins
-        assert_eq!(
-            remote_move_kind(OpeningProp, 2, false),
-            Some(MoveKind::Glide)
-        );
-        assert_eq!(remote_move_kind(Gliding, 2, true), Some(MoveKind::Glide));
-        assert_eq!(remote_move_kind(Gliding, 0, false), Some(MoveKind::Glide));
+        assert_eq!(kind(OpeningProp, 2, false), Some(MoveKind::Glide));
+        assert_eq!(kind(Gliding, 2, true), Some(MoveKind::Glide));
+        assert_eq!(kind(Gliding, 0, false), Some(MoveKind::Glide));
+        // closing the glider in the air is still the glide, not a second air jump
+        assert_eq!(kind(ClosingProp, 2, false), Some(MoveKind::Glide));
+        // closing it on landing is the landing
+        assert_eq!(remote_move_kind(ClosingProp, 0, false, true), None);
     }
 
     #[test]
@@ -1872,6 +1910,7 @@ mod tests {
         app.add_event::<EmoteLifecycleEvent>();
         app.add_event::<ChatEvent>();
         app.add_event::<ChatReactionEvent>();
+        app.add_event::<ReactionEvent>();
         crate::scene_rooms::test_support::init_scene_rooms(&mut app);
         app.add_plugins(crate::scene_topics::SceneTopicsRoutingPlugin);
         app.add_systems(
@@ -1966,6 +2005,215 @@ mod tests {
         });
         app.update();
         (bus_rx, topics_rx)
+    }
+
+    fn queue_presenter_message(
+        app: &App,
+        context: Entity,
+        transport: Entity,
+        identity: &str,
+        scene: &str,
+        data: Vec<u8>,
+    ) {
+        app.world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender()
+            .try_send(
+                NonPlayerUpdate {
+                    transport_id: transport,
+                    address: identity.to_owned(),
+                    message: Message::Scene(rfc4::Scene {
+                        scene_id: scene.to_owned(),
+                        data,
+                    }),
+                }
+                .into(),
+            )
+            .unwrap();
+    }
+
+    fn presentation_state_frame() -> Vec<u8> {
+        let mut frame = vec![3, 12, 0];
+        frame.extend_from_slice(b"presentation");
+        frame.extend_from_slice(
+            br#"{"type":"presentation:state","id":"slides","currentSlide":0,"slideCount":2}"#,
+        );
+        frame
+    }
+
+    #[test]
+    fn presentation_bot_state_reaches_the_scene_topic_inbox() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+        let frame = presentation_state_frame();
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "presentation-bot:session",
+            "bafyscene",
+            frame.clone(),
+        );
+        app.update();
+        assert_eq!(
+            topics_rx.try_recv().expect("presentation state delivered"),
+            ("presentation-bot:session".to_owned(), frame[1..].to_vec())
+        );
+        assert!(bus_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn authoritative_server_retains_video_crdt_authority() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        let (binary, mut binary_rx) = RpcStreamSender::<(String, Vec<u8>)>::channel();
+        let scene = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(RpcCallEvent {
+            origin: RpcOrigin::Scene {
+                entity: scene,
+                hash: "bafyscene".into(),
+            },
+            call: RpcCall::SubscribeBinaryBus { sender: binary },
+        });
+        app.update();
+        // Binary scene frame, CRDT batch, then a VideoPlayer put with an empty value.
+        let mut frame = vec![2, 1];
+        for word in [
+            24_u32,
+            1,
+            1,
+            dcl_component::SceneComponentId::VIDEO_PLAYER.0,
+            1,
+            0,
+        ] {
+            frame.extend(word.to_le_bytes());
+        }
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "authoritative-server",
+            "bafyscene",
+            frame.clone(),
+        );
+        app.update();
+        assert_eq!(
+            binary_rx.try_recv().unwrap(),
+            ("authoritative-server".into(), frame[1..].to_vec())
+        );
+    }
+
+    #[test]
+    fn presentation_bot_cannot_deliver_other_topics_or_use_another_transport() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        let socket = spawn_transport(&mut app, context);
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+        for (transport, identity, scene, frame) in [
+            (
+                room,
+                "stream:session",
+                "bafyscene",
+                presentation_state_frame(),
+            ),
+            (
+                room,
+                "presentation-bot:",
+                "bafyscene",
+                presentation_state_frame(),
+            ),
+            (
+                room,
+                "presentation-bot:session",
+                "another-scene",
+                presentation_state_frame(),
+            ),
+            (
+                socket,
+                "presentation-bot:session",
+                "bafyscene",
+                presentation_state_frame(),
+            ),
+            (
+                room,
+                "presentation-bot:session",
+                "bafyscene",
+                vec![3, 1, 0, b't', b'x'],
+            ),
+            (
+                room,
+                "presentation-bot:session",
+                "bafyscene",
+                vec![1, b'h', b'i'],
+            ),
+            (
+                room,
+                "presentation-bot:session",
+                "bafyscene",
+                vec![3, 12, 0, b'p'],
+            ),
+        ] {
+            queue_presenter_message(&app, context, transport, identity, scene, frame);
+        }
+        app.update();
+        assert!(topics_rx.try_recv().is_err());
+        assert!(bus_rx.try_recv().is_err());
+        app.world_mut()
+            .entity_mut(room)
+            .insert(crate::room_connection::ConnectionHealth::default());
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "presentation-bot:session",
+            "bafyscene",
+            presentation_state_frame(),
+        );
+        app.update();
+        assert!(
+            topics_rx.try_recv().is_err(),
+            "a disconnected presenter cannot deliver queued state"
+        );
+        app.world_mut()
+            .entity_mut(room)
+            .remove::<crate::room_connection::ConnectionHealth>();
+        app.world_mut().get_mut::<Transport>(room).unwrap().context = Entity::PLACEHOLDER;
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "presentation-bot:session",
+            "bafyscene",
+            presentation_state_frame(),
+        );
+        app.update();
+        assert!(
+            topics_rx.try_recv().is_err(),
+            "a presenter cannot enter another context"
+        );
+        app.world_mut().get_mut::<Transport>(room).unwrap().context = context;
+        app.world_mut()
+            .get_mut::<Transport>(room)
+            .unwrap()
+            .transport_type = TransportType::WebsocketRoom;
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "presentation-bot:session",
+            "bafyscene",
+            presentation_state_frame(),
+        );
+        app.update();
+        assert!(
+            topics_rx.try_recv().is_err(),
+            "a websocket cannot impersonate a LiveKit presenter"
+        );
     }
 
     const TOPIC_MESSAGE: [u8; 5] = [3, 1, 0, b't', b'x'];
@@ -2310,6 +2558,45 @@ mod tests {
         app.world_mut().despawn(gone);
         app.update();
         assert!(foreign_players(&mut app).is_empty());
+    }
+
+    #[test]
+    fn a_peers_reaction_is_raised_for_its_player_as_sent() {
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let transport = spawn_transport(&mut app, context);
+        let reaction = rfc4::Reaction {
+            emoji_index: -7,
+            timestamp: 12.5,
+            count: 900,
+        };
+        app.world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender()
+            .try_send(
+                PlayerUpdate {
+                    transport_id: transport,
+                    message: PlayerMessage::PlayerData(Message::Reaction(reaction.clone())),
+                    address: peer,
+                }
+                .into(),
+            )
+            .unwrap();
+        app.update();
+
+        let mut players = app.world_mut().query::<(Entity, &ForeignPlayer)>();
+        let (player, heard) = players.single(app.world()).unwrap();
+        assert_eq!(heard.address, peer);
+        let raised = app
+            .world()
+            .resource::<Events<ReactionEvent>>()
+            .iter_current_update_events()
+            .collect::<Vec<_>>();
+        assert_eq!(raised.len(), 1);
+        assert_eq!(raised[0].sender, player);
+        // its bounds are the reader's to enforce: the event carries what the peer sent
+        assert_eq!(raised[0].reaction, reaction);
     }
 
     #[test]

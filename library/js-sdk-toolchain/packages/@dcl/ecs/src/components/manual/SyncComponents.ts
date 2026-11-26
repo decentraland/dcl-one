@@ -1,4 +1,4 @@
-import { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine/types'
+import type { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine/types'
 import { Schemas } from '../../schemas'
 
 export interface ISyncComponentsType {

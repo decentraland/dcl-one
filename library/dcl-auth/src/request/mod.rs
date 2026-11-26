@@ -187,6 +187,7 @@ pub fn create_legacy_payload(method: &str, path: &str, timestamp: &str, metadata
 enum Refusal {
     Invalid(String),
     Unavailable,
+    RateLimited,
 }
 
 impl From<Refusal> for RequestAuthError {
@@ -194,6 +195,7 @@ impl From<Refusal> for RequestAuthError {
         match refusal {
             Refusal::Invalid(message) => unauthorized(format!("Invalid signature: {message}")),
             Refusal::Unavailable => RequestAuthError::Unavailable,
+            Refusal::RateLimited => RequestAuthError::RateLimited,
         }
     }
 }
@@ -236,6 +238,7 @@ async fn walk(chain: &AuthChain, now_ms: i64, options: &VerifyOptions) -> Result
     }
     match result {
         Err(_) | Ok(Err(AuthError::Eip1654ValidationFailed(_))) => Err(Refusal::Unavailable),
+        Ok(Err(AuthError::Eip1654RateLimited)) => Err(Refusal::RateLimited),
         Ok(Err(e)) => Err(Refusal::Invalid(e.to_string())),
         Ok(Ok(walked)) => Ok(walked),
     }
@@ -288,6 +291,7 @@ fn settle(
         Ok(walked) => walked,
         Err(Refusal::Invalid(message)) => return Err(Refusal::Invalid(message.clone())),
         Err(Refusal::Unavailable) => return Err(Refusal::Unavailable),
+        Err(Refusal::RateLimited) => return Err(Refusal::RateLimited),
     };
     if !payloads.contains(&walked.authority) {
         return Err(Refusal::Invalid(format!(
@@ -341,6 +345,7 @@ async fn verify_identity(
     let scope = match settle(&chain, &walked, &payloads(create_payload), now_ms, options) {
         Ok(scope) => scope,
         Err(Refusal::Unavailable) => return Err(RequestAuthError::Unavailable),
+        Err(Refusal::RateLimited) => return Err(RequestAuthError::RateLimited),
         Err(refusal) => {
             let Some(keys) = &options.canonical_metadata_keys else {
                 return Err(refusal.into());

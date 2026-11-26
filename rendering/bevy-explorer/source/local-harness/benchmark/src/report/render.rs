@@ -1,7 +1,7 @@
 //! The report's Markdown: the header, the headline, the legend, a section per runner and a line
 //! for each runner without results. The headline, the legend, the tables and the notes are
 //! `ProduceSummary.cs`'s words, with every number formatted as .NET formats it, but for the note
-//! and headline for missing baseline runs.
+//! and headline for missing baseline runs and the comparison with the latest release.
 
 use std::fmt::Write;
 
@@ -10,9 +10,11 @@ use super::fleet;
 use super::stats::{
     self, FrameTimeVerdict, IncidentsPerRunVerdict, MedianAndRange, PeakMemoryVerdict,
     SessionsNotComparable, CPU_HICCUPS_METRIC, EXCEPTIONS_METRIC, FRAME_TIME_METRICS,
-    PEAK_MEMORY_METRIC,
+    LOAD_TIME_METRICS, PEAK_MEMORY_METRIC,
 };
-use super::{BuildBenchmarkRunsStatistics, ReportOptions, RunnerCaveat, RunnerSection};
+use super::{
+    BuildBenchmarkRunsStatistics, MeasuredRuns, ReportOptions, RunnerCaveat, RunnerSection,
+};
 
 /// `intel-i5-chrome` is "Intel Core i5 (Chrome)": the parentheses keep the headline's ", " list
 /// readable. Any other label is shown as it is.
@@ -23,7 +25,7 @@ pub fn display_name(label: &str) -> String {
     }
 }
 
-/// The title, and what was compared: the PR, the two builds and the run.
+/// The title, and what was compared: the PR, the builds and the run.
 pub fn header(options: &ReportOptions) -> String {
     let mut out = format!("## {}\n\n", options.title);
     let mut parts = Vec::new();
@@ -36,6 +38,9 @@ pub fn header(options: &ReportOptions) -> String {
     if let Some(base) = &options.base {
         parts.push(format!("base: {base}"));
     }
+    if let Some(release) = &options.release {
+        parts.push(format!("latest release: {release}"));
+    }
     if let Some(url) = &options.run_url {
         parts.push(format!("[run]({url})"));
     }
@@ -47,6 +52,23 @@ pub fn header(options: &ReportOptions) -> String {
 
 /// The **Overall** line: the regressions when there are any, else the improvements.
 pub fn headline(regressions: &[(&str, Vec<&str>)], improvements: &[(&str, Vec<&str>)]) -> String {
+    labelled_headline("Overall", regressions, improvements)
+}
+
+/// The **Against the latest release** line: its frame-time regressions when there are any, else
+/// its improvements, picked as the **Overall** line picks them.
+pub fn release_headline(
+    regressions: &[(&str, Vec<&str>)],
+    improvements: &[(&str, Vec<&str>)],
+) -> String {
+    labelled_headline("Against the latest release", regressions, improvements)
+}
+
+fn labelled_headline(
+    label: &str,
+    regressions: &[(&str, Vec<&str>)],
+    improvements: &[(&str, Vec<&str>)],
+) -> String {
     let list = |groups: &[(&str, Vec<&str>)], moved: &str| {
         groups
             .iter()
@@ -55,31 +77,53 @@ pub fn headline(regressions: &[(&str, Vec<&str>)], improvements: &[(&str, Vec<&s
             .join("; ")
     };
     if !regressions.is_empty() {
-        format!("**Overall: 🔴 {}**\n\n", list(regressions, "regressed"))
+        format!("**{label}: 🔴 {}**\n\n", list(regressions, "regressed"))
     } else if !improvements.is_empty() {
-        format!("**Overall: 🟢 {}**\n\n", list(improvements, "improved"))
+        format!("**{label}: 🟢 {}**\n\n", list(improvements, "improved"))
     } else {
-        "**Overall: ✅ no significant changes**\n\n".to_string()
+        format!("**{label}: ✅ no significant changes**\n\n")
     }
 }
+
+/// The release line when the legs measured the latest release but no release run produced data.
+pub const NOTHING_COMPARED_WITH_RELEASE: &str =
+    "**Against the latest release: ⚠️ nothing was compared — no Release run produced data**\n\n";
+
+/// The release line when no leg with data could download or warm up the latest release.
+pub const RELEASE_NOT_MEASURED_ANYWHERE: &str =
+    "**Against the latest release: ⚠️ not measured on any laptop — its download or warm-up failed**\n\n";
 
 /// The **Overall** line when sections have data but none had baseline runs to compare with.
 pub const NOTHING_COMPARED: &str =
     "**Overall: ⚠️ nothing was compared — no Baseline run produced data**\n\n";
 
 /// How to read the tables, for someone with no context on the method.
-pub fn legend(expected_runs: u64) -> String {
+/// `release`: the legs measured the latest release, so its table and line are explained.
+pub fn legend(expected_runs: u64, release: bool) -> String {
+    let (interleaving, release_bullet) = if release {
+        (
+            "the other builds (change, baseline, release, change, baseline, release, ...) in the same session, so all see",
+            "- **Against the latest release** — the build every player gets at decentraland.org/play: a second table compares the frame times with it under the same rules, and Δ there is Change minus Release. The **Overall** line stays the comparison with the baseline.\n",
+        )
+    } else {
+        (
+            "the other build (change, baseline, change, baseline, ...) in the same session, so both see",
+            "",
+        )
+    };
     format!(
         "<details><summary>How to read this table</summary>\n\
          \n\
-         - Each build is measured **{expected_runs} times**, interleaved with the other build (change, baseline, change, baseline, ...) in the same session, so both see the same world content and machine state. The values are the **median**, and **(min–max)** is the lowest and highest of those runs.\n\
+         - Each build is measured **{expected_runs} times**, interleaved with {interleaving} the same world content and machine state. The values are the **median**, and **(min–max)** is the lowest and highest of those runs.\n\
          - **Δ** is Change minus Baseline (a negative Δ means Change is faster).\n\
+         {release_bullet}\
          - **🟢 faster / 🔴 slower** — a difference that passed every check: the runs are fully separated (every run of one build faster than every run of the other), and the median difference is at least **{lambda:.0}%** and at least **{min_ms} ms**.\n\
          - **⚪ within noise** — the builds' runs overlap, or the difference is tiny; it cannot be told apart from random variation. Treat it as no change.\n\
          - **— informational** — the 0.1% worst metrics average only the few worst frames of a run, so a single OS hiccup swings them by a lot; they are shown for context and never earn a verdict.\n\
          - **⚠️ no verdict** — the two builds' sessions were not comparable (very different sample counts, or too few usable runs), so no conclusion is drawn from them.\n\
          - **Exceptions per run** — the average number of exceptions in a run's log, not counting teardown ones logged while the app quits. Flagged only on a difference of at least {delta_min} per run and {ratio_min}× the other build; exception kinds the baseline never threw are called out under the table. The *Exception breakdown* groups all of them by the explorer's report category and exception type (as totals across the runs).\n\
          - **Hiccups per run / Peak memory** — from the `perf_summary` lines an explorer writes when its measured phase ends: frames over its hiccup threshold (the larger of 50 ms and two target frame times) and the peak engine memory. Hiccups follow the exceptions rule, given fully separated run ranges and the same hiccup threshold in both builds (⚠️ no verdict when the thresholds differ); memory the frame-time rule with a floor of {min_mib} MiB. The *Top scopes* list is the self time per run of the scopes the explorer's profiler recorded. Shown only when a run wrote them.\n\
+         - **Time to world / First ring ready** — from the run's log: the seconds from app start to arriving in world, and from the spawn scene's spawn to it and every scene within one parcel of the player being ready. They follow the frame-time rule with a floor of {min_load_s} s, and need 2 runs of each build that logged the value. Shown only when a run logged them.\n\
          - A run that logged **unusually many exceptions** (at least {outlier_min} and {outlier_factor}× the median of its build's runs — e.g. a service was down during it) is excluded from all numbers and called out under the table.\n\
          - The **Overall** line at the top only reacts to a metric that moved on **two or more machines**, or by **10% or more** on one — a single modest 🟢/🔴 cell can still be a statistical fluke.\n\
          </details>\n\
@@ -91,6 +135,7 @@ pub fn legend(expected_runs: u64) -> String {
         outlier_min = stats::OUTLIER_MIN_EXCEPTIONS,
         outlier_factor = stats::OUTLIER_FACTOR,
         min_mib = stats::MIN_ABSOLUTE_PEAK_MEMORY_DELTA_MIB,
+        min_load_s = stats::MIN_ABSOLUTE_LOAD_TIME_DELTA_MS / 1000.0,
     )
 }
 
@@ -110,16 +155,7 @@ pub fn runner_section(section: &RunnerSection) -> String {
                 samples(base),
                 samples(change)
             );
-            for (m, name) in FRAME_TIME_METRICS.iter().enumerate() {
-                let delta = change.frame_time_ms[m].median - base.frame_time_ms[m].median;
-                let _ = writeln!(
-                    out,
-                    "| {name} | {} | {} | {delta:.1} ms | {} |",
-                    frame_time_cell(&base.frame_time_ms[m]),
-                    frame_time_cell(&change.frame_time_ms[m]),
-                    frame_time_verdict_text(comparison.frame_time_verdicts[m])
-                );
-            }
+            frame_time_rows(&mut out, base, change, &comparison.frame_time_verdicts);
             let _ = writeln!(
                 out,
                 "| {EXCEPTIONS_METRIC} | {} | {} | {} | {} |",
@@ -128,17 +164,19 @@ pub fn runner_section(section: &RunnerSection) -> String {
                 signed_hundredths(change.exceptions_per_run - base.exceptions_per_run),
                 exceptions_verdict_text(comparison.exceptions_per_run_verdict)
             );
-            if change.cpu_hiccup_count_run_count > 0 || base.cpu_hiccup_count_run_count > 0 {
+            if change.cpu_hiccups_per_run.run_count > 0 || base.cpu_hiccups_per_run.run_count > 0 {
                 let _ = writeln!(
                     out,
                     "| {} | {} | {} | {} | {} |",
                     CPU_HICCUPS_METRIC,
                     cpu_hiccups_cell(base),
                     cpu_hiccups_cell(change),
-                    if change.cpu_hiccup_count_run_count > 0 && base.cpu_hiccup_count_run_count > 0
+                    if change.cpu_hiccups_per_run.run_count > 0
+                        && base.cpu_hiccups_per_run.run_count > 0
                     {
                         signed_hundredths(f64::from(
-                            change.cpu_hiccups_per_run.median - base.cpu_hiccups_per_run.median,
+                            change.cpu_hiccups_per_run.value.median
+                                - base.cpu_hiccups_per_run.value.median,
                         ))
                     } else {
                         "-".to_owned()
@@ -146,19 +184,39 @@ pub fn runner_section(section: &RunnerSection) -> String {
                     hiccups_verdict_text(comparison.cpu_hiccups_per_run_verdict)
                 );
             }
-            if change.peak_memory_run_count > 0 || base.peak_memory_run_count > 0 {
+            if change.peak_memory_mib.run_count > 0 || base.peak_memory_mib.run_count > 0 {
                 let _ = writeln!(
                     out,
                     "| {} | {} | {} | {} | {} |",
                     PEAK_MEMORY_METRIC,
-                    peak_memory_cell(base),
-                    peak_memory_cell(change),
-                    if change.peak_memory_run_count > 0 && base.peak_memory_run_count > 0 {
-                        signed_mib(change.peak_memory_mib.median - base.peak_memory_mib.median)
+                    measured_cell(&base.peak_memory_mib, "MiB", 1.0, 0),
+                    measured_cell(&change.peak_memory_mib, "MiB", 1.0, 0),
+                    if change.peak_memory_mib.run_count > 0 && base.peak_memory_mib.run_count > 0 {
+                        signed_mib(
+                            change.peak_memory_mib.value.median - base.peak_memory_mib.value.median,
+                        )
                     } else {
                         "-".to_owned()
                     },
                     peak_memory_verdict_text(comparison.peak_memory_verdict)
+                );
+            }
+            for (m, name) in LOAD_TIME_METRICS.iter().enumerate() {
+                let (change, base) = (&change.load_time_ms[m], &base.load_time_ms[m]);
+                if change.run_count == 0 && base.run_count == 0 {
+                    continue;
+                }
+                let delta = if change.run_count > 0 && base.run_count > 0 {
+                    signed_seconds((change.value.median - base.value.median) / 1000.0)
+                } else {
+                    "-".to_owned()
+                };
+                let _ = writeln!(
+                    out,
+                    "| {name} | {} | {} | {delta} | {} |",
+                    measured_cell(base, "s", 1000.0, 1),
+                    measured_cell(change, "s", 1000.0, 1),
+                    frame_time_verdict_text(comparison.load_time_verdicts[m])
                 );
             }
         }
@@ -178,21 +236,44 @@ pub fn runner_section(section: &RunnerSection) -> String {
                 "| {EXCEPTIONS_METRIC} | {} |",
                 hundredths(change.exceptions_per_run)
             );
-            if change.cpu_hiccup_count_run_count > 0 {
+            if change.cpu_hiccups_per_run.run_count > 0 {
                 let _ = writeln!(
                     out,
                     "| {CPU_HICCUPS_METRIC} | {} |",
                     cpu_hiccups_cell(change)
                 );
             }
-            if change.peak_memory_run_count > 0 {
+            if change.peak_memory_mib.run_count > 0 {
                 let _ = writeln!(
                     out,
                     "| {PEAK_MEMORY_METRIC} | {} |",
-                    peak_memory_cell(change)
+                    measured_cell(&change.peak_memory_mib, "MiB", 1.0, 0)
                 );
             }
+            for (m, name) in LOAD_TIME_METRICS.iter().enumerate() {
+                if change.load_time_ms[m].run_count > 0 {
+                    let _ = writeln!(
+                        out,
+                        "| {name} | {} |",
+                        measured_cell(&change.load_time_ms[m], "s", 1000.0, 1)
+                    );
+                }
+            }
         }
+    }
+
+    if let Some(comparison) = &section.release_comparison {
+        out += "\n**Against the latest release**\n\n";
+        out += "| Metric | Release | Change | Δ | Result |\n";
+        out += "| --- | ---: | ---: | ---: | :--- |\n";
+        let release = &comparison.release;
+        let _ = writeln!(
+            out,
+            "| Samples | {} | {} | | |",
+            samples(release),
+            samples(change)
+        );
+        frame_time_rows(&mut out, release, change, &comparison.frame_time_verdicts);
     }
 
     let base_scopes = section
@@ -294,6 +375,25 @@ pub fn runner_section(section: &RunnerSection) -> String {
     out
 }
 
+/// A comparison table's frame-time rows: the other build, the change, Δ and the verdict.
+fn frame_time_rows(
+    out: &mut String,
+    other: &BuildBenchmarkRunsStatistics,
+    change: &BuildBenchmarkRunsStatistics,
+    verdicts: &[FrameTimeVerdict; 6],
+) {
+    for (m, name) in FRAME_TIME_METRICS.iter().enumerate() {
+        let delta = change.frame_time_ms[m].median - other.frame_time_ms[m].median;
+        let _ = writeln!(
+            out,
+            "| {name} | {} | {} | {delta:.1} ms | {} |",
+            frame_time_cell(&other.frame_time_ms[m]),
+            frame_time_cell(&change.frame_time_ms[m]),
+            frame_time_verdict_text(verdicts[m])
+        );
+    }
+}
+
 /// A section whose files could not be read.
 pub fn failure(name: &str, message: &str) -> String {
     format!("> ⚠️ Could not gather the results of {name}: {message}\n\n")
@@ -376,7 +476,33 @@ fn caveat_text(note: &RunnerCaveat) -> String {
             "⚠️ No verdicts: the builds produced wildly different sample counts per run ({base} baseline vs {change} change, {:.0}% apart) — far beyond any plausible performance difference, so one of them likely did not run the full session and their frame times cannot be compared.",
             (ratio - 1.0) * 100.0
         ),
-        RunnerCaveat::NoBaselineData => {
+        RunnerCaveat::ReleaseSessionsNotComparable(SessionsNotComparable::TooFewRuns) => {
+            "⚠️ No verdicts against the latest release: fewer than 2 usable runs of a build — the run-to-run noise cannot be estimated from a single run."
+                .to_string()
+        }
+        RunnerCaveat::ReleaseSessionsNotComparable(SessionsNotComparable::SampleCountsDiffer {
+            base,
+            change,
+            ratio,
+        }) => format!(
+            "⚠️ No verdicts against the latest release: the builds produced wildly different sample counts per run ({base} release vs {change} change, {:.0}% apart), so their frame times cannot be compared.",
+            (ratio - 1.0) * 100.0
+        ),
+        RunnerCaveat::ReleaseNotMeasured => {
+            "⚠️ The latest release was not measured on this laptop: its download or warm-up failed."
+                .to_string()
+        }
+        RunnerCaveat::NoReleaseData => {
+            "⚠️ No Release run produced data — the change is not compared with the latest release here."
+                .to_string()
+        }
+        RunnerCaveat::NoBaselineData {
+            release_compared: true,
+        } => "⚠️ No Baseline run produced data — the change is not compared with the baseline."
+            .to_string(),
+        RunnerCaveat::NoBaselineData {
+            release_compared: false,
+        } => {
             "⚠️ No Baseline run produced data — the change is shown alone, with no verdicts."
                 .to_string()
         }
@@ -424,10 +550,10 @@ fn top_scope_names<'a>(change: &'a [(String, f32)], base: &'a [(String, f32)]) -
 
 /// The hiccup count's median and range, with the threshold in effect.
 fn cpu_hiccups_cell(build: &BuildBenchmarkRunsStatistics) -> String {
-    if build.cpu_hiccup_count_run_count == 0 {
+    if build.cpu_hiccups_per_run.run_count == 0 {
         return "-".to_owned();
     }
-    let MedianAndRange { median, min, max } = build.cpu_hiccups_per_run;
+    let MedianAndRange { median, min, max } = build.cpu_hiccups_per_run.value;
     let threshold = build
         .cpu_hiccup_threshold_ms
         .map_or(String::new(), |ms| format!(" over {ms:.0} ms"));
@@ -438,15 +564,26 @@ fn cpu_hiccups_cell(build: &BuildBenchmarkRunsStatistics) -> String {
     }
 }
 
-fn peak_memory_cell(build: &BuildBenchmarkRunsStatistics) -> String {
-    if build.peak_memory_run_count == 0 {
+/// The median in `unit`, the measured value divided by `per_unit`, at `decimals`, with the range
+/// when the runs differ at that precision.
+fn measured_cell(runs: &MeasuredRuns, unit: &str, per_unit: f32, decimals: usize) -> String {
+    if runs.run_count == 0 {
         return "-".to_owned();
     }
-    let MedianAndRange { median, min, max } = build.peak_memory_mib;
-    if max - min < 0.5 {
-        format!("{median:.0} MiB")
+    let MedianAndRange { median, min, max } = runs.value;
+    let (median, min, max) = (median / per_unit, min / per_unit, max / per_unit);
+    if max - min < 0.5 / 10f32.powi(decimals as i32) {
+        format!("{median:.decimals$} {unit}")
     } else {
-        format!("{median:.0} MiB ({min:.0}–{max:.0})")
+        format!("{median:.decimals$} {unit} ({min:.decimals$}–{max:.decimals$})")
+    }
+}
+
+fn signed_seconds(delta: f32) -> String {
+    if (delta * 10.0).round() == 0.0 {
+        "0".to_owned()
+    } else {
+        format!("{delta:+.1} s")
     }
 }
 
@@ -634,6 +771,14 @@ mod tests {
         assert_eq!(
             headline(&[], &[]),
             "**Overall: ✅ no significant changes**\n\n"
+        );
+        assert_eq!(
+            release_headline(&down, &up),
+            "**Against the latest release: 🔴 GPU average regressed on A; CPU 1% worst regressed on B**\n\n"
+        );
+        assert_eq!(
+            release_headline(&[], &[]),
+            "**Against the latest release: ✅ no significant changes**\n\n"
         );
     }
 

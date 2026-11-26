@@ -122,13 +122,24 @@ pub async fn realm_information(
 #[serde(rename_all = "camelCase")]
 pub struct WorldTime {
     pub seconds: f32,
+    /// The scene the player stands in holds the time of day and the player may not change it.
+    pub locked: bool,
+    /// The speed of the player's clock; 0 when it is stopped.
+    pub speed: f32,
+    /// The player's clock sets the sky: no scene's time does.
+    pub follows_clock: bool,
 }
 
 pub async fn op_world_time(op_state: Rc<RefCell<impl State>>) -> Result<WorldTime, anyhow::Error> {
     debug!("op_world_time");
     let state = op_state.borrow();
-    let TimeOfDay { time } = state.borrow::<TimeOfDay>();
-    Ok(WorldTime { seconds: *time })
+    let time = state.borrow::<TimeOfDay>();
+    Ok(WorldTime {
+        seconds: time.time,
+        locked: time.locked,
+        speed: time.speed,
+        follows_clock: time.follows_clock,
+    })
 }
 
 pub async fn op_camera_fov(op_state: Rc<RefCell<impl State>>) -> Result<f32, anyhow::Error> {
