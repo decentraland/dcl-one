@@ -57,15 +57,17 @@ async fn read_gate(
         .map_err(StudioError::Refused)
 }
 
-/// The write gate over `method` and `route`; answers the audit actor.
+/// The write gate over `method`, `route` and the request's `body`; answers
+/// the audit actor.
 async fn write_gate(
     state: &SharedState,
     headers: &HeaderMap,
     method: &str,
     route: &str,
     original: &OriginalUri,
+    body: &[u8],
 ) -> Result<String, StudioError> {
-    require_write_admin(state, headers, method, route, original)
+    require_write_admin(state, headers, method, route, original, body)
         .await
         .map_err(StudioError::Refused)
 }
@@ -96,7 +98,7 @@ async fn create_studio(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, StudioError> {
-    let actor = write_gate(&state, &headers, "post", "/admin/studios", &original).await?;
+    let actor = write_gate(&state, &headers, "post", "/admin/studios", &original, &body).await?;
     let body = json_object(&body)?;
     let name = parse_name(body.get("name"))?;
     let studio = state.credits.create_studio(&name, &actor).await?;
@@ -172,6 +174,7 @@ async fn update_studio(
         "patch",
         &format!("/admin/studios/{studio_id}"),
         &original,
+        &body,
     )
     .await?;
     let studio_id = parse_studio_id(&studio_id)?;
@@ -215,6 +218,7 @@ async fn add_operator(
         "post",
         &format!("/admin/studios/{studio_id}/operators"),
         &original,
+        &body,
     )
     .await?;
     let studio_id = parse_studio_id(&studio_id)?;
@@ -256,6 +260,7 @@ async fn remove_operator(
         "delete",
         &format!("/admin/studios/{studio_id}/operators/{address}"),
         &original,
+        &[],
     )
     .await?;
     let studio_id = parse_studio_id(&studio_id)?;
@@ -295,6 +300,7 @@ async fn record_budget(
         "post",
         &format!("/admin/studios/{studio_id}/budget"),
         &original,
+        &body,
     )
     .await?;
     let studio_id = parse_studio_id(&studio_id)?;

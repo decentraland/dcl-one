@@ -154,6 +154,9 @@ pub struct RawSettings {
     /// `CREDITS_WRITE_ADMIN_ADDRESSES` (empty): comma-separated wallets whose
     /// signed requests may change the studios, and read what a read admin reads.
     pub write_admin_addresses: String,
+    /// `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` (false): refuse a wallet's
+    /// admin write that signs no `bodySha256` (`admin::require_write_admin`).
+    pub admin_writes_require_bound_body: bool,
     /// `CREDITS_CAPTCHA_SECRET` (or `_FILE`): the hCaptcha secret; unset skips the token check.
     pub captcha_secret: Option<String>,
     /// `CREDITS_CAPTCHA_VERIFY_URL` (`https://hcaptcha.com/siteverify`).
@@ -256,6 +259,7 @@ impl Default for RawSettings {
             admin_token: None,
             read_admin_addresses: String::new(),
             write_admin_addresses: String::new(),
+            admin_writes_require_bound_body: false,
             captcha_secret: None,
             captcha_verify_url: DEFAULT_CAPTCHA_VERIFY_URL.to_string(),
             stripe_secret_key: None,
@@ -316,6 +320,9 @@ pub struct Settings {
     /// the studios with a signed request (`admin::require_write_admin`); they
     /// read too.
     pub write_admin_addresses: Vec<String>,
+    /// A wallet's admin write must sign its body (`bodySha256`); off, one
+    /// that signs none is accepted with a warning.
+    pub admin_writes_require_bound_body: bool,
     pub captcha_secret: Option<String>,
     pub captcha_verify_url: String,
     pub stripe_secret_key: Option<String>,
@@ -606,6 +613,7 @@ impl Settings {
             writes_enabled: raw.writes_enabled,
             admin_token: non_empty(raw.admin_token),
             read_admin_addresses: parse_read_admin_addresses(&raw.read_admin_addresses)?,
+            admin_writes_require_bound_body: raw.admin_writes_require_bound_body,
             write_admin_addresses: parse_admin_addresses(
                 "CREDITS_WRITE_ADMIN_ADDRESSES",
                 &raw.write_admin_addresses,

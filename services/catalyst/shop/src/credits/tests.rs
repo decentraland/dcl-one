@@ -11995,3 +11995,125 @@ async fn studio_admin_writes_ask_the_contract_and_bind_their_route() {
         .await
         .unwrap();
 }
+
+/// A wallet's studio write may commit to its body: the signed `bodySha256`
+/// must be the SHA-256 of the exact bytes sent, or the write is refused before
+/// anything is written. With `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` a write
+/// that signs no hash is refused too; off, it is accepted as credits-server
+/// accepted it. The bearer signs nothing and is unaffected.
+#[tokio::test]
+async fn a_wallet_studio_write_is_bound_to_its_body() {
+    let Some(pool) = pool().await else { return };
+    let writer = scratch_wallet();
+    let state_requiring = |required: bool| -> SharedState {
+        let settings = Settings::parse(RawSettings {
+            writes_enabled: true,
+            usage_chain_id: super::usage::CHAIN_POLYGON,
+            checkout_fulfillment_mode: "secondary".into(),
+            marketplace_markup_bps: 0,
+            mana_price_max_staleness_secs: 3600,
+            admin_token: Some("s3cret".into()),
+            write_admin_addresses: writer.address.clone(),
+            admin_writes_require_bound_body: required,
+            ..RawSettings::default()
+        })
+        .unwrap();
+        Arc::new(State::with_sources(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+            Arc::new(FakeMarket::default()),
+            Arc::new(MockBroker::configured()),
+            None,
+        ))
+    };
+    let path = "/credits/admin/studios";
+    let sha = |body: &Value| {
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
+            body.to_string().as_bytes(),
+        ))
+    };
+    let bound = |hash: String| -> &'static str {
+        Box::leak(json!({ "bodySha256": hash }).to_string().into_boxed_str())
+    };
+    let created = |v: &Value| v["studio"]["id"].as_str().map(str::to_string);
+    let mut ids = Vec::new();
+
+    for required in [true, false] {
+        let app = app(state_requiring(required));
+        let body = json!({ "name": unique("Bound") });
+        let headers = signed_headers_with(&writer, "post", path, bound(sha(&body))).await;
+        let (status, _, v) = send(&app, "POST", path, headers, Some(body)).await;
+        assert_eq!(
+            status,
+            StatusCode::CREATED,
+            "a body matching its signed hash (required: {required}): {v}"
+        );
+        ids.extend(created(&v));
+
+        let signed_for = json!({ "name": unique("Signed") });
+        let swapped_name = unique("Swapped");
+        let headers = signed_headers_with(&writer, "post", path, bound(sha(&signed_for))).await;
+        let (status, _, v) = send(
+            &app,
+            "POST",
+            path,
+            headers,
+            Some(json!({ "name": swapped_name })),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "another body than the one signed (required: {required}): {v}"
+        );
+        let written: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM credits.studios WHERE name = $1")
+                .bind(&swapped_name)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(written, 0, "refused before anything is written");
+
+        let unbound = json!({ "name": unique("Unbound") });
+        let headers = signed_headers(&writer, "post", path).await;
+        let (status, _, v) = send(&app, "POST", path, headers, Some(unbound)).await;
+        let expected = if required {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::CREATED
+        };
+        assert_eq!(
+            status, expected,
+            "a write that signs no hash (required: {required}): {v}"
+        );
+        ids.extend(created(&v));
+
+        let (status, _, v) = send(
+            &app,
+            "POST",
+            path,
+            admin_bearer(),
+            Some(json!({ "name": unique("Bearer") })),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::CREATED,
+            "the bearer signs nothing (required: {required}): {v}"
+        );
+        ids.extend(created(&v));
+    }
+    for id in ids {
+        sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}

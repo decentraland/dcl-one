@@ -13,11 +13,12 @@ use axum::http::HeaderMap;
 use axum::http::request::Parts;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use super::SharedState;
 use super::errors::ApiError;
 use crate::shared::signed_fetch::{
-    ORIGINAL_PATH_HEADER, PayloadPolicy, SignedPath, require_signer_at,
+    AUTH_METADATA_HEADER, ORIGINAL_PATH_HEADER, PayloadPolicy, SignedPath, require_signer_at,
 };
 
 pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_CREDITS_ADMIN_TOKEN";
@@ -93,6 +94,10 @@ pub(crate) async fn require_read_admin(
     .map(drop)
 }
 
+/// The signed-metadata key a wallet's write commits to its request body with:
+/// the hex SHA-256 of the body's exact bytes.
+pub const BODY_SHA256_KEY: &str = "bodySha256";
+
 /// The studio write gate: the operator bearer, or a signed-fetch request over
 /// `method` and the route whose signer is one of
 /// `CREDITS_WRITE_ADMIN_ADDRESSES` (the old server's read-write admins), so
@@ -100,12 +105,19 @@ pub(crate) async fn require_read_admin(
 /// audit actor: the bearer's [`RequireAdmin::audit_actor_description`], or the
 /// signer's address, so a wallet's change names who made it. Anything else
 /// answers the old server's 401.
+///
+/// A signed request proves the method, the route and the time, not the body.
+/// So a wallet's write that signs [`BODY_SHA256_KEY`] must match `body`, or it
+/// is refused before anything is written. One that signs no hash is accepted
+/// with a warning, as credits-server accepted it, until
+/// `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` refuses it.
 pub(crate) async fn require_write_admin(
     state: &SharedState,
     headers: &HeaderMap,
     method: &str,
     route_path: &str,
     original: &axum::extract::OriginalUri,
+    body: &[u8],
 ) -> Result<String, ApiError> {
     const REFUSED: &str =
         "Unauthorized: the admin token or a write-admin signed request is required";
@@ -113,10 +125,36 @@ pub(crate) async fn require_write_admin(
         return Ok(admin.audit_actor_description());
     }
     let admins = [state.settings.write_admin_addresses.as_slice()];
-    signed_admin(
+    let signer = signed_admin(
         state, headers, method, route_path, original, &admins, REFUSED,
     )
-    .await
+    .await?;
+    match signed_body_hash(headers) {
+        Some(Some(signed)) if signed.eq_ignore_ascii_case(&hex::encode(Sha256::digest(body))) => {}
+        Some(_) => {
+            return Err(ApiError::unauthorized(
+                "Unauthorized: the signed bodySha256 does not match the request body",
+            ));
+        }
+        None if state.settings.admin_writes_require_bound_body => {
+            return Err(ApiError::unauthorized(
+                "Unauthorized: a wallet-signed write must sign its body (bodySha256 in the signed metadata)",
+            ));
+        }
+        None => {
+            tracing::warn!(%signer, route = route_path, method, "a wallet-signed admin write signed no bodySha256; accepted while CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY is off");
+        }
+    }
+    Ok(signer)
+}
+
+/// The body hash a request's signed metadata commits to: `None` when it signs
+/// none, `Some(None)` when the key holds something other than a string.
+fn signed_body_hash(headers: &HeaderMap) -> Option<Option<String>> {
+    let raw = headers.get(AUTH_METADATA_HEADER)?.to_str().ok()?;
+    let metadata: Value = serde_json::from_str(raw).ok()?;
+    let value = metadata.get(BODY_SHA256_KEY)?;
+    Some(value.as_str().map(str::to_string))
 }
 
 /// The signer of a signed-fetch request over `method` and `route_path` when it
