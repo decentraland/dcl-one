@@ -19,6 +19,7 @@ guessing. The first standard defined here is styling.
   - [Accessibility](#accessibility)
   - [Migrating existing styles](#migrating-existing-styles)
   - [Verification](#verification)
+  - [Review checklist](#review-checklist)
 - [App-specific UI](#app-specific-ui)
 - [Shared UI: `library/ui`](#shared-ui-libraryui)
   - [Structure](#structure)
@@ -139,10 +140,18 @@ values to pass arbitrary colours or palette values from props.
 ### Composition
 
 - Build components from custom browser primitives (native elements, ARIA attributes and DOM events). Do not introduce Base UI or another component kit, headless or styled, as the base of a component.
-- Once `library/ui` is implemented and adopted by a surface, reuse its shared
-  components before creating a new one, and put components shared by multiple
-  apps or the Bevy HUD there. Until then, reuse the surface's existing
-  components.
+- Look in the shared library before building or importing a component: `@dcl/one-ui` exports the shared components, and [`docs/ui-components.md`](ui-components.md) lists them with their consumers. Use the shared component when one covers the need; when it needs another look, add or extend a variant on it.
+- When no shared component covers a need that more than one surface has:
+  - if the component is in the Figma library, build it in `library/ui/components` from the template and export it from `library/ui/index.ts`;
+  - if it is not in the Figma library, ask design for it with an issue in this repository before building it: search the open issues first and add to the one that already asks for it, or open one and list it in [the shared UI backlog](https://github.com/decentraland/dcl-one/issues/644). A change that cannot wait says in its PR which component is missing and links the issue.
+- A component one app uses is [app-specific UI](#app-specific-ui), which says where it lives; it needs no request.
+- `apps/ui3` receives no new shared UI, apart from the atoms Creator Hub and the inspector need (below). Do not add a component file to either kit that may only shrink, `apps/ui3/src/components` and `library/ui/apps/sites/shared` (the `--kit-ceiling` kits). In the paths that follow the library-first rule (below), added code does not import an `apps/ui3` atom or component, through the `@ui/…` alias or through a relative path into `apps/ui3/src/atoms` or `apps/ui3/src/components`; code that already imports one keeps it until that component migrates.
+- Which rule a path follows. A file that fits two groups follows the later one:
+  - **Library first** (every rule of this section): `apps/sites`, `library/ui/components`, `library/ui/apps/sites`, the web Shop (`apps/ui3/src/shop` and `library/ui/apps/shop` outside the in-world Shop's files), and the rest of `apps/ui3/src` but for `play`, `atoms`, `components` and the files Creator Hub compiles.
+  - **Explorer HUD kit, for now**: `library/ui/apps/hud`, `rendering/bevy-explorer/source/react-web`, its `/play` host `apps/ui3/src/play`, and the in-world Shop (`library/ui/apps/shop/ui`, `InWorldShop.tsx`, `ShopItems.tsx` and the modules only they and `/play` import). They build from `library/ui/apps/hud/design` and the HUD's tokens, under `rendering/bevy-explorer/source/react-web/AGENTS.md` and its `review.md`. The Explorer's own build cannot resolve the `@dcl/one-ui` entry yet; the `/play` host can, and the same HUD code runs in both.
+  - **`apps/ui3` atoms, for now**: Creator Hub and the inspector (`apps/creator-hub`), and the `apps/ui3/src` files Creator Hub compiles (those `apps/creator-hub/packages/creator-hub/renderer/tsconfig.ui3.json` includes, such as `apps/ui3/src/shop/land`). They run React 18, which the `@dcl/one-ui` entry does not support, and build from the `apps/ui3` atoms and the inspector's own `components/ui`, which keep receiving the components those two need. Their `@dcl/one-ui` imports reach `Tooltip` alone, through an alias, so they do not make them library-first paths.
+  - The [single-source ADR](adr/2026-11-24-library-ui-single-source.md) records what keeps the last two groups on their kits, and each joins the first group in the change that makes the entry importable there. Until then, a component added to one of those kits for a need a shared component already covers says why in its PR.
+- Put components shared by multiple apps or the Bevy HUD in `library/ui/components`; the HUD imports them once the Explorer's build resolves the entry.
 - Once `library/ui` is implemented, put components and styles used by one app
   only in `library/ui/apps/<app>/`; until then they stay in the app. See
   [App-specific UI](#app-specific-ui).
@@ -217,6 +226,17 @@ migration. Do not rewrite unrelated components or tokens in the same change.
 - `make check` and CI also run `tooling/ui_standards.py --kit-ceiling`. For each app-owned component kit whose consumers can already import `library/ui/components` (the `KIT_PATHS` of the script: `apps/ui3/src/components` and `library/ui/apps/sites/shared`) it fails when the number of tracked component files differs from the count in `tooling/ui-kit-ceiling.json`, and when that file records a higher ceiling than the base revision's. A kit may only shrink ([ADR](adr/2026-11-24-library-ui-single-source.md)); after removing a component from one, run `python3 tooling/ui_standards.py --write-kit-ceiling` and commit the file with the change. The writer refuses a count above the recorded or the base ceiling.
 - Report checks that could not run or failed. Documentation-only changes need
   link, structure and content checks, not an application build.
+
+### Review checklist
+
+A review of a change to web UI, by a person or an agent, checks each point and reports a miss as a finding. The points apply to the library-first paths that [Composition](#composition) lists. On the other paths only the first point's ban on new kit files applies, and a review of the Explorer HUD's paths follows `rendering/bevy-explorer/source/react-web/review.md` instead.
+
+- No new component file under `apps/ui3/src/components` or `library/ui/apps/sites/shared` (the `--kit-ceiling` kits), and no new import of an `apps/ui3` atom or component in added code, through the alias (`@ui/atoms/…`, `@ui/components/…`) or through a relative path into those folders, as the web Shop's are. A test, or a file that only moved, is not a new component.
+- No new component that duplicates one `@dcl/one-ui` exports. Compare the added components with [`docs/ui-components.md`](ui-components.md).
+- A new shared component lives in `library/ui/components`, is exported from `library/ui/index.ts`, and has tests, a gallery page and a row in `docs/ui-components.md`.
+- Shared components are imported from `@dcl/one-ui`, not from a path inside it. The exceptions are stylesheets, the `@dcl/one-ui/apps/hud/…` and `@dcl/one-ui/apps/shop/…` subpaths in the Explorer HUD's paths (a web Shop view uses the entry), and the specifiers `SHARED_IMPORT_KEPT` lists in `tooling/ui_standards.py`. The `--shared-imports` check does not scan files inside `library/ui`, where a relative import of a shared component is not a finding.
+- A component more than one surface needs, missing from both the shared library and the Figma library, has a linked issue that asks design for it. App-specific UI in `library/ui/apps/<app>/` needs none.
+- Colours, spacing, radii and type sizes come from `--dcl-*` tokens where one has the value.
 
 ## App-specific UI
 

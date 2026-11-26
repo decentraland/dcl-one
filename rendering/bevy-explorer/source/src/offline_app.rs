@@ -121,6 +121,7 @@ pub fn offline_app(config: AppConfig, realm: &str, content_server: String) -> Ap
         // noon, in seconds since midnight
         .insert_resource(TimeOfDay {
             time: 12.0 * 3600.0,
+            ..Default::default()
         })
         .insert_resource(DiscardPlayerUpdates(true));
 

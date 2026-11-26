@@ -11,10 +11,11 @@
 //! read-through on, a pointer or file this node does not hold is filled from
 //! the sync sources first, as `/entities/active` and `/contents` do.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::future::Future;
 use std::io::Cursor;
-use std::sync::{Arc, LazyLock, Mutex, Weak};
+use std::sync::{Arc, LazyLock, Weak};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
@@ -458,7 +459,7 @@ impl ThumbnailCache {
     }
 
     fn get(&self, key: &str) -> Option<Thumbnail> {
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock();
         let entry = entries.get_mut(key)?;
         if entry.inserted.elapsed() >= self.ttl {
             entries.remove(key);
@@ -469,7 +470,7 @@ impl ThumbnailCache {
     }
 
     fn insert(&self, key: String, value: Thumbnail) {
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock();
         entries.retain(|_, entry| entry.inserted.elapsed() < self.ttl);
         while entries.len() >= self.capacity && !entries.contains_key(&key) {
             let oldest = entries
@@ -509,7 +510,7 @@ impl ThumbnailCache {
             .map_err(|_| AppError::ServiceUnavailable("Thumbnail service busy".into()))?
             .map_err(|_| AppError::ServiceUnavailable("Thumbnail service unavailable".into()))?;
         let flight = {
-            let mut flights = self.flights.lock().unwrap();
+            let mut flights = self.flights.lock();
             flights.retain(|_, flight| flight.strong_count() > 0);
             flights
                 .get(&key)
@@ -758,14 +759,14 @@ mod tests {
         for _ in 0..8 {
             started_rx.recv().await.unwrap();
         }
-        assert_eq!(cache.flights.lock().unwrap().len(), 8);
+        assert_eq!(cache.flights.lock().len(), 8);
         release.add_permits(8);
         while let Some(result) = tasks.join_next().await {
             result.unwrap();
-            assert!(cache.entries.lock().unwrap().len() <= 2);
-            assert!(cache.flights.lock().unwrap().len() <= 8);
+            assert!(cache.entries.lock().len() <= 2);
+            assert!(cache.flights.lock().len() <= 8);
         }
-        assert_eq!(cache.entries.lock().unwrap().len(), 2);
+        assert_eq!(cache.entries.lock().len(), 2);
     }
 
     #[tokio::test]
@@ -799,11 +800,11 @@ mod tests {
         }
         start.wait().await;
         started_rx.recv().await.unwrap();
-        assert_eq!(cache.flights.lock().unwrap().len(), 1);
+        assert_eq!(cache.flights.lock().len(), 1);
         release.add_permits(1);
         while let Some(result) = tasks.join_next().await {
             assert_eq!(result.unwrap(), value());
-            assert!(cache.flights.lock().unwrap().len() <= 2);
+            assert!(cache.flights.lock().len() <= 2);
         }
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }

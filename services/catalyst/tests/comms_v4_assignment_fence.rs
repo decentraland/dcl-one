@@ -13,8 +13,7 @@ use catalyst::comms::gatekeeper::admission::cluster::fence::{
 use serde_json::json;
 use sqlx::{AssertSqlSafe, PgPool, Row};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 #[path = "support/gate.rs"]
 mod gate;
 

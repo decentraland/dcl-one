@@ -24,8 +24,7 @@ use catalyst::shared::signed_fetch::{
 };
 use catalyst::social::notifications::{Settings, State, router};
 
-#[path = "support/db.rs"]
-mod db;
+use crate::db;
 
 const ADMIN: &str = "fixture-admin-token";
 const METADATA: &str = r#"{"signer":"dcl:explorer"}"#;

@@ -45,13 +45,11 @@ rand = { workspace = true }
 bevy_kira_audio = { workspace = true }
 kira = { workspace = true }
 futures-util = { workspace = true }
-num-traits = { workspace = true }
 http = { workspace = true }
 multihash-codetable = { workspace = true }
 web-time = { workspace = true }
 base64 = { workspace = true }
 
-modular-bitfield = "0.11"
 unicode-properties = { workspace = true }
 
 cid = "0.11.0"
