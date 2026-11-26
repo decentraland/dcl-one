@@ -6,7 +6,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { execFileSync, spawnSync } = require('node:child_process')
-const { SOCIAL_REVISION, GATEKEEPER_REVISION, sha256, provenance, requireDatabaseUrl } = require('../social-capture-common.cjs')
+const { SOCIAL_REVISION, GATEKEEPER_REVISION, sha256, provenance, requireDatabaseUrl, requireNode } = require('../social-capture-common.cjs')
 
 const repository = path.resolve(__dirname, '../..')
 const helper = path.join(repository, 'tooling/social-capture-common.cjs')
@@ -113,6 +113,10 @@ test('requires Node 26 before imports', t => {
   const f = fixture(t)
   rejected(check(f, 'common.sourceCapture(process.argv[1])', { CAPTURE_TEST_NODE: '25.1.0' }), /require Node 26/)
   assert.equal(fs.existsSync(f.marker), false)
+})
+
+test('names an unknown capture kind instead of failing on it', () => {
+  assert.throws(() => requireNode('scenes'), { message: 'Unknown capture kind: scenes' })
 })
 
 test('rejects missing checkout, non-Git root and wrong HEAD', t => {

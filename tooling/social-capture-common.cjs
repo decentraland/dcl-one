@@ -18,7 +18,9 @@ const SOURCES = Object.freeze({
 const RUNTIMES = Object.freeze({ social: ['Social', '26'], gatekeeper: ['Social', '26'], builder: ['Builder', '24'] })
 
 function requireNode(kind = 'social') {
-  const [label, major] = RUNTIMES[kind]
+  const runtime = RUNTIMES[kind]
+  if (!runtime) throw Error(`Unknown capture kind: ${kind}`)
+  const [label, major] = runtime
   if (process.versions.node.split('.')[0] !== major) throw Error(`${label} captures require Node ${major}`)
 }
 
@@ -50,6 +52,11 @@ function sourceCapture(root, { companions = [], kind = 'social' } = {}) {
   const source = assertPinnedSource(root, kind)
   // Validate every companion before even loading the TypeScript registrar.
   for (const companion of companions) assertPinnedSource(companion.root, companion.kind)
+  return loadSource(source)
+}
+
+/** Registers ts-node for a source `assertPinnedSource` accepted, and returns it with its `req` and `load`. */
+function loadSource(source) {
   const req = createRequire(path.join(source.upstream, 'package.json'))
   req('ts-node').register({
     transpileOnly: true,
@@ -73,4 +80,4 @@ function requireDatabaseUrl(value) {
   return value
 }
 
-module.exports = { SOCIAL_REVISION, GATEKEEPER_REVISION, BUILDER_REVISION, requireNode, requireNode26, assertPinnedSource, sourceCapture, sha256, provenance, requireDatabaseUrl }
+module.exports = { SOCIAL_REVISION, GATEKEEPER_REVISION, BUILDER_REVISION, requireNode, requireNode26, assertPinnedSource, sourceCapture, loadSource, sha256, provenance, requireDatabaseUrl }
