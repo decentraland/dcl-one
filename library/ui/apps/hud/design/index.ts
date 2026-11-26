@@ -8,7 +8,6 @@ export { ColorPicker } from './ColorPicker'
 export { Select, type SelectOption } from './Select'
 export { Avatar } from './Avatar'
 export { WearableCard, type Rarity } from './WearableCard'
-export { EquippedItemCard, type EquippedItemCardProps } from './EquippedItemCard'
 export { LogoPattern } from './LogoPattern'
 export { Icon, type IconName } from './icons'
 

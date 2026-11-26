@@ -173,3 +173,41 @@
 .thumbRight {
   right: 0;
 }
+
+/* WearableCard tiles: room under each row for the action a hovered card shows, and around the row for its lift. */
+.tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 64px var(--dcl-space-24);
+  padding: var(--dcl-space-12) var(--dcl-space-16) 64px;
+}
+
+/* EquippedItemCard grid: 108px columns, with room under the last row for the link a hovered card shows. */
+.itemCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 108px);
+  align-items: stretch;
+  gap: 56px var(--dcl-space-12);
+  padding-bottom: 56px;
+}
+
+/* A PagedRail's row: 600px wide, with room at the sides for its arrows. */
+.railRoom {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 680px;
+  padding: var(--dcl-space-12) 40px;
+}
+
+.railRoom > * {
+  width: 100%;
+}
+
+.railCard {
+  display: grid;
+  width: 194px;
+  height: 120px;
+  place-items: center;
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-bg-surface-raised);
+}

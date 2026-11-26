@@ -1,0 +1,236 @@
+/* Not in Figma: the Explorer HUD's passport tile. A dark card whose square top carries the rarity's
+   gradient and a diagonal corner flap with the category glyph; the name and the rarity tag sit below.
+   The dark background is ::before, so hover can stretch it under the card to hold the link without
+   moving the grid: the extension overlaps the row beneath. The hover frame is ::after, a masked gradient
+   ring whose colours drift, with a glow. --item-rarity comes from rarity.module.css. These rules sit
+   outside the cascade layer, and the markup keeps its elements: the passport restyles the card from its
+   own stylesheet, by element. The 14px and 10px corners, the 50 % black, the frame's violet, the 16 % and
+   95 % whites, the rem type sizes, the glow's ruby and the 140ms timing have no token. */
+.card {
+  --shop-ext: 42px; /* how far the hovered card extends down to hold the link */
+  position: relative;
+  isolation: isolate; /* keeps the z-index: -1 background inside this card's stacking context */
+  min-width: 0; /* as a grid item, the one-line name must not widen its column */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  border-radius: 14px; /* = HUD --r-card */
+}
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 14px; /* = HUD --r-card */
+  background: rgba(0, 0, 0, 0.5); /* = HUD --scrim */
+}
+/* The frame: padding and a content-box mask leave only the border band, and the gradient drifts
+   through background-position. */
+.card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: 14px; /* = HUD --r-card */
+  padding: 2.5px;
+  background: linear-gradient(
+      120deg,
+      var(--dcl-brand-ruby),
+      #982de2 /* = HUD --purple */,
+      var(--dcl-brand-lavender),
+      var(--dcl-brand-ruby)
+    )
+    0 0 / 300% 300%;
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+}
+
+/* The picture's square: the rarity's colour covers this square only, not the whole card. */
+.thumbWrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 14px 14px 0 0; /* = HUD --r-card */
+  background: radial-gradient(
+    128% 110% at 50% -12%,
+    color-mix(in srgb, var(--item-rarity) 35%, var(--dcl-neutrals-white)) 0%,
+    var(--item-rarity) 60%,
+    color-mix(in srgb, var(--item-rarity) 86%, var(--dcl-neutrals-black)) 100%
+  );
+}
+.thumb {
+  width: 95%;
+  height: 95%;
+  object-fit: contain;
+}
+.placeholder {
+  width: 52%;
+  height: 52%;
+  border-radius: 10px; /* = HUD --r-control */
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* The corner flap: the 135° gradient paints the top-left triangle and leaves the rest clear. */
+.corner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  width: 46px;
+  height: 46px;
+  padding: 5px 0 0 6px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--item-rarity) 45%, var(--dcl-neutrals-white)) 0%,
+    var(--item-rarity) 49.8%,
+    transparent 50%
+  );
+  color: rgba(255, 255, 255, 0.95); /* = HUD --ink-95 */
+}
+
+/* The name is always one line; its minimum height keeps the cards even when a name is missing. The tag
+   is a 20 % tint of the rarity with its text in the rarity's colour. */
+.name {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 6px;
+  padding: 0 var(--dcl-space-8);
+  min-height: 1.2em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-size: 0.72rem; /* = HUD --fs-xs */
+  font-weight: 700;
+  color: var(--dcl-neutrals-snow);
+}
+.rarityTag {
+  margin: 3px 0 9px var(--dcl-space-8);
+  padding: 2px 9px;
+  border-radius: var(--dcl-radius-full);
+  background: color-mix(in srgb, var(--item-rarity) 20%, transparent);
+  color: var(--item-rarity);
+  font-size: 0.6rem; /* = HUD --fs-2xs */
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.price {
+  margin: -4px var(--dcl-space-8) 9px;
+  font-size: 0.82rem; /* = HUD --fs-sm */
+  font-weight: 700;
+  color: var(--dcl-neutrals-snow);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The frame and the lift, for both kinds of link. Only the card that reveals its link on hover grows
+   downward; a pinned one already holds it. */
+.hasShop:hover,
+.pinnedShop:hover {
+  z-index: 2;
+  transform: scale(1.04);
+}
+.hasShop:hover::before,
+.pinnedShop:hover::before {
+  box-shadow: 0 0 18px rgba(229, 39, 75, 0.5); /* = HUD --brand-active */
+}
+.hasShop:hover::after,
+.pinnedShop:hover::after {
+  opacity: 1;
+}
+.hasShop:hover::before,
+.hasShop:hover::after {
+  bottom: calc(-1 * var(--shop-ext));
+}
+@keyframes ringShift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Pinned: in the card's flow, always shown. Its automatic top margin keeps it on the card's bottom edge,
+   so the links of a row line up whether or not a card has a price. */
+.pinnedShop .shopBtn {
+  position: static;
+  align-self: stretch;
+  margin: auto 10px 10px;
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  pointer-events: auto;
+}
+.pinnedShop .shopBtn:active {
+  transform: translateY(1px);
+}
+
+/* The link, shown inside the extended card on hover. Hidden, not only clear: a clear link is still in
+   the tab order, where a keyboard user would land on something they cannot see. */
+.shopBtn {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 10px;
+  right: 10px;
+  text-decoration: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  pointer-events: none;
+}
+.hasShop:hover .shopBtn {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* 140ms (= HUD --dur-fast), unless less motion is asked for. Leaving hover the link clears at once, before
+   the card retracts from under it; entering, it waits for the card to finish extending. */
+@media (prefers-reduced-motion: no-preference) {
+  .card {
+    transition: transform 140ms ease;
+  }
+  .card::before {
+    transition:
+      bottom 140ms ease,
+      box-shadow 140ms ease;
+  }
+  .card::after {
+    transition:
+      opacity 140ms ease,
+      bottom 140ms ease;
+  }
+  .hasShop:hover::after,
+  .pinnedShop:hover::after {
+    animation: ringShift 2.5s linear infinite;
+  }
+  .shopBtn {
+    transition:
+      opacity 140ms ease,
+      transform 140ms ease,
+      visibility 0s linear 140ms;
+  }
+  .pinnedShop .shopBtn {
+    transition: none;
+  }
+  .hasShop:hover .shopBtn {
+    transition-delay: 140ms;
+  }
+}

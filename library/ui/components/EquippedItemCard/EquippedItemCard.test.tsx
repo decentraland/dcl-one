@@ -1,0 +1,153 @@
+import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it } from 'vitest'
+import { EquippedItemCard } from './EquippedItemCard'
+
+const RARITIES = [
+  'common',
+  'uncommon',
+  'rare',
+  'epic',
+  'legendary',
+  'mythic',
+  'unique',
+  'exotic'
+] as const
+
+const SHOP = 'https://decentraland.org/shop/item/0x0/0'
+
+/** The card: the element that carries the rarity. */
+const cardOf = (text: string) => screen.getByText(text).closest('[data-rarity]')
+
+describe('EquippedItemCard', () => {
+  describe.each(RARITIES)('when the rarity is %s', (rarity) => {
+    it('should mark the card with it and show it as the tag', () => {
+      render(<EquippedItemCard name="Hat" rarity={rarity} />)
+      expect(cardOf('Hat')).toHaveAttribute('data-rarity', rarity)
+      expect(screen.getByText(rarity)).toBeInTheDocument()
+    })
+  })
+
+  describe('when the card has no rarity', () => {
+    it('should be marked as base and say so, so every card of a row has a tag', () => {
+      render(<EquippedItemCard name="Plain shirt" />)
+      expect(cardOf('Plain shirt')).toHaveAttribute('data-rarity', 'base')
+      expect(screen.getByText('base')).toBeInTheDocument()
+    })
+  })
+
+  describe('when the rarity is one the foundations do not colour', () => {
+    it('should show it as given', () => {
+      render(<EquippedItemCard name="Odd" rarity="Golden" />)
+      expect(cardOf('Odd')).toHaveAttribute('data-rarity', 'Golden')
+      expect(screen.getByText('Golden')).toBeInTheDocument()
+    })
+
+    it('should keep an empty one empty', () => {
+      render(<EquippedItemCard name="Odd" rarity="" />)
+      expect(cardOf('Odd')).toHaveAttribute('data-rarity', '')
+      expect(screen.queryByText('base')).toBeNull()
+    })
+  })
+
+  describe('when the thumbnail is missing or fails', () => {
+    it('should draw no image without one', () => {
+      const { container } = render(<EquippedItemCard name="Hat" />)
+      expect(container.querySelector('img')).toBeNull()
+    })
+
+    it('should draw no image for an empty one', () => {
+      const { container } = render(<EquippedItemCard name="Hat" thumbnail="" />)
+      expect(container.querySelector('img')).toBeNull()
+    })
+
+    it('should drop an image that fails to load, and keep the caption', () => {
+      const { container } = render(<EquippedItemCard name="Hat" rarity="epic" thumbnail="/gone.png" />)
+      const image = container.querySelector('img')
+      expect(image).toHaveAttribute('src', '/gone.png')
+      expect(image).toHaveAttribute('alt', '')
+      fireEvent.error(image!)
+      expect(container.querySelector('img')).toBeNull()
+      expect(screen.getByText('Hat')).toBeInTheDocument()
+      expect(screen.getByText('epic')).toBeInTheDocument()
+    })
+  })
+
+  describe('when the name is long, or missing', () => {
+    it('should keep the whole name as its title', () => {
+      const name = 'A very long wearable name that no card of 108 pixels could ever show in one line'
+      render(<EquippedItemCard name={name} />)
+      expect(screen.getByText(name)).toHaveAttribute('title', name)
+    })
+
+    it('should render without a name', () => {
+      render(<EquippedItemCard rarity="rare" />)
+      expect(screen.getByText('rare')).toBeInTheDocument()
+    })
+  })
+
+  describe('when the item is not on sale', () => {
+    it('should show no link and no price', () => {
+      render(<EquippedItemCard name="Hat" shopLabel="Buy" />)
+      expect(screen.queryByRole('link')).toBeNull()
+      expect(screen.queryByText('Buy')).toBeNull()
+    })
+  })
+
+  describe('when the item is on sale', () => {
+    it('should link to its sale in a new tab', () => {
+      render(<EquippedItemCard name="Hat" shopUrl={SHOP} />)
+      const link = screen.getByRole('link', { name: 'Shop' })
+      expect(link).toHaveAttribute('href', SHOP)
+      expect(link).toHaveAttribute('target', '_blank')
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+    })
+
+    it("should take the caller's text for the link, and show the price", () => {
+      render(<EquippedItemCard name="Hat" shopUrl={SHOP} shopLabel="Buy" price="25 Credits" />)
+      expect(screen.getByRole('link', { name: 'Buy' })).toBeInTheDocument()
+      expect(screen.getByText('25 Credits')).toBeInTheDocument()
+    })
+
+    it('should show an empty price line as given', () => {
+      const { container } = render(<EquippedItemCard name="Hat" price="" />)
+      expect(container.querySelectorAll('[data-rarity] > span')).toHaveLength(3)
+    })
+
+    it('should keep the link in the card when pinned, reached with Tab', async () => {
+      render(<EquippedItemCard name="Hat" shopUrl={SHOP} pinShop />)
+      await userEvent.tab()
+      expect(screen.getByRole('link', { name: 'Shop' })).toHaveFocus()
+    })
+
+    it('should ignore the pin without a sale', () => {
+      render(<EquippedItemCard name="Hat" pinShop />)
+      expect(screen.queryByRole('link')).toBeNull()
+    })
+  })
+
+  describe('when it has a category glyph', () => {
+    it('should draw it', () => {
+      render(<EquippedItemCard name="Hat" categoryIcon={<svg data-testid="glyph" />} />)
+      expect(screen.getByTestId('glyph')).toBeInTheDocument()
+    })
+  })
+
+  describe('when the passport restyles it by element', () => {
+    it('should keep its elements: a picture block, then the name, the tag and the price', () => {
+      const { container } = render(
+        <EquippedItemCard name="Hat" rarity="epic" price="25 Credits" shopUrl={SHOP} />
+      )
+      const card = container.firstElementChild!
+      expect(card.tagName).toBe('DIV')
+      expect([...card.children].map((child) => child.tagName)).toEqual(['DIV', 'SPAN', 'SPAN', 'SPAN', 'A'])
+      expect([...card.children].map((child) => child.textContent)).toEqual([
+        '',
+        'Hat',
+        'epic',
+        '25 Credits',
+        'Shop'
+      ])
+    })
+  })
+})

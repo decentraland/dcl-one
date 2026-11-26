@@ -128,6 +128,8 @@ export { CountBadge } from './components/CountBadge/CountBadge'
 export type { CountBadgeProps } from './components/CountBadge/CountBadge'
 export { DclLogo } from './components/DclLogo/DclLogo'
 export type { DclLogoProps } from './components/DclLogo/DclLogo'
+export { EquippedItemCard } from './components/EquippedItemCard/EquippedItemCard'
+export type { EquippedItemCardProps } from './components/EquippedItemCard/EquippedItemCard'
 export { EmptyState } from './components/EmptyState/EmptyState'
 export type {
   EmptyStateAction,
@@ -142,6 +144,8 @@ export { MenuDivider, MenuList, MenuPanel, MenuRow } from './components/MenuPane
 export type { MenuPanelProps, MenuRowProps } from './components/MenuPanel/MenuPanel'
 export { OptionMenu } from './components/OptionMenu/OptionMenu'
 export type { OptionMenuProps, OptionSection } from './components/OptionMenu/OptionMenu'
+export { PagedRail } from './components/PagedRail/PagedRail'
+export type { PagedRailProps } from './components/PagedRail/PagedRail'
 export { Pager } from './components/Pager/Pager'
 export type { PagerProps } from './components/Pager/Pager'
 export { Panel } from './components/Panel/Panel'
@@ -176,6 +180,13 @@ export { Tooltip } from './components/Tooltip/Tooltip'
 export type { TooltipAlign, TooltipProps, TooltipSide } from './components/Tooltip/Tooltip'
 export { VoiceBars } from './components/VoiceBars/VoiceBars'
 export type { VoiceBarsProps } from './components/VoiceBars/VoiceBars'
+export { WearableCard } from './components/WearableCard/WearableCard'
+export type {
+  WearableCardArt,
+  WearableCardLabels,
+  WearableCardProps,
+  WearableCardRarity
+} from './components/WearableCard/WearableCard'
 
 export { ProgressBar } from './components/ProgressBar/ProgressBar'
 export type { ProgressBarProps } from './components/ProgressBar/ProgressBar'
