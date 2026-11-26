@@ -713,7 +713,7 @@
   },
   "library/ui/components/JumpInCTA/JumpInCTA.module.css": {
     "primitives": 0,
-    "tokens": 28
+    "tokens": 29
   },
   "library/ui/components/MenuPanel/MenuPanel.module.css": {
     "primitives": 0,
@@ -757,7 +757,7 @@
   },
   "library/ui/components/OptionMenu/OptionMenu.module.css": {
     "primitives": 0,
-    "tokens": 7
+    "tokens": 8
   },
   "library/ui/components/Pager/Pager.module.css": {
     "primitives": 0,
@@ -821,7 +821,7 @@
   },
   "library/ui/components/TabsBar/TabsBar.module.css": {
     "primitives": 0,
-    "tokens": 50
+    "tokens": 52
   },
   "library/ui/components/Tag/Tag.module.css": {
     "primitives": 0,
