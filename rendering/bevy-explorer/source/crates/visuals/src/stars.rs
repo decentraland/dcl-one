@@ -647,8 +647,8 @@ mod tests {
                 });
             }
             if bloom {
-                // the client's high setting, which thresholds at 1
-                camera.insert(platform::scatter_bloom());
+                // the client's bloom setting, which thresholds at 1
+                camera.insert(platform::scatter_bloom(platform::BLOOM_SCATTER));
             }
             (label, target)
         });
