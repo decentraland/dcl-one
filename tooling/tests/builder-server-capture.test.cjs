@@ -217,7 +217,7 @@ require('node:net').connect({ host: '192.0.2.10', port: 80 }).on('error', error 
   assert.throws(() => migrate(upstream, {}), error => /offline capture refused: 192\.0\.2\.10:80/.test(String(error.stderr)))
 })
 
-test('upstream runs with only the capture environment: no .env and no unlisted variable of the shell reach it', t => {
+test('upstream runs with only the capture environment, from an empty directory: no .env and no unlisted variable of the shell reach it', t => {
   const { useUpstreamEnvironment } = require(script)
   const cwd = scratch(t)
   fs.writeFileSync(path.join(cwd, '.env'), 'CORS_ORIGIN=https://local.example.org\nLOCAL_ONLY=1\n')
@@ -233,11 +233,10 @@ test('upstream runs with only the capture environment: no .env and no unlisted v
   process.env.CORS_METHOD = 'DELETE'
   const upstreamEnv = {
     loaded: false,
-    load({ path: file = './.env', values = {} } = {}) {
-      if (Object.keys(values).length === 0 && fs.existsSync(file)) {
-        values = Object.fromEntries(fs.readFileSync(file, 'utf8').trim().split('\n').map(line => line.split('=')))
-      }
+    load({ values = {} } = {}) {
       Object.assign(process.env, values)
+      const dotEnv = fs.existsSync('.env') ? fs.readFileSync('.env', 'utf8').trim().split('\n').map(line => line.split('=')) : []
+      for (const [name, value] of dotEnv) process.env[name] ??= value
       this.loaded = true
     },
     get(name) {
@@ -245,7 +244,11 @@ test('upstream runs with only the capture environment: no .env and no unlisted v
       return process.env[name]
     }
   }
-  useUpstreamEnvironment(name => (name === 'decentraland-commons' ? { env: upstreamEnv } : assert.fail(name)), { CORS_ORIGIN: 'https://capture.example.org' })
+  const upstreamCwd = useUpstreamEnvironment(name => (name === 'decentraland-commons' ? { env: upstreamEnv } : assert.fail(name)), { CORS_ORIGIN: 'https://capture.example.org' })
+  t.after(() => fs.rmSync(upstreamCwd, { recursive: true, force: true }))
+  assert.equal(process.cwd(), fs.realpathSync(upstreamCwd))
+  assert.notEqual(upstreamCwd, cwd)
+  assert.deepEqual(fs.readdirSync(upstreamCwd), [])
   assert.equal(upstreamEnv.get('CORS_ORIGIN'), 'https://capture.example.org')
   assert.equal(upstreamEnv.get('LOCAL_ONLY'), undefined)
   assert.equal(process.env.UNLISTED_CAPTURE_PROBE, undefined)
