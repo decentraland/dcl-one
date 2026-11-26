@@ -579,7 +579,8 @@ fn inputs_are_spaced_by_a_long_round_trip() {
 }
 
 /// A teleport overtaking an input held for its spacing drops it: the servers would otherwise get
-/// the teleport and then the older pose. The next input still goes a spacing after the last one.
+/// the teleport and then the pose queued before it. The next input still goes a spacing after the
+/// last one.
 #[test]
 fn a_teleport_drops_an_input_held_for_its_spacing() {
     let mut gate = UplinkGate::default();
@@ -598,7 +599,7 @@ fn a_teleport_drops_an_input_held_for_its_spacing() {
     );
     assert!(gate.held.is_empty());
     assert_eq!(gate.wake_within(at(80)), MAINTENANCE_INTERVAL);
-    assert!(gate.admit(Vec::new(), at(175)).is_empty());
+    assert!(gate.admit(Vec::new(), at(100)).is_empty());
 
     assert!(gate
         .admit(vec![frame(FrameKind::Input, 4)], at(120))

@@ -483,7 +483,8 @@ impl UplinkGate {
                 bevy::log::debug!("pulse: reliable messages unacknowledged, holding frames")
             }
             (false, false) => bevy::log::debug!("pulse: holding an input for its spacing"),
-            (true, true) => bevy::log::debug!("pulse: held frames sent"),
+            // Sent, or an input a teleport dropped (logged where it is dropped).
+            (true, true) => bevy::log::debug!("pulse: no longer holding frames"),
             _ => {}
         }
         out
@@ -536,8 +537,15 @@ impl UplinkGate {
                     self.input_sent_at = Some(now);
                 }
                 if frame.kind == FrameKind::Teleport {
-                    // A held input is older than the teleport, which supersedes its pose.
+                    // Drop an input queued before the teleport, which supersedes its position.
+                    // It is newer than the teleport when the teleport waited in the plugin's
+                    // pacer; the servers then keep the facing from before the teleport until
+                    // the next input (`decisions.md`).
+                    let before = self.held.len();
                     self.held.retain(|held| held.kind != FrameKind::Input);
+                    if self.held.len() < before {
+                        bevy::log::debug!("pulse: a teleport dropped the input queued before it");
+                    }
                 }
                 out.push(frame);
             }

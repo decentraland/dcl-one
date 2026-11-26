@@ -59,6 +59,7 @@ impl Plugin for PulseDebugPlugin {
                     ("Uplink round trip (ms)", "uplink.roundTripMs"),
                     ("Input spacing (ms)", "uplink.inputSpacingMs"),
                     ("Input holds", "uplink.inputHolds"),
+                    ("Inputs held in total (ms)", "uplink.inputHeldMs"),
                     ("Longest input hold (ms)", "uplink.longestInputHoldMs"),
                 ],
                 actions: &[],

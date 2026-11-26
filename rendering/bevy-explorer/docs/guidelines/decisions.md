@@ -666,8 +666,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   (6.7 a second at 600 ms, 3.1 at 2 s, at most 12 delivered at once up to 3 s). Holding inputs
   whenever the uplink is unconfirmed on such links, the other way to stay within the burst, stops
   movement for most of each round trip; spacing keeps updates regular, which observers smooth.
-  A teleport that goes while an input waits for its spacing drops that input: sent after it,
-  the older pose would snap observers back before the next input. An emote leaves it waiting.
+  A teleport that goes drops an input queued before it and still waiting for its spacing: sent
+  after it, that pose would snap observers back before the next input. The input is newer than
+  the teleport when the teleport waited in the pacer; Pulse then keeps the facing from before the
+  teleport until the next input, about a second at most. An emote leaves the input waiting.
   The rules run over simulated ENet links in `native/link_sim_tests.rs`.
 - **The client never sends what the Pulse server refuses for good.** A one-shot emote longer than
   60 s goes out without a duration and ends with an explicit stop, and inputs and teleports from
