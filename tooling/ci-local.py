@@ -398,9 +398,6 @@ def peel(sha):
 
 def pre_push(args):
     updates = sys.stdin.read()
-    if not shutil.which('git-lfs'):
-        print('ci-local: git-lfs is not on PATH, so this push would not upload its Git LFS objects', file=sys.stderr)
-        return False
     if not skipping():
         seen = set()
         for line in updates.splitlines():
@@ -417,14 +414,17 @@ def pre_push(args):
 
 
 HOOKS = {'pre-commit': '#!/bin/sh\n[ -f tooling/ci-local.py ] || exit 0\nexec python3 tooling/ci-local.py pre-commit\n',
-         'pre-push': '#!/bin/sh\n[ -f tooling/ci-local.py ] || exec git lfs pre-push "$@"\n'
+         # The check covers worktrees on older branches too, whose ci-local skips the upload without git-lfs.
+         'pre-push': '#!/bin/sh\ncommand -v git-lfs >/dev/null 2>&1 || { echo >&2 "ci-local: git-lfs is not on PATH, '
+                     'so this push would not upload its Git LFS objects"; exit 2; }\n'
+                     '[ -f tooling/ci-local.py ] || exec git lfs pre-push "$@"\n'
                      'exec python3 tooling/ci-local.py pre-push "$@"\n'}
 
 
-def stock_lfs_pre_push(text):
-    """git-lfs's own pre-push, which ci-local's pre-push runs in its place."""
+def is_stock_lfs_hook(name, text):
+    """git-lfs's own hook called name."""
     lines = [line for line in text.splitlines() if line.strip()]
-    return (len(lines) == 3 and lines[0] == '#!/bin/sh' and lines[2] == 'git lfs pre-push "$@"'
+    return (len(lines) == 3 and lines[0] == '#!/bin/sh' and lines[2] == f'git lfs {name} "$@"'
             and lines[1].startswith('command -v git-lfs >/dev/null 2>&1 || { ') and lines[1].endswith('exit 2; }'))
 
 
@@ -449,11 +449,21 @@ def install():
         path = hooks / name
         current = None if path.is_symlink() or not path.exists() else path.read_bytes()
         if path.is_symlink() or current not in (None, text.encode()) and not (
-                name == 'pre-push' and stock_lfs_pre_push(current.decode(errors='replace'))):
+                name == 'pre-push' and is_stock_lfs_hook(name, current.decode(errors='replace'))):
             print(f'ci-local: {path} is another hook, so install changed nothing; remove it and run install again',
                   file=sys.stderr)
             return False
     if local:
+        # Each worktree runs its own untracked .githooks, where only git-lfs writes hooks.
+        trees = [Path(line[9:]) for line in git('worktree', 'list', '--porcelain').splitlines()
+                 if line.startswith('worktree ')]
+        kept = [path for tree in trees for path in sorted((tree / '.githooks').glob('*'))
+                if not path.is_file() or not is_stock_lfs_hook(path.name, path.read_bytes().decode(errors='replace'))]
+        if kept:
+            print(f'ci-local: core.hooksPath is .githooks, and git would stop running {", ".join(map(str, kept))}; '
+                  f'install changed nothing. Move them into {hooks} or remove them, then run install again',
+                  file=sys.stderr)
+            return False
         git('config', '--local', '--unset-all', 'core.hooksPath')
     hooks.mkdir(exist_ok=True)
     for name, text in HOOKS.items():

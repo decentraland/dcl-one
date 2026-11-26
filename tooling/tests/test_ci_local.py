@@ -3,6 +3,7 @@ import importlib.util
 import errno
 import io
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -380,7 +381,82 @@ class HookTest(unittest.TestCase):
                     self.assertFalse(self.install())
                 self.assertFalse((root / '.git/hooks/pre-commit').exists())
 
-    def pre_push(self, line, lfs=True, passed=True, **environment):
+    def test_install_refuses_while_an_old_githooks_folder_holds_more_than_git_lfs_hooks(self):
+        for tree, entry in (('main', 'commit-msg'), ('linked', 'post-commit'), ('main', 'lib')):
+            with self.subTest(tree=tree, entry=entry):
+                root = self.repo()
+                ci.git('commit', '-q', '--allow-empty', '-m', 'first', cwd=root)
+                linked = Path(tempfile.mkdtemp(dir=self.folder)) / 'linked'
+                ci.git('worktree', 'add', '-q', str(linked), cwd=root)
+                ci.git('config', 'core.hooksPath', '.githooks', cwd=root)
+                for folder in (root / '.githooks', linked / '.githooks'):
+                    folder.mkdir()
+                    for name in ('pre-push', 'post-commit'):
+                        (folder / name).write_text(stock_lfs_hook(name))
+                custom = (root if tree == 'main' else linked) / '.githooks' / entry
+                if entry == 'lib':
+                    custom.mkdir()
+                else:
+                    custom.write_text('#!/bin/sh\n./check.sh "$1"\n')
+                self.assertFalse(self.install())
+                self.assertTrue(custom.exists())
+                self.assertFalse((root / '.git/hooks/pre-commit').exists())
+                self.assertEqual(self.hooks_path(root), '.githooks')
+                custom.rmdir() if entry == 'lib' else custom.unlink()
+                self.assertTrue(self.install())
+                self.assertEqual(self.hooks_path(root), '')
+
+    def test_the_installed_hooks_run_ci_local_or_git_lfs_and_need_git_lfs(self):
+        root = self.repo()
+        (root / 'tooling').mkdir()
+        for name in ('ci-local.py', 'ci_paths.py'):
+            shutil.copy(Path(__file__).parents[1] / name, root / 'tooling' / name)
+        self.assertTrue(self.install())
+        stub, log, remote = self.folder / 'bin', self.folder / 'lfs.log', self.folder / 'remote.git'
+        stub.mkdir()
+        (stub / 'git-lfs').write_text('#!/bin/sh\n{ printf "[%s]" "$@"; echo; cat; } >> "$LFS_LOG"\nexit "${LFS_EXIT:-0}"\n')
+        (stub / 'git-lfs').chmod(0o755)
+        ci.git('init', '-q', '--bare', str(remote), cwd=root)
+        ci.git('remote', 'add', 'origin', str(remote), cwd=root)
+        environment = {**os.environ, 'PATH': f'{stub}{os.pathsep}{os.environ["PATH"]}', 'LFS_LOG': str(log),
+                       'CI_LOCAL_SKIP': '1'}
+        def git(*args, **extra):
+            return subprocess.run(['git', *args], cwd=root, env={**environment, **extra}, capture_output=True, text=True)
+        def pushed(old, new):
+            return f'[pre-push][origin][{remote}]\nrefs/heads/main {new} refs/heads/main {old}\n'
+        def refused_without_git_lfs():
+            result = subprocess.run([str(root / '.git/hooks/pre-push'), 'origin', str(remote)], cwd=root, input='',
+                                    env={**environment, 'PATH': str(self.folder / 'no-tools')}, capture_output=True,
+                                    text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn('git-lfs is not on PATH', result.stderr)
+        skipped = 'CI_LOCAL_SKIP=1, checks skipped'
+        ci.git('add', 'tooling', cwd=root)
+        result = git('commit', '-q', '-m', 'first')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(skipped, result.stderr)
+        first = ci.git('rev-parse', 'HEAD', cwd=root)
+        result = git('push', '-q', 'origin', 'main', LFS_EXIT='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(skipped, result.stderr)
+        self.assertEqual(ci.git('rev-parse', '--verify', '-q', 'main', cwd=remote, check=False), '')
+        result = git('push', '-q', 'origin', 'main')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(log.read_text(), pushed(ci.ZERO, first) * 2)
+        refused_without_git_lfs()
+        ci.git('rm', '-q', 'tooling/ci-local.py', cwd=root)
+        result = git('commit', '-q', '-m', 'second')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(skipped, result.stderr)
+        second = ci.git('rev-parse', 'HEAD', cwd=root)
+        result = git('push', '-q', 'origin', 'main')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(skipped, result.stderr)
+        self.assertEqual(log.read_text(), pushed(ci.ZERO, first) * 2 + pushed(first, second))
+        self.assertEqual(ci.git('rev-parse', 'main', cwd=remote), second)
+        refused_without_git_lfs()
+
+    def pre_push(self, line, passed=True):
         uploads = []
         run = subprocess.run
         def fake(command, *args, **kwargs):
@@ -388,8 +464,7 @@ class HookTest(unittest.TestCase):
                 uploads.append((command[3:], kwargs.get('input')))
                 return subprocess.CompletedProcess(command, 0)
             return run(command, *args, **kwargs)
-        with patch.dict(os.environ, environment), patch('subprocess.run', side_effect=fake), \
-                patch('shutil.which', side_effect=lambda name: f'/bin/{name}' if lfs else None), \
+        with patch('subprocess.run', side_effect=fake), \
                 patch.object(ci, 'check_commit', return_value=passed) as check, \
                 patch.object(ci, 'changes_for_push', return_value=set()), \
                 patch('sys.stdin', io.StringIO(line)), patch('builtins.print'):
@@ -411,19 +486,6 @@ class HookTest(unittest.TestCase):
         ok, check, uploads = self.pre_push(line, passed=False)
         self.assertFalse(ok)
         self.assertEqual(uploads, [])
-
-    def test_pre_push_needs_git_lfs_and_ci_local_skip_keeps_the_upload(self):
-        root = self.repo()
-        ci.git('commit', '-q', '--allow-empty', '-m', 'first', cwd=root)
-        line = f'refs/heads/main {ci.git("rev-parse", "HEAD", cwd=root)} refs/heads/main {ci.ZERO}\n'
-        ok, check, uploads = self.pre_push(line, lfs=False)
-        self.assertFalse(ok)
-        check.assert_not_called()
-        self.assertEqual(uploads, [])
-        ok, check, uploads = self.pre_push(line, CI_LOCAL_SKIP='1')
-        self.assertTrue(ok)
-        check.assert_not_called()
-        self.assertEqual(uploads, [(['origin', 'https://example.invalid/repo.git'], line)])
 
     def test_ci_local_skip_skips_the_pre_commit_checks(self):
         with patch.dict(os.environ, {'CI_LOCAL_SKIP': '1'}), patch.object(ci, 'locked') as locked, \
