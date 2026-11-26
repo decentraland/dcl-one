@@ -231,11 +231,16 @@ pub async fn buy(
             })?;
             build_primary(&contracts, collection, item_id, price_wei, relayer)
         }
-        PurchaseMode::Trade => build_trade_accept(validated_trade.as_ref().unwrap(), relayer),
+        PurchaseMode::Trade => build_trade_accept(
+            validated_trade
+                .as_ref()
+                .expect("trade mode always sets validated_trade or returns early"),
+            relayer,
+        ),
         _ => build_secondary(
             &contracts,
             collection,
-            token_id_for_secondary.unwrap(),
+            token_id_for_secondary.expect("secondary mode always parses tokenId or returns early"),
             price_wei,
         ),
     };

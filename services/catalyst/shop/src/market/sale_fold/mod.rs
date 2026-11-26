@@ -75,13 +75,11 @@ struct Inputs {
     late_collections: i64,
     first_backfill: Option<i64>,
     collection_changes: Vec<String>,
+    /// The lowest folded block of `rows`.
+    common: i64,
 }
 
 impl Inputs {
-    fn common(&self) -> i64 {
-        self.rows.iter().map(|r| r.folded_block).min().unwrap()
-    }
-
     fn epochs(&self) -> Vec<Uuid> {
         self.rows.iter().map(|r| r.epoch).collect()
     }
@@ -97,7 +95,7 @@ impl Inputs {
         {
             return None;
         }
-        let mut prefix = marker.block_number.min(self.common());
+        let mut prefix = marker.block_number.min(self.common);
         if let Some(from) = self.first_backfill {
             prefix = prefix.min(from.checked_sub(1)?);
         }
@@ -115,7 +113,7 @@ impl Inputs {
             && marker.input_revisions.starts_with(&self.revisions())
             && marker.late_collections == self.late_collections
             && self.collection_changes.is_empty()
-            && marker.block_number <= self.common()
+            && marker.block_number <= self.common
     }
 }
 
@@ -178,7 +176,9 @@ async fn inputs(
     {
         return Ok(None);
     }
-    let common = rows.iter().map(|r| r.folded_block).min().unwrap();
+    let Some(common) = rows.iter().map(|r| r.folded_block).min() else {
+        return Ok(None);
+    };
     let (late_collections, first_backfill, collection_changes, owed): (i64, Option<i64>, Vec<String>, bool) = sqlx::query_as(
         "WITH current AS (SELECT contract_address,backfill_from_block,refold_owed OR
                    coalesce(backfilled_to_block,backfill_from_block-1)<walked_from_block-1 AS owed
@@ -243,6 +243,7 @@ async fn inputs(
         late_collections,
         first_backfill,
         collection_changes,
+        common,
     }))
 }
 
@@ -497,7 +498,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         .unwrap_or(initial)
         .max(initial);
     let preserved_marker = previous.as_ref().filter(|m| m.block_number == from);
-    let limit = start.common().min(from + 250_000);
+    let limit = start.common.min(from + 250_000);
     // Limit RPC receipt work even in a dense block range. Never split a block.
     let to: i64 = sqlx::query_scalar(include_str!("window.sql"))
         .bind(net.db_name())
@@ -649,12 +650,12 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
         .as_ref()
         .filter(|_| same_history)
         .and_then(|m| m.published_at);
-    let published_at = if (to == start.common() || previously_published.is_some())
+    let published_at = if (to == start.common || previously_published.is_some())
         && head >= to as u64
         && chain_walk::within_publish_lag(net, head, to as u64)
     {
         Some(Utc::now().naive_utc())
-    } else if to < start.common() && head >= to as u64 {
+    } else if to < start.common && head >= to as u64 {
         // This prefix extends the same verified history. Retain its original
         // freshness deadline until a near-head measurement earns a new one.
         previously_published
@@ -665,7 +666,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     // A rewind or a repair committed during the fold changes this comparison.
     sqlx::query("SELECT indexer FROM shop.chain_cursor WHERE network=$1 AND indexer IN ('nft','sales','trade_events','collections') ORDER BY indexer FOR UPDATE")
         .bind(net.db_name()).fetch_all(&mut *tx).await?;
-    let end = inputs(&mut tx, net, Utc::now(), Some(start.common()))
+    let end = inputs(&mut tx, net, Utc::now(), Some(start.common))
         .await?
         .context("sales inputs withdrawn during fold")?;
     ensure!(
@@ -673,7 +674,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
             && start.revisions() == end.revisions()
             && start.late_collections == end.late_collections
             && start.collection_changes == end.collection_changes
-            && to <= end.common(),
+            && to <= end.common,
         "sales history changed during fold"
     );
     ensure!(

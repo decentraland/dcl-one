@@ -672,7 +672,7 @@ pub(super) const REPORT_STALE_PROCESSING_EVERY: Duration = Duration::from_secs(2
 /// taking over the job's lease, reports again at its first pass.
 #[derive(Default)]
 pub(super) struct StaleProcessingReport {
-    last: std::sync::Mutex<Option<std::time::Instant>>,
+    last: parking_lot::Mutex<Option<std::time::Instant>>,
 }
 
 impl StaleProcessingReport {
@@ -684,7 +684,7 @@ impl StaleProcessingReport {
         every: Duration,
     ) -> Option<super::orders::StaleProcessing> {
         let due = {
-            let last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+            let last = self.last.lock();
             last.is_none_or(|at| at.elapsed() >= every)
         };
         if !due {
@@ -700,7 +700,7 @@ impl StaleProcessingReport {
                 return None;
             }
         };
-        *self.last.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+        *self.last.lock() = Some(std::time::Instant::now());
         if stale.count > 0 {
             tracing::error!(
                 count = stale.count,
