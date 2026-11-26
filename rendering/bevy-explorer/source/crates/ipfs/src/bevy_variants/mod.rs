@@ -787,17 +787,13 @@ impl BevyVariants {
     }
 
     /// The url of the variant a read of `ipfs_path`, whose original is `original`, would take
-    /// now: `Some(None)` when it would read the original, `None` while it would wait for its
-    /// entity's manifest.
+    /// now: `Some(None)` when it would read the original, `None` while it would wait for the
+    /// base or its entity's manifest.
     fn planned_url(&self, ipfs_path: &IpfsPath, original: &str) -> Option<Option<String>> {
-        let (Some(base), Some(scene), Some(file)) = (
-            self.base(),
-            ipfs_path.scene_hash(),
-            ipfs_path.content_path(),
-        ) else {
+        let (Some(scene), Some(file)) = (ipfs_path.scene_hash(), ipfs_path.content_path()) else {
             return Some(None);
         };
-        if !could_have_variant(file) {
+        if self.is_off() || !could_have_variant(file) {
             return Some(None);
         }
         let Some(manifest) = self.manifest(scene) else {
@@ -805,12 +801,28 @@ impl BevyVariants {
         };
         let state = manifest.borrow().clone();
         match state {
-            ManifestState::Pending if !self.manifest_wait_left(scene).is_zero() => None,
-            ManifestState::Loaded(manifest) => Some(
-                self.choose(base, &manifest, original, file)
-                    .ok()
-                    .map(|(_, _, url)| url),
-            ),
+            ManifestState::Pending => {
+                let route = self.route.borrow();
+                match &route.base {
+                    Base::Pending(_) => None,
+                    Base::On(_, settled_at)
+                        if !self.manifest_wait_left(scene, *settled_at).is_zero() =>
+                    {
+                        None
+                    }
+                    Base::On(..) | Base::Off => Some(None),
+                }
+            }
+            ManifestState::Loaded(manifest) => {
+                let Some(base) = self.base() else {
+                    return Some(None);
+                };
+                Some(
+                    self.choose(&base, &manifest, original, file)
+                        .ok()
+                        .map(|(_, _, url)| url),
+                )
+            }
             _ => Some(None),
         }
     }
@@ -1273,7 +1285,7 @@ impl IpfsIo {
             .collection
             .hash(file)?
             .into_owned();
-        let (variant, decoded, url) = match variants.choose(base, &manifest, &original, file) {
+        let (variant, decoded, url) = match variants.choose(&base, &manifest, &original, file) {
             Ok(chosen) => chosen,
             Err(reason) => {
                 if let Some(reason) = reason {
