@@ -185,9 +185,13 @@ pub async fn credits_stream(
         return Ok(flagged(&first));
     }
     let first = serde_json::to_string(&first).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let wallet: Arc<str> = wallet.into();
     let follow = Follow {
-        state,
-        wallet: wallet.into(),
+        reader: Arc::new(WalletBalance {
+            state,
+            wallet: wallet.clone(),
+        }),
+        wallet,
         changes,
         last: None,
         first: Some(first),
@@ -210,10 +214,27 @@ async fn body_of(state: &SharedState, wallet: &str) -> Result<String, ApiError> 
     serde_json::to_string(&body).map_err(|e| ApiError::Internal(e.to_string()))
 }
 
+/// What a stream reads and sends: the balance body.
+trait ReadBalance: Send + Sync {
+    fn read(&self) -> futures::future::BoxFuture<'_, Result<String, ApiError>>;
+}
+
+/// A wallet's balance body, from the database.
+struct WalletBalance {
+    state: SharedState,
+    wallet: Arc<str>,
+}
+
+impl ReadBalance for WalletBalance {
+    fn read(&self) -> futures::future::BoxFuture<'_, Result<String, ApiError>> {
+        Box::pin(body_of(&self.state, &self.wallet))
+    }
+}
+
 /// One stream's state: what it last sent, what it hears and when it reads
 /// again unprompted.
 struct Follow {
-    state: SharedState,
+    reader: Arc<dyn ReadBalance>,
     wallet: Arc<str>,
     changes: broadcast::Receiver<BalanceChange>,
     last: Option<String>,
@@ -239,13 +260,16 @@ impl Follow {
         loop {
             tokio::select! {
                 change = self.changes.recv() => match change {
+                    Err(broadcast::error::RecvError::Closed) => return None,
+                    // After a failed read nothing reads before the retry: the
+                    // read then covers whatever was announced meanwhile.
+                    _ if self.retry.is_some() => continue,
                     Ok(BalanceChange::Wallet(wallet)) if wallet != self.wallet => continue,
                     Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(broadcast::error::RecvError::Closed) => return None,
                 },
                 () = tokio::time::sleep_until(self.read_by) => {}
             }
-            match body_of(&self.state, &self.wallet).await {
+            match self.reader.read().await {
                 Ok(body) => {
                     self.retry = None;
                     self.read_by = tokio::time::Instant::now() + self.refresh;
@@ -265,5 +289,81 @@ impl Follow {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicUsize;
+
+    use super::*;
+
+    /// A reader that counts its reads and fails until told otherwise.
+    #[derive(Default)]
+    struct Counting {
+        reads: AtomicUsize,
+        recovered: AtomicBool,
+    }
+
+    impl ReadBalance for Counting {
+        fn read(&self) -> futures::future::BoxFuture<'_, Result<String, ApiError>> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            let recovered = self.recovered.load(Ordering::SeqCst);
+            Box::pin(async move {
+                if recovered {
+                    Ok("current".to_string())
+                } else {
+                    Err(ApiError::Internal("the database is away".into()))
+                }
+            })
+        }
+    }
+
+    /// After a failed read, announcements wait for the retry: one read, not
+    /// one per announcement, and the retry sends the current balance with no
+    /// further announcement.
+    #[tokio::test]
+    async fn a_failed_read_waits_for_its_retry_whatever_is_announced() {
+        let (sender, changes) = broadcast::channel(4);
+        let reader = Arc::new(Counting::default());
+        let refresh = Duration::from_millis(400);
+        let wallet: Arc<str> = "0xab".into();
+        let follow = Follow {
+            reader: reader.clone(),
+            wallet: wallet.clone(),
+            changes,
+            last: Some("before".into()),
+            first: None,
+            refresh,
+            retry: None,
+            read_by: tokio::time::Instant::now() + Duration::from_secs(60),
+        };
+        sender.send(BalanceChange::Wallet(wallet.clone())).unwrap();
+        let next = tokio::spawn(follow.next());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            reader.reads.load(Ordering::SeqCst),
+            1,
+            "the announcement's read fails"
+        );
+        for _ in 0..10 {
+            let _ = sender.send(BalanceChange::Wallet(wallet.clone()));
+            let _ = sender.send(BalanceChange::Everyone);
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(
+            reader.reads.load(Ordering::SeqCst),
+            1,
+            "nothing reads again before the retry"
+        );
+        reader.recovered.store(true, Ordering::SeqCst);
+        let (_, follow) = tokio::time::timeout(Duration::from_secs(2), next)
+            .await
+            .expect("the retry sends")
+            .unwrap()
+            .expect("an event");
+        assert_eq!(reader.reads.load(Ordering::SeqCst), 2);
+        assert_eq!(follow.last.as_deref(), Some("current"));
+        assert!(follow.retry.is_none());
     }
 }
