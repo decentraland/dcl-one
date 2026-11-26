@@ -15,7 +15,8 @@
 //! the operator routes `/admin/credits/{grant,revoke}`,
 //! `/admin/users/{a}/block`, `/admin/packs[/{sku}]`, `/admin/purchases`,
 //! `/admin/checkouts[/{id}/{refund,force-fulfill}]`, `/admin/ledger`,
-//! `/admin/grants/{ref}/{reclaim,release}`, `/admin/reconcile` behind
+//! `/admin/grants/{ref}/{reclaim,release}`, `/admin/reconcile`,
+//! `/admin/test-purchase-email` behind
 //! `CATALYRST_CREDITS_ADMIN_TOKEN` (`admin.rs`); the ops dashboard's reads
 //! `/credits`, `/credit-reasons`, `/admin/ledger-stats` and
 //! `/admin/purchase-audit` behind that bearer or a wallet signature from
@@ -29,8 +30,8 @@
 //!   (`pricing::LocalMarket`; a source that is unset or not ready answers 503,
 //!   a quote miss prices to `null`);
 //! - the packs, intents, orders and the Stripe webhook: local
-//!   (`credits.packs`, `purchases`, `payment_reversals`, `stripe_events`) plus
-//!   Stripe's API;
+//!   (`credits.packs`, `purchases`, `payment_reversals`, `stripe_events`,
+//!   `purchase_receipts`) plus Stripe's API;
 //! - the MANA top-up, the fulfilment and the escrow ops: the economy module
 //!   (`escrow::EconomyBroker`, the old HTTP hops to `/v1/payments/verify`,
 //!   `/v1/broker/buy`, `/v1/escrow/{reclaim,release}` as handler calls with
@@ -67,7 +68,8 @@
 //! `CREDITS_MANAGER_CONTRACT`; it debits the ledger it folds, as the old
 //! reconciler did, so it is local authority too: it runs in `serve` and
 //! folds only with `OPS_WRITES_ENABLED`, indexing
-//! the log either way). Not carried: the `ts-rs`
+//! the log either way), and `credits-purchase-receipts` (the receipt
+//! outbox, `receipts.rs`, with `OPS_WRITES_ENABLED`). Not carried: the `ts-rs`
 //! bindings, the per-service `/health`, `/ping` (the content server owns
 //! them), `CREDITS_PG_CONNECTION_STRING`, `MARKET_BASE_URL`,
 //! `PRICE_BASE_URL`, `ECONOMY_BASE_URL`, `CATALYRST_ECONOMY_ADMIN_TOKEN` and
@@ -85,6 +87,7 @@ pub mod digest;
 pub mod dto;
 pub mod errors;
 pub mod escrow;
+pub mod events;
 pub mod feed;
 pub mod fulfillment;
 pub mod goals;
@@ -97,6 +100,7 @@ pub mod packs;
 pub mod pricing;
 pub mod purchase_audit;
 pub mod purchase_intent;
+pub mod receipts;
 pub mod reconcile;
 pub mod reports;
 pub mod settlement;
@@ -109,6 +113,8 @@ pub mod wallet;
 pub mod wallet_flags;
 pub mod writes;
 
+#[cfg(test)]
+mod receipts_tests;
 #[cfg(test)]
 mod reports_tests;
 #[cfg(test)]
@@ -741,6 +747,10 @@ pub struct State {
     pub(crate) dapps_flags: Option<Arc<crate::market::features::DappsFlags>>,
     /// The balance streams' listener and subscribers (`stream.rs`).
     pub(crate) balance_changes: stream::BalanceChanges,
+    /// The purchase receipt's mailer, names and links (`receipts.rs`), set
+    /// once by [`Self::start_receipts`]: `serve` builds the mailer after
+    /// this state.
+    pub receipts: std::sync::OnceLock<Arc<receipts::Sender>>,
 }
 
 pub type SharedState = Arc<State>;
@@ -862,6 +872,21 @@ impl State {
             goals_chain: chain,
             dapps_flags: None,
             balance_changes: stream::BalanceChanges::default(),
+            receipts: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Sets the purchase receipt's sender and starts the
+    /// `credits-purchase-receipts` job (`receipts::spawn_job`). A second call
+    /// keeps the first sender and starts nothing.
+    pub fn start_receipts(
+        self: &Arc<Self>,
+        sender: receipts::Sender,
+        interval: Duration,
+        jobs: &Jobs,
+    ) {
+        if self.receipts.set(Arc::new(sender)).is_ok() {
+            receipts::spawn_job(self, interval, jobs);
         }
     }
 
@@ -896,6 +921,12 @@ impl State {
     /// wallet flags listener and the CreditUsed index, all under the shared
     /// lifecycle. `serve` runs them: the usage index's fold debits the
     /// ledger, so it runs beside the other credits writers.
+    /// Where the revenue events go (`events.rs`), handed in by the node:
+    /// attached before the jobs start, so no settlement goes unreported.
+    pub fn attach_revenue_events(&self, events: Arc<dyn events::RevenueEvents>) -> bool {
+        self.credits.attach_revenue_events(events)
+    }
+
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         // The balance streams end with the node, so its graceful shutdown
         // never waits on them.
@@ -1004,9 +1035,23 @@ impl State {
         .await?;
         let unpaid: Vec<&str> = diffs
             .iter()
-            .filter(|d| !d.consumed)
+            .filter(|d| !d.consumed && d.kind != settlement::DEFERRED)
             .map(|d| d.credit_id.as_str())
             .collect();
+        // In this full pass a log is deferred only behind an earlier log of
+        // its credit that could not be debited, which `unpaid` reports.
+        let deferred: Vec<&str> = diffs
+            .iter()
+            .filter(|d| d.kind == settlement::DEFERRED)
+            .map(|d| d.credit_id.as_str())
+            .collect();
+        if !deferred.is_empty() {
+            tracing::warn!(
+                count = deferred.len(),
+                credit_ids = ?deferred,
+                "reconcile: CreditUsed events left behind an earlier use of their credit that is not settled"
+            );
+        }
         if !unpaid.is_empty() {
             tracing::error!(
                 invariant = "credit_used==debited",

@@ -57,6 +57,28 @@ A synthetic PostgreSQL 17.6 fixture on a laptop held 5M Polygon and 1M Ethereum 
 
 Each side walks its index in the order the activity merges in (time, then position), with no sort step. On Polygon, each side of the 50,000-transfer wallet walked about 4,800 index rows to find 500 transfers that were not sales. Each walked row made one `sale_asset_read_token` probe and, when it found a sale, one probe of the execution's primary key. Other agents' builds were running during these measurements.
 
+## Latest sale per token
+
+The fixtures below are synthetic, measured on a laptop with PostgreSQL 17.6 while other builds were running. Treat the ranges as an order of magnitude.
+
+The backfill was measured on a ledger of 3M Polygon and 600,000 Ethereum single-asset sales spread over each network's history, 5% of them unpriced. Each 5,000,000-block window is one `INSERT ... SELECT DISTINCT ON` into `shop.nft_last_sale`, the statement a fold pass runs:
+
+| Network | Windows | Rows per window | Time per window | Total |
+| --- | ---: | ---: | ---: | ---: |
+| Polygon (blocks 15.2M to 78.2M) | 13 | 226,000 (the last 136,000) | 3.3 to 10.3 s | 78 s |
+| Ethereum (blocks 4.9M to 20.9M) | 4 | 50,000 (the last 32,000) | 0.7 to 1.8 s | 4.6 s |
+
+The 525,000 resulting rows took 518 MB, with the primary key and the two secondary indexes the table had then. The index on `(network, sold_at DESC)` has since been dropped.
+
+`/v1/nfts?sortBy=recently_sold` was measured on a seed shaped like the one in DATABASE.md's /v1/nfts measurements: 3M Polygon tokens over 100,000 items of 5,000 collections, 200,000 Ethereum v1 tokens, 300,000 names and 90,000 parcels. 0.2% of the tokens had a legacy sold time, and the latest sales covered 20% of Polygon tokens, 10% of v1 tokens, 5% of names and 2% of parcels. Each page is `first=24`, built by `build_nfts_query_for`, three runs:
+
+| Page | Legacy orders only | With the latest sales | Capped total |
+| --- | ---: | ---: | ---: |
+| `category=wearable` | 3.6 to 5.4 s | 4.5 to 7.1 s | 173 to 319 ms |
+| no category (collections, names and LAND) | 4.1 to 4.8 s | 6.0 to 7.0 s | 442 to 604 ms |
+
+Both plans spend most of their time reading every held token: a parallel sequential scan of the 3M Polygon tokens, joined to their items and collections, then a top-N sort. With the latest sales, the Ethereum v1 source probes `nft_last_sale_pkey` once for each of its 200,000 tokens. Measured with `EXPLAIN ANALYZE` on this machine, one wearable page took 6.7 s with legacy orders only and 6.1 s with the latest sales, so the difference stayed within the noise of the shared machine. An index ordering the table by `sold_at` would serve a page only if the recently sold sort first walked the sold tokens. Today's sort does not use one, so the table has none.
+
 ## Marketplace sales day rollups
 
 On PostgreSQL 17.6, a temporary table held 200,000 executions on one network,

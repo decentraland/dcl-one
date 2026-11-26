@@ -38,6 +38,7 @@ use async_trait::async_trait;
 use sqlx::Row;
 
 use super::errors::ApiError;
+use super::events;
 use super::reconcile::CreditUsageDiff;
 use super::store::{Credits, now};
 use crate::evm::chain::ChainComponent;
@@ -277,9 +278,10 @@ struct Candidate {
     salt: String,
     sender: String,
     value_wei: String,
+    tx_hash: String,
 }
 
-const CANDIDATES_SQL: &str = "SELECT u.block_number, u.log_index, u.salt, u.sender, u.value_wei::text AS value_wei \
+const CANDIDATES_SQL: &str = "SELECT u.block_number, u.log_index, u.salt, u.sender, u.value_wei::text AS value_wei, u.tx_hash \
      FROM credits.usages u \
      JOIN credits.authorizations a ON a.id = u.salt \
      LEFT JOIN credits.usage_settlements s ON s.chain_id = u.chain_id AND s.block_number = u.block_number AND s.log_index = u.log_index \
@@ -318,6 +320,7 @@ pub async fn settle(
                 salt: r.get("salt"),
                 sender: r.get("sender"),
                 value_wei: r.get("value_wei"),
+                tx_hash: r.get("tx_hash"),
             };
             after_block = candidate.block_number;
             after_log = candidate.log_index;
@@ -350,6 +353,86 @@ pub fn remainder_credits(
     })
 }
 
+/// The kind of a log left for later: an earlier use of its credit is not
+/// settled yet, and the purchase must be the credit's first use.
+pub const DEFERRED: &str = "deferred";
+
+/// One line of a settled credit, as its event reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GroupLineCharge {
+    position: i32,
+    charged_cents: i64,
+    trade_id: Option<String>,
+}
+
+/// A purchase's settled lines as credits-server reported them, one per
+/// intent: each line's charged cents, its trade and its share of the MANA the
+/// log moved, pro rata by cents, the rounding remainder to the largest line
+/// (the first by position among equals). A credit without line rows (a
+/// single-line reserve) is one line with its own cents and trade.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SettledLine {
+    usd_cents: i64,
+    trade_id: Option<String>,
+    mana_settled_wei: String,
+}
+
+fn settled_lines(
+    usd_cents: i64,
+    trade_id: Option<&str>,
+    lines: &[GroupLineCharge],
+    value_wei: &str,
+) -> Vec<SettledLine> {
+    if lines.is_empty() {
+        return vec![SettledLine {
+            usd_cents,
+            trade_id: trade_id.map(str::to_string),
+            mana_settled_wei: value_wei.to_string(),
+        }];
+    }
+    let total = U256::from_str_radix(value_wei, 10).unwrap_or_else(|_| {
+        tracing::warn!(
+            value_wei,
+            "a settled credit's MANA is not a decimal number; its lines report 0"
+        );
+        U256::ZERO
+    });
+    let group_cents: i64 = lines.iter().map(|l| l.charged_cents.max(0)).sum();
+    // total * cents / group as (total / group) * cents + (total % group) *
+    // cents / group: neither product can overflow, since a line's cents are
+    // at most the group's, whatever the total.
+    let mut shares: Vec<U256> = lines
+        .iter()
+        .map(|l| match u64::try_from(group_cents) {
+            Ok(group) if group > 0 => {
+                let (group, cents) = (U256::from(group), U256::from(l.charged_cents.max(0) as u64));
+                total / group * cents + total % group * cents / group
+            }
+            _ => U256::ZERO,
+        })
+        .collect();
+    let allocated = shares.iter().fold(U256::ZERO, |sum, share| sum + *share);
+    let largest = lines
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| {
+            a.charged_cents
+                .cmp(&b.charged_cents)
+                .then(b.position.cmp(&a.position))
+        })
+        .map_or(0, |(i, _)| i);
+    shares[largest] += total - allocated;
+    lines
+        .iter()
+        .zip(shares)
+        .map(|(line, share)| SettledLine {
+            usd_cents: line.charged_cents,
+            trade_id: line.trade_id.clone(),
+            mana_settled_wei: share.to_string(),
+        })
+        .collect()
+}
+
 impl Credits {
     /// One log's settlement in one transaction: the authorization row is
     /// locked, the kind decided from the settlements already recorded, the
@@ -364,10 +447,17 @@ impl Credits {
         c: &Candidate,
     ) -> Result<CreditUsageDiff, ApiError> {
         let mut tx = self.pool.begin().await?;
+        // The settlement facts are read in their own statements once the lock
+        // is held, at a pinned READ COMMITTED: a statement that waited for
+        // the lock still reads from the snapshot it started with, so a count
+        // taken alongside the lock could miss the settlement the previous
+        // holder just committed, and two passes would both settle a purchase.
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *tx)
+            .await?;
         let row = sqlx::query(
-            "SELECT address, usd_cents, oracle_rate::text AS oracle_rate, oracle_decimals, credit_hash, status, \
-                    (SELECT count(*) FROM credits.usage_settlements s WHERE s.authorization_id = a.id)::bigint AS settled \
-             FROM credits.authorizations a WHERE id = $1 FOR UPDATE",
+            "SELECT address, usd_cents, oracle_rate::text AS oracle_rate, oracle_decimals, credit_hash, status, trade_id \
+             FROM credits.authorizations WHERE id = $1 FOR UPDATE",
         )
         .bind(&c.salt)
         .fetch_one(&mut *tx)
@@ -377,7 +467,81 @@ impl Credits {
         let oracle_rate: Option<String> = row.get("oracle_rate");
         let oracle_decimals: Option<i16> = row.get("oracle_decimals");
         let credit_hash: Option<String> = row.get("credit_hash");
-        let settled: i64 = row.get("settled");
+        // Released or expired: its hold no longer counted against the balance.
+        let recovered = matches!(row.get::<&str, _>("status"), "released" | "expired");
+        let trade_id: Option<String> = row.get("trade_id");
+        // Another pass settled this log while this one waited for the lock.
+        if let Some(recorded) = sqlx::query(
+            "SELECT kind, debited_credits::text AS debited FROM credits.usage_settlements \
+             WHERE chain_id = $1 AND block_number = $2 AND log_index = $3",
+        )
+        .bind(chain_id)
+        .bind(c.block_number)
+        .bind(c.log_index)
+        .fetch_optional(&mut *tx)
+        .await?
+        {
+            tx.rollback().await?;
+            return Ok(CreditUsageDiff {
+                credit_id: c.salt.clone(),
+                address,
+                debited: recorded.get("debited"),
+                consumed: true,
+                replayed: true,
+                new_balance: String::new(),
+                kind: recorded.get("kind"),
+            });
+        }
+        // A credit's purchase is its first use: a log waits while an earlier
+        // log of its salt is unsettled, whichever pass reached it first, and
+        // the pass that covers the earlier one settles both in order.
+        let earlier_unsettled: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM credits.usages u \
+                 WHERE u.salt = $1 AND u.chain_id = $2 AND u.contract = $3 \
+                   AND (u.block_number, u.log_index) < ($4, $5) \
+                   AND NOT EXISTS (SELECT 1 FROM credits.usage_settlements s \
+                                   WHERE s.chain_id = u.chain_id AND s.block_number = u.block_number \
+                                     AND s.log_index = u.log_index))",
+        )
+        .bind(&c.salt)
+        .bind(chain_id)
+        .bind(contract)
+        .bind(c.block_number)
+        .bind(c.log_index)
+        .fetch_one(&mut *tx)
+        .await?;
+        if earlier_unsettled {
+            tx.rollback().await?;
+            return Ok(CreditUsageDiff {
+                credit_id: c.salt.clone(),
+                address,
+                debited: "0".into(),
+                consumed: false,
+                replayed: false,
+                new_balance: String::new(),
+                kind: DEFERRED.to_string(),
+            });
+        }
+        let settled: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM credits.usage_settlements WHERE authorization_id = $1",
+        )
+        .bind(&c.salt)
+        .fetch_one(&mut *tx)
+        .await?;
+        let lines: Vec<GroupLineCharge> = sqlx::query(
+            "SELECT position, charged_cents, trade_id FROM credits.authorization_lines \
+             WHERE authorization_id = $1 ORDER BY position",
+        )
+        .bind(&c.salt)
+        .fetch_all(&mut *tx)
+        .await?
+        .iter()
+        .map(|r| GroupLineCharge {
+            position: r.get("position"),
+            charged_cents: r.get("charged_cents"),
+            trade_id: r.get("trade_id"),
+        })
+        .collect();
         if c.sender != address {
             tracing::warn!(credit = %c.salt, %address, sender = %c.sender, "credits-settlement: a credit this node signed for one wallet was used by another; debiting the signer's wallet");
         }
@@ -446,6 +610,28 @@ impl Credits {
             enqueue_revocation(&mut tx, &hash, &c.salt, chain_id, contract, "consumed").await?;
         }
         tx.commit().await?;
+        // The settlement row's key makes this the one pass that recorded the
+        // purchase, so it is reported once, after the commit: one event per
+        // line, as credits-server reported one per intent. A purchase debit
+        // the ledger already held (a replay: the purchase was recorded, and
+        // reported, before this settlement row) is not reported again.
+        if kind == "purchase" && !spent.replayed {
+            for line in settled_lines(usd_cents, trade_id.as_deref(), &lines, &c.value_wei) {
+                events::fire(
+                    self.revenue_events(),
+                    events::USD_PURCHASE_SETTLED,
+                    events::purchase_settled(&events::PurchaseSettled {
+                        salt: &c.salt,
+                        user_address: &address,
+                        usd_cents: line.usd_cents,
+                        mana_settled_wei: &line.mana_settled_wei,
+                        trade_id: line.trade_id.as_deref(),
+                        tx_hash: &c.tx_hash,
+                        recovered,
+                    }),
+                );
+            }
+        }
         Ok(CreditUsageDiff {
             credit_id: c.salt.clone(),
             address,
@@ -672,7 +858,7 @@ pub(super) const REPORT_STALE_PROCESSING_EVERY: Duration = Duration::from_secs(2
 /// taking over the job's lease, reports again at its first pass.
 #[derive(Default)]
 pub(super) struct StaleProcessingReport {
-    last: std::sync::Mutex<Option<std::time::Instant>>,
+    last: parking_lot::Mutex<Option<std::time::Instant>>,
 }
 
 impl StaleProcessingReport {
@@ -684,7 +870,7 @@ impl StaleProcessingReport {
         every: Duration,
     ) -> Option<super::orders::StaleProcessing> {
         let due = {
-            let last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+            let last = self.last.lock();
             last.is_none_or(|at| at.elapsed() >= every)
         };
         if !due {
@@ -700,7 +886,7 @@ impl StaleProcessingReport {
                 return None;
             }
         };
-        *self.last.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+        *self.last.lock() = Some(std::time::Instant::now());
         if stale.count > 0 {
             tracing::error!(
                 count = stale.count,
@@ -858,6 +1044,64 @@ mod tests {
         );
         assert_eq!(remainder_credits("3000000000000000000", None, None), None);
         assert_eq!(remainder_credits("x", Some("1"), Some(18)), None);
+    }
+
+    #[test]
+    fn a_settled_purchase_reports_each_line_with_its_share_of_the_mana() {
+        let line = |position: i32, charged_cents: i64, trade: &str| GroupLineCharge {
+            position,
+            charged_cents,
+            trade_id: Some(trade.to_string()),
+        };
+        assert_eq!(
+            settled_lines(700, Some("t0"), &[], "12345"),
+            [SettledLine {
+                usd_cents: 700,
+                trade_id: Some("t0".into()),
+                mana_settled_wei: "12345".into()
+            }],
+            "a single-line credit is one line with its own trade"
+        );
+        let shares = |lines: &[GroupLineCharge], wei: &str| {
+            settled_lines(0, Some("first"), lines, wei)
+                .into_iter()
+                .map(|l| (l.usd_cents, l.trade_id.unwrap(), l.mana_settled_wei))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            shares(
+                &[line(0, 300, "a"), line(1, 500, "b"), line(2, 200, "c")],
+                "1001"
+            ),
+            [
+                (300, "a".into(), "300".into()),
+                (500, "b".into(), "501".into()),
+                (200, "c".into(), "200".into())
+            ],
+            "pro rata, the remainder to the largest line; the parent's trade is not every line's"
+        );
+        assert_eq!(
+            shares(&[line(0, 100, "a"), line(1, 100, "b")], "3"),
+            [(100, "a".into(), "2".into()), (100, "b".into(), "1".into())],
+            "among equals the first by position takes the remainder"
+        );
+        let half: U256 = U256::from(1u8) << 254usize;
+        let whole: U256 = half * U256::from(2u8);
+        assert_eq!(
+            shares(&[line(0, 2, "a"), line(1, 2, "b")], &whole.to_string()),
+            [
+                (2, "a".into(), half.to_string()),
+                (2, "b".into(), half.to_string())
+            ],
+            "no product overflows, at 2^255 wei"
+        );
+        let big = "123456789012345678901234567890123456789";
+        let sum = shares(&[line(0, 333, "a"), line(1, 667, "b")], big)
+            .iter()
+            .fold(U256::ZERO, |s, (_, _, w)| {
+                s + U256::from_str_radix(w, 10).unwrap()
+            });
+        assert_eq!(sum.to_string(), big, "the shares add up to what moved");
     }
 
     #[test]

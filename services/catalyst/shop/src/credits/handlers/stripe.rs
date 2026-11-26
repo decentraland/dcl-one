@@ -1,6 +1,7 @@
 //! `POST /stripe/webhook`: the signature is verified over the raw body
 //! before any row is touched; then ONE transaction lands the event claim,
-//! the purchase flip and the wallet move, granting `purchases.credits`
+//! the purchase flip, the wallet move and the purchase's receipt row
+//! (`receipts.rs`, sent after the commit), granting `purchases.credits`
 //! (captured at intent/session creation), never the event's metadata, and
 //! only for a settled payment in the purchase's currency and amount. A
 //! reversal REVOKES the granted Credits, bounded by the purchase. Stripe
@@ -38,9 +39,13 @@ use serde_json::{Value as JsonValue, json};
 use crate::credits::SharedState;
 use crate::credits::admin_store::GrantRequest;
 use crate::credits::errors::ApiError;
-use crate::credits::packs::{Charge, MarkPaidOutcome, ReversalOutcome};
+use crate::credits::events;
+use crate::credits::packs::{Charge, MarkPaidOutcome, ReversalOutcome, SettledPurchase};
+use crate::credits::receipts;
 use crate::credits::store::Credits;
-use crate::credits::stripe::{SIGNATURE_TOLERANCE_SECS, verify_stripe_signature};
+use crate::credits::stripe::{
+    SIGNATURE_TOLERANCE_SECS, session_buyer_email, verify_stripe_signature,
+};
 
 type Tx<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
 
@@ -113,6 +118,7 @@ pub async fn webhook(
         .cloned()
         .unwrap_or(JsonValue::Null);
 
+    let mut granted = None;
     match event_type.as_str() {
         "payment_intent.succeeded" => {
             let pi_id = object
@@ -128,11 +134,12 @@ pub async fn webhook(
                 event_id: &event_id,
                 event_type: &event_type,
                 by: SettledBy::PaymentIntent(pi_id),
+                buyer_email: None,
             };
-            credit_settled(&state, &mut tx, outcome, settled).await?;
+            granted = credit_settled(&state, &mut tx, outcome, settled).await?;
         }
         "checkout.session.completed" | "checkout.session.async_payment_succeeded" => {
-            settle_session(&state, &mut tx, &object, &event_id, &event_type).await?;
+            granted = settle_session(&state, &mut tx, &object, &event_id, &event_type).await?;
         }
         "checkout.session.expired" => {
             mark_session_terminal(&mut tx, &object, &event_id, "abandoned", None).await?;
@@ -158,7 +165,34 @@ pub async fn webhook(
     }
 
     tx.commit().await?;
+    // After the commit, so a rolled-back grant is never reported; past the
+    // event's claim, so a redelivery never reports it twice.
+    if let Some(purchase) = granted {
+        report_pack_granted(&state, &purchase);
+    }
     Ok(ok("processed"))
+}
+
+/// `stripe_credit_granted` for a purchase this webhook granted.
+fn report_pack_granted(state: &SharedState, purchase: &SettledPurchase) {
+    let order_id = purchase
+        .order_id
+        .as_deref()
+        .or(purchase.checkout_session.as_deref())
+        .or(purchase.payment_intent.as_deref())
+        .unwrap_or_default();
+    events::fire(
+        state.credits.revenue_events(),
+        events::STRIPE_CREDIT_GRANTED,
+        events::pack_granted(&events::PackGranted {
+            order_id,
+            user_address: &purchase.address,
+            credits: &purchase.credits,
+            charged_cents: purchase.amount_cents,
+            pack_id: &purchase.sku,
+            quantity: purchase.quantity,
+        }),
+    );
 }
 
 /// The amount and currency an event says were charged; both are required,
@@ -200,7 +234,7 @@ async fn settle_session(
     object: &JsonValue,
     event_id: &str,
     event_type: &str,
-) -> Result<(), ApiError> {
+) -> Result<Option<SettledPurchase>, ApiError> {
     let session_id = object
         .get("id")
         .and_then(|v| v.as_str())
@@ -219,7 +253,7 @@ async fn settle_session(
                 tracing::warn!(event_id = %event_id, event_type = %event_type, checkout_session = %session_id, payment_status = payment_status.unwrap_or("absent"), "checkout.session not paid; NOT granting credits");
             }
         }
-        return Ok(());
+        return Ok(None);
     }
     let charged = charge(object, "amount_total", "checkout.session")?;
     let outcome = state
@@ -230,6 +264,7 @@ async fn settle_session(
         event_id,
         event_type,
         by: SettledBy::Session(session_id),
+        buyer_email: session_buyer_email(object),
     };
     credit_settled(state, tx, outcome, settled).await
 }
@@ -239,6 +274,9 @@ struct Settled<'a> {
     event_id: &'a str,
     event_type: &'a str,
     by: SettledBy<'a>,
+    /// The address the buyer typed into Checkout, which only a session
+    /// event carries: the receipt's first recipient.
+    buyer_email: Option<String>,
 }
 
 /// The key the event matched its purchase by.
@@ -264,17 +302,21 @@ impl<'a> SettledBy<'a> {
 /// the grant is the same whichever lands first. Its ledger row is described
 /// from the purchase row, and the reversals recorded before it are applied
 /// for the payment intent the purchase holds, which an unpaid completion
-/// may have recorded before an event that names none.
+/// may have recorded before an event that names none. The purchase's
+/// receipt is enqueued in the same transaction (`receipts.rs`), so it is
+/// sent only once the grant commits. Answers the purchase it granted, which
+/// the webhook reports once its transaction commits.
 async fn credit_settled(
     state: &SharedState,
     tx: &mut Tx<'_>,
     outcome: MarkPaidOutcome,
     settled: Settled<'_>,
-) -> Result<(), ApiError> {
+) -> Result<Option<SettledPurchase>, ApiError> {
     let Settled {
         event_id,
         event_type,
         by,
+        buyer_email,
     } = settled;
     let (matched_by, matched) = by.parts();
     match outcome {
@@ -322,6 +364,8 @@ async fn credit_settled(
                     tracing::warn!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, "settled purchase holds no payment_intent: a later refund or dispute cannot find it");
                 }
             }
+            receipts::enqueue_in_tx(tx, purchase.id, buyer_email.as_deref()).await?;
+            return Ok(Some(purchase));
         }
         MarkPaidOutcome::AmountMismatch {
             expected_cents,
@@ -351,7 +395,7 @@ async fn credit_settled(
             }
         },
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Retires a pending order, and closes one already retired as `abandoned`
