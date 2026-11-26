@@ -695,7 +695,8 @@ fn upstream_ops_outside_the_list_are_disabled() {
     });
 }
 
-/// An op one of the compiled-in scripts names is one a scene runtime can call.
+/// An op one of the compiled-in scripts or `~system/*` modules names is one a scene runtime
+/// can call.
 #[test]
 fn every_op_a_loaded_script_names_is_enabled() {
     use super::super::{scene_ops, sources, UPSTREAM_OPS};
@@ -706,7 +707,7 @@ fn every_op_a_loaded_script_names_is_enabled() {
     .unwrap();
     let (own, replaced) = scene_ops(true);
     let mut checked = 0;
-    for file in [
+    let mut scripts: Vec<(String, String)> = [
         sources::own(),
         sources::deno_fetch(),
         sources::deno_web(),
@@ -714,10 +715,27 @@ fn every_op_a_loaded_script_names_is_enabled() {
     ]
     .into_iter()
     .flatten()
-    {
-        let code = file.load().unwrap();
+    .map(|file| {
+        (
+            file.specifier.to_string(),
+            file.load().unwrap().as_str().to_owned(),
+        )
+    })
+    .collect();
+    // the `~system/*` modules `op_require` serves
+    let modules = concat!(env!("CARGO_MANIFEST_DIR"), "/../dcl_js/src/modules");
+    for entry in std::fs::read_dir(modules).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|ext| ext == "js") {
+            scripts.push((
+                path.display().to_string(),
+                std::fs::read_to_string(&path).unwrap(),
+            ));
+        }
+    }
+    assert!(scripts.iter().any(|(name, _)| name.ends_with("EngineApi.js")));
+    for (script, code) in &scripts {
         let named = code
-            .as_str()
             .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
             .filter(|word| word.starts_with("op_") && names.iter().any(|name| name == word));
         for op in named {
@@ -725,8 +743,7 @@ fn every_op_a_loaded_script_names_is_enabled() {
                 UPSTREAM_OPS.contains(&op)
                     || replaced.contains_key(op)
                     || own.iter().any(|own| own.name == op),
-                "{} names {op}, which is disabled",
-                file.specifier
+                "{script} names {op}, which is disabled"
             );
             checked += 1;
         }
