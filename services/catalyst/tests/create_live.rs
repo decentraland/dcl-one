@@ -462,7 +462,7 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
     assert_eq!(read.body["data"]["description"], "A blue hat");
     assert_eq!(
         node.signed(&stranger, "get", &i_path, None).await.status,
-        401,
+        403,
         "another wallet is refused the draft item"
     );
 
@@ -485,7 +485,7 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
     assert_eq!(mine["item_count"], 1);
     assert_eq!(
         node.signed(&stranger, "get", &c_path, None).await.status,
-        401,
+        403,
         "a non-owner, non-admin collection read is refused"
     );
     let items = node
@@ -570,8 +570,8 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
     assert_eq!(bulk.body["data"]["updated"], 1);
     let by_admin = node.signed(&curator, "get", &c_path, None).await;
     assert!(
-        matches!(by_admin.status, 401 | 503),
-        "an admin address has no role on another wallet's draft (401, or 503 while the committee can't tell): {}",
+        matches!(by_admin.status, 403 | 503),
+        "an admin address has no role on another wallet's draft (403, or 503 while the committee can't tell): {}",
         by_admin.body
     );
     let curation = node

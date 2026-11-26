@@ -84,7 +84,7 @@
       "anchors": []
     },
     "access-before-kind-conflict": {
-      "text": "PUT /v1/collections/:id on an existing collection: the node answers 401 Unauthorized to upsert collection before it compares the body's URN with the stored collection, so only a signer who may save the collection gets the 409s for converting it or changing its third party. Upstream answers those 409s first.",
+      "text": "PUT /v1/collections/:id on an existing collection: the node answers 403 Unauthorized to upsert collection before it compares the body's URN with the stored collection, so only a signer who may save the collection gets the 409s for converting it or changing its third party. Upstream answers those 409s first.",
       "captures": [],
       "anchors": []
     },
@@ -148,7 +148,7 @@
       "anchors": []
     },
     "admin-addresses-not-admitted": {
-      "text": "GET /v1/collections/:id, GET /v1/items/:id and GET /v1/collections/:id/items: upstream answers its ADMIN_ADDRESSES wallets the full body of a published collection and of an item, and every item of any collection; the node gives BUILDER_ADMIN_ADDRESSES no role on collection and item reads, and answers those wallets as any other signer: the public body, and 401 for a draft collection's items.",
+      "text": "GET /v1/collections/:id, GET /v1/items/:id and GET /v1/collections/:id/items: upstream answers its ADMIN_ADDRESSES wallets the full body of a published collection and of an item, and every item of any collection; the node gives BUILDER_ADMIN_ADDRESSES no role on collection and item reads, and answers those wallets as any other signer: the public body, and 403 for a draft collection's items.",
       "captures": [
         "source/129-collection-admin.json",
         "source/166-item-minted-admin.json",
@@ -256,13 +256,13 @@
       "anchors": []
     },
     "lock-owner-only": {
-      "text": "POST /v1/collections/:id/lock signed by a wallet that may act on the collection but is not the owner of a standard collection (an on-chain manager, the provider manager of a third-party collection): upstream answers 200 with the date and stores no lock; the node answers 401 'Unauthorized user <signer> for collections <id>' and stores nothing. The old builder web locks only as the owner, right after it deploys.",
+      "text": "POST /v1/collections/:id/lock signed by a wallet that may act on the collection but is not the owner of a standard collection (an on-chain manager, the provider manager of a third-party collection): upstream answers 200 with the date and stores no lock; the node answers 403 'Unauthorized user <signer> for collections <id>' and stores nothing. The old builder web locks only as the owner, right after it deploys.",
       "captures": [
         "source/283-collection-lock-published-manager.json",
         "source/284-collection-lock-linked-manager.json"
       ],
       "anchors": [
-        "status: fixture=200 candidate=401"
+        "status: fixture=200 candidate=403"
       ]
     },
     "publish-repeat-items-merged": {
@@ -278,13 +278,13 @@
       "anchors": []
     },
     "third-party-claims": {
-      "text": "A provider the registry lists unapproved whose virtual third party lists other wallets: the node admits as its manager only a wallet both list, and refuses the others (401); upstream admits the virtual third party's managers alone until the registry approves the provider. The old builder web registers a provider from its virtual third party with the same managers, so both list them; a wallet that claimed an id before another wallet registered it on chain manages nothing of it on the node.",
+      "text": "A provider the registry lists unapproved whose virtual third party lists other wallets: the node admits as its manager only a wallet both list, and refuses the others (403); upstream admits the virtual third party's managers alone until the registry approves the provider. The old builder web registers a provider from its virtual third party with the same managers, so both list them; a wallet that claimed an id before another wallet registered it on chain manages nothing of it on the node.",
       "captures": [
         "source/314-third-party-slots-claimed-before-registration.json",
         "source/320-collection-save-claimed-before-registration.json"
       ],
       "anchors": [
-        "status: fixture=200 candidate=401"
+        "status: fixture=200 candidate=403"
       ]
     },
     "curation-invalid-id": {
@@ -319,12 +319,12 @@
       "anchors": []
     },
     "item-curation-reopened-by-the-committee": {
-      "text": "PATCH /v1/items/:id/curation with status pending on an item whose newest curation is approved or rejected, by a wallet off the committee: upstream sets that decision back to pending; the node answers 401 Only committee members can approve or reject a curation and writes nothing. The old builder web sends a pending PATCH only for an item whose newest curation is already pending, and asks again for a decided one with POST /v1/items/:id/curation.",
+      "text": "PATCH /v1/items/:id/curation with status pending on an item whose newest curation is approved or rejected, by a wallet off the committee: upstream sets that decision back to pending; the node answers 403 Only committee members can approve or reject a curation and writes nothing. The old builder web sends a pending PATCH only for an item whose newest curation is already pending, and asks again for a decided one with POST /v1/items/:id/curation.",
       "captures": [
         "source/428-item-curation-reopen-manager.json"
       ],
       "anchors": [
-        "status: fixture=200 candidate=401"
+        "status: fixture=200 candidate=403"
       ]
     },
     "curation-list-bounds": {
@@ -474,7 +474,7 @@
       "anchors": []
     },
     "review-access-before-body": {
-      "text": "POST /v1/collections/:id/comments: the node decides who may comment before it reads the body, so a signer without a role and outside the committee gets 401 for any body; upstream checks the body's schema first and answers such a signer 400 for an invalid body.",
+      "text": "POST /v1/collections/:id/comments: the node decides who may comment before it reads the body, so a signer without a role and outside the committee gets 403 for any body; upstream checks the body's schema first and answers such a signer 400 for an invalid body.",
       "captures": [],
       "anchors": []
     },
@@ -600,7 +600,7 @@
       "anchors": []
     },
     "virtual-third-party-changes": {
-      "text": "PATCH and DELETE /v1/thirdParties/:id: the node lets a wallet the virtual third party lists change or remove it only when the wallet also manages the provider: once the registry lists the provider, approved or not, a manager the registry lists too; with no registry record, the virtual third party's managers. Another wallet gets 401 {ok:false, data:{id}, error:'You are not the manager of this Third Party.'}. PATCH reads the registry and answers 503 while it can't tell. Upstream lets every wallet the virtual third party lists change or remove it, and reads the registry only for a removal.",
+      "text": "PATCH and DELETE /v1/thirdParties/:id: the node lets a wallet the virtual third party lists change or remove it only when the wallet also manages the provider: once the registry lists the provider, approved or not, a manager the registry lists too; with no registry record, the virtual third party's managers. Another wallet gets 403 {ok:false, data:{id}, error:'You are not the manager of this Third Party.'}. PATCH reads the registry and answers 503 while it can't tell. Upstream lets every wallet the virtual third party lists change or remove it, and reads the registry only for a removal.",
       "captures": [],
       "anchors": []
     },
@@ -663,6 +663,95 @@
       "text": "Every read the third-party registry decides (a third-party collection's or item's body, items, curations, files and timeline, an address's listings and drafts, the third-party listings and the provider flags of the committee's listing and the public search): the node accepts a registry read that started up to 5 seconds before the request, so concurrent reads share one and a manager the registry stopped listing keeps reading for at most that long. Every write decides on a read that started after it began. Upstream reads the registry afresh for every request.",
       "captures": [],
       "anchors": []
+    },
+    "denied-signer-forbidden": {
+      "text": "Every signed operation that refuses a signer whose signature verifies but who holds no role the operation needs (a stranger, the committee where only the owner or a manager acts, a manager where only the owner acts, a wallet the registry does not list as the provider's manager, an assignee off the committee): upstream answers 401; the node answers 403 with upstream's error and data. The node keeps 401 for a request whose signature is missing, malformed or does not verify (Unauthenticated), for an anonymous GET /v1/collections, and for the validator's calls whose signature does not verify.",
+      "captures": [
+        "source/04-collection-stranger.json",
+        "source/25-collection-save-stranger.json",
+        "source/26-collection-save-committee.json",
+        "source/27-collection-save-published-manager.json",
+        "source/29-collection-items-stranger.json",
+        "source/60-collections-stranger.json",
+        "source/74-address-collections-other.json",
+        "source/81-collection-third-party-stranger.json",
+        "source/97-collection-save-third-party-as-standard.json",
+        "source/109-address-collections-committee-other.json",
+        "source/131-collection-body-manager.json",
+        "source/133-collection-save-third-party-stranger.json",
+        "source/139-collection-save-registered-provider-stranger.json",
+        "source/153-item-draft-stranger.json",
+        "source/160-item-linked-stranger.json",
+        "source/163-item-orphan-stranger.json",
+        "source/186-address-items-other.json",
+        "source/189-items-stranger.json",
+        "source/193-item-save-draft-stranger.json",
+        "source/194-item-save-draft-committee.json",
+        "source/195-item-save-orphan-other.json",
+        "source/212-item-save-linked-stranger.json",
+        "source/219-item-delete-stranger.json",
+        "source/228-item-files-stranger.json",
+        "source/229-item-files-committee.json",
+        "source/278-collection-publish-stranger.json",
+        "source/281-collection-lock-stranger.json",
+        "source/288-collection-tos-stranger.json",
+        "source/293-collection-owner-sync-stranger.json",
+        "source/294-collection-delete-stranger.json",
+        "source/312-third-party-slots-stranger.json",
+        "source/315-third-party-slots-unapproved-registry-manager.json",
+        "source/318-collection-unapproved-registry-only-manager.json",
+        "source/321-collection-save-unapproved-registry-only.json",
+        "source/324-collection-save-under-another-virtual.json",
+        "source/325-third-party-update-other.json",
+        "source/330-third-party-delete-other.json",
+        "source/359-collection-curation-stranger.json",
+        "source/366-collection-curation-third-party-stranger.json",
+        "source/368-collection-curation-admin.json",
+        "source/374-item-curations-stranger.json",
+        "source/379-item-curation-stranger.json",
+        "source/385-item-curation-minted-minter.json",
+        "source/387-collection-curation-request-stranger.json",
+        "source/398-collection-curation-update-stranger.json",
+        "source/399-collection-curation-update-owner-status.json",
+        "source/400-collection-curation-update-owner-assignee.json",
+        "source/401-collection-curation-update-assignee-not-committee.json",
+        "source/419-item-curation-approve-manager.json",
+        "source/420-item-curation-update-stranger.json",
+        "source/427-item-curation-request-stranger.json",
+        "source/432-collection-post-stranger.json",
+        "source/433-collection-post-committee.json",
+        "source/442-curation-post-owner.json",
+        "source/452-collection-publish-third-party-stranger.json",
+        "source/453-collection-publish-third-party-committee.json",
+        "source/466-collection-approval-data-manager.json",
+        "source/485-item-videos-stranger.json",
+        "source/486-item-videos-committee.json",
+        "source/502-review-comment-stranger.json"
+      ],
+      "anchors": [
+        "status: fixture=401 candidate=403"
+      ]
+    },
+    "not-published-conflict": {
+      "text": "POST /v1/collections/:id/publish of a standard collection the chain does not hold yet (no contract address, a publication the node is still sending, no contract at the address), and GET /v1/collections/:id/approvalData of a third-party collection with no submitted items: upstream answers 401 The collection is not published.; the node answers 409 with the same error and data. While the Polygon RPC can't tell whether the address holds the collection, the publish answers 503. The /create client retries the publish on both.",
+      "captures": [
+        "source/279-collection-publish-draft-owner.json",
+        "source/468-collection-approval-data-unsubmitted.json"
+      ],
+      "anchors": [
+        "status: fixture=401 candidate=409"
+      ]
+    },
+    "item-move-conflict": {
+      "text": "PUT /v1/items/:idOrURN that moves an item into, out of or between third-party collections: upstream answers 401 Item can't change between collections.; the node answers 409 with the same error and data, whoever signs.",
+      "captures": [
+        "source/33-item-orphan-into-third-party.json",
+        "source/34-item-out-of-third-party.json",
+        "source/35-item-between-third-party.json"
+      ],
+      "anchors": [
+        "status: fixture=401 candidate=409"
+      ]
     }
   },
   "operations": [
@@ -704,7 +793,7 @@
       "id": "api_http:GET:/v1/items",
       "owner": "items",
       "status": "reviewed",
-      "result": "The committee's list, curated third-party items included, and a stranger's refusal were compared and match.",
+      "result": "The committee's list, curated third-party items included, and a stranger's refusal were compared and match. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/188-items-committee.json",
@@ -714,7 +803,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/189-items-stranger.json",
           "scope": "GET /items signed by a wallet that is not on the committee.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/builder/src/tests/limits.rs",
@@ -727,7 +821,8 @@
         "deliberate:committee-unavailable",
         "deliberate:chain-copy-lag",
         "deliberate:catalyst-is-this-node",
-        "deliberate:request-budgets"
+        "deliberate:request-budgets",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "A list over the 1,000 rows the node answers."
     },
@@ -735,7 +830,7 @@
       "id": "api_http:GET:/v1/:address/items",
       "owner": "items",
       "status": "reviewed",
-      "result": "An address's own items, paged, unpaginated, its orphans and one collection's, and another wallet's refused read, and an address's curated third-party items, were compared and match.",
+      "result": "An address's own items, paged, unpaginated, its orphans and one collection's, and another wallet's refused read, and an address's curated third-party items, were compared and match. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/182-address-items-owner-page.json",
@@ -760,7 +855,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/186-address-items-other.json",
           "scope": "GET /{address}/items signed by another wallet.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/187-address-items-stranger-own.json",
@@ -794,7 +894,8 @@
         "deliberate:catalyst-is-this-node",
         "deliberate:request-budgets",
         "deliberate:third-party-registry-read-window",
-        "deliberate:listing-page-past-the-last"
+        "deliberate:listing-page-past-the-last",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "A registry manager listing its provider's items."
     },
@@ -802,7 +903,7 @@
       "id": "api_http:GET:/v1/items/:id",
       "owner": "items",
       "status": "reviewed",
-      "result": "Reads by the owner, a stranger, the committee, an on-chain manager and minter, and an admin wallet of draft, unminted, minted, approved, third-party and orphan items, and an unknown and a malformed id, were compared. Each caller is admitted or refused as upstream decides and gets upstream's body for it, the chain's values merged into a minted item and a third-party item's URN and values; the admin wallet gets the public body. The provider's manager reading a curated third-party item gets upstream's body: published, with the mapping flag of the newest curation of the collection's first curated item by id. A signer with no role reading a third-party item of a collection with item curations, curated or not, gets upstream's public body. An on-chain manager of a published collection reads an unminted item in full, a deliberate gap.",
+      "result": "Reads by the owner, a stranger, the committee, an on-chain manager and minter, and an admin wallet of draft, unminted, minted, approved, third-party and orphan items, and an unknown and a malformed id, were compared. Each caller is admitted or refused as upstream decides and gets upstream's body for it, the chain's values merged into a minted item and a third-party item's URN and values; the admin wallet gets the public body. The provider's manager reading a curated third-party item gets upstream's body: published, with the mapping flag of the newest curation of the collection's first curated item by id. A signer with no role reading a third-party item of a collection with item curations, curated or not, gets upstream's public body. An on-chain manager of a published collection reads an unminted item in full, a deliberate gap. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/36-item-published-stranger.json",
@@ -827,7 +928,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/153-item-draft-stranger.json",
           "scope": "GET /items/{id} signed by a wallet with no role on a draft item.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/154-item-draft-committee.json",
@@ -923,7 +1029,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/160-item-linked-stranger.json",
           "scope": "GET /items/{id} signed by a wallet with no role on a third-party item never submitted.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/161-item-linked-owner.json",
@@ -938,7 +1049,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/163-item-orphan-stranger.json",
           "scope": "GET /items/{id} signed by another wallet on an item with no collection.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/164-item-unknown.json",
@@ -1041,7 +1157,8 @@
         "deliberate:item-curation-reopen-later-reads",
         "deliberate:item-read-on-chain-manager",
         "deliberate:item-decided-by-its-collection",
-        "deliberate:third-party-registry-read-window"
+        "deliberate:third-party-registry-read-window",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "None for the catalyst state; the bodies of items the catalyst holds were compared for a third-party item never curated, a curated one and a minted standard one."
     },
@@ -1074,7 +1191,7 @@
       "id": "api_http:GET:/v1/collections/:id/items",
       "owner": "items",
       "status": "reviewed",
-      "result": "Lists of a draft, a collection on chain and a third-party collection, by id and by contract address, paged, filtered by name, synced, status and mappingStatus, by the owner, a stranger, an on-chain manager and minter, the committee and an admin wallet, and an unknown collection with an invalid status, were compared and match except the admin wallet's refusal. A third-party collection with curated items, for the provider's manager and for a signer with no role, matches: each item published and with the mapping flag of its own newest curation, a never-curated one unpublished and left out of the public list. Its status filter lists the items whose newest curation is pending, as upstream's does.",
+      "result": "Lists of a draft, a collection on chain and a third-party collection, by id and by contract address, paged, filtered by name, synced, status and mappingStatus, by the owner, a stranger, an on-chain manager and minter, the committee and an admin wallet, and an unknown collection with an invalid status, were compared and match except the admin wallet's refusal. A third-party collection with curated items, for the provider's manager and for a signer with no role, matches: each item published and with the mapping flag of its own newest curation, a never-curated one unpublished and left out of the public list. Its status filter lists the items whose newest curation is pending, as upstream's does. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/28-collection-items-unsigned.json",
@@ -1089,7 +1206,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/29-collection-items-stranger.json",
           "scope": "Signed GET by a wallet with no role on a draft.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/30-collection-items-committee.json",
@@ -1180,13 +1302,13 @@
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/181-collection-items-draft-admin.json",
           "scope": "GET /collections/{id}/items signed by an ADMIN_ADDRESSES wallet with no other role on a draft collection.",
           "replay": [
-            "status: fixture=200 candidate=401",
+            "status: fixture=200 candidate=403",
             "data value",
             "error extra",
             "ok value"
           ],
           "explained_by": {
-            "status: fixture=200 candidate=401": "deliberate:admin-addresses-not-admitted",
+            "status: fixture=200 candidate=403": "deliberate:admin-addresses-not-admitted",
             "data value": "deliberate:admin-addresses-not-admitted",
             "error extra": "deliberate:admin-addresses-not-admitted",
             "ok value": "deliberate:admin-addresses-not-admitted"
@@ -1244,7 +1366,8 @@
         "deliberate:item-curation-reopen-later-reads",
         "deliberate:request-budgets",
         "deliberate:third-party-registry-read-window",
-        "deliberate:listing-page-past-the-last"
+        "deliberate:listing-page-past-the-last",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "The synced and mappingStatus filters over items with curations."
     },
@@ -1252,22 +1375,37 @@
       "id": "api_http:PUT:/v1/items/:idOrURN",
       "owner": "items",
       "status": "reviewed",
-      "result": "Saves of draft, unminted and minted items by the owner, an on-chain manager, a stranger and the committee; creations into a draft, a published collection and no collection; moves and removals around a published collection; a rarity change; third-party saves by URN and by id, creations, URN conflicts, a curated item's refused URN change, a URN in another case and mappings; and each schema and path refusal were compared and match, except the schema refusal's detail and the unsigned message.",
+      "result": "Saves of draft, unminted and minted items by the owner, an on-chain manager, a stranger and the committee; creations into a draft, a published collection and no collection; moves and removals around a published collection; a rarity change; third-party saves by URN and by id, creations, URN conflicts, a curated item's refused URN change, a URN in another case and mappings; and each schema and path refusal were compared and match, except the schema refusal's detail and the unsigned message. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap. A move into, out of or between third-party collections answers 409 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/33-item-orphan-into-third-party.json",
           "scope": "Signed PUT by the owner moving its item with no collection into a third-party collection whose provider it manages.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=409"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=409": "deliberate:item-move-conflict"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/34-item-out-of-third-party.json",
           "scope": "Signed PUT by the owner taking its item out of a third-party collection whose provider it manages.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=409"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=409": "deliberate:item-move-conflict"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/35-item-between-third-party.json",
           "scope": "Signed PUT by the owner moving its item between two third-party collections of a provider it manages.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=409"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=409": "deliberate:item-move-conflict"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/190-item-save-draft-owner.json",
@@ -1287,17 +1425,32 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/193-item-save-draft-stranger.json",
           "scope": "PUT /items/{id} signed by a wallet with no role on the draft collection.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/194-item-save-draft-committee.json",
           "scope": "PUT /items/{id} signed by a committee member on a draft item.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/195-item-save-orphan-other.json",
           "scope": "PUT /items/{id} signed by another wallet on an item with no collection.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/196-item-save-minted-owner.json",
@@ -1392,7 +1545,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/212-item-save-linked-stranger.json",
           "scope": "PUT /items/{id} signed by a wallet that does not manage the provider.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/213-item-create-linked-by-urn.json",
@@ -1537,7 +1695,9 @@
         "deliberate:request-budgets",
         "deliberate:wallet-draft-bounds",
         "deliberate:create-writes-switch",
-        "deliberate:item-save-keeps-its-collection"
+        "deliberate:item-save-keeps-its-collection",
+        "deliberate:item-move-conflict",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "The lock and a registry manager's accepted saves."
     },
@@ -1545,12 +1705,17 @@
       "id": "api_http:DELETE:/v1/items/:id",
       "owner": "items",
       "status": "reviewed",
-      "result": "Deletes of a draft, minted, unminted, third-party and orphan item by their owner, an on-chain manager and a stranger, of an unknown item, in a locked collection, and the refused delete of a curated third-party item by its provider's registry manager, were compared and match.",
+      "result": "Deletes of a draft, minted, unminted, third-party and orphan item by their owner, an on-chain manager and a stranger, of an unknown item, in a locked collection, and the refused delete of a curated third-party item by its provider's registry manager, were compared and match. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/219-item-delete-stranger.json",
           "scope": "DELETE /items/{id} signed by a wallet with no role on the draft collection.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/220-item-delete-minted.json",
@@ -1603,7 +1768,8 @@
         "deliberate:chain-copy-lag",
         "deliberate:access-checks-never-write",
         "deliberate:managers-from-chain-only",
-        "deliberate:create-writes-switch"
+        "deliberate:create-writes-switch",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "A registry manager's delete of a never-curated item."
     },
@@ -1611,7 +1777,7 @@
       "id": "api_http:POST:/v1/items/:id/files",
       "owner": "items",
       "status": "reviewed",
-      "result": "Uploads by the owner and an on-chain manager, including to a minted item and in a locked collection, refusals of a stranger, the committee, an unsigned request and an unknown item, and parts that don't match their hash or that the item doesn't name, were compared; the node refuses those parts.",
+      "result": "Uploads by the owner and an on-chain manager, including to a minted item and in a locked collection, refusals of a stranger, the committee, an unsigned request and an unknown item, and parts that don't match their hash or that the item doesn't name, were compared; the node refuses those parts. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/226-item-files-owner.json",
@@ -1626,12 +1792,22 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/228-item-files-stranger.json",
           "scope": "POST /items/{id}/files signed by a wallet with no role on the item.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/229-item-files-committee.json",
           "scope": "POST /items/{id}/files signed by a committee member.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/230-item-files-unknown.json",
@@ -1776,7 +1952,8 @@
         "deliberate:managers-from-chain-only",
         "deliberate:wallet-storage-bound",
         "deliberate:create-writes-switch",
-        "deliberate:item-upload-multipart-only"
+        "deliberate:item-upload-multipart-only",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "The lock and a registry manager's uploads; the bounds, which no capture holds, are held by the cited tests."
     },
@@ -1784,7 +1961,7 @@
       "id": "api_http:POST:/v1/items/:id/videos",
       "owner": "items",
       "status": "reviewed",
-      "result": "Uploads by the owner, refusals of a stranger, the committee, an unsigned request and an unknown item, and a web page sent as the video, a video sent under its hash and a video the item doesn't name were compared; the node refuses those three parts.",
+      "result": "Uploads by the owner, refusals of a stranger, the committee, an unsigned request and an unknown item, and a web page sent as the video, a video sent under its hash and a video the item doesn't name were compared; the node refuses those three parts. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/484-item-videos-owner.json",
@@ -1794,12 +1971,22 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/485-item-videos-stranger.json",
           "scope": "POST /items/{id}/videos signed by a wallet with no role on the item.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/486-item-videos-committee.json",
           "scope": "POST /items/{id}/videos signed by a committee member.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/487-item-videos-unsigned.json",
@@ -1920,7 +2107,8 @@
         "deliberate:access-checks-never-write",
         "deliberate:managers-from-chain-only",
         "deliberate:wallet-storage-bound",
-        "deliberate:create-writes-switch"
+        "deliberate:create-writes-switch",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "Uploads by an on-chain manager and a registry manager, and the bounds, which no capture holds (a body over 250 MB)."
     },
@@ -1970,7 +2158,7 @@
       "id": "api_http:GET:/v1/collections",
       "owner": "collections",
       "status": "reviewed",
-      "result": "The committee's listing with and without pagination, an empty page, every sort with a defined order, each review filter (status, repeated status, review type, assignee), the type, published, unpublished and item tag filters and their refusals; the public search unsigned, as the marketplace sends it and signed by the committee; and the refusals of a signer off the committee and of an anonymous request without a search were compared. Every one matches. Also compared: the curation page's own request (no search, published only, by relevance) and its second page, third-party only, new reviews, every other sort, an assignee, the rejected, under-review and auto-reviewing statuses, and the public search paginated, with an item tag and standard only. Every one matches, a registered provider's collection and a programmatic provider's collection on the committee's listing included. The curation page shows a third-party collection with curated items with its newest collection curation's status and activity, as upstream does. The relevance and request sorts over collections to review, under review, approved and rejected whose reviews were requested in another order than they were created match too.",
+      "result": "The committee's listing with and without pagination, an empty page, every sort with a defined order, each review filter (status, repeated status, review type, assignee), the type, published, unpublished and item tag filters and their refusals; the public search unsigned, as the marketplace sends it and signed by the committee; and the refusals of a signer off the committee and of an anonymous request without a search were compared. Every one matches. Also compared: the curation page's own request (no search, published only, by relevance) and its second page, third-party only, new reviews, every other sort, an assignee, the rejected, under-review and auto-reviewing statuses, and the public search paginated, with an item tag and standard only. Every one matches, a registered provider's collection and a programmatic provider's collection on the committee's listing included. The curation page shows a third-party collection with curated items with its newest collection curation's status and activity, as upstream does. The relevance and request sorts over collections to review, under review, approved and rejected whose reviews were requested in another order than they were created match too. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/01-collections-public-search.json",
@@ -2085,7 +2273,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/60-collections-stranger.json",
           "scope": "GET /collections signed by a wallet that is not on the committee, without a search.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/61-collections-unsigned.json",
@@ -2226,7 +2419,8 @@
         "deliberate:review-running-is-an-open-request",
         "deliberate:listing-page-past-the-last",
         "deliberate:published-filter-splits",
-        "deliberate:third-party-registry-read-window"
+        "deliberate:third-party-registry-read-window",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "None for the cases its captures cover."
     },
@@ -2234,7 +2428,7 @@
       "id": "api_http:GET:/v1/:address/collections",
       "owner": "collections",
       "status": "reviewed",
-      "result": "An address's own listing as its stored owner, as an on-chain manager, as an on-chain minter and as the chain creator of a collection another wallet stored; with pagination and its status counts; each status, the unpublished, third-party, contract address and name filters and a name sort; and the refusals of another wallet, an unknown status, a contract that is not an address and an unsigned request were compared. Also compared: published only alone, with a search, with no match and paginated with its counts; unpublished with a search; standard only; a second page; oldest first; an address with no collections; a committee member asking about another address. Every difference is one a deliberate gap names. Also compared: a registry manager's and a programmatic provider's manager's listings of their providers' third-party collections, and an address query parameter naming another wallet or the signer (upstream decides by the query, the node by the path: a deliberate gap). Also compared: an address's listing whose rows carry their newest collection curation's status and count its last change as activity. The status filter reads the newest curation as upstream does: a collection approved on chain with changes under review is under review, and a rejection wins over the chain's approval.",
+      "result": "An address's own listing as its stored owner, as an on-chain manager, as an on-chain minter and as the chain creator of a collection another wallet stored; with pagination and its status counts; each status, the unpublished, third-party, contract address and name filters and a name sort; and the refusals of another wallet, an unknown status, a contract that is not an address and an unsigned request were compared. Also compared: published only alone, with a search, with no match and paginated with its counts; unpublished with a search; standard only; a second page; oldest first; an address with no collections; a committee member asking about another address. Every difference is one a deliberate gap names. Also compared: a registry manager's and a programmatic provider's manager's listings of their providers' third-party collections, and an address query parameter naming another wallet or the signer (upstream decides by the query, the node by the path: a deliberate gap). Also compared: an address's listing whose rows carry their newest collection curation's status and count its last change as activity. The status filter reads the newest curation as upstream does: a collection approved on chain with changes under review is under review, and a rejection wins over the chain's approval. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/62-address-collections-creator.json",
@@ -2308,7 +2502,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/74-address-collections-other.json",
           "scope": "GET /{address}/collections signed by another wallet.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/75-address-collections-invalid-status.json",
@@ -2415,7 +2614,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/109-address-collections-committee-other.json",
           "scope": "GET /{address}/collections signed by a committee member for another address.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/142-address-collections-registered-manager.json",
@@ -2447,13 +2651,13 @@
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/150-address-collections-query-address-own.json",
           "scope": "GET /{address}/collections signed by another wallet, with an address query parameter naming the signer.",
           "replay": [
-            "status: fixture=200 candidate=401",
+            "status: fixture=200 candidate=403",
             "data value",
             "error extra",
             "ok value"
           ],
           "explained_by": {
-            "status: fixture=200 candidate=401": "deliberate:query-never-overrides",
+            "status: fixture=200 candidate=403": "deliberate:query-never-overrides",
             "data value": "deliberate:query-never-overrides",
             "error extra": "deliberate:query-never-overrides",
             "ok value": "deliberate:query-never-overrides"
@@ -2518,7 +2722,8 @@
         "deliberate:request-budgets",
         "deliberate:listing-page-past-the-last",
         "deliberate:published-filter-splits",
-        "deliberate:third-party-registry-read-window"
+        "deliberate:third-party-registry-read-window",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "None for the cases its captures cover."
     },
@@ -2526,7 +2731,7 @@
       "id": "api_http:GET:/v1/collections/:id",
       "owner": "collections",
       "status": "reviewed",
-      "result": "The full body for the owner of a draft, of a published unapproved and of a published approved collection, for a committee member of a draft and of a published collection, for an on-chain manager and an on-chain minter, and for the provider's manager of a third-party collection; the public detail for a signer without a role on a published unapproved and approved collection; the refusals of a stranger on a draft and on a third-party collection, an unsigned request, each signature defect, a missing id and a malformed id were compared. Every one matches but the signature cases. Also compared: the chain creator and the stored owner of a transferred collection, a committee member on a third-party draft, an ADMIN_ADDRESSES wallet on a collection on chain, a wallet named as manager only in a draft's body, and a second registry manager of a provider. Also compared: the manager of a programmatic provider reading its collection, and an id query parameter naming another collection (upstream answers that one; the node the path's: a deliberate gap). Also compared: a collection of an unapproved provider read by a wallet both the registry and the virtual third party list, and by a registry manager the virtual third party doesn't list. Also compared: a third-party collection with curated items, published with the dates of its first curated item's newest curation, for the provider's manager and as the public detail for a signer with no role; a collection on chain with a forum post, the forum fields in its owner's body and left out of the public detail.",
+      "result": "The full body for the owner of a draft, of a published unapproved and of a published approved collection, for a committee member of a draft and of a published collection, for an on-chain manager and an on-chain minter, and for the provider's manager of a third-party collection; the public detail for a signer without a role on a published unapproved and approved collection; the refusals of a stranger on a draft and on a third-party collection, an unsigned request, each signature defect, a missing id and a malformed id were compared. Every one matches but the signature cases. Also compared: the chain creator and the stored owner of a transferred collection, a committee member on a third-party draft, an ADMIN_ADDRESSES wallet on a collection on chain, a wallet named as manager only in a draft's body, and a second registry manager of a provider. Also compared: the manager of a programmatic provider reading its collection, and an id query parameter naming another collection (upstream answers that one; the node the path's: a deliberate gap). Also compared: a collection of an unapproved provider read by a wallet both the registry and the virtual third party list, and by a registry manager the virtual third party doesn't list. Also compared: a third-party collection with curated items, published with the dates of its first curated item's newest curation, for the provider's manager and as the public detail for a signer with no role; a collection on chain with a forum post, the forum fields in its owner's body and left out of the public detail. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/02-collection-owner.json",
@@ -2556,7 +2761,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/04-collection-stranger.json",
           "scope": "Signed GET by a wallet with no role on the draft.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/07-collection-malformed-chain.json",
@@ -2773,7 +2983,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/81-collection-third-party-stranger.json",
           "scope": "GET /collections/{id} signed by a wallet that manages no provider of the third-party collection.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/82-collection-missing.json",
@@ -2846,7 +3061,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/131-collection-body-manager.json",
           "scope": "GET /collections/{id} signed by a wallet the draft names as manager in its body only.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/141-collection-registered-manager.json",
@@ -2896,7 +3116,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/318-collection-unapproved-registry-only-manager.json",
           "scope": "GET /collections/{id} signed by a manager the registry lists unapproved that the provider's virtual third party doesn't list. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/319-collection-unapproved-both.json",
@@ -2949,7 +3174,8 @@
         "deliberate:signature-window",
         "deliberate:unauthenticated-message",
         "deliberate:query-never-overrides",
-        "deliberate:third-party-registry-read-window"
+        "deliberate:third-party-registry-read-window",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "A collection whose first curated item by id is not the one curated last."
     },
@@ -2957,7 +3183,7 @@
       "id": "api_http:POST:/v1/collections/:id/publish",
       "owner": "collections",
       "status": "reviewed",
-      "result": "The owner's publish of a collection on chain holding an item without an on-chain id (assigned in creation order), the same publish again, and the refusals of a stranger and of a draft the chain doesn't hold were compared and match, but the repeated publish's items, a deliberate gap. A third-party collection's publish was compared for its provider's manager naming items with the cheque it signed, and for each refusal upstream makes: a signer who doesn't manage the provider (the committee included), no item ids, no cheque, another wallet's cheque, a quantity other than the items', an item of another collection, no item, too few slots, and items under review; each matches, with the cheque, the item curations, the new collection curation, the Slack notice and the forum topic it writes. A cheque whose salt the provider already used is refused, a deliberate gap. The first publication's automated review request was compared through the manifest upstream queued and the one the node answers when the request is claimed, and they match.",
+      "result": "The owner's publish of a collection on chain holding an item without an on-chain id (assigned in creation order), the same publish again, and the refusals of a stranger and of a draft the chain doesn't hold were compared and match, but the repeated publish's items, a deliberate gap. A third-party collection's publish was compared for its provider's manager naming items with the cheque it signed, and for each refusal upstream makes: a signer who doesn't manage the provider (the committee included), no item ids, no cheque, another wallet's cheque, a quantity other than the items', an item of another collection, no item, too few slots, and items under review; each matches, with the cheque, the item curations, the new collection curation, the Slack notice and the forum topic it writes. A cheque whose salt the provider already used is refused, a deliberate gap. The first publication's automated review request was compared through the manifest upstream queued and the one the node answers when the request is claimed, and they match. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap. The refusal of a collection the chain does not hold yet answers 409 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/276-collection-publish-assigns-ids.json",
@@ -2989,12 +3215,22 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/278-collection-publish-stranger.json",
           "scope": "POST /collections/{id}/publish signed by a wallet with no role on the collection.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/279-collection-publish-draft-owner.json",
           "scope": "POST /collections/{id}/publish signed by the owner of a collection the chain doesn't hold.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=409"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=409": "deliberate:not-published-conflict"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/280-collection-publish-linked.json",
@@ -3004,12 +3240,22 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/452-collection-publish-third-party-stranger.json",
           "scope": "A third-party collection, signed by a wallet that manages no provider, with a cheque it signed.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/453-collection-publish-third-party-committee.json",
           "scope": "A third-party collection, signed by a committee member that doesn't manage its provider.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/454-collection-publish-third-party-no-cheque.json",
@@ -3106,7 +3352,9 @@
         "deliberate:item-list-bounds",
         "deliberate:request-budgets",
         "deliberate:create-writes-switch",
-        "deliberate:third-party-collection-dates-from-curation"
+        "deliberate:third-party-collection-dates-from-curation",
+        "deliberate:denied-signer-forbidden",
+        "deliberate:not-published-conflict"
       ],
       "remaining_verification": "A repeat publish of more items once the first are decided (a forum post update) is covered by the node's tests, not by a capture. Its item answer's bound and price are covered by the node's tests (publish_answers_its_items_within_the_bounds_of_the_items_listing, a_first_publication_whose_answer_is_refused_still_records_its_review_and_tells_the_curators), not by a capture."
     },
@@ -3114,7 +3362,7 @@
       "id": "api_http:POST:/v1/collections/:id/owner/sync",
       "owner": "collections",
       "status": "reviewed",
-      "result": "The sync by the owner of a collection on chain, by the chain creator of a transferred collection, on a third-party collection and by a stranger were compared and match. The node stores nothing, a deliberate gap.",
+      "result": "The sync by the owner of a collection on chain, by the chain creator of a transferred collection, on a third-party collection and by a stranger were compared and match. The node stores nothing, a deliberate gap. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/290-collection-owner-sync-owner.json",
@@ -3134,7 +3382,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/293-collection-owner-sync-stranger.json",
           "scope": "POST /collections/{id}/owner/sync signed by a wallet with no role on the draft.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/builder/src/tests/write_gate.rs",
@@ -3146,7 +3399,8 @@
         "deliberate:owner-sync-stores-nothing",
         "deliberate:owner-is-the-chain-creator",
         "deliberate:chain-copy-lag",
-        "deliberate:create-writes-switch"
+        "deliberate:create-writes-switch",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "A sync by a committee member, which the matrix tests hold."
     },
@@ -3154,7 +3408,7 @@
       "id": "api_http:POST:/v1/collections/:id/tos",
       "owner": "collections",
       "status": "reviewed",
-      "result": "Acceptances by the owner of a draft and by the provider manager of a third-party collection with its items' hashes, an email the schema refuses and a stranger were compared and match, but the schema refusal's detail. The node also keeps a signer's newest acceptance per collection and event, which no route answers.",
+      "result": "Acceptances by the owner of a draft and by the provider manager of a third-party collection with its items' hashes, an email the schema refuses and a stranger were compared and match, but the schema refusal's detail. The node also keeps a signer's newest acceptance per collection and event, which no route answers. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/286-collection-tos-owner.json",
@@ -3174,7 +3428,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/288-collection-tos-stranger.json",
           "scope": "POST /collections/{id}/tos signed by a wallet with no role on the draft.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/289-collection-tos-linked.json",
@@ -3213,7 +3472,8 @@
         "deliberate:owner-is-the-chain-creator",
         "deliberate:terms-acceptance-bounds",
         "deliberate:create-writes-switch",
-        "deliberate:terms-forwarded-later"
+        "deliberate:terms-forwarded-later",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "What the warehouse receives is not part of a capture; the node's forward is held to upstream's body by its own tests."
     },
@@ -3221,7 +3481,7 @@
       "id": "api_http:POST:/v1/collections/:id/lock",
       "owner": "collections",
       "status": "reviewed",
-      "result": "The owner's lock of a draft, and the refusals of a stranger, an unsigned request and an unknown id, were compared and match; its effect (423 on item saves, creations and deletes, never uploads) replays on captures 236 to 239 and on the collection's delete (296). An on-chain manager's and a provider manager's lock are refused by the node, a deliberate gap.",
+      "result": "The owner's lock of a draft, and the refusals of a stranger, an unsigned request and an unknown id, were compared and match; its effect (423 on item saves, creations and deletes, never uploads) replays on captures 236 to 239 and on the collection's delete (296). An on-chain manager's and a provider manager's lock are refused by the node, a deliberate gap. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/235-collection-lock-owner.json",
@@ -3231,7 +3491,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/281-collection-lock-stranger.json",
           "scope": "POST /collections/{id}/lock signed by a wallet with no role on the draft.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/282-collection-lock-unsigned.json",
@@ -3247,13 +3512,13 @@
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/283-collection-lock-published-manager.json",
           "scope": "POST /collections/{id}/lock signed by an on-chain manager of a collection on chain.",
           "replay": [
-            "status: fixture=200 candidate=401",
+            "status: fixture=200 candidate=403",
             "data value",
             "error extra",
             "ok value"
           ],
           "explained_by": {
-            "status: fixture=200 candidate=401": "deliberate:lock-owner-only",
+            "status: fixture=200 candidate=403": "deliberate:lock-owner-only",
             "data value": "deliberate:lock-owner-only",
             "error extra": "deliberate:lock-owner-only",
             "ok value": "deliberate:lock-owner-only"
@@ -3263,13 +3528,13 @@
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/284-collection-lock-linked-manager.json",
           "scope": "POST /collections/{id}/lock signed by the provider manager of a third-party collection.",
           "replay": [
-            "status: fixture=200 candidate=401",
+            "status: fixture=200 candidate=403",
             "data value",
             "error extra",
             "ok value"
           ],
           "explained_by": {
-            "status: fixture=200 candidate=401": "deliberate:lock-owner-only",
+            "status: fixture=200 candidate=403": "deliberate:lock-owner-only",
             "data value": "deliberate:lock-owner-only",
             "error extra": "deliberate:lock-owner-only",
             "ok value": "deliberate:lock-owner-only"
@@ -3292,7 +3557,8 @@
         "deliberate:access-checks-never-write",
         "deliberate:owner-is-the-chain-creator",
         "deliberate:chain-copy-lag",
-        "deliberate:create-writes-switch"
+        "deliberate:create-writes-switch",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "A lock by the chain creator of a transferred collection, which the node admits as its owner."
     },
@@ -3300,7 +3566,7 @@
       "id": "api_http:GET:/v1/collections/:id/approvalData",
       "owner": "collections",
       "status": "reviewed",
-      "result": "The committee's read of a third-party collection under review and of one whose cheque the registry consumed, and the refusals of a wallet off the committee, a standard collection, a third-party collection with nothing submitted, an unknown id and an unsigned request were compared and match.",
+      "result": "The committee's read of a third-party collection under review and of one whose cheque the registry consumed, and the refusals of a wallet off the committee, a standard collection, a third-party collection with nothing submitted, an unknown id and an unsigned request were compared and match. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap. The refusal of a collection the chain does not hold yet answers 409 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/464-collection-approval-data-committee.json",
@@ -3315,7 +3581,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/466-collection-approval-data-manager.json",
           "scope": "Signed by the provider's manager, not on the committee.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/467-collection-approval-data-standard.json",
@@ -3325,7 +3596,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/468-collection-approval-data-unsubmitted.json",
           "scope": "Signed by a committee member: a third-party collection none of whose items was submitted.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=409"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=409": "deliberate:not-published-conflict"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/469-collection-approval-data-unknown.json",
@@ -3352,7 +3628,9 @@
         "deliberate:unauthenticated-message",
         "deliberate:committee-unavailable",
         "deliberate:third-party-registry-unavailable",
-        "deliberate:approval-data-unsubmitted-content"
+        "deliberate:approval-data-unsubmitted-content",
+        "deliberate:denied-signer-forbidden",
+        "deliberate:not-published-conflict"
       ],
       "remaining_verification": "None for the cases captured; the content hashes of an item submitted twice are covered by the node's tests."
     },
@@ -3360,7 +3638,7 @@
       "id": "api_http:PUT:/v1/collections/:id",
       "owner": "collections",
       "status": "reviewed",
-      "result": "Creating a standard draft with initialize calldata naming its signer, renaming a draft, a name in use, body and path ids that differ, a body without data, a body claiming publication, a published collection, creating a third-party collection, a third-party URN in use, a changed URN suffix of an unpublished third-party collection, converting either kind, moving a collection to another provider, and the refusals of a stranger, a committee member, an on-chain manager, an unsigned request and an invalid body were compared. Also compared: unsigned with a valid body, a stranger saving another provider's collection, names in use only by a third-party collection or differing by case and spaces, approval claimed alone, a linked contract another collection of the provider links and a cleared linked contract (both refused as upstream refuses them), a manager kept in a draft's body, and a create under a provider the registry lists by a wallet that doesn't manage it and by one that does. Every difference is one a deliberate gap names. Also compared: a create under a programmatic registered provider, and a registry manager saving a collection another manager created. Third-party creates under an unapproved provider by a wallet the registry and the virtual third party both list, by the virtual third party's manager alone (the node refuses it: a deliberate gap) and by the registry's manager alone, the first collection of a provider nobody has, and a create by a wallet that provider's virtual third party doesn't list, were compared too.",
+      "result": "Creating a standard draft with initialize calldata naming its signer, renaming a draft, a name in use, body and path ids that differ, a body without data, a body claiming publication, a published collection, creating a third-party collection, a third-party URN in use, a changed URN suffix of an unpublished third-party collection, converting either kind, moving a collection to another provider, and the refusals of a stranger, a committee member, an on-chain manager, an unsigned request and an invalid body were compared. Also compared: unsigned with a valid body, a stranger saving another provider's collection, names in use only by a third-party collection or differing by case and spaces, approval claimed alone, a linked contract another collection of the provider links and a cleared linked contract (both refused as upstream refuses them), a manager kept in a draft's body, and a create under a provider the registry lists by a wallet that doesn't manage it and by one that does. Every difference is one a deliberate gap names. Also compared: a create under a programmatic registered provider, and a registry manager saving a collection another manager created. Third-party creates under an unapproved provider by a wallet the registry and the virtual third party both list, by the virtual third party's manager alone (the node refuses it: a deliberate gap) and by the registry's manager alone, the first collection of a provider nobody has, and a create by a wallet that provider's virtual third party doesn't list, were compared too. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/05-collection-create.json",
@@ -3491,17 +3769,32 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/25-collection-save-stranger.json",
           "scope": "Signed PUT by a wallet with no role on an existing draft.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/26-collection-save-committee.json",
           "scope": "Signed PUT by a committee member with no other role on an existing draft.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/27-collection-save-published-manager.json",
           "scope": "Signed PUT by an on-chain manager of a collection on chain.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/85-collection-save-create.json",
@@ -3660,7 +3953,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/97-collection-save-third-party-as-standard.json",
           "scope": "PUT /collections/{id} signed by the owner, saving a third-party collection without its URN.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/98-collection-save-standard-as-third-party.json",
@@ -3695,7 +3993,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/133-collection-save-third-party-stranger.json",
           "scope": "PUT /collections/{id} signed by a wallet that manages no provider, saving an existing third-party collection.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/134-collection-save-name-of-third-party.json",
@@ -3730,7 +4033,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/139-collection-save-registered-provider-stranger.json",
           "scope": "PUT /collections/{id} signed by a wallet that manages no provider, creating a collection under a provider the registry lists.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/140-collection-save-registered-provider-manager.json",
@@ -3756,7 +4064,7 @@
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/320-collection-save-claimed-before-registration.json",
           "scope": "PUT /collections/{id} signed by the manager of a virtual third party of a provider the registry lists unapproved for another wallet. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
           "replay": [
-            "status: fixture=200 candidate=401",
+            "status: fixture=200 candidate=403",
             "data.contract_address missing",
             "data.created_at missing",
             "data.eth_address value",
@@ -3780,7 +4088,7 @@
             "ok value"
           ],
           "explained_by": {
-            "status: fixture=200 candidate=401": "deliberate:third-party-claims",
+            "status: fixture=200 candidate=403": "deliberate:third-party-claims",
             "data.contract_address missing": "deliberate:third-party-claims",
             "data.created_at missing": "deliberate:third-party-claims",
             "data.eth_address value": "deliberate:third-party-claims",
@@ -3807,7 +4115,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/321-collection-save-unapproved-registry-only.json",
           "scope": "PUT /collections/{id} signed by the manager the registry lists unapproved for a provider whose virtual third party lists another wallet. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/322-collection-save-new-provider.json",
@@ -3817,7 +4130,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/324-collection-save-under-another-virtual.json",
           "scope": "PUT /collections/{id} signed by a wallet a provider's virtual third party doesn't list, under that provider. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/518-cors-preflight-listed.json",
@@ -3908,7 +4226,8 @@
         "deliberate:request-budgets",
         "deliberate:collection-urn-change-keeps-deployed-urns",
         "deliberate:create-writes-switch",
-        "deliberate:third-party-collection-dates-from-curation"
+        "deliberate:third-party-collection-dates-from-curation",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "The lock's 423 waits for the lifecycle change."
     },
@@ -3916,12 +4235,17 @@
       "id": "api_http:DELETE:/v1/collections/:id",
       "owner": "collections",
       "status": "reviewed",
-      "result": "Deletes of a draft by its owner with the body the old builder web sends, of a third-party collection never submitted by its provider manager, of a collection on chain and of a locked one by their owner, by a stranger and of an unknown id were compared and match, and so does a read of the deleted draft. So does the delete of a provider's only collection by its virtual third party's manager, which removes the virtual third party.",
+      "result": "Deletes of a draft by its owner with the body the old builder web sends, of a third-party collection never submitted by its provider manager, of a collection on chain and of a locked one by their owner, by a stranger and of an unknown id were compared and match, and so does a read of the deleted draft. So does the delete of a provider's only collection by its virtual third party's manager, which removes the virtual third party. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/294-collection-delete-stranger.json",
           "scope": "DELETE /collections/{id} signed by a wallet with no role on the draft.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/295-collection-delete-published.json",
@@ -3963,7 +4287,8 @@
         "deliberate:access-checks-never-write",
         "deliberate:owner-is-the-chain-creator",
         "deliberate:chain-copy-lag",
-        "deliberate:create-writes-switch"
+        "deliberate:create-writes-switch",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "A delete of a submitted third-party collection, which the node's own tests hold."
     },
@@ -4107,7 +4432,7 @@
       "id": "api_http:GET:/v1/collections/:id/itemCurations",
       "owner": "curation",
       "status": "reviewed",
-      "result": "The newest curation of each item of a third-party collection for its provider's manager, the committee and a stranger, narrowed by bracketed and repeated itemIds, refused for a single itemIds, and the empty list of a standard collection on chain, were compared and match.",
+      "result": "The newest curation of each item of a third-party collection for its provider's manager, the committee and a stranger, narrowed by bracketed and repeated itemIds, refused for a single itemIds, and the empty list of a standard collection on chain, were compared and match. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/369-item-curations-manager.json",
@@ -4137,7 +4462,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/374-item-curations-stranger.json",
           "scope": "GET /collections/{id}/itemCurations signed by a wallet with no role.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/375-item-curations-standard-owner.json",
@@ -4156,7 +4486,8 @@
         "deliberate:curation-list-bounds",
         "deliberate:owner-is-the-chain-creator",
         "deliberate:request-budgets",
-        "deliberate:third-party-registry-read-window"
+        "deliberate:third-party-registry-read-window",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "None for the cases its captures cover."
     },
@@ -4164,7 +4495,7 @@
       "id": "api_http:GET:/v1/collections/:id/curation",
       "owner": "curation",
       "status": "reviewed",
-      "result": "The newest curation of a published standard collection for the committee, its on-chain creator, an on-chain manager, a stranger and an admin wallet; of a published collection with none (answered without data); of a third-party collection for its provider's manager and a stranger; and the refusals of a draft, a third-party collection without item curations, an unknown and a malformed id, were compared; all match but the malformed id, a deliberate gap.",
+      "result": "The newest curation of a published standard collection for the committee, its on-chain creator, an on-chain manager, a stranger and an admin wallet; of a published collection with none (answered without data); of a third-party collection for its provider's manager and a stranger; and the refusals of a draft, a third-party collection without item curations, an unknown and a malformed id, were compared; all match but the malformed id, a deliberate gap. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/357-collection-curation-committee.json",
@@ -4179,7 +4510,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/359-collection-curation-stranger.json",
           "scope": "GET /collections/{id}/curation signed by a wallet with no role on a collection on chain.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/360-collection-curation-draft.json",
@@ -4223,7 +4559,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/366-collection-curation-third-party-stranger.json",
           "scope": "GET /collections/{id}/curation signed by a wallet with no role on a third-party collection with curated items.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/367-collection-curation-third-party-uncurated.json",
@@ -4233,7 +4574,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/368-collection-curation-admin.json",
           "scope": "GET /collections/{id}/curation signed by an ADMIN_ADDRESSES wallet with no other role, a collection on chain under review.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/430-collection-curation-after.json",
@@ -4257,7 +4603,8 @@
         "deliberate:curation-invalid-id",
         "deliberate:owner-is-the-chain-creator",
         "deliberate:fixed-capture-clock",
-        "deliberate:third-party-registry-read-window"
+        "deliberate:third-party-registry-read-window",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "None for the cases its captures cover."
     },
@@ -4265,7 +4612,7 @@
       "id": "api_http:PATCH:/v1/collections/:id/curation",
       "owner": "curation",
       "status": "reviewed",
-      "result": "The committee's assign (unchanged, unassign, assign), approve, repeated approval, rejection with reasons and message, its edit, reopening to pending and approval of another collection; the refusals of a missing curation, a stranger, a creator's status and assignee, an assignee off the committee, a schema refusal, an unknown key, a collection without a curation and a draft, were compared with their Slack notices and match but the deliberate gaps.",
+      "result": "The committee's assign (unchanged, unassign, assign), approve, repeated approval, rejection with reasons and message, its edit, reopening to pending and approval of another collection; the refusals of a missing curation, a stranger, a creator's status and assignee, an assignee off the committee, a schema refusal, an unknown key, a collection without a curation and a draft, were compared with their Slack notices and match but the deliberate gaps. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/397-collection-curation-update-no-curation.json",
@@ -4280,22 +4627,42 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/398-collection-curation-update-stranger.json",
           "scope": "PATCH /collections/{id}/curation signed by a wallet with no role, approving.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/399-collection-curation-update-owner-status.json",
           "scope": "PATCH /collections/{id}/curation signed by the owner, approving its own collection.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/400-collection-curation-update-owner-assignee.json",
           "scope": "PATCH /collections/{id}/curation signed by the owner, assigning a committee member.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/401-collection-curation-update-assignee-not-committee.json",
           "scope": "PATCH /collections/{id}/curation signed by a committee member, assigning a wallet off the committee.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/402-collection-curation-update-unknown-status.json",
@@ -4436,7 +4803,8 @@
         "deliberate:fixed-capture-clock",
         "deliberate:invalid-body-detail",
         "deliberate:owner-is-the-chain-creator",
-        "deliberate:create-writes-switch"
+        "deliberate:create-writes-switch",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "None for the cases its captures cover."
     },
@@ -4444,7 +4812,7 @@
       "id": "api_http:POST:/v1/collections/:id/curation",
       "owner": "curation",
       "status": "reviewed",
-      "result": "A creator's first request on an unapproved collection, a request on a collection approved on chain and on a third-party collection after its approval, a request again after a rejection, the committee's request with an assignee and without one, and the refusals of a pending review, a stranger, a draft, an unknown id and a note over 2,000 characters, were compared, with the Slack notices each sends, and match but the schema refusal's detail. Neither upstream nor the node requests an automated review for these requests: the first request is no changes submission, and the collection approved on chain holds no item to review.",
+      "result": "A creator's first request on an unapproved collection, a request on a collection approved on chain and on a third-party collection after its approval, a request again after a rejection, the committee's request with an assignee and without one, and the refusals of a pending review, a stranger, a draft, an unknown id and a note over 2,000 characters, were compared, with the Slack notices each sends, and match but the schema refusal's detail. Neither upstream nor the node requests an automated review for these requests: the first request is no changes submission, and the collection approved on chain holds no item to review. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/386-collection-curation-request-pending.json",
@@ -4454,7 +4822,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/387-collection-curation-request-stranger.json",
           "scope": "POST /collections/{id}/curation signed by a wallet with no role.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/388-collection-curation-request-draft.json",
@@ -4522,7 +4895,8 @@
         "deliberate:validator-pull",
         "deliberate:validator-switch",
         "deliberate:validation-request-bounds",
-        "deliberate:create-writes-switch"
+        "deliberate:create-writes-switch",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "None for the cases its captures cover."
     },
@@ -4530,7 +4904,7 @@
       "id": "api_http:POST:/v1/collections/:id/curation/post",
       "owner": "forum",
       "status": "reviewed",
-      "result": "Committee replies use the collection's stored first-post id to read its forum topic and ignore a client topic_id. Assignment, unassignment, anonymous, non-committee, missing-collection, missing-topic and raw-length cases were compared, including the forum calls. Group mentions carry the stated deliberate difference.",
+      "result": "Committee replies use the collection's stored first-post id to read its forum topic and ignore a client topic_id. Assignment, unassignment, anonymous, non-committee, missing-collection, missing-topic and raw-length cases were compared, including the forum calls. Group mentions carry the stated deliberate difference. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/441-curation-post-unsigned.json",
@@ -4545,7 +4919,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/442-curation-post-owner.json",
           "scope": "POST /collections/{id}/curation/post signed by the owner, who is not on the committee.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/443-curation-post-unknown.json",
@@ -4597,7 +4976,8 @@
         "deliberate:forum-reply-mentions",
         "deliberate:forum-reply-fields",
         "deliberate:unauthenticated-message",
-        "deliberate:create-writes-switch"
+        "deliberate:create-writes-switch",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "Production forum capability and API credentials remain unverified. Concurrent claims, accepted-but-lost responses, bounded replies, and upstream failures are covered by node tests rather than captures."
     },
@@ -4605,7 +4985,7 @@
       "id": "api_http:GET:/v1/items/:id/curation",
       "owner": "curation",
       "status": "reviewed",
-      "result": "An item's newest curation (pending, approved, none) for the provider's manager, the committee and a stranger; a minted standard item for its owner, its on-chain manager and its minter; an orphan item and an item of a draft collection, were compared and match.",
+      "result": "An item's newest curation (pending, approved, none) for the provider's manager, the committee and a stranger; a minted standard item for its owner, its on-chain manager and its minter; an orphan item and an item of a draft collection, were compared and match. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/376-item-curation-pending-manager.json",
@@ -4625,7 +5005,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/379-item-curation-stranger.json",
           "scope": "GET /items/{id}/curation signed by a wallet with no role.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/380-item-curation-committee.json",
@@ -4655,7 +5040,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/385-item-curation-minted-minter.json",
           "scope": "GET /items/{id}/curation signed by an on-chain minter of a minted item's collection.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         }
       ],
       "gaps": [
@@ -4663,7 +5053,8 @@
         "deliberate:committee-unavailable",
         "deliberate:owner-is-the-chain-creator",
         "deliberate:item-decided-by-its-collection",
-        "deliberate:third-party-registry-read-window"
+        "deliberate:third-party-registry-read-window",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "None for the cases its captures cover."
     },
@@ -4671,7 +5062,7 @@
       "id": "api_http:PATCH:/v1/items/:id/curation",
       "owner": "curation",
       "status": "reviewed",
-      "result": "The provider's manager refreshing a pending item curation's content hash, the committee's approval, and the refusals of a creator's approval, a stranger, an item never curated and an assignee, were compared and match; a creator setting a decided item curation back to pending is refused, a deliberate gap. A committee approval names the content hash it approves and is refused without it or for content saved since, a deliberate gap.",
+      "result": "The provider's manager refreshing a pending item curation's content hash, the committee's approval, and the refusals of a creator's approval, a stranger, an item never curated and an assignee, were compared and match; a creator setting a decided item curation back to pending is refused, a deliberate gap. A committee approval names the content hash it approves and is refused without it or for content saved since, a deliberate gap. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/418-item-curation-refresh-pending.json",
@@ -4681,12 +5072,22 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/419-item-curation-approve-manager.json",
           "scope": "PATCH /items/{id}/curation signed by the provider's manager, approving.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/420-item-curation-update-stranger.json",
           "scope": "PATCH /items/{id}/curation signed by a wallet with no role.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/421-item-curation-update-assignee.json",
@@ -4737,7 +5138,7 @@
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/428-item-curation-reopen-manager.json",
           "scope": "PATCH /items/{id}/curation signed by the provider's manager, pending on an item whose newest curation is approved.",
           "replay": [
-            "status: fixture=200 candidate=401",
+            "status: fixture=200 candidate=403",
             "data.content_hash missing",
             "data.created_at missing",
             "data.id value",
@@ -4749,7 +5150,7 @@
             "ok value"
           ],
           "explained_by": {
-            "status: fixture=200 candidate=401": "deliberate:item-curation-reopened-by-the-committee",
+            "status: fixture=200 candidate=403": "deliberate:item-curation-reopened-by-the-committee",
             "data.content_hash missing": "deliberate:item-curation-reopened-by-the-committee",
             "data.created_at missing": "deliberate:item-curation-reopened-by-the-committee",
             "data.id value": "deliberate:item-curation-reopened-by-the-committee",
@@ -4775,7 +5176,8 @@
         "deliberate:owner-is-the-chain-creator",
         "deliberate:item-approval-names-content",
         "deliberate:create-writes-switch",
-        "deliberate:item-decided-by-its-collection"
+        "deliberate:item-decided-by-its-collection",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "None for the cases its captures cover."
     },
@@ -4783,7 +5185,7 @@
       "id": "api_http:POST:/v1/items/:id/curation",
       "owner": "curation",
       "status": "reviewed",
-      "result": "A new submission of an item whose newest curation is decided, and the refusals of a pending one, a never-curated item and a stranger, were compared and match. Its capture follows an approval the node refuses (deliberate:item-approval-names-content), so the item is still pending.",
+      "result": "A new submission of an item whose newest curation is decided, and the refusals of a pending one, a never-curated item and a stranger, were compared and match. Its capture follows an approval the node refuses (deliberate:item-approval-names-content), so the item is still pending. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/424-item-curation-request-decided.json",
@@ -4824,7 +5226,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/427-item-curation-request-stranger.json",
           "scope": "POST /items/{id}/curation signed by a wallet with no role.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/builder/src/tests/write_gate.rs",
@@ -4838,7 +5245,8 @@
         "deliberate:owner-is-the-chain-creator",
         "deliberate:item-approval-names-content",
         "deliberate:create-writes-switch",
-        "deliberate:item-decided-by-its-collection"
+        "deliberate:item-decided-by-its-collection",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "None for the cases its captures cover."
     },
@@ -5036,7 +5444,7 @@
       "id": "api_http:POST:/v1/collections/:id/comments",
       "owner": "curation",
       "status": "reviewed",
-      "result": "With the review flow off the owner's comment answers 404 Not found. With it on, the owner's comment (trimmed, markup kept as text) answers its event and posts upstream's curators' notice escaped on one line; a committee member's comment about an item answers its curator event with no notice; a stranger's answers 401 and a blank one 400.",
+      "result": "With the review flow off the owner's comment answers 404 Not found. With it on, the owner's comment (trimmed, markup kept as text) answers its event and posts upstream's curators' notice escaped on one line; a committee member's comment about an item answers its curator event with no notice; a stranger's answers 403 and a blank one 400. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/495-review-comments-flag-off.json",
@@ -5056,7 +5464,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/502-review-comment-stranger.json",
           "scope": "POST /collections/{id}/comments by a wallet with no role.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/503-review-comment-blank.json",
@@ -5073,7 +5486,8 @@
         "deliberate:review-flow-switch",
         "deliberate:review-text-bounds",
         "deliberate:review-access-before-body",
-        "deliberate:create-writes-switch"
+        "deliberate:create-writes-switch",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "A closed review, an unpublished collection, a foreign item and the daily bounds are covered by the node's tests, not by a capture."
     },
@@ -5264,7 +5678,7 @@
       "id": "api_http:GET:/v1/thirdParties/:id/slots",
       "owner": "third-parties",
       "status": "reviewed",
-      "result": "The slots of an approved provider for its second registry manager and a stranger, of a virtual third party for its manager, of unapproved providers for the manager of their virtual third party, for a registry manager the virtual third party doesn't list, and for a wallet both list, and after the virtual third party was removed, were compared; every one matches but the manager of the virtual third party of a provider the registry lists unapproved for another wallet, whom the node refuses. Also compared: a registry provider's slots less its items with an item curation.",
+      "result": "The slots of an approved provider for its second registry manager and a stranger, of a virtual third party for its manager, of unapproved providers for the manager of their virtual third party, for a registry manager the virtual third party doesn't list, and for a wallet both list, and after the virtual third party was removed, were compared; every one matches but the manager of the virtual third party of a provider the registry lists unapproved for another wallet, whom the node refuses. Also compared: a registry provider's slots less its items with an item curation. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/311-third-party-slots-registry-manager.json",
@@ -5274,7 +5688,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/312-third-party-slots-stranger.json",
           "scope": "GET /thirdParties/{id}/slots signed by a wallet with no role. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/313-third-party-slots-virtual-manager.json",
@@ -5285,13 +5704,13 @@
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/314-third-party-slots-claimed-before-registration.json",
           "scope": "GET /thirdParties/{id}/slots signed by the manager of a virtual third party of a provider the registry lists unapproved for another wallet. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
           "replay": [
-            "status: fixture=200 candidate=401",
+            "status: fixture=200 candidate=403",
             "data value",
             "error extra",
             "ok value"
           ],
           "explained_by": {
-            "status: fixture=200 candidate=401": "deliberate:third-party-claims",
+            "status: fixture=200 candidate=403": "deliberate:third-party-claims",
             "data value": "deliberate:third-party-claims",
             "error extra": "deliberate:third-party-claims",
             "ok value": "deliberate:third-party-claims"
@@ -5300,7 +5719,12 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/315-third-party-slots-unapproved-registry-manager.json",
           "scope": "GET /thirdParties/{id}/slots signed by the manager the registry lists unapproved for a provider whose virtual third party lists another wallet. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/316-third-party-slots-unapproved-both.json",
@@ -5320,7 +5744,8 @@
       ],
       "gaps": [
         "deliberate:third-party-claims",
-        "deliberate:third-party-registry-read-window"
+        "deliberate:third-party-registry-read-window",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "Slots after a third-party publication the node records."
     },
@@ -5380,12 +5805,17 @@
       "id": "api_http:DELETE:/v1/thirdParties/:id",
       "owner": "third-parties",
       "status": "reviewed",
-      "result": "Removals by another wallet, by the manager before and after the registry lists the provider, and of a provider no virtual third party has were compared and match.",
+      "result": "Removals by another wallet, by the manager before and after the registry lists the provider, and of a provider no virtual third party has were compared and match. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/330-third-party-delete-other.json",
           "scope": "DELETE /thirdParties/{id} signed by a wallet the virtual third party doesn't list. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/331-third-party-delete-unregistered.json",
@@ -5405,7 +5835,7 @@
         {
           "path": "services/catalyst/builder/src/tests/third_party_matrix.rs",
           "test": "only_a_manager_both_lists_name_changes_or_removes_a_virtual_third_party",
-          "scope": "A wallet the virtual third party lists but the registry's unapproved record leaves out neither changes nor removes it (401); a wallet both list does."
+          "scope": "A wallet the virtual third party lists but the registry's unapproved record leaves out neither changes nor removes it (403); a wallet both list does."
         },
         {
           "path": "services/catalyst/builder/src/tests/write_gate.rs",
@@ -5415,7 +5845,8 @@
       ],
       "gaps": [
         "deliberate:virtual-third-party-changes",
-        "deliberate:create-writes-switch"
+        "deliberate:create-writes-switch",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "A removal while the registry can't tell: the node answers 503 where upstream answers 200 with ok:false."
     },
@@ -5423,12 +5854,17 @@
       "id": "api_http:PATCH:/v1/thirdParties/:id",
       "owner": "third-parties",
       "status": "reviewed",
-      "result": "Updates by the virtual third party's manager and by another wallet, with a kind that is not a boolean, and of a provider no virtual third party has were compared; every one matches but the schema refusal's data.",
+      "result": "Updates by the virtual third party's manager and by another wallet, with a kind that is not a boolean, and of a provider no virtual third party has were compared; every one matches but the schema refusal's data. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/325-third-party-update-other.json",
           "scope": "PATCH /thirdParties/{id} signed by a wallet the virtual third party doesn't list. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/326-third-party-update-manager.json",
@@ -5453,7 +5889,7 @@
         {
           "path": "services/catalyst/builder/src/tests/third_party_matrix.rs",
           "test": "only_a_manager_both_lists_name_changes_or_removes_a_virtual_third_party",
-          "scope": "A wallet the virtual third party lists but the registry's unapproved record leaves out neither changes nor removes it (401); a wallet both list does."
+          "scope": "A wallet the virtual third party lists but the registry's unapproved record leaves out neither changes nor removes it (403); a wallet both list does."
         },
         {
           "path": "services/catalyst/builder/src/tests/write_gate.rs",
@@ -5469,7 +5905,8 @@
       "gaps": [
         "deliberate:invalid-body-detail",
         "deliberate:virtual-third-party-changes",
-        "deliberate:create-writes-switch"
+        "deliberate:create-writes-switch",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "An update of a virtual third party whose provider the registry already lists."
     },
@@ -5516,7 +5953,7 @@
       "id": "api_http:POST:/v1/collections/:id/post",
       "owner": "forum",
       "status": "reviewed",
-      "result": "The collection's owner, on-chain manager, chain creator and third-party provider manager create its forum topic, a third-party collection also before any of its items was submitted; a second post returns its existing link. Anonymous, unrelated, committee-only, missing-collection and unpublished-standard requests were compared, including the generated title, body, category and API account.",
+      "result": "The collection's owner, on-chain manager, chain creator and third-party provider manager create its forum topic, a third-party collection also before any of its items was submitted; a second post returns its existing link. Anonymous, unrelated, committee-only, missing-collection and unpublished-standard requests were compared, including the generated title, body, category and API account. A signed wallet refused for lack of a role gets 403 where upstream answers 401, a deliberate gap.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/431-collection-post-unsigned.json",
@@ -5531,12 +5968,22 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/432-collection-post-stranger.json",
           "scope": "POST /collections/{id}/post signed by a wallet with no role on a collection on chain.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/433-collection-post-committee.json",
           "scope": "POST /collections/{id}/post signed by a committee member, who has no role on the collection.",
-          "replay": []
+          "replay": [
+            "status: fixture=401 candidate=403"
+          ],
+          "explained_by": {
+            "status: fixture=401 candidate=403": "deliberate:denied-signer-forbidden"
+          }
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/builder/source/434-collection-post-unknown.json",
@@ -5591,7 +6038,8 @@
       ],
       "gaps": [
         "deliberate:unauthenticated-message",
-        "deliberate:create-writes-switch"
+        "deliberate:create-writes-switch",
+        "deliberate:denied-signer-forbidden"
       ],
       "remaining_verification": "Production forum capability and API credentials remain unverified. Concurrent claims, a topic the forum made whose link was not stored (made again after the claim lapses: a standard collection's under a title naming its contract, a third-party collection's refused by its taken title), bounded replies, and upstream failures are covered by node tests rather than captures."
     },

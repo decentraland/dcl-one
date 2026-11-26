@@ -579,7 +579,7 @@ impl Op {
             } else if granted {
                 200
             } else {
-                401
+                403
             })
         };
         match self {
@@ -610,7 +610,7 @@ impl Op {
             ForumPost => Expect::Status(match (signed, manages) {
                 (false, _) => 401,
                 (true, true) => 503,
-                (true, false) => 401,
+                (true, false) => 403,
             }),
             ThirdParty => {
                 if !signed {
@@ -631,7 +631,8 @@ impl Op {
             Publish => Expect::Status(match (signed, manages, p.registered()) {
                 (true, true, true) => 200,
                 (true, true, false) => 409,
-                _ => 401,
+                (false, _, _) => 401,
+                _ => 403,
             }),
         }
     }
@@ -768,10 +769,10 @@ async fn a_manager_the_registry_stops_listing_is_refused_its_next_write_and_its_
         .await
         .unwrap()
         .status();
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(snapshot(&w.pool).await, before);
     w.state.third_parties.outdate();
-    assert_eq!(as_former(path).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(as_former(path).await, StatusCode::FORBIDDEN);
 }
 
 /// A manager the registry stops listing loses the third-party item it last
@@ -839,7 +840,7 @@ async fn a_manager_the_registry_stops_listing_loses_the_item_it_saved() {
     w.state.third_parties.outdate();
     assert_eq!(
         sees(Creator).await,
-        (401, 404, false, false),
+        (403, 404, false, false),
         "once dropped"
     );
     assert_eq!(
@@ -865,7 +866,7 @@ async fn a_manager_the_registry_stops_listing_loses_the_item_it_saved() {
         ),
     ] {
         let (status, answer) = call(&w.app, Creator, method, &curation, body).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method}: {answer}");
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method}: {answer}");
     }
     assert_eq!(snapshot(&w.pool).await, before);
 }
@@ -1001,7 +1002,7 @@ async fn the_first_collection_of_a_new_provider_makes_its_signer_the_providers_o
     assert_eq!(managers, vec![Holder.address()]);
     let (method, path, body) = CreateCollection.request(&f, Stranger);
     let (status, answer) = call(&w.app, Stranger, method, &path, body).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "{answer}");
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
     let (status, answer) = call(
         &w.app,
         Holder,
@@ -1028,10 +1029,10 @@ async fn an_unreadable_registry_record_grants_its_provider_to_nobody() {
     for caller in [Holder, Stranger] {
         let (method, path, body) = CreateCollection.request(&f, caller);
         let (status, answer) = call(&w.app, caller, method, &path, body).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{caller:?}: {answer}");
+        assert_eq!(status, StatusCode::FORBIDDEN, "{caller:?}: {answer}");
         let (method, path, _) = ReadCollection.request(&f, caller);
         let (status, answer) = call(&w.app, caller, method, &path, None).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{caller:?}: {answer}");
+        assert_eq!(status, StatusCode::FORBIDDEN, "{caller:?}: {answer}");
     }
     let claimed: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM builder.virtual_third_parties WHERE id = $1)",
@@ -1285,8 +1286,8 @@ async fn only_a_manager_both_lists_name_changes_or_removes_a_virtual_third_party
     assert_eq!(
         (patched, deleted, kept, removed),
         (
-            StatusCode::UNAUTHORIZED,
-            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
+            StatusCode::FORBIDDEN,
             true,
             StatusCode::OK
         )

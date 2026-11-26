@@ -630,7 +630,11 @@ async fn nobody_without_a_right_to_the_item_makes_the_node_read_a_byte() {
             .oneshot(request.body(body).unwrap())
             .await
             .unwrap();
-        assert_eq!(response.status().as_u16(), 401, "{who}");
+        assert_eq!(
+            response.status().as_u16(),
+            if key.is_some() { 403 } else { 401 },
+            "{who}"
+        );
         assert_eq!(polled.load(Ordering::SeqCst), 0, "{who}: the body was read");
     }
     let (body, polled) = untouchable();
@@ -1594,7 +1598,7 @@ async fn a_manager_removed_while_the_video_streams_stores_nothing() {
     managers(vec![]).await.unwrap();
     tx.send(Bytes::copy_from_slice(&whole[10..])).unwrap();
     drop(tx);
-    assert_eq!(uploading.await.unwrap().0, 401);
+    assert_eq!(uploading.await.unwrap().0, 403);
     assert!(records(&node.pool, &hash(&video)).await.is_empty());
     assert!(!stored(&node, &hash(&video)).await);
     super::support::off_chain(&node.pool, &contract).await;

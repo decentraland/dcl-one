@@ -73,8 +73,9 @@ pub async fn approval_data(state: &State, read: &ApprovalRead) -> Result<Approva
         )
     });
     let (Some((cheque, cheque_provider)), false) = (cheque, hashes.is_empty()) else {
-        return Err(ApiError::unauthorized("The collection is not published.")
-            .with_data(json!({ "id": id })));
+        return Err(
+            ApiError::conflict("The collection is not published.").with_data(json!({ "id": id }))
+        );
     };
     let changed: Vec<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT i.id FROM builder.items i WHERE i.collection_id = $1 \

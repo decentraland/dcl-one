@@ -677,7 +677,7 @@ async fn a_creator_appeals_a_rejection_and_the_curators_see_it() {
         assert_eq!(
             (got, body["error"].clone()),
             (
-                401,
+                403,
                 json!(format!(
                     "Unauthorized user {} for collections {id}",
                     address(key)
@@ -829,7 +829,7 @@ async fn comments_are_written_by_role_holders_and_the_committee_and_stored_as_te
         json!({ "message": "hi" }),
     )
     .await;
-    assert_eq!(status, 401);
+    assert_eq!(status, 403);
     for body in [
         json!({ "message": "   " }),
         json!({ "message": "x".repeat(2001) }),
@@ -1070,7 +1070,7 @@ async fn a_creator_retries_the_automated_review_once_something_changed() {
         )
     );
     for key in [STRANGER_KEY, CURATOR_KEY] {
-        assert_eq!(post(&node, key, id, "validations", json!({})).await.0, 401);
+        assert_eq!(post(&node, key, id, "validations", json!({})).await.0, 403);
     }
     resave(&node, id, items[1], 1, &unique("retried model")).await;
     advance(Duration::milliseconds(1));

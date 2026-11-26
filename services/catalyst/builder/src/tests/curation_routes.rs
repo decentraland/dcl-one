@@ -283,7 +283,7 @@ async fn audits(pool: &PgPool, target: Uuid) -> i64 {
 
 fn refusal_status(refusal: Refusal) -> u16 {
     match refusal {
-        Refusal::StatusIsCommittees | Refusal::AssigneeIsCommittees => 401,
+        Refusal::StatusIsCommittees | Refusal::AssigneeIsCommittees => 403,
         Refusal::NoCuration => 404,
         Refusal::Ongoing | Refusal::NeverCurated | Refusal::ItemAssignee => 400,
         Refusal::VerdictOnly | Refusal::Decided | Refusal::ItemStatusOnly => {
@@ -763,7 +763,7 @@ async fn a_former_committee_member_and_an_admin_address_get_no_curation() {
             let (status, answer) = call(&n.app, Some(key), method, &path, body).await;
             assert_eq!(
                 (status, answer["error"].as_str()),
-                (401, Some("Unauthorized")),
+                (403, Some("Unauthorized")),
                 "{method} {path}"
             );
         }
@@ -919,7 +919,7 @@ async fn slack_hears_of_a_decision_only_after_it_is_committed() {
         call(&n.app, Some(OWNER_KEY), "PATCH", &path, approve.clone())
             .await
             .0,
-        401
+        403
     );
     assert_eq!(
         call(&n.app, Some(COMMITTEE_KEY), "PATCH", &path, approve.clone())
@@ -1139,7 +1139,7 @@ async fn hostile_curation_input_is_refused_or_matches_nothing() {
     .await;
     assert_eq!(
         (status, answer["error"].as_str()),
-        (401, Some("The assignee must be a committee member"))
+        (403, Some("The assignee must be a committee member"))
     );
     let (status, answer) = call(
         &n.app,
@@ -1265,7 +1265,7 @@ async fn a_role_lost_after_the_decision_writes_nothing() {
     let refused = crate::curation::writes::open_collection(&n.state, curator, Default::default())
         .await
         .unwrap_err();
-    assert_eq!(refused.status(), 401);
+    assert_eq!(refused.status(), 403);
     assert_eq!(
         statuses(&n.pool, Curation::Collection, id).await,
         ["approved"]
@@ -1468,7 +1468,7 @@ async fn a_committee_member_dropped_after_the_decision_writes_nothing() {
             owner_rejected.err().map(|e| e.status()),
             commented.err().map(|e| e.status())
         ),
-        (Some(401), Some(401), Some(401), Some(401))
+        (Some(403), Some(403), Some(403), Some(403))
     );
     assert_eq!(assignee, None);
     assert_eq!(
@@ -1517,7 +1517,7 @@ async fn a_member_the_subgraph_stops_listing_is_refused_its_next_write_and_its_r
     .await;
     assert_eq!(
         (kept, write, body["error"].as_str(), late_reply),
-        (200, 401, Some("Unauthorized"), 401)
+        (200, 403, Some("Unauthorized"), 403)
     );
     assert_eq!(
         statuses(&n.pool, Curation::Collection, id).await,
@@ -1525,7 +1525,7 @@ async fn a_member_the_subgraph_stops_listing_is_refused_its_next_write_and_its_r
     );
     n.state.committee.outdate();
     let (late, _) = call(&n.app, Some(COMMITTEE_KEY), "GET", &path, None).await;
-    assert_eq!(late, 401);
+    assert_eq!(late, 403);
 }
 
 /// A committee member who also creates the collection on chain decides its
@@ -1551,7 +1551,7 @@ async fn a_creator_on_the_committee_approves_as_the_committee() {
     .await
     .unwrap();
     let (both, body) = call(&n.app, Some(COMMITTEE_KEY), "PATCH", &path, approve()).await;
-    assert_eq!((creator_alone, both), (401, 200), "{body}");
+    assert_eq!((creator_alone, both), (403, 200), "{body}");
     assert_eq!(
         statuses(&n.pool, Curation::Collection, id).await,
         ["approved"]
