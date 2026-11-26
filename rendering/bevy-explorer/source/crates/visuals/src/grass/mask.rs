@@ -1,4 +1,4 @@
-//! The mask the grass cards are cut out by: two strips of blade clumps, drawn here. No reference
+//! The mask the grass cards are cut out by: two strips of grass blades, drawn here. No reference
 //! artwork is sampled. A strip spans the mask's width and half its height, its roots along the
 //! mask's top or bottom edge and its tips toward the middle, so the edges a card's sample can
 //! reach past repeat what the card already shows.
@@ -24,44 +24,72 @@ const EDGE: f32 = 4.0;
 /// card widths, and its height as a share of the card's.
 type Blade = (f32, f32, f32, f32);
 
-/// The blades of each strip, in clumps with gaps between them.
+/// The blades of each strip: one mass across the card, solid at the root and breaking into
+/// spikes above, lower toward its sides, where the blades fan outward.
 const STRIPS: [&[Blade]; 2] = [
     &[
-        (0.060, 0.020, -0.045, 0.50),
-        (0.092, 0.024, -0.060, 0.78),
-        (0.128, 0.026, -0.015, 0.95),
-        (0.150, 0.020, 0.070, 0.60),
-        (0.186, 0.024, 0.045, 0.84),
-        (0.222, 0.020, 0.100, 0.52),
-        (0.352, 0.020, -0.085, 0.58),
-        (0.384, 0.024, -0.040, 0.86),
-        (0.420, 0.026, 0.012, 0.96),
-        (0.452, 0.022, 0.075, 0.70),
-        (0.486, 0.024, 0.050, 0.90),
-        (0.520, 0.018, 0.110, 0.48),
-        (0.670, 0.020, -0.070, 0.66),
-        (0.702, 0.024, -0.025, 0.92),
-        (0.738, 0.022, 0.030, 0.62),
-        (0.770, 0.026, 0.070, 0.82),
-        (0.806, 0.020, 0.115, 0.56),
+        (0.096, 0.021, -0.076, 0.33),
+        (0.130, 0.021, -0.086, 0.54),
+        (0.154, 0.027, -0.103, 0.47),
+        (0.181, 0.023, -0.066, 0.52),
+        (0.214, 0.026, -0.105, 0.79),
+        (0.240, 0.026, -0.085, 0.81),
+        (0.267, 0.022, -0.038, 0.60),
+        (0.296, 0.027, -0.074, 0.74),
+        (0.322, 0.024, -0.030, 0.78),
+        (0.350, 0.021, -0.060, 0.87),
+        (0.376, 0.026, -0.063, 0.47),
+        (0.407, 0.021, -0.023, 0.90),
+        (0.431, 0.026, -0.057, 0.89),
+        (0.456, 0.021, -0.032, 0.95),
+        (0.488, 0.027, -0.032, 0.60),
+        (0.510, 0.021, -0.025, 0.57),
+        (0.544, 0.022, 0.042, 0.69),
+        (0.568, 0.024, -0.018, 0.69),
+        (0.594, 0.025, -0.009, 0.78),
+        (0.627, 0.021, 0.021, 0.61),
+        (0.653, 0.024, -0.008, 0.88),
+        (0.680, 0.026, 0.031, 0.60),
+        (0.709, 0.023, 0.034, 0.78),
+        (0.737, 0.020, 0.091, 0.65),
+        (0.760, 0.021, 0.013, 0.61),
+        (0.786, 0.023, 0.054, 0.56),
+        (0.819, 0.022, 0.034, 0.62),
+        (0.845, 0.021, 0.078, 0.74),
+        (0.875, 0.022, 0.075, 0.35),
+        (0.903, 0.022, 0.073, 0.66),
     ],
     &[
-        (0.100, 0.020, -0.075, 0.54),
-        (0.134, 0.026, -0.030, 0.90),
-        (0.166, 0.022, 0.050, 0.68),
-        (0.200, 0.024, 0.085, 0.80),
-        (0.300, 0.018, -0.060, 0.46),
-        (0.330, 0.022, -0.020, 0.72),
-        (0.364, 0.020, 0.065, 0.58),
-        (0.500, 0.020, -0.090, 0.62),
-        (0.532, 0.024, -0.050, 0.88),
-        (0.566, 0.026, 0.005, 0.96),
-        (0.598, 0.022, 0.060, 0.76),
-        (0.632, 0.024, 0.095, 0.92),
-        (0.664, 0.018, 0.120, 0.50),
-        (0.800, 0.020, -0.055, 0.60),
-        (0.832, 0.024, 0.010, 0.84),
-        (0.864, 0.020, 0.075, 0.66),
+        (0.099, 0.023, -0.079, 0.47),
+        (0.127, 0.020, -0.078, 0.48),
+        (0.159, 0.026, -0.034, 0.50),
+        (0.179, 0.023, -0.094, 0.72),
+        (0.213, 0.026, -0.060, 0.56),
+        (0.236, 0.025, -0.036, 0.50),
+        (0.268, 0.024, -0.046, 0.48),
+        (0.291, 0.024, -0.025, 0.61),
+        (0.323, 0.024, 0.005, 0.83),
+        (0.349, 0.023, -0.054, 0.57),
+        (0.378, 0.024, -0.048, 0.54),
+        (0.405, 0.024, -0.038, 0.90),
+        (0.427, 0.022, -0.045, 0.94),
+        (0.462, 0.021, -0.029, 0.75),
+        (0.482, 0.021, -0.003, 0.41),
+        (0.514, 0.025, -0.035, 0.56),
+        (0.544, 0.026, -0.030, 0.47),
+        (0.566, 0.021, 0.018, 0.83),
+        (0.597, 0.025, 0.026, 0.78),
+        (0.628, 0.023, -0.004, 0.64),
+        (0.655, 0.021, 0.040, 0.72),
+        (0.681, 0.020, 0.017, 0.52),
+        (0.709, 0.021, 0.026, 0.57),
+        (0.735, 0.025, 0.010, 0.74),
+        (0.760, 0.023, 0.066, 0.82),
+        (0.790, 0.026, 0.085, 0.77),
+        (0.814, 0.027, 0.056, 0.54),
+        (0.842, 0.027, 0.108, 0.58),
+        (0.876, 0.024, 0.104, 0.61),
+        (0.904, 0.023, 0.076, 0.39),
     ],
 ];
 
@@ -181,19 +209,27 @@ mod tests {
         texel(x, y) >= CUT
     }
 
-    /// Each strip is clumps of blades with gaps down to the root, and about half of it is blade.
+    /// Each strip is one mass at the root, most of the card wide, breaking into many spikes
+    /// above, and nearly half of it is blade.
     #[test]
-    fn strips_are_clumps_with_gaps() {
-        for root_row in [0, SIZE - 1] {
-            let roots: Vec<bool> = (0..SIZE).map(|x| is_blade(x, root_row)).collect();
-            let clumps = roots.windows(2).filter(|pair| !pair[0] && pair[1]).count();
-            assert!((3..=5).contains(&clumps), "{clumps} clumps");
+    fn strips_are_a_wide_mass_of_spikes() {
+        let runs = |row: usize| {
+            let blade: Vec<bool> = (0..SIZE).map(|x| is_blade(x, row)).collect();
+            blade.windows(2).filter(|pair| !pair[0] && pair[1]).count()
+        };
+        for (root_row, towards_tips) in [(0, 1), (SIZE - 1, -1)] {
+            assert_eq!(runs(root_row), 1);
+            let width = (0..SIZE).filter(|x| is_blade(*x, root_row)).count();
+            assert!(width > SIZE * 4 / 5, "{width} texels wide");
+            // 0.7 of the way up the strip
+            let high = root_row as i32 + towards_tips * (SIZE as i32 * 7 / 20);
+            assert!(runs(high as usize) >= 5, "{} spikes", runs(high as usize));
         }
         let level: Vec<u8> = (0..SIZE * SIZE)
             .map(|i| texel(i % SIZE, i / SIZE))
             .collect();
         let coverage = kept(&level, 1.0);
-        assert!((0.2..0.5).contains(&coverage), "coverage {coverage}");
+        assert!((0.35..0.55).contains(&coverage), "coverage {coverage}");
     }
 
     /// Nothing reaches the mask's sides or the middle rows where the strips meet, so a card's

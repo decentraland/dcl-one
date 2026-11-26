@@ -7,7 +7,7 @@
 // Mesh: uv is the instance's root (x/z from the parcel's centre), uv_b its height share (0 at the
 // root, 1 at the top) and its part (grass/geometry.rs PART_*), colour (x, y) where it reads the
 // blade mask. To the fragment, uv carries the root's world x/z, uv_b the height share and the
-// part plus a per-instance random, and colour the mask position.
+// part, and colour the mask position.
 
 #import bevy_pbr::{
     mesh_functions,
@@ -42,7 +42,7 @@
 
 // x: 1 while the landscape sways, 0 while it is held still
 @group(2) @binding(108) var<uniform> wind_scale: vec4<f32>;
-// the blade clumps a grass card shows (grass/mask.rs)
+// the grass blades a card shows (grass/mask.rs)
 @group(2) @binding(109) var blade_mask: texture_2d<f32>;
 @group(2) @binding(110) var blade_mask_sampler: sampler;
 
@@ -135,9 +135,8 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.world_position = vec4(world, 1.0);
     out.position = position_world_to_clip(world);
     out.uv = root.xz;
-    // the part is whole, the random below it a quarter clear of each whole number, so
-    // interpolation never moves the part
-    out.uv_b = vec2(vertex.uv_b.x, vertex.uv_b.y + 0.25 + 0.5 * random);
+    // the part is whole: half a step up, interpolation never moves it to its neighbour
+    out.uv_b = vec2(vertex.uv_b.x, vertex.uv_b.y + 0.5);
     out.color = vertex.color;
 
 #ifdef PREPASS_PIPELINE
@@ -232,15 +231,12 @@ override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3
 }
 #endif
 
-// The colours, as unity-explorer's grass and flower materials set them.
-// a blade is darkened toward its root by this share
-const BLADE_DARKENING: f32 = 0.487;
+// The colours, as unity-explorer's grass and flower materials set them. A tuft is its patch of
+// ground's colour from root to tip, as unity-explorer draws it.
 // a flower's or reed's colour blends this far toward the ground's at its root, fading out by
 // this share of its height
 const FLOWER_COLOUR_MAP_STRENGTH: f32 = 0.241;
 const FLOWER_COLOUR_MAP_HEIGHT: f32 = 0.178;
-// each instance leans toward this colour by up to its alpha, by its random
-const HUE_VARIATION: vec4<f32> = vec4(1.0, 0.5, 0.0, 0.1);
 
 // The flower and reed parts' own colours (linear), lookalikes of their own.
 fn part_colour(part: u32) -> vec3<f32> {
@@ -263,16 +259,14 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     let height = in.uv_b.x;
     let part = u32(in.uv_b.y);
-    let random = (fract(in.uv_b.y) - 0.25) * 2.0;
     var albedo: vec3<f32>;
     if part == 0u {
-        albedo = ground * mix(1.0 - BLADE_DARKENING, 1.0, height);
+        albedo = ground;
     } else {
         let colour_map = FLOWER_COLOUR_MAP_STRENGTH
             * (1.0 - smoothstep(0.0, FLOWER_COLOUR_MAP_HEIGHT, height));
         albedo = mix(part_colour(part), ground, colour_map);
     }
-    albedo = mix(albedo, HUE_VARIATION.rgb, HUE_VARIATION.a * random);
 
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     pbr_input.material.base_color = vec4(albedo, 1.0);

@@ -991,7 +991,7 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     from the meaning of the material's values: Unity's grass and flower meshes, textures and
     shader come from commercial packages that cannot be redistributed. A grass instance is built
     as Unity's grass card, two crossed quads (0.64 m wide, 0.27 m tall at scale 1) cut out at 0.5
-    by a mask of blade clumps, with a mask drawn in code where Unity has a texture. A flower is a
+    by a mask of grass blades, with a mask drawn in code where Unity has a texture. A flower is a
     stem under a five-petal daisy or a four-petal bell, a reed a stem, a leaf and a seed head.
   - The scatter runs on the CPU once per parcel, and each parcel draws one mesh of its blades and
     one of its flowers and reeds, where Unity scatters every frame on the GPU and draws
@@ -1009,10 +1009,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     normal, as the ground under them.
   - A grass instance takes the colour Unity's scatter gives it: the ground and sand textures
     under the splat's weights, all three read under its root at the splat's 1024 m tiling, so
-    the colour changes over metres and the tufts of a patch share it. It is darkened toward the
-    root by the material's 0.487. The material's vertex darkening and colour-map height are not
-    carried: they act on vertex data and textures of the packages' meshes. Flowers and reeds
-    blend toward that colour by 0.241 over their lowest 0.178.
+    the colour changes over metres and the tufts of a patch share it. A tuft is that colour from
+    root to tip, as Unity draws it: the material's darkening, vertex darkening and colour-map
+    height are not carried (they act through the package's shader, on its meshes' vertex data),
+    and its hue variation is switched off. Flowers and reeds blend toward that colour by 0.241
+    over their lowest 0.178.
   - Flowers and reeds use the grass material's wind; the flower material's own wind values act
     through the package's shader, whose meaning is not known here.
   - Until the splat and both ground textures have loaded, and for good if one fails, no flowers
