@@ -802,6 +802,7 @@ pub mod scratch {
 
     /// `/proc` is absent on macOS. Signal zero probes existence without sending
     /// a signal; permission denied also proves that a process still exists.
+    #[allow(unsafe_code, reason = "libc signal-zero probe for a process")]
     pub(super) fn process_alive(pid: u32) -> bool {
         if pid == std::process::id() {
             return true;

@@ -300,6 +300,10 @@ pub fn bake_args(tile: TileKey, cfg: &BakeConfig, staging: &Path) -> Vec<String>
     args
 }
 
+#[allow(
+    unsafe_code,
+    reason = "libc killpg reaps the timed-out bake process group"
+)]
 pub async fn run_bake(cfg: &BakeConfig, store: Arc<FileCache>, tile: TileKey) -> Result<usize> {
     let staging = store
         .tmp_dir()

@@ -1261,6 +1261,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        unsafe_code,
+        reason = "the `_FILE` lookup reads the process environment"
+    )]
     fn secrets_are_hidden_from_help_and_read_from_files() {
         let help = match parse(&["x", "--help"]) {
             Err(e) => e.to_string(),
@@ -1352,6 +1356,7 @@ mod tests {
             "CATALYST_TEST_SECRET_{}",
             uuid::Uuid::new_v4().simple().to_string().to_uppercase()
         );
+        // SAFETY: the name is unique to this test, and this crate reads the environment only through std, which locks it.
         unsafe { std::env::set_var(format!("{name}_FILE"), &file) };
         Config::read_secret_file(&name, &mut slot).unwrap();
         assert_eq!(slot.as_deref(), Some("s3cr3t"));
@@ -1362,6 +1367,7 @@ mod tests {
             .to_string();
         assert!(err.contains("both set"), "{err}");
 
+        // SAFETY: as above.
         unsafe { std::env::set_var(format!("{name}_FILE"), dir.join("missing")) };
         let mut missing = None;
         let err = Config::read_secret_file(&name, &mut missing)
@@ -1371,6 +1377,7 @@ mod tests {
             err.contains(&format!("{name}_FILE")) && !err.contains("s3cr3t"),
             "{err}"
         );
+        // SAFETY: as above.
         unsafe { std::env::remove_var(format!("{name}_FILE")) };
         let _ = std::fs::remove_dir_all(&dir);
     }
