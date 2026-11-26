@@ -1,5 +1,6 @@
-import { useId } from 'react'
+import { useState } from 'react'
 
+import { Tooltip } from '../../../components/Tooltip/Tooltip'
 import styles from './ProfileBadges.module.css'
 
 export type ProfileBadgeItem = {
@@ -24,25 +25,40 @@ type ProfileBadgesProps = {
   errorText?: string
 }
 
+/** The widest the tip gets before its text wraps. */
+const TIP_MAX_WIDTH = 240
+
 function Badge({ badge }: { badge: ProfileBadgeItem }) {
-  const tipId = useId()
+  // The slot is the tip's anchor, so the open tip describes the focused slot itself.
+  const [slot, setSlot] = useState<HTMLSpanElement | null>(null)
   return (
-    <li className={styles.badge}>
-      <span className={styles.slot} tabIndex={0} aria-describedby={tipId}>
-        {badge.imageUrl ? (
-          <img className={styles.image} src={badge.imageUrl} alt={badge.name} loading="lazy" />
-        ) : (
-          <span className={styles.fallback} role="img" aria-label={badge.name}>
-            {badge.name.charAt(0).toUpperCase()}
+    <li>
+      <Tooltip
+        anchor={slot}
+        side="top"
+        gap={8}
+        keepInViewport
+        maxWidth={TIP_MAX_WIDTH}
+        tipClassName={styles.tip}
+        content={
+          <span className={styles.tipContent}>
+            <strong className={styles.tipName}>{badge.name}</strong>
+            {badge.tierName ? <span className={styles.tipTier}>{badge.tierName}</span> : null}
+            {badge.description ? <span>{badge.description}</span> : null}
+            {badge.unlocked ? <span className={styles.tipDate}>{badge.unlocked}</span> : null}
           </span>
-        )}
-      </span>
-      <span className={styles.tip} role="tooltip" id={tipId}>
-        <strong className={styles.tipName}>{badge.name}</strong>
-        {badge.tierName ? <span className={styles.tipTier}>{badge.tierName}</span> : null}
-        {badge.description ? <span>{badge.description}</span> : null}
-        {badge.unlocked ? <span className={styles.tipDate}>{badge.unlocked}</span> : null}
-      </span>
+        }
+      >
+        <span ref={setSlot} className={styles.slot} tabIndex={0}>
+          {badge.imageUrl ? (
+            <img className={styles.image} src={badge.imageUrl} alt={badge.name} loading="lazy" />
+          ) : (
+            <span className={styles.fallback} role="img" aria-label={badge.name}>
+              {badge.name.charAt(0).toUpperCase()}
+            </span>
+          )}
+        </span>
+      </Tooltip>
     </li>
   )
 }
