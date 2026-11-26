@@ -562,6 +562,7 @@ async fn a_restarted_leader_resumes_its_pass_where_it_stopped() {
     }
     let cancel = CancellationToken::new();
     let mut first = f.replay(&["wearable"], 0).await;
+    first.pacing.retry_max = Duration::from_secs(60);
     let running = tokio::spawn({
         let cancel = cancel.clone();
         async move { first.pass(&cancel).await }
@@ -605,6 +606,47 @@ async fn a_restarted_leader_resumes_its_pass_where_it_stopped() {
     assert!(
         pages.iter().all(|q| !q.contains("from=0")),
         "resumed from zero: {pages:?}"
+    );
+    f.finish().await;
+}
+
+/// A peer whose page still fails once the retries back off to their longest
+/// wait ends its walk with debt: the pass completes, the reader gets
+/// `Unknown(Debt)`, and the next pass reads the peer again.
+#[tokio::test]
+async fn an_unreachable_peer_ends_its_walk_with_debt_and_the_next_pass_reads_it_again() {
+    let Some(f) = fixture().await else {
+        return;
+    };
+    let wearable = f.peer.offer("wearable", 1, 1_000, true).await;
+    f.peer.failing.store(true, Ordering::SeqCst);
+    let mut replay = f.replay(&["wearable"], 0).await;
+    let pass = tokio::time::timeout(
+        Duration::from_secs(10),
+        replay.pass(&CancellationToken::new()),
+    )
+    .await
+    .expect("the pass ends while the peer is down")
+    .unwrap()
+    .unwrap();
+    assert_eq!(pass.debt, 1);
+    assert_eq!(
+        f.coverage("wearable").await,
+        Coverage::Unknown(Unknown::Debt)
+    );
+    f.peer.failing.store(false, Ordering::SeqCst);
+    let pass = replay
+        .pass(&CancellationToken::new())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pass.debt, 0);
+    assert!(f.deployed(&wearable).await);
+    assert_eq!(
+        f.coverage("wearable").await,
+        Coverage::Covered {
+            as_of: pass.started_at
+        }
     );
     f.finish().await;
 }
@@ -954,10 +996,10 @@ async fn an_operator_who_turns_the_item_replay_off_gets_no_pass_and_no_coverage(
 }
 
 /// A leader whose replay walks a two-page history reads its pages the page
-/// pause apart and starts its next pass only after the last one ended, one
-/// interval later.
+/// pause apart and starts its next pass one interval after the last one
+/// started, so the pass's own length doesn't delay the next proof.
 #[tokio::test]
-async fn a_leader_starts_its_next_item_pass_one_interval_after_the_last_ends() {
+async fn a_leader_starts_its_next_item_pass_one_interval_after_the_last_started() {
     let Some(mut f) = fixture().await else {
         return;
     };
@@ -1006,10 +1048,16 @@ async fn a_leader_starts_its_next_item_pass_one_interval_after_the_last_ends() {
                 page[1].1.duration_since(page[0].1)
             );
         }
+        let (_, started) = pass.first().unwrap();
         let (_, ended) = pass.last().unwrap();
         let (_, next) = &replay[pair[1]];
         assert!(
-            next.duration_since(*ended) >= Duration::from_millis(900),
+            next.duration_since(*started) >= Duration::from_millis(900),
+            "the next pass started {:?} after the first page",
+            next.duration_since(*started)
+        );
+        assert!(
+            next.duration_since(*ended) < Duration::from_millis(800),
             "the next pass started {:?} after the last page",
             next.duration_since(*ended)
         );

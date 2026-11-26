@@ -166,8 +166,10 @@ pub struct LeaseOwner {
     pub pid: i32,
 }
 
-/// The replay's timing: the pause between pages, between passes, while the
-/// operator's switch is set and the failed-fetch backoff bounds.
+/// The replay's timing: the pause between pages, between pass starts, while
+/// the operator's switch is set and the failed-fetch backoff bounds. A page
+/// that still fails once its doubling wait passes `retry_max` ends its
+/// peer's walk.
 #[derive(Debug, Clone, Copy)]
 pub struct Pacing {
     pub page_pause: Duration,
@@ -195,6 +197,8 @@ pub struct PassReport {
     pub started_at: NaiveDateTime,
     pub debt: i64,
     pub observed_frontier_ms: i64,
+    /// From its start to its completion, on the database clock.
+    pub elapsed: Duration,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -227,6 +231,12 @@ enum Next {
     Done,
 }
 
+/// A peer's page: read, or still failing once the retries ran out.
+enum Fetched {
+    Page(Vec<serde_json::Value>, bool),
+    Unreachable,
+}
+
 /// The sync leader's strict item history replay over `peers`.
 pub struct ItemHistoryReplay {
     pub pool: PgPool,
@@ -242,7 +252,8 @@ pub struct ItemHistoryReplay {
 }
 
 impl ItemHistoryReplay {
-    /// Passes back to back, [`Pacing::pass_interval`] apart, until `cancel`.
+    /// Passes until `cancel`, each starting [`Pacing::pass_interval`] after
+    /// the last one started, or as it ends when it took longer.
     pub async fn run(mut self, cancel: CancellationToken, report: impl Fn(Result<String, String>)) {
         loop {
             let wait = match self.pass(&cancel).await {
@@ -251,7 +262,15 @@ impl ItemHistoryReplay {
                         "pass from {} complete, debt {}",
                         pass.started_at, pass.debt
                     )));
-                    self.pacing.pass_interval
+                    if pass.elapsed.max(self.pacing.pass_interval) + pass.elapsed > STALE_AFTER {
+                        warn!(
+                            elapsed_secs = pass.elapsed.as_secs(),
+                            interval_secs = self.pacing.pass_interval.as_secs(),
+                            sources = self.peers.borrow().len(),
+                            "item history replay: a pass this long lets item coverage lapse before the next one completes"
+                        );
+                    }
+                    self.pacing.pass_interval.saturating_sub(pass.elapsed)
                 }
                 Ok(None) => self.pacing.retry_start,
                 Err(e) => {
@@ -302,8 +321,10 @@ impl ItemHistoryReplay {
             if self.peers.has_changed().unwrap_or(false) {
                 return Ok(None);
             }
-            let Some((items, more)) = self.fetch(&at, &scope, cancel).await else {
-                return Ok(None);
+            let (items, more) = match self.fetch(&at, &scope, cancel).await {
+                Some(Fetched::Page(items, more)) => (items, more),
+                Some(Fetched::Unreachable) => (Vec::new(), true),
+                None => return Ok(None),
             };
             let keyset = more.then(|| keyset(&items)).flatten();
             let (mut debt, frontier) = self.accept(items, &scope, &at.peer).await?;
@@ -500,7 +521,9 @@ impl ItemHistoryReplay {
     ) -> Result<PassReport, ReplayError> {
         let mut tx = self.pool.begin().await?;
         let pass = sqlx::query(
-            "SELECT debt + $1 AS debt, GREATEST(observed_frontier_ms, $2) AS frontier
+            "SELECT debt + $1 AS debt, GREATEST(observed_frontier_ms, $2) AS frontier,
+                    GREATEST(EXTRACT(EPOCH FROM timezone('UTC', now()) - pass_started_at), 0)::float8
+                      AS elapsed_secs
                FROM content.item_history_replay
               WHERE pass_started_at = $3 AND peer = $4 AND from_ms = $5
                 AND last_id IS NOT DISTINCT FROM $6
@@ -519,6 +542,7 @@ impl ItemHistoryReplay {
             started_at: at.started_at,
             debt: pass.try_get("debt")?,
             observed_frontier_ms: pass.try_get("frontier")?,
+            elapsed: Duration::from_secs_f64(pass.try_get("elapsed_secs")?),
         };
         let written = sqlx::query(concat!(
             "INSERT INTO content.item_history_coverage AS c
@@ -570,20 +594,24 @@ impl ItemHistoryReplay {
         at: &Checkpoint,
         scope: &Scope,
         cancel: &CancellationToken,
-    ) -> Option<(Vec<serde_json::Value>, bool)> {
+    ) -> Option<Fetched> {
         let url = page_url(at, &scope.entity_types)?;
         let mut wait = self.pacing.retry_start;
         loop {
             match fetch_page(&self.client, &url).await {
-                Ok(page) => return Some(page),
+                Ok((items, more)) => return Some(Fetched::Page(items, more)),
                 Err(e) => {
                     warn!(peer = %at.peer, error = %e, "item history replay: page fetch failed")
                 }
             }
+            if wait > self.pacing.retry_max {
+                warn!(peer = %at.peer, "item history replay: peer unreachable, its walk ends with debt");
+                return Some(Fetched::Unreachable);
+            }
             if sleep_or_cancel(cancel, wait).await {
                 return None;
             }
-            wait = (wait * 2).min(self.pacing.retry_max);
+            wait *= 2;
         }
     }
 
