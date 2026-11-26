@@ -17,6 +17,12 @@
 //! ERC721BidV2 acceptances are the sales index's `bid_accepted` rows
 //! (`shop.sale_event`), the same split at the same pinned cut, under their
 //! own cursor (`royalties:bid_accepted:matic`) and transaction-keyed ids.
+//!
+//! A sale holds its cursor while [`ItemWait::decide`] says so: under the
+//! mirrors, a bid sale of an item they lack, until a complete items pass an
+//! hour after it and at most a day; on a network the collections index owns,
+//! any sale until the publication covers its block, however long that
+//! takes. A held cursor shows as a growing `shop_notification_cursor_lag`.
 
 use std::time::Duration;
 
@@ -240,6 +246,7 @@ async fn drain(
     loop {
         let mut txn = pool.begin().await?;
         let (_, since_block, since_log) = notice_cursor::lock(&mut txn, producer).await?;
+        notice_cursor::report_lag(producer, published, since_block);
         let now = chrono::Utc::now();
         let page = sqlx::query(sqlx::AssertSqlSafe(page_sql.as_str()))
             .bind(NET.db_name())
@@ -288,24 +295,12 @@ async fn drain(
                 )
             })
             .collect();
+        // Every sale before the first held one is described.
         let held = decisions.iter().position(|d| *d == Waited::Hold);
         let ready = &rows[..held.unwrap_or(rows.len())];
-        for (row, _) in ready
-            .iter()
-            .zip(&decisions)
-            .filter(|(_, d)| **d == Waited::Skip)
-        {
-            tracing::warn!(
-                block = row.block_number,
-                log = row.log_index,
-                "royalties_earned: the collections index has not covered this sale for a day; it is not announced"
-            );
-        }
         let batch: Vec<NewNotification> = ready
             .iter()
-            .zip(&decisions)
-            .filter(|(_, d)| **d == Waited::Describe)
-            .filter_map(|(row, _)| {
+            .filter_map(|row| {
                 let cut = row.cut.as_deref().filter(|c| *c != "0")?;
                 let collector = row
                     .collector
@@ -649,12 +644,13 @@ mod tests {
         .unwrap();
     }
 
-    /// On a network the collections index owns, a sale the publication has
-    /// not covered for a day passes without a notice: the hold never lasts
-    /// past it, and a row read while the index refuses never picks the
-    /// collector.
+    /// On a network the collections index owns, a refusal longer than
+    /// `ITEM_HOLD_MAX_SECS` gives up no sale: a day-old sale the publication
+    /// does not cover holds the cursor, a row read meanwhile never picks the
+    /// collector, and once the publication covers its block the collector
+    /// hears of it.
     #[tokio::test]
-    async fn on_an_owned_network_a_sale_past_the_hold_passes_without_a_notice() {
+    async fn on_an_owned_network_a_sale_past_the_hold_waits_for_the_publication() {
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
@@ -683,25 +679,42 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        let cursor = || async {
+            sqlx::query_as::<_, (i64, i32)>(
+                "SELECT block_number, log_index FROM shop.notification_cursor WHERE producer = 'royalties:bid_accepted:matic'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        let stored = || async {
+            sqlx::query_scalar::<_, String>(
+                "SELECT address FROM social.notifications WHERE type = 'royalties_earned'",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
         owning::rewind(&pool, "matic").await;
+        for _ in 0..2 {
+            assert_eq!(
+                run_bids_once(&pool, BASE, true).await.unwrap(),
+                Pass::Emitted(0)
+            );
+            assert_eq!(cursor().await, (100, i32::MAX), "held below the sale");
+            assert!(
+                stored().await.is_empty(),
+                "no notice from an unverified row"
+            );
+        }
+
+        owning::own(&pool, "matic", 137, 106, 60).await;
         assert_eq!(
             run_bids_once(&pool, BASE, true).await.unwrap(),
-            Pass::Emitted(0)
+            Pass::Emitted(1)
         );
-        let (block, _): (i64, i32) = sqlx::query_as(
-            "SELECT block_number, log_index FROM shop.notification_cursor WHERE producer = 'royalties:bid_accepted:matic'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert!(block >= 105, "passed: {block}");
-        let stored: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM social.notifications WHERE type = 'royalties_earned'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(stored, 0, "without a notice");
+        assert_eq!(cursor().await, (106, i32::MAX));
+        assert_eq!(stored().await, [BENEFICIARY], "described once covered");
     }
 
     /// On a network the collections index owns, a rewind leaves the item

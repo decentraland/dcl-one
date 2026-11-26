@@ -1057,26 +1057,7 @@ pub fn ready_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: 
     )
 }
 
-/// The publish marker alone as SQL, for the fail-closed readers of an index
-/// whose every pass advances `last_block` before it folds and publishes
-/// (`trade_events`; the `nft` readers' `owned_items::Rule::Fresh`): the whole
-/// history walked, a fold published (`folded_block`, cleared by every
-/// rewind, divergence, unpublish, quarantine and rebuild) within
-/// [`READY_WINDOW`] of the caller's clock, bound to the expected chain and
-/// out of quarantine, without `folded_block = last_block`, which a pass
-/// breaks for as long as it walks and folds. `folded_at` is the walker's
-/// clock: one up to [`MAX_CLOCK_SKEW`] ahead of the caller's still counts.
-pub fn published_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: i64) -> String {
-    format!(
-        "({alias}.full_history AND {alias}.folded_block IS NOT NULL \
-          AND {alias}.chain_id = CASE {alias}.network WHEN 'ethereum' THEN {ethereum_chain}::bigint WHEN 'matic' THEN {matic_chain}::bigint END \
-          AND {alias}.quarantined_at IS NULL \
-          AND {alias}.folded_at <= {now_p} + interval '{skew} seconds' \
-          AND {alias}.folded_at >= {now_p} - interval '{window} seconds')",
-        skew = MAX_CLOCK_SKEW.num_seconds(),
-        window = READY_WINDOW.num_seconds(),
-    )
-}
+pub use crate::chain_index::catalogue::published_sql_on;
 
 pub(crate) use crate::chain_index::catalogue::MAX_CLOCK_SKEW;
 

@@ -2650,8 +2650,10 @@ default, and social writes are), each a reader of tables other areas own, with o
   entity or `shop.items`;
 - `shop.sale_event` (`mint`, `bid_accepted`), `shop.trade_event` (`traded`)
   and `shop.nft_event` (`order_successful`) on Polygon by (block, log index),
-  each up to the block its index published in `shop.chain_cursor`, a
-  cursor bound to chain 137 and out of quarantine (emotionista, fashionista; one step per transaction hash, a legacy order
+  each up to its index's publish marker in `shop.chain_cursor` (a fold
+  published within 30 minutes, a cursor bound to chain 137 and out of
+  quarantine; a pass walking past it does not withdraw it), read in the
+  snapshot that reads the page (emotionista, fashionista; one step per transaction hash, a legacy order
   indexed before `nft_event.tx_hash` was recorded counted by its chain
   position until a re-index fills the hash). An off-chain good counts for
   its `beneficiary` in `trade_event.assets`; a legacy order bought by a fiat
@@ -2669,8 +2671,9 @@ default, and social writes are), each a reader of tables other areas own, with o
   pass walks every item, minutes at the defaults); then it is passed without
   effect. Once the collections index owns Polygon, every sale with an item
   waits instead until the index's publication covers its block, row or not,
-  and one it has not covered for a day passes without a badge (the notices'
-  rule, `ItemWait::decide` in `catalyst_chain_index::catalogue`). The page,
+  however long that takes (the notices' rule, `ItemWait::decide` in
+  `catalyst_chain_index::catalogue`); a sale older than
+  `BADGES_EVENT_MAX_AGE_SECS` gets no badge and never waits. The page,
   its goods' item types and the wait come from one snapshot. Without
   `MARKETPLACE_MIRRORS_ENABLED` no pass ever completes, so the sales job is
   not started (logged at startup);
@@ -2678,7 +2681,8 @@ default, and social writes are), each a reader of tables other areas own, with o
   `shop.mirror_state` records a complete pass, or, once the collections
   index owns Polygon, while its descriptive verdict holds; the verdict, the
   candidates and the creators' items come from one snapshot) and of accepted
-  `social.referral_progress` rows (creators, the collection half of open for
+  `social.referral_progress` rows, read in the job's own transaction
+  (creators, the collection half of open for
   business, referral), for the wallets whose stored steps are behind. A
   creator's steps are the size of their item set, never below the stored
   count, so an imported item id in another format is not counted twice. A pass
@@ -3800,10 +3804,19 @@ its current check (a mirror pass, or none):
   - Under the mirrors, only a sale whose item has no row waits, until a
     complete items pass an hour after the sale; a bid on an unlisted
     contract never waits.
-  - Nothing waits past a day. Under the mirrors the sale is then described
-    from whatever rows there are. On an owned network a sale the publication
-    still does not cover passes without a notice, so an unverified row never
-    picks a recipient.
+  - Under the mirrors nothing waits past a day: the sale is then described
+    from whatever rows there are, so a stalled mirror never freezes a
+    cursor. On an owned network there is no such bound: a sale waits for the
+    publication over its block however long the index refuses, so an
+    unverified row never picks a recipient and no sale is given up because
+    its producer fell behind. An index that refuses for good freezes these
+    producers until it is fixed or the network is handed back through
+    `MARKETPLACE_COLLECTIONS_INDEX_OWNS`; they then drain under whichever
+    rule applies. A frozen producer shows as a growing lag:
+    `shop_notification_cursor_lag{producer}` for the sale, bid and royalty
+    notices (blocks between the cursor and the published block it reads up
+    to, set each time a pass locks the cursor) and
+    `badges_processor_cursor_lag{source}` for the badge sales logs.
   - A sale's description, its collection membership and its wait come from
     one snapshot (the royalty notices' from the statement that joins the
     items).
