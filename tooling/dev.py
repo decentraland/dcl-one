@@ -705,7 +705,6 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'MARKETPLACE_INDEX_INTERVAL_SECS': '30',
             # The tag names development stacks in rpc.decentraland.org's request logs.
             'ETH_RPC_URL': 'https://rpc.decentraland.org/mainnet?project=dcl-one-dev',
-            'BUILDER_CONTENT_BUCKET_URL': 'https://builder-items.decentraland.org',
             # Credit prices need a MANA spot.
             'PRICE_POLL_ENABLED': 'true', 'COINGECKO_URL': 'https://api.coingecko.com/api/v3',
             'PRICE_FALLBACK_SOURCES': 'coinbase=https://api.coinbase.com,binance=https://api.binance.com,'
