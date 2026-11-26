@@ -8,7 +8,7 @@ The heading of each group (Foundations, each kind of component, HUD) is a button
 
 ## Components Showcase
 
-`Showcase`, the first entry under Components, draws every component page on one canvas (`src/frame/ComponentShowcase.tsx`): the groups in the sidebar's order, each page under its name, which opens the page itself, and its summary. It renders the registry's examples with the canvas's own example view, so a page and the Showcase cannot differ. A page whose content is positioned against the viewport (a `minHeight` in its entry: Modal, NavBar, Dropdown) is drawn in a canvas of its own inside the Showcase, loaded as it nears the window, so a dialog covers its own page only.
+`Showcase`, the first entry under Components, draws every component page on one canvas (`src/frame/ComponentShowcase.tsx`): the groups in the sidebar's order, each page under its name, which opens the page itself, and its summary. It renders the registry's examples with the canvas's own example view, so a page and the Showcase cannot differ. A page whose content is positioned against the viewport (a `minHeight` in its entry: Modal, NavBar, Dropdown) is drawn in a canvas of its own inside the Showcase, loaded as it nears the window, so a dialog covers its own page only. That canvas spans the Showcase's padding, so its viewport is the chosen width, and it is an embedded canvas (`frame.html?component=Modal&embedded=1`): the Modal example that opens on load starts closed there, since opening would take the keyboard focus from wherever the reviewer is on the page. A page name links to its page at the chosen width.
 
 ## HUD
 

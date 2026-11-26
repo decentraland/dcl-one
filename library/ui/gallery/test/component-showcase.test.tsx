@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as library from '@dcl/one-ui'
 import {
@@ -11,7 +11,7 @@ import { entries } from '../src/examples'
 import { Canvas } from '../src/frame/Canvas'
 import { ComponentShowcase } from '../src/frame/ComponentShowcase'
 import { keepLinksInCanvas } from '../src/frame/links'
-import { OPEN_MESSAGE } from '../src/messages'
+import { HEIGHT_MESSAGE, OPEN_MESSAGE } from '../src/messages'
 import type { GalleryEntry } from '../src/registry'
 
 vi.stubGlobal(
@@ -140,9 +140,49 @@ describe('when the Showcase canvas draws the component pages', () => {
       <ComponentShowcase groups={groupEntries([page('Dialog', 'One', { minHeight: 720 })])} />
     )
     const frame = screen.getByTitle('Dialog canvas') as HTMLIFrameElement
-    expect(frame.getAttribute('src')).toBe('frame.html?component=Dialog')
+    expect(frame.getAttribute('src')).toBe('frame.html?component=Dialog&embedded=1')
     expect(frame.style.height).toBe('720px')
     expect(container.querySelector('[data-example]')).toBeNull()
+  })
+
+  it('should follow the height its own canvas reports, never under what the page asks', () => {
+    render(<ComponentShowcase groups={groupEntries([page('Dialog', 'One', { minHeight: 720 })])} />)
+    const frame = screen.getByTitle('Dialog canvas') as HTMLIFrameElement
+    const report = (source: Window | null, data: unknown) =>
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', { source, data }))
+      })
+    report(frame.contentWindow, { type: HEIGHT_MESSAGE, height: 900.2 })
+    expect(frame.style.height).toBe('901px')
+    report(frame.contentWindow, { type: HEIGHT_MESSAGE, height: 300 })
+    expect(frame.style.height).toBe('720px')
+  })
+
+  it('should ignore a height from another window, of another kind, or that is not a number', () => {
+    render(
+      <ComponentShowcase
+        groups={groupEntries([
+          page('Dialog', 'One', { minHeight: 720 }),
+          page('Drawer', 'One', { minHeight: 480 })
+        ])}
+      />
+    )
+    const dialog = screen.getByTitle('Dialog canvas') as HTMLIFrameElement
+    const drawer = screen.getByTitle('Drawer canvas') as HTMLIFrameElement
+    const report = (source: Window | null, data: unknown) =>
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', { source, data }))
+      })
+    report(window, { type: HEIGHT_MESSAGE, height: 2000 })
+    report(null, { type: HEIGHT_MESSAGE, height: 2000 })
+    report(dialog.contentWindow, { type: OPEN_MESSAGE, height: 2000 })
+    report(dialog.contentWindow, { type: HEIGHT_MESSAGE, height: '2000' })
+    report(dialog.contentWindow, null)
+    expect(dialog.style.height).toBe('720px')
+    // Each canvas listens to its own frame only.
+    report(drawer.contentWindow, { type: HEIGHT_MESSAGE, height: 1000 })
+    expect(dialog.style.height).toBe('720px')
+    expect(drawer.style.height).toBe('1000px')
   })
 
   it('should use an own canvas for exactly the registry pages that ask for a taller one', () => {
@@ -166,6 +206,49 @@ describe('when a reviewer follows a page link on the Showcase canvas', () => {
     const link = screen.getByRole('link', { name: 'Alpha' })
     expect(link.getAttribute('href')).toBe('./?component=Alpha')
     expect(link.getAttribute('target')).toBe('_top')
+  })
+
+  it('should carry the width chosen in the gallery around it, and follow it when the canvas is resized', () => {
+    const location = { search: '?component=Showcase&width=768' }
+    vi.spyOn(window, 'parent', 'get').mockReturnValue({ location } as unknown as Window)
+    render(<ComponentShowcase groups={groups} />)
+    const link = screen.getByRole('link', { name: 'Alpha' })
+    expect(link.getAttribute('href')).toBe('./?component=Alpha&width=768')
+    location.search = '?component=Showcase&width=1024'
+    act(() => {
+      window.dispatchEvent(new Event('resize'))
+    })
+    expect(link.getAttribute('href')).toBe('./?component=Alpha&width=1024')
+    location.search = '?component=Showcase'
+    act(() => {
+      window.dispatchEvent(new Event('resize'))
+    })
+    expect(link.getAttribute('href')).toBe('./?component=Alpha')
+  })
+
+  it.each(['?component=Showcase&width=wide', '?component=Showcase&width=12', ''])(
+    'should link without a width when the gallery around it has %j',
+    (search) => {
+      vi.spyOn(window, 'parent', 'get').mockReturnValue({
+        location: { search }
+      } as unknown as Window)
+      render(<ComponentShowcase groups={groups} />)
+      expect(screen.getByRole('link', { name: 'Alpha' }).getAttribute('href')).toBe(
+        './?component=Alpha'
+      )
+    }
+  )
+
+  it('should link without a width when the page around it keeps its URL out of reach', () => {
+    vi.spyOn(window, 'parent', 'get').mockReturnValue({
+      get location(): never {
+        throw new DOMException('cross-origin', 'SecurityError')
+      }
+    } as unknown as Window)
+    render(<ComponentShowcase groups={groups} />)
+    expect(screen.getByRole('link', { name: 'Alpha' }).getAttribute('href')).toBe(
+      './?component=Alpha'
+    )
   })
 
   it('should ask the gallery to open the page in place when the canvas is inside it', () => {
@@ -221,4 +304,22 @@ describe('when a canvas is drawn inside the gallery', () => {
     render(<Canvas search="?component=Button" />)
     expect(document.documentElement.style.overflowY).toBe('')
   })
+})
+
+describe('when the Showcase draws a page in a canvas inside itself', () => {
+  it('should start an example that opens on load closed, and open it from its trigger', () => {
+    const { container } = render(<Canvas search="?component=Modal&embedded=1" />)
+    expect(container.querySelector('main')!.dataset.component).toBe('Modal')
+    expect(document.querySelector('dialog')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Open message dialog' }))
+    expect(document.querySelector('dialog')).not.toBeNull()
+  })
+
+  it.each(['?component=Modal', '?component=Modal&embedded=0', '?component=Modal&embedded='])(
+    'should open that example on load on the page itself (%s)',
+    (search) => {
+      render(<Canvas search={search} />)
+      expect(document.querySelector('dialog')).not.toBeNull()
+    }
+  )
 })

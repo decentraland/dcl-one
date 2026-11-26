@@ -63,9 +63,12 @@
   overflow-wrap: anywhere;
 }
 
+/* A page's own canvas spans the Showcase's padding, so its viewport is the chosen width: the width its media queries
+   read on the page itself. The nested canvas pads its examples as every canvas does. */
 .frame {
   display: block;
   box-sizing: border-box;
-  inline-size: 100%;
+  inline-size: calc(100% + 2 * var(--dcl-space-16));
+  margin-inline: calc(-1 * var(--dcl-space-16));
   border: 0;
 }

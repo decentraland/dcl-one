@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { COMPONENT_OVERVIEW } from '../componentPages'
+import { EmbeddedCanvas } from '../embedded'
 import { entries } from '../examples'
 import { foundationPages } from '../foundations/FoundationPages'
 import { HEIGHT_MESSAGE } from '../messages'
@@ -56,10 +57,12 @@ export function Canvas({ search }: { search: string }) {
       </main>
     )
   return (
-    <main className={styles.canvas} data-component={page.name}>
-      {page.examples.map((example) => (
-        <ExampleView key={example.id} example={example} />
-      ))}
-    </main>
+    <EmbeddedCanvas value={params.get('embedded') === '1'}>
+      <main className={styles.canvas} data-component={page.name}>
+        {page.examples.map((example) => (
+          <ExampleView key={example.id} example={example} />
+        ))}
+      </main>
+    </EmbeddedCanvas>
   )
 }
