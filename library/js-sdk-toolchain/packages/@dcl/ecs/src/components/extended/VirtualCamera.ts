@@ -1,6 +1,7 @@
-import { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
-import { PBVirtualCamera, VirtualCamera } from '../generated/index.gen'
-import { CameraTransition } from '../generated/pb/decentraland/sdk/components/common/camera_transition.gen'
+import type { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
+import type { PBVirtualCamera } from '../generated/index.gen'
+import { VirtualCamera } from '../generated/index.gen'
+import type { CameraTransition } from '../generated/pb/decentraland/sdk/components/common/camera_transition.gen'
 
 /**
  * @public

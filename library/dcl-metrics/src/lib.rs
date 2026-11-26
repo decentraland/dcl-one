@@ -18,6 +18,12 @@ pub mod ws;
 
 pub const CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
+/// prom-client's default histogram buckets, for families that keep a legacy Node service's
+/// histograms declared without buckets of their own.
+pub const PROM_CLIENT_DEFAULT_BUCKETS: &[f64] = &[
+    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+];
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Kind {
     Counter,
@@ -203,12 +209,21 @@ impl Registry {
         Ok(builder)
     }
 
-    /// For binaries that mount metrics alongside their own health routes.
-    pub fn install(&self, builder: PrometheusBuilder) -> anyhow::Result<PrometheusHandle> {
+    /// Builds a recorder with the process's descriptors and histogram buckets.
+    pub fn build_recorder(
+        &self,
+        builder: PrometheusBuilder,
+    ) -> anyhow::Result<metrics_exporter_prometheus::PrometheusRecorder> {
         let recorder = self.builder(builder)?.build_recorder();
         for family in self.families.values() {
             family.describe(&recorder);
         }
+        Ok(recorder)
+    }
+
+    /// For binaries that mount metrics alongside their own health routes.
+    pub fn install(&self, builder: PrometheusBuilder) -> anyhow::Result<PrometheusHandle> {
+        let recorder = self.build_recorder(builder)?;
         let handle = recorder.handle();
         set_global_recorder(recorder)
             .map_err(|error| anyhow::anyhow!("installing prometheus recorder: {error}"))?;

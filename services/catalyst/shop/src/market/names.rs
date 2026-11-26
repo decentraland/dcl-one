@@ -5,15 +5,9 @@
 //! read's purpose (a statement sees one snapshot at any isolation level, so a
 //! read runs on a pooled connection or on a session the caller holds):
 //!
-//! - [`Purpose::Authorize`]: [`chain_walk::is_ready_on`]: the whole history
-//!   walked, every walked block folded and published (`folded_block =
-//!   last_block`), within [`chain_walk::READY_WINDOW`], bound to chain 1, out
-//!   of quarantine; or, between walking and publishing a pass, the same with
-//!   no NAME registrar event walked past the published fold, which is then
-//!   still every NAME's state. While a pass has walked a registrar transfer
-//!   it has not folded, the fold still names the former holder, so no
-//!   holder is authorized.
-//! - [`Purpose::Display`]: [`owned_items::Rule::Fresh`]: complete and
+//! - [`Purpose::Authorize`] requires a fresh publication for the served
+//!   chain and no registrar event beyond its folded height.
+//! - [`Purpose::Display`]: [`super::owned_items::Rule::Fresh`]: complete and
 //!   published within [`chain_walk::READY_WINDOW`].
 //!
 //! Every answer carries the [`Observation`] of its read. A memo files it
@@ -33,17 +27,23 @@ use crate::chain_index::names::{
 };
 
 use super::chain_walk::{self, CURSOR_COLUMNS, ChainNet, Cursor, INDEXER_NFT};
+use super::nft_index::Catalogue;
+#[cfg(test)]
 use super::nft_index::DCL_REGISTRAR;
-use super::owned_items;
 
 /// The nft index as the DCL NAME authority.
 pub struct IndexNames {
     pool: PgPool,
+    catalogue: Catalogue,
 }
 
 impl IndexNames {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self::for_catalogue(pool, Catalogue::Mainnet)
+    }
+
+    pub fn for_catalogue(pool: PgPool, catalogue: Catalogue) -> Self {
+        Self { pool, catalogue }
     }
 
     async fn conn(&self) -> Result<sqlx::pool::PoolConnection<sqlx::Postgres>, NamesError> {
@@ -54,36 +54,17 @@ impl IndexNames {
 /// Whether `cursor` may be trusted for `purpose` at `now`. `names_walked`:
 /// whether the walk holds a NAME registrar event past the published fold
 /// (a pass between walking and publishing it).
-pub(crate) fn holds(
+fn holds_on(
+    catalogue: Catalogue,
     cursor: &Cursor,
     names_walked: bool,
     purpose: Purpose,
     now: DateTime<Utc>,
 ) -> bool {
-    match purpose {
-        Purpose::Authorize => {
-            let ethereum = chain_walk::mainnet_chain(ChainNet::Ethereum);
-            if chain_walk::is_ready_on(cursor, ethereum, now) {
-                return true;
-            }
-            // Each pass commits its walk before it folds and publishes, so
-            // every new block opens a window in which the published fold
-            // trails the walk. The fold is still every NAME's state there
-            // when the walk holds no registrar event past it; otherwise it
-            // may name a former holder, and nobody is authorized.
-            !names_walked
-                && cursor.folded_block.is_some_and(|f| f < cursor.last_block)
-                && chain_walk::is_ready_on(
-                    &Cursor {
-                        folded_block: Some(cursor.last_block),
-                        ..cursor.clone()
-                    },
-                    ethereum,
-                    now,
-                )
-        }
-        Purpose::Display => owned_items::Rule::Fresh.holds(cursor, now),
-    }
+    cursor.indexer == INDEXER_NFT
+        && cursor.network == ChainNet::Ethereum.db_name()
+        && chain_walk::fresh_fold_on(cursor, catalogue.chain_id(ChainNet::Ethereum), now).is_some()
+        && (purpose == Purpose::Display || !names_walked)
 }
 
 /// The observation of a cursor that holds: its published fold.
@@ -136,18 +117,20 @@ fn cursor_of(rows: &[PgRow]) -> Result<Option<(Cursor, bool)>, NamesError> {
 
 /// `cursor` checked for `purpose` at `now`: its observation, or the refusal.
 fn checked(
+    catalogue: Catalogue,
     cursor: Option<(Cursor, bool)>,
     purpose: Purpose,
     now: DateTime<Utc>,
 ) -> Result<Observation, NamesError> {
     cursor
-        .filter(|(c, walked)| holds(c, *walked, purpose, now))
+        .filter(|(c, walked)| holds_on(catalogue, c, *walked, purpose, now))
         .and_then(|(c, _)| observation(&c))
         .ok_or_else(|| not_established(purpose))
 }
 
 /// The Ethereum cursor read on `conn`, checked for `purpose`.
 pub(crate) async fn check(
+    catalogue: Catalogue,
     conn: &mut PgConnection,
     purpose: Purpose,
     now: DateTime<Utc>,
@@ -157,11 +140,11 @@ pub(crate) async fn check(
         cursor = cursor_select("$2")
     )))
     .bind(INDEXER_NFT)
-    .bind(DCL_REGISTRAR)
+    .bind(catalogue.registrar())
     .fetch_all(conn)
     .await
     .map_err(|e| NamesError::Failed(format!("ethereum nft cursor: {e}")))?;
-    checked(cursor_of(&rows)?, purpose, now)
+    checked(catalogue, cursor_of(&rows)?, purpose, now)
 }
 
 /// The NAMEs the owners in `$1` (lowercased) hold, `$2` the registrar, `$3`
@@ -189,6 +172,7 @@ fn owned_name(r: &PgRow) -> Option<OwnedName> {
 /// The NAMEs `owner` holds ([`OWNED_NAMES_SQL`]), read on `conn` in one
 /// statement with the cursor.
 async fn owned_on(
+    catalogue: Catalogue,
     conn: &mut PgConnection,
     owner: &str,
     purpose: Purpose,
@@ -203,13 +187,13 @@ async fn owned_on(
         cursor = cursor_select("$2")
     )))
     .bind(vec![owner.to_lowercase()])
-    .bind(DCL_REGISTRAR)
+    .bind(catalogue.registrar())
     .bind(now.timestamp_millis())
     .bind(INDEXER_NFT)
     .fetch_all(conn)
     .await
     .map_err(failed)?;
-    let observed = checked(cursor_of(&rows)?, purpose, now)?;
+    let observed = checked(catalogue, cursor_of(&rows)?, purpose, now)?;
     Ok(Answer {
         value: Arc::new(rows.iter().filter_map(owned_name).collect()),
         observation: Some(observed),
@@ -220,6 +204,7 @@ async fn owned_on(
 /// statement with the cursor (more than one holder is an ambiguity the
 /// caller refuses).
 async fn holders_on(
+    catalogue: Catalogue,
     conn: &mut PgConnection,
     labels: &[String],
     purpose: Purpose,
@@ -237,12 +222,12 @@ async fn holders_on(
         cursor = cursor_select("$2")
     )))
     .bind(labels)
-    .bind(DCL_REGISTRAR)
+    .bind(catalogue.registrar())
     .bind(INDEXER_NFT)
     .fetch_all(conn)
     .await
     .map_err(failed)?;
-    let observed = checked(cursor_of(&rows)?, purpose, now)?;
+    let observed = checked(catalogue, cursor_of(&rows)?, purpose, now)?;
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
     for r in &rows {
         if let (Some(label), Some(holder)) = (
@@ -260,6 +245,7 @@ async fn holders_on(
 /// profiles' and outfits' composite read): owner (lowercased) -> its NAMEs
 /// in the subgraph's order; an owner holding none is absent.
 pub(crate) async fn read_owned_names_of(
+    catalogue: Catalogue,
     conn: &mut PgConnection,
     owners: &[String],
 ) -> Result<HashMap<String, Vec<OwnedName>>, sqlx::Error> {
@@ -268,7 +254,7 @@ pub(crate) async fn read_owned_names_of(
         "SELECT x.* FROM ({OWNED_NAMES_SQL}) x ORDER BY x.owner, x.sort_key"
     )))
     .bind(&owners)
-    .bind(DCL_REGISTRAR)
+    .bind(catalogue.registrar())
     .bind(Utc::now().timestamp_millis())
     .fetch_all(conn)
     .await?;
@@ -295,12 +281,14 @@ fn sole_holder(label: &str, holders: Option<&Vec<String>>) -> Result<Option<Stri
 }
 
 async fn name_owner_on(
+    catalogue: Catalogue,
     conn: &mut PgConnection,
     label: &str,
     purpose: Purpose,
 ) -> Result<Answer<Option<String>>, NamesError> {
     let label = label.to_lowercase();
-    let (observed, holders) = holders_on(conn, std::slice::from_ref(&label), purpose).await?;
+    let (observed, holders) =
+        holders_on(catalogue, conn, std::slice::from_ref(&label), purpose).await?;
     Ok(Answer {
         value: sole_holder(&label, holders.get(&label))?,
         observation: Some(observed),
@@ -314,7 +302,7 @@ impl NameAuthority for IndexNames {
         owner: &str,
         purpose: Purpose,
     ) -> Result<Answer<Arc<Vec<OwnedName>>>, NamesError> {
-        owned_on(&mut *self.conn().await?, owner, purpose).await
+        owned_on(self.catalogue, &mut *self.conn().await?, owner, purpose).await
     }
 
     async fn owned_names_on(
@@ -323,7 +311,7 @@ impl NameAuthority for IndexNames {
         owner: &str,
         purpose: Purpose,
     ) -> Result<Answer<Arc<Vec<OwnedName>>>, NamesError> {
-        owned_on(conn, owner, purpose).await
+        owned_on(self.catalogue, conn, owner, purpose).await
     }
 
     async fn name_owner(
@@ -331,7 +319,7 @@ impl NameAuthority for IndexNames {
         label: &str,
         purpose: Purpose,
     ) -> Result<Answer<Option<String>>, NamesError> {
-        name_owner_on(&mut *self.conn().await?, label, purpose).await
+        name_owner_on(self.catalogue, &mut *self.conn().await?, label, purpose).await
     }
 
     async fn name_owner_on(
@@ -340,7 +328,7 @@ impl NameAuthority for IndexNames {
         label: &str,
         purpose: Purpose,
     ) -> Result<Answer<Option<String>>, NamesError> {
-        name_owner_on(conn, label, purpose).await
+        name_owner_on(self.catalogue, conn, label, purpose).await
     }
 
     /// An ambiguous label is left out of the map: unknown, never `None`.
@@ -352,7 +340,8 @@ impl NameAuthority for IndexNames {
         let mut labels: Vec<String> = labels.iter().map(|l| l.to_lowercase()).collect();
         labels.sort_unstable();
         labels.dedup();
-        let (observed, holders) = holders_on(&mut *self.conn().await?, &labels, purpose).await?;
+        let (observed, holders) =
+            holders_on(self.catalogue, &mut *self.conn().await?, &labels, purpose).await?;
         let mut out = HashMap::with_capacity(labels.len());
         for label in labels {
             match sole_holder(&label, holders.get(&label)) {
@@ -374,7 +363,14 @@ impl NameAuthority for IndexNames {
         purpose: Purpose,
     ) -> Result<bool, NamesError> {
         Ok(
-            match check(&mut *self.conn().await?, purpose, Utc::now()).await {
+            match check(
+                self.catalogue,
+                &mut *self.conn().await?,
+                purpose,
+                Utc::now(),
+            )
+            .await
+            {
                 Ok(now) => {
                     now.folded_block == observation.folded_block
                         && now.folded_at_us == observation.folded_at_us

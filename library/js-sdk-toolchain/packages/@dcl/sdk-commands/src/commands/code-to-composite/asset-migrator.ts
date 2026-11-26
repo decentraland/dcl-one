@@ -1,9 +1,9 @@
 import path from 'path'
-import { IEngine } from '@dcl/ecs/dist-cjs'
+import type { IEngine } from '@dcl/ecs/dist-cjs'
 import { validateBytes } from '@dcl/gltf-validator-ts'
 
-import { CliComponents } from '../../components'
-import { SceneProject } from '../../logic/project-validations'
+import type { CliComponents } from '../../components'
+import type { SceneProject } from '../../logic/project-validations'
 
 /**
  * Asset Migrator for code-to-composite command

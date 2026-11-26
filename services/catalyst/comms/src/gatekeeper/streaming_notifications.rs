@@ -66,8 +66,8 @@ pub(in crate::gatekeeper) enum Scope<'a> {
 /// managers; for a world its owner, the deployment/streaming grantees of its
 /// parcels, and the scene admins of the key's scene (of every active scene
 /// for a removal) whose granter still holds the world-wide authority
-/// (`streaming::world_authority`). With per-scene world keys (#1948) the
-/// admins of the key's scene are exactly those who hold it. A surface that
+/// (`streaming::KeyTarget::world_wide`), as for the key itself: the admins of
+/// the key's scene are exactly those who hold it. A surface that
 /// cannot be read is an error, never a smaller set.
 pub(in crate::gatekeeper) async fn recipients(
     state: &CommsState,
@@ -145,7 +145,7 @@ pub(in crate::gatekeeper) async fn recipients(
     if let Scope::KeyScene { grants, .. } | Scope::Removal { grants, .. } = scope {
         admins.extend(grants.iter().cloned());
     }
-    let authority = super::world_authority(state, &context.place_id, &world);
+    let authority = super::KeyTarget::world_wide(state, &context.place_id, &world);
     // Most grants share a granter (the owner): one decision for each.
     let mut decided: std::collections::HashMap<Address, bool> = Default::default();
     for (admin, granter) in admins {

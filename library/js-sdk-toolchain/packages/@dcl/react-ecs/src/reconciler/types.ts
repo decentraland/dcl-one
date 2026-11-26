@@ -1,5 +1,5 @@
 import type { Entity } from '@dcl/ecs'
-import { Children, Key, Listeners } from '../components'
+import type { Children, Key, Listeners } from '../components'
 import type { EntityComponents } from '../react-ecs'
 
 export type EngineComponents = Omit<EntityComponents, keyof Listeners>
