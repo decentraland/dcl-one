@@ -9814,7 +9814,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPreview.tsx",
-      "sha256": "9e434066424a3c1c13b4aeb99841773c0558316a7b6aeafd205af16c882bd49c"
+      "sha256": "4e381b8aa8e87b849d13f654618db3b1509c501dbe4dca14ab0ace04f6ff83cd"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
@@ -9899,6 +9899,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/places.ts",
       "sha256": "d280e0bf5fd6fec2d5f9440d84600aad455c7d63ca40557ea85062c66213096f"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/previewView.ts",
+      "sha256": "ccc20233803c20375533a742c75f92160ba4e08dfd17588e6b2465b65fba4baf"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
@@ -10093,6 +10097,10 @@
       "sha256": "4377aea1a5e3763e78ddcfe16cb43b6153effd85c19a91e572ca81a78837e995"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarPreviewShop.test.ts",
+      "sha256": "02dcfe540c8660c5df3ad5ea189a2e2b8723dc4957ea6a066f2b6da89e01e251"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
       "sha256": "5341f5caf1386ca26a83ff84943370e26b68df28dcd224b9f39da13567b4511a"
     },
@@ -10163,6 +10171,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
       "sha256": "5b6206d2f815a52a02054dd682e877e4853b27c2a61049d3f37980942a7b3d0e"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePreviewView.test.ts",
+      "sha256": "35f4f4e6ad44138e42d3ad7144f95c76504400f2ef3e42f43b7c9f1bcc022955"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
@@ -10346,7 +10358,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "5e0f28877f27e864ad1a0a9e5c056aeaf65e1afe47e66e8a845dbfa716f9975c"
+      "sha256": "21ef0328da9b00b6a64f62389866007b9a28dba21dfee75468039812d661ce2b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -10389,6 +10401,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/bootWatchdog.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarDraft.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarPreviewShop.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
@@ -10407,6 +10420,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePermissionsInForce.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgePreviewView.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizerTokens.test.ts",
@@ -10544,7 +10558,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "6244c3703725d0bdfb5be225b0b5894455fb4fafb4443b1f09c5a69a7f17febb"
+      "sha256": "140c39339d6aafaef6c5d450cf1d4280e9ac858719ae7d4483152db3678888c7"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -13908,7 +13922,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "11afe9fd7c150fa8f29c375d2d3194fce6683b0bb7c81d1e9b106c1ece672579"
+      "sha256": "c0f2b43c165ef04615003daf89b2e3bbd1babba5d1978c67eeefabcc998b4f7d"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
