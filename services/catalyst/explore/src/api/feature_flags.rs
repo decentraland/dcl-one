@@ -26,7 +26,8 @@ pub use crate::shared::feature_flags::{
 };
 
 pub const MIRROR: &str = "feature-flags";
-/// The builder's application, whose document the pass also stores.
+/// The builder's application, whose document the pass also stores for the
+/// builder to read its automated review's flag from.
 pub const BUILDER_APP: &str = "builder";
 const EMBEDDED_FLAGS: &str = include_str!("feature-flags.explorer.json");
 
