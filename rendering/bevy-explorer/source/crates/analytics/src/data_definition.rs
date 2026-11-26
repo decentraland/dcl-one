@@ -130,6 +130,7 @@ pub enum SegmentEvent {
     WalkedDistance(SegmentEventWalkedDistance),
     VerticalHeightReached(SegmentEventVerticalHeightReached),
     FeatureFlagsResolved(SegmentEventFeatureFlagsResolved),
+    ReactSituation(SegmentEventReactSituation),
     /// An event the host page reports through `/track`: its name, properties and time as sent.
     Page {
         name: String,
@@ -182,6 +183,7 @@ impl SegmentEvent {
             SegmentEvent::FeatureFlagsResolved(event) => {
                 ("Feature Flags Resolved", serde_json::to_value(event))
             }
+            SegmentEvent::ReactSituation(event) => ("react_situation", serde_json::to_value(event)),
             SegmentEvent::Page { .. } => return None,
         };
         Some((name.to_string(), properties.unwrap()))
@@ -515,6 +517,13 @@ pub struct SegmentEventWalkedDistance {
 #[derive(Serialize, Debug, PartialEq)]
 pub struct SegmentEventVerticalHeightReached {
     pub height: f32,
+}
+
+/// The local user reacted with an emoji over their avatar: `reaction_id` is the emoji's index
+/// on the wire. Named and shaped as the desktop client's.
+#[derive(Serialize)]
+pub struct SegmentEventReactSituation {
+    pub reaction_id: i32,
 }
 
 /// Photo mode opened, from the key or a button.

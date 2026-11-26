@@ -1,10 +1,12 @@
-// from: credits-server@d9c6a261:src/controllers/handlers/get-credits.ts, src/controllers/handlers/get-credit-reasons.ts, src/controllers/routes.ts (GET /credits, GET /credit-reasons)
+// from: credits-server@d9c6a261:src/controllers/handlers/get-credits.ts, src/controllers/handlers/get-credit-reasons.ts, src/controllers/handlers/get-ledger-stats.ts, src/controllers/handlers/get-purchase-audit.ts, src/controllers/routes.ts
 //! `GET /credits` and `GET /credit-reasons` on the credits host (and
 //! `/admin/credits`, `/admin/credit-reasons` under `/shop-api`): the ops
 //! dashboard's cross-wallet credits list and the reasons its grant filter
 //! offers, behind [`require_read_admin`]. The query parameters, defaults and
 //! row shape are the old server's; `reports.rs` says where each row comes
-//! from.
+//! from. `GET /admin/ledger-stats` and `GET /admin/purchase-audit` answer at
+//! the same local path on both mounts, behind the same check
+//! (`ledger_stats.rs`, `purchase_audit.rs`).
 
 use axum::Json;
 use axum::extract::{OriginalUri, Query, State};
@@ -14,7 +16,10 @@ use serde::{Deserialize, Serialize};
 use crate::credits::SharedState;
 use crate::credits::admin::require_read_admin;
 use crate::credits::errors::ApiError;
+use crate::credits::ledger_stats::LedgerStats;
+use crate::credits::purchase_audit::{AUDIT_SORT_KEYS, AuditSort, AuditTransaction};
 use crate::credits::reports::{CreditFilters, CreditListRow, CreditOrder, ON_DEMAND_GOAL};
+use crate::shared::identity::Address;
 
 /// Every `credit_source` the old server wrote; any other `source` is ignored, as it was.
 const KNOWN_SOURCES: &[&str] = &[
@@ -172,9 +177,8 @@ pub async fn list_credits_canonical(
     list_credits_at(&state, &original, &headers, &q, "/admin/credits").await
 }
 
-/// `route` is the mount's own local path, so a proxy's `x-original-path`
-/// only counts when it ends with this route, not with another one that
-/// happens to share its last segment.
+/// `route` is the mount's own local path: a proxy's `x-original-path` counts
+/// only when it is exactly this route ([`require_read_admin`]).
 async fn list_credits_at(
     state: &SharedState,
     original: &OriginalUri,
@@ -250,6 +254,137 @@ async fn credit_reasons_at(
     Ok(Json(Paginated { data, total }))
 }
 
+/// `GET /admin/ledger-stats`, at the same local path on the credits host and
+/// under `/shop-api`.
+pub async fn ledger_stats(
+    State(state): State<SharedState>,
+    original: OriginalUri,
+    headers: HeaderMap,
+) -> Result<Json<LedgerStats>, ApiError> {
+    require_read_admin(&state, &headers, "/admin/ledger-stats", &original).await?;
+    Ok(Json(state.credits.report_ledger_stats().await?))
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditQuery {
+    limit: Option<String>,
+    offset: Option<String>,
+    address: Option<String>,
+    sort_by: Option<String>,
+    sort_direction: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditPage {
+    limit: i64,
+    offset: i64,
+    /// Rows in this page.
+    count: usize,
+    /// Transactions the filter matches.
+    total: i64,
+    sort_by: &'static str,
+    sort_direction: &'static str,
+    /// Over the returned page only.
+    reserved_usd_cents: i64,
+    consumed_usd_cents: i64,
+    retained_usd_cents: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuditOut {
+    transactions: Vec<AuditTransaction>,
+    page: AuditPage,
+}
+
+/// What the audit was asked for, validated as the old server did.
+#[derive(Debug, PartialEq)]
+pub(crate) struct AuditRequest {
+    buyer: Option<String>,
+    sort: AuditSort,
+    descending: bool,
+    limit: i64,
+    offset: i64,
+}
+
+/// `limit` defaults to 50 and is capped at 200, `offset` at 10,000; a value
+/// that is not a positive number falls back. A malformed address, sort key or
+/// direction is a 400, never quietly widened or re-sorted.
+pub(crate) fn audit_request(q: &AuditQuery) -> Result<AuditRequest, ApiError> {
+    let positive = |raw: Option<&str>| {
+        raw.and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v >= 1.0)
+            .map(|v| v.floor() as i64)
+    };
+    let limit = positive(q.limit.as_deref()).map_or(50, |l| l.min(200));
+    let offset = positive(q.offset.as_deref()).map_or(0, |o| o.min(10_000));
+    let buyer = match q.address.as_deref().filter(|a| !a.is_empty()) {
+        None => None,
+        Some(raw) => Some(
+            Address::parse(raw)
+                .map_err(|_| ApiError::bad_request("Invalid address"))?
+                .as_str()
+                .to_string(),
+        ),
+    };
+    let sort = match q.sort_by.as_deref() {
+        None => AuditSort::SettledAt,
+        Some(raw) => AuditSort::parse(raw).ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "Invalid sortBy. Valid: {}",
+                AUDIT_SORT_KEYS.join(", ")
+            ))
+        })?,
+    };
+    let descending = match q.sort_direction.as_deref() {
+        None | Some("desc") => true,
+        Some("asc") => false,
+        Some(_) => {
+            return Err(ApiError::bad_request(
+                "Invalid sortDirection. Valid: asc, desc",
+            ));
+        }
+    };
+    Ok(AuditRequest {
+        buyer,
+        sort,
+        descending,
+        limit,
+        offset,
+    })
+}
+
+/// `GET /admin/purchase-audit`, at the same local path on both mounts.
+pub async fn purchase_audit(
+    State(state): State<SharedState>,
+    original: OriginalUri,
+    headers: HeaderMap,
+    Query(q): Query<AuditQuery>,
+) -> Result<Json<AuditOut>, ApiError> {
+    require_read_admin(&state, &headers, "/admin/purchase-audit", &original).await?;
+    let r = audit_request(&q)?;
+    let (transactions, total) = state
+        .credits
+        .report_purchase_audit(r.buyer.as_deref(), r.sort, r.descending, r.limit, r.offset)
+        .await?;
+    let sum = |f: fn(&AuditTransaction) -> i64| {
+        transactions.iter().map(f).fold(0i64, i64::saturating_add)
+    };
+    let page = AuditPage {
+        limit: r.limit,
+        offset: r.offset,
+        count: transactions.len(),
+        total,
+        sort_by: r.sort.key(),
+        sort_direction: if r.descending { "desc" } else { "asc" },
+        reserved_usd_cents: sum(|t| t.reserved_usd_cents),
+        consumed_usd_cents: sum(|t| t.consumed_usd_cents),
+        retained_usd_cents: sum(|t| t.retained_usd_cents),
+    };
+    Ok(Json(AuditOut { transactions, page }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,6 +408,70 @@ mod tests {
             }
         }
         q
+    }
+
+    fn audit(pairs: &[(&str, &str)]) -> Result<AuditRequest, String> {
+        let mut q = AuditQuery::default();
+        for (k, v) in pairs {
+            let v = Some(v.to_string());
+            match *k {
+                "limit" => q.limit = v,
+                "offset" => q.offset = v,
+                "address" => q.address = v,
+                "sortBy" => q.sort_by = v,
+                "sortDirection" => q.sort_direction = v,
+                _ => panic!("{k}"),
+            }
+        }
+        audit_request(&q).map_err(|e| e.public_message())
+    }
+
+    #[test]
+    fn the_audit_request_validates_like_the_old_server() {
+        let d = audit(&[]).unwrap();
+        assert_eq!(
+            (d.limit, d.offset, d.sort, d.descending, d.buyer),
+            (50, 0, AuditSort::SettledAt, true, None)
+        );
+        let r = audit(&[
+            ("limit", "12.9"),
+            ("offset", "40000"),
+            ("sortBy", "items"),
+            ("sortDirection", "asc"),
+        ])
+        .unwrap();
+        assert_eq!(
+            (r.limit, r.offset, r.sort, r.descending),
+            (12, 10_000, AuditSort::Items, false)
+        );
+        assert_eq!(
+            audit(&[("limit", "0"), ("offset", "-1")]).unwrap().limit,
+            50
+        );
+        assert_eq!(audit(&[("limit", "1e9")]).unwrap().limit, 200);
+        let a = audit(&[("address", "0xAbCdEf0000000000000000000000000000000001")]).unwrap();
+        assert_eq!(
+            a.buyer.as_deref(),
+            Some("0xabcdef0000000000000000000000000000000001")
+        );
+        assert_eq!(
+            audit(&[("address", "")]).unwrap().buyer,
+            None,
+            "an empty address is no filter"
+        );
+        assert_eq!(
+            audit(&[("address", "nope")]).unwrap_err(),
+            "Invalid address"
+        );
+        assert!(
+            audit(&[("sortBy", "")])
+                .unwrap_err()
+                .starts_with("Invalid sortBy. Valid: settledAt,")
+        );
+        assert_eq!(
+            audit(&[("sortDirection", "DESC")]).unwrap_err(),
+            "Invalid sortDirection. Valid: asc, desc"
+        );
     }
 
     #[test]

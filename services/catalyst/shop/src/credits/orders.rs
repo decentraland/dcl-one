@@ -49,6 +49,9 @@ pub struct SessionState {
     pub payment_status: String,
     pub url: Option<String>,
     pub payment_intent: Option<String>,
+    /// `customer_details.email`: the address the buyer typed into the
+    /// hosted page, which the purchase receipt goes to.
+    pub buyer_email: Option<String>,
 }
 
 impl SessionState {
@@ -208,6 +211,7 @@ mod tests {
             payment_status: "unpaid".into(),
             url: Some("https://checkout.stripe.test/cs".into()),
             payment_intent: None,
+            buyer_email: None,
         };
         assert!(open.is_payable() && !open.is_paid());
         let complete = SessionState {

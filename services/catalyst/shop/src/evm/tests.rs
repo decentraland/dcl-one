@@ -2047,6 +2047,65 @@ async fn a_target_outside_the_allowlist_is_refused_only_after_a_complete_mirror_
     assert_eq!((status, text.as_str()), (200, r#"{"ok":true}"#));
 }
 
+/// On a network the collections index owns, a relay target's membership is
+/// the index's projection under an authorizing publication, read in the
+/// statement that reads the verdict; the mirror's recorded pass, which a
+/// takeover leaves behind, never stands in for it.
+#[tokio::test]
+async fn on_an_owned_network_membership_follows_the_index() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    use crate::market::catalogue::owning;
+    let app = oz_app(&pool).await;
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let calldata = signed_split_calldata(&key, FS);
+    let unknown = unique_address();
+    seed_collection(&pool, COLLECTION).await;
+    let get = |address: String| {
+        let app = app.clone();
+        async move {
+            let (status, text) =
+                send(&app, "GET", &format!("/v1/contracts/{address}"), None, &[]).await;
+            (status, text)
+        }
+    };
+
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    assert_eq!(get(COLLECTION.into()).await, (200, r#"{"ok":true}"#.into()));
+    assert_eq!(get(unknown.clone()).await.0, 404);
+
+    // A collections event walked past the publication (a revoked approval,
+    // a new collection): no target is enrolled or refused on it.
+    owning::walk_past(&pool, "matic", 101, COLLECTION).await;
+    for address in [COLLECTION.to_string(), unknown.clone()] {
+        let (status, text) = get(address).await;
+        assert_eq!(status, 503, "{text}");
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["source"], "collections-index", "{text}");
+    }
+    let (status, body) = post_transaction(&app, &user, &unknown, &calldata).await;
+    assert_eq!(status, 503, "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("collections index"),
+        "{body}"
+    );
+    assert_eq!(row_count(&pool, &user).await, 0);
+
+    // Published past the window, or rewound: unavailable, though the
+    // mirror's pass is recorded.
+    owning::own(&pool, "matic", 137, 101, 31 * 60).await;
+    assert_eq!(get(COLLECTION.into()).await.0, 503);
+    owning::own(&pool, "matic", 137, 101, 60).await;
+    assert_eq!(get(COLLECTION.into()).await.0, 200);
+    owning::rewind(&pool, "matic").await;
+    assert_eq!(get(COLLECTION.into()).await.0, 503);
+}
+
 #[derive(Clone, Default)]
 struct Captured {
     body: Vec<u8>,
