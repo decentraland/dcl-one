@@ -56,11 +56,11 @@ pub struct PrimaryUser {
 impl Default for PrimaryUser {
     fn default() -> Self {
         Self {
-            walk_speed: 2.5,
-            jog_speed: 8.18,
-            run_speed: 11.0,
-            jump_height: 1.9,
-            run_jump_height: 2.95,
+            walk_speed: 1.5,
+            jog_speed: 8.0,
+            run_speed: 10.0,
+            jump_height: 1.0,
+            run_jump_height: 1.5,
             block_all: false,
             block_run: false,
             block_walk: false,
@@ -69,6 +69,11 @@ impl Default for PrimaryUser {
         }
     }
 }
+
+/// A player's wallet address: on every peer from its spawn, and on the local player while a
+/// profile is set (not between login and the profile being set, nor in server mode).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlayerAddress(pub Address);
 
 /// The walk, jog and run speeds (m/s) the primary user's locomotion currently allows, after area
 /// modifiers and the active scene locomotion settings. Written by the movement plugin; read to
@@ -391,6 +396,9 @@ pub struct SceneDrivenAnimationRequest {
     // dedups per-avatar so leaving identical entries across consecutive updates doesn't
     // re-fire; the scene clears the list on frames it doesn't want sound.
     pub sounds: Vec<String>,
+    // The scene is a startup portable, as the movement scene is, so the clip's file name says the
+    // avatar's motion (`ClipMotion::of_clip`). False for remote requests.
+    pub movement_scene: bool,
 }
 
 // Current scene-driven animation playback state, written by `play_current_emote` in
@@ -705,6 +713,9 @@ pub struct AppConfig {
     pub sysinfo_visible: bool,
     pub scene_log_to_console: bool,
     pub max_avatars: usize,
+    /// Shows every nearby avatar, whatever `max_avatars` says; that value is kept for when this
+    /// goes off again.
+    pub max_avatars_unlimited: bool,
     pub constrain_scene_ui: bool,
     /// "Allow overriding scene controls": the player may change what the scene they stand in
     /// controls, today the time of day.
@@ -745,7 +756,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 5;
+pub const SETTINGS_GENERATION: u32 = 6;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -784,6 +795,7 @@ impl Default for AppConfig {
             sysinfo_visible: false,
             scene_log_to_console: false,
             max_avatars: 20,
+            max_avatars_unlimited: false,
             constrain_scene_ui: false,
             allow_scene_control_override: false,
             player_settings: Default::default(),
@@ -898,6 +910,8 @@ impl AppConfig {
     /// so every saved config lands on Medium.
     /// gen 5: Render Resolution moves in 10% steps; move a value saved between steps to its
     /// nearest step.
+    /// gen 6: new defaults for the player speeds and jump heights, which now measure a jump
+    /// released at once. A value still on its old default moves to the new default.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -915,6 +929,20 @@ impl AppConfig {
         if self.settings_generation < 5 {
             self.graphics
                 .set_render_scale_steps(self.graphics.render_scale_steps());
+        }
+        if self.settings_generation < 6 {
+            let (saved, new) = (&mut self.player_settings, &default.player_settings);
+            for (value, old, new) in [
+                (&mut saved.walk_speed, 2.5, new.walk_speed),
+                (&mut saved.jog_speed, 8.18, new.jog_speed),
+                (&mut saved.run_speed, 11.0, new.run_speed),
+                (&mut saved.jump_height, 1.9, new.jump_height),
+                (&mut saved.run_jump_height, 2.95, new.run_jump_height),
+            ] {
+                if *value == old {
+                    *value = new;
+                }
+            }
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -1249,7 +1277,8 @@ pub struct SessionGraphics {
     pub fps_target: Option<usize>,
     pub parcel_grass: Option<ParcelGrassSetting>,
     pub render_scale: Option<f32>,
-    /// Set by the preview's `/avatar_demo cap`, which takes values past the setting's range.
+    /// Set by the preview's `/avatar_demo cap`, which takes values past the setting's range and
+    /// wins over the player's setting, Unlimited Avatars included.
     pub max_avatars: Option<usize>,
 }
 
@@ -1263,8 +1292,17 @@ impl SessionGraphics {
         self.fps_target.unwrap_or(config.graphics.fps_target)
     }
 
+    /// The value of "no cap" in a Max Avatars count.
+    pub const NO_AVATAR_CAP: usize = usize::MAX;
+
+    /// The session's cap if it set one, else no cap when the player turned Max Avatars off, else
+    /// the player's count.
     pub fn max_avatars(&self, config: &AppConfig) -> usize {
-        self.max_avatars.unwrap_or(config.max_avatars)
+        self.max_avatars.unwrap_or(if config.max_avatars_unlimited {
+            Self::NO_AVATAR_CAP
+        } else {
+            config.max_avatars
+        })
     }
 
     /// The frame rate the explorer paces to: the session's target, else the player's, and with
@@ -2021,6 +2059,7 @@ pub struct AvatarDynamicState {
     /// smart wearable or a scene-spawned portable drives, a suppression holds or a force pushes the
     /// player.
     pub own_displacement: Vec3,
+    /// Height of the feet above the ground the avatar can stand on.
     pub ground_height: f32,
     pub jump_time: f64,
     pub move_kind: MoveKind,
@@ -3043,6 +3082,51 @@ mod tests {
     }
 
     #[test]
+    fn reset_outdated_settings_moves_movement_still_on_the_old_defaults() {
+        // written by the old build and read back through JSON, as at startup
+        let saved = |settings_generation, walk_speed| {
+            let old = AppConfig {
+                settings_generation,
+                player_settings: PrimaryUser {
+                    walk_speed,
+                    jog_speed: 8.18,
+                    run_speed: 11.0,
+                    jump_height: 1.9,
+                    run_jump_height: 2.95,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut config = AppConfig::from_json(&serde_json::to_vec(&old).unwrap());
+            config.reset_outdated_settings();
+            config
+        };
+        let moved = |user: &PrimaryUser| {
+            (
+                user.jog_speed,
+                user.run_speed,
+                user.jump_height,
+                user.run_jump_height,
+            )
+        };
+
+        let config = saved(5, 2.5);
+        assert_eq!(config.player_settings.walk_speed, 1.5);
+        assert_eq!(moved(&config.player_settings), (8.0, 10.0, 1.0, 1.5));
+        assert_eq!(config.settings_generation, SETTINGS_GENERATION);
+
+        // a value the player set stays
+        let config = saved(5, 3.2);
+        assert_eq!(config.player_settings.walk_speed, 3.2);
+        assert_eq!(moved(&config.player_settings), (8.0, 10.0, 1.0, 1.5));
+
+        // a config already on the current generation chose these values
+        let config = saved(SETTINGS_GENERATION, 2.5);
+        assert_eq!(config.player_settings.walk_speed, 2.5);
+        assert_eq!(moved(&config.player_settings), (8.18, 11.0, 1.9, 2.95));
+    }
+
+    #[test]
     fn default_graphics_are_the_medium_preset() {
         let g = GraphicsSettings::default();
         assert_eq!((g.fps_target, g.render_scale), (60, 1.0));
@@ -3108,6 +3192,18 @@ mod tests {
         config.graphics.vsync = false;
         config.graphics.fps_target = UNCAPPED_FPS;
         assert_eq!(shown(&config, Some(61)), UNCAPPED_FPS);
+    }
+
+    #[test]
+    fn unlimited_avatars_lifts_the_cap_but_keeps_the_count_and_yields_to_the_session() {
+        let mut config = AppConfig::default();
+        let mut session = SessionGraphics::default();
+        assert_eq!(session.max_avatars(&config), 20);
+        config.max_avatars_unlimited = true;
+        assert_eq!(session.max_avatars(&config), SessionGraphics::NO_AVATAR_CAP);
+        assert_eq!(config.max_avatars, 20);
+        session.max_avatars = Some(5);
+        assert_eq!(session.max_avatars(&config), 5);
     }
 
     #[test]

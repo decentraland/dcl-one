@@ -12,13 +12,12 @@ mod traffic;
 #[cfg(test)]
 mod tests;
 
-use alloy_core::primitives::Address;
 use ban_block::{BanBlock, PlatformBanStatus};
 use bevy::{platform::collections::HashMap, prelude::*};
 use common::{
     rpc::RpcStreamSender,
     sets::SceneSets,
-    structs::{PlayerReacted, PrimaryUser},
+    structs::{PlayerAddress, PlayerReacted, PrimaryUser},
 };
 use comms::{
     broadcast_to,
@@ -79,14 +78,6 @@ impl Plugin for ReactionPlugin {
 struct ReactionPlayed {
     player: Entity,
     emoji: &'static str,
-}
-
-/// The address a player reacts under. A peer is who comms heard them as; the one other player
-/// who reacts is the local user.
-fn address_of(peer: Option<&ForeignPlayer>, wallet: &Wallet) -> Address {
-    peer.map(|peer| peer.address)
-        .or_else(|| wallet.address())
-        .unwrap_or_default()
 }
 
 /// What has happened to reactions this session, for the debug panel.
@@ -156,11 +147,10 @@ fn receive_reactions(
     mut commands: Commands,
     mut events: EventReader<ReactionEvent>,
     ban_block: BanBlock,
-    wallet: Res<Wallet>,
     mut senders: Query<(
         &mut ReactionGuard,
         Option<&mut ReactionQueue>,
-        Option<&ForeignPlayer>,
+        Option<&PlayerAddress>,
         Has<BlockedOrBanned>,
     )>,
     time: Res<Time<Real>>,
@@ -173,10 +163,10 @@ fn receive_reactions(
     for event in events.read() {
         stats.received += 1;
         // a sender who has already gone has no avatar to react
-        let Ok((mut guard, queue, peer, blocked)) = senders.get_mut(event.sender) else {
+        let Ok((mut guard, queue, address, blocked)) = senders.get_mut(event.sender) else {
             continue;
         };
-        let from = address_of(peer, &wallet);
+        let from = address.map(|address| address.0).unwrap_or_default();
         // the marker follows a block or ban by a frame or two, and a player who has just
         // appeared has none yet: their first message is asked about by address
         if blocked
@@ -213,19 +203,18 @@ fn receive_reactions(
 fn play_queued_reactions(
     mut commands: Commands,
     time: Res<Time>,
-    wallet: Res<Wallet>,
     ban_block: BanBlock,
     mut queues: Query<(
         Entity,
         &mut ReactionQueue,
-        Option<&ForeignPlayer>,
+        Option<&PlayerAddress>,
         Has<BlockedOrBanned>,
     )>,
     mut played: EventWriter<ReactionPlayed>,
     mut stats: ResMut<ReactionStats>,
 ) {
-    for (player, mut queue, peer, blocked) in &mut queues {
-        let from = address_of(peer, &wallet);
+    for (player, mut queue, address, blocked) in &mut queues {
+        let from = address.map(|address| address.0).unwrap_or_default();
         // blocked or banned since they were queued: asked by address as at intake, as the
         // marker follows by a frame or two
         if blocked
@@ -279,8 +268,7 @@ fn pipe_reactions_to_scene(
     mut played: EventReader<ReactionPlayed>,
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ReactionData>>>,
-    players: Query<Option<&ForeignPlayer>>,
-    wallet: Res<Wallet>,
+    players: Query<Option<&PlayerAddress>>,
     mut stats: ResMut<ReactionStats>,
 ) {
     senders.extend(requests.read().filter_map(|ev| {
@@ -299,11 +287,14 @@ fn pipe_reactions_to_scene(
     }
     for reaction in played.read() {
         // a player who went this frame is not streamed
-        let Ok(peer) = players.get(reaction.player) else {
+        let Ok(address) = players.get(reaction.player) else {
             continue;
         };
         let data = ReactionData {
-            from: format!("{:#x}", address_of(peer, &wallet)),
+            from: format!(
+                "{:#x}",
+                address.map(|address| address.0).unwrap_or_default()
+            ),
             emoji: reaction.emoji.to_owned(),
         };
         for sender in senders.iter() {

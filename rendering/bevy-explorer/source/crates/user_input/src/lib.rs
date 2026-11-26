@@ -167,7 +167,7 @@ pub(crate) fn speed_cmd(
         user.jog_speed = command.jog;
         input.reply_ok(format!(
             "run speed: {}, jog speed: {}, walk speed: {}",
-            command.run, command.walk, command.jog
+            command.run, command.jog, command.walk
         ));
     }
 }

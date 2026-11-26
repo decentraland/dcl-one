@@ -1042,15 +1042,13 @@ mod tests {
             other => panic!("another chain: {other:?}"),
         }
 
-        // Handed back with the mirror's pass cleared: the mirror's rule again.
-        sqlx::query("UPDATE shop.collection_projection SET owned_at = NULL")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM shop.mirror_state WHERE mirror = 'items'")
-            .execute(&pool)
-            .await
-            .unwrap();
+        // Handed back (the hand-back clears the network's rows and the
+        // mirrors' passes with the ownership): the mirror's rule again.
+        assert!(
+            super::super::collections_projection::hand_back(&pool, ChainNet::Matic)
+                .await
+                .unwrap()
+        );
         match checked(pool.clone()).await {
             Err(ReadError::NotReady(Source::ItemsMirror, _)) => {}
             other => panic!("handed back: {other:?}"),

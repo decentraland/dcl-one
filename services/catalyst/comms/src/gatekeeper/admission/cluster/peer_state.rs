@@ -2,8 +2,8 @@
 //! the next from_island_id hint. Reconnect authority comes from Pulse lookup.
 //! TTL and capacity reclaim departed wallets without a disconnect feed.
 
+use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
 use std::time::Duration;
 
 use tokio::time::Instant;
@@ -59,7 +59,7 @@ impl<V: Clone> BoundedTtlMap<V> {
     }
 
     fn insert(&self, key: &str, value: V) {
-        let mut entries = self.inner.lock().unwrap();
+        let mut entries = self.inner.lock();
         let stamp = entries.take_stamp();
         entries
             .values
@@ -69,7 +69,7 @@ impl<V: Clone> BoundedTtlMap<V> {
     }
 
     fn get_fresh(&self, key: &str) -> Option<V> {
-        let mut entries = self.inner.lock().unwrap();
+        let mut entries = self.inner.lock();
         let fresh = match entries.values.get(key) {
             Some((at, _, value)) => (at.elapsed() < self.ttl).then(|| value.clone()),
             None => return None,
@@ -93,7 +93,7 @@ impl<V: Clone> BoundedTtlMap<V> {
     }
 
     fn len(&self) -> usize {
-        let mut entries = self.inner.lock().unwrap();
+        let mut entries = self.inner.lock();
         entries
             .values
             .retain(|_, (at, _, _)| at.elapsed() < self.ttl);
@@ -103,7 +103,7 @@ impl<V: Clone> BoundedTtlMap<V> {
 
     #[cfg(test)]
     fn recency_len(&self) -> usize {
-        self.inner.lock().unwrap().recency.len()
+        self.inner.lock().recency.len()
     }
 
     /// Sheds expired entries from the least-recently-used end, then whatever is still over the cap.
@@ -318,7 +318,7 @@ mod tests {
         map.insert("old", 1);
         map.insert("fresh", 2);
         assert_eq!(map.get_fresh("old"), Some(1));
-        map.inner.lock().unwrap().values.get_mut("old").unwrap().0 =
+        map.inner.lock().values.get_mut("old").unwrap().0 =
             Instant::now() - Duration::from_secs(31);
         assert_eq!(map.len(), 1);
         assert_eq!(map.get_fresh("fresh"), Some(2));
