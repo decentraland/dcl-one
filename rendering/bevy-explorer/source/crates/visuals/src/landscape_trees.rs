@@ -490,10 +490,14 @@ fn update_trees(
         }
     }
 
-    // parcels whose values reach a tree's parcel through bilinear sampling
+    // only the heights move a tree: the layout, the step count and the parcels whose values
+    // reach a tree's parcel through bilinear sampling
+    if !changes.relayout && !changes.max_steps && changes.targets.is_none() {
+        return;
+    }
     let resnap = |parcel: IVec2| {
         changes.relayout
-            || changes.params
+            || changes.max_steps
             || changes.targets.is_some_and(|(min, max)| {
                 (min - 1).cmple(parcel).all() && (max + 1).cmpge(parcel).all()
             })

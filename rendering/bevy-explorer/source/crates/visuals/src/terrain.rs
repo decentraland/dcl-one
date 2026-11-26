@@ -201,6 +201,8 @@ pub struct SurfaceChanges {
     pub relayout: bool,
     /// Shader parameters (bounds, step count) changed.
     pub params: bool,
+    /// The step count changed, which scales every height.
+    pub max_steps: bool,
     /// Only the player's position within its parcel changed, which the shader's detail morph uses.
     pub player: bool,
     /// Parcels whose step value changed.
@@ -396,6 +398,7 @@ impl TerrainSurface {
         if self.max_steps != max_steps {
             self.max_steps = max_steps;
             self.changes.params = true;
+            self.changes.max_steps = true;
         }
         self.epoch = Some(targets.epoch());
         self.enabled = enabled;
