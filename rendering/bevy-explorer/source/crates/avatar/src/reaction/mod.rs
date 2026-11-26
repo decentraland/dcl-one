@@ -251,7 +251,8 @@ struct EmojiGlyphs {
 /// Why an emoji has no mesh.
 #[derive(Debug, PartialEq, Eq)]
 enum NoMesh {
-    /// Its glyphs are still being rastered: ask again next frame.
+    /// Its glyphs are still being rastered, or one found no room in the atlas and waits for
+    /// the rebuild that makes some: ask again next frame.
     Pending,
     /// Its glyphs are in the atlas and none is in colour: it is never drawn.
     Colourless,
@@ -321,6 +322,15 @@ impl EmojiShaper<'_> {
             .shaper
             .glyphs(&ATLAS, &glyphs.text, budget)
             .map_err(|_| NoMesh::Pending)?;
+        // a glyph the full atlas dropped is placed by its next rebuild: until then the emoji
+        // is not drawn, in part or at all, and is not taken for one with no colour glyph
+        if self
+            .shaper
+            .atlas(&ATLAS)
+            .has_dropped(glyphs.text.laid_out())
+        {
+            return Err(NoMesh::Pending);
+        }
         // the glyphs are all in the atlas: with none in colour, there never will be one
         let Some(mesh) = emoji_mesh(&colour) else {
             glyphs.colourless = true;
@@ -642,8 +652,9 @@ fn pipe_reactions_to_scene(
 }
 
 /// Give each particle the mesh of its emoji for the glyph atlas as it is now, and the material
-/// the atlas' page. A particle whose glyphs are still being rastered waits, undrawn; one whose
-/// glyphs came with none in colour has nothing to draw, and goes.
+/// the atlas' page. A particle whose glyphs are still being rastered, or found no room in the
+/// atlas, waits, undrawn; one whose glyphs came with none in colour has nothing to draw, and
+/// goes.
 fn build_reaction_glyphs(
     mut commands: Commands,
     mut shaper: EmojiShaper,

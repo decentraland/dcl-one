@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, LazyLock},
+    sync::{Arc, LazyLock, Mutex},
     time::Duration,
 };
 
@@ -7,9 +7,11 @@ use bevy::{
     text::{cosmic_text::fontdb::Source, CosmicFontSystem, TextPipeline},
     time::TimeUpdateStrategy,
 };
+use bevy_console::ConsoleCommandEntered;
 use common::{
     rpc::RpcStreamReceiver,
     structs::{PlayerModifiers, PrimaryPlayerRes},
+    sync::MutexExt,
 };
 use scene_runner::update_world::text_shape::{GlyphAtlases, Page};
 
@@ -515,8 +517,12 @@ impl Harness {
         }
     }
 
+    /// A particle that is gone is not drawn.
     fn drawn(&self, particle: Entity) -> bool {
-        self.app.world().get::<Visibility>(particle) != Some(&Visibility::Hidden)
+        self.app
+            .world()
+            .get::<Visibility>(particle)
+            .is_some_and(|visibility| *visibility != Visibility::Hidden)
     }
 
     /// Run frames with time standing still until `particle` is drawn: its emoji's glyph is
@@ -533,6 +539,56 @@ impl Harness {
             std::thread::yield_now();
             self.app.update();
         }
+    }
+
+    /// Give a console command, and take its reply.
+    fn console(&mut self, command: &str) -> String {
+        let reply = Arc::new(Mutex::new(None));
+        let output = reply.clone();
+        self.app.world_mut().send_event(ConsoleCommandEntered {
+            command_name: command.into(),
+            args: vec![],
+            responder: Some(Arc::new(move |result| {
+                *output.lock_ignore_poison() = Some(result)
+            })),
+        });
+        self.app.update();
+        let reply = reply.lock_ignore_poison().take();
+        reply.expect("the command replies").expect("and succeeds")
+    }
+
+    /// The colour page size `/reaction_state` reports.
+    fn reported_atlas(&mut self) -> u64 {
+        let state: serde_json::Value =
+            serde_json::from_str(&self.console("/reaction_state")).unwrap();
+        state["atlas"].as_u64().expect("a size in pixels")
+    }
+
+    /// The generation of the reactions' glyph atlas, if it has been made.
+    fn atlas_made(&self) -> Option<u32> {
+        let atlases = self.app.world().resource::<GlyphAtlases>();
+        atlases.get(&ATLAS.key).map(|atlas| atlas.generation())
+    }
+
+    /// An emoji with a glyph the atlas had no room for.
+    fn emoji_with_no_room(&self) -> Option<&'static str> {
+        let world = self.app.world();
+        let atlas = world.resource::<GlyphAtlases>().get(&ATLAS.key)?;
+        world
+            .resource::<ReactionGlyphs>()
+            .emoji
+            .iter()
+            .find(|(_, glyphs)| atlas.has_dropped(glyphs.text.laid_out()))
+            .map(|(emoji, _)| *emoji)
+    }
+
+    fn particle_of(&mut self, emoji: &str) -> Option<Entity> {
+        self.app
+            .world_mut()
+            .query::<(Entity, &ReactionParticle)>()
+            .iter(self.app.world())
+            .find(|(_, particle)| particle.emoji == emoji)
+            .map(|(entity, _)| entity)
     }
 
     /// The reactions' glyph atlas: its generation, and its colour page.
@@ -770,6 +826,105 @@ fn an_emoji_with_no_glyph_in_colour_loses_its_particle_and_gets_no_other() {
     assert!(harness.particles().is_empty());
     assert_eq!(harness.stats().dropped.no_glyphs, 2);
     assert_eq!(harness.streamed().len(), 2);
+}
+
+#[test]
+fn an_emoji_the_full_atlas_has_no_room_for_waits_and_is_drawn_once_there_is() {
+    let mut harness = Harness::with_avatars();
+    harness
+        .app
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
+    // more emoji alive at once than the atlas' colour page holds at its largest, each player
+    // with as many as one may have
+    let mut tiles = 0..;
+    for index in 0..MAX_PARTICLES / MAX_PARTICLES_PER_PLAYER {
+        let peer = harness.peer_at(Vec3::new(index as f32 * 0.1, 0.0, -3.0));
+        for emoji in tiles
+            .by_ref()
+            .take(MAX_PARTICLES_PER_PLAYER)
+            .filter_map(atlas_index_to_emoji)
+        {
+            harness.app.world_mut().send_event(ReactionPlayed {
+                player: peer,
+                emoji,
+            });
+        }
+    }
+    harness.app.update();
+
+    // each is rastered and placed until one finds no room, with every glyph placed in use
+    let deadline = std::time::Instant::now() + Duration::from_secs(300);
+    let emoji = loop {
+        if let Some(emoji) = harness.emoji_with_no_room() {
+            break emoji;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the atlas never filled"
+        );
+        std::thread::yield_now();
+        harness.app.update();
+    };
+    harness.app.update();
+    // its particle waits undrawn, and the emoji is not taken for one with no colour glyph
+    let waiting = harness.particle_of(emoji).expect("its particle is kept");
+    assert!(!harness.drawn(waiting));
+    let glyphs = harness.app.world().resource::<ReactionGlyphs>();
+    assert!(!glyphs.emoji[emoji].colourless);
+
+    // the others go, and the rebuild frees their glyphs and places its own
+    for particle in harness.particles() {
+        if particle != waiting {
+            harness.app.world_mut().despawn(particle);
+        }
+    }
+    let (generation, _) = harness.atlas();
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<GlyphAtlases>()
+        .get_mut(&ATLAS.key)
+        .unwrap()
+        .request_rebuild();
+    harness.app.update();
+    assert_eq!(harness.atlas().0, generation + 1);
+    harness.wait_until_drawn(waiting);
+    assert_eq!(harness.emoji_with_no_room(), None);
+}
+
+#[test]
+fn the_console_reads_the_atlas_without_making_it_and_has_it_rebuilt() {
+    let mut harness = Harness::with_avatars();
+    // before any reaction there is no atlas, and neither command makes one
+    assert_eq!(harness.reported_atlas(), 0);
+    harness.console("/reaction_atlas_rebuild");
+    harness.app.update();
+    assert_eq!(harness.atlas_made(), None);
+
+    harness.pick("🔥");
+    harness.app.update();
+    let kept = harness.particle();
+    harness.wait_until_drawn(kept);
+    // a glyph no particle uses any more, for the rebuild to free
+    harness.pick("👍");
+    harness.app.update();
+    let gone = harness.particle_of("👍").unwrap();
+    harness.wait_until_drawn(gone);
+    harness.app.world_mut().despawn(gone);
+    let (_, size) = harness
+        .app
+        .world()
+        .resource::<ReactionAssets>()
+        .page()
+        .unwrap();
+    assert_eq!(harness.reported_atlas(), u64::from(size));
+
+    let generation = harness.atlas_made().unwrap();
+    harness.console("/reaction_atlas_rebuild");
+    // asked for in the frame of the command, served by the next upkeep
+    harness.app.update();
+    assert_eq!(harness.atlas_made(), Some(generation + 1));
+    harness.wait_until_drawn(kept);
 }
 
 #[test]
