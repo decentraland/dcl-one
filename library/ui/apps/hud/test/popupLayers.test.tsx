@@ -7,7 +7,9 @@ import { PopupHost, openPopup, closeTopPopup, hasOpenPopup, showConfirm, showDia
 // where the focus goes, that a dialog's promise takes its first answer only, and that a close guard still
 // refuses. The session's Cancel (Escape) reaches the layer as closeTopPopup(): see popups.test.tsx.
 
-const backdrops = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('[class*="backdrop"]')]
+// A layer is what PopupHost mounts in the render container and makes focusable for its trap. Content is never
+// matched, whatever its class names.
+const backdrops = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('body > div > [tabindex="-1"]')]
 const topBackdrop = (): HTMLElement => backdrops().at(-1) as HTMLElement
 const cancel = (): void => act(() => closeTopPopup())
 

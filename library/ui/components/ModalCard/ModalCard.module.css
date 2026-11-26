@@ -168,7 +168,7 @@
   .backdrop {
     position: fixed;
     inset: 0;
-    z-index: 10000; /* = HUD --z-popup */
+    z-index: var(--z-popup, 10000); /* the HUD's popup layer; 10000 in a host without that token */
   }
   /* The scrim is the host's reference canvas: sized at 100% / scale and scaled back from the top left, so content
      in reference pixels is centred without a transform of its own. Its padding is reference pixels too: viewport
@@ -187,11 +187,11 @@
     align-items: center;
     justify-content: center;
     padding: var(--dcl-space-32);
-    background: rgba(18, 7, 33, 0.6); /* = HUD --modal-scrim */
+    background: rgba(18, 7, 33, 0.6); /* the HUD's scrim purple; it has no token */
     backdrop-filter: blur(2px);
   }
   .backdrop[data-tone='deep'] {
-    background: rgba(0, 0, 0, 0.68); /* = HUD --modal-scrim-deep */
+    background: rgba(0, 0, 0, 0.68); /* the HUD's deep scrim; it has no token */
     backdrop-filter: none;
   }
   /* Content under a fixed scrim reads a scale of 1 too. */

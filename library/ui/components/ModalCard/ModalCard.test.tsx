@@ -220,18 +220,26 @@ describe('ModalBackdrop', () => {
     expect(onClick).toHaveBeenCalledTimes(1)
   })
 
-  it('should draw an empty layer with no content, no class and no handlers', () => {
-    render(<ModalBackdrop data-testid="backdrop" />)
+  it('should draw an empty layer with no content and no class, and leave a press on it to its host', () => {
+    const onHostClick = vi.fn()
+    render(
+      <div onClick={onHostClick}>
+        <ModalBackdrop data-testid="backdrop" />
+      </div>
+    )
     const backdrop = screen.getByTestId('backdrop')
     expect(backdrop.className).toBe('backdrop')
     expect(backdrop).not.toHaveAttribute('tabindex')
     expect(backdrop.firstElementChild).toBeEmptyDOMElement()
     fireEvent.click(backdrop)
+    expect(onHostClick).toHaveBeenCalledTimes(1)
   })
 
-  it('should keep long content inside the layer', () => {
+  it('should draw long content whole, in the layer that scales in', () => {
     const long = 'A very long line of text. '.repeat(200)
     render(<ModalBackdrop data-testid="backdrop">{long}</ModalBackdrop>)
-    expect(screen.getByTestId('backdrop')).toHaveTextContent(long.trim())
+    const backdrop = screen.getByTestId('backdrop')
+    expect(backdrop.children).toHaveLength(1)
+    expect(backdrop.firstElementChild).toHaveTextContent(long.trim())
   })
 })
