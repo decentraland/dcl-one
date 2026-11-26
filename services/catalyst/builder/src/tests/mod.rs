@@ -5,6 +5,7 @@
 pub(crate) mod support;
 
 mod chain_state;
+mod collection_writes;
 mod cors;
 mod curations;
 mod items;
