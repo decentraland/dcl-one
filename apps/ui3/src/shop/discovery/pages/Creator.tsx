@@ -5,8 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
-import { Button } from "@dcl/one-ui";
-import EmptyState from "../../../components/EmptyState";
+import { Button, ShopEmptyState } from "@dcl/one-ui";
 import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../routes";
 import { fetchCatalogItems, fetchCreatorCollections, type CollectionSummary } from "@shop/discovery/api";
@@ -174,12 +173,12 @@ export default function Creator() {
                 </Button>
               </div>
             ) : !collections.isLoading && collections.items.length === 0 && !unavailable ? (
-              <EmptyState
+              <ShopEmptyState
                 data-testid="creator-collections-empty"
                 icon={illustration(collectionsEmptyIllustration)}
                 title={t("creator.collectionsEmptyTitle")}
                 subtitle={t("creator.collectionsEmpty")}
-                actions={[exploreCta]}
+                action={exploreCta}
               />
             ) : (
               <div className="shop-grid" data-variant="collections">
@@ -209,14 +208,14 @@ export default function Creator() {
                 </Button>
               </div>
             ) : view === "no-creations" ? (
-              <EmptyState data-testid="creator-empty" icon={illustration(itemsEmptyIllustration)} title={t("creator.emptyNoCreationsTitle")} subtitle={t("creator.emptyNoCreations")} actions={[exploreCta]} />
+              <ShopEmptyState data-testid="creator-empty" icon={illustration(itemsEmptyIllustration)} title={t("creator.emptyNoCreationsTitle")} subtitle={t("creator.emptyNoCreations")} action={exploreCta} />
             ) : view === "filters" ? (
-              <EmptyState
+              <ShopEmptyState
                 data-testid="creator-empty-filters"
                 icon={illustration(searchEmptyIllustration)}
                 title={t("creator.emptyFiltersTitle")}
                 subtitle={t("creator.emptyFilters", { count: baseline.data ?? 0 })}
-                actions={[{ label: t("filterBar.clearAll"), onClick: clearFilters }]}
+                action={{ label: t("filterBar.clearAll"), onClick: clearFilters }}
               />
             ) : unavailable ? null : (
               <>

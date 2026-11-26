@@ -6,8 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 
-import { Button } from "@dcl/one-ui";
-import EmptyState from "../../../components/EmptyState";
+import { Button, ShopEmptyState } from "@dcl/one-ui";
 import { formatMana, parseManaWei, type ManaWei } from "@shop/model/money";
 import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
@@ -172,7 +171,7 @@ function CollectionRows({ collection, catalogue }: { collection: StoreCollection
 
 export function CollectionsTable({ stats, catalogue }: { stats: StoreStats; catalogue: PublishableItem[] }) {
   if (stats.collections.length === 0)
-    return <EmptyState variant="inline" title="No collections yet" subtitle="Publish a collection in the Builder to sell it here." data-testid="shop-empty" />;
+    return <ShopEmptyState variant="inline" title="No collections yet" subtitle="Publish a collection in the Builder to sell it here." data-testid="shop-empty" />;
   return (
     <table className="mk-table" aria-label="Collections">
       <thead>
@@ -207,7 +206,7 @@ export function SalesHistory({ address }: { address: string }) {
       ) : query.isError ? (
         <LoadFailure error={query.error} what="Your sales" onRetry={() => void query.refetch()} />
       ) : query.data.rows.length === 0 ? (
-        <EmptyState variant="inline" title="No sales in this period yet." data-testid="shop-empty" />
+        <ShopEmptyState variant="inline" title="No sales in this period yet." data-testid="shop-empty" />
       ) : (
         <>
           <table className="mk-table">
