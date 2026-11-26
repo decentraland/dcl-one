@@ -14,7 +14,7 @@ use common::{
 
 use crate::{
     dui_utils::PropsExt,
-    focus::Focus,
+    focus::{Focus, PopupFocus},
     interact_style::{Active, InteractStyle, InteractStyles},
     scrollable::ScrollTargetEvent,
     text_size::FontSize,
@@ -276,6 +276,7 @@ fn update_comboboxen(
                                 Node::default(),
                                 Interaction::default(),
                                 Focus,
+                                PopupFocus,
                                 On::<Defocus>::new(close_ui_silent),
                                 On::<Click>::new(move |mut commands: Commands| {
                                     debug!("selected {ix:?}");

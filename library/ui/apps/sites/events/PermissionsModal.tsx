@@ -2,7 +2,7 @@ import { useId, useState, type ReactNode } from 'react'
 import { InputField } from '../../../components/InputField/InputField'
 import { Switch } from '../../../components/Switch/Switch'
 import { GeneralClose } from '../../../foundations/icons'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { ADMIN_PERMISSIONS, adminCopy } from './admin-copy'
 import { Dialog } from './Dialog'
 import styles from './AdminModal.module.css'
@@ -159,10 +159,11 @@ export function PermissionsModal({
         </ul>
         {feedback}
         <div className={styles.footer}>
-          <Button variant="secondary" disabled={busy} onClick={close}>
+          <Button size="lg" variant="secondary" disabled={busy} onClick={close}>
             {adminCopy.permissions.cancel}
           </Button>
           <Button
+            size="lg"
             disabled={!valid || busy}
             onClick={() =>
               onSubmit({ address: address.trim(), permissions: submitted, initial: [...start] })

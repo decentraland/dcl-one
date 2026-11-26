@@ -28,15 +28,33 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **The toon outline is a screen-space line, not an inverted hull.** It keeps Unity's colour,
   width falloff and 8 m cutoff. Kept differences: the cutoff is per mesh, not per avatar; an
   overlap shallower than the edge threshold gets no line, so a curved surface draws none on
-  itself; creases inside the silhouette darken, which the look relies on; and an orthographic
-  view (the Backpack) skips the cutoff, in place of Unity's preview flag.
+  itself; creases inside the silhouette darken, which the look relies on; an orthographic
+  view (the Backpack) skips the cutoff, in place of Unity's preview flag; an alpha-blended
+  mesh draws no line, since the line reads the depth and normal prepass and a blended mesh is not
+  in it (it would trace the edges of the scene behind); and a single-sided mesh seen from its
+  back draws nothing, where Unity's hull, made of back faces, fills its shape with the outline
+  colour (the Epic Arrival Shield's particles, seen from the front). As with Unity's hull, the
+  line never covers a mesh's emission, so a glowing mesh glows to its edge.
 - **A hovered avatar glows through the shared highlight pass.** Unity's colour, opacity, width
   and 0.1 s fade, through the pass scene entities use, so the glow shows through what stands in
   front and ignores the camera dither and the ghost reveal. Kept differences: every opaque or
   alpha-tested mesh under the player glows, an emote's props included, where Unity lists the
   wearables only; an avatar shown with `ShowOnlyWearables` glows like any other.
-- **Day and night (#1467).** An explicit, stopped HUD time beats scene time; restarting the
-  clock hands control back to the scene. No HUD lock while a scene controls the sky.
+- **Day and night (#1467).** The time of the scene the player stands in holds the sky: over
+  the running clock, over a time set from the HUD and over `/time`, which still move the clock
+  and show once no scene sets the time. The HUD's Skybox menu is locked meanwhile and says
+  why. The "Allow overriding scene controls" setting (off by default) unlocks it: the scene's
+  time still takes the sky when it arrives, a time the player stops the clock at after that
+  wins, and the scene's time is back when it arrives again (on return, in another scene, or
+  when the scene changes it) or when the clock runs again, the menu's Auto included. No
+  override is kept for a scene. `~system/Runtime.getWorldTime` tells every scene, next to the
+  time, whether a scene holds it, the clock's speed and whether the clock sets the sky, so
+  that the menu and a scene that shows the time of day read one source. Two exceptions.
+  `/time --force` beats a
+  scene's time whatever the setting, until the next `/time` that sets a time or a speed: the
+  scene editor lights a stopped scene with it. A portable's time comes after the scene's, wins
+  only over a running clock and never locks the menu: a portable follows the player
+  everywhere, so the player's own stopped time beats it.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
   direction; SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
 - **Scene environment components.** Skybox cloud speed accepts finite negative values for
@@ -69,9 +87,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   no direct light; at most a tenth of a light unit points upward. It is not clamped to the
   horizon.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
-  it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
-  the extension is not the fix; the long-term answer is still open. A glTF emissive factor of 1
-  draws five times as bright as a lit white surface, and the strength multiplies that.
+  it, spec-correctly, on scene glTFs. Content authored against Unity can glow (the Nekko cat at
+  65x). Dropping the extension is not the fix for scenes; the long-term answer is still open. A
+  glTF emissive factor of 1 draws five times as bright as a lit white surface, and the strength
+  multiplies that. Wearables are the exception: an avatar drops the strength, as Unity does, and
+  draws a factor of 1 at 12.5 times a lit white surface, so a wearable glows as its creator saw
+  it in Unity.
 - **A Material that names a glTF keeps the glTF's rules.** An SDK unlit material is opaque
   unless it has an alpha texture, whose brightness scales the alpha, and an SDK PBR emissive
   colour is drawn as it is, as in Unity. A glTF's own unlit material cuts out or blends through
@@ -86,9 +107,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   channel pointing down the image and a glTF's normal map up, so the glTF's own normal map
   keeps its orientation when it comes back, and a bump texture the scene puts in its place is
   read as the SDK's.
-- **High bloom scatters at 0.5.** Unity's settings name 0.3; at 0.3 the glow around a bright
-  surface here is about half as strong as Unity draws it, and 0.5 matches its captures
-  (`BLOOM_SCATTER`).
+- **Bloom is off or on, and scatters at 0.5.** Unity's quality presets name 0.3 (Low, where
+  bloom is off), 0.5 (Medium) and 0.6 (High). At 0.3 the glow around a bright surface here is
+  about half as strong as Unity draws it, and 0.5 matches its captures (`BLOOM_SCATTER`). The
+  setting has one level: a saved config that names an earlier one (Low or High) reads as On.
 - **Alpha test and blend premultiplies the whole base colour.** The alpha multiplies the base
   colour before lighting, and a metal's reflectance is its base colour, so a transparent metal's
   reflections thin with it where Unity keeps them. Keeping them needs the diffuse and specular
@@ -403,6 +425,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer stores no community history. A new DM or DM reaction from them is not stored,
   since a DM history is never trimmed. A DM thread stored before the block is read back whole:
   hiding it would reveal that the other side blocked you, who is otherwise shown as offline.
+- **Situational reactions.** An emoji a player reacts with travels as unity-explorer's rfc4
+  `Reaction` and is sent, limited and played one at a time as unity-explorer does, with these
+  differences. Only the indices that name an emoji are taken (unity-explorer takes any under 4096
+  and draws the blank tiles), and an emoji with no index is not sent or shown. A message's copy
+  by the other room is told by its stamp and its index together, and the stamps sent only move
+  on: the sender's uptime as a float stops telling two messages of one send apart after a few
+  hours. What a sender may send is counted on the sender's own entity, so a player who leaves or
+  is blocked takes their waiting reactions with them; unity-explorer plays them out. A sender's
+  reactions play 0.2 s apart whichever messages they came in; unity-explorer starts the gap
+  afresh for a message that finds none of theirs waiting, which lets a sender of one-reaction
+  messages play twenty a second.
 - **Community creation and editing.** The form follows unity-explorer's (fields, limits, texts,
   the content check's two refusal screens, every HTTP 400 read as the check's answer), with
   these differences. CANCEL on the refusal screen asks "Discard this community?" first, as the
@@ -712,6 +745,26 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer scales the scroll delta by 50 everywhere but macOS, per frame; here a wheel line
   (16 pixels of a trackpad's scroll, on every platform including web) zooms as Unity's 60 fps frame
   would, and a held bumper zooms at Unity's per-second rate, so neither depends on the frame rate.
+- **What a scene is doing to the player is listed with its permissions.** A held camera, a
+  hidden avatar or passport and changed movement all happen under a permission that allows by
+  default, so nothing asks. The permissions popover lists them under "In force now" for the
+  scene the player stands in, and each row opens that scene's rule, so the player can refuse
+  it there. There is no separate restrictions list.
+  - The engine reports a start and an end on the permission-used stream (`inForce`), read
+    from the effect itself, not from the grant: a granted camera permission with no camera
+    held lists nothing. A stream that attaches is sent everything in force.
+  - Each effect is reported under the scene that causes it, recorded where it is applied
+    (`PrimaryCamera.scene_override_owner`, `PlayerModifiers.hide_scenes` and
+    `locomotion_scenes`), so the row's rule is the one that controls it. A hidden nametag
+    counts like a hidden avatar or passport.
+  - Movement is listed only while a setting or a block is on: an area with nothing set, or an
+    input modifier whose flags are all off, lists nothing.
+  - A row opens a stored rule, never "This visit": that answer forgets the rules of every
+    level and would not end what the scene is doing.
+  - The popover lists the scene the player stands in. What a portable experience or a
+    neighbouring scene's area does to the player is reported under that scene and is not
+    shown there; `/permissions_in_force` has it.
+  - A rule changed from the row applies from the next visit to the scene.
 - **Smart wearable permissions are asked on use, not at equip.** unity-explorer asks once, when a
   smart wearable is equipped (or at login for one already worn), to allow the permissions its
   `requiredPermissions` declares, and refuses what it did not declare. Here a smart wearable is a
@@ -978,8 +1031,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   carry Unity's values for the frame rate, VSync, render scale, avatar outline, jiggle bones, sun
   shadow quality, the Low and High shadow distances and scene lights; Medium is the default and
   the one every saved config migrates to, except jiggle bones, which stay off by default (see the
-  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Bloom is Low in every
-  preset, closer to Unity's look than High. Medium's sun shadow distance is 20 m, not 60 m: Medium
+  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Every preset keeps
+  bloom on, as Unity's Medium and High do; Unity turns bloom off on
+  Low. Medium's sun shadow distance is 20 m, not 60 m: Medium
   has one cascade (above), which stops at 40 m, and at 20 m its texels are half as large as at
   40 m. The presets leave out Unity's scene distance (in parcels, where far scenes load as
   LODs; here imposters draw them and the load distance stays the player's), the landscape

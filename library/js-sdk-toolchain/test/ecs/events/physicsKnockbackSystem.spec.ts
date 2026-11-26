@@ -1,11 +1,5 @@
-import {
-  components,
-  createPhysicsSystem,
-  Engine,
-  IEngine,
-  PhysicsSystem,
-  KnockbackFalloff
-} from '../../../packages/@dcl/ecs/src'
+import type { IEngine, PhysicsSystem } from '../../../packages/@dcl/ecs/src'
+import { components, createPhysicsSystem, Engine, KnockbackFalloff } from '../../../packages/@dcl/ecs/src'
 
 describe('Physics knockback helper system should', () => {
   function setup() {

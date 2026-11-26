@@ -31,6 +31,8 @@ interface ImportMetaEnv {
   VITE_ASSET_PACKS_JS_PATH: string | undefined;
   VITE_CLI_DEPLOY_PORT: string | undefined;
   VITE_ENABLE_DEV_APP_UPDATE: string | undefined;
+  /** Dev builds only: a local Assistant Insights for AI sharing (also turns its flag on). */
+  VITE_AI_SHARING_API_URL: string | undefined;
 
   // Publish
   VITE_WORLDS_SERVER: string | undefined;
