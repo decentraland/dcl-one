@@ -55,9 +55,6 @@ impl ApiError {
     pub fn unauthorized(error: impl Into<String>) -> Self {
         Self::http(401, error)
     }
-    pub fn forbidden(error: impl Into<String>) -> Self {
-        Self::http(403, error)
-    }
     pub fn not_found(error: impl Into<String>) -> Self {
         Self::http(404, error)
     }
