@@ -14,9 +14,10 @@
 
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, StreamExt};
+use parking_lot::Mutex as SyncMutex;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering::Relaxed, Ordering::SeqCst};
-use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::sync::{Mutex, Notify};
 use tokio::task::{JoinError, JoinHandle};
@@ -410,8 +411,10 @@ pub async fn run_sync_job(
             _ = ctx.cancel.cancelled() => break,
             _ = signal.wait_settled(), if !bootstrapped => {
                 bootstrapped = true;
-                if !ctx.cancel.is_cancelled() && status.state() == SyncState::Syncing {
-                    on_bootstrap.take().unwrap()();
+                if !ctx.cancel.is_cancelled() && status.state() == SyncState::Syncing
+                    && let Some(on_bootstrap) = on_bootstrap.take()
+                {
+                    on_bootstrap();
                 }
                 info!("Bootstrap complete, sync is now in steady state");
                 ctx.progress(format!("bootstrapped; {}", status.state_name()));
@@ -465,8 +468,8 @@ struct SyncOrchestratorRefs {
     peers_changed: Arc<Notify>,
     cancel: CancellationToken,
     control: SyncControl,
-    failed_snapshot_hashes: Arc<StdMutex<HashSet<String>>>,
-    unmarked_clean_snapshots: Arc<StdMutex<HashSet<String>>>,
+    failed_snapshot_hashes: Arc<SyncMutex<HashSet<String>>>,
+    unmarked_clean_snapshots: Arc<SyncMutex<HashSet<String>>>,
 }
 
 /// Beats the sync heartbeat every 10 s for as long as it lives. A bootstrap
@@ -746,8 +749,8 @@ impl SyncOrchestratorRefs {
             .values()
             .all(|state| state.phase == ServerPhase::Syncing)
         {
-            self.failed_snapshot_hashes.lock().unwrap().clear();
-            self.unmarked_clean_snapshots.lock().unwrap().clear();
+            self.failed_snapshot_hashes.lock().clear();
+            self.unmarked_clean_snapshots.lock().clear();
         }
     }
 
@@ -1084,7 +1087,7 @@ impl SyncOrchestratorRefs {
                 (hash, servers, Arc::new(report))
             })
             .collect();
-        let failed_hashes = StdMutex::new(HashSet::<String>::new());
+        let failed_hashes = SyncMutex::new(HashSet::<String>::new());
 
         if !time_ranges_to_deploy.is_empty() {
             self.deployer
@@ -1104,7 +1107,7 @@ impl SyncOrchestratorRefs {
                         })
                         .collect();
                     if advertisers.is_empty() {
-                        failed_hashes.lock().unwrap().insert(hash.clone());
+                        failed_hashes.lock().insert(hash.clone());
                         return;
                     }
                     if let Err(e) = snapshots::deploy_entities_from_snapshot(
@@ -1127,7 +1130,7 @@ impl SyncOrchestratorRefs {
                     .await
                     {
                         warn!(snapshot_hash = %hash, error = %e, "Snapshot deployment failed");
-                        failed_hashes.lock().unwrap().insert(hash.clone());
+                        failed_hashes.lock().insert(hash.clone());
                     }
                 }
             })
@@ -1137,7 +1140,7 @@ impl SyncOrchestratorRefs {
         self.until_stopped(self.deployer.on_idle()).await??;
         self.check_stopped()?;
 
-        let mut failed_hashes = failed_hashes.into_inner().unwrap();
+        let mut failed_hashes = failed_hashes.into_inner();
         for (hash, _, report) in &pass {
             if !report.is_complete() {
                 warn!(
@@ -1162,8 +1165,8 @@ impl SyncOrchestratorRefs {
         let covers_all =
             pass_covers_all_synced_types(entity_type_filter, self.config.entity_types.as_ref());
         let (held_servers, to_mark) = {
-            let mut failed_global = self.failed_snapshot_hashes.lock().unwrap();
-            let mut clean_unmarked = self.unmarked_clean_snapshots.lock().unwrap();
+            let mut failed_global = self.failed_snapshot_hashes.lock();
+            let mut clean_unmarked = self.unmarked_clean_snapshots.lock();
             let mut held = held_from_fetch;
             let mut to_mark = Vec::new();
             for (hash, servers, _) in &pass {
@@ -1198,8 +1201,8 @@ impl SyncOrchestratorRefs {
         .await??;
         metrics::snapshots_processed("saved", to_mark.len() as u64);
         if !to_mark.is_empty() {
-            let mut failed_global = self.failed_snapshot_hashes.lock().unwrap();
-            let mut clean_unmarked = self.unmarked_clean_snapshots.lock().unwrap();
+            let mut failed_global = self.failed_snapshot_hashes.lock();
+            let mut clean_unmarked = self.unmarked_clean_snapshots.lock();
             for hash in to_mark {
                 failed_global.remove(&hash);
                 clean_unmarked.remove(&hash);

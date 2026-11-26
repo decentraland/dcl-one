@@ -270,7 +270,7 @@ pub async fn social_api_methods(
             .header(header::ALLOW, allow)
             .header(header::CONTENT_LENGTH, "0")
             .body(axum::body::Body::empty())
-            .unwrap();
+            .expect("method names are valid header values");
     }
     if method == Method::HEAD && response.extensions().get::<SocialApiNotFound>().is_some() {
         response.headers_mut().remove(header::CONTENT_TYPE);

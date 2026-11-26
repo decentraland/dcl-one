@@ -119,18 +119,18 @@ fn media_content_type(body: &[u8]) -> Result<String, Response> {
 }
 
 fn is_mp4(body: &[u8]) -> bool {
-    let Some(header) = body.get(..8) else {
+    let Some((size, rest)) = body.split_first_chunk::<4>() else {
         return false;
     };
-    if &header[4..8] != b"ftyp" {
+    if rest.get(..4) != Some(b"ftyp".as_slice()) {
         return false;
     }
-    let size = u32::from_be_bytes(header[..4].try_into().unwrap());
+    let size = u32::from_be_bytes(*size);
     let (size, offset) = if size == 1 {
-        let Some(extended) = body.get(8..16) else {
+        let Some(extended) = rest.get(4..).and_then(<[u8]>::first_chunk::<8>) else {
             return false;
         };
-        (u64::from_be_bytes(extended.try_into().unwrap()), 16)
+        (u64::from_be_bytes(*extended), 16)
     } else {
         (u64::from(size), 8)
     };
