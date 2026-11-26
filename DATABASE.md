@@ -5336,6 +5336,10 @@ few bids it reads and compared each with the whole catalogue (180 ms):
 | one token | 0.5 ms |
 | open, most expensive | 17 ms |
 
+These timings cover a book with no pending seller recheck. A pending recheck
+also inspects bids created past its start, whose stored sellers may have
+changed. That case can scan a larger part of the book and is unmeasured.
+
 ## Legacy Marketplace orders
 
 `shop.legacy_order` is the legacy on-chain order book of `/v1/orders`,

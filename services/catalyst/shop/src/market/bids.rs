@@ -421,13 +421,8 @@ fn legacy_order(sort_by: Option<BidSortBy>) -> (&'static str, &'static str) {
     }
 }
 
-pub fn bid_from_graph(b: &Value, network: Network) -> Bid {
-    bid_from_graph_on(b, network, network.chain_id())
-}
-
-/// [`bid_from_graph`] labelled with `chain_id`: the chain a walking node
-/// serves on the network, rather than the `ETHEREUM_CHAIN_ID` alias.
-fn bid_from_graph_on(b: &Value, network: Network, chain_id: ChainId) -> Bid {
+/// Convert a legacy Graph row with the chain selected for that leg.
+fn bid_from_graph(b: &Value, network: Network, chain_id: ChainId) -> Bid {
     let ms = |key: &str| {
         let raw = readers::int_of(b, key);
         if raw != 0 && raw < 100_000_000_000 {
@@ -535,7 +530,7 @@ async fn graph_leg(
         } else {
             wire.chain_id()
         };
-        rows.extend(got.iter().map(|b| bid_from_graph_on(b, wire, chain_id)));
+        rows.extend(got.iter().map(|b| bid_from_graph(b, wire, chain_id)));
     }
     Ok((rows, total))
 }
@@ -593,12 +588,11 @@ pub(super) async fn bids_snapshot(
     ),
     Response,
 > {
-    let db = |e: sqlx::Error| ApiError::internal(e.to_string()).into_response();
-    let mut tx = state.pool.begin().await.map_err(db)?;
+    let mut tx = state.pool.begin().await.map_err(read_error)?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await
-        .map_err(db)?;
+        .map_err(read_error)?;
     sqlx::query("SELECT set_config('statement_timeout', $1, true)")
         .bind(format!(
             "{}ms",
@@ -606,7 +600,7 @@ pub(super) async fn bids_snapshot(
         ))
         .execute(&mut *tx)
         .await
-        .map_err(db)?;
+        .map_err(read_error)?;
     // The statement above established the snapshot.
     let now = Utc::now();
     super::trades::ready_on(state, &mut tx, now).await?;
@@ -617,7 +611,7 @@ pub(super) async fn bids_snapshot(
     let chain = state.settings.catalogue().chain_id(ChainNet::Matic);
     let sales = chain_walk::cursor(&mut *tx, INDEXER_SALES, ChainNet::Matic)
         .await
-        .map_err(db)?;
+        .map_err(read_error)?;
     if !sales
         .as_ref()
         .is_some_and(|c| sales_published(c, chain, now))
@@ -648,18 +642,20 @@ pub(super) async fn bids_snapshot(
         now,
     )
     .await
-    .map_err(|e| e.into_response(|m| ApiError::internal(m.to_string()).into_response()))?;
-    super::catalogue::require_collections_on(&mut tx, state, ChainNet::Matic, now).await?;
+    .map_err(nft_source_error)?;
+    super::catalogue::require_collections_on(&mut tx, state, ChainNet::Matic, now)
+        .await
+        .map_err(nft_source_error)?;
     let nft = chain_walk::cursor(&mut *tx, INDEXER_NFT, ChainNet::Matic)
         .await
-        .map_err(db)?
+        .map_err(read_error)?
         .ok_or_else(|| owned_items::not_ready("the matic nft index has no cursor"))?;
     let recheck_from: Option<i64> = sqlx::query_scalar(
         "SELECT min(from_block) FROM shop.bid_seller_recheck WHERE network = 'matic'",
     )
     .fetch_one(&mut *tx)
     .await
-    .map_err(db)?;
+    .map_err(read_error)?;
     Ok((
         tx,
         Some(SellerBounds {
@@ -915,6 +911,13 @@ fn read_error(e: sqlx::Error) -> Response {
         super::nft_reads::timed_out()
     } else {
         ApiError::from(e).into_response()
+    }
+}
+
+fn nft_source_error(e: owned_items::ReadError) -> Response {
+    match e {
+        owned_items::ReadError::Db(e) => read_error(e),
+        owned_items::ReadError::NotReady(source, why) => unavailable(source, &why),
     }
 }
 

@@ -44,7 +44,7 @@ and the subgraph's Ethereum bids are filtered at. It checks:
   seller.
 
 The scope, the page and the total hold only bids on the catalogue the nft
-index walks on the served chain: a mirrored collection of that chain,
+index walks on the served chain: a collection row on that chain,
 verified there on a testnet. The bid contract takes any ERC721, but the
 collections subgraph kept no bid on an asset it had not catalogued, and the
 nft walk never reads such a token's transfers.
@@ -67,7 +67,12 @@ envelope, rather than being served without its seller or left out of a
 - Polygon's bid book no longer depends on a hosted subgraph per request.
 - While the sales walk is ahead of the nft walk, a read whose scope holds a
   bid placed past the nft walk answers 503 until the nft walk catches up.
-  So does every `seller=` read, whose scope is every bid.
+  A seller filter cannot establish whether that bid belongs in its result.
+  The seller leg of `/v1/activity` can also report the NFT source as
+  unavailable when its scope contains a bid whose seller cannot be proven.
+- A mirrored ERC721 bid requires fresh, published NFT ownership on the
+  served chain when the NFT index runs here. A mirrored item bid derives
+  its seller from an item on the trade's chain, verified on testnets.
 - A bid dropped by another acceptance reads `cancelled` where the subgraph
   kept it `open`.
 
