@@ -1000,6 +1000,7 @@ fn stopped_on_request(e: &anyhow::Error) -> bool {
 }
 
 /// `--json`: the result, as upstream writes it.
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 fn print_json(value: serde_json::Value) {
     println!(
         "{}",
@@ -1007,6 +1008,7 @@ fn print_json(value: serde_json::Value) {
     );
 }
 
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 async fn run(command: Command) -> Result<()> {
     match command {
         Command::Init {

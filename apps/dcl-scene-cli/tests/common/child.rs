@@ -87,9 +87,11 @@ pub fn wait_bounded(child: &mut Child, limit: Duration) -> Option<ExitStatus> {
 /// preview server runs no such handler. The sidecar sits in its own process
 /// group, so it would be orphaned onto the developer's machine holding a port
 /// and a pile of worker threads, once per run of this file.
+#[allow(unsafe_code, reason = "signals the child through libc")]
 pub fn terminate(child: &mut Child) -> ExitStatus {
     #[cfg(unix)]
     unsafe {
+        // SAFETY: kill(2) takes plain integers and reads no memory of ours.
         libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
     }
     if let Some(status) = wait_bounded(child, Duration::from_secs(15)) {

@@ -213,6 +213,10 @@ fn work_dir() -> PathBuf {
 /// `OnceLock::get_or_init` is the lock: cargo runs these `#[test]`s in
 /// parallel and every one calls this before touching anything else, so the
 /// environment scrub below lands before any build reads it.
+#[allow(
+    unsafe_code,
+    reason = "clears inherited environment before any test thread reads it"
+)]
 fn node_modules_src() -> &'static Path {
     static SRC: OnceLock<PathBuf> = OnceLock::new();
     SRC.get_or_init(|| {

@@ -139,6 +139,7 @@ fn signed(
 
 /// Everything a preview with its own server must do, from `/about` to the
 /// scene gatekeeper. `None` is the gated skip of a build without a server.
+#[allow(clippy::print_stdout, reason = "test progress notes")]
 async fn assert_voice(base: &str, client: &reqwest::Client, log: &Path) -> Option<String> {
     let about = wait_for_about(base, client, log).await;
     let fixed = about["comms"]["fixedAdapter"]
@@ -253,6 +254,8 @@ async fn assert_voice(base: &str, client: &reqwest::Client, log: &Path) -> Optio
 }
 
 /// The server is the preview's: a clean stop takes it down too.
+#[allow(unsafe_code, reason = "signals the preview through libc")]
+#[allow(clippy::print_stdout, reason = "test progress notes")]
 async fn assert_dies_with_preview(
     guard: &mut ChildGuard,
     client: &reqwest::Client,
@@ -262,6 +265,7 @@ async fn assert_dies_with_preview(
     #[cfg(unix)]
     {
         let pid = guard.0.id() as i32;
+        // SAFETY: kill(2) takes plain integers and reads no memory of ours.
         assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
         common::wait::until(Duration::from_secs(20), async || {
             guard.0.try_wait().unwrap().map(drop)

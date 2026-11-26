@@ -716,8 +716,10 @@ async fn a_deploy_that_fails_prints_the_error_event() {
 /// programmatic run still prints its final state.
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
+#[allow(unsafe_code, reason = "signals the child through libc")]
 async fn a_deploy_stopped_by_a_signal_prints_no_error_event() {
     let f = Fixture::new("signal");
+    // SAFETY: kill(2) takes plain integers and reads no memory of ours.
     let sigterm = |run: &Run| unsafe {
         libc::kill(run.child.id() as libc::pid_t, libc::SIGTERM);
     };

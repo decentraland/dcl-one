@@ -90,6 +90,7 @@ fn exit_within(child: &mut Child, within: Duration) -> Option<std::process::Exit
     common::wait::until_blocking(within, || child.try_wait().ok().flatten())
 }
 
+#[allow(unsafe_code, reason = "signals the preview through libc")]
 async fn signal_ends_the_preview(name: &str, signal: libc::c_int, expected_code: i32) {
     if dcl_scene_cli::build::find_node().is_none() {
         let _: Option<()> = common::testgate::unavailable(
@@ -103,6 +104,7 @@ async fn signal_ends_the_preview(name: &str, signal: libc::c_int, expected_code:
     let mut guard = start_preview(&scene, &log);
     wait_until("the preview", &log, || logged(&log, "Preview server ready")).await;
 
+    // SAFETY: kill(2) takes plain integers and reads no memory of ours.
     unsafe { libc::kill(guard.0.id() as libc::pid_t, signal) };
     let status = exit_within(&mut guard.0, Duration::from_secs(15)).unwrap_or_else(|| {
         panic!(

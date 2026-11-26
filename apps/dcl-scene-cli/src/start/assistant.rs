@@ -319,10 +319,12 @@ impl Drop for TurnGuard {
     }
 }
 
+#[allow(unsafe_code, reason = "kills the child's process group through libc")]
 async fn stop_child(child: &mut tokio::process::Child) {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
         unsafe {
+            // SAFETY: kill(2) takes plain integers and reads no memory of ours.
             libc::kill(-(pid as i32), libc::SIGKILL);
         }
     }
