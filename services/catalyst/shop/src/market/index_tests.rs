@@ -157,6 +157,8 @@ struct FakeChain {
     omit_range_hint: std::sync::atomic::AtomicBool,
     max_addresses: usize,
     forks: Mutex<HashMap<u64, String>>,
+    by_hash_parents: Mutex<HashMap<u64, String>>,
+    by_number_parents: Mutex<HashMap<u64, String>>,
     requests: AtomicUsize,
     get_logs: AtomicUsize,
     /// Answer eth_getLogs without `blockTimestamp` (the Polygon backends that do).
@@ -259,6 +261,8 @@ impl FakeChain {
             omit_range_hint: Default::default(),
             max_addresses,
             forks: Mutex::new(HashMap::new()),
+            by_hash_parents: Mutex::new(HashMap::new()),
+            by_number_parents: Mutex::new(HashMap::new()),
             requests: AtomicUsize::new(0),
             get_logs: AtomicUsize::new(0),
             strip_timestamps: std::sync::atomic::AtomicBool::new(false),
@@ -510,6 +514,27 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
                 None => refuse("unknown collection at block hash".into()),
             }
         }
+        Some("eth_getBlockByHash") => {
+            let hash = body["params"][0].as_str().unwrap_or_default();
+            let Some(n) = hash
+                .get(52..)
+                .and_then(|suffix| u64::from_str_radix(suffix, 16).ok())
+            else {
+                return reply(Value::Null);
+            };
+            if chain.hash_of(n) != hash {
+                return reply(Value::Null);
+            }
+            let parent = chain
+                .by_hash_parents
+                .lock()
+                .get(&n)
+                .cloned()
+                .unwrap_or_else(|| chain.hash_of(n.saturating_sub(1)));
+            reply(
+                json!({"number":format!("0x{n:x}"),"hash":hash,"parentHash":parent,"timestamp":format!("0x{:x}",time_of(n))}),
+            )
+        }
         Some("eth_getBlockByNumber") => {
             let n = if body["params"][0] == "finalized" {
                 if !chain.finalized_available.load(Ordering::SeqCst) {
@@ -525,8 +550,14 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
                 }
                 hex_u64(&body["params"][0])
             };
+            let parent = chain
+                .by_number_parents
+                .lock()
+                .get(&n)
+                .cloned()
+                .unwrap_or_else(|| chain.hash_of(n.saturating_sub(1)));
             let answered = reply(
-                json!({ "number": format!("0x{n:x}"), "hash": chain.hash_of(n), "timestamp": format!("0x{:x}", time_of(n)) }),
+                json!({ "number": format!("0x{n:x}"), "hash": chain.hash_of(n), "parentHash": parent, "timestamp": format!("0x{:x}", time_of(n)) }),
             );
             let mut gating = chain.gate_after.lock();
             if let Some(g) = gating.as_mut()
@@ -1163,6 +1194,12 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
     let app = super::market_router(st.clone());
     // The walk can be ahead of the published verdict. Its last execution is
     // visible only through the published height in the route's snapshot.
+    let published: i64 = sqlx::query_scalar(
+        "SELECT folded_block FROM shop.chain_cursor WHERE indexer='trade_events' AND network='matic'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
     let sold_block: i64 = sqlx::query_scalar(
         "SELECT min(block_number) FROM shop.trade_event WHERE hashed_signature = $1",
     )
@@ -1174,8 +1211,8 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
         .bind(sold_block - 1).execute(&db.pool).await.unwrap();
     let (code, body) = get_json(&app, &format!("/v1/trades/{}/accept", sold.1)).await;
     assert_eq!(code, StatusCode::NOT_FOUND, "{body}");
-    sqlx::query("UPDATE shop.chain_cursor SET folded_block=last_block-1 WHERE indexer='trade_events' AND network='matic'")
-        .execute(&db.pool).await.unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=$1 WHERE indexer='trade_events' AND network='matic'")
+        .bind(published).execute(&db.pool).await.unwrap();
     let (code, body) = get_json(
         &app,
         &format!("/v1/trades/{}/accept?timestamp=1234&caller={BOB}", sold.1),
@@ -1426,6 +1463,22 @@ async fn a_v3_cancellation_applies_on_the_stored_digest_and_a_trade_without_one_
         let late = stored_v3_trade(&db.pool, net, "0x1237").await;
         // open: nothing closes it.
         let open = stored_v3_trade(&db.pool, net, "0x1238").await;
+        super::owned_items::test_support::publish(
+            &db.pool,
+            &[net],
+            false,
+            std::time::Duration::ZERO,
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+             VALUES ($1, '0x1111111111111111111111111111111111111111', 42, $2, 1, 1, 1, 0, 1)",
+        )
+        .bind(net.db_name())
+        .bind(&signer)
+        .execute(&db.pool)
+        .await
+        .unwrap();
         sqlx::query("UPDATE shop.trades SET checks = '{}'::jsonb WHERE id = ANY($1::uuid[])")
             .bind(vec![kept.0.clone(), late.0.clone()])
             .execute(&db.pool)
@@ -1649,13 +1702,29 @@ async fn the_listing_routes_fail_closed_until_the_trade_events_index_is_current_
         &db.pool,
         "public_nft_order",
         ALICE,
-        "0x00000000000000000000000000000000000000aa",
+        trade_events::marketplaces(ChainNet::Matic)[0].0,
         1,
         0,
         (3, "0x00000000000000000000000000000000000000c1", "1"),
         (1, ZERO, "1"),
     )
     .await;
+    crate::test_db::open_trade_verdict(&db.pool, &id).await;
+    super::owned_items::test_support::publish(
+        &db.pool,
+        &[ChainNet::Matic],
+        false,
+        std::time::Duration::ZERO,
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+         VALUES ('matic', '0x00000000000000000000000000000000000000c1', 1, $1, 1, 1, 1, 0, 1)",
+    )
+    .bind(ALICE)
+    .execute(&db.pool)
+    .await
+    .unwrap();
     let records_served = || async {
         for path in ["/v1/trades?first=1".to_string(), format!("/v1/trades/{id}")] {
             let (code, body) = get_json(&app, &path).await;
@@ -1699,7 +1768,7 @@ async fn the_listing_routes_fail_closed_until_the_trade_events_index_is_current_
         &db.pool,
         "public_nft_order",
         ALICE,
-        "0x00000000000000000000000000000000000000aa",
+        trade_events::marketplaces(ChainNet::Matic)[0].0,
         1,
         0,
         (3, "0x00000000000000000000000000000000000000c1", "2"),
@@ -1962,7 +2031,7 @@ fn estate_document(
 
 #[tokio::test]
 async fn descriptive_mirror_readers_check_the_chain_of_every_recorded_source() {
-    use super::mirrors::{self, Mirror};
+    use super::mirrors::Mirror;
     let Some(db) = ScratchDb::create().await else {
         return;
     };
@@ -1981,18 +2050,22 @@ async fn descriptive_mirror_readers_check_the_chain_of_every_recorded_source() {
             crate::http::Outbound::for_tests(),
             settings,
         );
-        let error = mirrors::require_ready(&state, Mirror::Collections)
-            .await
-            .unwrap_err();
+        let read = || {
+            super::catalogue::begin(
+                &state,
+                super::catalogue::Purpose::Describe,
+                &[Mirror::Collections],
+                None,
+                super::catalogue::Access::ReadOnly,
+            )
+        };
+        let error = read().await.err().unwrap();
         assert_eq!(error.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
         sqlx::query("UPDATE shop.mirror_state SET chain_id=NULL WHERE network='ethereum'")
             .execute(&db.pool)
             .await
             .unwrap();
-        state.mirror_ready.clear();
-        mirrors::require_ready(&state, Mirror::Collections)
-            .await
-            .unwrap();
+        assert!(read().await.is_ok());
         sqlx::query("UPDATE shop.mirror_state SET chain_id=1 WHERE network='ethereum'")
             .execute(&db.pool)
             .await
@@ -2465,7 +2538,18 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
     assert_eq!(retried.pass_started_at, pending.pass_started_at);
     assert_eq!(retried.last_complete_pass_at, earlier.last_complete_pass_at);
     assert_eq!(stored_price().await.unwrap(), "100");
-    assert!(mirrors::require_priced(&state).await.is_ok());
+    // The catalogue gate still prices from the last complete pass.
+    assert!(
+        super::catalogue::begin(
+            &state,
+            super::catalogue::Purpose::Priced,
+            &[Mirror::Items],
+            None,
+            super::catalogue::Access::ReadOnly,
+        )
+        .await
+        .is_ok()
+    );
 
     // Advance the persisted RPC outage clock without a wall-clock wait.
     age_proof().await.unwrap();
@@ -8339,7 +8423,7 @@ async fn a_job_that_lost_its_projection_commits_nothing() {
         chain_walk::record_fold(&db.pool, &a, before.0)
             .await
             .unwrap_err(),
-        chain_walk::mark_folded(&db.pool, &a, before.0, chrono::Utc::now())
+        chain_walk::mark_folded(&db.pool, &ix, &a, before.0, chrono::Utc::now())
             .await
             .unwrap_err(),
         chain_walk::unpublish(&db.pool, &a, before.0)
@@ -9059,6 +9143,9 @@ mod supervisor {
                 gate.acquire().await.unwrap().forget();
             }
             self.inner().fold(pool, since, upto, owner).await
+        }
+        async fn publish(&self, conn: &mut sqlx::PgConnection, upto: i64) -> anyhow::Result<()> {
+            self.inner().publish(conn, upto).await
         }
         fn abandon(&self) {
             assert!(!self.abandon_panics, "a hooked index's cleanup panicked");
@@ -14859,5 +14946,6 @@ mod compare_sources_tests {
 mod sale_accounting;
 
 mod cancelled_trades;
+mod historical_routes;
 mod royalties;
 mod sale_routes;

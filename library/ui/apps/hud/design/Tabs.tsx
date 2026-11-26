@@ -1,12 +1,9 @@
-// Tabs — the one tab strip for the HUD. Two looks: `pill` (filled pills, the selected one
-// accent-orange) and `underline` (bare uppercase labels, the selected one underlined in brand).
-// Controlled: `value` + `onChange`. WAI-ARIA tablist/tab with a roving tabindex — Left/Right/
-// Home/End move focus AND select, so a strip is keyboard-operable (the panels it heads are not
-// `tabpanel`s; the strip only owns selection).
+// Tabs — the HUD's tab strip, drawn by the shared TabsBar and Tabs (`appearance="hud"`). Two families of
+// looks: pills (`pill`, `section`, `shop`) and labels on a rule (`underline`, `subtab`). Controlled: `value`
+// + `onChange`. WAI-ARIA tablist/tab with a roving tabindex — Left/Right/Home/End move focus AND select, so a
+// strip is keyboard-operable (the panels it heads are not `tabpanel`s; the strip only owns selection).
 
-import { useRef } from 'react'
-import { CountBadge } from './CountBadge'
-import styles from './Tabs.module.css'
+import { CountBadge, Tabs as SharedTab, TabsBar } from '@dcl/one-ui'
 
 export interface TabItem<T extends string = string> {
   id: T
@@ -35,8 +32,6 @@ export interface TabsProps<T extends string> {
   'aria-label'?: string
 }
 
-const KEY_STEP: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1 }
-
 export function Tabs<T extends string>({
   items,
   value,
@@ -46,54 +41,29 @@ export function Tabs<T extends string>({
   className,
   'aria-label': ariaLabel
 }: TabsProps<T>): React.JSX.Element {
-  const refs = useRef<(HTMLButtonElement | null)[]>([])
-
-  const select = (i: number): void => {
-    const item = items[i]
-    if (!item || item.disabled) return
-    onChange(item.id)
-    refs.current[i]?.focus()
-  }
-
-  // Wrap around, skipping disabled items; Home/End go to the first/last enabled one.
-  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
-    const enabled = items.map((it, i) => (it.disabled ? -1 : i)).filter((i) => i >= 0)
-    if (enabled.length === 0) return
-    const cur = items.findIndex((it) => it.id === value)
-    let next: number | undefined
-    if (e.key in KEY_STEP) {
-      const pos = enabled.indexOf(cur)
-      next = enabled[(pos + KEY_STEP[e.key] + enabled.length) % enabled.length]
-    } else if (e.key === 'Home') next = enabled[0]
-    else if (e.key === 'End') next = enabled[enabled.length - 1]
-    if (next === undefined) return
-    e.preventDefault()
-    select(next)
-  }
-
   return (
-    <div className={`${styles.tabs} ${styles[variant]} ${fill ? styles.fill : ''} ${className ?? ''}`.trim()} role="tablist" aria-label={ariaLabel} onKeyDown={onKeyDown}>
-      {items.map((it, i) => {
-        const active = it.id === value
-        return (
-          <button
-            key={it.id}
-            ref={(el) => { refs.current[i] = el }}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            tabIndex={active ? 0 : -1}
-            disabled={it.disabled}
-            className={`${styles.tab} ${active ? styles.active : ''}`.trim()}
-            onClick={() => select(i)}
-          >
-            {it.icon}
-            {it.label}
-            {it.iconAfter}
-            {it.badge ? <CountBadge count={it.badge} max={it.badgeMax} size={fill ? 'xs' : 'sm'} announce /> : null}
-          </button>
-        )
-      })}
-    </div>
+    <TabsBar appearance="hud" variant={variant} fill={fill} className={className} label={ariaLabel ?? ''}>
+      {items.map((it) => (
+        <SharedTab
+          key={it.id}
+          appearance="hud"
+          selected={it.id === value}
+          disabled={it.disabled}
+          onClick={(event) => {
+            // Safari does not focus a button on click, and the arrow keys start from the focused tab.
+            event.currentTarget.focus()
+            onChange(it.id)
+          }}
+          label={
+            <>
+              {it.icon}
+              {it.label}
+              {it.iconAfter}
+              {it.badge ? <CountBadge count={it.badge} max={it.badgeMax} size={fill ? 'xs' : 'sm'} announce /> : null}
+            </>
+          }
+        />
+      ))}
+    </TabsBar>
   )
 }

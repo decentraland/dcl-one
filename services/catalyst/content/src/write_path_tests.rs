@@ -713,6 +713,8 @@ async fn index_land_events(pool: &PgPool, grants: &[(&'static str, (i32, i32), &
                 account: transfer.then(|| address.to_string()),
                 operator: (!transfer).then(|| address.to_string()),
                 approved: None,
+                from_address: None,
+                tx_hash: None,
             }
         })
         .collect();

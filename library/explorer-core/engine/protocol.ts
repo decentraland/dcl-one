@@ -299,6 +299,7 @@ export type PageToScene =
   | GetPlaceRequest
   | GetWorldAccessRequest
   | WatchMapPlayersRequest
+  | WatchSkyTimeRequest
   | SetPhotoModeRequest
   | TakePhotoRequest
   | GetGalleryPhotoRequest
@@ -663,7 +664,7 @@ export interface DmDeleteRequest {
 
 /** Mirrors the engine's ExplorerSetting (BevyApi.getSettings). A setting is a
  *  Select when it has namedVariants, otherwise a numeric Slider; a 2-variant or
- *  0..1 setting renders as a Toggle. */
+ *  0..1 setting renders as a switch. */
 import type { SettingInfo as Setting, NamedVariant as SettingVariant } from './generated/index'
 export type { Setting, SettingVariant }
 
@@ -2092,6 +2093,25 @@ export interface MapPlayer {
   z: number
 }
 
+/** The Skybox menu opens or closes; while it is open the scene reports the time of day, at once
+ *  and then once a second. */
+export interface WatchSkyTimeRequest {
+  kind: 'watchSkyTime'
+  on: boolean
+}
+
+/** The time of day as `~system/Runtime.getWorldTime` reports it. */
+export interface SkyTime {
+  /** The hour the sky shows, 0 to 24. */
+  hours: number
+  /** The scene the player stands in holds the time of day and the player may not change it. */
+  locked: boolean
+  /** The speed of the player's clock; 0 when it is stopped. */
+  speed: number
+  /** The player's clock sets the sky: no scene's time does. */
+  followsClock: boolean
+}
+
 /** The page's map starts or stops showing the other players; while it does the scene reports them. */
 export interface WatchMapPlayersRequest {
   kind: 'watchMapPlayers'
@@ -2352,6 +2372,15 @@ export interface OutfitSaveFailedMessage {
   message: string
 }
 
+/** A save, a delete or an equip of the saved outfit in `slot` runs in the scene from `busy: true` until
+ *  `busy: false`, which follows every outcome (scene → page). */
+export interface OutfitBusyMessage {
+  kind: 'outfitBusy'
+  slot: number
+  action: 'save' | 'delete' | 'equip'
+  busy: boolean
+}
+
 export interface GetOutfitsRequest {
   kind: 'getOutfits'
 }
@@ -2595,6 +2624,8 @@ export type SceneToPage =
   | PlaceMessage
   | WorldAccessMessage
   | { kind: 'connectivity'; state: ConnectivitySnapshot }
+  /** The time of day for the Skybox menu, while the page watches it (`watchSkyTime`). */
+  | { kind: 'skyTime'; state: SkyTime }
   | { kind: 'connectivityRetry'; requestId: string; error?: string }
   | BridgeUnavailableMessage
   | VoiceChatStateMessage
@@ -2643,6 +2674,7 @@ export type SceneToPage =
   | GiftingPageMessage
   | OutfitsMessage
   | OutfitSaveFailedMessage
+  | OutfitBusyMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
   | CommunityBrowseMessage

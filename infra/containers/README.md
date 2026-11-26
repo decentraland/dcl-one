@@ -223,13 +223,59 @@ Testnet mirrors default to the Polygon registry subgraph. Once `catalyst index` 
 registry history, API replicas prefer the native index and can serve manager and slot details.
 The NFT worker supplies wallet holdings for open mappings.
 
+The marketplace historical holdings API serves the subgraph worker at
+`/v1/historical/*` on the marketplace gateway. Set `HISTORICAL_ADMIN_TOKEN_FILE`
+to the credential corresponding to the worker's `subgraph-historical-api-token`.
+The routes use the Ethereum and Polygon mainnet indexes. An existing
+database needs schema step 0094 and the registry review repair before the
+full Polygon history is available. Moving the marketplace API host to this
+gateway preserves the worker's request paths.
+
+The Wert card on-ramp (`POST /v1/wert/sign` under `/shop-api` and `/marketplace-api`)
+needs four settings:
+- `WERT_PRIVATE_KEY_FILE` and `WERT_PUBLICATION_FEES_PRIVATE_KEY_FILE`: Wert's 32-byte
+  Ed25519 partner keys in hex. The plain variables are refused.
+- `WERT_API_URL`: Wert's partner API, over https.
+- `WERT_API_KEY`, or `WERT_API_KEY_FILE`.
+
+Without them, the route answers 503 naming them. A partial set fails startup. The
+route writes nothing to the database, so it answers while `DATA_WRITES_ENABLED` is off.
+
+The Transak card on-ramp (`/v1/transak/widget-url`, `/v1/transak/orders/{id}` and
+`PUT /v1/transak/access-token`, under `/shop-api` and `/marketplace-api`) needs
+six settings:
+- `TRANSAK_API_URL` and `TRANSAK_API_GATEWAY_URL`, over https;
+- `TRANSAK_API_KEY` and `TRANSAK_API_SECRET`, plain or as `_FILE`;
+- `TRANSAK_REFRESH_ACCESS_TOKEN_AUTH`: the bearer of the forced refresh, at least
+  32 bytes;
+- `TRANSAK_REFERRER_DOMAIN`: the bare host Transak registered for the partner.
+
+Without them, the routes answer 503 naming them. A partial set fails startup.
+Run `catalyst schema migrate` before deploying: it creates
+`shop.transak_access_token`, the one access token the replicas share.
+
+**Never configure a node with the Transak partner key marketplace-server is
+serving with.** Transak invalidates the previous token on each refresh, and
+marketplace-server never refreshes on a 401. The node's first refresh would
+leave marketplace-server's Redis token dead, and production Transak with it,
+until that token expires (up to 7 days) or someone calls marketplace-server's
+`PUT /v1/transak/access-token`. Use separate partner credentials, or set the
+six `TRANSAK_*` only at the cutover, once marketplace-server has stopped
+serving Transak. No posture or default config sets them, so a node keeps the
+unavailable envelope until an operator does. When marketplace-server
+refreshes, the node itself recovers: its next 401 refreshes once, at most
+once per 30 s.
+
 Collections index upgrade: run `catalyst schema migrate` before deploying the updated index worker.
 Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The mirror
 posture enables `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`. A Polygon RPC in `TRADE_RPC_URLS` (chain 137)
-lets it walk from block 15,202,000. Polygon accounts and lifetime creator rankings return HTTP 503
+lets it walk from block 15,202,000. Polygon accounts and creator rankings return HTTP 503
 until the collections and sales indexes publish their required history. Polygon accounts also require
 a fresh committee fold covering the published sales block. To warm the walks ahead of the API upgrade,
 enable the switches on the index worker and wait for the required publications before rolling out the sales readers.
+On a populated ledger, prebuild `collection_event_creatorship_position_idx` with
+`CREATE INDEX CONCURRENTLY` before running `catalyst schema migrate`. See the sales-read
+index procedure in `DATABASE.md`.
 The catalogue continues to
 read the collections mirror unless the on-chain projection owns that network.
 

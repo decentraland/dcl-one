@@ -5,10 +5,22 @@ import styles from './TabsBar.module.css'
 import { assertNavigationEntries, isPlainLinkClick } from '../../link.helpers'
 
 type PanelTabsBarProps = {
+  /**
+   * `hud` is the Explorer HUD's strip, holding `Tabs` of the same appearance. Its variants are `pill` (filled
+   * pills, the selected one orange), `underline` (bare upper-case labels on a hairline, the selected one
+   * underlined), `section` and `shop` (large icon pills) and `subtab` (tall labels with a thick underline).
+   */
+  appearance?: 'default' | 'hud'
+  /**
+   * By default: `underline`, `compact` (the transparent underline bar) or `pill` (rounded filter tabs).
+   * `section`, `shop` and `subtab` exist for `appearance="hud"` only: the default appearance draws them as
+   * `underline`. The `hud` appearance has no `compact`, and draws it as `pill`, as it does without a variant.
+   */
+  variant?: 'underline' | 'compact' | 'pill' | 'section' | 'shop' | 'subtab'
+  /** For `appearance="hud"`: equal-width tabs across the strip, with centred labels. Ignored otherwise. */
+  fill?: boolean
   label: string
   children: ReactNode
-  /** `compact` is the transparent underline bar. `pill` spaces rounded filter tabs. */
-  variant?: 'underline' | 'compact' | 'pill'
   /**
    * The bar's inline padding. Without it the variant's own (the Figma 64px for `underline`, none for
    * `pill`); `content` lines the first tab up with a page's content column: 16px, 32px from 1024px.
@@ -19,22 +31,36 @@ type PanelTabsBarProps = {
 } & Omit<HTMLAttributes<HTMLDivElement>, 'children' | 'role' | 'aria-label'>
 
 const KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End'])
+const HUD_VARIANT = {
+  pill: 'hudPill',
+  underline: 'hudUnderline',
+  section: 'hudSection',
+  shop: 'hudShop',
+  subtab: 'hudSubtab'
+} as const
 
 /** A tab list: arrows, Home and End move focus between its tabs; a button tab is also activated. */
 function PanelTabsBar({
   label,
   children,
-  variant = 'underline',
+  appearance = 'default',
+  variant,
+  fill = false,
   inset,
   scrollable = false,
   className,
   onKeyDown,
   ...rest
 }: PanelTabsBarProps) {
+  const look =
+    appearance === 'hud'
+      ? [styles[HUD_VARIANT[!variant || variant === 'compact' ? 'pill' : variant]], fill && styles.hudFill]
+      : [styles[variant === 'compact' || variant === 'pill' ? variant : 'underline']]
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     onKeyDown?.(event)
     if (event.defaultPrevented || !KEYS.has(event.key)) return
-    const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'))
+    // A disabled tab is shown but skipped, like a static heading standing in the strip.
+    const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]:not(:disabled)'))
     const current = tabs.indexOf(event.target as HTMLElement)
     if (current < 0) return
     event.preventDefault()
@@ -53,10 +79,10 @@ function PanelTabsBar({
     <div
       {...rest}
       role="tablist"
-      aria-label={label}
+      aria-label={label || undefined}
       className={[
         styles.root,
-        styles[variant],
+        ...look,
         inset === 'content' && styles.insetContent,
         scrollable && styles.scrollable,
         className

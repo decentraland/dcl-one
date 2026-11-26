@@ -2,20 +2,16 @@
 //! The ops dashboard's cross-wallet credits list and its grant reasons, read
 //! from this node's tables in the old server's row shape:
 //!
-//! - an operator grant (`credits.ledger` kind `grant` with its
-//!   `ops.admin_audit` row): a USD row, source `grant` (`studio_grant` when
-//!   the audit names a studio), goal `on-demand-granted-credits`, its reason
-//!   and annotation from the audit detail, and the granter when the audit
-//!   actor is a wallet (a bearer grant records `token:<VARIABLE>`, so it has
-//!   no granter, and no grant path writes an annotation yet);
-//! - a grant migrated from the old server (kind `grant`, no audit row): a USD
-//!   row, source `migrated`, no goal, reason or granter. The migration folded
-//!   every positive non-purchase credit (grants, studio grants, IAP, sale
-//!   proceeds and royalties, won disputes) into `grant` without its source,
-//!   so these rows are not claimed as the operator's grants;
+//! - An audited USD grant, including imported grants with metadata, has the
+//!   source `grant` or `studio_grant` when the audit carries `studioName`,
+//!   and goal `on-demand-granted-credits`. Reason and annotation come from
+//!   the audit detail. A wallet actor appears as the granter.
+//! - An imported credit of kind `grant` without an audit row has source
+//!   `migrated` and no goal, reason or granter. This includes IAP, sale
+//!   proceeds and royalties, and won disputes.
 //! - a pack purchase (`credits.ledger` kind `purchase`): a USD row, source
 //!   `purchase`;
-//! - a goal credit (`credits.goal_grants`): a MANA row with its season,
+//! - a claimed goal credit (`credits.goal_grants` with `claimed_at`): a MANA row with its season,
 //!   contract, signature and expiry, source `goal`, and the MANA its salt
 //!   has consumed on chain (`credits.usages`).
 //!
@@ -128,7 +124,8 @@ fn credit_rows() -> String {
            NULL::text, NULL::text, NULL::text, \
            COALESCE((SELECT SUM(u.value_wei) FROM credits.usages u WHERE u.salt = g.salt), 0), \
            'goal'::text, g.goal_id \
-    FROM credits.goal_grants g LEFT JOIN credits.seasons s ON s.id = g.season_id"
+    FROM credits.goal_grants g LEFT JOIN credits.seasons s ON s.id = g.season_id \
+    WHERE g.claimed_at IS NOT NULL"
     )
 }
 
@@ -263,9 +260,15 @@ impl Credits {
 
     /// A REPEATABLE READ, READ ONLY transaction: every statement in it reads
     /// the same snapshot, and nothing in it can write.
-    async fn read_snapshot(&self) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
+    pub(super) async fn read_snapshot(
+        &self,
+    ) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        // Each report statement is bounded, as the market's reads are.
+        sqlx::query("SET LOCAL statement_timeout = '10s'")
             .execute(&mut *tx)
             .await?;
         Ok(tx)

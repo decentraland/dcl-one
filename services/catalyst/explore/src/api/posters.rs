@@ -95,7 +95,7 @@ fn avif_file_type(body: &[u8]) -> bool {
     if &header[4..] != b"ftyp" {
         return false;
     }
-    let size = u32::from_be_bytes(header[..4].try_into().unwrap());
+    let size = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
     let (size, offset) = if size == 1 {
         let Some(extended) = body.get(8..16).and_then(|bytes| bytes.try_into().ok()) else {
             return false;
@@ -206,7 +206,7 @@ pub async fn serve(state: &Shared, kind: Kind, file: &str) -> anyhow::Result<Ser
         return Ok(Served::Miss);
     }
     let lock = state.posters.locks.claim(&key);
-    let result = async {
+    async {
         let _guard = lock.lock().await;
         if let Some(hit) = lookup(state, kind, file).await? {
             return Ok(hit);
@@ -251,8 +251,7 @@ pub async fn serve(state: &Shared, kind: Kind, file: &str) -> anyhow::Result<Ser
             Conditional::NotModified => anyhow::bail!("{} answered 304 to an unconditional GET", mirror::shown(&url)),
         }
     }
-    .await;
-    result
+    .await
 }
 
 fn not_found() -> Response {
