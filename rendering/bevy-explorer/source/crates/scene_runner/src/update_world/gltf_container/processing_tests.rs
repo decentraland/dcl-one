@@ -418,6 +418,58 @@ fn removing_the_container_drops_its_progress() {
     assert!(!has_node(&mut app, "a"));
 }
 
+/// What an animated model leaves on its container.
+fn animated(app: &mut App, container: Entity) {
+    app.world_mut().entity_mut(container).insert((
+        AnimationPlayer::default(),
+        AnimationGraphHandle::default(),
+        Clips {
+            default: None,
+            named: HashMap::default(),
+        },
+        PlaysOnce,
+    ));
+}
+
+fn is_animated(app: &App, container: Entity) -> bool {
+    let container = app.world().entity(container);
+    container.contains::<AnimationPlayer>()
+        || container.contains::<AnimationGraphHandle>()
+        || container.contains::<Clips>()
+        || container.contains::<PlaysOnce>()
+}
+
+#[test]
+fn a_model_without_animations_drops_the_player_of_the_model_it_replaces() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    give_context(&mut app, root);
+    let (container, _) = spawn_container(&mut app, root, &["node"]);
+    animated(&mut app, container);
+
+    app.update();
+
+    assert!(is_processed(&app, container));
+    assert!(!is_animated(&app, container));
+}
+
+#[test]
+fn removing_the_container_drops_its_player() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    give_context(&mut app, root);
+    let (container, _) = spawn_container(&mut app, root, &["node"]);
+    app.update();
+    animated(&mut app, container);
+
+    app.world_mut()
+        .entity_mut(container)
+        .remove::<GltfDefinition>();
+    app.update();
+
+    assert!(!is_animated(&app, container));
+}
+
 #[test]
 fn removing_the_container_while_its_model_spawns_leaves_nothing() {
     let mut app = app();

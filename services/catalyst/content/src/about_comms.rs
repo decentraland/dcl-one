@@ -37,12 +37,15 @@ pub struct AboutComms {
     pub v4: Option<Discovery>,
 }
 
+/// `(userCount, peers per parcel)`.
+pub type RealmView = (u64, Vec<((i32, i32), u32)>);
+
 /// What the clustering engine last reported: archipelago's `/core-status`.
 pub trait CommsCore: Send + Sync {
     /// `(healthy, userCount)`.
     fn core_status(&self) -> (bool, u64);
     /// One coherent realm view. Implementations with asynchronous feeds override this read.
-    fn realm_view(&self) -> (u64, Vec<((i32, i32), u32)>) {
+    fn realm_view(&self) -> RealmView {
         (self.core_status().1, self.parcel_counts())
     }
     /// Peers per parcel, for `/lambdas/explore/realms`.
@@ -166,7 +169,7 @@ impl AboutCommsState {
             .unwrap_or_default()
     }
 
-    pub fn realm_view(&self) -> (u64, Vec<((i32, i32), u32)>) {
+    pub fn realm_view(&self) -> RealmView {
         self.core
             .get()
             .map(|core| core.realm_view())

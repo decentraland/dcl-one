@@ -38,6 +38,7 @@ import {
 } from './protocol'
 import { applyProfileEdit } from './profileEdit'
 import { mentionName } from './mention'
+import { CHAT_REACTIONS_SETTING } from '../features/chat/reactions'
 import { mockEventList, mockEventPlaces, setMockReminder } from './mockEvents'
 import type { Color3, PortableInfo, PortableState } from './generated/index'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
@@ -405,6 +406,8 @@ const ON_OFF = ['Off', 'On']
 // names, order and values are the reference client's settings pages (Graphics, Sounds, Controls,
 // Chat); 'Master Volume' and 'Voice Volume' keep the engine's names, which the rail's Volume
 // popover and the nearby-voice panel read.
+/** Whether the mock passes reactions to the page: its "Chat Reactions" setting. */
+const reactionsShown = (): boolean => (mockSettings.find((s) => s.name === CHAT_REACTIONS_SETTING)?.value ?? 0) >= 1
 const mockSettings: Setting[] = [
   choice('Experimental Lobby (requires restart)', 'graphics', ON_OFF, 1),
   choice('Graphics Preset', 'graphics', ['Low', 'Medium', 'High', 'Custom'], 3),
@@ -442,7 +445,7 @@ const mockSettings: Setting[] = [
   choice('Exchange DMs & Calls with', 'chat', ['Everyone', 'Only Friends'], 0),
   choice('In-World Chat Bubbles & Reactions', 'chat', ['All Chats', 'Nearby Only', 'None'], 0),
   choice('Language', 'chat', ['English', 'Español', 'Français', 'Deutsch', 'Português', '中文', '日本語', '한국어'], 0),
-  choice('Chat Reactions', 'chat', ON_OFF, 0)
+  choice(CHAT_REACTIONS_SETTING, 'chat', ON_OFF, 0)
 ]
 
 // The engine's default binding table (mirrors InputMap::default() in crates/common/src/inputs.rs)
@@ -735,6 +738,15 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     ch.postMessage({ to: 'page', msg } satisfies Envelope)
   }
 
+  // A saved outfit's work takes a moment, as the scene's does, so the slot's busy state shows.
+  const outfitWork = (slot: number, action: 'save' | 'delete' | 'equip', work: () => void): void => {
+    reply({ kind: 'outfitBusy', slot, action, busy: true })
+    setTimeout(() => {
+      work()
+      reply({ kind: 'outfitBusy', slot, action, busy: false })
+    }, 800)
+  }
+
   // ?mockportables=1: the portables the mock engine lists. The jetpack runs until the player stops it
   // (then it can be restarted); the pet is paused by the scene; the scene's portable failed to load.
   const portables: PortableInfo[] = [
@@ -758,6 +770,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   let pendingAuth: { id: string; timer: ReturnType<typeof setTimeout> } | null = null
   // Drives the mock pose stream (see spawnPlayer) so the minimap is developable without an engine.
   let poseTimer: ReturnType<typeof setInterval> | null = null
+  // The nearby players' reactions under ?mockreactions=1 (see spawnPlayer).
+  let reactionTimer: ReturnType<typeof setInterval> | null = null
 
   // No engine in mock mode, so stand in for the engine's input stream: relay DOM key edges as
   // the systemAction messages the real bridge sends from getSystemActionStream, looked up from
@@ -1054,6 +1068,22 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       }
     })
 
+    // ?mockreactions=1 → the "Chat Reactions" setting starts on and the players nearby react every
+    // so often, so the on-screen lane has something to show without a second player.
+    if (new URLSearchParams(location.search).get('mockreactions') === '1') {
+      const setting = mockSettings.find((s) => s.name === CHAT_REACTIONS_SETTING)
+      if (setting != null) setting.value = 1
+      const emoji = ['\u{2665}\u{fe0f}', '\u{1f44f}', '\u{1f525}', '\u{1f923}']
+      let played = 0
+      // one stream however many times the player has logged in
+      if (reactionTimer != null) clearInterval(reactionTimer)
+      reactionTimer = alone ? null : setInterval(() => {
+        if (!reactionsShown()) return
+        reply({ kind: 'reaction', reaction: { from: samples[played % samples.length][0], emoji: emoji[played % emoji.length] } })
+        played++
+      }, 700)
+    }
+
     // ?worldpw=1 → fire a sample world password prompt so the dialog is exercisable in the mock; a
     // wrong answer (anything but "open-sesame") re-asks with the reason, as the engine does.
     if (new URLSearchParams(location.search).get('worldpw') === '1') {
@@ -1089,6 +1119,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       for (const [ty, allowed] of [['Fetch', true], ['OpenUrl', false], ['MovePlayer', true]] as const) {
         reply({ kind: 'permissionUsed', ty, sceneName: 'Genesis Plaza', scene, realm, allowed })
       }
+      // and the scene holding the camera, for the list's "In force now"
+      reply({ kind: 'permissionUsed', ty: 'ForceCamera', sceneName: 'Genesis Plaza', scene, realm, allowed: true, inForce: true })
       setTimeout(
         () =>
           reply({
@@ -1140,6 +1172,12 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
 
+    if (msg.kind === 'watchSkyTime') {
+      // ?mocksky=1 → a scene holds the time of day at 22:00, so the Skybox menu shows locked.
+      const held = new URLSearchParams(location.search).get('mocksky') === '1'
+      if (msg.on) reply({ kind: 'skyTime', state: held ? { hours: 22, locked: true, speed: 12, followsClock: false } : { hours: 10, locked: false, speed: 12, followsClock: true } })
+      return
+    }
     if (msg.kind === 'watchMapPlayers') {
       if (msg.on) reply({ kind: 'mapPlayers', players: MOCK_NEARBY_PLAYERS })
       return
@@ -1227,6 +1265,11 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
           { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado' }
         ]
       })
+      return
+    }
+    if (msg.kind === 'sendReaction') {
+      // Play the local player's reaction back, as the engine does while the setting is on.
+      if (reactionsShown()) reply({ kind: 'reaction', reaction: { from: o.userId.toLowerCase(), emoji: msg.emoji } })
       return
     }
     if (msg.kind === 'getSettings') {
@@ -1360,27 +1403,33 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'saveOutfit') {
-      // Capture the full current look (equippedNow includes the off-catalog item), so a saved slot
-      // equals the equipped set and shows the "matches current look" marker.
-      mockOutfits.outfits = mockOutfits.outfits.filter((o) => o.slot !== msg.slot)
-      mockOutfits.outfits.push({ slot: msg.slot, outfit: mockOutfit(equippedNow().map((w) => w.urn)) })
-      mockOutfits.outfits.sort((a, b) => a.slot - b.slot)
-      reply({ kind: 'outfits', metadata: mockOutfits })
+      outfitWork(msg.slot, 'save', () => {
+        // Capture the full current look (equippedNow includes the off-catalog item), so a saved slot
+        // equals the equipped set and shows the "matches current look" marker.
+        mockOutfits.outfits = mockOutfits.outfits.filter((o) => o.slot !== msg.slot)
+        mockOutfits.outfits.push({ slot: msg.slot, outfit: mockOutfit(equippedNow().map((w) => w.urn)) })
+        mockOutfits.outfits.sort((a, b) => a.slot - b.slot)
+        reply({ kind: 'outfits', metadata: mockOutfits })
+      })
       return
     }
     if (msg.kind === 'deleteOutfit') {
-      mockOutfits.outfits = mockOutfits.outfits.filter((o) => o.slot !== msg.slot)
-      reply({ kind: 'outfits', metadata: mockOutfits })
+      outfitWork(msg.slot, 'delete', () => {
+        mockOutfits.outfits = mockOutfits.outfits.filter((o) => o.slot !== msg.slot)
+        reply({ kind: 'outfits', metadata: mockOutfits })
+      })
       return
     }
     if (msg.kind === 'equipOutfit') {
-      // Reflect the outfit's wearables as equipped so the Wearables tab updates too.
-      const found = mockOutfits.outfits.find((o) => o.slot === msg.slot)
-      if (found) {
-        const set = new Set(found.outfit.wearables)
-        for (const w of wardrobe()) w.equipped = set.has(w.urn)
-        reply({ kind: 'wearables', equipped: equippedNow(), bodyShape: BASE_MALE, colors: mockColors })
-      }
+      outfitWork(msg.slot, 'equip', () => {
+        // Reflect the outfit's wearables as equipped so the Wearables tab updates too.
+        const found = mockOutfits.outfits.find((o) => o.slot === msg.slot)
+        if (found) {
+          const set = new Set(found.outfit.wearables)
+          for (const w of wardrobe()) w.equipped = set.has(w.urn)
+          reply({ kind: 'wearables', equipped: equippedNow(), bodyShape: BASE_MALE, colors: mockColors })
+        }
+      })
       return
     }
     if (msg.kind === 'setNearbyMute') {
@@ -1860,19 +1909,39 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'getGalleryPhoto') {
-      reply({
-        kind: 'galleryPhoto',
-        id: msg.id,
-        meta: {
-          userName: o.hasPreviousLogin ? 'Mojito' : 'Guest',
-          userAddress: o.userId,
-          sceneName: 'Genesis Plaza',
-          x: -9,
-          y: 14,
-          realm: 'main',
-          people: MOCK_NEARBY.slice(0, 3).map((m) => ({ address: m.address, name: m.name || 'Guest', isGuest: false }))
-        }
-      })
+      const photo = mockGallery.find((p) => p.id === msg.id)
+      // Covers a person with collectibles, one with none, and an official wallet.
+      const wearablesOf = [MOCK_COLLECTIBLE_EQUIPPED.map((w) => w.urn), [], MOCK_OFF_CATALOG_EQUIPPED.map((w) => w.urn)]
+      setTimeout(
+        () =>
+          reply({
+            kind: 'galleryPhoto',
+            id: msg.id,
+            meta: {
+              dateTime: photo?.dateTime,
+              userName: o.hasPreviousLogin ? 'Mojito' : 'Guest',
+              userAddress: o.userId,
+              sceneName: 'Genesis Plaza',
+              x: -9,
+              y: 14,
+              realm: 'main',
+              people: MOCK_NEARBY.slice(0, 3).map((m, i) => ({
+                address: m.address,
+                name: m.name || 'Guest',
+                isGuest: false,
+                wearables: wearablesOf[i],
+                official: i === 2
+              }))
+            }
+          }),
+        o.latency
+      )
+      return
+    }
+    if (msg.kind === 'getGalleryWearables') {
+      const known = [...MOCK_COLLECTIBLE_EQUIPPED, ...MOCK_OFF_CATALOG_EQUIPPED]
+      const wearables = msg.urns.map((urn) => known.find((w) => w.urn === urn)).filter((w): w is Wearable => w != null)
+      setTimeout(() => reply({ kind: 'galleryWearables', requestId: msg.requestId, ok: true, wearables }), o.latency)
       return
     }
     if (msg.kind === 'quit') return
@@ -2054,6 +2123,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     window.removeEventListener('keyup', onKeyUp)
     window.removeEventListener('pointerdown', onPointerDown, true)
     if (poseTimer != null) clearInterval(poseTimer)
+    if (reactionTimer != null) clearInterval(reactionTimer)
     ch.close()
   }
   return running

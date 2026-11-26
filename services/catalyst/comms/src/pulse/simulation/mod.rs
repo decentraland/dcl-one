@@ -423,7 +423,9 @@ impl PeerSimulation {
                 listener.get_visible_subjects(boards.board, grids, observer_id, &mut collector);
                 true
             } else {
-                let snap = observer_snapshot.as_ref().unwrap();
+                let snap = observer_snapshot
+                    .as_ref()
+                    .expect("an observer without a listener has a snapshot");
                 aoi.get_visible_subjects(
                     boards.board,
                     grids,
@@ -521,10 +523,9 @@ impl PeerSimulation {
                     },
                     PacketMode::Reliable,
                 );
-                self.observer_views
-                    .get_mut(&observer_id)
-                    .unwrap()
-                    .remove(&entry.subject);
+                if let Some(views) = self.observer_views.get_mut(&observer_id) {
+                    views.remove(&entry.subject);
+                }
                 is_new = true;
                 if let Some(requests) = resync.as_deref_mut() {
                     requests.remove(&entry.subject);
@@ -744,35 +745,34 @@ impl PeerSimulation {
             discrete_event_sent = true;
         }
 
-        let emote_start_is_effective = match (&scan.last_emote_start, &scan.last_emote_stop) {
-            (Some(start), stop) => start.seq > stop.as_ref().map(|s| s.seq).unwrap_or(0),
-            _ => false,
-        };
+        let effective_start = scan
+            .last_emote_start
+            .as_ref()
+            .filter(|start| start.seq > scan.last_emote_stop.as_ref().map(|s| s.seq).unwrap_or(0));
 
-        if emote_start_is_effective {
-            let es = scan.last_emote_start.as_ref().unwrap();
-            if let Some(emote) = es.emote.clone().filter(|e| e.emote_id.is_some()) {
-                let dup = view
-                    .last_sent_emote
-                    .as_ref()
-                    .map(|l| l.emote_id == emote.emote_id && l.start_seq == emote.start_seq)
-                    .unwrap_or(false);
-                if !dup {
-                    let es = resolve_event_pose(es, latest);
-                    self.send_emote_started(observer_id, view, entry.subject, es, &emote);
-                    if let Some(r) = resync.as_deref_mut() {
-                        r.remove(&entry.subject);
-                    }
-                    view.last_sent_emote = Some(emote);
-                    if es.seq > last_sent_state.seq {
-                        last_sent_state = es.clone();
-                    }
-                    discrete_event_sent = true;
+        if let Some(es) = effective_start
+            && let Some(emote) = es.emote.clone().filter(|e| e.emote_id.is_some())
+        {
+            let dup = view
+                .last_sent_emote
+                .as_ref()
+                .map(|l| l.emote_id == emote.emote_id && l.start_seq == emote.start_seq)
+                .unwrap_or(false);
+            if !dup {
+                let es = resolve_event_pose(es, latest);
+                self.send_emote_started(observer_id, view, entry.subject, es, &emote);
+                if let Some(r) = resync.as_deref_mut() {
+                    r.remove(&entry.subject);
                 }
+                view.last_sent_emote = Some(emote);
+                if es.seq > last_sent_state.seq {
+                    last_sent_state = es.clone();
+                }
+                discrete_event_sent = true;
             }
         }
 
-        if !emote_start_is_effective {
+        if effective_start.is_none() {
             self.try_sync_emote_stop(
                 observer_id,
                 entry.subject,

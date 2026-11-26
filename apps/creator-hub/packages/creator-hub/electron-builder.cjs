@@ -146,8 +146,8 @@ const config = {
     ...(isDryRun ? { identity: null } : {}),
     // The defaults plus microphone access, which the hardened runtime needs for the session
     // recorder; the usage string is what macOS shows when it asks the user.
-    entitlements: 'buildResources/entitlements.mac.plist',
-    entitlementsInherit: 'buildResources/entitlements.mac.plist',
+    entitlements: path.join(__dirname, 'buildResources', 'entitlements.mac.plist'),
+    entitlementsInherit: path.join(__dirname, 'buildResources', 'entitlements.mac.plist'),
     extendInfo: {
       NSMicrophoneUsageDescription:
         'Creator Hub records your voice only while you press Record in the editor, so the AI assistant can follow what you say.',

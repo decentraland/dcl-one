@@ -5,7 +5,8 @@ use crate::interfaces::{
 };
 use crate::rooms::{ActiveDeployment, ReplacedScene, ResolveError, ResolvedRoom, RoomRequest};
 use crate::world_identity::SceneId;
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 struct RetainedScenes {
     unavailable: bool,
@@ -55,6 +56,12 @@ impl SceneIdentity for RetainedScenes {
             }),
         )
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 #[tokio::test]
@@ -97,11 +104,11 @@ async fn retired_room_repair_reads_current_bans_and_preserves_roles_and_unrelate
             let metadata = captured.clone(); let writes = counted.clone(); let room = listed_room.clone();
             async move {
                 if method == "ListRooms" {
-                    axum::Json(json!({"rooms":[{"name":room,"sid":"RM_retired","metadata":metadata.lock().unwrap().to_string()}]}))
+                    axum::Json(json!({"rooms":[{"name":room,"sid":"RM_retired","metadata":metadata.lock().to_string()}]}))
                 } else {
                     assert_eq!(method, "UpdateRoomMetadata");
-                    *metadata.lock().unwrap() = serde_json::from_str(body["metadata"].as_str().unwrap()).unwrap();
-                    *writes.lock().unwrap() += 1;
+                    *metadata.lock() = serde_json::from_str(body["metadata"].as_str().unwrap()).unwrap();
+                    *writes.lock() += 1;
                     axum::Json(json!({}))
                 }
             }
@@ -113,7 +120,7 @@ async fn retired_room_repair_reads_current_bans_and_preserves_roles_and_unrelate
     let server = tokio::spawn(async move { axum::serve(listener, api).await.unwrap() });
     // The unban already committed while its immediate room inventory failed.
     refresh(&state).await.unwrap();
-    assert_eq!(metadata.lock().unwrap()["bannedAddresses"], json!([]));
+    assert_eq!(metadata.lock()["bannedAddresses"], json!([]));
     for (key, address) in [
         ("retained.dcl.eth:1,2", "rebanned"),
         ("retained.dcl.eth:3,4", "successor"),
@@ -125,7 +132,7 @@ async fn retired_room_repair_reads_current_bans_and_preserves_roles_and_unrelate
     }
     refresh(&state).await.unwrap();
     assert_eq!(
-        *metadata.lock().unwrap(),
+        *metadata.lock(),
         json!({"bannedAddresses":["legacy","rebanned","successor"],"sceneAdmins":["existing"],"presenters":["presenter"]})
     );
     for unrelated in [
@@ -143,10 +150,6 @@ async fn retired_room_repair_reads_current_bans_and_preserves_roles_and_unrelate
     }
     state.scenes = Arc::new(RetainedScenes { unavailable: true });
     refresh(&state).await.unwrap();
-    assert_eq!(
-        *writes.lock().unwrap(),
-        2,
-        "unavailable authority retains metadata"
-    );
+    assert_eq!(*writes.lock(), 2, "unavailable authority retains metadata");
     server.abort();
 }

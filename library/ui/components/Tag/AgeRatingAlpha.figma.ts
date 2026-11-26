@@ -5,7 +5,11 @@
 import figma from 'figma'
 const instance = figma.selectedInstance
 
-const variant = instance.getEnum('Flag', { Teen: 'teen', Adult: 'adult', Restricted: 'restricted' })
+const variant = instance.getEnum('rating', {
+  teen: 'teen',
+  adult: 'adult',
+  restricted: 'restricted'
+})
 
 export default {
   example: figma.tsx`<Tag variant="${variant}" />`,

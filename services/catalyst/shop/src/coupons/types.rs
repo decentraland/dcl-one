@@ -1,3 +1,9 @@
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 use std::time::Duration;
 
 use chrono::NaiveDateTime;
@@ -25,6 +31,10 @@ pub const DEFAULT_PAGE_LIMIT: i64 = 100;
 /// The creation body is gated by `validate_creation_schema`, whose `discountType`/`discount`
 /// rule is JSON Schema's `integer`: a number with a zero fractional part, however it was
 /// spelled. Plain `i64` deserialisation refuses `300000.0`, so the two gates would disagree.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the float is integral and |v| <= 2^63; `as` saturates the one 2^63 case"
+)]
 fn integer_number<'de, D>(deserializer: D) -> Result<i64, D::Error>
 where
     D: serde::Deserializer<'de>,

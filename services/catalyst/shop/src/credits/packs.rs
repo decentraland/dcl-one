@@ -4,6 +4,13 @@
 //! (bounded by the PURCHASE through `revoked_credits <= credits`, never by
 //! spend rows) and the completion-based event de-duplication.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 use serde_json::Value as JsonValue;
 use sqlx::Row;
 
@@ -29,6 +36,8 @@ pub(crate) fn validate_sku(raw: &str) -> Result<String, ApiError> {
 /// reversals go by, whichever Stripe event settled it.
 #[derive(Debug, Clone)]
 pub struct SettledPurchase {
+    /// `credits.purchases.id`, the key of its receipt.
+    pub id: i64,
     pub address: String,
     pub credits: String,
     pub sku: String,
@@ -38,6 +47,11 @@ pub struct SettledPurchase {
     /// The payment intent the purchase holds after the flip: the one it
     /// already had (an unpaid completion records it), else the event's.
     pub payment_intent: Option<String>,
+    /// What the payment charged, in cents of `currency`, and how many
+    /// packs it bought (the credits and the cents are already the totals).
+    pub amount_cents: i64,
+    pub currency: String,
+    pub quantity: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +93,8 @@ pub enum ReversalOutcome {
         shortfall: String,
         /// Whether `shortfall` is strictly positive (decided in NUMERIC).
         has_shortfall: bool,
+        /// A dispute's reversal; else a refund's.
+        dispute: bool,
     },
     NothingToReverse,
     NoPaidPurchase,
@@ -152,6 +168,11 @@ impl PackOrder<'_> {
     }
 }
 
+#[allow(clippy::cast_possible_truncation, reason = "d % 10 is below 10")]
+fn digit_char(d: u64) -> char {
+    char::from(b'0' + (d % 10) as u8)
+}
+
 /// `text × factor`, exactly, for PostgreSQL's plain `numeric::text` output
 /// (`[-]digits[.digits]`); `None` for anything else.
 fn multiply_decimal(text: &str, factor: u32) -> Option<String> {
@@ -187,20 +208,14 @@ fn multiply_decimal(text: &str, factor: u32) -> Option<String> {
     head.reverse();
     head.extend(digits);
     let split = head.len() - frac_part.len();
-    let int_digits: String = head[..split]
-        .iter()
-        .map(|d| char::from(b'0' + *d as u8))
-        .collect();
+    let int_digits: String = head[..split].iter().map(|d| digit_char(*d)).collect();
     let int_digits = int_digits.trim_start_matches('0');
     let int_digits = if int_digits.is_empty() {
         "0"
     } else {
         int_digits
     };
-    let frac_digits: String = head[split..]
-        .iter()
-        .map(|d| char::from(b'0' + *d as u8))
-        .collect();
+    let frac_digits: String = head[split..].iter().map(|d| digit_char(*d)).collect();
     let mut out = String::new();
     if negative {
         out.push('-');
@@ -295,7 +310,10 @@ impl Credits {
         .bind(&order.pack.sku)
         .bind(&order.credits)
         .bind(order.amount_cents)
-        .bind(order.quantity as i32)
+        .bind(
+            i32::try_from(order.quantity)
+                .map_err(|_| ApiError::Internal(format!("pack quantity {} is past i32", order.quantity)))?,
+        )
         .bind(order.source)
         .bind(&order.pack.currency)
         .bind(checkout_session_id)
@@ -516,12 +534,16 @@ impl Credits {
 
         if updated || (status == "paid" && existing_event.as_deref() == Some(event_id)) {
             return Ok(MarkPaidOutcome::Granted(SettledPurchase {
+                id: row.get("id"),
                 address: row.get("address"),
                 credits: row.get("credits"),
                 sku: row.get("sku"),
                 order_id: row.get("order_id"),
                 checkout_session: row.get("stripe_checkout_session"),
                 payment_intent: row.get("payment_intent"),
+                amount_cents,
+                currency: currency.clone(),
+                quantity: row.get("quantity"),
             }));
         }
         if !SETTLEABLE_STATUSES.contains(&status.as_str()) {
@@ -772,6 +794,7 @@ impl Credits {
             removed: outcome.removed,
             shortfall: outcome.shortfall,
             has_shortfall: outcome.has_shortfall,
+            dispute: status_label == Some("disputed"),
         })
     }
 
@@ -821,7 +844,7 @@ macro_rules! mark_paid_sql {
     ($column:literal) => {
         concat!(
             "WITH cur AS ( \
-                 SELECT id, address, credits::text AS credits, amount_cents, currency, status, stripe_event_id, \
+                 SELECT id, address, credits::text AS credits, amount_cents, quantity, currency, status, stripe_event_id, \
                         sku, order_id, stripe_checkout_session, stripe_payment_intent \
                  FROM credits.purchases WHERE ",
             $column,
@@ -834,7 +857,7 @@ macro_rules! mark_paid_sql {
                      AND cur.amount_cents = $3 AND lower(cur.currency) = lower($5::text) \
                  RETURNING p.id \
              ) \
-             SELECT cur.address, cur.credits, cur.amount_cents, cur.currency, cur.status, cur.stripe_event_id, \
+             SELECT cur.id, cur.address, cur.credits, cur.amount_cents, cur.quantity, cur.currency, cur.status, cur.stripe_event_id, \
                     cur.sku, cur.order_id, cur.stripe_checkout_session, \
                     COALESCE(cur.stripe_payment_intent, $4::text) AS payment_intent, \
                     EXISTS (SELECT 1 FROM upd) AS updated \

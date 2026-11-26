@@ -12,7 +12,13 @@ import { AuthServerProvider } from '../../../lib/auth';
 import { createTestStore, type TestStore } from '../../../../tests/utils/testStore';
 import { actions as aiActions } from '../ai';
 import { FeatureFlag } from '../featureFlags/types';
-import { actions, canManageSharing, selectSharingView, shouldShareTurn } from './slice';
+import {
+  actions,
+  BACKOFF_JITTER,
+  canManageSharing,
+  selectSharingView,
+  shouldShareTurn,
+} from './slice';
 
 vi.mock('../../../lib/aiSharingApi', () => ({
   isConfigured: vi.fn(() => true),
@@ -747,7 +753,7 @@ describe('when the service asks to wait', () => {
     expect(backoffOf(store).nextUploadAt).toBeGreaterThanOrEqual(Date.now() + 3599 * 1000);
   });
 
-  it('should wait no longer than the longest backoff, whatever Retry-After says', async () => {
+  it('should wait no longer than the longest backoff and its spread, whatever Retry-After says', async () => {
     vi.mocked(api.getConsent).mockResolvedValue(ok(serverSays(true, granted.decidedAt)));
     vi.mocked(aiSharing.peek).mockResolvedValue([record('a')]);
     vi.mocked(api.uploadTurns).mockResolvedValue({ ...fail(503), retryAfterSeconds: 86_400 });
@@ -755,7 +761,26 @@ describe('when the service asks to wait', () => {
 
     await store.dispatch(actions.flush());
 
-    expect(backoffOf(store).nextUploadAt).toBeLessThanOrEqual(Date.now() + 3_600_000);
+    expect(backoffOf(store).nextUploadAt).toBeLessThanOrEqual(
+      Date.now() + 3_600_000 * (1 + BACKOFF_JITTER),
+    );
+  });
+
+  it('should spread clients that failed together, never retrying before Retry-After', () => {
+    const waits = [0, 0.5, 0.999].map(draw => {
+      const random = vi.spyOn(Math, 'random').mockReturnValue(draw);
+      const store = setup({ consent: granted });
+      const before = Date.now();
+      store.dispatch(actions.uploadFailed({ wallet: ADDRESS, retryAfterSeconds: 600 }));
+      random.mockRestore();
+      return backoffOf(store).nextUploadAt - before;
+    });
+
+    expect(waits[0]).toBeGreaterThanOrEqual(600_000);
+    expect(waits[1]).toBeGreaterThanOrEqual(660_000);
+    expect(waits[2]).toBeGreaterThanOrEqual(719_000);
+    expect(waits[2]).toBeLessThanOrEqual(720_000 + 50);
+    expect(new Set(waits.map(w => Math.round(w / 1000))).size).toBe(3);
   });
 
   it('should honour Retry-After on a failed conversation erasure', async () => {
@@ -840,6 +865,111 @@ describe('when looking at what was shared', () => {
     expect(store.getState().aiSharing.shared.turns.map(t => t.recordId)).toEqual(['b']);
     expect(store.getState().workspace.settings.aiDataSharing?.[ADDRESS]?.consent).toBe('granted');
   });
+
+  const summary = (id: string) => ({
+    conversationId: id,
+    goal: 'a door',
+    outcome: 'achieved' as const,
+    frictions: [],
+    createdAt: NOW,
+  });
+
+  it('should load the summaries on screen again, without the erased conversation', async () => {
+    vi.mocked(api.listTurns).mockResolvedValue(ok({ records: [turn('a'), turn('b')], next: null }));
+    vi.mocked(api.listDigests)
+      .mockResolvedValueOnce(ok({ digests: [summary('conv-a'), summary('conv-b')], next: null }))
+      .mockResolvedValueOnce(ok({ digests: [summary('conv-b')], next: null }));
+    vi.mocked(api.eraseTurn).mockResolvedValue(ok({ deleted: 1 }));
+    const store = setup({ consent: granted });
+    await store.dispatch(actions.loadSharedTurns({ reset: true }));
+    await store.dispatch(actions.loadDigests({ reset: true }));
+
+    await store.dispatch(actions.eraseSharedTurn('a'));
+    await settled();
+
+    expect(api.listDigests).toHaveBeenCalledTimes(2);
+    expect(store.getState().aiSharing.digests.digests.map(d => d.conversationId)).toEqual([
+      'conv-b',
+    ]);
+  });
+
+  it('should not load summaries that were never shown', async () => {
+    vi.mocked(api.listTurns).mockResolvedValue(ok({ records: [turn('a')], next: null }));
+    vi.mocked(api.eraseTurn).mockResolvedValue(ok({ deleted: 1 }));
+    const store = setup({ consent: granted });
+    await store.dispatch(actions.loadSharedTurns({ reset: true }));
+
+    await store.dispatch(actions.eraseSharedTurn('a'));
+    await settled();
+
+    expect(api.listDigests).not.toHaveBeenCalled();
+  });
+
+  it('should not load summaries that were hidden', async () => {
+    vi.mocked(api.listTurns).mockResolvedValue(ok({ records: [turn('a')], next: null }));
+    vi.mocked(api.listDigests).mockResolvedValue(ok({ digests: [summary('conv-a')], next: null }));
+    vi.mocked(api.eraseTurn).mockResolvedValue(ok({ deleted: 1 }));
+    const store = setup({ consent: granted });
+    await store.dispatch(actions.loadSharedTurns({ reset: true }));
+    await store.dispatch(actions.loadDigests({ reset: true }));
+    store.dispatch(actions.clearDigests());
+
+    await store.dispatch(actions.eraseSharedTurn('a'));
+    await settled();
+
+    expect(api.listDigests).toHaveBeenCalledTimes(1);
+  });
+
+  it('should load as many pages of summaries as were on screen', async () => {
+    vi.mocked(api.listTurns).mockResolvedValue(ok({ records: [turn('a')], next: null }));
+    vi.mocked(api.listDigests)
+      .mockResolvedValueOnce(ok({ digests: [summary('conv-a')], next: 'c1' }))
+      .mockResolvedValueOnce(ok({ digests: [summary('conv-b')], next: 'c2' }))
+      .mockResolvedValueOnce(ok({ digests: [summary('conv-b')], next: 'd1' }))
+      .mockResolvedValueOnce(ok({ digests: [summary('conv-c')], next: null }));
+    vi.mocked(api.eraseTurn).mockResolvedValue(ok({ deleted: 1 }));
+    const store = setup({ consent: granted });
+    await store.dispatch(actions.loadSharedTurns({ reset: true }));
+    await store.dispatch(actions.loadDigests({ reset: true }));
+    await store.dispatch(actions.loadDigests({ reset: false }));
+
+    await store.dispatch(actions.eraseSharedTurn('a'));
+    await settled();
+
+    expect(vi.mocked(api.listDigests).mock.calls.slice(2)).toEqual([
+      [ADDRESS, null],
+      [ADDRESS, 'd1'],
+    ]);
+    expect(store.getState().aiSharing.digests).toMatchObject({
+      status: 'loaded',
+      next: null,
+      pages: 2,
+      digests: [{ conversationId: 'conv-b' }, { conversationId: 'conv-c' }],
+    });
+  });
+
+  it('should keep the newest summaries when an older reload fails after it', async () => {
+    let failOlder: (value: unknown) => void = () => {};
+    let answerNewer: (value: unknown) => void = () => {};
+    vi.mocked(api.listTurns).mockResolvedValue(ok({ records: [turn('a'), turn('b')], next: null }));
+    vi.mocked(api.listDigests)
+      .mockResolvedValueOnce(ok({ digests: [summary('conv-a'), summary('conv-b')], next: null }))
+      .mockReturnValueOnce(new Promise(r => (failOlder = r)) as never)
+      .mockReturnValueOnce(new Promise(r => (answerNewer = r)) as never);
+    vi.mocked(api.eraseTurn).mockResolvedValue(ok({ deleted: 1 }));
+    const store = setup({ consent: granted });
+    await store.dispatch(actions.loadSharedTurns({ reset: true }));
+    await store.dispatch(actions.loadDigests({ reset: true }));
+
+    await store.dispatch(actions.eraseSharedTurn('a'));
+    await store.dispatch(actions.eraseSharedTurn('b'));
+    answerNewer(ok({ digests: [], next: null }));
+    await settled();
+    failOlder(fail(503));
+    await settled();
+
+    expect(store.getState().aiSharing.digests).toMatchObject({ status: 'loaded', digests: [] });
+  });
 });
 
 describe('when the first reply was stopped', () => {
@@ -863,6 +993,38 @@ describe('when the service rate-limits an upload', () => {
 
     expect(aiSharing.ack).not.toHaveBeenCalled();
     expect(backoffOf(store).nextUploadAt).toBeGreaterThanOrEqual(Date.now() + 599_000);
+  });
+
+  it('should send the same records once the wait is over, and drop them only once accepted', async () => {
+    vi.mocked(api.getConsent).mockResolvedValue(ok(serverSays(true, granted.decidedAt)));
+    // The queue holds both until they are acknowledged.
+    let queued = [record('a'), record('b')];
+    vi.mocked(aiSharing.peek).mockImplementation(async () => queued);
+    vi.mocked(aiSharing.ack).mockImplementation(async () => {
+      queued = [];
+    });
+    vi.mocked(api.uploadTurns)
+      .mockResolvedValueOnce({ ...fail(429), retryAfterSeconds: 600 })
+      .mockResolvedValueOnce(ok({ accepted: 2, rejected: [] }));
+    const store = setup({ consent: granted });
+
+    await store.dispatch(actions.flush());
+    expect(aiSharing.ack).not.toHaveBeenCalled();
+    // Still waiting: nothing is sent.
+    await store.dispatch(actions.flush());
+    expect(api.uploadTurns).toHaveBeenCalledTimes(1);
+
+    const later = Date.now() + 2 * 3_600_000;
+    const now = vi.spyOn(Date, 'now').mockReturnValue(later);
+    await store.dispatch(actions.flush());
+    now.mockRestore();
+
+    expect(api.uploadTurns).toHaveBeenCalledTimes(2);
+    const ids = (call: number) =>
+      (vi.mocked(api.uploadTurns).mock.calls[call][1] as AiTurnRecord[]).map(r => r.recordId);
+    // The same record ids: the service counts a resent id as already stored, never twice.
+    expect(ids(1)).toEqual(ids(0));
+    expect(aiSharing.ack).toHaveBeenCalledWith(['a', 'b']);
   });
 });
 

@@ -35,7 +35,7 @@ uuid.workspace = true
 tokio-util.workspace = true
 dashmap.workspace = true
 parking_lot.workspace = true
-metrics.workspace = true
+dcl-metrics.workspace = true
 hex.workspace = true
 libc.workspace = true
 urlencoding.workspace = true
@@ -83,3 +83,6 @@ alloy = { version = "2", default-features = false, features = ["std", "signer-lo
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 rustls = { workspace = true, features = ["ring"] }
 openmls_basic_credential = "0.6.0"
+
+[lints]
+workspace = true

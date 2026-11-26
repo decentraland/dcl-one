@@ -306,7 +306,7 @@ type ListRow = (
     i64,
 );
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, reason = "one argument per list filter")]
 pub async fn list(
     pool: &PgPool,
     pagination: &Pagination,

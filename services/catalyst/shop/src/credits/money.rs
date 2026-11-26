@@ -20,6 +20,13 @@
 //! written by a `WHERE portion > 0` predicate evaluated by PostgreSQL in
 //! NUMERIC, in the same statement family that applies the balance change.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 use super::errors::ApiError;
 
 /// Reject `|amount| >= 10^30`. Credits are a retail currency; anything at or
@@ -107,6 +114,17 @@ impl CreditAmount {
 
     pub fn as_str(&self) -> &str {
         &self.text
+    }
+}
+
+/// A NUMERIC integer read as text (a report's rounded sum of cents), as an
+/// `i64` that saturates instead of failing: one absurd row must not fail a
+/// whole report.
+pub fn saturating_cents(text: &str) -> i64 {
+    match text.parse::<i64>() {
+        Ok(v) => v,
+        Err(_) if text.starts_with('-') => i64::MIN,
+        Err(_) => i64::MAX,
     }
 }
 
@@ -253,6 +271,10 @@ impl Decimal {
 
     /// Base-10 exponent of the most significant digit: the value lies in
     /// `[10^mag, 10^(mag+1))`. Only meaningful when `has_nonzero_digit`.
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "slice indexes are at most isize::MAX, which fits i64"
+    )]
     fn magnitude_exp(&self) -> i64 {
         self.int_len as i64 - self.first_significant as i64 - 1 + self.exp
     }
@@ -260,6 +282,14 @@ impl Decimal {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn saturating_cents_never_fail() {
+        assert_eq!(saturating_cents("1234"), 1234);
+        assert_eq!(saturating_cents("-5"), -5);
+        assert_eq!(saturating_cents("99999999999999999999999"), i64::MAX);
+        assert_eq!(saturating_cents("-99999999999999999999999"), i64::MIN);
+    }
     use super::*;
 
     fn ok(s: &str) -> bool {

@@ -14,7 +14,9 @@ use common::{
 };
 use dcl_component::proto_components::sdk::components::{PbAudioEvent, PbVideoEvent};
 use ipfs::IpfsResource;
-use livestream_manager::{ReceiverImage, ReceiverVolume};
+use livestream_manager::{
+    ReceiverImage, ReceiverVolume, SelectedVideoReceiver, VideoTrackSource, LIVEKIT_CURRENT_STREAM,
+};
 use media::{AVCommand, VideoData, VideoInfo};
 use scene_runner::{
     automatic_testing::SnapshotInProgress,
@@ -27,7 +29,6 @@ use crate::{
     plugin::push_state_to_crdt,
     video_stream::{av_sinks, noop_sinks},
     AVPlayer, AVPlayerConfig, AVSinks, AudioStream, ShouldBePlaying, Stream, VideoPlayer,
-    LIVEKIT_VIDEO_STREAM,
 };
 
 pub struct VideoPlayerPlugin;
@@ -146,20 +147,27 @@ fn new_video_player_source(
         sinks.command_sender.send(AVCommand::Dispose).report();
     }
 
-    let livestream = &**source == LIVEKIT_VIDEO_STREAM;
-    if livestream != has_stream {
-        if livestream {
-            debug!("VideoPlayer {} now a stream.", entity);
-            commands.entity(entity).try_insert(Stream);
-        } else {
-            debug!("VideoPlayer {} no longer a stream.", entity);
-            commands.entity(entity).try_remove::<Stream>();
-            let _ = maybe_video_texture_output.take();
-        }
+    // Refresh the receiver when its source changes, including between live tracks.
+    if has_stream {
+        commands.entity(entity).try_remove::<Stream>();
+        maybe_video_texture_output = None;
+    }
+    commands
+        .entity(entity)
+        .try_remove::<SelectedVideoReceiver>();
+    if let Some(track) = VideoTrackSource::from_url(&context.hash, source) {
+        commands
+            .entity(entity)
+            .try_insert(SelectedVideoReceiver(track));
+        commands.entity(entity).try_insert(Stream);
+        return;
+    }
+    if &**source == LIVEKIT_CURRENT_STREAM {
+        commands.entity(entity).try_insert(Stream);
+        return;
     }
 
     let image = match (&(**source), maybe_video_texture_output) {
-        (LIVEKIT_VIDEO_STREAM, _) => return,
         // a cleared source shows black, never the last frame of what played before
         ("", _) => images.add(video_output_image(basic::BLACK)),
         (_, Some(texture)) => {

@@ -3,11 +3,11 @@
 // card click resolves a destination (parcel teleport / world realm) and a Skip button takes home
 // (the default realm at 0,0 — Genesis Plaza — unless the user pinned one).
 
-import { Button } from '../../design'
 import { PlacesBrowser } from './PlacesBrowser'
 import { placeTeleport, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import type { Destination } from '../session/useEngineSession'
 import styles from './PlacesPicker.module.css'
+import { Button } from '@dcl/one-ui'
 
 export function PlacesPicker({ onPick, account }: { onPick: (dest: Destination) => void; account?: string | null }): React.JSX.Element {
   return (
@@ -19,7 +19,7 @@ export function PlacesPicker({ onPick, account }: { onPick: (dest: Destination) 
               <p className={styles.kicker}>Welcome back</p>
               <h1 className={styles.title}>Where do you want to go?</h1>
             </div>
-            <Button variant="secondary" size="md" className={styles.skip} onClick={() => onPick(null)}>
+            <Button appearance="hud" variant="secondary" size="md" className={styles.skip} onClick={() => onPick(null)}>
               Skip to Home
             </Button>
           </div>

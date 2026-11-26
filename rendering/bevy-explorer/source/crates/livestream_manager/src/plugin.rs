@@ -31,17 +31,22 @@ impl Plugin for LivestreamManagerPlugin {
         app.add_observer(transmitter_off);
         app.add_observer(receiver_on);
         app.add_observer(receiver_off);
+        app.add_observer(clear_hidden_automatic_output);
 
         app.add_systems(
             Update,
             (
+                selected_video_receivers,
                 transmission_kind,
                 manage_streams.run_if(in_state(TransmissionState::NeedStream)),
                 manage_casts.run_if(in_state(TransmissionState::Cast)),
+                automatic_video_shown,
+                release_selected_video_transmitters,
             )
                 .chain(),
         );
         app.add_systems(OnEnter(Receiver::Off), drop_transmissions);
+        app.add_systems(OnEnter(TransmissionKind::Off), clear_automatic_image);
         app.add_systems(
             OnEnter(TransmissionState::Cast),
             enter_transmission_kind::<ManagingAudioCasts>,
@@ -91,6 +96,7 @@ impl ComputedStates for TransmissionState {
 struct LivestreamManager {
     image: Handle<Image>,
     state: tokio::sync::watch::Sender<VideoState>,
+    selected_fallback: ActiveTransmitter,
 }
 
 #[derive(Component)]
@@ -149,7 +155,7 @@ struct ManagingAudioStreams(Vec<Entity>);
 #[relationship(relationship_target = ManagingAudioStreams)]
 struct AudioStreamer(Entity);
 
-fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+fn empty_output_image() -> Image {
     let mut image = Image::new_fill(
         Extent3d {
             width: 8,
@@ -157,7 +163,7 @@ fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        &[255, 0, 255, 255],
+        &[0, 0, 0, 255],
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::all(),
     );
@@ -166,12 +172,17 @@ fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     {
         image.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
     }
-    let handle = images.add(image);
+    image
+}
+
+fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    let handle = images.add(empty_output_image());
     let (state_sender, _) = tokio::sync::watch::channel(VideoState::VsLoading);
 
     commands.spawn(LivestreamManager {
         image: handle,
         state: state_sender,
+        selected_fallback: selected_output(&mut images),
     });
     debug!("LivestreamManager setup");
 }
@@ -298,12 +309,16 @@ fn transmitter_on(
 
 fn transmitter_off(
     _trigger: Trigger<OnRemove, ActiveTransmitter>,
+    mut commands: Commands,
     mut next_state: ResMut<NextState<Transmitter>>,
 ) {
     debug!(
         "Transmitter {} removed, transmitters are now Off",
         _trigger.target()
     );
+    commands
+        .entity(_trigger.target())
+        .try_remove::<AutomaticVideoShown>();
     next_state.set(Transmitter::Off);
 }
 
@@ -311,16 +326,19 @@ fn receiver_on(
     trigger: Trigger<OnAdd, ActiveReceiver>,
     mut commands: Commands,
     livestream_manager: Single<&LivestreamManager>,
+    selected_receivers: Query<(), With<SelectedVideoReceiver>>,
     mut next_state: ResMut<NextState<Receiver>>,
 ) {
     let entity = trigger.target();
     debug!("New receiver {}", entity);
-    commands.entity(entity).try_insert(ReceiverImage {
-        image: livestream_manager.image.clone(),
-        state: livestream_manager.state.subscribe(),
-        sent_event: 0.,
-        sent_state: VideoState::VsNone,
-    });
+    if !selected_receivers.contains(entity) {
+        commands.entity(entity).try_insert(ReceiverImage {
+            image: livestream_manager.image.clone(),
+            state: livestream_manager.state.subscribe(),
+            sent_event: 0.,
+            sent_state: VideoState::VsNone,
+        });
+    }
     next_state.set(Receiver::On);
 }
 
@@ -430,6 +448,27 @@ fn drop_transmissions(
         .try_remove::<ActiveTransmitter>();
 }
 
+fn clear_automatic_image(
+    manager: Single<&LivestreamManager>,
+    mut images: ResMut<Assets<Image>>,
+    mut resized: EventWriter<TransmissionImageResized>,
+) {
+    clear_automatic_output(&manager, &mut images, &mut resized);
+}
+
+fn clear_automatic_output(
+    manager: &LivestreamManager,
+    images: &mut Assets<Image>,
+    resized: &mut EventWriter<TransmissionImageResized>,
+) {
+    let Some(image) = images.get_mut(&manager.image) else {
+        return;
+    };
+    *image = empty_output_image();
+    manager.state.send_replace(VideoState::VsLoading);
+    resized.write(TransmissionImageResized);
+}
+
 fn manage_streams(
     mut commands: Commands,
     livestream_manager: Single<(&LivestreamManager, &ManagingVideoStreams)>,
@@ -491,5 +530,126 @@ fn transfer_receiver_volume(
 
     for mut audio_transmitter_volume in audio_transmitters.into_inner() {
         audio_transmitter_volume.0 = global_volume;
+    }
+}
+
+fn selected_output(images: &mut Assets<Image>) -> ActiveTransmitter {
+    ActiveTransmitter {
+        image: images.add(empty_output_image()),
+        state: tokio::sync::watch::channel(VideoState::VsLoading).0,
+    }
+}
+
+fn selected_video_receivers(
+    mut commands: Commands,
+    manager: Single<&LivestreamManager>,
+    receivers: Query<
+        (Entity, &SelectedVideoReceiver, Option<&ReceiverImage>),
+        With<ActiveReceiver>,
+    >,
+    tracks: Query<(Entity, &VideoTrackSource, Option<&SelectedVideoTransmitter>)>,
+    changed: Query<
+        (),
+        Or<(
+            Added<ActiveReceiver>,
+            Changed<SelectedVideoReceiver>,
+            Changed<VideoTrackSource>,
+        )>,
+    >,
+    mut removed_receivers: RemovedComponents<ActiveReceiver>,
+    mut removed_selections: RemovedComponents<SelectedVideoReceiver>,
+    mut removed_tracks: RemovedComponents<VideoTrackSource>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let removed_receivers = removed_receivers.read().count();
+    let removed_selections = removed_selections.read().count();
+    let removed_tracks = removed_tracks.read().count();
+    if changed.is_empty() && removed_receivers + removed_selections + removed_tracks == 0 {
+        return;
+    }
+    // One image and subscription per requested track, shared by all its screens.
+    let mut requested =
+        bevy::platform::collections::HashMap::<Entity, ActiveTransmitter>::default();
+    for (receiver, selected, previous) in &receivers {
+        let output = if let Some((track, _, existing)) =
+            tracks.iter().find(|(_, source, _)| **source == selected.0)
+        {
+            requested.entry(track).or_insert_with(|| {
+                if let Some(existing) = existing {
+                    ActiveTransmitter {
+                        image: existing.image.clone(),
+                        state: existing.state.clone(),
+                    }
+                } else {
+                    let output = selected_output(&mut images);
+                    commands.entity(track).try_insert(SelectedVideoTransmitter(
+                        ActiveTransmitter {
+                            image: output.image.clone(),
+                            state: output.state.clone(),
+                        },
+                    ));
+                    output
+                }
+            })
+        } else {
+            &manager.selected_fallback
+        };
+        if previous.is_none_or(|previous| previous.image != output.image) {
+            commands.entity(receiver).try_insert(ReceiverImage {
+                image: output.image.clone(),
+                state: output.state.subscribe(),
+                sent_event: 0.,
+                sent_state: VideoState::VsNone,
+            });
+        }
+    }
+}
+
+/// Receivers keep [`Receiver::On`] for the cast audio whichever video they show; the automatic
+/// video is only marked as needed while a receiver shows it.
+fn automatic_video_shown(
+    mut commands: Commands,
+    automatic_receivers: Query<(), (With<ActiveReceiver>, Without<SelectedVideoReceiver>)>,
+    transmitters: Query<(Entity, Has<AutomaticVideoShown>), With<ActiveTransmitter>>,
+) {
+    let shown = !automatic_receivers.is_empty();
+    for (transmitter, has_shown) in &transmitters {
+        if shown && !has_shown {
+            commands.entity(transmitter).try_insert(AutomaticVideoShown);
+        } else if !shown && has_shown {
+            commands
+                .entity(transmitter)
+                .try_remove::<AutomaticVideoShown>();
+        }
+    }
+}
+
+/// The next screen to show the automatic output must not start from the hidden track's last
+/// frame or state. Cleared as the marker goes, so no frame is copied in after it.
+fn clear_hidden_automatic_output(
+    trigger: Trigger<OnRemove, AutomaticVideoShown>,
+    transmitters: Query<(), With<ActiveTransmitter>>,
+    manager: Single<&LivestreamManager>,
+    mut images: ResMut<Assets<Image>>,
+    mut resized: EventWriter<TransmissionImageResized>,
+) {
+    if transmitters.contains(trigger.target()) {
+        clear_automatic_output(&manager, &mut images, &mut resized);
+    }
+}
+
+/// Runs after the automatic demand is updated, so a track that a screen moves between its
+/// selected and automatic outputs is never released while it is still shown.
+fn release_selected_video_transmitters(
+    mut commands: Commands,
+    receivers: Query<&SelectedVideoReceiver, With<ActiveReceiver>>,
+    tracks: Query<(Entity, &VideoTrackSource), With<SelectedVideoTransmitter>>,
+) {
+    for (track, source) in &tracks {
+        if !receivers.iter().any(|selected| selected.0 == *source) {
+            commands
+                .entity(track)
+                .try_remove::<SelectedVideoTransmitter>();
+        }
     }
 }

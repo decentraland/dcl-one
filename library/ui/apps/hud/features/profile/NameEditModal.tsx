@@ -6,13 +6,14 @@
 // (Mirrors unity-explorer's Edit Username dialog.)
 
 import { useEffect, useRef, useState } from 'react'
-import { Button, ModalShell, Select, Tabs, TextInput, openPopup, type TabItem } from '../../design'
+import { ModalShell, Select, Tabs, TextInput, openPopup, type TabItem } from '../../design'
 import { useSession } from '../session/SessionContext'
 import { splitName } from '@explorer-core/lib/identity'
 import { NAME_MAX, isValidName } from '@explorer-core/features/profile/profileFields'
 import { addressSuffix } from '@explorer-core/engine/profileEdit'
 import styles from './NameEditModal.module.css'
 import { siteUrl } from '@hud-host'
+import { Button } from '@dcl/one-ui'
 
 /** Where a NAME is bought. Same destination as the communities modal's "Get a NAME". */
 const NAMES_URL = siteUrl('/marketplace/names/claim')
@@ -133,10 +134,10 @@ export function NameEditModal({ onClose }: { onClose: () => void }): React.JSX.E
       {/* The actions live in the body rather than the shell's footer: the claim panel sits BELOW
           them, filling the bottom of the dialog, and a footer would land under it. */}
       <div className={styles.actions}>
-        <Button variant="secondary" onClick={onClose} disabled={saving}>
+        <Button appearance="hud" variant="secondary" onClick={onClose} disabled={saving}>
           CANCEL
         </Button>
-        <Button variant="primary" onClick={() => save({ name: chosen })} disabled={!canSave}>
+        <Button appearance="hud" variant="primary" onClick={() => save({ name: chosen })} disabled={!canSave}>
           {saving ? 'SAVING…' : 'SAVE'}
         </Button>
       </div>
@@ -150,7 +151,7 @@ export function NameEditModal({ onClose }: { onClose: () => void }): React.JSX.E
             ? 'Each NAME adds a World to your collection and increases your overall World size limits. Plus, NAMEs are each worth 100 Voting Power!'
             : 'A NAME comes with a World you can build and host events in, and grants DAO Voting Power too!'}
         </p>
-        <Button variant="primary" onClick={() => window.open(NAMES_URL, '_blank', 'noopener')}>
+        <Button appearance="hud" variant="primary" onClick={() => window.open(NAMES_URL, '_blank', 'noopener')}>
           CLAIM NAME
         </Button>
       </div>

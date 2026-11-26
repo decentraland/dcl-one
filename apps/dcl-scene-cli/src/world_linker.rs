@@ -268,6 +268,7 @@ pub async fn run(req: WorldSignRequest, opts: LinkerOptions) -> Result<String> {
 
 /// Host a one-shot signing page: bind, print the URL, open the browser, and
 /// resolve with the first outcome the page reports (or the timeout).
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 pub(crate) async fn serve(
     app: Router,
     rx: tokio::sync::oneshot::Receiver<Result<String>>,

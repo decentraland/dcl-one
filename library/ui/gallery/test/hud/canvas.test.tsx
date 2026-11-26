@@ -80,12 +80,18 @@ describe('when the HUD canvas opens a page', () => {
     expect(drawn(container)).toEqual(['Tabs'])
   })
 
-  it('should draw every section, in order, then the glyphs on the Showcase page', () => {
+  it('should draw every section and the glyphs on the Showcase page, by name as the sidebar lists them', () => {
     const { container } = render(<HudCanvas search="?hud=Showcase" />)
-    expect(drawn(container)).toEqual([
-      ...SHOWCASE_SECTIONS.map((section) => section.name),
-      'Glyphs'
-    ])
+    const names = [...SHOWCASE_SECTIONS.map((section) => section.name), 'Glyphs']
+    expect(drawn(container)).toEqual(
+      names.sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base', numeric: true }))
+    )
+    expect(drawn(container)).toEqual(hudPages.pages.slice(1))
+  })
+
+  it('should keep opening a component on the first section of the HUD index that renders it', () => {
+    // FieldLabel sorts before FormControls and renders a TextInput too; MenuPanel comes after EquippedItemCard.
+    expect(hudPages.aliases).toMatchObject({ TextInput: 'FormControls', Icon: 'MenuPanel' })
   })
 
   it.each([

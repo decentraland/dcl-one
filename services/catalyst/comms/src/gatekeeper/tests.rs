@@ -1624,6 +1624,12 @@ impl crate::interfaces::SceneIdentity for DeployedGenesis {
     ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
         self.inner.world_active_scene(world).await
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        self.inner.world_scene_count(world).await
+    }
 }
 
 fn genesis_state(pool: PgPool) -> SharedState {
@@ -1689,6 +1695,12 @@ impl crate::interfaces::SceneIdentity for ParcelScenes {
         _: &crate::world_identity::WorldName,
     ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
         panic!("must not resolve the newest world scene")
+    }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
     }
 }
 
@@ -2335,9 +2347,9 @@ async fn the_moderator_routes_need_the_token_or_a_listed_wallet() {
 /// loosening the room refuses is stored. Each room failure is counted.
 #[tokio::test(flavor = "current_thread")]
 async fn the_private_messages_privacy_patch_reaches_the_room_or_is_refused() {
-    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
     let series = recorder.handle();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let failures = || {
         series
             .render()
@@ -2861,7 +2873,7 @@ async fn a_community_room_lives_while_a_moderator_is_present_and_sweeps_otherwis
         "the last moderator leaving tears the room down"
     );
     {
-        let events = directory.community_events.lock().unwrap();
+        let events = directory.community_events.lock();
         assert_eq!(
             events.len(),
             1,
@@ -2896,7 +2908,7 @@ async fn a_community_room_lives_while_a_moderator_is_present_and_sweeps_otherwis
 /// What the worlds access log is in `serve`: records every event the
 /// webhook hands over, so the test sees that only verified ones arrive.
 #[derive(Default)]
-struct RecordingSink(std::sync::Mutex<Vec<(String, String, String)>>);
+struct RecordingSink(parking_lot::Mutex<Vec<(String, String, String)>>);
 
 impl super::events::RoomEventSink for RecordingSink {
     fn observe_room_event(&self, event: &crate::protocol::bus::room_events::RoomEvent) {
@@ -2908,7 +2920,6 @@ impl super::events::RoomEventSink for RecordingSink {
         };
         self.0
             .lock()
-            .unwrap()
             .push((kind.to_string(), event.room.clone(), event.identity.clone()));
     }
 }
@@ -3001,7 +3012,7 @@ async fn the_livekit_webhook_verifies_always_and_feeds_the_worlds_sink_verified_
         StatusCode::UNAUTHORIZED
     );
     assert!(
-        sink.0.lock().unwrap().is_empty(),
+        sink.0.lock().is_empty(),
         "an unverified event never reaches the worlds sink"
     );
     assert_eq!(
@@ -3009,7 +3020,7 @@ async fn the_livekit_webhook_verifies_always_and_feeds_the_worlds_sink_verified_
         StatusCode::OK
     );
     assert_eq!(
-        sink.0.lock().unwrap().as_slice(),
+        sink.0.lock().as_slice(),
         &[(
             "participant_joined".to_string(),
             "world-w.dcl.eth".to_string(),
@@ -3053,14 +3064,14 @@ async fn the_livekit_webhook_verifies_always_and_feeds_the_worlds_sink_verified_
         post_webhook(&dev_app, Some(&webhook_jwt(&body, &key, &secret)), &body).await,
         StatusCode::SERVICE_UNAVAILABLE
     );
-    assert!(dev_sink.0.lock().unwrap().is_empty());
+    assert!(dev_sink.0.lock().is_empty());
 }
 
 /// What worlds' `CoreState` is in `serve` since the webhook split: the
 /// access-log half only, one `(action, world, identity)` row per join or
 /// leave on a worlds room.
 #[derive(Default)]
-struct AccessLogSink(std::sync::Mutex<Vec<(String, String, String)>>);
+struct AccessLogSink(parking_lot::Mutex<Vec<(String, String, String)>>);
 
 impl super::events::RoomEventSink for AccessLogSink {
     fn observe_room_event(&self, event: &crate::protocol::bus::room_events::RoomEvent) {
@@ -3073,7 +3084,7 @@ impl super::events::RoomEventSink for AccessLogSink {
             RoomEventKind::Left => "leave",
             _ => return,
         };
-        self.0.lock().unwrap().push((
+        self.0.lock().push((
             action.to_string(),
             event.realm_name.clone(),
             event.identity.clone(),
@@ -3085,7 +3096,7 @@ impl super::events::RoomEventSink for AccessLogSink {
 /// participant event, by `(event id, session)`; `fail` refuses the next one.
 #[derive(Default)]
 struct RecordingStore {
-    events: std::sync::Mutex<Vec<(String, String)>>,
+    events: parking_lot::Mutex<Vec<(String, String)>>,
     fail: std::sync::atomic::AtomicBool,
 }
 
@@ -3100,7 +3111,6 @@ impl super::events::RoomEventStore for RecordingStore {
         }
         self.events
             .lock()
-            .unwrap()
             .push((event.event_id.clone(), event.participant_sid.clone()));
         Ok(())
     }
@@ -3165,13 +3175,13 @@ async fn the_room_event_store_receives_superseded_session_events_and_fails_the_w
         assert_eq!(post(id, kind, sid, at).await, StatusCode::OK);
     }
     assert_eq!(
-        sink.0.lock().unwrap().len(),
+        sink.0.lock().len(),
         2,
         "the access log keeps comms' ordering"
     );
     let stored = |id: &str, sid: &str| (id.to_string(), sid.to_string());
     assert_eq!(
-        store.events.lock().unwrap().as_slice(),
+        store.events.lock().as_slice(),
         &[
             stored("old-join", "PA_old"),
             stored("new-join", "PA_new"),
@@ -3182,11 +3192,11 @@ async fn the_room_event_store_receives_superseded_session_events_and_fails_the_w
     let leave = || post("new-leave", "participant_left", "PA_new", 1718900003);
     store.fail.store(true, std::sync::atomic::Ordering::SeqCst);
     assert_eq!(leave().await, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(sink.0.lock().unwrap().len(), 2, "nothing applied yet");
+    assert_eq!(sink.0.lock().len(), 2, "nothing applied yet");
     assert_eq!(leave().await, StatusCode::OK);
-    assert_eq!(sink.0.lock().unwrap().len(), 3);
+    assert_eq!(sink.0.lock().len(), 3);
     assert_eq!(
-        store.events.lock().unwrap().last(),
+        store.events.lock().last(),
         Some(&stored("new-leave", "PA_new"))
     );
 }
@@ -3199,11 +3209,10 @@ async fn the_room_event_store_receives_superseded_session_events_and_fails_the_w
 async fn the_room_event_store_retries_failed_leaves_and_skips_duplicates() {
     let (post, sink, store) = room_event_store_app();
     let fail = || store.fail.store(true, std::sync::atomic::Ordering::SeqCst);
-    let stored = || store.events.lock().unwrap().len();
+    let stored = || store.events.lock().len();
     let leaves = || {
         sink.0
             .lock()
-            .unwrap()
             .iter()
             .filter(|(action, ..)| action == "leave")
             .count()
@@ -3254,7 +3263,7 @@ async fn the_room_event_store_retries_failed_leaves_and_skips_duplicates() {
         StatusCode::OK
     );
     assert_eq!(
-        store.events.lock().unwrap().last(),
+        store.events.lock().last(),
         Some(&("b-leave".to_string(), "PA_b".to_string()))
     );
     assert_eq!(
@@ -3316,7 +3325,7 @@ async fn webhook_invalidates_occupancy_and_preserves_access_log_ordering() {
     );
     assert_eq!((first, duplicate), (StatusCode::OK, StatusCode::OK));
     assert_eq!(state.presence.world_participant_count("alice.dcl.eth"), 0);
-    assert_eq!(sink.0.lock().unwrap().as_slice(), &[row("join", "0xabc")]);
+    assert_eq!(sink.0.lock().as_slice(), &[row("join", "0xabc")]);
     // Concurrent redelivery of one verified event applies no second access row.
     let jwt = webhook_jwt(&joined, &key, &secret);
     let (a, b) = tokio::join!(
@@ -3324,7 +3333,7 @@ async fn webhook_invalidates_occupancy_and_preserves_access_log_ordering() {
         post_webhook(&app, Some(&jwt), &joined)
     );
     assert_eq!((a, b), (StatusCode::OK, StatusCode::OK));
-    assert_eq!(sink.0.lock().unwrap().as_slice(), &[row("join", "0xabc")]);
+    assert_eq!(sink.0.lock().as_slice(), &[row("join", "0xabc")]);
 
     // Server events still reach the access sink without consuming a player's seat.
     for kind in ["participant_joined", "participant_left"] {
@@ -3336,7 +3345,7 @@ async fn webhook_invalidates_occupancy_and_preserves_access_log_ordering() {
         assert_eq!(state.presence.world_participant_count("alice.dcl.eth"), 0);
     }
     assert_eq!(
-        sink.0.lock().unwrap().as_slice(),
+        sink.0.lock().as_slice(),
         &[
             row("join", "0xabc"),
             row("join", "authoritative-server"),
@@ -3351,7 +3360,7 @@ async fn webhook_invalidates_occupancy_and_preserves_access_log_ordering() {
     );
     assert_eq!(state.presence.world_participant_count("alice.dcl.eth"), 0);
     assert_eq!(
-        sink.0.lock().unwrap().as_slice(),
+        sink.0.lock().as_slice(),
         &[
             row("join", "0xabc"),
             row("join", "authoritative-server"),
@@ -3369,7 +3378,7 @@ async fn webhook_invalidates_occupancy_and_preserves_access_log_ordering() {
         StatusCode::OK
     );
     assert_eq!(
-        sink.0.lock().unwrap().as_slice(),
+        sink.0.lock().as_slice(),
         &[
             row("join", "0xabc"),
             row("join", "authoritative-server"),
@@ -3399,7 +3408,7 @@ async fn webhook_invalidates_occupancy_and_preserves_access_log_ordering() {
         StatusCode::OK
     );
     assert_eq!(
-        sink.0.lock().unwrap().as_slice(),
+        sink.0.lock().as_slice(),
         &[
             row("join", "0xabc"),
             row("join", "authoritative-server"),
@@ -3462,7 +3471,7 @@ async fn webhook_invalidates_occupancy_and_preserves_access_log_ordering() {
         assert_eq!(state.presence.world_participant_count("alice.dcl.eth"), 0);
     }
     // Exact host exclusion also separates coordinator keys from retained case variants.
-    let before = sink.0.lock().unwrap().len();
+    let before = sink.0.lock().len();
     for (index, kind, identity, expected) in [
         (0, "participant_joined", "AUTHORITATIVE-SERVER", 0),
         (1, "participant_joined", "authoritative-server", 0),
@@ -3484,7 +3493,7 @@ async fn webhook_invalidates_occupancy_and_preserves_access_log_ordering() {
         );
     }
     assert_eq!(
-        &sink.0.lock().unwrap()[before..],
+        &sink.0.lock()[before..],
         &[
             row("join", "AUTHORITATIVE-SERVER"),
             row("join", "authoritative-server"),
@@ -3768,7 +3777,7 @@ async fn a_connect_reaches_only_a_running_island_subscriber() {
 /// connector announces makes it ask Pulse for that session's cluster.
 #[tokio::test]
 async fn the_island_feed_needs_no_switch() {
-    use std::sync::Mutex;
+    use parking_lot::Mutex;
     use std::time::Duration;
 
     use super::admission::cluster::ClusterConfig;
@@ -3811,7 +3820,7 @@ async fn the_island_feed_needs_no_switch() {
             queue: Option<&str>,
             handler: NatsHandler,
         ) -> NatsSubscription {
-            self.subjects.lock().unwrap().push(subject.to_owned());
+            self.subjects.lock().push(subject.to_owned());
             self.bus.subscribe(subject, queue, handler)
         }
 
@@ -3854,11 +3863,10 @@ async fn the_island_feed_needs_no_switch() {
     assert!(
         bus.subjects
             .lock()
-            .unwrap()
             .iter()
             .any(|subject| subject == ClusterChange::SUBJECTS),
         "{:?}",
-        bus.subjects.lock().unwrap()
+        bus.subjects.lock()
     );
 
     state.announce_session(WALLET, SESSION);
@@ -4461,7 +4469,7 @@ async fn participant_resolution_preserves_raw_lookup_misses_and_route_statuses()
 
 #[tokio::test]
 async fn participant_consumers_share_room_spelling_addresses_and_livekit_failure() {
-    let observed = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let observed = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
     let capture = observed.clone();
     let fixture = axum::Router::new().route(
         "/twirp/livekit.RoomService/ListParticipants",
@@ -4470,7 +4478,6 @@ async fn participant_consumers_share_room_spelling_addresses_and_livekit_failure
             async move {
                 capture
                     .lock()
-                    .unwrap()
                     .push(body["room"].as_str().unwrap().to_string());
                 Json(serde_json::json!({"participants":[
                     {"identity":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
@@ -4549,7 +4556,7 @@ async fn participant_consumers_share_room_spelling_addresses_and_livekit_failure
         Some(expected)
     );
     assert_eq!(
-        *observed.lock().unwrap(),
+        *observed.lock(),
         vec![
             "w1:7:foo.ethSignedScene",
             "scene:LocalPreview:SignedScene",
@@ -4650,7 +4657,7 @@ async fn webhook_community_notification_failure_keeps_rows_for_complete_retry() 
             .len(),
         1
     );
-    assert!(directory.community_events.lock().unwrap().is_empty());
+    assert!(directory.community_events.lock().is_empty());
     assert_eq!(post_webhook(&app, Some(&jwt), &body).await, StatusCode::OK);
     assert!(
         state
@@ -4660,13 +4667,13 @@ async fn webhook_community_notification_failure_keeps_rows_for_complete_retry() 
             .unwrap()
             .is_empty()
     );
-    assert_eq!(directory.community_events.lock().unwrap().len(), 1);
+    assert_eq!(directory.community_events.lock().len(), 1);
     assert_eq!(
-        directory.community_events.lock().unwrap()[0]["key"],
+        directory.community_events.lock()[0]["key"],
         "community-streaming-ended-community-end-retry"
     );
     assert_eq!(post_webhook(&app, Some(&jwt), &body).await, StatusCode::OK);
-    assert_eq!(directory.community_events.lock().unwrap().len(), 1);
+    assert_eq!(directory.community_events.lock().len(), 1);
 }
 
 #[tokio::test]
@@ -4681,14 +4688,14 @@ async fn webhook_private_join_restart_reconstructs_old_room_after_delete_failure
         .bind(previous).bind(&participant).bind(&previous_peer).bind(next).bind(&next_peer).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO social.private_voice_chat_participants (call_id,address,status,joined_at,status_updated_at) VALUES ($1,$2,'connected',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),($1,$3,'connected',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),($4,$2,'not_connected',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),($4,$5,'not_connected',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
         .bind(previous).bind(&participant).bind(&previous_peer).bind(next).bind(&next_peer).execute(&pool).await.unwrap();
-    let rooms = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let rooms = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
     let observed = rooms.clone();
     let fixture = axum::Router::new().route(
         "/twirp/livekit.RoomService/DeleteRoom",
         axum::routing::post(move |Json(body): Json<serde_json::Value>| {
             let observed = observed.clone();
             async move {
-                let mut rooms = observed.lock().unwrap();
+                let mut rooms = observed.lock();
                 rooms.push(body["room"].as_str().unwrap().to_owned());
                 let status = if rooms.len() == 1 {
                     StatusCode::INTERNAL_SERVER_ERROR
@@ -4746,14 +4753,14 @@ async fn webhook_private_join_restart_reconstructs_old_room_after_delete_failure
         Some(next)
     );
     assert_eq!(
-        rooms.lock().unwrap().as_slice(),
+        rooms.lock().as_slice(),
         &[
             crate::rooms::private_voice_chat_room_name(&previous),
             crate::rooms::private_voice_chat_room_name(&previous)
         ]
     );
     assert_eq!(post_webhook(&app, Some(&jwt), &body).await, StatusCode::OK);
-    assert_eq!(rooms.lock().unwrap().len(), 2);
+    assert_eq!(rooms.lock().len(), 2);
     restarted
         .voice_db
         .delete_private_call(previous)
@@ -5062,6 +5069,12 @@ async fn an_event_in_a_room_reads_refuse_is_neither_applied_nor_published() {
         ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
             Ok(None)
         }
+        async fn world_scene_count(
+            &self,
+            world: &crate::world_identity::WorldName,
+        ) -> Result<usize, crate::rooms::ResolveError> {
+            Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+        }
     }
     let bus = Arc::new(super::bus::InProcessBus::new());
     let (app, topology, sink) = presence_webhook_state(bus.clone(), Arc::new(Renamed));
@@ -5074,11 +5087,7 @@ async fn an_event_in_a_room_reads_refuse_is_neither_applied_nor_published() {
         1718900000,
     )
     .await;
-    assert_eq!(
-        sink.0.lock().unwrap().len(),
-        1,
-        "the access log still gets it"
-    );
+    assert_eq!(sink.0.lock().len(), 1, "the access log still gets it");
     assert!(bus.published().is_empty());
     assert!(topology.snapshot().wallets.is_empty());
 }

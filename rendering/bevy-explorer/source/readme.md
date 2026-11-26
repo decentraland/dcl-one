@@ -156,7 +156,9 @@ The launch parameters shared with the web build — realm, spawn parcel, ui scen
 
 ### Bevy variants (prototype)
 
-abgen can publish, per scene, wearable and emote entity, GPU-ready variants of its textures: KTX2 files holding BC7, BC1 or BC5 blocks, level 0 alone or with its mip chain, each level zstd-supercompressed. The explorer reads them from `--bevy-variants-url <url>` natively, `?bevyVariants=<url>` on web, or the `bevy_variants_url` field of the config file, and otherwise from abgen's CDN for the base domain (`https://abgen-cdn.decentraland.org`, or the `abgen_cdn` service's override). `off` in any of them turns variants off.
+abgen can publish, per scene, wearable and emote entity, GPU-ready variants of its textures: KTX2 files holding BC7, BC1 or BC5 blocks, level 0 alone or with its mip chain, each level zstd-supercompressed. The explorer reads them from a base url: `--bevy-variants-url <url>` natively or `?bevyVariants=<url>` on web, an `abgen_cdn` service override, the feature flag below, the `bevy_variants_url` field of the config file, or abgen's CDN for the base domain (`https://abgen-cdn.decentraland.org`), in the order the precedence paragraph gives. `off` in the launch option or the config field turns variants off.
+
+Precedence: `--bevy-variants-url` / `?bevyVariants=`, then an `abgen_cdn` service override (both launch options, which settle the base at launch), then the feature flag `explorer-bevy-variants-endpoint` (with `?ff=` applied on top), then the `bevy_variants_url` config field, then the CDN. Without a launch option the base settles once the session's flags are read: an enabled flag variant named `off` turns the variants off, one named `on` keeps the fallback (the config field, else the CDN), and any other names the base as a `string` payload, taken only when it is an `https` url on a Decentraland host, on the default port, with no userinfo, query or fragment. When the flag is disabled, unreadable or names nothing usable, the fallback serves. The base settles once and does not change during the session. Until it settles, manifests are requested but not fetched, a file waits for its manifest, and far and near LODs wait; the manifest deadline counts from the request, or from the base settling if that came later. The flags read is bounded, so a file waits at most that read plus the deadline. `?ff=bevy-variants-endpoint:off` tests the off route in one session.
 
 With a base url:
 
@@ -168,7 +170,7 @@ With a base url:
 - When a `.glb` file has a `glb` variant and the GPU supports BC textures, the file is read from `{base}/{path}` and cached as served; on web the service sends its Brotli copy, when there is one, to a browser that accepts it. Its embedded images are BC KTX2 files of the texture variants' format. The reader checks only that the file starts with the GLB magic and hands it to the glTF loader as it is. The loader decodes each embedded KTX2 through the same KTX2 transcoder as a texture variant, which unwraps it to a DDS as above, so textures stay BC in memory, sRGB or linear as each material uses them. Images left in their own format (PNG, JPEG) load as usual. A KTX2 that does not unwrap fails the GLB's load, and a GLB that fails to load from the variant is reloaded from the original. The asset keeps its original path.
 - Any failure falls back to the original for that file: no variant of a supported class, a failed fetch, a KTX2 that does not unwrap, or an image or GLB that fails to load from the variant. A failed variant is not tried again that session, and its cached copy is dropped. Five consecutive failed requests to the service turn variants off for the session.
 - Image processing skips assets loaded from a variant, so their bytes are never re-encoded or written over the original's cache entry.
-- The runtime debug panel's "Optimized variants" section, and the `/bevy_variants` console command, show the base url, the formats taken, each scene's manifest state, how many variants were served in all and per format, and fallbacks per format and recent ones with their reasons.
+- The runtime debug panel's "Optimized variants" section, and the `/bevy_variants` console command, show the base url, what set it (a launch option, an `abgen_cdn` override, or the endpoint flag and its variant with the fallback's source), whether it is waiting for the flag, the formats taken, each scene's manifest state, how many variants were served in all and per format, and fallbacks per format and recent ones with their reasons.
 
 On web, a link that sets `?bevyVariants=` to a host outside Decentraland's own deployments stops on the launch gate, as `?contentServer=` does. The variants service decides what those scenes look like. On web the service must also send CORS headers for the explorer's origin.
 
@@ -276,6 +278,14 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   showing that message; replies with nothing), `/nametag_official <address> [bool]` (reads or
   sets, for the session, whether a wallet's nametag carries the official badge; replies with
   `address` and `official`),
+  `/reaction_state` (the situational reactions: whether they show in the `world` and on the
+  `screenLane`, the `picked`, `outbox`, `refusedPicks`, `sent`, `received`, `queued`, `played`
+  and `streamed` counts, the `subscribers` streams, the `particles` alive, drawn and waiting for
+  glyphs, the glyph `atlas` page size, and those `dropped` by cause),
+  `/reaction_simulate <local|nearest|address> <emoji> [count]` (takes a message of reactions as if
+  that player had sent it, on this client only; replies with the `target` taken and the emoji's
+  wire `index`), `/reaction_atlas_rebuild` (has the reactions' glyph atlas rebuilt at its next
+  upkeep; replies with nothing),
   `/voice_state` (the nearby mic, with `sceneBlocked` while the scene the player stands in turns
   nearby voice off or its room refused the player as banned, asking again every 15 seconds; the
   nearby voice rooms and, as `call`, the private call or community stream the player is in:
@@ -299,10 +309,11 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   and the scene commands.
 - Social: `/block_user <address>` and `/unblock_user <address>` block and unblock through the
   social service, as the passport does.
-- Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`
-  and `/react <channel> <message id> <emoji>` send as the HUD does; `/community_channels [add
-  <id>|remove <id>|clear]` lists or edits the community channels the engine listens to, which
-  the HUD sets from the user's communities (the engine drops community messages on any other).
+- Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`,
+  `/react <channel> <message id> <emoji>` and `/reaction_send <emoji>` send as the HUD does;
+  `/community_channels [add <id>|remove <id>|clear]` lists or edits the community channels the
+  engine listens to, which the HUD sets from the user's communities (the engine drops community
+  messages on any other).
 - Voice chat, as the HUD's buttons do it and through the same refusals: `/voice call <address>`
   rings a user, `/voice accept` and `/voice reject` answer a ringing call, `/voice end` hangs up
   or leaves a stream, `/voice start|join <community id>` opens or joins a stream, `/voice close`
@@ -362,6 +373,13 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   to the engine through `engine_console_command` and write Bevy input events, unlike `/press_key`
   and `/click_at`, which need a DevTools client for real input. `docs/guidelines/interaction.md`
   has the options, replies and diagnoses.
+- Scene animations: `/scene_animations` (the `models` that animate and how many are
+  `withAnimator`; the clips `playing`, `stopped` by their scene and `finished`; `finishReports`,
+  the finished clips reported to scenes; and up to 32 `clips`, each with its `scene` (the base
+  parcel), `entity`, `clip`, `state`, `weight`, `speed`, `seekSeconds`, `durationSeconds` and
+  `looping`).
+- Movement: `/movement_state` reads the locomotion settings, the last movement step and the
+  height over the ground.
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 **The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC
