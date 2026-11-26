@@ -1,5 +1,6 @@
 'use strict'
 
+// Capture tooling only: importing this module never loads an upstream dependency.
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
@@ -47,6 +48,7 @@ function assertPinnedSource(root, kind = 'social') {
 
 function sourceCapture(root, { companions = [], kind = 'social' } = {}) {
   const source = assertPinnedSource(root, kind)
+  // Validate every companion before even loading the TypeScript registrar.
   for (const companion of companions) assertPinnedSource(companion.root, companion.kind)
   const req = createRequire(path.join(source.upstream, 'package.json'))
   req('ts-node').register({
@@ -61,6 +63,7 @@ function sha256(root, file) {
   return crypto.createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex')
 }
 
+// Callers retain their existing metadata layout; use sha256 directly for variants.
 function provenance(root, files, extra = {}) {
   return { ...SOURCES.social, sha256: Object.fromEntries(files.map(file => [file, sha256(root, file)])), ...extra }
 }
