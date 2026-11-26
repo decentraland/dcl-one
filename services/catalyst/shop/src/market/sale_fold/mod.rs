@@ -3,6 +3,7 @@
 mod creators;
 mod last_sale;
 mod settlements;
+mod trade_prices;
 
 use std::collections::BTreeSet;
 
@@ -15,8 +16,8 @@ use super::chain_walk::{self, ChainNet};
 use super::{ethereum_sales, listings, nft_index, sale_history, sales_index, trade_events};
 use crate::chain_index::rpc::Rpc;
 
-// The input decoder version is independent of how the published ID is formed.
-pub(super) const PUBLICATION_VERSION: i32 = 3;
+// The input decoder version is independent of how public sales are derived.
+pub(super) const PUBLICATION_VERSION: i32 = 4;
 
 fn venue_query(
     net: ChainNet,
@@ -91,7 +92,7 @@ impl Inputs {
     }
 
     fn reusable_prefix(&self, marker: &Marker) -> Option<i64> {
-        if !matches!(marker.input_version, 1 | 2 | PUBLICATION_VERSION)
+        if !matches!(marker.input_version, 1 | 2 | 3 | PUBLICATION_VERSION)
             || marker.input_epochs.get(..self.rows.len()) != self.epochs().get(..self.rows.len())
             || marker.input_revisions.len() < self.rows.len()
         {
@@ -110,7 +111,7 @@ impl Inputs {
     }
 
     fn covers(&self, marker: &Marker) -> bool {
-        matches!(marker.input_version, 1 | 2 | PUBLICATION_VERSION)
+        matches!(marker.input_version, 1 | 2 | 3 | PUBLICATION_VERSION)
             && marker.input_epochs.starts_with(&self.epochs())
             && marker.input_revisions.starts_with(&self.revisions())
             && marker.late_collections == self.late_collections
@@ -574,8 +575,8 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     }
     write_rows(&mut tx, net, from, to).await?;
     let (creator_days, corrected_creators) = creators::write(&mut tx, rpc, net, from, to).await?;
-    let (payment_days, corrected_payments, minted) =
-        settlements::write(&mut tx, rpc, net, from, to).await?;
+    let (payment_days, corrected_payments, mut receipt_asset_changes) =
+        settlements::write(&mut tx, rpc, net, from, to, mana).await?;
     days.extend(creator_days);
     days.extend(payment_days);
     let upgrading_rollups = previous
@@ -595,6 +596,21 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
                 (p.network,p.block_number,p.log_index,p.asset_ordinal)=(a.network,a.block_number,a.log_index,a.ordinal))"
         )).bind(net.db_name()).fetch_all(&mut *tx).await?;
         days.extend(repair_days);
+    }
+    let upgrading_prices = previous
+        .as_ref()
+        .is_some_and(|marker| matches!(marker.input_version, 1..=3));
+    if upgrading_prices {
+        let cleared = trade_prices::clear_unproved(&mut tx, net, from, mana).await?;
+        let mut removed_mana = Vec::new();
+        for (day, block, log, was_mana) in cleared {
+            days.push(day);
+            if was_mana {
+                removed_mana.push((block, log));
+            }
+        }
+        last_sale::remove_changed(&mut tx, net, &removed_mana).await?;
+        receipt_asset_changes.extend(removed_mana);
     }
     days.sort_unstable();
     days.dedup();
@@ -640,8 +656,16 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     let last_sale_to = to.min(last_sale_through.saturating_add(last_sale::WINDOW_BLOCKS));
     last_sale::advance(&mut tx, net, last_sale_through, last_sale_to, mana).await?;
     last_sale_through = last_sale_through.max(last_sale_to);
-    // A retried receipt can set a token id below the table's block.
-    last_sale::refresh(&mut tx, net, &minted, last_sale_through, mana).await?;
+    // A receipt can price or identify a token below the latest-sale table's
+    // block. Recompute the tokens touched by either a receipt or the upgrade.
+    last_sale::refresh(
+        &mut tx,
+        net,
+        &receipt_asset_changes,
+        last_sale_through,
+        mana,
+    )
+    .await?;
     let point = rpc.block_header(to as u64).await?;
     ensure!(point.hash == *hash, "sales prefix changed during fold");
     let head = rpc.head_block().await?;
@@ -723,7 +747,7 @@ pub(super) async fn pass(pool: &PgPool, rpc: &Rpc<'_>, net: ChainNet) -> anyhow:
     // Cached reads may lag an append by their TTL. Changes within that
     // prefix and a newly restored publication invalidate those results.
     let replace_generation = !same_history
-        || upgrading_rollups
+        || upgrading_prices
         || corrected_creators
         || corrected_payments
         || corrected_buyers

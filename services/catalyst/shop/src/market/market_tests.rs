@@ -4178,8 +4178,8 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
         "INSERT INTO shop.committee_event(network,block_number,log_index,block_time,contract_address,member,is_member)
          VALUES('matic',$1-1,2,99,$2,$3,true),('matic',$1,2,100,$2,$3,false)",
     ).bind(height).bind(super::committee_index::CONTRACTS[0]).bind(FORMER_MEMBER).execute(pool).await.unwrap();
-    // A sale in another currency proves the seller and the payer who bought
-    // the NFT for WALLET_A. Their public MANA counters remain zero.
+    // A trade with an unsupported token proves both parties. The payer
+    // has no other evidence and paid for a different NFT recipient.
     let assets = json!({
         "sent":[{"assetType":"3","contractAddress":CREATOR,"value":"5","beneficiary":WALLET_A}],
         "received":[{"assetType":"1","contractAddress":OTHER_TOKEN,"value":"25","beneficiary":SELLER}]
@@ -4200,6 +4200,16 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     .await
     .unwrap();
 
+    let (price, currency, payer): (Option<String>, Option<String>, String) = sqlx::query_as(
+        "SELECT a.price::text,a.currency,m.payer FROM shop.sale_asset a
+         JOIN shop.sale_payment m USING(network,block_number,log_index,ordinal)
+         WHERE a.network='matic' AND a.block_number=$1 AND a.log_index=9",
+    )
+    .bind(height)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!((price, currency, payer.as_str()), (None, None, PAYER));
     let (status, list) = get(
         app.clone(),
         "/v1/accounts?network=MATIC&sortBy=most_collections",

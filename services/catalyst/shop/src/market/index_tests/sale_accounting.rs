@@ -1050,7 +1050,25 @@ async fn sales_accounting_keeps_unallocated_evidence_out_of_public_totals() {
         VALUES('ethereum',$1,11,86400,'bid_accepted',$2,$3,1,$5,$4,$3,500,$5)")
         .bind(b as i64).bind(crate::market::ethereum_sales::ERC721_BID).bind(CARL).bind(BOB).bind(&outside.tx_hash)
         .execute(&mut *c).await.unwrap();
-    trade_events::insert_events(&mut c, net, &[event, outside, mixed, bundled])
+    let mut trades = vec![event.clone(), outside, mixed, bundled];
+    for (index, payments) in [
+        (14, vec![asset("1", CARL, "70", ALICE)]),
+        (
+            15,
+            vec![asset("1", listings::mana_token(137).unwrap(), "80", ALICE)],
+        ),
+        (
+            16,
+            vec![asset("1", mana, "10", ALICE), asset("1", CARL, "90", ALICE)],
+        ),
+    ] {
+        let mut trade = event.clone();
+        trade.log_index = index;
+        trade.tx_hash = format!("0x{:064x}", 440 + index);
+        trade.assets = Some(json!({"sent":[asset("3",DAVE,"25",BOB)],"received":payments}));
+        trades.push(trade);
+    }
+    trade_events::insert_events(&mut c, net, &trades)
         .await
         .unwrap();
     drop(c);
@@ -1064,7 +1082,7 @@ async fn sales_accounting_keeps_unallocated_evidence_out_of_public_totals() {
             .unwrap();
     assert_eq!(
         executions,
-        [8, 13],
+        [8, 13, 14, 15, 16],
         "only catalogue-only executions are normalized"
     );
     let counts: (i64,i64,i64,i64,i64,i64) = sqlx::query_as("SELECT
@@ -1072,7 +1090,7 @@ async fn sales_accounting_keeps_unallocated_evidence_out_of_public_totals() {
          (SELECT count(*) FROM shop.sale_payment),(SELECT count(*) FROM shop.sale_analytics_day),
          (SELECT count(*) FROM shop.sale_account_day),(SELECT count(*) FROM shop.sale_item_day)")
         .fetch_one(&db.pool).await.unwrap();
-    assert_eq!(counts, (4, 0, 5, 0, 0, 0));
+    assert_eq!(counts, (7, 0, 9, 0, 0, 0));
     sqlx::query(
         "INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
         VALUES('items','ethereum','test',timezone('UTC',now()))",
@@ -1145,6 +1163,274 @@ async fn sales_accounting_keeps_unallocated_evidence_out_of_public_totals() {
 }
 
 #[tokio::test]
+async fn pegged_trade_prices_follow_receipt_proof_and_repair_latest_sales() {
+    use crate::market::sale_fold;
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let net = ChainNet::Ethereum;
+    let tip = nft_index::deployments::Deployments::mainnet(net).start + 30;
+    let chain = FakeChain::new(tip + net.confirmations(), vec![], 1000, 100);
+    chain.chain_id.store(1, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let mut settings = index_settings(100, 20);
+    settings.sales_enabled = true;
+    let state = state_over(db.pool.clone(), &url, settings, false);
+    let app = crate::market::market_router(state.clone());
+    let rpc = Rpc::at(&state.http, &url);
+    let venue = trade_events::marketplaces(net)[0].0;
+    let mana = listings::mana_token(1).unwrap();
+    let other_token = listings::mana_token(137).unwrap();
+    sqlx::query("INSERT INTO shop.chain_cursor(indexer,network,chain_id,start_block,last_block,last_block_hash,
+          full_history,folded_block,folded_at,sale_input_version,sale_verified_through,sale_covered_rewinds)
+          SELECT ix,'ethereum',1,1,$1,$2,true,$1,timezone('UTC',now()),$3,$1,0
+          FROM unnest(ARRAY['nft','sales','trade_events']) ix")
+        .bind(tip as i64).bind(chain.hash_of(tip)).bind(crate::market::sale_history::VERSION)
+        .execute(&db.pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO shop.nft_contract(network,contract_address,walked_from_block) VALUES('ethereum',$1,$2)",
+    )
+    .bind(CARL)
+    .bind(tip as i64 - 1)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.sale_fee_change(network,venue,field,block_number,log_index,value)
+        VALUES('ethereum',$1,'collector',1,0,$2),('ethereum',$1,'fee_ppm',1,1,'50000')",
+    )
+    .bind(venue)
+    .bind(DAVE)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    let build_trade = |block: u64,
+                       index: u64,
+                       token: u64,
+                       kind: &str,
+                       currency: &str,
+                       amount: u64| {
+        let event_log =
+            trade_events::tests::traded_log(block, index, venue, BOB, ALICE, "0x01", 1, false);
+        let mut event = trade_events::decode_log(&event_log, 86401 + (block as i64 - tip as i64))
+            .unwrap()
+            .unwrap();
+        event.assets = Some(json!({
+            "sent":[{"assetType":"3","contractAddress":CARL,"value":token.to_string(),"beneficiary":BOB}],
+            "received":[{"assetType":kind,"contractAddress":currency,"value":amount.to_string(),"beneficiary":ALICE}]
+        }));
+        (event_log, event)
+    };
+    let earlier = build_trade(tip - 1, 10, 1, "1", mana, 100);
+    let wrong_amount = build_trade(tip, 10, 1, "2", mana, 500);
+    let wrong_emitter = build_trade(tip, 20, 2, "2", mana, 500);
+    let observed = build_trade(tip, 30, 3, "2", mana, 500);
+    let delayed = build_trade(tip, 40, 4, "2", mana, 500);
+    // This leg still carries the signed USD amount and an unconverted token.
+    let quoted = build_trade(tip, 50, 5, "2", ZERO, 10);
+    let unsupported = build_trade(tip, 60, 6, "1", other_token, 150);
+    let free = build_trade(tip, 70, 7, "1", mana, 0);
+    let make_receipt = |log: &crate::chain_index::rpc::RpcLog,
+                        block: u64,
+                        index: u64,
+                        token: &str,
+                        seller_amount: u64,
+                        fee: u64| {
+        let transfer = |to: &str, amount: u64, at| {
+            log_at(
+                token,
+                vec![
+                    nft_index::TOPIC_TRANSFER.into(),
+                    topic_addr(BOB),
+                    topic_addr(to),
+                ],
+                U256::from(amount).abi_encode(),
+                block,
+                at,
+            )
+        };
+        let tx_hash = log.transaction_hash.as_deref().unwrap();
+        let hash = chain.hash_of(block);
+        let logs: Vec<_> = [
+            transfer(ALICE, seller_amount, index - 2),
+            transfer(DAVE, fee, index - 1),
+            log.clone(),
+        ]
+        .iter()
+        .map(|l| {
+            let mut raw = log_json(l);
+            raw["blockHash"] = json!(hash);
+            raw["transactionHash"] = json!(tx_hash);
+            raw
+        })
+        .collect();
+        json!({"status":"0x1","blockNumber":format!("0x{block:x}"),"blockHash":hash,
+               "transactionHash":tx_hash,"logs":logs})
+    };
+    for (trade, index, token, amount, fee) in [
+        (&wrong_amount, 10, mana, 474, 25),
+        (&wrong_emitter, 20, other_token, 475, 25),
+        (&observed, 30, mana, 475, 25),
+        (&quoted, 50, mana, 475, 25),
+        (&unsupported, 60, other_token, 143, 7),
+        (&free, 70, mana, 0, 0),
+    ] {
+        chain.receipts.lock().insert(
+            trade.1.tx_hash.clone(),
+            make_receipt(&trade.0, tip, index, token, amount, fee),
+        );
+    }
+    chain.receipts.lock().insert(
+        earlier.1.tx_hash.clone(),
+        make_receipt(&earlier.0, tip - 1, 10, mana, 95, 5),
+    );
+    let mut conn = db.pool.acquire().await.unwrap();
+    trade_events::insert_events(
+        &mut conn,
+        net,
+        &[
+            earlier.1,
+            wrong_amount.1,
+            wrong_emitter.1,
+            observed.1,
+            delayed.1.clone(),
+            quoted.1,
+            unsupported.1,
+            free.1,
+        ],
+    )
+    .await
+    .unwrap();
+    drop(conn);
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    let prices = || {
+        sqlx::query_as::<_, (i64, Option<String>, Option<String>, bool)>(
+            "SELECT a.token_id::bigint,a.price::text,a.currency,e.receipt_read
+             FROM shop.sale_asset a JOIN shop.sale_execution e USING(network,block_number,log_index)
+             WHERE a.block_number=$1 ORDER BY a.token_id",
+        )
+        .bind(tip as i64)
+        .fetch_all(&db.pool)
+    };
+    let fresh_prices = prices().await.unwrap();
+    assert_eq!(
+        fresh_prices,
+        [
+            (1, None, None, true),
+            (2, None, None, true),
+            (3, Some("500".into()), Some(mana.into()), true),
+            (4, None, None, false),
+            (5, None, None, true),
+            (6, None, None, true),
+            (7, None, None, true),
+        ]
+    );
+    let last = || {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT token_id::bigint,block_number FROM shop.nft_last_sale ORDER BY token_id",
+        )
+        .fetch_all(&db.pool)
+    };
+    let expected = [(1, tip as i64 - 1), (3, tip as i64)];
+    assert_eq!(last().await.unwrap(), expected);
+    let generation = || {
+        sqlx::query_scalar::<_, uuid::Uuid>("SELECT generation FROM shop.sale_publication")
+            .fetch_one(&db.pool)
+    };
+
+    // Simulate the pre-upgrade price assignments. The latest-sale table was
+    // already MANA-only. Tokens 1 and 2 nevertheless had unproved MANA prices.
+    sqlx::query(
+        "UPDATE shop.sale_asset SET price=CASE token_id WHEN 6 THEN 150 WHEN 7 THEN 0 ELSE 500 END,
+        currency=CASE WHEN token_id=6 THEN $3 ELSE $2 END
+        WHERE block_number=$1 AND token_id IN (1,2,6,7)",
+    )
+    .bind(tip as i64)
+    .bind(mana)
+    .bind(other_token)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.nft_last_sale(network,contract_address,token_id,sold_at,block_number)
+        SELECT 'ethereum',$1,t,86401,$2 FROM unnest(ARRAY[1,2]) t
+        ON CONFLICT(network,contract_address,token_id)
+        DO UPDATE SET sold_at=excluded.sold_at,block_number=excluded.block_number",
+    )
+    .bind(CARL)
+    .bind(tip as i64)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE shop.sale_publication SET input_version=3")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let before = generation().await.unwrap();
+    sale_fold::rollups(&mut db.pool.acquire().await.unwrap(), net, &[86400])
+        .await
+        .unwrap();
+    let route = "/v1/sales?network=ETHEREUM";
+    assert_eq!(
+        get_json(&app, route).await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    let after = generation().await.unwrap();
+    assert_ne!(after, before);
+    assert_eq!(prices().await.unwrap(), fresh_prices);
+    let free_payment: (String, String) = sqlx::query_as(
+        "SELECT gross::text,currency FROM shop.sale_payment WHERE block_number=$1 AND log_index=70",
+    )
+    .bind(tip as i64)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(free_payment, ("0".into(), mana.into()));
+    assert_eq!(last().await.unwrap(), expected);
+    let currencies: Vec<String> = sqlx::query_scalar(
+        "SELECT currency FROM shop.sale_analytics_day UNION SELECT currency FROM shop.sale_item_day
+         UNION SELECT currency FROM shop.sale_account_day UNION SELECT currency FROM shop.sale_account_total
+         UNION SELECT currency FROM shop.sale_first_purchase",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(currencies, [mana]);
+
+    let (status, published) = get_json(&app, route).await;
+    assert_eq!(status, StatusCode::OK, "{published}");
+    assert_eq!(published["total"], 2);
+    chain.receipts.lock().insert(
+        delayed.1.tx_hash.clone(),
+        make_receipt(&delayed.0, tip, 40, mana, 475, 25),
+    );
+    sqlx::query("UPDATE shop.sale_execution SET receipt_attempted_at=NULL WHERE tx_hash=$1")
+        .bind(&delayed.1.tx_hash)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    sale_fold::pass(&db.pool, &rpc, net).await.unwrap();
+    assert_ne!(generation().await.unwrap(), after);
+    assert_eq!(
+        last().await.unwrap(),
+        [expected[0], expected[1], (4, tip as i64)]
+    );
+    let (status, published) = get_json(&app, route).await;
+    assert_eq!(status, StatusCode::OK, "{published}");
+    assert_eq!(published["total"], 3);
+    let totals: (i64, String, String) =
+        sqlx::query_as("SELECT sales,volume::text,venue_fees::text FROM shop.sale_analytics_day")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(totals, (3, "1100".into(), "55".into()));
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() {
     use crate::market::sale_fold;
     let Some(db) = ScratchDb::create().await else {
@@ -1195,7 +1481,7 @@ async fn sales_delayed_receipt_corrects_checkout_buyer_and_first_purchase_day() 
         e.caller = BOB.into();
         e.assets = Some(
             json!({"sent":[{"assetType":"4","contractAddress":DAVE,"value":"3","beneficiary":CHECKOUT,"extra":"0x"}],
-            "received":[{"assetType":"2","contractAddress":mana,"value":"500","beneficiary":ALICE,"extra":split}]}),
+            "received":[{"assetType":"1","contractAddress":mana,"value":"500","beneficiary":ALICE,"extra":split}]}),
         );
         let mut c = db.pool.acquire().await.unwrap();
         trade_events::insert_events(&mut c, net, &[e])
