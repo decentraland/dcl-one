@@ -912,7 +912,7 @@ mod tests {
             json!({ "status": "rejected", "rejectionReasons": ["<script>"] }),
             json!({ "status": "rejected", "rejectionMessage": "" }),
             json!({ "status": "rejected", "rejectionMessage": "x".repeat(MAX_MESSAGE + 1) }),
-            json!({ "status": "approved", "note": "x".repeat(MAX_NOTE + 1) }),
+            json!({ "status": "approved", "note": "x".repeat(2001) }),
             json!([]),
             json!("approved"),
         ] {
@@ -924,6 +924,7 @@ mod tests {
             )
             .is_ok()
         );
+        assert!(parse_update(&json!({ "status": "approved", "note": "é".repeat(2000) })).is_ok());
     }
 
     #[test]
@@ -942,12 +943,13 @@ mod tests {
             None
         );
         for refused in [
-            json!({ "note": "x".repeat(MAX_NOTE + 1) }),
+            json!({ "note": "x".repeat(2001) }),
             json!({ "assignee": 1 }),
             json!({ "status": "approved" }),
             json!(null),
         ] {
             assert!(parse_open(Some(&refused)).is_err(), "{refused}");
         }
+        assert!(parse_open(Some(&json!({ "note": "é".repeat(2000) }))).is_ok());
     }
 }

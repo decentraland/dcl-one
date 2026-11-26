@@ -5,7 +5,6 @@
 //! the body is validated and before the database is asked; another caller is
 //! unaffected; the same caller is served again once the window refills.
 
-use std::sync::Arc;
 use std::time::Duration as Window;
 
 use axum::Router;
@@ -36,19 +35,20 @@ pub(super) async fn node_over(
     set_clock(
         chrono::DateTime::from_timestamp_millis(chrono::Utc::now().timestamp_millis()).unwrap(),
     );
-    let mut state = super::support::state(
+    let super::support::Node { app, state, .. } = super::support::node_over(
         pool,
+        super::support::temp_storage().await,
         None,
         crate::Settings {
             writes_enabled: true,
             ..crate::Settings::default()
         },
+        |state| {
+            state.items.clock.now = clock;
+            tune(state);
+        },
     )
     .await;
-    state.items.clock.now = clock;
-    tune(&mut state);
-    let state = Arc::new(state);
-    let app = super::support::mounted(&state);
     (app, state)
 }
 

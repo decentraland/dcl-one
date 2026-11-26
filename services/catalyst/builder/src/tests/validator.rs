@@ -174,15 +174,10 @@ pub(super) async fn node_over(pool: PgPool, options: Options) -> Node {
         Some(storage) => storage,
         None => temp_storage().await,
     };
-    let mut state = crate::State::new(
-        pool.clone(),
+    let super::support::Node { pool, app, state } = super::support::node_over(
+        pool,
         storage.clone(),
-        Arc::default(),
-        dcl_http::Outbound::for_tests(),
-        dcl_http::Outbound::for_tests(),
         Some(registry_index(&options.committee, &options.registry).await),
-        None,
-        std::sync::Arc::default(),
         crate::Settings {
             writes_enabled: options.writes,
             polygon_rpc_url: Some(oracle.url().await),
@@ -198,17 +193,16 @@ pub(super) async fn node_over(pool: PgPool, options: Options) -> Node {
             validator_secret: options.secret.map(crate::validator::Secret::from),
             ..crate::Settings::default()
         },
+        |state| {
+            state.items.clock.now = clock;
+            if options.unbounded {
+                state.limits = crate::limits::Limits::unbounded();
+            }
+            (options.tune)(state);
+        },
     )
-    .unwrap();
-    state.items.clock.now = clock;
-    if options.unbounded {
-        state.limits = crate::limits::Limits::unbounded();
-    }
-    (options.tune)(&mut state);
-    let state = Arc::new(state);
-    let app = options
-        .registry
-        .published(&pool, super::support::mounted(&state));
+    .await;
+    let app = options.registry.published(&pool, app);
     Node {
         pool,
         storage,

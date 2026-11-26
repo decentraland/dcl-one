@@ -39,10 +39,63 @@ pub async fn waiting_for_the_store(pool: &sqlx::PgPool) -> bool {
     .unwrap()
 }
 
+/// A blob store of the calling test's own, in a folder of this process's;
+/// the first one a process makes removes the folders of processes that have
+/// exited, as their scratch databases are swept.
 pub async fn temp_storage() -> Arc<Storage> {
-    let dir = std::env::temp_dir().join(format!("catalyst-builder-test-{}", Uuid::new_v4()));
+    static SWEPT: std::sync::Once = std::sync::Once::new();
+    let root = std::env::temp_dir().join("catalyst-builder-tests");
+    SWEPT.call_once(|| remove_exited(&root));
+    let dir = root
+        .join(std::process::id().to_string())
+        .join(Uuid::new_v4().simple().to_string());
     tokio::fs::create_dir_all(&dir).await.unwrap();
     Arc::new(Storage::from_config(&dir).await.unwrap())
+}
+
+fn remove_exited(root: &std::path::Path) {
+    let Ok(folders) = std::fs::read_dir(root) else {
+        return;
+    };
+    for folder in folders.flatten() {
+        let exited = folder
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+            .is_some_and(|pid| !crate::db::scratch::process_alive(pid));
+        if exited {
+            let _ = std::fs::remove_dir_all(folder.path());
+        }
+    }
+}
+
+/// The server process of `conn`'s session.
+pub async fn backend_pid(conn: &mut sqlx::PgConnection) -> i32 {
+    sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(conn)
+        .await
+        .unwrap()
+}
+
+/// Whether `count` sessions wait on a lock `holder`'s session holds, directly
+/// or queued behind another waiter, checked again until they do
+/// ([`crate::shared::test_wait::until`]).
+pub async fn blocked_by(pool: &sqlx::PgPool, holder: i32, count: i64) -> bool {
+    crate::shared::test_wait::until(async || {
+        sqlx::query_scalar::<_, i64>(
+            "WITH RECURSIVE waiting (pid) AS ( \
+               SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) \
+               UNION \
+               SELECT a.pid FROM pg_stat_activity a JOIN waiting w ON w.pid = ANY(pg_blocking_pids(a.pid)) \
+             ) SELECT count(*) FROM waiting",
+        )
+        .bind(holder)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+            >= count
+    })
+    .await
 }
 
 /// A complete pass of the Polygon collections copy that ended `minutes_ago`.
@@ -474,15 +527,48 @@ pub(crate) fn lazy_pool() -> sqlx::PgPool {
         .expect("lazy pool from static url")
 }
 
+/// A builder node for a test: its pool, its state and the state's routes
+/// as `serve` mounts them ([`mounted`]).
+pub struct Node {
+    pub pool: sqlx::PgPool,
+    pub app: Router,
+    pub state: crate::SharedState,
+}
+
+/// A [`Node`] over `pool` whose state keeps its files in `storage`, reads
+/// `market` and `settings`, and has `tune` applied before it is shared.
+pub async fn node_over(
+    pool: sqlx::PgPool,
+    storage: Arc<Storage>,
+    market: Option<Arc<crate::chain_index::ChainIndex>>,
+    settings: crate::Settings,
+    tune: impl FnOnce(&mut crate::State),
+) -> Node {
+    let mut state = state_in(pool.clone(), storage, market, settings);
+    tune(&mut state);
+    let state = Arc::new(state);
+    let app = mounted(&state);
+    Node { pool, app, state }
+}
+
 /// A builder state over `pool` with a throwaway blob store.
 pub async fn state(
     pool: sqlx::PgPool,
     market: Option<Arc<crate::chain_index::ChainIndex>>,
     settings: crate::Settings,
 ) -> crate::State {
+    state_in(pool, temp_storage().await, market, settings)
+}
+
+fn state_in(
+    pool: sqlx::PgPool,
+    storage: Arc<Storage>,
+    market: Option<Arc<crate::chain_index::ChainIndex>>,
+    settings: crate::Settings,
+) -> crate::State {
     crate::State::new(
         pool,
-        temp_storage().await,
+        storage,
         Arc::default(),
         dcl_http::Outbound::for_tests(),
         dcl_http::Outbound::for_tests(),
