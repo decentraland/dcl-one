@@ -19,7 +19,8 @@ use crate::ChainIndex;
 use crate::graph::{THE_GRAPH_PAGE_SIZE, graph_query};
 use crate::shared::identity::is_valid_eth_address;
 
-/// Pages of [`THE_GRAPH_PAGE_SIZE`] providers walked before the read fails.
+/// Full pages of [`THE_GRAPH_PAGE_SIZE`] providers the registry may hold;
+/// a longer one fails the read.
 pub const MAX_PAGES: usize = 10;
 
 const QUERY: &str = "query registry($idFrom: ID!, $first: Int!) {\
@@ -90,7 +91,8 @@ pub fn is_provider_id(id: &str) -> bool {
 /// when the subgraph fails or an answer breaks the walk.
 pub async fn registry(index: &ChainIndex, url: &str) -> Result<Vec<Provider>, String> {
     let mut providers: Vec<Provider> = Vec::new();
-    for _ in 0..MAX_PAGES {
+    let bound = MAX_PAGES * THE_GRAPH_PAGE_SIZE as usize;
+    for _ in 0..=MAX_PAGES {
         let id_from = providers
             .iter()
             .map(|p| p.id.as_str())
@@ -112,6 +114,9 @@ pub async fn registry(index: &ChainIndex, url: &str) -> Result<Vec<Provider>, St
         providers.extend(page.iter().filter_map(read));
         if providers[id_from_count..].iter().any(|p| p.id <= id_from) {
             return Err("registry answered a provider before the page's start".into());
+        }
+        if providers.len() > bound {
+            break;
         }
         if page.len() < THE_GRAPH_PAGE_SIZE as usize {
             providers.sort_by(|a, b| a.id.cmp(&b.id));
@@ -520,21 +525,32 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_registry_longer_than_the_page_bound_fails() {
-        let fake = Fake::default();
-        let records: Vec<Value> = (0..(MAX_PAGES * 1000))
+    fn providers(n: usize) -> Vec<Value> {
+        (0..n)
             .map(|n| {
                 record(&format!(
                     "urn:decentraland:matic:collections-thirdparty:p{n:06}"
                 ))
             })
-            .collect();
-        set(&fake, Some(records));
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_registry_that_fills_the_page_bound_exactly_is_read_whole() {
+        let fake = Fake::default();
+        set(&fake, Some(providers(MAX_PAGES * 1000)));
+        let index = index(&fake).await;
+        let read = registry(&index, url(&index)).await.unwrap();
+        assert_eq!(read.len(), MAX_PAGES * 1000);
+    }
+
+    #[tokio::test]
+    async fn a_registry_longer_than_the_page_bound_fails() {
+        let fake = Fake::default();
+        set(&fake, Some(providers(MAX_PAGES * 1000 + 1)));
         let index = index(&fake).await;
         let err = registry(&index, url(&index)).await.unwrap_err();
         assert!(err.contains("longer than"), "{err}");
-        assert_eq!(fake.hits.load(Ordering::SeqCst), MAX_PAGES);
     }
 
     #[tokio::test]
