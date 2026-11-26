@@ -3272,10 +3272,6 @@
           "kind": "regular"
         },
         {
-          "name": "OptionMenu.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "OptionMenu.tsx",
           "kind": "regular"
         },
@@ -7898,6 +7894,10 @@
           "kind": "directory"
         },
         {
+          "name": "OptionMenu",
+          "kind": "directory"
+        },
+        {
           "name": "Pager",
           "kind": "directory"
         },
@@ -8919,6 +8919,23 @@
         },
         {
           "name": "NavProfileButton.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/OptionMenu",
+      "entries": [
+        {
+          "name": "OptionMenu.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "OptionMenu.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "OptionMenu.tsx",
           "kind": "regular"
         }
       ]
@@ -12772,12 +12789,8 @@
       "sha256": "da49b763ba49acfc8d0ea1207308a623d9f0189ab66ebc3402a2bad5651310cf"
     },
     {
-      "path": "library/ui/apps/hud/design/OptionMenu.module.css",
-      "sha256": "35fb3ba1c89fbe3029d27363914605f7ee8f1c7111786d8b753e68273015f919"
-    },
-    {
       "path": "library/ui/apps/hud/design/OptionMenu.tsx",
-      "sha256": "598dfc706130d48db4b107941f79bb49e550c1c86fae163128e80079cd6f7a89"
+      "sha256": "6f089c71995ac51ca26907ba5d3e010e4e336699b7bc2332e0d80444d97c4a2f"
     },
     {
       "path": "library/ui/apps/hud/design/Pager.tsx",
@@ -16876,6 +16889,14 @@
       "sha256": "6c2d4987ca2bd9fedfd9bdd7163a6623081343236019aa1b83c22b8cdd71e271"
     },
     {
+      "path": "library/ui/components/OptionMenu/OptionMenu.module.css",
+      "sha256": "bdf0dcf7fc5e378c1e0560d10cf74ed7313745ef8b9ba33a58312425bd22bf10"
+    },
+    {
+      "path": "library/ui/components/OptionMenu/OptionMenu.tsx",
+      "sha256": "72511c90955ab032853d3942b815750e36cbfb03bf25cc66a3be425d7f6d24f0"
+    },
+    {
       "path": "library/ui/components/Pager/Pager.module.css",
       "sha256": "a2ade0771038d4ccfdf461016df028aa8ee26d702a48c039c1601a148dea737a"
     },
@@ -17185,7 +17206,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "11c00dce83ed3c0a2c51dcd45b0ffd47646862d97346a92ec95206c30374300d"
+      "sha256": "df59a855c878d2b8fd47fddd7cc003a5213ed527106fecdf4be1a2f66b5dc4d0"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -21648,21 +21669,6 @@
     },
     {
       "from": "library/ui/apps/hud/design/OptionMenu.tsx",
-      "to": "library/ui/apps/hud/design/OptionMenu.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/OptionMenu.tsx",
-      "to": "library/ui/apps/hud/design/OptionMenu.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/OptionMenu.tsx",
-      "to": "library/ui/apps/hud/design/OptionMenu.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/OptionMenu.tsx",
       "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
@@ -62924,6 +62930,21 @@
     {
       "from": "library/ui/components/NavProfileButton/NavProfileButton.tsx",
       "to": "library/ui/components/NavProfileButton/NavProfileButton.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/OptionMenu/OptionMenu.tsx",
+      "to": "library/ui/components/OptionMenu/OptionMenu.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/OptionMenu/OptionMenu.tsx",
+      "to": "library/ui/components/OptionMenu/OptionMenu.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/OptionMenu/OptionMenu.tsx",
+      "to": "library/ui/components/OptionMenu/OptionMenu.module.css",
       "kind": "test:runtime"
     },
     {
@@ -64674,6 +64695,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/NavProfileButton/NavProfileButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/OptionMenu/OptionMenu.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/OptionMenu/OptionMenu.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/OptionMenu/OptionMenu.tsx",
       "kind": "test:runtime"
     },
     {
@@ -69769,6 +69805,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/NavProfileButton/NavProfileButton.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/OptionMenu/OptionMenu.tsx",
       "kind": "type"
     },
     {

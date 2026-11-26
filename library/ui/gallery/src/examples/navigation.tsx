@@ -31,7 +31,8 @@ import {
   AnchoredMenu,
   ContextMenu,
   KebabMenu,
-  Submenu
+  Submenu,
+  OptionMenu
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
 import { covers, people, placeholderFace } from './data'
@@ -60,6 +61,36 @@ function AnchoredMenuExample() {
         items={[{ label: 'Share' }, { label: 'Download' }, { label: 'Delete', danger: true }]}
       />
     </div>
+  )
+}
+
+function OptionMenuExample() {
+  const [sort, setSort] = useState('newest')
+  const [view, setView] = useState('all')
+  return (
+    <OptionMenu
+      onClose={() => undefined}
+      sections={[
+        {
+          label: 'Sort by',
+          options: [
+            { id: 'newest', label: 'Newest' },
+            { id: 'oldest', label: 'Oldest' }
+          ],
+          value: sort,
+          onChange: setSort
+        },
+        {
+          label: 'View',
+          options: [
+            { id: 'all', label: 'All Items' },
+            { id: 'collectibles', label: 'Collectibles only' }
+          ],
+          value: view,
+          onChange: setView
+        }
+      ]}
+    />
   )
 }
 
@@ -634,6 +665,20 @@ export const navigationEntries: GalleryEntry[] = [
             </MenuList>
           </MenuPanel>
         )
+      }
+    ]
+  },
+  {
+    name: 'OptionMenu',
+    group: 'Navigation',
+    summary:
+      'A light list of single-choice sections, the chosen option of each marked with a check.',
+    components: ['OptionMenu'],
+    examples: [
+      {
+        id: 'sections',
+        title: 'Two sections; choose an option of each',
+        render: () => <OptionMenuExample />
       }
     ]
   },
