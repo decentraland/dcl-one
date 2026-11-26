@@ -11,7 +11,7 @@ import { entries } from '../src/examples'
 import { Canvas } from '../src/frame/Canvas'
 import { ComponentShowcase } from '../src/frame/ComponentShowcase'
 import { keepLinksInCanvas } from '../src/frame/links'
-import { HEIGHT_MESSAGE, OPEN_MESSAGE } from '../src/messages'
+import { HEIGHT_MESSAGE, OPEN_MESSAGE, WIDTH_MESSAGE } from '../src/messages'
 import type { GalleryEntry } from '../src/registry'
 
 vi.stubGlobal(
@@ -224,6 +224,55 @@ describe('when a reviewer follows a page link on the Showcase canvas', () => {
       window.dispatchEvent(new Event('resize'))
     })
     expect(link.getAttribute('href')).toBe('./?component=Alpha')
+  })
+
+  describe('and the gallery says the width changed while the canvas keeps its size', () => {
+    // A message as the gallery around the canvas posts it: jsdom takes no stand-in window as an event's source.
+    const message = (source: unknown, data: unknown) =>
+      act(() => {
+        const event = new MessageEvent('message', { data })
+        Object.defineProperty(event, 'source', { value: source })
+        window.dispatchEvent(event)
+      })
+    const embedAt = (search: string) => {
+      const parent = { location: { search } }
+      vi.spyOn(window, 'parent', 'get').mockReturnValue(parent as unknown as Window)
+      return parent
+    }
+
+    it('should carry the new width with no resize, and drop it for the fill width', () => {
+      const parent = embedAt('?component=Showcase')
+      render(<ComponentShowcase groups={groups} />)
+      const link = screen.getByRole('link', { name: 'Alpha' })
+      expect(link.getAttribute('href')).toBe('./?component=Alpha')
+      parent.location.search = '?component=Showcase&width=1024'
+      message(parent, { type: WIDTH_MESSAGE })
+      expect(link.getAttribute('href')).toBe('./?component=Alpha&width=1024')
+      parent.location.search = '?component=Showcase'
+      message(parent, { type: WIDTH_MESSAGE })
+      expect(link.getAttribute('href')).toBe('./?component=Alpha')
+    })
+
+    it('should ignore a message from another window, of another kind, or with no data', () => {
+      const parent = embedAt('?component=Showcase&width=768')
+      render(<ComponentShowcase groups={groups} />)
+      const link = screen.getByRole('link', { name: 'Alpha' })
+      parent.location.search = '?component=Showcase&width=1024'
+      message(window, { type: WIDTH_MESSAGE })
+      message(null, { type: WIDTH_MESSAGE })
+      message(parent, { type: OPEN_MESSAGE })
+      message(parent, null)
+      expect(link.getAttribute('href')).toBe('./?component=Alpha&width=768')
+    })
+
+    it('should stop listening once the canvas is gone', () => {
+      const parent = embedAt('?component=Showcase&width=768')
+      const { unmount } = render(<ComponentShowcase groups={groups} />)
+      const read = vi.spyOn(parent, 'location', 'get')
+      unmount()
+      message(parent, { type: WIDTH_MESSAGE })
+      expect(read).not.toHaveBeenCalled()
+    })
   })
 
   it.each(['?component=Showcase&width=wide', '?component=Showcase&width=12', ''])(

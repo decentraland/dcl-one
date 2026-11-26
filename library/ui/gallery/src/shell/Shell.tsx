@@ -5,7 +5,7 @@ import { COMPONENT_OVERVIEW, componentGroups, componentPages } from '../componen
 import { entries } from '../examples'
 import { foundationPages } from '../foundations/FoundationPages'
 import { HUD_OVERVIEW, hudPages, hudSections } from '../hudPages'
-import { OPEN_MESSAGE } from '../messages'
+import { OPEN_MESSAGE, WIDTH_MESSAGE } from '../messages'
 import {
   MAX_WIDTH,
   MIN_WIDTH,
@@ -39,6 +39,8 @@ const presets = widthPresets(breakpoints)
 const FOUNDATIONS_GROUP = 'foundations'
 const HUD_GROUP = 'hud'
 const componentGroupId = (group: string) => `component:${group}`
+// The id of the note that says why the collapse buttons do nothing while a filter is set.
+const FILTER_LOCK_NOTE = 'gallery-filter-lock'
 const groupIds = [
   FOUNDATIONS_GROUP,
   ...componentGroups.map((group) => componentGroupId(group.name)),
@@ -126,7 +128,7 @@ function NavGroup({
   label: string
   level: 2 | 3
   expanded: boolean
-  /** A filter shows every match, so the group stays open and its button does nothing meanwhile. */
+  /** A filter shows every match, so the group stays open and its button, still focusable, does nothing meanwhile. */
   locked: boolean
   onToggle: (id: string) => void
   children: ReactNode
@@ -141,8 +143,11 @@ function NavGroup({
           className={styles.groupToggle}
           aria-expanded={expanded}
           aria-controls={region}
-          disabled={locked}
-          onClick={() => onToggle(id)}
+          aria-disabled={locked || undefined}
+          aria-describedby={locked ? FILTER_LOCK_NOTE : undefined}
+          onClick={() => {
+            if (!locked) onToggle(id)
+          }}
         >
           <span>{label}</span>
           <span className={styles.chevron} aria-hidden="true" />
@@ -197,11 +202,17 @@ function Navigation({ route, navigate }: { route: Route; navigate: Navigate }) {
       <button
         type="button"
         className={styles.collapseAll}
-        disabled={filtering}
-        onClick={() => setCollapsed((current) => toggleAllGroups(current, groupIds))}
+        aria-disabled={filtering || undefined}
+        aria-describedby={filtering ? FILTER_LOCK_NOTE : undefined}
+        onClick={() => {
+          if (!filtering) setCollapsed((current) => toggleAllGroups(current, groupIds))
+        }}
       >
         {everyCollapsed ? 'Expand all' : 'Collapse all'}
       </button>
+      <p id={FILTER_LOCK_NOTE} hidden>
+        Groups stay open while filtering.
+      </p>
       <NavGroup {...group(FOUNDATIONS_GROUP)} label="Foundations" level={2}>
         <ul className={styles.navList}>
           {foundationPages
@@ -383,6 +394,11 @@ function RuntimeView({
     window.addEventListener('message', receive)
     return () => window.removeEventListener('message', receive)
   }, [navigate, width])
+  // The canvas stays the same document across a width change, and the same size when the new width is the one it
+  // already had: the Showcase's links carry the chosen width, so the canvas is told.
+  useEffect(() => {
+    frame.current?.contentWindow?.postMessage({ type: WIDTH_MESSAGE }, window.location.origin)
+  }, [width])
   // A canvas wider than the space beside the sidebar is drawn scaled down, not scrolled: it keeps the chosen width,
   // which is what its media queries read, and the whole of it stays in view.
   const viewport = useRef<HTMLDivElement>(null)

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { OPEN_MESSAGE } from '../src/messages'
+import { HEIGHT_MESSAGE, OPEN_MESSAGE, WIDTH_MESSAGE } from '../src/messages'
 import { COLLAPSED_GROUPS_KEY } from '../src/shell/collapsedGroups'
 
 vi.stubGlobal('__GENERATED_COMPONENTS__', [{ name: 'Button', variants: 2 }])
@@ -206,13 +206,38 @@ describe('when a reviewer filters the sidebar', () => {
     })
     expect(screen.getByRole('link', { name: 'Switch' })).toBeTruthy()
     expect(expanded('Forms')).toBe(true)
-    expect((toggle('Forms') as HTMLButtonElement).disabled).toBe(true)
-    expect(
-      (screen.getByRole('button', { name: 'Collapse all' }) as HTMLButtonElement).disabled
-    ).toBe(true)
     fireEvent.change(screen.getByRole('searchbox', { name: 'Filter' }), { target: { value: '' } })
     expect(collapsedGroups()).toEqual(['Forms'])
-    expect((toggle('Forms') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('should keep the collapse buttons in the tab order, say why they do nothing, and leave the groups as they were', () => {
+    render(<Shell search="?component=Button" />)
+    fireEvent.click(toggle('Forms'))
+    const all = screen.getByRole('button', { name: 'Collapse all' }) as HTMLButtonElement
+    expect(toggle('Forms').hasAttribute('aria-disabled')).toBe(false)
+    expect(toggle('Forms').hasAttribute('aria-describedby')).toBe(false)
+    expect(all.hasAttribute('aria-disabled')).toBe(false)
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Filter' }), {
+      target: { value: 'switch' }
+    })
+    for (const button of [toggle('Forms') as HTMLButtonElement, all]) {
+      expect(button.disabled).toBe(false)
+      expect(button.getAttribute('aria-disabled')).toBe('true')
+      expect(document.getElementById(button.getAttribute('aria-describedby')!)!.textContent).toBe(
+        'Groups stay open while filtering.'
+      )
+      button.focus()
+      expect(document.activeElement).toBe(button)
+      fireEvent.click(button)
+    }
+    expect(expanded('Forms')).toBe(true)
+    expect(all.textContent).toBe('Collapse all')
+    expect(stored()).toEqual(['component:Forms'])
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Filter' }), { target: { value: '' } })
+    expect(collapsedGroups()).toEqual(['Forms'])
+    expect(toggle('Forms').hasAttribute('aria-disabled')).toBe(false)
+    fireEvent.click(toggle('Forms'))
+    expect(collapsedGroups()).toEqual([])
   })
 })
 
@@ -272,5 +297,48 @@ describe('when a reviewer opens the components Showcase', () => {
     post(null, { type: OPEN_MESSAGE, component: 'Tabs' })
     expect(window.location.search).toBe('?component=Showcase')
     expect(heading()).toBe('Showcase')
+  })
+})
+
+describe('when the canvas of a runtime page reports to the gallery around it', () => {
+  const post = (source: Window | null, data: unknown) =>
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', { source, data }))
+    })
+
+  it('should start the canvas at 480px and follow the height it reports, never under 240px', () => {
+    render(<Shell search="?component=Button" />)
+    const canvas = screen.getByTitle('Button canvas') as HTMLIFrameElement
+    expect(canvas.style.height).toBe('480px')
+    post(canvas.contentWindow, { type: HEIGHT_MESSAGE, height: 900.2 })
+    expect(canvas.style.height).toBe('901px')
+    post(canvas.contentWindow, { type: HEIGHT_MESSAGE, height: 100 })
+    expect(canvas.style.height).toBe('240px')
+  })
+
+  it('should ignore a height from another window, of another kind, or that is not a number', () => {
+    render(<Shell search="?component=Button" />)
+    const canvas = screen.getByTitle('Button canvas') as HTMLIFrameElement
+    post(window, { type: HEIGHT_MESSAGE, height: 2000 })
+    post(null, { type: HEIGHT_MESSAGE, height: 2000 })
+    post(canvas.contentWindow, { type: OPEN_MESSAGE, height: 2000 })
+    post(canvas.contentWindow, { type: HEIGHT_MESSAGE, height: '2000' })
+    post(canvas.contentWindow, null)
+    expect(canvas.style.height).toBe('480px')
+  })
+
+  it('should tell the canvas when the reviewer picks another width, and not when another page opens at the same one', () => {
+    window.history.replaceState(null, '', '/gallery/?component=Showcase&width=768')
+    render(<Shell search={window.location.search} />)
+    const canvas = screen.getByTitle('Showcase canvas') as HTMLIFrameElement
+    const told = vi.spyOn(canvas.contentWindow!, 'postMessage')
+    const input = screen.getByRole('spinbutton', { name: 'Custom px' })
+    fireEvent.change(input, { target: { value: '1024' } })
+    fireEvent.submit(input.closest('form')!)
+    expect(window.location.search).toBe('?component=Showcase&width=1024')
+    expect(screen.getByTitle('Showcase canvas')).toBe(canvas)
+    expect(told.mock.calls).toEqual([[{ type: WIDTH_MESSAGE }, window.location.origin]])
+    fireEvent.submit(input.closest('form')!)
+    expect(told).toHaveBeenCalledTimes(1)
   })
 })

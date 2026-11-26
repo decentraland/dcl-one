@@ -7,8 +7,9 @@
 //      1280px and 375px keeps its layout (LAYOUT): the page fits the viewport, every picture loads and paints inside
 //      its own box, and no in-flow text covers other text; so do the foundations pages and the HUD Showcase; at 375px
 //      the gallery page around it fits a 375px window too; the components Showcase, the first runtime page listed,
-//      passes the same checks and draws every other runtime page, in the sidebar's order, each with its examples
-//      drawn and none failed, a page with a canvas of its own in a canvas of the chosen width;
+//      passes the same checks on its own document and draws every other runtime page, in the sidebar's order, each
+//      with its examples drawn and none failed, a page with a canvas of its own in a canvas of the chosen width (the
+//      layout inside that nested canvas is checked on the page itself, not here);
 //   3. the canvas is a real viewport: NavBar shows its menu button at 375px and hides it at 1280px;
 //   4. every runtime foundations page renders;
 //   5. the HUD section lists the Explorer HUD's Showcase first, then its pages; the Showcase page draws every page
@@ -180,7 +181,8 @@ const COMPONENT_OVERVIEW = 'Showcase'
 // The pages the components Showcase draws, in order, or null while one is still loading. A page positioned against
 // the viewport has a canvas of its own, loaded as it nears the window: the check loads each now, waits for it and
 // reads its document, with the width of that canvas. A page is drawn when it has examples and each one draws a nonzero
-// box; `error` is its first example error.
+// box; `error` is its first example error. LAYOUT does not read these nested documents: each of those pages gets its
+// layout check on its own page.
 const SHOWCASE_PAGES = `(() => {
   const pages = []
   for (const page of ${CANVAS}.querySelectorAll('[data-showcase-page]')) {

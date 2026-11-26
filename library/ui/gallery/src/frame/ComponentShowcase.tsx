@@ -1,16 +1,25 @@
 import { useRef, useSyncExternalStore, type MouseEvent } from 'react'
 import { useCanvasHeight } from '../canvasHeight'
 import { COMPONENT_OVERVIEW, componentGroups, type ComponentGroup } from '../componentPages'
-import { OPEN_MESSAGE } from '../messages'
+import { OPEN_MESSAGE, WIDTH_MESSAGE } from '../messages'
 import type { GalleryEntry } from '../registry'
 import { canvasHref, galleryHref, parseWidth, type Width } from '../url'
 import styles from './ComponentShowcase.module.css'
 import { ExampleView } from './ExampleView'
 
-// The gallery resizes the canvas when the reviewer picks another width, so a resize is when the chosen width changes.
-function onResize(notify: () => void) {
+// The gallery says when the reviewer picks another width (WIDTH_MESSAGE): the canvas keeps its size when the new
+// width is the one it already had, so a resize alone would miss that change.
+function onWidthChange(notify: () => void) {
+  const receive = (event: MessageEvent) => {
+    if (event.source !== window.parent) return
+    if ((event.data as { type?: unknown } | null)?.type === WIDTH_MESSAGE) notify()
+  }
   window.addEventListener('resize', notify)
-  return () => window.removeEventListener('resize', notify)
+  window.addEventListener('message', receive)
+  return () => {
+    window.removeEventListener('resize', notify)
+    window.removeEventListener('message', receive)
+  }
 }
 
 // The width chosen in the gallery around this canvas, which its URL carries. A canvas open on its own has none: its
@@ -99,7 +108,7 @@ export function ComponentShowcase({
   groups?: readonly ComponentGroup[]
 }) {
   // A link opened in a new tab keeps the chosen width, as the page opened in place does.
-  const width = useSyncExternalStore(onResize, chosenWidth)
+  const width = useSyncExternalStore(onWidthChange, chosenWidth)
   return (
     <main className={styles.showcase} data-component={COMPONENT_OVERVIEW}>
       {groups.map((group) => (

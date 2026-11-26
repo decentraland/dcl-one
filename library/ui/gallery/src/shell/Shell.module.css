@@ -67,8 +67,8 @@
   cursor: pointer;
 }
 
-.groupToggle:hover:not(:disabled),
-.collapseAll:hover:not(:disabled) {
+.groupToggle:hover:not([aria-disabled='true']),
+.collapseAll:hover:not([aria-disabled='true']) {
   background: var(--dcl-bg-hover);
 }
 
@@ -79,8 +79,8 @@
   outline-offset: -2px;
 }
 
-.groupToggle:disabled,
-.collapseAll:disabled {
+.groupToggle[aria-disabled='true'],
+.collapseAll[aria-disabled='true'] {
   cursor: default;
 }
 
@@ -98,7 +98,7 @@
   transform: rotate(45deg);
 }
 
-.groupToggle:disabled .chevron {
+.groupToggle[aria-disabled='true'] .chevron {
   visibility: hidden;
 }
 
@@ -115,7 +115,7 @@
   cursor: pointer;
 }
 
-.collapseAll:disabled {
+.collapseAll[aria-disabled='true'] {
   opacity: 0.5;
 }
 
