@@ -6,7 +6,10 @@
 //! the `collections-mirror` job keeps per network). The mirror replaces the
 //! crate's one `squid.collection` probe; while it has no complete pass on
 //! the relay's network the answer is [`Membership::MirrorUnavailable`], never
-//! "not a collection" out of an empty table.
+//! "not a collection" out of an empty table. On a network the collections
+//! index owns, the rows are the index's projection, read in the statement
+//! that reads its authorizing verdict ([`Membership::IndexUnavailable`]
+//! while it refuses one).
 //!
 //! Collections are the one source that enrols a target without review, and a
 //! relayable target reports the domain separator and nonce its own signature
@@ -17,11 +20,12 @@
 //! signature itself (the relay routes that would fail closed) and the mirror
 //! decides as before.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
+use chrono::Utc;
 use serde_json::Value;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 
 use alloy_primitives::Address;
 
@@ -29,6 +33,7 @@ use super::chain::ChainComponent;
 use super::contracts_addrs::mirror_network;
 use super::errors::ApiError;
 use crate::http::{Outbound, read_body_capped};
+use crate::market::catalogue::{self, NetworkState, Purpose};
 use crate::shared::cache::TtlMap;
 
 const WHITELIST_BODY_CAP: usize = 4 * 1024 * 1024;
@@ -92,7 +97,7 @@ pub fn trusted_collection_anchor_label(chain_id: u64, anchor: Address) -> Option
         .map(|(_, label)| *label)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Membership {
     /// Whitelisted or a mirrored collection.
     Allowed,
@@ -101,13 +106,44 @@ pub enum Membership {
     /// Not whitelisted and the collections mirror has no complete pass yet
     /// (or the relay's chain is not one the mirror covers).
     MirrorUnavailable,
+    /// Not whitelisted, and the collections index owns the relay's network
+    /// and cannot authorize a read of it: why.
+    IndexUnavailable(String),
 }
+
+/// What the catalogue of the relay's network says about one address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Catalogued {
+    /// After a complete pass of the collections mirror, or under the
+    /// collections index's authorizing publication: whether it is a
+    /// collection.
+    Known(bool),
+    /// Before the mirror's first complete pass, or on a chain it does not
+    /// cover.
+    MirrorUnready,
+    /// The collections index owns the network and refuses: why.
+    IndexRefused(String),
+}
+
+/// One statement, so one snapshot decides and reads: the relay network's
+/// state as the catalogue gate reads it, and whether the address is one of
+/// its collections (primary keys only).
+static MEMBERSHIP_SQL: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "SELECT {columns}, \
+         EXISTS (SELECT 1 FROM shop.collections WHERE network = n.network AND contract_address = $2) AS found \
+         FROM (SELECT $1::text AS network) AS n {joins}",
+        columns = catalogue::STATE_COLUMNS,
+        joins = *catalogue::STATE_JOINS,
+    )
+});
 
 pub struct ContractsComponent {
     pool: PgPool,
     http: Outbound,
     addresses_url: Option<String>,
     chain_key: String,
+    chain_id: u64,
     network: Option<&'static str>,
     ttl: Duration,
     cache: TtlMap<(), Arc<Vec<String>>>,
@@ -135,6 +171,7 @@ impl ContractsComponent {
                 .map(|u| u.trim().to_string())
                 .filter(|u| !u.is_empty()),
             chain_key,
+            chain_id,
             network: mirror_network(chain_id),
             ttl,
             cache: TtlMap::new(ttl),
@@ -163,10 +200,12 @@ impl ContractsComponent {
             return Ok(Membership::Allowed);
         }
         match self.mirror_membership(&addr).await? {
-            Some(true) if self.runs_collection_code(&addr).await? => Ok(Membership::Allowed),
-            Some(true) => whitelisted.map(|_| Membership::Unknown),
-            Some(false) => whitelisted.map(|_| Membership::Unknown),
-            None => whitelisted.map(|_| Membership::MirrorUnavailable),
+            Catalogued::Known(true) if self.runs_collection_code(&addr).await? => {
+                Ok(Membership::Allowed)
+            }
+            Catalogued::Known(_) => whitelisted.map(|_| Membership::Unknown),
+            Catalogued::MirrorUnready => whitelisted.map(|_| Membership::MirrorUnavailable),
+            Catalogued::IndexRefused(why) => whitelisted.map(|_| Membership::IndexUnavailable(why)),
         }
     }
 
@@ -181,33 +220,33 @@ impl ContractsComponent {
                  later (MARKETPLACE_MIRRORS_ENABLED)"
                     .into(),
             )),
+            Membership::IndexUnavailable(why) => Err(ApiError::RelayerUnavailable(format!(
+                "{why}, so contract membership cannot be decided; retry later"
+            ))),
         }
     }
 
-    /// `Some(found)` after a complete pass of the collections mirror on the
-    /// relay's network, `None` before one.
-    pub async fn mirror_membership(&self, address: &str) -> Result<Option<bool>, ApiError> {
+    /// Whether `address` is a collection on the relay's network, by the
+    /// source that owns it: the collections mirror after a complete pass,
+    /// or the collections index under an authorizing publication (the
+    /// relay enrols a target on it).
+    pub async fn mirror_membership(&self, address: &str) -> Result<Catalogued, ApiError> {
         let Some(network) = self.network else {
-            return Ok(None);
+            return Ok(Catalogued::MirrorUnready);
         };
-        let ready: Option<bool> = sqlx::query_scalar(
-            "SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state \
-             WHERE mirror = 'collections' AND network = $1",
-        )
-        .bind(network)
-        .fetch_optional(&self.pool)
-        .await?;
-        if ready != Some(true) {
-            return Ok(None);
+        let row = sqlx::query(sqlx::AssertSqlSafe(MEMBERSHIP_SQL.as_str()))
+            .bind(network)
+            .bind(address.to_lowercase())
+            .fetch_one(&self.pool)
+            .await?;
+        let state = NetworkState::from_row(&row)?;
+        match state.owned_verdict(self.chain_id as i64, Purpose::Authorize, Utc::now()) {
+            Some(Err(why)) => return Ok(Catalogued::IndexRefused(why)),
+            Some(Ok(_)) => {}
+            None if state.collections_pass.is_none() => return Ok(Catalogued::MirrorUnready),
+            None => {}
         }
-        let found: Option<i32> = sqlx::query_scalar(
-            "SELECT 1 FROM shop.collections WHERE network = $1 AND contract_address = $2 LIMIT 1",
-        )
-        .bind(network)
-        .bind(address.to_lowercase())
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(Some(found.is_some()))
+        Ok(Catalogued::Known(row.get("found")))
     }
 
     /// Whether a mirrored collection is a factory proxy over recorded

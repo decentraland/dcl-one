@@ -9,7 +9,7 @@ use catalyst::comms::gatekeeper::admission::cluster::sockets::{IslandDelivery, I
 use catalyst::comms::gatekeeper::admission::cluster::subscriber::{
     ClusterGateway, ClusterSubscriber, GatewayError, IslandOccupant,
 };
-use catalyst::comms::gatekeeper::bus::{InProcessBus, NatsBus, RequestError};
+use catalyst::comms::gatekeeper::bus::{InProcessBus, RequestError};
 use catalyst::comms::gatekeeper::livekit::Removal;
 use catalyst::comms::protocol::archipelago::archipelago::IslandChangedMessage;
 use catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterSnapshot;

@@ -1,8 +1,10 @@
-// The item page's avatar in the wearable-preview iframe, the page decentraland.org's Shop and Sites' creators preview
-// also embed. Its options travel in the URL it mounts with, and later changes as `update` messages (the
-// @dcl/schemas preview protocol), so a change of view reloads the scene in place instead of the iframe.
+// The Shop's avatars in the wearable-preview iframe, the page decentraland.org's Shop and Sites' creators preview also
+// embed. Its options travel in the URL it mounts with, and later changes as `update` messages (the @dcl/schemas
+// preview protocol), so a change of view or of items reloads the scene in place instead of the iframe.
 
 import { useEffect, useRef, useState } from "react";
+
+import styles from "./PreviewFrame.module.css";
 
 const MAINNET_PREVIEW = "https://wearable-preview.decentraland.org";
 const TESTNET_PREVIEW = "https://wearable-preview.decentraland.zone";
@@ -11,19 +13,34 @@ export type PreviewRendererName = "unity" | "babylon";
 
 export type PreviewFrameOptions = {
   urns: string[];
+  /** Item definitions sent whole, for what the preview cannot name: a published emote (lib/emoteBase64). */
+  base64s?: string[];
   profile?: string;
   bodyShape?: string;
+  skin?: string;
+  hair?: string;
+  eyes?: string;
   type?: "avatar" | "wearable";
   emote?: string;
   disableBackground?: boolean;
+  disableDefaultEmotes?: boolean;
+  disableFadeEffect?: boolean;
   wheelZoom?: number;
   wheelStart?: number;
   unity?: boolean;
-  unityMode?: "marketplace";
+  /** Unity's mode: `marketplace` for an item on an avatar, `builder` for a mannequin dressed in a set of items. */
+  unityMode?: "marketplace" | "builder";
 };
 
 // The option each prop travels as in the URL, where its name differs (decentraland-ui2's WearablePreview).
-const PARAM_NAMES: Record<string, string> = { urns: "urn", unityMode: "mode" };
+const PARAM_NAMES: Record<string, string> = { urns: "urn", base64s: "base64", unityMode: "mode" };
+
+/**
+ * How long Unity may go without drawing or failing before the page falls back to Babylon: when it cannot read its config
+ * it shows the error on its own canvas and tells the page nothing. The three.js preview it replaced allowed a load the
+ * same 45 seconds.
+ */
+export const UNITY_LOAD_TIMEOUT_MS = 45_000;
 
 /** The preview that resolves these items: a testnet item is only on the testnet peers the .zone preview reads. */
 export function previewBase(urns: string[]): string {
@@ -44,6 +61,11 @@ export function previewUrl(base: string, options: PreviewFrameOptions): string {
 // them: Unity has no mapping for `unity` there, and logs each one it is sent.
 const RENDERER_KEYS = ["unity", "unityMode"] as const;
 
+// The options Unity applies from an update (wearable-preview@6f1e470 src/lib/unity/messages.ts: PROPERTY_METHOD_MAP and
+// SPECIAL_PROPERTIES). Any other, `disableFadeEffect` among them, reaches Unity only through the mount URL: sent in an
+// update it is logged as unmapped, and a change to it mounts again.
+const UNITY_UPDATE_KEYS = new Set(["urns", "base64s", "profile", "bodyShape", "skin", "hair", "eyes", "type", "emote", "disableBackground", "disableDefaultEmotes", "wheelZoom", "wheelStart"]);
+
 type Mount = { n: number; base: string; src: string; options: PreviewFrameOptions; serialized: string };
 
 function mountWith(n: number, options: PreviewFrameOptions): Mount {
@@ -61,7 +83,11 @@ const isSet = (value: unknown) => value !== undefined && value !== null && value
 function needsMount(mount: Mount, held: ReadonlySet<string>, options: PreviewFrameOptions): boolean {
   if (previewBase(options.urns) !== mount.base) return true;
   if (RENDERER_KEYS.some((key) => options[key] !== mount.options[key])) return true;
-  return mount.options.unity === true && [...held].some((key) => !isSet(options[key as keyof PreviewFrameOptions]));
+  if (mount.options.unity !== true) return false;
+  const value = (from: PreviewFrameOptions, key: string) => (isSet(from[key as keyof PreviewFrameOptions]) ? JSON.stringify(from[key as keyof PreviewFrameOptions]) : undefined);
+  const mountOnly = new Set([...Object.keys(mount.options), ...Object.keys(options)].filter((key) => !UNITY_UPDATE_KEYS.has(key) && !(RENDERER_KEYS as readonly string[]).includes(key)));
+  if ([...mountOnly].some((key) => value(options, key) !== value(mount.options, key))) return true;
+  return [...held].some((key) => !isSet(options[key as keyof PreviewFrameOptions]));
 }
 
 function setKeys(options: PreviewFrameOptions): Set<string> {
@@ -78,11 +104,34 @@ function updateFor(mount: Mount, options: PreviewFrameOptions): Record<string, u
   for (const key of setKeys(mount.options)) update[key] = undefined;
   Object.assign(update, options);
   for (const key of RENDERER_KEYS) delete update[key];
+  if (mount.options.unity === true) for (const key of Object.keys(update)) if (!UNITY_UPDATE_KEYS.has(key)) delete update[key];
   return update;
 }
 
-/** What one mounted iframe has said and been told. A new mount starts a new one, so the retired iframe's are dropped. */
-type Live = { n: number; ready: boolean; answered: boolean; delivered: string; held: Set<string> };
+/**
+ * How long an update under Unity waits for the answer to the scene before it. Unity answers every reload with a `load`,
+ * a superseded one included (Babylon drops those itself), so it is sent one scene at a time to tell which scene an answer
+ * is for. A slow scene should not hold the next one for long: past this the next one mounts a fresh iframe instead, whose
+ * answers cannot be confused with the retired one's. (A change only to the camera reloads nothing and gets no answer, so
+ * the change after it mounts again too; the Shop makes none.)
+ */
+export const UNITY_ANSWER_WAIT_MS = 3_000;
+
+/**
+ * What one mounted iframe has said and been told. A new mount starts a new one, so the retired iframe's are dropped.
+ * `awaiting`: the options of the scene Unity is drawing and has not answered for, sent at `sentAt`.
+ */
+type Live = { n: number; ready: boolean; answered: boolean; delivered: string; held: Set<string>; awaiting: string | null; sentAt: number };
+
+const liveFor = (n: number, serialized: string, options: PreviewFrameOptions): Live => ({
+  n,
+  ready: false,
+  answered: false,
+  delivered: serialized,
+  held: setKeys(options),
+  awaiting: serialized,
+  sentAt: performance.now(),
+});
 
 type Props = {
   options: PreviewFrameOptions;
@@ -97,9 +146,14 @@ type Props = {
   loadTimeoutMs?: number;
   onLoad: (renderer: PreviewRendererName | undefined) => void;
   onError: (message: string) => void;
+  /**
+   * The frame put a fresh iframe in place of its own: for a change an update cannot carry, a Unity scene that answered too
+   * late, or Unity booting again. Nothing is drawn in it yet, whatever the options.
+   */
+  onReplaced?: () => void;
 };
 
-export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoad, onError }: Props) {
+export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoad, onError, onReplaced }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
   const serialized = JSON.stringify(options);
   // The iframe keeps the URL it mounted with: a new `src` reloads the whole preview, not only its scene. It mounts again
@@ -107,9 +161,16 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
   const [mount, setMount] = useState(() => mountWith(0, options));
   const origin = new URL(mount.base).origin;
   // `held`: the options a Unity preview holds a value for, the mount URL's plus every one an update has set since.
-  const live = useRef<Live>({ n: 0, ready: false, answered: false, delivered: serialized, held: setKeys(options) });
-  const callbacks = useRef({ onLoad, onError });
-  callbacks.current = { onLoad, onError };
+  const live = useRef<Live>(liveFor(0, serialized, options));
+  // The options the page shows now: an answer counts only for them.
+  const latest = useRef(serialized);
+  latest.current = serialized;
+  const latestOptions = useRef(options);
+  latestOptions.current = options;
+  const callbacks = useRef({ onLoad, onError, onReplaced });
+  callbacks.current = { onLoad, onError, onReplaced };
+  const retry = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(retry.current), []);
 
   const post = (type: string, payload: unknown) => frame.current?.contentWindow?.postMessage({ type, payload }, origin);
   const push = useRef(() => undefined as void);
@@ -118,12 +179,30 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
     if (now.n !== mount.n || now.delivered === serialized) return;
     if (needsMount(mount, now.held, options)) {
       // The iframe retires here, not when React replaces it: nothing it says from now on is the new mount's.
-      live.current = { n: mount.n + 1, ready: false, answered: false, delivered: serialized, held: setKeys(options) };
+      live.current = liveFor(mount.n + 1, serialized, options);
       setMount(mountWith(mount.n + 1, options));
       return;
     }
     if (!now.ready) return;
+    if (mount.options.unity === true && now.awaiting !== null) {
+      // Unity applies no update before its first scene has loaded, so until that scene answers (or the load timeout
+      // gives up on it) an update waits for it however long it takes.
+      if (!now.answered) return;
+      const waited = performance.now() - now.sentAt;
+      if (waited < UNITY_ANSWER_WAIT_MS) {
+        // Sent once the scene before it answers, or once the wait is over.
+        window.clearTimeout(retry.current);
+        retry.current = window.setTimeout(() => push.current(), UNITY_ANSWER_WAIT_MS - waited);
+        return;
+      }
+      // The scene it is drawing may still answer, for options the page has left: these go to a fresh iframe instead.
+      live.current = liveFor(mount.n + 1, serialized, options);
+      setMount(mountWith(mount.n + 1, options));
+      return;
+    }
     now.delivered = serialized;
+    now.awaiting = serialized;
+    now.sentAt = performance.now();
     const update = updateFor(mount, options);
     for (const key of setKeys(update as PreviewFrameOptions)) now.held.add(key);
     post("update", { options: update });
@@ -135,19 +214,36 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
       const now = live.current;
       if (now.n !== mount.n || event.source !== frame.current?.contentWindow || event.origin !== origin) return;
       const { type, payload } = (event.data ?? {}) as { type?: string; payload?: { renderer?: string; message?: string } };
-      if (type === "ready") {
-        // Every boot, the first or a reload of the frame, starts again from the URL: what it has lost goes again.
+      if (type === "ready" && now.ready && mount.options.unity === true) {
+        // Unity booting again has lost its scene, and its answer to the first one belongs to the boot before: a fresh
+        // iframe with the current options starts over, with a deadline of its own.
+        live.current = liveFor(mount.n + 1, latest.current, latestOptions.current);
+        setMount(mountWith(mount.n + 1, latestOptions.current));
+      } else if (type === "ready") {
+        // Every boot, the first or (under Babylon) a reload of the frame, starts again from the URL: what it has lost goes
+        // again. What it draws first is the mount URL's scene.
         now.ready = true;
         now.delivered = mount.serialized;
         now.held = setKeys(mount.options);
+        now.awaiting = mount.serialized;
+        now.sentAt = performance.now();
         push.current();
-      } else if (type === "load") {
+      } else if (type === "load" || type === "error") {
+        const first = !now.answered;
         now.answered = true;
-        const renderer = payload?.renderer;
-        callbacks.current.onLoad(renderer === "unity" || renderer === "babylon" ? renderer : undefined);
-      } else if (type === "error") {
-        now.answered = true;
-        callbacks.current.onError(payload?.message ?? "");
+        // Under Unity an answer is for the scene it was drawing; one for options the page has moved on from is not the
+        // page's. Babylon answers only for the scene it was last sent (Preview.tsx drops a superseded one).
+        const answeredFor = now.awaiting;
+        now.awaiting = null;
+        // Except a failed first scene: Unity that could not start applies no update after it, whatever options it was for.
+        const failedToStart = type === "error" && first;
+        if (mount.options.unity !== true || answeredFor === null || answeredFor === latest.current || failedToStart) {
+          if (type === "load") {
+            const renderer = payload?.renderer;
+            callbacks.current.onLoad(renderer === "unity" || renderer === "babylon" ? renderer : undefined);
+          } else callbacks.current.onError(payload?.message ?? "");
+        }
+        if (!(mount.options.unity === true && failedToStart)) push.current();
       }
     };
     window.addEventListener("message", onMessage);
@@ -195,6 +291,10 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
     push.current();
   }, [serialized]);
 
+  useEffect(() => {
+    if (mount.n > 0) callbacks.current.onReplaced?.();
+  }, [mount.n]);
+
   const played = useRef(replay);
   useEffect(() => {
     if (replay === played.current) return;
@@ -202,5 +302,5 @@ export default function PreviewFrame({ options, replay = 0, loadTimeoutMs, onLoa
     if (live.current.n === mount.n && live.current.ready) post("controller_request", { id: `shop-item-preview-${replay}`, namespace: "emote", method: "play", params: [] });
   }, [replay]);
 
-  return <iframe key={mount.n} ref={frame} className="shop-preview__frame" src={mount.src} allow="autoplay" title="3D preview" />;
+  return <iframe key={mount.n} ref={frame} className={styles.frame} src={mount.src} allow="autoplay" title="3D preview" />;
 }
