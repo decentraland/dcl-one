@@ -48,7 +48,7 @@ impl AppSetting for LiveSceneRingSetting {
     }
 
     fn description(&self) -> String {
-        "Live Scene Ring\n\nScenes this many parcels from yours always run, whatever the Scene Load Distance, and keep running until they are one parcel further. At 0 only the Scene Load Distance decides which nearby scenes run; a larger value starts nearby scenes earlier and uses more memory.".to_string()
+        "Live Scene Ring\n\nAdvanced: the Graphics Preset sets this with the other Scene LODs settings; changing it shows the preset as Custom.\n\nScenes this many parcels from yours always run, whatever the Scene Load Distance, and keep running until they are one parcel further. At 0 only the Scene Load Distance decides which nearby scenes run; a larger value starts nearby scenes earlier and uses more memory.".to_string()
     }
 
     fn save(&self, config: &mut AppConfig) {
@@ -93,7 +93,7 @@ impl AppSetting for NearLodRingSetting {
     }
 
     fn description(&self) -> String {
-        "Near LOD Ring\n\nScenes up to this many parcels away that are not running show their own models, without scripts, until one parcel further. Far LODs start past that. At or inside the Live Scene Ring, only scenes still loading show them.".to_string()
+        "Near LOD Ring\n\nAdvanced: the Graphics Preset sets this with the other Scene LODs settings; changing it shows the preset as Custom.\n\nScenes up to this many parcels away that are not running show their own models, without scripts, until one parcel further. Far LODs start past that. At or inside the Live Scene Ring, only scenes still loading show them.".to_string()
     }
 
     fn save(&self, config: &mut AppConfig) {
@@ -138,7 +138,7 @@ impl AppSetting for FarLodRingSetting {
     }
 
     fn description(&self) -> String {
-        "Far LOD Ring\n\nHow many parcels away distant scenes may show a simplified mesh before they load. Distant Scene Rendering can end them sooner: about 13 to 18 parcels away at its default distances, about 25 to 30 on Ultra. Beyond, only the distant scene tiles remain; with Distant Scene Rendering off, this ring is the edge.".to_string()
+        "Far LOD Ring\n\nAdvanced: the Graphics Preset sets this with the other Scene LODs settings; changing it shows the preset as Custom.\n\nHow many parcels away distant scenes may show a simplified mesh before they load. Distant Scene Rendering can end them sooner: about 13 to 18 parcels away at its default distances, about 25 to 30 on Ultra. Beyond, only the distant scene tiles remain. While Distant Scene Rendering is off, far LODs are off and this value is kept for when it is turned on.".to_string()
     }
 
     fn save(&self, config: &mut AppConfig) {
@@ -147,6 +147,10 @@ impl AppSetting for FarLodRingSetting {
 
     fn load(config: &AppConfig) -> Self {
         Self(clamp_ring(config.far_lod_ring as i32, FAR_LOD_RINGS))
+    }
+
+    fn is_disabled(config: &AppConfig) -> bool {
+        config.scene_imposter_distances.is_empty()
     }
 
     fn category() -> super::SettingCategory {

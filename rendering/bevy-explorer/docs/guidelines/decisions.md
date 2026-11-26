@@ -1056,8 +1056,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   bloom on, as Unity's Medium and High do; Unity turns bloom off on
   Low. Medium's sun shadow distance is 20 m, not 60 m: Medium
   has one cascade (above), which stops at 40 m, and at 20 m its texels are half as large as at
-  40 m. The presets leave out Unity's scene distance (in parcels, where far scenes load as
-  LODs; here imposters draw them and the load distance stays the player's), the landscape
+  40 m. Each preset also sets every scene-loading value (the scene streaming ADR has the table)
+  in place of Unity's single scene distance. The presets leave out the landscape
   distance (read only at startup; its default is Medium's 1000 m), current-scene streams and
   HDR (always on). The preset is not stored: the HUD reads it off the settings, and any
   difference shows as Custom.

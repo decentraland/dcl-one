@@ -221,7 +221,8 @@ the same kind.
   out) its mesh starts loading again at once, with no new far LOD to spawn and name; the scene
   shows its imposters only while that mesh loads. Beyond the far ring only the imposters remain.
   It has visuals only: no colliders part.
-- **A count.** At most "Max Far LODs" far LODs (a Performance setting, 0 to 600, default 200)
+- **A count.** At most "Max Far LODs" far LODs (0 to 600, default 200; none while Distant Scene
+  Rendering is off)
   load or show at once, in view and behind the camera together, by the near LODs' visuals rule:
   nearest in view first while a place is free, then one behind the camera making way for each in
   view; the rest show their imposter tiles. Lowering it stops the farthest over it, those behind
@@ -288,17 +289,33 @@ nodes, or on the floor where it has none.
 
 ### Settings
 
-The bands and counts are Performance settings, read each frame, so a change applies on the next
-one. All five are hidden in preview mode, like "Scene Load Distance", and none is in the HUD's
-graphics presets.
+One Graphics setting and the HUD's Graphics Preset set scene loading; the Performance tab's
+"Scene LODs" section tunes it further. The bands and counts are read each frame, so a change
+applies on the next one. All of them are hidden in preview mode.
 
-| Setting | Default | Range | What it sets |
-| --- | --- | --- | --- |
-| Live Scene Ring | 1 | 0 to 3 | scenes within it go live; kept one ring further |
-| Near LOD Ring | 3 | 1 to 8 | near LODs start within it; kept one ring further |
-| Far LOD Ring | 20 | 5 to 40 | far LODs' outer bound; the imposter tiles may end them sooner |
-| Max Near LODs | 12 | 0 to 40 | near LODs drawn at once, in view and behind the camera; their colliders take no place |
-| Max Far LODs | 200 | 0 to 600 | far LODs that load or show at once, in view and behind the camera |
+"Distant Scene Rendering" (Graphics; Off, Normal, Ultra) is the one switch for what draws past
+the scenes around the player. Normal and Ultra set the imposter distances, Ultra's tiles finer
+nearby. Off removes the imposters and turns far LODs off: the engine reads the far LOD count
+through `AppConfig::far_lods_cap`, which is 0 while there are no imposter distances. It keeps the
+"Max Far LODs" and "Far LOD Ring" values, which the panel shows disabled until it is turned on
+again, as "Unlimited Avatars" does to "Max Avatars". Live scenes and near LODs are unchanged.
+
+Each Graphics Preset sets every scene-loading value, so a preset is one profile (Medium is the
+engine default):
+
+| Setting | Range | Low | Medium | High | What it sets |
+| --- | --- | --- | --- | --- | --- |
+| Distant Scene Rendering | Off to Ultra | Normal | Normal | Ultra | imposters; Off also turns far LODs off |
+| Scene Load Distance | 10 to 150 m | 10 | 10 | 10 | scenes within it go live, past the live ring |
+| Scene Unload Distance | 0 to 100 m | 10 | 10 | 10 | extra distance before such a scene unloads |
+| Live Scene Ring | 0 to 3 | 1 | 1 | 1 | scenes within it go live; kept one ring further |
+| Near LOD Ring | 1 to 8 | 2 | 3 | 4 | near LODs start within it; kept one ring further |
+| Max Near LODs | 0 to 40 | 6 | 12 | 20 | near LODs drawn at once, in view and behind the camera; their colliders take no place |
+| Far LOD Ring | 5 to 40 | 12 | 20 | 30 | far LODs' outer bound; the imposter tiles may end them sooner (about 25 to 30 parcels on Ultra) |
+| Max Far LODs | 0 to 600 | 100 | 200 | 400 | far LODs that load or show at once, in view and behind the camera |
+
+Changing one of them in the Performance tab shows the preset as Custom. Saved configs keep their
+values: no migration moves them, and a config on the defaults reads as Medium.
 
 The rings stay ordered whatever the values. A config value outside a range is clamped to it.
 Far LODs start one ring past the near keep ring, or past the live keep ring when the live ring

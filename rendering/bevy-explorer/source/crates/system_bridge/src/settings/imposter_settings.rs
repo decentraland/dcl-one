@@ -38,11 +38,11 @@ impl AppSetting for ImposterSetting {
     }
 
     fn description(&self) -> String {
-        format!("Distant scenes are rendered as low quality imposters to increase immersion.\n\n{}", 
+        format!("Distant Scene Rendering\n\nWhat you see past the scenes around you: far LODs (simplified meshes of distant scenes) and, beyond them, low quality imposter tiles. The Graphics Preset sets it; the Performance tab's Scene LODs settings tune it further.\n\n{}",
         match self {
-            ImposterSetting::Off => "Off: No distant scenes are rendered.",
-            ImposterSetting::Low => "Normal: Distant scenes are rendered at normal quality.",
-            ImposterSetting::High => "Ultra: Distant scenes are rendered at higher quality. This setting requires at least 16mb VRAM.",
+            ImposterSetting::Off => "Off: No far LODs and no imposters; only the scenes around you and their near LODs are drawn. Max Far LODs and Far LOD Ring keep their values for when it is turned on.",
+            ImposterSetting::Low => "Normal: Far LODs, then imposters at normal quality.",
+            ImposterSetting::High => "Ultra: Far LODs, then imposters at higher quality, which uses more video memory.",
         })
     }
 
@@ -76,5 +76,35 @@ impl AppSetting for ImposterSetting {
         };
 
         param.load_imposter = max_distance;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::{max_lods::MaxFarLodsSetting, rings::FarLodRingSetting, AppSetting as _};
+
+    #[test]
+    fn off_turns_far_lods_off_and_keeps_the_far_settings() {
+        let mut config = AppConfig::default();
+        assert_eq!(ImposterSetting::load(&config), ImposterSetting::Low);
+        assert!(!MaxFarLodsSetting::is_disabled(&config));
+        assert!(!FarLodRingSetting::is_disabled(&config));
+
+        ImposterSetting::Off.save(&mut config);
+        assert_eq!(ImposterSetting::load(&config), ImposterSetting::Off);
+        assert_eq!(config.far_lods_cap(), 0);
+        assert!(MaxFarLodsSetting::is_disabled(&config));
+        assert!(FarLodRingSetting::is_disabled(&config));
+        let default = AppConfig::default();
+        assert_eq!(config.max_far_lods, default.max_far_lods);
+        assert_eq!(config.far_lod_ring, default.far_lod_ring);
+
+        for setting in [ImposterSetting::Low, ImposterSetting::High] {
+            setting.save(&mut config);
+            assert_eq!(ImposterSetting::load(&config), setting);
+            assert_eq!(config.far_lods_cap(), default.max_far_lods);
+            assert!(!MaxFarLodsSetting::is_disabled(&config));
+        }
     }
 }

@@ -32,7 +32,7 @@ impl AppSetting for LoadDistanceSetting {
     }
 
     fn description(&self) -> String {
-        "Scene Load Distance\n\nThe distance at which neighbouring scenes will be spawned. A parcel is 16 meters, so for example a value of 64 will load 4 parcels in all directions. While Distant Scene Rendering is on, the scenes within the Live Scene Ring load whatever this value".to_string()
+        "Scene Load Distance\n\nAdvanced: the Graphics Preset sets this with the other Scene LODs settings; changing it shows the preset as Custom.\n\nThe distance at which neighbouring scenes will be spawned. A parcel is 16 meters, so for example a value of 64 will load 4 parcels in all directions. Scenes within the Live Scene Ring run whatever this value.".to_string()
     }
 
     fn save(&self, config: &mut AppConfig) {
@@ -81,7 +81,7 @@ impl AppSetting for UnloadDistanceSetting {
     }
 
     fn description(&self) -> String {
-        "Scene Unload Distance\n\nThe additional distance (above the load distance) at which neighbouring scenes will be despawned. Using too low a setting will cause churn as scenes load and unload frequently.".to_string()
+        "Scene Unload Distance\n\nAdvanced: the Graphics Preset sets this with the other Scene LODs settings; changing it shows the preset as Custom.\n\nThe additional distance (above the load distance) at which neighbouring scenes will be despawned. Using too low a setting will cause churn as scenes load and unload frequently.".to_string()
     }
 
     fn save(&self, config: &mut AppConfig) {

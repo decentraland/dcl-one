@@ -820,6 +820,16 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    /// How many far LODs may load or show at once: none while Distant Scene Rendering is off
+    /// (no imposter distances), else `max_far_lods`, which is kept for when it is turned on.
+    pub fn far_lods_cap(&self) -> usize {
+        if self.scene_imposter_distances.is_empty() {
+            0
+        } else {
+            self.max_far_lods
+        }
+    }
+
     pub fn terms_accepted(&self) -> bool {
         self.accepted_terms.is_some_and(|v| v >= TERMS_VERSION)
     }
@@ -3217,6 +3227,15 @@ mod tests {
         let write = |setting| serde_json::to_string(&setting).unwrap();
         assert_eq!(write(BloomSetting::On), r#""High""#);
         assert_eq!(write(BloomSetting::Off), r#""Off""#);
+    }
+
+    #[test]
+    fn distant_scene_rendering_off_turns_far_lods_off_but_keeps_the_count() {
+        let mut config = AppConfig::default();
+        assert_eq!(config.far_lods_cap(), 200);
+        config.scene_imposter_distances.clear();
+        assert_eq!(config.far_lods_cap(), 0);
+        assert_eq!(config.max_far_lods, 200);
     }
 
     #[test]

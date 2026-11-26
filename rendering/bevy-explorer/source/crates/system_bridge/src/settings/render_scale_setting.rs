@@ -41,7 +41,7 @@ impl AppSetting for RenderScaleSetting {
     }
 
     fn category() -> SettingCategory {
-        SettingCategory::Performance
+        SettingCategory::Graphics
     }
 
     fn description(&self) -> String {

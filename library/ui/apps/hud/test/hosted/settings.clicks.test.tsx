@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SettingsPanel, resetSettingsTab } from '../../features/settings/SettingsPanel'
 import type { Setting } from '@explorer-core/engine/protocol'
@@ -160,6 +160,24 @@ describe('settings panel disabled controls', () => {
     expect(screen.getByRole('button', { name: 'Target Frame Rate' })).toBeEnabled()
     rerender(panel({ ...FPS, disabled: true }))
     expect(screen.getByRole('button', { name: 'Target Frame Rate' })).toBeDisabled()
+  })
+})
+
+describe('performance tab sections', () => {
+  beforeEach(() => resetSettingsTab())
+
+  it('groups the rows under Avatars, General and Scene LODs, in that order', async () => {
+    const list = ['Max Far LODs', 'Scene Threads', 'Max Avatars'].map((name) => base({ name, category: 'performance' }))
+    const settings: SettingsState = { ...fakeSession().settings, open: true, list, set: vi.fn() }
+    render(<SettingsPanel lobbyStage={{ preset: 'halloween-2026', set: vi.fn() }} settings={settings} bindings={fakeSession().bindings} profile={fakeProfileState()} onNavigate={vi.fn()} />)
+    await userEvent.click(screen.getByRole('tab', { name: 'Performance' }))
+    const card = screen.getByRole('group', { name: 'Performance settings' })
+    expect(within(card).getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Avatars', 'General', 'Scene LODs'])
+    // each row sits in the section under its heading, and only there
+    const section = (title: string): HTMLElement => screen.getByRole('heading', { level: 2, name: title }).closest('section') as HTMLElement
+    for (const [title, name] of [['Avatars', 'Max Avatars'], ['General', 'Scene Threads'], ['Scene LODs', 'Max Far LODs']]) {
+      expect(within(section(title)).getAllByRole('slider')).toEqual([screen.getByRole('slider', { name })])
+    }
   })
 })
 

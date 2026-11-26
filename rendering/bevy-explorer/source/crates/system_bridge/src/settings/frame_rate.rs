@@ -39,6 +39,6 @@ impl AppSetting for FpsTargetSetting {
     }
 
     fn category() -> super::SettingCategory {
-        super::SettingCategory::Performance
+        super::SettingCategory::Graphics
     }
 }

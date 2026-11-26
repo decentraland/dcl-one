@@ -387,7 +387,7 @@ fn lod_state(
     near["max"] = json!(config.max_near_lods);
     near["colliders"] = json!(counts[0][4]);
     let mut far = level_counts(counts[1]);
-    far["max"] = json!(config.max_far_lods);
+    far["max"] = json!(config.far_lods_cap());
     let health = ipfs.far_lod_status();
     far["missing"] = json!(health.missing);
     far["failures"] = json!(health.failures);
@@ -960,7 +960,7 @@ fn lod_visual_changes(
     let (far_start, mut far_stop) = visual_changes(
         lods,
         LodLevel::Far,
-        config.max_far_lods,
+        config.far_lods_cap(),
         &near_waiting,
         &rings,
         far_max_starts,
