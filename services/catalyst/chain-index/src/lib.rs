@@ -1,4 +1,5 @@
-//! The chain-derived readers every domain shares: the collections and
+//! The chain-derived readers every domain shares: the collections index's
+//! readiness rule over the catalogue (`catalogue`), the collections and
 //! marketplace subgraph clients (`graph`),
 //! the DCL NAME authority interface (`names`),
 //! the LAND registries per network (`registries`), Ethereum RPC logs and
@@ -13,6 +14,7 @@
 pub(crate) use catalyst_shared as shared;
 pub(crate) use dcl_http as http;
 
+pub mod catalogue;
 pub mod graph;
 pub mod logs;
 pub mod names;

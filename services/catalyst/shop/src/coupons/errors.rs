@@ -17,6 +17,9 @@ pub enum CouponError {
     InvalidSignature,
     InvalidSignatureIndex,
     NotCollectionCreator(String),
+    /// The collections index owns the coupon's network and cannot authorize
+    /// a read of it: why.
+    CatalogueUnavailable(String),
     Duplicate,
     NotFound(String),
     Db(sqlx::Error),
@@ -80,6 +83,7 @@ impl std::fmt::Display for CouponError {
                     "The signer is not the creator of collection {collection}"
                 )
             }
+            CouponError::CatalogueUnavailable(why) => write!(f, "{why}; retry later"),
             CouponError::Duplicate => write!(f, "This coupon already exists"),
             CouponError::NotFound(id) => write!(f, "Coupon not found for id {id}"),
             CouponError::Db(e) => write!(f, "database error: {e}"),

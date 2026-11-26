@@ -21,6 +21,7 @@ pub mod chain;
 pub mod executions;
 pub mod facts;
 pub mod feed_rate;
+pub(crate) mod history;
 pub mod quote;
 pub mod tracker;
 pub mod venues;

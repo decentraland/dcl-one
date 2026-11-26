@@ -227,7 +227,7 @@ pub struct RegistryReader {
     /// Derives the picture of a profile that deployed no `face256`.
     faces: Option<FaceUrls>,
     #[cfg(test)]
-    seen: std::sync::Mutex<HashSet<String>>,
+    seen: parking_lot::Mutex<HashSet<String>>,
 }
 impl RegistryReader {
     pub fn new(pool: Option<PgPool>) -> Self {
@@ -258,7 +258,7 @@ impl RegistryReader {
         keys: &[String],
     ) -> Result<HashMap<String, RegistryProfile>, sqlx::Error> {
         #[cfg(test)]
-        self.seen.lock().unwrap().extend(keys.iter().cloned());
+        self.seen.lock().extend(keys.iter().cloned());
         let Some(pool) = &self.pool else {
             return Ok(HashMap::new());
         };
@@ -290,7 +290,7 @@ impl RegistryReader {
             values.push(serde_json::to_value(profile).expect("minimal JSON profile"));
         }
         #[cfg(test)]
-        self.seen.lock().unwrap().extend(keys.iter().cloned());
+        self.seen.lock().extend(keys.iter().cloned());
         if let Err(error) = sqlx::query(CACHE_WRITE_SQL)
             .bind(&keys)
             .bind(&values)
@@ -411,7 +411,7 @@ impl RegistryReader {
     }
     #[cfg(test)]
     async fn clear_seen(&self) {
-        let keys = self.seen.lock().unwrap().drain().collect::<Vec<_>>();
+        let keys = self.seen.lock().drain().collect::<Vec<_>>();
         if let Some(pool) = &self.pool {
             sqlx::query(
                 "DELETE FROM social.registry_profile_cache WHERE profile_key=ANY($1::text[])",
