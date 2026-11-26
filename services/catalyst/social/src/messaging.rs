@@ -223,7 +223,7 @@ static CLAIMS_BY_CLAIMER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(500, Duration::from_secs(3600)));
 static CLAIMS_OF_OWNER: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(60, Duration::from_secs(3600)));
-// Pair keys grow as claimers x owners and need more slots than the per-wallet maps.
+// Pair keys grow as claimers x owners: a larger map keeps an overflow from resetting them.
 static CLAIMS_OF_PAIR: LazyLock<RateLimiter> =
     LazyLock::new(|| RateLimiter::new(10, Duration::from_secs(3600)).with_max_buckets(200_000));
 
@@ -231,43 +231,16 @@ fn claim_pair(claimer: &str, owner: &str) -> String {
     format!("{claimer}:{owner}")
 }
 
-struct ClaimBudget<'a> {
-    owner: &'a str,
-    pair: String,
-    spent: bool,
+/// Whether the owner's or this pair's handed-out budget is spent.
+fn claim_budget_spent(claimer: &str, owner: &str) -> bool {
+    CLAIMS_OF_OWNER.is_rate_limited(owner)
+        || CLAIMS_OF_PAIR.is_rate_limited(&claim_pair(claimer, owner))
 }
 
-impl ClaimBudget<'_> {
-    fn spend(mut self) {
-        self.spent = true;
-    }
-}
-
-impl Drop for ClaimBudget<'_> {
-    fn drop(&mut self) {
-        if !self.spent {
-            CLAIMS_OF_OWNER.refund(self.owner, 1);
-            CLAIMS_OF_PAIR.refund(&self.pair, 1);
-        }
-    }
-}
-
-/// Reserves both budgets before consuming a package. Refund the owner's
-/// token if the pair cannot be admitted.
-fn reserve_claim_budget<'a>(claimer: &str, owner: &'a str) -> Result<ClaimBudget<'a>, ApiError> {
-    if CLAIMS_OF_OWNER.check(owner) == RateLimitDecision::Deny {
-        return Err(claim_rate_limited());
-    }
-    let pair = claim_pair(claimer, owner);
-    if CLAIMS_OF_PAIR.check(&pair) == RateLimitDecision::Deny {
-        CLAIMS_OF_OWNER.refund(owner, 1);
-        return Err(claim_rate_limited());
-    }
-    Ok(ClaimBudget {
-        owner,
-        pair,
-        spent: false,
-    })
+/// Charges one handed-out package to the owner and the pair.
+fn spend_claim(claimer: &str, owner: &str) {
+    CLAIMS_OF_OWNER.check(owner);
+    CLAIMS_OF_PAIR.check(&claim_pair(claimer, owner));
 }
 
 /// Owners with a claim in flight on this node. One claim per owner runs at a
@@ -558,12 +531,15 @@ pub async fn claim_key_package(
     if CLAIMS_BY_CLAIMER.check(&claimer) == RateLimitDecision::Deny {
         return Err(claim_rate_limited());
     }
+    // The owner's budget is spent only by a package handed out.
     let Some(_slot) = ClaimSlot::take(&owner) else {
         return Err(claim_rate_limited());
     };
-    let budget = reserve_claim_budget(&claimer, &owner)?;
+    if claim_budget_spent(&claimer, &owner) {
+        return Err(claim_rate_limited());
+    }
     // A block either way answers as an empty stock.
-    let row = sqlx::query_as::<_, (String, Vec<u8>, i32)>(
+    let row: Option<(String, Vec<u8>, i32)> = sqlx::query_as(
         "UPDATE social.mls_key_packages SET consumed_at = $2 \
          WHERE id = ( \
             SELECT id FROM social.mls_key_packages \
@@ -579,14 +555,14 @@ pub async fn claim_key_package(
     .bind(&claimer)
     .fetch_optional(&state.pool)
     .await?;
+    if row.is_some() {
+        spend_claim(&claimer, &owner);
+    }
     match row {
-        Some((ref_hash, kp, cs)) => {
-            budget.spend();
-            Ok(Json(
-                json!({ "owner": owner, "ref": ref_hash, "ciphersuite": cs, "key_package": b64(&kp) }),
-            )
-            .into_response())
-        }
+        Some((ref_hash, kp, cs)) => Ok(Json(
+            json!({ "owner": owner, "ref": ref_hash, "ciphersuite": cs, "key_package": b64(&kp) }),
+        )
+        .into_response()),
         None => Err(ApiError::labeled(
             404,
             "no key package available",
@@ -1528,15 +1504,11 @@ mod tests {
         let owner = address_of(&random_key());
         let (heavy, other) = (address_of(&random_key()), address_of(&random_key()));
         for _ in 0..10 {
-            drop(reserve_claim_budget(&heavy, &owner).unwrap());
+            assert!(!claim_budget_spent(&heavy, &owner));
+            spend_claim(&heavy, &owner);
         }
-        for _ in 0..10 {
-            reserve_claim_budget(&heavy, &owner).unwrap().spend();
-        }
-        for _ in 0..60 {
-            assert!(reserve_claim_budget(&heavy, &owner).is_err());
-        }
-        assert!(reserve_claim_budget(&other, &owner).is_ok());
+        assert!(claim_budget_spent(&heavy, &owner));
+        assert!(!claim_budget_spent(&other, &owner));
     }
 
     /// Unset `FED_PEER_ID` falls back to the id schema apply minted (the old

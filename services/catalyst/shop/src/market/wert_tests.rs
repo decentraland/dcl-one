@@ -1,6 +1,5 @@
 use std::sync::{Arc, Mutex};
 
-use alloy::signers::local::PrivateKeySigner;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
@@ -11,7 +10,7 @@ use tower::ServiceExt as _;
 use super::*;
 use crate::market::tests::support::state_without_db_settings;
 use crate::market::{Settings, market_router};
-use crate::shared::signed_fetch::test_support::{address, signed_headers, signed_headers_by};
+use crate::shared::signed_fetch::test_support::{address, signed_headers};
 
 const MARKETPLACE: &str = r#"{"signer":"dcl:marketplace"}"#;
 
@@ -27,7 +26,6 @@ fn test_policy() -> anyhow::Result<WertPolicy> {
         None,
         EvmAddress::parse(PUBLICATION_MANAGER).unwrap(),
         Some(&extras),
-        NonZeroU32::new(10).unwrap(),
     )
 }
 
@@ -232,7 +230,7 @@ fn wert_extra_contract_config_rejects_malformed_tuples() {
             "network:address:target",
         ),
     ] {
-        let error = WertPolicy::new(None, manager, Some(&input), NonZeroU32::MIN)
+        let error = WertPolicy::new(None, manager, Some(&input))
             .err()
             .expect("invalid startup configuration")
             .to_string();
@@ -284,16 +282,6 @@ fn app_with(wert: Option<WertSettings>) -> Router {
 }
 
 async fn post(app: Router, path: &str, headers: HeaderMap, body: Value) -> (StatusCode, Value) {
-    let (status, _, body) = post_with_headers(app, path, headers, body).await;
-    (status, body)
-}
-
-async fn post_with_headers(
-    app: Router,
-    path: &str,
-    headers: HeaderMap,
-    body: Value,
-) -> (StatusCode, HeaderMap, Value) {
     let mut request = Request::post(path).header("content-type", "application/json");
     for (name, value) in &headers {
         request = request.header(name, value);
@@ -303,13 +291,11 @@ async fn post_with_headers(
         .await
         .unwrap();
     let status = response.status();
-    let headers = response.headers().clone();
     let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
         .await
         .unwrap();
     (
         status,
-        headers,
         serde_json::from_slice(&bytes).unwrap_or(Value::Null),
     )
 }
@@ -411,7 +397,6 @@ async fn wert_contract_policy_signs_each_seeded_tuple_and_the_configured_extra()
         Some((ChainId::POLYGON, credits)),
         publication,
         Some(&extras),
-        NonZeroU32::new(100).unwrap(),
     )
     .unwrap();
 
@@ -523,61 +508,6 @@ async fn wert_contract_policy_refuses_unknown_wrong_chain_and_wrong_target() {
         );
     }
     assert!(fake.seen.lock().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn wert_signer_limit_shares_the_wallet_budget_across_mounts() {
-    let (url, fake) = fake_wert(StatusCode::OK, json!({ "sessionId": "session-example" })).await;
-    let market = app_with(Some(test_settings(&url)));
-    let app = Router::new()
-        .nest("/shop-api", market.clone())
-        .nest("/marketplace-api", market);
-    let paths = [
-        format!("/shop-api{PATH}"),
-        format!("/marketplace-api{PATH}"),
-    ];
-    let headers = [
-        signed_headers("post", &paths[0], MARKETPLACE, true).await,
-        signed_headers("post", &paths[1], MARKETPLACE, true).await,
-    ];
-    for request in 0..10 {
-        let mount = request % paths.len();
-        let (status, body) = post(
-            app.clone(),
-            &paths[mount],
-            headers[mount].clone(),
-            request_body(None),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-    }
-    let (status, response_headers, body) = post_with_headers(
-        app.clone(),
-        &paths[1],
-        headers[1].clone(),
-        request_body(Some("publicationFees")),
-    )
-    .await;
-    assert_eq!(
-        (status, body["message"].as_str()),
-        (
-            StatusCode::TOO_MANY_REQUESTS,
-            Some("Too many Wert requests")
-        )
-    );
-    assert_eq!(response_headers[RETRY_AFTER], "6");
-    assert_eq!(fake.seen.lock().unwrap().len(), 10);
-
-    let other = PrivateKeySigner::random();
-    let wallet = format!("{:#x}", other.address());
-    let mut request = request_body(None);
-    request["message"]["address"] = json!(wallet);
-    request["session"]["wallet_address"] = json!(wallet);
-    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
-    let headers = signed_headers_by(&other, "post", &paths[0], MARKETPLACE, true, &timestamp).await;
-    let (status, body) = post(app, &paths[0], headers, request).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(fake.seen.lock().unwrap().len(), 11);
 }
 
 #[tokio::test]

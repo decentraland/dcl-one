@@ -92,7 +92,6 @@ pub(crate) fn market_settings(
                         credits_manager,
                         publication_manager,
                         config.marketplace.wert_extra_contracts.as_deref(),
-                        config.marketplace.wert_signer_requests_per_minute,
                     )
                 },
             )

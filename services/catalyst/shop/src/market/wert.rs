@@ -16,11 +16,6 @@
 //! - The startup allow-list binds the chain, contract address and key target.
 //!   A tuple outside it returns 400 "Invalid contract" before signing or
 //!   requesting a Wert session. `WERT_EXTRA_CONTRACTS` adds approved tuples.
-//! - Each replica spends from its own wallet token bucket, shared across
-//!   both mounts and all permitted contracts. `WERT_SIGNER_REQUESTS_PER_MINUTE`
-//!   sets the initial burst and per-minute refill, defaulting to 10. A full
-//!   burst can exhaust the bucket and subsequent requests get 429 with
-//!   `Retry-After` until a token refills.
 //! - **Differences from upstream:**
 //!   - A message with a missing, extra or mistyped field is 400 "Invalid
 //!     message". Upstream throws, which is a 500.
@@ -34,14 +29,13 @@
 //! envelope naming them.
 
 use std::collections::HashSet;
-use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode, header::RETRY_AFTER};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use ed25519_dalek::{Signer as _, SigningKey};
 use serde::Deserialize;
@@ -52,7 +46,6 @@ use super::wire::ApiError;
 use super::{SharedState, Source, check_upstream, listings, unavailable};
 use crate::credits::batch::collection_store;
 use crate::evm::contracts_addrs::{DclContracts, NameContracts};
-use crate::shared::limits::{RateLimitDecision, RateLimiter};
 use crate::types::{ChainId, EvmAddress};
 
 /// The route, as `DataWrites` sees it: it writes nothing here.
@@ -75,7 +68,6 @@ const NETWORKS: [(ChainId, &str); 4] = [
     (ChainId::AMOY, "amoy"),
     (ChainId::SEPOLIA, "sepolia"),
 ];
-const RATE_WINDOW: Duration = Duration::from_secs(60);
 
 fn network(value: &str) -> Option<(ChainId, &'static str)> {
     NETWORKS
@@ -86,8 +78,6 @@ fn network(value: &str) -> Option<(ChainId, &'static str)> {
 /// Signing policy built at startup and shared by both route mounts.
 pub struct WertPolicy {
     contracts: HashSet<(ChainId, EvmAddress, Target)>,
-    signer_limit: RateLimiter,
-    retry_after: u64,
 }
 
 impl WertPolicy {
@@ -95,7 +85,6 @@ impl WertPolicy {
         credits_manager: Option<(ChainId, EvmAddress)>,
         polygon_publication_manager: EvmAddress,
         extras: Option<&str>,
-        requests_per_minute: NonZeroU32,
     ) -> anyhow::Result<Self> {
         let mut contracts = HashSet::new();
         for (chain, _) in NETWORKS {
@@ -167,12 +156,7 @@ impl WertPolicy {
             }
         }
 
-        let rate = requests_per_minute.get();
-        Ok(Self {
-            contracts,
-            signer_limit: RateLimiter::new(rate, RATE_WINDOW),
-            retry_after: RATE_WINDOW.as_secs().div_ceil(u64::from(rate)),
-        })
+        Ok(Self { contracts })
     }
 }
 
@@ -395,19 +379,6 @@ pub async fn sign(State(state): State<SharedState>, headers: HeaderMap, body: By
             return ApiError::bad_request("Invalid contract").into_response();
         }
     };
-    if wert.policy.signer_limit.check(&signer) == RateLimitDecision::Deny {
-        log_refusal(
-            Some(network_name),
-            Some(contract),
-            target,
-            "signer_rate_limit",
-        );
-        return (
-            [(RETRY_AFTER, wert.policy.retry_after.to_string())],
-            ApiError::http(429, "Too many Wert requests"),
-        )
-            .into_response();
-    }
     let signature = sign_text(wert.key(target), &text);
     let session_id = match create_session(&state, wert, &request.session).await {
         Ok(session_id) => session_id,

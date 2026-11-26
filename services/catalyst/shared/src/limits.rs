@@ -19,7 +19,6 @@ use std::time::{Duration, Instant};
 pub const DEFAULT_MAX_BUCKETS: usize = 10_000;
 
 const SWEEP_EVERY: u64 = 512;
-const MIN_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RateLimitDecision {
@@ -32,17 +31,15 @@ struct Bucket {
     last: Instant,
 }
 
-/// Token bucket per key. Sweeps reclaim fully refilled buckets. When all
-/// slots are occupied, new keys are refused while tracked keys keep their
-/// balances. Sweeps are spaced out to bound the cost of a new-key flood.
+/// Token bucket per key. Keys are attacker-chosen, so the map is pruned: a
+/// fully refilled bucket is dropped on a periodic sweep, and the map is
+/// hard-capped so a burst of distinct keys cannot grow the process without
+/// bound.
 pub struct RateLimiter {
     capacity: f64,
     refill_per_sec: f64,
     max_buckets: usize,
     checks: AtomicU64,
-    // Serializes new keys and remembers the last sweep. Tracked keys spend
-    // from their own bucket locks.
-    admission: Mutex<Option<Instant>>,
     buckets: DashMap<String, Mutex<Bucket>>,
 }
 
@@ -53,7 +50,6 @@ impl RateLimiter {
             refill_per_sec: capacity as f64 / per.as_secs_f64(),
             max_buckets: DEFAULT_MAX_BUCKETS,
             checks: AtomicU64::new(0),
-            admission: Mutex::new(None),
             buckets: DashMap::new(),
         }
     }
@@ -73,18 +69,8 @@ impl RateLimiter {
 
     fn maybe_sweep(&self) {
         let n = self.checks.fetch_add(1, Ordering::Relaxed);
-        if n.is_multiple_of(SWEEP_EVERY)
-            && let Some(mut last_sweep) = self.admission.try_lock()
-        {
-            self.sweep_if_due(&mut last_sweep);
-        }
-    }
-
-    fn sweep_if_due(&self, last_sweep: &mut Option<Instant>) {
-        let now = Instant::now();
-        if last_sweep.is_none_or(|last| now.duration_since(last) >= MIN_SWEEP_INTERVAL) {
+        if n.is_multiple_of(SWEEP_EVERY) || self.buckets.len() >= self.max_buckets {
             self.sweep();
-            *last_sweep = Some(Instant::now());
         }
     }
 
@@ -97,6 +83,9 @@ impl RateLimiter {
             let elapsed = now.saturating_duration_since(b.last).as_secs_f64();
             b.tokens + elapsed * refill_per_sec < capacity
         });
+        if self.buckets.len() >= self.max_buckets {
+            self.buckets.clear();
+        }
     }
 
     pub fn check(&self, key: &str) -> RateLimitDecision {
@@ -110,38 +99,18 @@ impl RateLimiter {
             return RateLimitDecision::Allow;
         }
         let cost = f64::from(cost);
-        if cost > self.capacity {
-            return RateLimitDecision::Deny;
-        }
         self.maybe_sweep();
-        let key = key.to_ascii_lowercase();
-        if let Some(entry) = self.buckets.get(&key) {
-            return self.spend(&mut entry.lock(), cost);
-        }
-
-        let mut last_sweep = self.admission.lock();
-        // Another request may have inserted this key while we waited.
-        if let Some(entry) = self.buckets.get(&key) {
-            return self.spend(&mut entry.lock(), cost);
-        }
-        if self.buckets.len() >= self.max_buckets {
-            self.sweep_if_due(&mut last_sweep);
-            if self.buckets.len() >= self.max_buckets {
-                return RateLimitDecision::Deny;
-            }
-        }
-        self.buckets.insert(
-            key,
-            Mutex::new(Bucket {
-                tokens: self.capacity - cost,
-                last: Instant::now(),
-            }),
-        );
-        RateLimitDecision::Allow
-    }
-
-    fn spend(&self, b: &mut Bucket, cost: f64) -> RateLimitDecision {
         let now = Instant::now();
+        let entry = self
+            .buckets
+            .entry(key.to_ascii_lowercase())
+            .or_insert_with(|| {
+                Mutex::new(Bucket {
+                    tokens: self.capacity,
+                    last: now,
+                })
+            });
+        let mut b = entry.lock();
         let elapsed = now.saturating_duration_since(b.last).as_secs_f64();
         b.tokens = (b.tokens + elapsed * self.refill_per_sec).min(self.capacity);
         b.last = now;
@@ -167,8 +136,7 @@ impl RateLimiter {
         self.buckets.remove(&key.to_ascii_lowercase());
     }
 
-    /// Whether a key is out of tokens or has no slot, without spending a
-    /// token or sweeping. Admission can change before the next check.
+    /// Whether the next attempt would be refused, without spending a token.
     pub fn is_rate_limited(&self, key: &str) -> bool {
         match self.buckets.get(&key.to_ascii_lowercase()) {
             Some(entry) => {
@@ -178,7 +146,7 @@ impl RateLimiter {
                     .as_secs_f64();
                 (b.tokens + elapsed * self.refill_per_sec).min(self.capacity) < 1.0
             }
-            None => self.buckets.len() >= self.max_buckets,
+            None => false,
         }
     }
 
@@ -215,7 +183,8 @@ struct KeyedBucket {
 /// Token buckets, at most `max_keys`, each call naming its keys and their
 /// budgets a minute: a key is stored only when a call spends from it, and
 /// past the cap the least recently used goes, so keys a denied flood invents
-/// never displace the buckets it exhausted.
+/// never displace the buckets it exhausted (unlike [`RateLimiter`], whose
+/// sweep empties a full map).
 pub struct KeyedLimiter {
     max_keys: usize,
     inner: Mutex<KeyedBuckets>,
@@ -328,57 +297,6 @@ mod tests {
             "attacker-keyed buckets grew to {}",
             limiter.len()
         );
-    }
-
-    #[test]
-    fn a_full_limiter_keeps_the_budgets_of_tracked_wallets() {
-        let limiter = RateLimiter::new(2, Duration::from_secs(60)).with_max_buckets(2);
-        assert_eq!(limiter.check_cost("exhausted", 2), RateLimitDecision::Allow);
-        assert_eq!(limiter.check("tracked"), RateLimitDecision::Allow);
-        assert!(limiter.is_rate_limited("new"));
-
-        *limiter.admission.lock() = None;
-        for i in 0..SWEEP_EVERY * 2 {
-            assert_eq!(
-                limiter.check(&format!("fresh-{i}")),
-                RateLimitDecision::Deny
-            );
-        }
-        assert_eq!(limiter.len(), 2);
-        assert_eq!(limiter.check("EXHAUSTED"), RateLimitDecision::Deny);
-        assert_eq!(limiter.check("tracked"), RateLimitDecision::Allow);
-        assert_eq!(limiter.check("tracked"), RateLimitDecision::Deny);
-
-        limiter.refund("tracked", 2);
-        *limiter.admission.lock() = None;
-        assert_eq!(limiter.check("new"), RateLimitDecision::Allow);
-        assert_eq!(limiter.check("exhausted"), RateLimitDecision::Deny);
-        assert_eq!(limiter.len(), 2);
-    }
-
-    #[test]
-    fn concurrent_new_keys_share_the_hard_capacity() {
-        let limiter = RateLimiter::new(1, Duration::from_secs(60)).with_max_buckets(2);
-        assert_eq!(limiter.check("existing"), RateLimitDecision::Allow);
-        let start = std::sync::Barrier::new(8);
-        let allowed = std::thread::scope(|scope| {
-            let threads: Vec<_> = (0..8)
-                .map(|i| {
-                    let (start, limiter) = (&start, &limiter);
-                    scope.spawn(move || {
-                        start.wait();
-                        limiter.check(&format!("new-{i}")) == RateLimitDecision::Allow
-                    })
-                })
-                .collect();
-            threads
-                .into_iter()
-                .map(|thread| usize::from(thread.join().unwrap()))
-                .sum::<usize>()
-        });
-        assert_eq!(allowed, 1);
-        assert_eq!(limiter.len(), 2);
-        assert_eq!(limiter.check("existing"), RateLimitDecision::Deny);
     }
 
     #[test]

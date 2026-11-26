@@ -246,12 +246,8 @@ configured CreditsManager on `COLLECTIONS_CHAIN_ID`, and Builder's Polygon Colle
 for `publicationFees`. `WERT_EXTRA_CONTRACTS` adds comma-separated `network:address:target`
 entries. Use `ethereum`, `polygon`, `amoy` or `sepolia` for the network and `default` or
 `publicationFees` for the target. An Amoy publication sandbox can add
-`amoy:0x5309ae874fc4eb21adcd63f8b6c3f766cc3b1849:publicationFees`.
-
-`WERT_SIGNER_REQUESTS_PER_MINUTE` defaults to 10 and accepts positive integers. Each replica
-gives a verified wallet its own token bucket, with that initial burst and continuous refill
-per minute. Both mounts share the bucket within a replica. An exhausted bucket returns 429
-with `Retry-After` in seconds.
+`amoy:0x5309ae874fc4eb21adcd63f8b6c3f766cc3b1849:publicationFees`. When Wert is enabled,
+a configured `CREDITS_MANAGER_CONTRACT` must be a 20-byte hex EVM address on Polygon or Amoy.
 
 The Transak card on-ramp (`/v1/transak/widget-url`, `/v1/transak/orders/{id}` and
 `PUT /v1/transak/access-token`, under `/shop-api` and `/marketplace-api`) needs
