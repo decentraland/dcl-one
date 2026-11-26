@@ -80,7 +80,7 @@ fn metric(body: &mut String, name: &str, kind: &str, help: &str, value: f64) {
             body,
             "# HELP {name} {help}\n# TYPE {name} {kind}\n{name} {value}\n"
         )
-        .unwrap();
+        .expect("writing to a String cannot fail");
     }
 }
 #[cfg(any(windows, test))]
@@ -198,11 +198,13 @@ pub fn cached_max_fds(
     *cache.get_or_init(|| read().and_then(|limits| proc_max_fds(&limits)))
 }
 #[cfg(target_os = "linux")]
+#[allow(unsafe_code, reason = "reads the clock tick rate through sysconf")]
 pub fn collect() -> Sample {
     unsafe extern "C" {
         fn sysconf(name: std::ffi::c_int) -> std::ffi::c_long;
     }
     // Linux's _SC_CLK_TCK. Read the configured kernel tick frequency, never assume HZ.
+    // SAFETY: sysconf takes an integer and reads no memory of ours.
     let ticks = unsafe { sysconf(2) } as f64;
     let boot = std::fs::read_to_string("/proc/stat").ok().and_then(|s| {
         s.lines().find_map(|l| {

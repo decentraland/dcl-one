@@ -7,8 +7,9 @@
 //! The bid contract accepts bids on any ERC721, and the sales index keeps
 //! them all: a bid on another contract notifies nobody. Under the mirrors it
 //! never holds the cursor; on a network the collections index owns it holds
-//! it until the publication covers its block, since a collection created by
-//! then may not be published yet ([`ItemWait`]).
+//! it until the publication covers its block, however long that takes, since
+//! a collection created by then may not be published yet ([`ItemWait`]). A
+//! held cursor shows as a growing `shop_notification_cursor_lag`.
 //!
 //! The recipient is the owner when the bid was placed, the subgraph's
 //! `seller`: the nft walk's latest transfer (a mint is one) before the bid,
@@ -78,6 +79,9 @@ pub struct Settings {
 #[derive(sqlx::FromRow)]
 struct BidRow {
     id_key: String,
+    /// The page's bound: the lower published block of the sales and nft
+    /// indexes, read with the rows.
+    upto: i64,
     block_number: i64,
     log_index: i32,
     block_time: i64,
@@ -111,7 +115,7 @@ fn rows_sql() -> String {
     format!(
         "WITH bound AS (SELECT min(c.folded_block) AS upto FROM shop.chain_cursor c \
              WHERE c.network = $1 AND c.indexer = ANY($4) AND {ready} HAVING count(*) = 2) \
-         SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.contract_address::text AS contract_address, \
+         SELECT {key} AS id_key, bound.upto, e.block_number, e.log_index, e.block_time, e.contract_address::text AS contract_address, \
                 e.token_id::text AS token_id, lower(e.buyer) AS bidder, e.price::text AS price, \
                 lower((SELECT n.to_address FROM shop.nft_event n \
                     WHERE n.network = e.network AND n.contract_address = e.contract_address AND n.token_id = e.token_id \
@@ -123,8 +127,12 @@ fn rows_sql() -> String {
          FROM shop.sale_event e CROSS JOIN bound \
          WHERE e.network = $1 AND e.kind = 'bid_created' AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= bound.upto \
          ORDER BY e.block_number, e.log_index LIMIT $5",
-        ready =
-            chain_walk::published_sql_on("c", "$6", ChainNet::Ethereum.chain_id(), NET.chain_id()),
+        ready = crate::chain_index::catalogue::published_sql_on(
+            "c",
+            "$6",
+            ChainNet::Ethereum.chain_id(),
+            NET.chain_id()
+        ),
         key = notice_cursor::tx_log_key(
             "sale_event",
             "e",
@@ -238,7 +246,8 @@ async fn start(pool: &PgPool, now: DateTime<Utc>) -> anyhow::Result<Option<&'sta
     Ok(None)
 }
 
-/// The pages after the cursor, each under its own published bound.
+/// The pages after the cursor, each under its own published bound, which
+/// the lag is measured against.
 async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow::Result<Pass> {
     let network = NET.db_name();
     let mut emitted = 0;
@@ -256,6 +265,8 @@ async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow
             .await?;
         if rows.is_empty() {
             txn.rollback().await?;
+            // Nothing left up to the bound.
+            notice_cursor::report_lag(PRODUCER, 0, 0);
             break;
         }
         // Which contracts are collections, the tokens' descriptions and the
@@ -311,6 +322,7 @@ async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow
                 "bid on a collection token not described yet or owing a backfill: held"
             );
             txn.rollback().await?;
+            notice_cursor::report_lag(PRODUCER, rows[0].upto, since_block);
             break;
         };
         let (done_block, done_log) = (last.block_number, last.log_index);
@@ -324,23 +336,10 @@ async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow
                 "bid_received: the contract's nft backfill outlasted the hold; the bid is not announced"
             );
         }
-        for r in ready
-            .iter()
-            .zip(&decisions)
-            .filter(|(_, d)| **d == Waited::Skip)
-        {
-            tracing::warn!(
-                block = r.0.block_number,
-                log = r.0.log_index,
-                contract = %r.0.contract_address,
-                "bid_received: the collections index has not covered this bid for a day; it is not announced"
-            );
-        }
+        // Every bid before the first held one is described.
         let batch: Vec<NewNotification> = ready
             .iter()
-            .zip(&decisions)
-            .filter(|(_, d)| **d == Waited::Describe)
-            .filter_map(|(r, _)| {
+            .filter_map(|r| {
                 let asset = metas.get(&(r.contract_address.clone(), r.token_id.clone()))?;
                 notice(settings, r, asset)
             })
@@ -348,6 +347,13 @@ async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow
         emitted += insert_notifications(&mut *txn, &batch).await?;
         notice_cursor::advance(&mut txn, PRODUCER, None, done_block, done_log).await?;
         txn.commit().await?;
+        // A page short of full read everything up to the bound.
+        let drained = held.is_none() && rows.len() < PAGE_SIZE as usize;
+        notice_cursor::report_lag(
+            PRODUCER,
+            rows[0].upto,
+            if drained { rows[0].upto } else { done_block },
+        );
         if held.is_some() || rows.len() < PAGE_SIZE as usize {
             break;
         }
@@ -401,6 +407,7 @@ mod tests {
     fn row(collection: bool, backfill_owed: bool, block_time: i64) -> BidRow {
         BidRow {
             id_key: String::new(),
+            upto: 1,
             block_number: 1,
             log_index: 1,
             block_time,
@@ -415,8 +422,8 @@ mod tests {
     }
 
     #[test]
-    fn only_a_collection_bid_holds_and_never_past_the_bound() {
-        use Waited::{Describe, Hold, Skip};
+    fn only_a_collection_bid_holds_and_only_the_index_holds_past_the_bound() {
+        use Waited::{Describe, Hold};
         let t = T0;
         let mirror = ItemWait::Mirror(None);
         let at = |r: &BidRow, described, mirror_on, wait, now| {
@@ -476,9 +483,20 @@ mod tests {
             "a row read while the index refuses never describes the bid"
         );
         assert_eq!(
-            at(&bid, true, true, index(None), t + ITEM_HOLD_MAX_SECS),
-            Skip,
-            "past the bound an unverified row passes without a notice"
+            at(&bid, true, true, index(None), t + 30 * ITEM_HOLD_MAX_SECS),
+            Hold,
+            "past the bound the index still holds: an unverified row never describes the bid"
+        );
+        assert_eq!(
+            at(
+                &bid,
+                false,
+                true,
+                index(Some(bid.block_number)),
+                t + 30 * ITEM_HOLD_MAX_SECS
+            ),
+            Describe,
+            "however late, the publication over the bid describes it"
         );
         let unlisted = row(false, false, t);
         assert_eq!(

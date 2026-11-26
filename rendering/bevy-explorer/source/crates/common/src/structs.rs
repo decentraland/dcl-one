@@ -70,6 +70,11 @@ impl Default for PrimaryUser {
     }
 }
 
+/// A player's wallet address: on every peer from its spawn, and on the local player while a
+/// profile is set (not between login and the profile being set, nor in server mode).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlayerAddress(pub Address);
+
 /// The walk, jog and run speeds (m/s) the primary user's locomotion currently allows, after area
 /// modifiers and the active scene locomotion settings. Written by the movement plugin; read to
 /// express the player's speed as a gait.
@@ -725,6 +730,8 @@ pub struct AppConfig {
     pub inputs: InputMapSerialized,
     pub point_at_marker_visibility: PointAtMarkerVisibility,
     pub chat_bubble_visibility: ChatBubbleVisibility,
+    /// Whether situational reactions are also shown on screen, by the HUD.
+    pub chat_reactions: bool,
     /// Who may DM the local user. Owned by the social service, so never persisted here: the
     /// slot mirrors the server value and the social crate upserts user changes to it. `None`
     /// until either the user or the server has set it.
@@ -803,6 +810,7 @@ impl Default for AppConfig {
             inputs: Default::default(),
             point_at_marker_visibility: Default::default(),
             chat_bubble_visibility: Default::default(),
+            chat_reactions: false,
             dm_privacy: None,
             camera_smoothing: Default::default(),
             language: None,

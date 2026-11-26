@@ -786,7 +786,8 @@ impl<S: LogSource> LogSource for AdmittedPortal<'_, S> {
             // Both sides hold every log of their addresses up to their own
             // end: the window reaches the lower one.
             reached = reached.min(r.reached);
-            let cut = reached as i64;
+            // Saturates: every i64 block is at or below a larger `reached`.
+            let cut = i64::try_from(reached).unwrap_or(i64::MAX);
             logs.retain(|l| log_position(l).0 <= cut);
             from_rpc = r
                 .logs
@@ -878,5 +879,11 @@ impl<S: LogSource> LogSource for AdmittedPortal<'_, S> {
     }
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "test support"
+)]
 #[cfg(test)]
 mod tests;

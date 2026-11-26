@@ -18,6 +18,9 @@
 //! Local uploads (`origin = 'local'`, the old `<sha256>.<ext>` names) are
 //! rows of the same index, written by the events write routes.
 
+// Decodes untrusted input: malformed bytes must not panic.
+#![deny(clippy::indexing_slicing, clippy::expect_used)]
+
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -65,7 +68,7 @@ pub fn valid_file(file: &str) -> bool {
     let bytes = file.as_bytes();
     !bytes.is_empty()
         && bytes.len() <= 200
-        && bytes[0].is_ascii_alphanumeric()
+        && bytes.first().is_some_and(u8::is_ascii_alphanumeric)
         && bytes
             .iter()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
@@ -79,7 +82,9 @@ pub fn sniff(body: &[u8]) -> Option<&'static str> {
         Some("image/jpeg")
     } else if body.starts_with(b"GIF87a") || body.starts_with(b"GIF89a") {
         Some("image/gif")
-    } else if body.len() >= 12 && &body[..4] == b"RIFF" && &body[8..12] == b"WEBP" {
+    } else if body.get(..4) == Some(b"RIFF".as_slice())
+        && body.get(8..12) == Some(b"WEBP".as_slice())
+    {
         Some("image/webp")
     } else {
         None

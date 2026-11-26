@@ -40,6 +40,7 @@ INPUTS = ('rendering/bevy-explorer/source', PATCHES + '/bevy', 'rendering/bevy-e
           'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
           'tooling/bevy-ci.py', 'tooling/bevy-dead-code-check.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/bevy-target-cache.py', PATCH_TOOL, 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'library/hashing', 'tooling/check-local-hashing.mjs', 'apps/creator-hub/packages/zip-extract',
+          'rendering/avatar-preview',
           'tooling/tests/test_bevy_*.py', 'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
@@ -280,7 +281,9 @@ def platform_input(path):
     """A source path whose change can behave differently on Windows or macOS."""
     path = path.removeprefix(SOURCE)
     return (path == 'Cargo.toml' or re.fullmatch(r'build\w*\.rs', path.rsplit('/', 1)[-1]) is not None
-            or path.startswith(('.cargo/', 'rust-toolchain', 'local-harness/benchmark/', 'local-harness/web-driver/'))
+            or path.startswith(('.cargo/', 'rust-toolchain', 'local-harness/benchmark/', 'local-harness/web-driver/',
+                                # The native platform layer: OS paths, profiles, files and deep links.
+                                'crates/platform/src/native.rs', 'crates/platform/src/native/'))
             or re.search(r'(^|/)(windows|macos)(\.rs$|/)', path) is not None)
 
 
@@ -361,6 +364,10 @@ def select(base, head):
             affected = ('web', 'test')
         elif path in shared_paths and not path.startswith(SOURCE):
             # Shared library inputs are web-only; owned source keeps its existing lane rules.
+            affected = ('web',)
+        elif path.startswith('rendering/avatar-preview/'):
+            # The avatar preview is built, packaged and published with the web app
+            # (play-artifact.py); no native lane compiles it.
             affected = ('web',)
         elif path.startswith(('rendering/bevy-explorer/source/react-web/',
                               'rendering/bevy-explorer/source/deploy/web/')):

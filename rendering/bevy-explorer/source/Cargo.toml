@@ -336,6 +336,19 @@ rand = "0.8.5"
 futures-util = "0.3.28"
 futures-channel = "0.3"
 async-native-tls = { version = "0.5", features = ["runtime-async-std"] }
+native-tls = "0.2"
+tokio-native-tls = "0.3"
+tokio-tungstenite = { version = "0.29", default-features = false, features = [
+  "handshake",
+  "native-tls",
+] }
+# ICU is not a default deno_core feature; without it Intl and locale APIs break.
+deno_core = { version = "0.413", features = ["include_icu_data"] }
+deno_error = "=0.7.1"
+deno_web = "0.291"
+deno_webidl = "0.260"
+# localStorage: deno_webstorage 0.163's sqlite store, kept as our own ops
+rusqlite = { version = "0.32", features = ["unlock_notify", "bundled"] }
 # Not on crates.io. The rev is the commit that ../patches/boimp/source.toml names.
 boimp = { git = "https://github.com/decentraland/dcl-one", rev = "fb8df51cf64664a8e3987b0ae585f68d80f4b3ff" }
 crc = "3"
@@ -564,29 +577,15 @@ draco-oxide-core = { git = "https://github.com/decentraland/dcl-one", rev = "ffb
 # patch series there (rendering/bevy-explorer/docs/guidelines/bevy-fork.md). The workspace and the
 # ecosystem crates name these six crates by crates.io version; the other subcrates follow from
 # the same checkout as Bevy's path dependencies.
-bevy = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
-bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
-bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
-bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
-bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
-bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
+bevy = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
+bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
+bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
+bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
+bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
+bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
 
 ffmpeg-next = { git = "https://github.com/decentraland/dcl-one", rev = "0a8f3cf998262fc4749fb7c86eea93b48f0b8254" }
 parry3d-f64 = { git = "https://github.com/decentraland/dcl-one", rev = "2943100ea8674045ee96e67e3805578aea31fed4" }
-deno_core = { git = "https://github.com/decentraland/dcl-one", rev = "95d9df86a00e079ea15b567857d2ba97fb9f2a6a" }
-
-deno_console = { git = "https://github.com/decentraland/dcl-one", rev = "21ad8173bda46b322a191bf353556305ea4d4f5d" }
-deno_fetch = { git = "https://github.com/decentraland/dcl-one", rev = "21ad8173bda46b322a191bf353556305ea4d4f5d" }
-deno_net = { git = "https://github.com/decentraland/dcl-one", rev = "21ad8173bda46b322a191bf353556305ea4d4f5d" }
-deno_url = { git = "https://github.com/decentraland/dcl-one", rev = "21ad8173bda46b322a191bf353556305ea4d4f5d" }
-deno_webidl = { git = "https://github.com/decentraland/dcl-one", rev = "21ad8173bda46b322a191bf353556305ea4d4f5d" }
-deno_web = { git = "https://github.com/decentraland/dcl-one", rev = "21ad8173bda46b322a191bf353556305ea4d4f5d" }
-deno_websocket = { git = "https://github.com/decentraland/dcl-one", rev = "21ad8173bda46b322a191bf353556305ea4d4f5d" }
-# 0.8.1 + upstream bc39c1f (fragmented-message size cap, unreleased) + 1 MiB default cap.
-# deno_websocket's pinned API exposes no set_max_message_size hook, so the fork default is
-# how scene websocket inbound message size is bounded.
-fastwebsockets = { git = "https://github.com/decentraland/dcl-one", rev = "758f43302466087ea1cde438d7924d397d8d0b20" }
-deno_webstorage = { git = "https://github.com/decentraland/dcl-one", rev = "21ad8173bda46b322a191bf353556305ea4d4f5d" }
 
 # gltf 1.4.1 (latest release, 2024-05) predates gltf-rs/gltf#449 "allow empty accessors"
 # (robtfm, merged 2025-05): dense accessors with no bufferView (zero-filled per spec,
@@ -616,7 +615,7 @@ opener = { git = "https://github.com/decentraland/dcl-one", rev = "9fec930b69093
 # by git. These entries point them at the same commits. With Cargo.lock present Cargo does not
 # read those repositories; a resolve without Cargo.lock reads each branch once.
 [patch."https://github.com/robtfm/bevy"]
-bevy = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
+bevy = { git = "https://github.com/decentraland/dcl-one", rev = "ab63e345bed22ce58ef3fa38a1b822099f4a4f3f" }
 
 [patch."https://github.com/robtfm/bevy_ecss"]
 bevy_ecss = { git = "https://github.com/decentraland/dcl-one", rev = "da37b8fbfd7d2561257254f4ae9370ca33a71acb" }

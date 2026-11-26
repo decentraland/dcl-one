@@ -26,10 +26,41 @@ describe('Skeleton', () => {
     })
   })
 
+  describe('when the tone is overlay', () => {
+    it('adds the overlay class, keeps the consumer class and stays hidden from assistive technology', () => {
+      const { container } = render(<Skeleton tone="overlay" className="bone" />)
+      const node = container.firstElementChild as HTMLElement
+      expect(node.className).toMatch(/overlay/)
+      expect(node.className).not.toMatch(/neutral/)
+      expect(node.className).toMatch(/bone/)
+      expect(node).toHaveAttribute('aria-hidden', 'true')
+    })
+  })
+
+  describe('when the tone is sweep', () => {
+    it('adds the sweep class and keeps the consumer class', () => {
+      const { container } = render(<Skeleton tone="sweep" className="tile" />)
+      const node = container.firstElementChild as HTMLElement
+      expect(node.className).toMatch(/sweep/)
+      expect(node.className).toMatch(/tile/)
+      expect(node).toHaveAttribute('aria-hidden', 'true')
+    })
+  })
+
+  describe('when the tone is band', () => {
+    it('adds the band class and keeps the size the consumer gives it', () => {
+      const { container } = render(<Skeleton tone="band" className="line" style={{ width: 200 }} />)
+      const node = container.firstElementChild as HTMLElement
+      expect(node.className).toMatch(/band/)
+      expect(node.style.width).toBe('200px')
+      expect(node).toHaveAttribute('aria-hidden', 'true')
+    })
+  })
+
   describe('when no tone is given', () => {
-    it('does not add the neutral class', () => {
+    it('adds neither tone class', () => {
       const { container } = render(<Skeleton />)
-      expect(container.firstElementChild?.className).not.toMatch(/neutral/)
+      expect(container.firstElementChild?.className).not.toMatch(/neutral|overlay|sweep|band/)
     })
   })
 })

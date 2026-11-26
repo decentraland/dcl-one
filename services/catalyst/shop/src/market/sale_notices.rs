@@ -16,8 +16,9 @@
 //! so it sells nothing here. A sale of an item the catalogue lacks holds its
 //! cursor until the item appears, or a complete items mirror pass
 //! `ITEM_WAIT_SECS` after the sale (on a network the collections index owns:
-//! its publication covering the sale's block), as the badge processor's do
-//! ([`ItemWait`]). The Ethereum ERC721Bid was never polled.
+//! its publication covering the sale's block, however long that takes), as
+//! the badge processor's do ([`ItemWait`]). A held cursor shows as a growing
+//! `shop_notification_cursor_lag`. The Ethereum ERC721Bid was never polled.
 //!
 //! Each (source, network) reads only up to its index's `folded_block` while
 //! `chain_walk::is_ready`; its first pass starts at that published block, so
@@ -532,6 +533,8 @@ async fn drain(
             .await?;
         if rows.is_empty() {
             txn.rollback().await?;
+            // Nothing left up to `published`.
+            notice_cursor::report_lag(producer, published, published);
             break;
         }
         // The assets' descriptions and the item wait from one snapshot, so a
@@ -563,17 +566,6 @@ async fn drain(
                     );
                     held = true;
                     break;
-                }
-                Waited::Skip => {
-                    tracing::warn!(
-                        source = source.db_name(),
-                        network = net.db_name(),
-                        block = row.block_number,
-                        log = row.log_index,
-                        "the collections index has not covered this sale for a day: passed without a notification"
-                    );
-                    done = Some((row.block_number, row.log_index));
-                    continue;
                 }
                 Waited::Describe => {}
             }
@@ -609,11 +601,19 @@ async fn drain(
         }
         let Some((done_block, done_log)) = done else {
             txn.rollback().await?;
+            notice_cursor::report_lag(producer, published, since_block);
             break;
         };
         emitted += insert_notifications(&mut *txn, &batch).await?;
         notice_cursor::advance(&mut txn, producer, None, done_block, done_log).await?;
         txn.commit().await?;
+        // A page short of full read everything up to `published`.
+        let drained = !held && rows.len() < PAGE_SIZE as usize;
+        notice_cursor::report_lag(
+            producer,
+            published,
+            if drained { published } else { done_block },
+        );
         if held || rows.len() < PAGE_SIZE as usize {
             break;
         }
@@ -1145,7 +1145,6 @@ mod tests {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn mint<'a>(
         block: i64,
         log: i32,

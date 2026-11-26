@@ -43,7 +43,7 @@ pub fn terminate_scene(scene_id: SceneId) {
 
 /// must be called from main thread on linux before any isolates are created
 pub fn init_runtime() {
-    let _ = deno_core::v8::Platform::new(1, false);
+    deno_core::JsRuntime::init_platform(None);
 }
 
 /// The test harness runs each test on its own thread. V8's default platform lets an isolate run
@@ -54,10 +54,9 @@ pub fn init_runtime() {
 pub(crate) fn test_platform() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
-        deno_core::JsRuntime::init_platform(
-            Some(deno_core::v8::new_unprotected_default_platform(0, false).make_shared()),
-            false,
-        );
+        deno_core::JsRuntime::init_platform(Some(
+            deno_core::v8::new_unprotected_default_platform(0, false).make_shared(),
+        ));
     });
 }
 

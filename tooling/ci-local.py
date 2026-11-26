@@ -126,6 +126,12 @@ def web_steps(changed_ui3=True):
 # Without Nix, the steps that need the dev shell (Python 3.11+, bash 4+) are skipped rather than failed.
 STRUCTURE = [Step('ownership catalogue', 'python3 tooling/owners.py --check', tools=('python3',)),
              Step('module layers', 'bash services/catalyst/scripts/check-module-dag.sh', tools=('nix',))]
+# The development workflow's unused-dependency check, from the flake's nixpkgs.
+MACHETE = ('nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete && '
+           '.cache/cargo-machete/bin/cargo-machete services/catalyst library/dcl-* apps/dcl-scene-cli')
+# sdk.yml's check for the scene CLI alone.
+SCENE_CLI_MACHETE = ('nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete && '
+                     '.cache/cargo-machete/bin/cargo-machete apps/dcl-scene-cli')
 TOOLING_TESTS = Step('tooling tests', 'python3 -m unittest discover -s tooling/tests', tools=('nix',))
 # The Changes job runs these on every pull request.
 WORKFLOW_TESTS = Step('workflow tests', 'python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local '
@@ -208,11 +214,15 @@ def pre_push_steps(changed):
         steps += web_steps()
         steps.append(Step('catalyst clippy', 'cd services/catalyst && cargo clippy --locked '
                           '--workspace --all-targets -- -D warnings', tools=('cargo',)))
+        steps.append(Step('catalyst clippy (ts)', 'cd services/catalyst && cargo clippy --locked '
+                          '--workspace --all-targets --features catalyst/ts -- -D warnings', tools=('cargo',)))
+        steps.append(Step('unused dependencies', MACHETE, tools=('nix',)))
         steps.append(Step('rust and sites e2e suites', 'bash tooling/dev-test.sh', tools=('nix',)))
     elif triggered('sdk.yml', changed):
         # the workspace clippy above covers it otherwise
         steps.append(Step('scene cli clippy', 'cd services/catalyst && cargo clippy --locked '
                           '-p dcl-scene-cli --all-targets -- -D warnings', tools=('cargo',)))
+        steps.append(Step('scene cli unused dependencies', SCENE_CLI_MACHETE, tools=('nix',)))
     if images:
         system = image_system()
         if system is None:

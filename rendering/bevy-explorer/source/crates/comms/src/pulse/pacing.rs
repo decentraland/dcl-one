@@ -17,7 +17,7 @@
 
 use std::collections::VecDeque;
 
-use common::util::dcl_assert;
+use common::{token_bucket::TokenBucket, util::dcl_assert};
 
 use super::transport::{FrameKind, PulseFrame};
 
@@ -26,57 +26,6 @@ use super::transport::{FrameKind, PulseFrame};
 pub const PACED_EVENTS_PER_SECOND: f64 = 10.0;
 /// How many it lets out at once after a quiet spell: half of the servers' burst of 16.
 pub const PACED_EVENTS_BURST: f64 = 8.0;
-
-/// A token bucket on the caller's clock: tokens come back at a steady rate up to a capacity, and a
-/// send spends a whole one. The pacers of this module and of [`super::movement_pacing`] are built
-/// on it, each with half of the rate the servers allow.
-#[derive(Clone, Copy, Debug)]
-pub struct TokenBucket {
-    refill_per_second: f64,
-    capacity: f64,
-    /// How far below full the bucket was at `refilled_at`, in tokens.
-    spent: f64,
-    /// The time `spent` is as of.
-    refilled_at: f64,
-}
-
-impl TokenBucket {
-    /// What a whole token may fall short by: the refill is a product of `f64` times, and a clock
-    /// that adds up frame lengths reaches a tenth of a second a rounding error early.
-    const ROUNDING: f64 = 1e-9;
-
-    /// A full bucket that regains `refill_per_second` tokens a second and holds `capacity`.
-    pub const fn new(refill_per_second: f64, capacity: f64) -> Self {
-        Self {
-            refill_per_second,
-            capacity,
-            spent: 0.0,
-            refilled_at: 0.0,
-        }
-    }
-
-    /// How far below full the bucket is at `now`.
-    fn spent_at(&self, now: f64) -> f64 {
-        let elapsed = (now - self.refilled_at).max(0.0);
-        (self.spent - elapsed * self.refill_per_second).max(0.0)
-    }
-
-    /// Whether a whole token is held at `now`.
-    pub fn has_token(&self, now: f64) -> bool {
-        self.capacity - self.spent_at(now) >= 1.0 - Self::ROUNDING
-    }
-
-    /// Spend a token at `now`. Without a whole one it returns `false` and spends nothing; the part
-    /// of a token that has come back is kept.
-    pub fn try_spend(&mut self, now: f64) -> bool {
-        if !self.has_token(now) {
-            return false;
-        }
-        self.spent = (self.spent_at(now) + 1.0).min(self.capacity);
-        self.refilled_at = now;
-        true
-    }
-}
 
 /// A bucket that lets teleports and emotes out at [`PACED_EVENTS_PER_SECOND`], holding the latest of
 /// each kind while it is empty. The default is a full bucket with nothing waiting, which is what a

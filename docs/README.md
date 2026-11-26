@@ -38,6 +38,7 @@
 - [Community chat message router](adr/2026-11-18-community-chat-message-router.md)
 - [World presence counts as online](adr/2026-11-21-world-presence-counts-as-online.md)
 - [Explorer avatar spring bones (proposed)](adr/2026-11-16-explorer-avatar-spring-bones.md)
+- [Native scene runtime on upstream deno_core](adr/2026-11-09-native-scene-runtime-on-upstream-deno.md)
 - [Dormant schema release definitions (proposed)](adr/2026-11-04-dormant-schema-release-definitions.md)
 - [Referral trusted proxy ingress (proposed)](adr/2026-11-04-referral-trusted-proxy-ingress.md)
 - [Referral Slack effect budget (proposed)](adr/2026-11-04-referral-slack-effect-budget.md)
@@ -45,6 +46,7 @@
 - [Referral reward recovery (proposed)](adr/2026-11-04-social-runtime-boundaries.md)
 - [Scene proxy for browser scenes (proposed)](adr/2026-11-14-scene-proxy.md)
 - [library/ui is the single source of UI components (proposed)](adr/2026-11-24-library-ui-single-source.md)
+- [The Explorer HUD imports the shared UI entry (proposed)](adr/2026-11-24-explorer-hud-shared-entry.md)
 - [Web app server state](adr/2026-11-04-web-app-server-state.md)
 
 Verify compatibility, readiness and performance claims against evidence at the

@@ -127,11 +127,18 @@ type SharedHandles = (
 );
 
 impl HostState {
+    #[allow(unsafe_code, reason = "reads the host state V8 holds as isolate data")]
     pub(super) fn with<R>(
         isolate: &mut v8::Isolate,
         f: impl FnOnce(&RefCell<HostState>) -> R,
     ) -> R {
         let ptr = isolate.get_data(0) as *const RefCell<HostState>;
+        assert!(
+            !ptr.is_null(),
+            "HostState::with on an isolate without host state"
+        );
+        // SAFETY: non-null, so this is a scene isolate: run_scene_thread sets its slot 0 to a
+        // `HostState` box it keeps alive while scene code and host ops run.
         let cell = unsafe { &*ptr };
         f(cell)
     }

@@ -1,4 +1,8 @@
-use std::{f64::consts::FRAC_1_SQRT_2, marker::PhantomData};
+use std::{
+    f64::consts::FRAC_1_SQRT_2,
+    marker::PhantomData,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use bevy::{
     diagnostic::FrameCount,
@@ -43,6 +47,8 @@ use super::AddCrdtInterfaceExt;
 
 mod bounds;
 use bounds::ColliderBounds;
+mod camera;
+pub use camera::{BallHit, BallSweep};
 mod volume;
 use volume::SceneVolume;
 
@@ -157,6 +163,7 @@ pub fn add_collider_systems<T: ColliderType>(app: &mut App) {
     app.add_observer(on_collider_removed::<T>);
 
     // show debugs whenever (skip entirely unless debug is enabled or was just disabled)
+    app.init_resource::<DebugColliders>();
     app.add_systems(
         Update,
         render_debug_colliders::<T>
@@ -171,6 +178,7 @@ impl Plugin for MeshColliderPlugin {
             ComponentPosition::EntityOnly,
         );
 
+        app.add_event::<PlayerCollisionToggled>();
         app.add_systems(
             Update,
             propagate_disabled::<CtCollider>.in_set(SceneSets::Init),
@@ -185,7 +193,6 @@ impl Plugin for MeshColliderPlugin {
         // in postinit - update collider transforms
         add_collider_systems::<CtCollider>(app);
 
-        app.init_resource::<DebugColliders>();
         app.add_preview_console_command::<DebugColliderCommand, _>(debug_colliders);
     }
 }
@@ -216,6 +223,47 @@ pub struct RaycastResult {
     pub position: Vec3,
 }
 
+/// The colliders a query meets, by layer. A bare mask meets a collider on any of its layers.
+#[derive(Clone, Copy, Debug)]
+pub struct ColliderLayers {
+    any: u32,
+    /// a collider on every one of these is met too
+    all: u32,
+    skip_disabled: bool,
+}
+
+impl From<u32> for ColliderLayers {
+    fn from(mask: u32) -> Self {
+        Self {
+            any: mask,
+            all: 0,
+            skip_disabled: false,
+        }
+    }
+}
+
+impl ColliderLayers {
+    /// What stops the third-person camera: SDK colliders on both `CL_PHYSICS` and `CL_POINTER`
+    /// (the `MeshCollider` and invisible-mesh default) and the terrain ground. Physics-only,
+    /// pointer-only and custom-layer colliders, so a scene can keep one out of the camera's way,
+    /// border walls, landscape solids and colliders that are off for the player don't.
+    pub const CAMERA: Self = Self {
+        any: GROUND_COLLISION_MASK,
+        all: ColliderLayer::ClPhysics as u32 | ColliderLayer::ClPointer as u32,
+        skip_disabled: true,
+    };
+
+    fn groups(self) -> InteractionGroups {
+        let layers = Group::from_bits_truncate(self.any | self.all);
+        InteractionGroups::new(layers, layers, InteractionTestMode::And)
+    }
+
+    fn admits(self, collider: &Collider) -> bool {
+        let memberships = collider.collision_groups().memberships.bits();
+        memberships & self.any != 0 || (self.all != 0 && memberships & self.all == self.all)
+    }
+}
+
 struct ColliderState {
     entity: Option<Entity>,
     base_collider: Collider,
@@ -230,16 +278,72 @@ struct ColliderState {
 
 #[derive(Component, Default)]
 pub struct SceneColliderData {
+    /// Every change a query can see (a collider added, removed, moved, reshaped, or switched on
+    /// or off) is recorded in `changes`, which both feeds the bvh and stamps the collider's layers
+    /// for [`Self::layers_version`]. A new way of changing a collider goes through
+    /// [`ColliderChanges`]; one that skips it leaves the bvh stale and trigger areas showing old
+    /// overlaps.
     collider_set: ColliderSet,
     scaled_collider: bimap::BiMap<ColliderId, ColliderHandle>,
     collider_state: HashMap<ColliderId, ColliderState>,
     bvh: BroadPhaseBvh,
-    changed_colliders: HashSet<ColliderHandle>,
-    removed_colliders: HashSet<ColliderHandle>,
+    changes: ColliderChanges,
     dummy_rapier_structs: (IslandManager, RigidBodySet),
     disabled: HashSet<ColliderHandle>,
     bounds: ColliderBounds,
     volume: SceneVolume,
+}
+
+/// Collider changes the bvh has not taken in yet, and the stamp of the last change on each
+/// collision layer. Each method records both, so neither can be done without the other.
+#[derive(Default)]
+struct ColliderChanges {
+    changed: HashSet<ColliderHandle>,
+    removed: HashSet<ColliderHandle>,
+    /// per collision layer bit, the stamp of the last change to a collider on that layer
+    layer_stamps: [u64; 32],
+}
+
+impl ColliderChanges {
+    /// A collider in `groups` was added, moved or reshaped.
+    fn changed(&mut self, handle: ColliderHandle, groups: InteractionGroups) {
+        stamp_layers(&mut self.layer_stamps, groups);
+        self.changed.insert(handle);
+    }
+
+    /// A collider in `groups` was switched back on, so it returns to the bvh.
+    fn enabled(&mut self, handle: ColliderHandle, groups: InteractionGroups) {
+        self.removed.remove(&handle);
+        self.changed(handle, groups);
+    }
+
+    /// A collider in `groups` was removed or switched off, so it leaves the bvh.
+    fn removed(&mut self, handle: ColliderHandle, groups: InteractionGroups) {
+        stamp_layers(&mut self.layer_stamps, groups);
+        self.removed.insert(handle);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.changed.is_empty() && self.removed.is_empty()
+    }
+}
+
+/// Stamps for [`SceneColliderData::layers_version`], shared by every collider set so a stamp is
+/// never reused and each new one is larger than any before it.
+static NEXT_LAYER_STAMP: AtomicU64 = AtomicU64::new(1);
+
+/// Records a change to a collider in `groups` on each layer it belongs to or filters on.
+fn stamp_layers(layer_stamps: &mut [u64; 32], groups: InteractionGroups) {
+    let bits = groups.memberships.bits() | groups.filter.bits();
+    if bits == 0 {
+        return;
+    }
+    let stamp = NEXT_LAYER_STAMP.fetch_add(1, Ordering::Relaxed);
+    for (bit, layer_stamp) in layer_stamps.iter_mut().enumerate() {
+        if bits & (1 << bit) != 0 {
+            *layer_stamp = stamp;
+        }
+    }
 }
 
 impl SceneColliderData {
@@ -262,6 +366,20 @@ impl SceneColliderData {
     /// The height above which the scene's colliders are off; none when they have no limit.
     pub(crate) fn height_limit(&self) -> Option<f64> {
         self.bounds.height()
+    }
+
+    /// Changes whenever a collider on any layer in `mask` is added, removed, moved, reshaped or
+    /// switched on or off, so a query filtered to `mask` returns what it returned while this
+    /// value holds.
+    pub(crate) fn layers_version(&self, mask: u32) -> u64 {
+        self.changes
+            .layer_stamps
+            .iter()
+            .enumerate()
+            .filter(|(bit, _)| mask & (1 << bit) != 0)
+            .map(|(_, stamp)| *stamp)
+            .max()
+            .unwrap_or_default()
     }
 
     /// Colliders that are off because they reach outside the scene's bounds.
@@ -348,8 +466,9 @@ impl SceneColliderData {
             },
         );
 
+        let groups = new_collider.collision_groups();
         let handle = self.collider_set.insert(new_collider);
-        self.changed_colliders.insert(handle);
+        self.changes.changed(handle, groups);
         self.scaled_collider.insert(id.to_owned(), handle);
         debug!("set {id:?} collider");
     }
@@ -462,7 +581,7 @@ impl SceneColliderData {
                 let initial_transform = if (&req_scale, &req_rotation, &req_translation)
                     != (init_scale, init_rotation, init_translation)
                 {
-                    self.changed_colliders.insert(handle);
+                    self.changes.changed(handle, collider.collision_groups());
 
                     let initial_transform = Transform {
                         translation: *init_translation,
@@ -510,10 +629,9 @@ impl SceneColliderData {
                     collider.set_enabled(enabled);
                     // the bvh skips a collider that is off, so one turned off has to leave it
                     if enabled {
-                        self.removed_colliders.remove(&handle);
-                        self.changed_colliders.insert(handle);
+                        self.changes.enabled(handle, collider.collision_groups());
                     } else {
-                        self.removed_colliders.insert(handle);
+                        self.changes.removed(handle, collider.collision_groups());
                     }
                 }
                 return initial_transform;
@@ -523,10 +641,11 @@ impl SceneColliderData {
         None
     }
 
-    pub(crate) fn update_bvh(&mut self) {
-        if !self.changed_colliders.is_empty() || !self.removed_colliders.is_empty() {
-            let changed = self.changed_colliders.drain().collect::<Vec<_>>();
-            let removed = self.removed_colliders.drain().collect::<Vec<_>>();
+    /// Must run after collider changes and before the `_flushed` queries.
+    pub fn update_bvh(&mut self) {
+        if !self.changes.is_empty() {
+            let changed = self.changes.changed.drain().collect::<Vec<_>>();
+            let removed = self.changes.removed.drain().collect::<Vec<_>>();
             self.bvh.update(
                 &Default::default(),
                 &self.collider_set,
@@ -538,8 +657,12 @@ impl SceneColliderData {
         }
     }
 
+    fn meets(&self, layers: ColliderLayers, handle: ColliderHandle, collider: &Collider) -> bool {
+        layers.admits(collider) && !(layers.skip_disabled && self.disabled.contains(&handle))
+    }
+
     fn query_pipeline<'a>(&'a self, filter: QueryFilter<'a>) -> QueryPipeline<'a> {
-        if !self.changed_colliders.is_empty() || !self.removed_colliders.is_empty() {
+        if !self.changes.is_empty() {
             panic!();
         }
 
@@ -556,7 +679,7 @@ impl SceneColliderData {
         origin: Vec3,
         direction: Vec3,
         distance: f32,
-        collision_mask: u32,
+        collision_mask: impl Into<ColliderLayers>,
         skip_inside: bool,
         include_sensors: bool,
         specific_collider: Option<&ColliderId>,
@@ -580,11 +703,12 @@ impl SceneColliderData {
         origin: Vec3,
         direction: Vec3,
         distance: f32,
-        collision_mask: u32,
+        collision_mask: impl Into<ColliderLayers>,
         skip_inside: bool,
         include_sensors: bool,
         specific_collider: Option<&ColliderId>,
     ) -> Option<RaycastResult> {
+        let layers = collision_mask.into();
         let ray = Ray {
             origin: origin.as_dvec3().into(),
             dir: direction.as_dvec3().into(),
@@ -594,24 +718,17 @@ impl SceneColliderData {
         let mut skip = HashSet::new();
         if skip_inside {
             skip.extend(
-                self.query_pipeline(QueryFilter::default().groups(InteractionGroups::new(
-                    Group::from_bits_truncate(collision_mask),
-                    Group::from_bits_truncate(collision_mask),
-                    InteractionTestMode::And,
-                )))
-                .intersect_shape(origin.as_dvec3().into(), &Ball::new(0.001))
-                .map(|(h, _)| h),
+                self.query_pipeline(QueryFilter::default().groups(layers.groups()))
+                    .intersect_shape(origin.as_dvec3().into(), &Ball::new(0.001))
+                    .map(|(h, _)| h),
             );
         }
         skip.extend(specific_collider.and_then(|id| self.get_collider_handle(id)));
 
-        let predicate = move |h: ColliderHandle, _: &Collider| !skip.contains(&h);
+        let predicate =
+            move |h: ColliderHandle, c: &Collider| !skip.contains(&h) && self.meets(layers, h, c);
         let filter = QueryFilter::default()
-            .groups(InteractionGroups::new(
-                Group::from_bits_truncate(collision_mask),
-                Group::from_bits_truncate(collision_mask),
-                InteractionTestMode::And,
-            ))
+            .groups(layers.groups())
             .predicate(&predicate);
         let filter = if include_sensors {
             filter
@@ -1004,34 +1121,58 @@ impl SceneColliderData {
     ) -> Option<f64> {
         self.update_bvh();
 
-        if !direction.is_finite() || distance <= 0.0 {
+        if !direction.is_finite() {
             return None;
         }
 
-        let ball = Ball::new(radius);
-        let groups = InteractionGroups::new(
-            Group::from_bits_truncate(collision_mask),
-            Group::from_bits_truncate(collision_mask),
-            InteractionTestMode::And,
-        );
+        self.sweep_ball(
+            origin,
+            direction,
+            distance,
+            &Ball::new(radius),
+            collision_mask.into(),
+        )
+        .1
+        .map(|(_, toi)| toi)
+    }
 
-        let mut skip = self.disabled.clone();
-        skip.extend(
-            self.query_pipeline(QueryFilter::default().groups(groups).exclude_sensors())
-                .intersect_shape(origin.into(), &ball)
-                .map(|(h, _)| h),
-        );
-        let predicate = |h, _: &_| !skip.contains(&h);
-        let filter = QueryFilter::default()
-            .groups(groups)
-            .exclude_sensors()
-            .predicate(&predicate);
+    /// The colliders the ball starts in, and the nearest one it reaches that it did not start
+    /// in with the time of impact. Colliders that are off for the player never count.
+    fn sweep_ball(
+        &self,
+        origin: DVec3,
+        direction: DVec3,
+        distance: f64,
+        ball: &Ball,
+        layers: ColliderLayers,
+    ) -> (Vec<ColliderHandle>, Option<(ColliderHandle, f64)>) {
+        let met = |h, c: &Collider| !self.disabled.contains(&h) && layers.admits(c);
+        let started_in = self
+            .query_pipeline(
+                QueryFilter::default()
+                    .groups(layers.groups())
+                    .exclude_sensors()
+                    .predicate(&met),
+            )
+            .intersect_shape(origin.into(), ball)
+            .map(|(h, _)| h)
+            .collect::<Vec<_>>();
+        if distance <= 0.0 {
+            return (started_in, None);
+        }
 
-        self.query_pipeline(filter)
+        let predicate = |h, c: &Collider| met(h, c) && !started_in.contains(&h);
+        let nearest = self
+            .query_pipeline(
+                QueryFilter::default()
+                    .groups(layers.groups())
+                    .exclude_sensors()
+                    .predicate(&predicate),
+            )
             .cast_shape(
                 &origin.into(),
                 &direction.into(),
-                &ball,
+                ball,
                 ShapeCastOptions {
                     max_time_of_impact: distance,
                     target_distance: 0.0,
@@ -1039,7 +1180,8 @@ impl SceneColliderData {
                     compute_impact_geometry_on_penetration: false,
                 },
             )
-            .map(|(_, hit)| hit.time_of_impact)
+            .map(|(handle, hit)| (handle, hit.time_of_impact));
+        (started_in, nearest)
     }
 
     fn avatar_intersections(
@@ -1221,19 +1363,24 @@ impl SceneColliderData {
 
     pub fn remove_collider(&mut self, id: &ColliderId) {
         if let Some(handle) = self.scaled_collider.get_by_left(id) {
-            self.collider_set.remove(
-                *handle,
-                &mut self.dummy_rapier_structs.0,
-                &mut self.dummy_rapier_structs.1,
-                false,
-            );
-            self.removed_colliders.insert(*handle);
+            let groups = self
+                .collider_set
+                .remove(
+                    *handle,
+                    &mut self.dummy_rapier_structs.0,
+                    &mut self.dummy_rapier_structs.1,
+                    false,
+                )
+                .map_or(InteractionGroups::none(), |removed| {
+                    removed.collision_groups()
+                });
+            self.changes.removed(*handle, groups);
         }
 
         self.scaled_collider.remove_by_left(id);
         self.collider_state.remove(id);
 
-        if self.removed_colliders.len() >= PENDING_REMOVALS_BEFORE_FLUSH {
+        if self.changes.removed.len() >= PENDING_REMOVALS_BEFORE_FLUSH {
             self.update_bvh();
         }
     }
@@ -1249,16 +1396,6 @@ impl SceneColliderData {
 
     pub fn get_id(&self, handle: ColliderHandle) -> Option<&ColliderId> {
         self.scaled_collider.get_by_right(&handle)
-    }
-
-    pub fn disable_player_collisions(&mut self, id: &ColliderId) {
-        if let Some(h) = self.get_collider_handle(id) {
-            self.disabled.insert(h);
-        }
-    }
-
-    pub fn clear_disabled(&mut self) {
-        self.disabled.clear();
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &ColliderId> {
@@ -1345,16 +1482,17 @@ impl SceneColliderData {
     /// [`Self::cast_ray_nearest_flushed`] over the stretches of the ray inside the space the
     /// scene is drawn in. A stretch does not hit a collider it starts inside, as the ray does
     /// not at its origin.
-    pub(crate) fn cast_ray_nearest_in_scene_flushed(
+    pub fn cast_ray_nearest_in_scene_flushed(
         &self,
         origin: Vec3,
         direction: Vec3,
         distance: f32,
-        collision_mask: u32,
+        collision_mask: impl Into<ColliderLayers>,
         skip_inside: bool,
         include_sensors: bool,
         specific_collider: Option<&ColliderId>,
     ) -> Option<RaycastResult> {
+        let collision_mask = collision_mask.into();
         self.volume
             .stretches(
                 origin.as_dvec3(),
@@ -1796,8 +1934,13 @@ fn on_collider_removed<T: ColliderType>(
     }
 }
 
+/// The entity of a collider whose collisions with the player turned on or off.
+#[derive(Event)]
+pub struct PlayerCollisionToggled(pub Entity);
+
 fn propagate_disabled<T: ColliderType>(
     mut scene_datas: Query<(Entity, &mut SceneColliderData)>,
+    mut toggled: EventWriter<PlayerCollisionToggled>,
     q: Query<
         (&ContainerEntity, Option<&HasCollider<T>>, Option<&Children>),
         With<DisableCollisions>,
@@ -1834,12 +1977,24 @@ fn propagate_disabled<T: ColliderType>(
     }
 
     for (ent, mut scene_data) in scene_datas.iter_mut() {
-        scene_data.clear_disabled();
-        if let Some(disabled) = disable.get(&ent) {
-            disabled.iter().for_each(|id| {
-                scene_data.disable_player_collisions(id);
-            });
+        let disabled: HashSet<ColliderHandle> = disable
+            .get(&ent)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| scene_data.get_collider_handle(id))
+            .collect();
+        if disabled == scene_data.disabled {
+            continue;
         }
+        for handle in disabled.symmetric_difference(&scene_data.disabled) {
+            let entity = scene_data
+                .get_id(*handle)
+                .and_then(|id| scene_data.get_collider_entity(id));
+            if let Some(entity) = entity {
+                toggled.write(PlayerCollisionToggled(entity));
+            }
+        }
+        scene_data.disabled = disabled;
     }
 }
 
@@ -2069,6 +2224,8 @@ mod bounds_tests;
 #[cfg(test)]
 pub(crate) use bounds_tests::regions as regions_of_parcels;
 #[cfg(test)]
+mod camera_tests;
+#[cfg(test)]
 mod initial_transform_tests;
 #[cfg(test)]
 mod ownership_tests;
@@ -2097,8 +2254,8 @@ mod tests {
             wall(&mut colliders, index, Vec3::ZERO, Vec3::ONE);
             colliders.remove_collider(&ColliderId::new(SceneEntityId::ROOT, None, index));
         }
-        assert!(colliders.removed_colliders.len() < PENDING_REMOVALS_BEFORE_FLUSH);
-        assert!(colliders.changed_colliders.len() < PENDING_REMOVALS_BEFORE_FLUSH);
+        assert!(colliders.changes.removed.len() < PENDING_REMOVALS_BEFORE_FLUSH);
+        assert!(colliders.changes.changed.len() < PENDING_REMOVALS_BEFORE_FLUSH);
     }
 
     #[test]

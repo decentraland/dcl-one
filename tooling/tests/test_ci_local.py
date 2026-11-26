@@ -52,11 +52,23 @@ class CiLocalTest(unittest.TestCase):
     def test_clippy_runs_from_the_catalyst_folder_and_lints_scene_cli_only_changes(self):
         steps = {s.name: s.command for s in ci.pre_push_steps({'services/catalyst/src/lib.rs'})}
         self.assertTrue(steps['catalyst clippy'].startswith('cd services/catalyst && cargo clippy --locked --workspace '))
+        self.assertEqual(steps['catalyst clippy (ts)'], 'cd services/catalyst && cargo clippy --locked '
+                         '--workspace --all-targets --features catalyst/ts -- -D warnings')
         self.assertNotIn('scene cli clippy', steps)
+        names = list(steps)
+        self.assertEqual(names.index('unused dependencies'), names.index('catalyst clippy (ts)') + 1)
+        self.assertEqual(steps['unused dependencies'], 'nix build --inputs-from . nixpkgs#cargo-machete -o '
+                         '.cache/cargo-machete && .cache/cargo-machete/bin/cargo-machete services/catalyst '
+                         'library/dcl-* apps/dcl-scene-cli')
         steps = {s.name: s.command for s in ci.pre_push_steps({'apps/dcl-scene-cli/src/main.rs'})}
         self.assertNotIn('catalyst clippy', steps)
+        self.assertNotIn('catalyst clippy (ts)', steps)
         self.assertEqual(steps['scene cli clippy'],
                          'cd services/catalyst && cargo clippy --locked -p dcl-scene-cli --all-targets -- -D warnings')
+        self.assertEqual(steps['scene cli unused dependencies'], 'nix build --inputs-from . nixpkgs#cargo-machete -o '
+                         '.cache/cargo-machete && .cache/cargo-machete/bin/cargo-machete apps/dcl-scene-cli')
+        self.assertIn('.cache/cargo-machete/bin/cargo-machete apps/dcl-scene-cli\n',
+                      (ci.ROOT / '.github/workflows/sdk.yml').read_text())
 
     def test_documentation_is_excluded_from_development_and_image_inputs(self):
         docs = {'DATABASE.md', 'services/catalyst/docs/events.md',

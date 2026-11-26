@@ -38,7 +38,7 @@ pub(super) fn prompt(prompt: &str, selection: &[EntityContext]) -> Result<String
     }
     Ok(format!(
         "{prompt}\n\nEditor selection (context only; verify these current entities with scene tools before editing):\n{}",
-        serde_json::to_string(selection).unwrap()
+        serde_json::to_string(selection).expect("string fields serialize to JSON")
     ))
 }
 
@@ -156,17 +156,18 @@ impl History {
         tx.commit().map_err(failure)
     }
     pub fn list(&self) -> Result<Value, Failure> {
+        Ok(json!({"conversations":self.summaries()?}))
+    }
+    fn summaries(&self) -> Result<Vec<Value>, Failure> {
         let mut stmt = self.conn.prepare("SELECT id,provider,title,updated,truncated FROM conversations ORDER BY updated DESC,rowid DESC").map_err(failure)?;
         let rows = stmt.query_map([], |r| Ok(json!({"id":r.get::<_,String>(0)?,"provider":r.get::<_,String>(1)?,"title":r.get::<_,String>(2)?,"updatedAt":r.get::<_,i64>(3)?,"truncated":r.get::<_,bool>(4)?}))).map_err(failure)?;
-        Ok(json!({"conversations":rows.collect::<Result<Vec<_>,_>>().map_err(failure)?}))
+        rows.collect::<Result<Vec<_>, _>>().map_err(failure)
     }
     pub fn get(&self, id: &str) -> Result<Value, Failure> {
-        let mut summary = self.list()?["conversations"]
-            .as_array()
-            .unwrap()
-            .iter()
+        let mut summary = self
+            .summaries()?
+            .into_iter()
             .find(|v| v["id"] == id)
-            .cloned()
             .ok_or((
                 StatusCode::NOT_FOUND,
                 "Conversation does not belong to this project".into(),

@@ -420,9 +420,44 @@ pub async fn ready(state: &MarketplaceState) -> Result<Readiness, Response> {
     Ok(readiness)
 }
 
-/// [`ready`] on `conn` at `now`: the mirror's pass marker (uncached) and the
-/// trade-events verdicts read on the snapshot the reads that follow run on
-/// (the nft pages read from the database).
+/// A readiness refusal or a failed read on the caller's snapshot.
+#[derive(Debug)]
+pub(super) enum CheckError {
+    Refused(Source, String),
+    Database(Source, sqlx::Error),
+}
+
+impl CheckError {
+    pub(super) fn into_response(self, read_error: fn(sqlx::Error) -> Response) -> Response {
+        match self {
+            Self::Refused(source, why) => unavailable(source, &why),
+            Self::Database(Source::TradeEventsIndex, error)
+                if !super::nft_reads::cancelled(&error) =>
+            {
+                let (source, why) = super::trade_events::unreadable_reason(error);
+                unavailable(source, &why)
+            }
+            Self::Database(_, error) => read_error(error),
+        }
+    }
+
+    /// The source and message for readers that use a source-only envelope.
+    pub(super) fn refusal(self) -> Option<(Source, String)> {
+        match self {
+            Self::Refused(source, why) => Some((source, why)),
+            Self::Database(Source::TradeEventsIndex, error) => {
+                Some(super::trade_events::unreadable_reason(error))
+            }
+            Self::Database(_, error) => {
+                tracing::error!(%error, "trades_mirror read failed");
+                None
+            }
+        }
+    }
+}
+
+/// [`ready`] on `conn` at `now`: the uncached mirror pass and trade-events
+/// verdicts on the same snapshot as the rows that follow.
 pub async fn ready_on(
     state: &MarketplaceState,
     conn: &mut sqlx::PgConnection,
@@ -430,32 +465,46 @@ pub async fn ready_on(
 ) -> Result<Readiness, Response> {
     ready_checked_on(state, conn, now)
         .await
-        .map_err(|refused| match refused {
-            Some((source, why)) => unavailable(source, &why),
-            None => super::internal_server_error(),
+        .map_err(|error| match error {
+            CheckError::Database(_, error) if super::nft_reads::cancelled(&error) => {
+                super::nft_reads::read_error(error)
+            }
+            error => match error.refusal() {
+                Some((source, why)) => unavailable(source, &why),
+                None => super::internal_server_error(),
+            },
         })
 }
 
-/// [`ready_on`], typed: the source that refused and why (`None`: the pass
-/// marker could not be read), for a caller that carries them through its own
-/// error.
-pub async fn ready_checked_on(
+pub(super) async fn ready_checked_on(
     state: &MarketplaceState,
     conn: &mut sqlx::PgConnection,
     now: DateTime<Utc>,
-) -> Result<Readiness, Option<(Source, String)>> {
+) -> Result<Readiness, CheckError> {
+    ready_checked_for_networks_on(state, conn, &super::chain_walk::ChainNet::ALL, now).await
+}
+
+pub(super) async fn ready_checked_for_networks_on(
+    state: &MarketplaceState,
+    conn: &mut sqlx::PgConnection,
+    nets: &[super::chain_walk::ChainNet],
+    now: DateTime<Utc>,
+) -> Result<Readiness, CheckError> {
     let readiness = readiness_on(state, conn, now)
         .await
         .map_err(|not_ready| match not_ready {
-            NotReady::Refused(why) => Some((Source::TradesMirror, why)),
-            NotReady::Database(e) => {
-                tracing::error!(error = %e, "trades_mirror read failed");
-                None
-            }
+            NotReady::Refused(why) => CheckError::Refused(Source::TradesMirror, why),
+            NotReady::Database(error) => CheckError::Database(Source::TradesMirror, error),
         })?;
-    super::trade_events::current_on(conn, now)
+    let stale = super::trade_events::stale_networks_on(conn, nets, now)
         .await
-        .map_err(Some)?;
+        .map_err(|error| CheckError::Database(Source::TradeEventsIndex, error))?;
+    if !stale.is_empty() {
+        return Err(CheckError::Refused(
+            Source::TradeEventsIndex,
+            super::trade_events::stale_message(&stale),
+        ));
+    }
     Ok(readiness)
 }
 

@@ -12,3 +12,4 @@ disallowed-methods = [
 ]
 
 allow-unwrap-in-tests = true
+allow-print-in-tests = true

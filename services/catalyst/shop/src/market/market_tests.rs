@@ -482,6 +482,9 @@ async fn insert_trade_on(
         .await
         .unwrap();
     }
+    if matches!(kind, "public_item_order" | "public_nft_order") {
+        crate::test_db::open_trade_verdict(pool, &id).await;
+    }
     (id, hashed)
 }
 
@@ -741,6 +744,33 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         "{}",
         alloy_primitives::U256::from(2u64) << 216u32 | alloy_primitives::U256::from(7u64)
     );
+    let (status, body) = get(
+        market_router(state.clone()),
+        "/v1/prices?assetType=nft&category=wearable",
+    )
+    .await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "the nft leg waits for the nft index to publish"
+    );
+    super::owned_items::test_support::publish(
+        &pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         VALUES ('matic', $1, $2::numeric, $3, 2, 7, 10, 1700000000, 10, 0, 1700000000)",
+    )
+    .bind(&c_nft)
+    .bind(&token_1_of_item_2)
+    .bind(WALLET_A)
+    .execute(&pool)
+    .await
+    .unwrap();
     let (resale_id, _) = insert_trade(
         &pool,
         "public_nft_order",
@@ -1301,12 +1331,6 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         body["data"]["5000000000000000000"].as_i64().unwrap() >= 800,
         "{body}"
     );
-    let (status, body) = get(app(), "/v1/prices?assetType=nft&category=wearable").await;
-    assert_eq!(
-        (status, body["source"].as_str()),
-        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
-        "the nft leg waits for the nft index to publish"
-    );
     // A memo is filed under every mirror pass it read, not only the oldest:
     // Polygon's newer pass with a new price answers the new histogram,
     // though Ethereum's older pass stays the oldest.
@@ -1359,7 +1383,30 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     // The readers: canned subgraph rows merged with the mirror legs.
     let now_s = chrono::Utc::now().timestamp();
     let far = (now_s + 86_400 * 30) * 1000;
-    up.set("orders", vec![json!({ "id": "legacy-order-1", "marketplaceAddress": "0x8e5660b4ab70168b5a6feea0e0315cb49c8cd539", "nftAddress": c_nft, "tokenId": "5", "owner": WALLET_A, "buyer": null, "price": "1000000000000000000", "status": "open", "expiresAt": far.to_string(), "createdAt": (now_s - 100).to_string(), "updatedAt": (now_s - 100).to_string(), "nft": { "issuedId": "5" } })]);
+    // The legacy order book is the nft index's on this walking node: the
+    // order sits in `shop.legacy_order`, and its contract is a collection
+    // the node serves (kept only around the order routes below).
+    sqlx::query(
+        "INSERT INTO shop.collections SELECT (jsonb_populate_record(NULL::shop.collections, to_jsonb(c) \
+           || jsonb_build_object('contract_address', $2::text))).* FROM shop.collections c WHERE c.network = 'matic' AND c.contract_address = $1",
+    )
+    .bind(&c1)
+    .bind(&c_nft)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, price, expires_at, status, \
+             created_block, created_log, created_at, updated_block, updated_log, updated_at) \
+         VALUES ('matic', '0x480a0f4e360e8964e68858dd231c2922f1df45ef', 'legacy-order-1', $1, 5, $2, 1000000000000000000, $3, 'open', 1, 0, $4, 1, 0, $4)",
+    )
+    .bind(&c_nft)
+    .bind(WALLET_A)
+    .bind(far)
+    .bind(now_s - 100)
+    .execute(&pool)
+    .await
+    .unwrap();
     up.set("bids", vec![json!({ "id": "legacy-bid-1", "bidAddress": "0xb1d", "nftAddress": c_nft, "tokenId": "5", "bidder": WALLET_B, "seller": WALLET_A, "price": "2000000000000000000", "fingerprint": "0x", "status": "open", "blockchainId": "bid-1", "blockNumber": "1", "expiresAt": far.to_string(), "createdAt": (now_s - 1000).to_string(), "updatedAt": (now_s - 1000).to_string() })]);
     let sale = |i: i64| json!({ "id": format!("sale-{i}"), "type": if i % 2 == 0 { "mint" } else { "order" }, "buyer": WALLET_B, "seller": if i % 2 == 0 { CREATOR } else { WALLET_A }, "price": "5000000000000000000", "timestamp": (now_s - 3600 * i).to_string(), "txHash": format!("0xtx{i}"), "searchContractAddress": c1, "searchItemId": "1", "searchTokenId": "77", "searchCategory": "wearable", "item": { "id": format!("{c1}-1"), "creator": CREATOR } });
     up.set("sales", (1..=6).map(sale).collect());
@@ -1399,6 +1446,8 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         .execute(&pool)
         .await
         .unwrap();
+    // The nft rows above are the published fold.
+    republish_nft(&pool).await;
 
     let (status, body) = get(
         app(),
@@ -1458,6 +1507,11 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         body["total"], "1",
         "only the token whose id encodes item 2: {body}"
     );
+    sqlx::query("DELETE FROM shop.collections WHERE network = 'matic' AND contract_address = $1")
+        .bind(&c_nft)
+        .execute(&pool)
+        .await
+        .unwrap();
     let (status, body) = get(app(), "/v1/bids?sortBy=most_expensive").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let results = body["data"]["results"].as_array().unwrap();
@@ -1718,9 +1772,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         body["data"][0]
     );
 
-    // The trending rail's memo is filled right before the cancellation below, so the few reads in
-    // between are all that separate it from the check that it still answers: its 30 s cannot lapse
-    // over the rest of this test on a slow runner.
+    // Warm the trending rail before the cancellation.
     state.readers.clear();
     let (status, trending) = get(app(), "/v3/catalog/trending?first=3").await;
     assert_eq!(status, StatusCode::OK, "{trending}");
@@ -1744,7 +1796,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     let (status, body) = get(app(), &format!("/v2/catalog?id={c1}-1")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body["data"][0]["tradeId"].is_null(), "{}", body["data"][0]);
-    // An item read stays fresh; the trending rail answers from its 30 s memo until it lapses.
+    // Both the item read and the warm trending rail drop the cancelled listing.
     let (_, body) = get(
         app(),
         &format!("/v3/catalog/unified?groupBy=item&contractAddress={c1}&itemId=1&source=native"),
@@ -1759,9 +1811,6 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
             .any(|i| i["tradeId"] == primary_id.as_str())
     };
     assert!(carries_primary(&trending), "{trending}");
-    let (_, body) = get(app(), "/v3/catalog/trending?first=3").await;
-    assert_eq!(body["data"], trending["data"]);
-    state.readers.clear();
     let (_, body) = get(app(), "/v3/catalog/trending?first=3").await;
     assert!(!carries_primary(&body), "{body}");
     // A read that names its item never reads the creator directory; a browse read does.
@@ -1787,9 +1836,7 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     .await
     .expect("the browse read fills the creator directory");
 
-    // The feeds carry their creators' profiles per response, never memoized with the page: a
-    // profile denylisted after the pages were memoized leaves the very next answer, and every
-    // response that carries a profile is sent no-cache.
+    // The feeds apply the profile denylist per response and require revalidation.
     let profile_entity = format!("bafyprofile{t}");
     sqlx::query(
         "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
@@ -1870,9 +1917,8 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         .execute(&pool)
         .await
         .unwrap();
-    // A feed without the creator directory (here, its refresh held by another) answers without
-    // profiles under a brief cache, never the hour these feeds had, so a CDN does not keep an
-    // answer whose cards each ask /lambdas/profiles.
+    // A feed whose directory is refreshing answers without profiles.
+    // Listing pages must still be revalidated.
     // A claim still live from the feeds above could not release this hold either: its release
     // acts only on its own claim.
     state.readers.clear();
@@ -1893,7 +1939,12 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
                 .all(|r| r.get("creatorProfile").is_none() && r.get("profile").is_none()),
             "{uri}: {body}"
         );
-        assert_eq!(cache, "public,max-age=60,s-maxage=60", "{uri}");
+        let expected = if uri.contains("/catalog/trending") {
+            "no-cache"
+        } else {
+            "public,max-age=60,s-maxage=60"
+        };
+        assert_eq!(cache, expected, "{uri}");
     }
     state.readers.end_refresh(&directory, hold, true);
 
@@ -3029,6 +3080,7 @@ async fn on_an_owned_network_an_item_order_needs_an_authorizing_publication() {
     let id = listings::create_trade(&pool, None, &trade, &signer, 1_000)
         .await
         .unwrap();
+    crate::test_db::open_trade_verdict(&pool, &id).await;
     assert!(open_item_order_ids(&pool).await.contains(&id));
 }
 
@@ -3086,6 +3138,8 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     let id = listings::create_trade(&pool, None, &trade, &signer, 1_000)
         .await
         .unwrap();
+    assert!(!open_item_order_ids(&pool).await.contains(&id));
+    crate::test_db::open_trade_verdict(&pool, &id).await;
     assert!(open_item_order_ids(&pool).await.contains(&id));
     assert!(matches!(
         listings::create_trade(&pool, None, &trade, &signer, 1_000)
@@ -3460,7 +3514,8 @@ async fn a_second_open_order_or_bid_on_the_same_asset_is_refused() {
     // A first order without a verified V3 digest is left out of the
     // listings, but still counts: it may still execute on chain, or be
     // verified later, and two open orders would then be listed.
-    sqlx::query("INSERT INTO shop.trade_chain_state (trade_id, network, status, folded_block, digest_failed_at) VALUES ($1::uuid, 'matic', 'open', 10, timezone('UTC', now()))")
+    sqlx::query("INSERT INTO shop.trade_chain_state (trade_id, network, status, folded_block, digest_failed_at) VALUES ($1::uuid, 'matic', 'open', 10, timezone('UTC', now()))
+         ON CONFLICT (trade_id) DO UPDATE SET digest_failed_at=EXCLUDED.digest_failed_at")
         .bind(&first)
         .execute(&pool)
         .await
@@ -4542,14 +4597,8 @@ async fn a_warm_inventory_follows_a_catalogue_only_republication() {
     own.drop().await;
 }
 
-/// The open listings' owner guard is an exact-token check on the nft index:
-/// a listing whose signer still holds that token stays, one whose token
-/// another address holds (even while the signer holds another copy of the
-/// item) or nobody holds (burned) drops out, and a token the index does not
-/// hold (LAND, an estate, a collection outside the mirror) passes. Until the
-/// index is published the leg is empty, never unguarded; a node that does
-/// not walk the index has no guard and serves every open listing, whatever
-/// rows its `shop.nft` holds.
+/// Both order legs require their published sources on a walking node.
+/// The graph-backed legacy reader still requires published proof for v3.
 #[tokio::test]
 async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
     let up = FakeGraph::new();
@@ -4634,43 +4683,39 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         owner: Some(WALLET_A.into()),
         ..Default::default()
     };
-    use super::orders::OwnerCheck;
-    let ids_of = |rows: Vec<super::orders::Keyed>| {
-        let mut ids: Vec<String> = rows.into_iter().map(|k| k.order.id).collect();
+    let ids_of = |rows: Vec<super::orders::Order>| {
+        let mut ids: Vec<String> = rows.into_iter().map(|o| o.id).collect();
         ids.sort();
         ids
     };
-    let (unpublished, check) = super::orders::trades_leg(&state, &open).await.unwrap();
-    assert_eq!(check, OwnerCheck::Partial);
+    let unavailable = |r: Result<_, axum::response::Response>| r.err().map(|r| r.status());
     assert_eq!(
-        ids_of(unpublished),
-        vec![land.clone()],
-        "an unpublished index serves only the LAND and Estate registries' listings: the guard passes those anyway, and a contract merely absent from the index is not one of them"
+        unavailable(super::orders::list_orders(&state, &open).await),
+        Some(StatusCode::SERVICE_UNAVAILABLE),
+        "an unpublished book answers the envelope"
     );
+
+    crate::test_db::publish_land_owner(
+        &pool,
+        crate::land_authz::LAND_REGISTRY_MAINNET,
+        "77",
+        WALLET_A,
+    )
+    .await;
     let not_walking = std::sync::Arc::new(super::MarketplaceState::new(
         pool.clone(),
         crate::http::Outbound::for_tests(),
         market_settings(&url, &url, true),
     ));
+    not_walking
+        .test_allow_loopback
+        .store(true, Ordering::Relaxed);
     assert!(!super::owned_items::walks_here(&not_walking));
-    let (rows, check) = super::orders::trades_leg(&not_walking, &open)
+    let (rows, _) = super::orders::list_orders(&not_walking, &open)
         .await
         .unwrap();
-    assert_eq!(check, OwnerCheck::Unchecked);
-    let ids = ids_of(rows);
-    let mut want = vec![
-        held.clone(),
-        sold.clone(),
-        burned.clone(),
-        elsewhere.clone(),
-        land.clone(),
-    ];
-    want.sort();
-    assert_eq!(
-        ids, want,
-        "a node that does not walk the index serves the leg without the guard"
-    );
-    // The leg waits for the networks the read names only.
+    assert_eq!(ids_of(rows), vec![land.clone()]);
+
     super::owned_items::test_support::publish(
         &pool,
         &[super::chain_walk::ChainNet::Matic],
@@ -4678,48 +4723,333 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         Duration::ZERO,
     )
     .await;
-    let (rows, check) = super::orders::trades_leg(&state, &open).await.unwrap();
     assert_eq!(
-        (ids_of(rows), check),
-        (vec![land.clone()], OwnerCheck::Partial),
-        "a read of both networks waits for Ethereum to guard the indexed contracts"
+        unavailable(super::orders::list_orders(&state, &open).await),
+        Some(StatusCode::SERVICE_UNAVAILABLE),
+        "a book read of both networks waits for Ethereum"
     );
     let matic = super::orders::OrderFilters {
         network: Some(super::wire::Network::Matic),
         ..open.clone()
     };
-    let mut polygon = vec![held.clone(), elsewhere.clone()];
-    polygon.sort();
-    let mut both = vec![held, elsewhere, land];
-    both.sort();
-    for (label, filters, nets, want) in [
-        (
-            "Polygon alone",
-            &matic,
-            &[super::chain_walk::ChainNet::Matic][..],
-            &polygon,
-        ),
-        ("both", &open, &super::chain_walk::ChainNet::ALL[..], &both),
-    ] {
-        super::owned_items::test_support::publish(&pool, nets, false, Duration::ZERO).await;
-        let (rows, check) = super::orders::trades_leg(&state, filters).await.unwrap();
-        assert_eq!(check, OwnerCheck::Checked, "{label}");
+    let (rows, _) = super::orders::list_orders(&state, &matic).await.unwrap();
+    assert_eq!(ids_of(rows), vec![held.clone()]);
+    super::owned_items::test_support::publish(
+        &pool,
+        &[super::chain_walk::ChainNet::Ethereum],
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    let mut want = vec![held.clone(), land.clone()];
+    want.sort();
+    for reader in [&state, &not_walking] {
+        let (rows, _) = super::orders::list_orders(reader, &open).await.unwrap();
         assert_eq!(
-            &ids_of(rows),
+            ids_of(rows),
             want,
-            "{label}: the sold ({sold}) and burned ({burned}) tokens' listings drop out"
+            "exclude {sold}, {burned}, and {elsewhere}"
         );
     }
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET chain_id=80002 WHERE indexer='nft' AND network='matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        unavailable(super::orders::list_orders(&state, &open).await),
+        Some(StatusCode::SERVICE_UNAVAILABLE),
+        "another chain's publication cannot serve the local book"
+    );
+    let (rows, _) = super::orders::list_orders(&not_walking, &open)
+        .await
+        .unwrap();
+    assert_eq!(
+        ids_of(rows),
+        vec![land],
+        "other-chain ownership cannot back the v3 listing"
+    );
     own.drop().await;
 }
 
-/// A listing the guard drops (its signer sold the token) stays out on both
-/// order routes while a rewind has deleted the token's row and withdrawn
-/// the index, and after the refill publishes it again; the LAND registry's
-/// listing, which the guard never filters, is served throughout.
+/// Both the creator and minter evidence must come from the order's chain.
+#[tokio::test]
+async fn an_item_listing_requires_creator_and_minter_rows_on_its_chain() {
+    let up = FakeGraph::new();
+    let Some((pool, state, contract)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    let (id, _) = insert_trade(
+        &pool,
+        "public_item_order",
+        CREATOR,
+        Asset {
+            asset_type: 4,
+            contract: contract.clone(),
+            value: "0".into(),
+        },
+        Asset {
+            asset_type: 1,
+            contract: listings::mana_token(137).unwrap().into(),
+            value: "1000000000000000000".into(),
+        },
+    )
+    .await;
+    let listed = async |expected: bool| {
+        let uri = format!("/v3/catalog/importable?seller={CREATOR}");
+        let (status, body) = get(market_router(state.clone()), &uri).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["data"][0]["oldTradeId"].as_str(),
+            expected.then_some(id.as_str()),
+            "{body}"
+        );
+    };
+    listed(true).await;
+    for (set, restore) in [
+        (
+            "UPDATE shop.items SET chain_id = 80002, testnet_verified = true WHERE contract_address = $1",
+            "UPDATE shop.items SET chain_id = 137, testnet_verified = false WHERE contract_address = $1",
+        ),
+        (
+            "UPDATE shop.collections SET chain_id = 80002, testnet_verified = true WHERE contract_address = $1",
+            "UPDATE shop.collections SET chain_id = 137, testnet_verified = false WHERE contract_address = $1",
+        ),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(set))
+            .bind(&contract)
+            .execute(&pool)
+            .await
+            .unwrap();
+        listed(false).await;
+        sqlx::query(sqlx::AssertSqlSafe(restore))
+            .bind(&contract)
+            .execute(&pool)
+            .await
+            .unwrap();
+        listed(true).await;
+    }
+    pool.close().await;
+}
+
+/// Repeat the exact same reads while their trade and ownership publications
+/// change independently of the catalogue. Every leg uses the new proof.
+#[tokio::test]
+async fn listing_routes_stop_serving_a_trade_as_soon_as_its_proof_is_withdrawn() {
+    let up = FakeGraph::new();
+    let Some((pool, fixture, contract)) = owned_polygon_market(&up).await else {
+        return;
+    };
+    let mut settings = fixture.settings.clone();
+    settings.market.catalog_cache_ttl = Duration::from_secs(60);
+    let state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    let token = "1"; // item 0, issued 1
+    let (id, hashed_signature) = insert_trade(
+        &pool,
+        "public_nft_order",
+        WALLET_A,
+        Asset {
+            asset_type: 3,
+            contract: contract.clone(),
+            value: token.into(),
+        },
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "3000000000000000000".into(),
+        },
+    )
+    .await;
+    super::owned_items::test_support::publish(
+        &pool,
+        &[super::chain_walk::ChainNet::Matic],
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+         VALUES ('matic', $1, 1, $2, 0, 1, 10, 1, 10, 0, 1)",
+    )
+    .bind(&contract)
+    .bind(WALLET_A)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let routes = [
+        format!(
+            "/v3/catalog/unified?contractAddress={contract}&includeLegacySecondary=true&listingType=secondary"
+        ),
+        "/v3/catalog/unified?includeLegacySecondary=true&listingType=secondary".into(),
+        format!("/v3/catalog/importable?seller={WALLET_A}"),
+        format!("/v1/orders?contractAddress={contract}"),
+        format!("/v1/orders/open-by-items?item={contract}-0"),
+    ];
+    let assert_listed = async |expected: bool| {
+        for route in &routes {
+            let (status, body) = get(market_router(state.clone()), route).await;
+            assert_eq!(status, StatusCode::OK, "{route}: {body}");
+            let data = body["data"].as_array().expect("listing data");
+            assert_eq!(data.len(), usize::from(expected), "{route}: {body}");
+            if let Some(row) = data.first() {
+                let listing_id = row.get("oldTradeId").unwrap_or(&row["tradeId"]);
+                assert_eq!(listing_id, &id, "{route}: {body}");
+            }
+            if let Some(total) = body.get("total") {
+                assert_eq!(
+                    total.as_u64().or_else(|| total.as_str()?.parse().ok()),
+                    Some(u64::from(expected)),
+                    "{route}: {body}"
+                );
+            }
+        }
+        let (status, catalogue) = get(
+            market_router(state.clone()),
+            &format!("/v2/catalog?contractAddress={contract}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{catalogue}");
+        assert_eq!(
+            catalogue["data"][0]["listings"],
+            usize::from(expected),
+            "{catalogue}"
+        );
+        let (status, nft) = get(
+            market_router(state.clone()),
+            &format!(
+                "/v1/nfts?category=wearable&network=MATIC&contractAddress={contract}&tokenId=1"
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{nft}");
+        assert_eq!(nft["data"].as_array().map(Vec::len), Some(1), "{nft}");
+        assert_eq!(
+            nft["data"][0]["order"]["tradeId"].as_str(),
+            expected.then_some(id.as_str()),
+            "{nft}"
+        );
+        let (status, prices) = get(
+            market_router(state.clone()),
+            &format!("/v1/prices?assetType=nft&category=wearable&network=MATIC&contractAddress={contract}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{prices}");
+        assert_eq!(
+            prices["data"]["3000000000000000000"].as_u64(),
+            expected.then_some(1),
+            "{prices}"
+        );
+    };
+    assert_listed(true).await;
+
+    let venue = async |address: &str| {
+        sqlx::query("UPDATE shop.trades SET contract = $1 WHERE id = $2::uuid")
+            .bind(address)
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    };
+    venue("0x9999999999999999999999999999999999999999").await;
+    assert_listed(false).await;
+    venue(super::trade_events::marketplaces(super::chain_walk::ChainNet::Matic)[0].0).await;
+    sqlx::query("UPDATE shop.trade_chain_state SET digest = NULL WHERE trade_id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_listed(true).await;
+    venue(listings::offchain_marketplace_v3(137).unwrap().address).await;
+    crate::test_db::open_trade_verdict(&pool, &id).await;
+    sqlx::query("UPDATE shop.chain_cursor SET last_block = last_block + 10 WHERE network = 'matic' AND indexer IN ('nft', 'trade_events')")
+        .execute(&pool).await.unwrap();
+    assert_listed(true).await;
+
+    sqlx::query("INSERT INTO shop.nft_contract(network, contract_address, walked_from_block, backfill_from_block) VALUES ('matic', $1, 50, 1)")
+        .bind(&contract).execute(&pool).await.unwrap();
+    assert_listed(false).await;
+    sqlx::query("UPDATE shop.nft_contract SET backfilled_to_block = 49, refold_owed = true WHERE network='matic' AND contract_address=$1")
+        .bind(&contract).execute(&pool).await.unwrap();
+    assert_listed(false).await;
+    sqlx::query("UPDATE shop.nft_contract SET refold_owed = false WHERE network='matic' AND contract_address=$1")
+        .bind(&contract).execute(&pool).await.unwrap();
+    assert_listed(true).await;
+
+    sqlx::query(
+        "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address) \
+         VALUES ('matic', 101, 0, 2, 'transfer', $1, $1, 1, $2, $3)",
+    )
+    .bind(&contract).bind(WALLET_A).bind(WALLET_B)
+    .execute(&pool).await.unwrap();
+    assert_listed(false).await;
+    sqlx::query("DELETE FROM shop.nft_event WHERE network = 'matic' AND contract_address = $1")
+        .bind(&contract)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_listed(true).await;
+
+    sqlx::query(
+        "INSERT INTO shop.trade_event (network, block_number, log_index, block_time, kind, marketplace_address, caller, hashed_signature, tx_hash) \
+         VALUES ('matic', 11, 0, 2, 'signature_cancelled', $1, $2, $3, 'tx')",
+    )
+    .bind(listings::offchain_marketplace_v3(137).unwrap().address)
+    .bind(WALLET_A)
+    .bind("another-trade")
+    .execute(&pool).await.unwrap();
+    assert_listed(true).await;
+
+    sqlx::query("UPDATE shop.trade_event SET hashed_signature = $1 WHERE network = 'matic' AND block_number = 11")
+        .bind(hashed_signature).execute(&pool).await.unwrap();
+    assert_listed(false).await;
+
+    // Signer index changes only affect that signer. Contract index changes
+    // affect every order at the same venue.
+    sqlx::query("UPDATE shop.trade_event SET kind = 'signer_index_increased', hashed_signature = NULL, new_index = 1, caller = $1 WHERE network = 'matic' AND block_number = 11")
+        .bind(WALLET_B).execute(&pool).await.unwrap();
+    assert_listed(true).await;
+    sqlx::query(
+        "UPDATE shop.trade_event SET caller = $1 WHERE network = 'matic' AND block_number = 11",
+    )
+    .bind(WALLET_A)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_listed(false).await;
+    sqlx::query("UPDATE shop.trade_event SET kind = 'contract_index_increased', caller = $1 WHERE network = 'matic' AND block_number = 11")
+        .bind(WALLET_B).execute(&pool).await.unwrap();
+    assert_listed(false).await;
+
+    for closed in ["cancelled", "sold"] {
+        sqlx::query("UPDATE shop.trade_chain_state SET status = $1, folded_block = 11 WHERE trade_id = $2::uuid")
+            .bind(closed).bind(&id).execute(&pool).await.unwrap();
+        sqlx::query("UPDATE shop.chain_cursor SET folded_block = 11 WHERE network = 'matic' AND indexer = 'trade_events'")
+            .execute(&pool).await.unwrap();
+        assert_listed(false).await;
+    }
+    sqlx::query("UPDATE shop.trade_chain_state SET status = 'open', digest = NULL WHERE trade_id = $1::uuid")
+        .bind(&id).execute(&pool).await.unwrap();
+    assert_listed(false).await; // the fold saw the trade before its digest
+    sqlx::query("DELETE FROM shop.trade_chain_state WHERE trade_id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_listed(false).await;
+    pool.close().await;
+}
+
+/// Both orders routes keep a transferred token out during a rewind and
+/// retest the surviving LAND order against its independent publication.
 #[tokio::test]
 async fn a_sold_listing_stays_out_through_a_rewind_and_its_refill() {
-    use super::orders::OwnerCheck;
     let up = FakeGraph::new();
     let url = serve_graph(up.clone()).await;
     let Some((state, own)) = state_over_own(&url, true).await else {
@@ -4763,6 +5093,13 @@ async fn a_sold_listing_stays_out_through_a_rewind_and_its_refill() {
     )
     .await
     .0;
+    crate::test_db::publish_land_owner(
+        &pool,
+        crate::land_authz::LAND_REGISTRY_MAINNET,
+        "77",
+        WALLET_A,
+    )
+    .await;
     // The fold: the token belongs to WALLET_B now.
     let fold = || {
         let (pool, c, token) = (pool.clone(), c.clone(), token.clone());
@@ -4798,28 +5135,35 @@ async fn a_sold_listing_stays_out_through_a_rewind_and_its_refill() {
             "0".to_string(),
         ),
     ];
+    let withdrawn = || async {
+        (
+            super::orders::list_orders(&state, &open)
+                .await
+                .err()
+                .map(|r| r.status()),
+            super::orders::open_orders_by_items(&state, &items, 10)
+                .await
+                .err()
+                .map(|r| r.status()),
+        )
+    };
     let routes = || async {
-        let (orders, _, listed) = super::orders::list_orders_checked(&state, &open)
+        let (orders, _) = super::orders::list_orders(&state, &open)
             .await
             .unwrap_or_else(|_| panic!("/v1/orders answers"));
-        let (by_items, by_items_check) =
-            super::orders::open_orders_by_items_checked(&state, &items, 10)
-                .await
-                .unwrap_or_else(|_| panic!("/v1/orders/open-by-items answers"));
+        let by_items = super::orders::open_orders_by_items(&state, &items, 10)
+            .await
+            .unwrap_or_else(|_| panic!("/v1/orders/open-by-items answers"));
         let ids = |orders: Vec<super::orders::Order>| -> Vec<String> {
             let mut ids: Vec<String> = orders.into_iter().map(|o| o.id).collect();
             ids.sort();
             ids
         };
-        ((ids(orders), listed), (ids(by_items), by_items_check))
+        (ids(orders), ids(by_items))
     };
     fold().await;
-    let want = |check| ((vec![land.clone()], check), (vec![land.clone()], check));
-    assert_eq!(
-        routes().await,
-        want(OwnerCheck::Checked),
-        "published: {sold} drops out"
-    );
+    let want = (vec![land.clone()], vec![land.clone()]);
+    assert_eq!(routes().await, want, "published: {sold} drops out");
     // A rewind deletes the token's row and withdraws the publication.
     sqlx::query("DELETE FROM shop.nft WHERE network = 'matic' AND contract_address = $1")
         .bind(&c)
@@ -4833,15 +5177,2084 @@ async fn a_sold_listing_stays_out_through_a_rewind_and_its_refill() {
     .await
     .unwrap();
     assert_eq!(
-        routes().await,
-        want(OwnerCheck::Partial),
-        "rewound: {sold} stays out although its token has no row"
+        withdrawn().await,
+        (
+            Some(StatusCode::SERVICE_UNAVAILABLE),
+            Some(StatusCode::SERVICE_UNAVAILABLE)
+        ),
+        "rewound: the routes answer the envelope, never {sold} unguarded"
     );
     fold().await;
+    assert_eq!(routes().await, want, "refilled: {sold} still drops out");
+    own.drop().await;
+}
+
+/// The legacy order book of a walking node is `shop.legacy_order` on one
+/// snapshot: only the orders of the contracts it serves (a collection, the
+/// LAND and Estate registries, names), and an open order `open` only while
+/// its owner source proves the seller holds the token (`shop.nft`, or
+/// `land_authz.token_right` for LAND and estates): another owner, a burned
+/// or dissolved token and a token with no row there all read
+/// `transferred`, in the page, the status filters and the totals alike;
+/// the unavailable envelope naming the
+/// nft index while it is not published on a network the read names, and
+/// the land-authz index's while it is not ready for a read that could
+/// answer an open LAND order.
+#[tokio::test]
+async fn the_legacy_order_book_is_the_index_with_the_subgraph_statuses() {
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
+    let pool = state.pool.clone();
+    let t = tag();
+    let (c, stray) = (contract_of(&t, 1), contract_of(&t, 2));
+    let land = crate::land_authz::LAND_REGISTRY_MAINNET.to_lowercase();
+    let estate = crate::land_authz::ESTATE_REGISTRY_MAINNET.to_lowercase();
+    let (m_eth, m_matic) = (
+        super::nft_index::deployments::Deployments::mainnet(super::chain_walk::ChainNet::Ethereum)
+            .markets[0]
+            .0,
+        super::nft_index::deployments::Deployments::mainnet(super::chain_walk::ChainNet::Matic)
+            .markets[1]
+            .0,
+    );
+    let token = |item: u64, issued: u64| {
+        (alloy_primitives::U256::from(item) << 216u32 | alloy_primitives::U256::from(issued))
+            .to_string()
+    };
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+         SELECT 'matic', $1, 137, 'Pirates', $2, $2, 'urn:decentraland:matic:collections-v2:' || $1, true, true, false, 1, 1, 1, timezone('UTC', now())",
+    )
+    .bind(&c)
+    .bind(CREATOR)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let far = (chrono::Utc::now().timestamp() + 86_400) * 1000;
+    let order = |network: &'static str,
+                 market: &'static str,
+                 id: &'static str,
+                 contract: String,
+                 token: String,
+                 seller: &'static str,
+                 price: i64,
+                 created: i64| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, price, expires_at, status, \
+                     created_block, created_log, created_at, updated_block, updated_log, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5::numeric, $6, $7, $8, 'open', $9, 0, $9, $9, 0, $9)",
+            )
+            .bind(network)
+            .bind(market)
+            .bind(id)
+            .bind(contract)
+            .bind(token)
+            .bind(seller)
+            .bind(price)
+            .bind(far)
+            .bind(created)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    // held: the seller still holds it; moved: the index holds it elsewhere;
+    // burned: the index holds it with no owner; unheld: the index has no row
+    // for it; parcel / parcel_moved / parcel_unindexed / estate_dissolved:
+    // LAND and an estate, checked on the land index (the seller's, another
+    // owner's, no row, no owner); stray: a contract the node does not serve.
+    order(
+        "matic",
+        m_matic,
+        "held",
+        c.clone(),
+        token(3, 1),
+        WALLET_A,
+        30,
+        1_000,
+    )
+    .await;
+    order(
+        "matic",
+        m_matic,
+        "moved",
+        c.clone(),
+        token(3, 2),
+        WALLET_A,
+        20,
+        1_001,
+    )
+    .await;
+    order(
+        "ethereum",
+        m_eth,
+        "parcel",
+        land.clone(),
+        "77".into(),
+        WALLET_A,
+        10,
+        1_002,
+    )
+    .await;
+    order(
+        "ethereum",
+        m_eth,
+        "parcel_moved",
+        land.clone(),
+        "78".into(),
+        WALLET_A,
+        40,
+        1_003,
+    )
+    .await;
+    order(
+        "matic",
+        m_matic,
+        "stray",
+        stray.clone(),
+        "5".into(),
+        WALLET_A,
+        5,
+        1_004,
+    )
+    .await;
+    order(
+        "matic",
+        m_matic,
+        "burned",
+        c.clone(),
+        token(3, 4),
+        WALLET_A,
+        50,
+        1_005,
+    )
+    .await;
+    order(
+        "matic",
+        m_matic,
+        "unheld",
+        c.clone(),
+        token(3, 5),
+        WALLET_A,
+        60,
+        1_006,
+    )
+    .await;
+    order(
+        "ethereum",
+        m_eth,
+        "parcel_unindexed",
+        land.clone(),
+        "79".into(),
+        WALLET_A,
+        70,
+        1_007,
+    )
+    .await;
+    order(
+        "ethereum",
+        m_eth,
+        "estate_dissolved",
+        estate.clone(),
+        "500".into(),
+        WALLET_A,
+        80,
+        1_008,
+    )
+    .await;
+    for (issued, owner) in [(1, Some(WALLET_A)), (2, Some(WALLET_B)), (4, None)] {
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             VALUES ('matic', $1, $2::numeric, $3, 3, $4, 1, 1, 1, 0, 1)",
+        )
+        .bind(&c)
+        .bind(token(3, issued))
+        .bind(owner)
+        .bind(issued as i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let app = || market_router(state.clone());
+    let ids = |body: &Value| -> Vec<(String, String)> {
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| {
+                (
+                    o["id"].as_str().unwrap().to_string(),
+                    o["status"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    // Not published: the envelope, never a partial page.
+    let (status, body) = get(app(), "/v1/orders?network=MATIC").await;
     assert_eq!(
-        routes().await,
-        want(OwnerCheck::Checked),
-        "refilled: {sold} still drops out"
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    super::owned_items::test_support::publish(
+        &pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    // A book that trails the published fold (an earlier binary folded the
+    // nft index past it) is not served beside that ownership.
+    sqlx::query("UPDATE shop.legacy_order_cursor SET folded_through = 50 WHERE network = 'matic'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app(), "/v1/orders?network=MATIC").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    sqlx::query("UPDATE shop.legacy_order_cursor SET folded_through = 100 WHERE network = 'matic'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Nor one with a refold queued on its network: an earlier binary
+    // repaired a sale the book has folded and republished the same height
+    // without folding it. Another network's queue does not withhold it.
+    let queue = |network: &'static str| {
+        let (pool, c) = (pool.clone(), c.clone());
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.legacy_order_refold (network, contract_address, token_id) VALUES ($1, $2, 1)",
+            )
+            .bind(network)
+            .bind(c)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    queue("ethereum").await;
+    let (status, body) = get(app(), "/v1/orders?network=MATIC").await;
+    assert_eq!(status, StatusCode::OK, "another network's queue: {body}");
+    queue("matic").await;
+    let (status, body) = get(app(), "/v1/orders?network=MATIC").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    sqlx::query("DELETE FROM shop.legacy_order_refold")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app(), "/v1/orders?network=MATIC").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // Nor one folded on a branch the walk no longer has: an earlier binary
+    // republished block 100 with another hash.
+    let republish = |hash: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "UPDATE shop.chain_checkpoint SET block_hash = $1 WHERE indexer = 'nft' AND network = 'matic' AND block_number = 100",
+            )
+            .bind(hash)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    republish("0x1111111111111111111111111111111111111111111111111111111111111111").await;
+    let (status, body) = get(app(), "/v1/orders?network=MATIC").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    republish("0x0000000000000000000000000000000000000000000000000000000000000000").await;
+    // Polygon alone needs no LAND index.
+    let (status, body) = get(app(), "/v1/orders?network=MATIC&sortBy=cheapest").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        ids(&body),
+        vec![
+            ("moved".to_string(), "transferred".to_string()),
+            ("held".to_string(), "open".to_string()),
+            ("burned".to_string(), "transferred".to_string()),
+            ("unheld".to_string(), "transferred".to_string()),
+        ],
+        "the stray contract is not served; a burned or unindexed token is not proof of ownership: {body}"
+    );
+    assert_eq!(body["total"], "4", "{body}");
+    assert_eq!(
+        (
+            body["data"][1]["issuedId"].as_str(),
+            body["data"][1]["owner"].as_str(),
+            body["data"][1]["tradeId"].as_str(),
+            body["data"][1]["chainId"].as_i64()
+        ),
+        (Some("1"), Some(WALLET_A), Some(""), Some(137))
+    );
+    // An open LAND order could be answered: the LAND index must be ready.
+    let (status, body) = get(app(), "/v1/orders?status=open").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("land-authz-index")),
+        "{body}"
+    );
+    let (status, body) = get(app(), "/v1/orders?status=sold").await;
+    assert_eq!(
+        (status, body["total"].as_str()),
+        (StatusCode::OK, Some("0")),
+        "a sold order needs no LAND owner: {body}"
+    );
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
+         VALUES ('ethereum-mainnet', '{land}', '{estate}', 1, 1, timezone('UTC', now()), true); \
+         INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) VALUES \
+            ('{land}', 77, 0, 77, '{WALLET_A}', 1, 0), ('{land}', 78, 0, 78, '{WALLET_B}', 1, 1), \
+            ('{estate}', 500, NULL, NULL, NULL, 1, 2)",
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), "/v1/orders?sortBy=oldest").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        ids(&body),
+        vec![
+            ("held".to_string(), "open".to_string()),
+            ("moved".to_string(), "transferred".to_string()),
+            ("parcel".to_string(), "open".to_string()),
+            ("parcel_moved".to_string(), "transferred".to_string()),
+            ("burned".to_string(), "transferred".to_string()),
+            ("unheld".to_string(), "transferred".to_string()),
+            ("parcel_unindexed".to_string(), "transferred".to_string()),
+            ("estate_dissolved".to_string(), "transferred".to_string()),
+        ],
+        "{body}"
+    );
+    assert_eq!(
+        (
+            body["data"][2]["network"].as_str(),
+            body["data"][2]["issuedId"].clone()
+        ),
+        (Some("ETHEREUM"), Value::Null)
+    );
+    let (_, body) = get(app(), "/v1/orders?status=open").await;
+    assert_eq!(
+        ids(&body),
+        vec![
+            ("parcel".to_string(), "open".to_string()),
+            ("held".to_string(), "open".to_string())
+        ],
+        "open, newest first, leaves out a listing whose seller lost the token: {body}"
+    );
+    assert_eq!(
+        body["total"], "2",
+        "the total counts the page's status: {body}"
+    );
+    let (_, body) = get(app(), "/v1/orders?status=transferred&sortBy=oldest").await;
+    assert_eq!(
+        ids(&body),
+        vec![
+            ("moved".to_string(), "transferred".to_string()),
+            ("parcel_moved".to_string(), "transferred".to_string()),
+            ("burned".to_string(), "transferred".to_string()),
+            ("unheld".to_string(), "transferred".to_string()),
+            ("parcel_unindexed".to_string(), "transferred".to_string()),
+            ("estate_dissolved".to_string(), "transferred".to_string()),
+        ],
+        "{body}"
+    );
+    assert_eq!(body["total"], "6", "{body}");
+    let (_, body) = get(app(), "/v1/orders?status=transferred&network=ETHEREUM").await;
+    assert_eq!(
+        ids(&body),
+        vec![
+            ("estate_dissolved".to_string(), "transferred".to_string()),
+            ("parcel_unindexed".to_string(), "transferred".to_string()),
+            ("parcel_moved".to_string(), "transferred".to_string()),
+        ],
+        "{body}"
+    );
+    let (_, body) = get(
+        app(),
+        &format!("/v1/orders?contractAddress={c}&itemId=3&status=open"),
+    )
+    .await;
+    assert_eq!(
+        ids(&body),
+        vec![("held".to_string(), "open".to_string())],
+        "{body}"
+    );
+    let (status, body) = get(app(), &format!("/v1/orders/open-by-items?item={c}-3")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        ids(&body),
+        vec![("held".to_string(), "open".to_string())],
+        "{body}"
+    );
+    own.drop().await;
+}
+
+/// The auditor's rollout case: an earlier binary's nft fold, which knows
+/// nothing of the book's marker, returns a token to its order's seller at
+/// 101 while the book and the published fold both still say 100. The order
+/// must not read open (in the page or its total) before that fold is
+/// published; a raw walk advance alone still serves the book at 100; once
+/// published, the order is open.
+#[tokio::test]
+async fn an_earlier_writers_unpublished_transfer_never_reopens_an_order() {
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
+    let pool = state.pool.clone();
+    let c = contract_of(&tag(), 1);
+    let token = (alloy_primitives::U256::from(3u64) << 216u32 | alloy_primitives::U256::from(1u64))
+        .to_string();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at)
+         VALUES ('matic', '{c}', 137, 'Pirates', '{CREATOR}', '{CREATOR}', 'urn:decentraland:matic:collections-v2:{c}', true, true, false, 1, 1, 1, timezone('UTC', now()));
+         INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+         VALUES ('matic', '{c}', {token}, '{WALLET_B}', 3, 1, 1, 1, 50, 0, 50);
+         INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, price, expires_at, status,
+             created_block, created_log, created_at, updated_block, updated_log, updated_at)
+         VALUES ('matic', '0xmarket', 'returned', '{c}', {token}, '{WALLET_A}', 10, {far}, 'open', 60, 0, 60, 60, 0, 60)",
+        far = (chrono::Utc::now().timestamp() + 86_400) * 1000,
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // The fixtures are the published fold at 100.
+    super::owned_items::test_support::publish(
+        &state.pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        std::time::Duration::ZERO,
+    )
+    .await;
+    let app = || market_router(state.clone());
+    let read = |status: &'static str| {
+        let router = app();
+        async move {
+            let (code, body) =
+                get(router, &format!("/v1/orders?network=MATIC&status={status}")).await;
+            (
+                code,
+                body["total"].as_str().map(str::to_string),
+                body["source"].as_str().map(str::to_string),
+            )
+        }
+    };
+    let served = |total: &str| (StatusCode::OK, Some(total.to_string()), None);
+    let refused = (
+        StatusCode::SERVICE_UNAVAILABLE,
+        None,
+        Some("nft-index".to_string()),
+    );
+    assert_eq!(
+        read("open").await,
+        served("0"),
+        "the token left its seller at 50"
+    );
+    assert_eq!(read("transferred").await, served("1"));
+    // The walk advanced to 120 without folding: the book at 100 is served.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = 120 WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(read("open").await, served("0"));
+    // The earlier binary's fold through 120 returns the token to its seller
+    // at 101; nothing of it is published, and the book's marker is untouched.
+    sqlx::query("UPDATE shop.nft SET owner = $1, transferred_block = 101 WHERE network = 'matic' AND contract_address = $2")
+        .bind(WALLET_A)
+        .bind(&c)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        read("open").await,
+        refused,
+        "the reopened order is not exposed"
+    );
+    assert_eq!(read("transferred").await, refused);
+    // Published at 120 (with the book folded there): the order is open.
+    sqlx::query(
+        "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) \
+         VALUES ('nft', 'matic', 120, '0x' || repeat('0', 64), 0) ON CONFLICT DO NOTHING",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE shop.legacy_order_cursor SET folded_through = 120 WHERE network = 'matic'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET fold_through = 120, folded_block = 120, folded_at = timezone('UTC', now()) \
+         WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        read("open").await,
+        served("1"),
+        "published: the order is open"
+    );
+    assert_eq!(read("transferred").await, served("0"));
+    own.drop().await;
+}
+
+/// Publishes the nft cursors again where they stand: fixtures written after
+/// a publication are pending writes (`shop.projection_write`) until one
+/// commits after them.
+async fn republish_nft(pool: &PgPool) {
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) \
+         WHERE indexer = 'nft' AND folded_block IS NOT NULL",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// One event of a token's history, for the subgraph model below.
+#[derive(Clone, Copy, Debug)]
+enum TokenEvent {
+    /// `OrderCreated(id)` on Marketplace `market` (0 or 1) by `seller`.
+    Created(u8, usize, &'static str),
+    /// `Transfer` to `to`.
+    Transfer(&'static str),
+    /// `OrderSuccessful(id)` on `market` to `buyer`.
+    Sold(u8, usize, &'static str),
+    /// `OrderCancelled(id)` on `market`.
+    Cancelled(u8, usize),
+}
+
+/// The order statuses the collections graph leaves after `events`
+/// (`handlers/marketplace.ts`, `marketplaceV2.ts`, `modules/nft`:
+/// `cancelActiveOrder`, `updateNFTOrderProperties`, `handleTransferOrder`).
+fn subgraph_statuses(events: &[TokenEvent]) -> std::collections::BTreeMap<u8, &'static str> {
+    use std::collections::BTreeMap;
+    let mut orders: BTreeMap<u8, (&'static str, &'static str)> = BTreeMap::new();
+    // None: never set; Some(None): cleared (''); Some(Some(id)): active.
+    let mut active: Option<Option<u8>> = None;
+    for event in events {
+        match *event {
+            TokenEvent::Created(id, _, seller) => {
+                if let Some(Some(old)) = active
+                    && let Some(order) = orders.get_mut(&old)
+                    && matches!(order.0, "open" | "transferred")
+                {
+                    order.0 = "cancelled";
+                }
+                orders.insert(id, ("open", seller));
+                active = Some(Some(id));
+            }
+            TokenEvent::Sold(id, _, _) => {
+                if let Some(order) = orders.get_mut(&id) {
+                    order.0 = "sold";
+                    active = Some(None);
+                }
+            }
+            TokenEvent::Cancelled(id, _) => {
+                if let Some(order) = orders.get_mut(&id) {
+                    order.0 = "cancelled";
+                    active = Some(None);
+                }
+            }
+            TokenEvent::Transfer(to) => {
+                if let Some(Some(id)) = active
+                    && let Some(order) = orders.get_mut(&id)
+                {
+                    if order.0 == "open" {
+                        order.0 = "transferred";
+                    } else if order.0 == "transferred" && order.1 == to {
+                        order.0 = "open";
+                    }
+                }
+            }
+        }
+    }
+    orders
+        .into_iter()
+        .map(|(id, (status, _))| (id, status))
+        .collect()
+}
+
+/// The order book against the collections graph over the traces that
+/// decide `transferred`: a token sent away and back, away for good, relisted
+/// by its new owner, relisted by its seller, sold, cancelled then moved;
+/// every status agrees. The one known difference is pinned: an order
+/// superseded on the other Polygon Marketplace whose token is sold there
+/// and comes back to its seller reads `open` here (its seller holds the
+/// token and it is still executable on chain), where the graph, having
+/// cleared the token's active order with the sale, keeps it `transferred`.
+#[tokio::test]
+async fn the_order_book_agrees_with_the_subgraph_on_transfers_away_and_back() {
+    use TokenEvent::*;
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
+    let pool = state.pool.clone();
+    let c = contract_of(&tag(), 4);
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+         SELECT 'matic', $1, 137, 'Trace', $2, $2, 'urn:decentraland:matic:collections-v2:' || $1, true, true, false, 1, 1, 1, timezone('UTC', now())",
+    )
+    .bind(&c)
+    .bind(CREATOR)
+    .execute(&pool)
+    .await
+    .unwrap();
+    super::owned_items::test_support::publish(
+        &pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    let markets =
+        super::nft_index::deployments::Deployments::mainnet(super::chain_walk::ChainNet::Matic)
+            .markets;
+    const S: &str = WALLET_A;
+    const B: &str = WALLET_B;
+    const X: &str = CREATOR;
+    let traces: Vec<(&str, Vec<TokenEvent>)> = vec![
+        (
+            "away and back",
+            vec![Created(1, 0, S), Transfer(B), Transfer(S)],
+        ),
+        (
+            "away for good",
+            vec![Created(2, 0, S), Transfer(B), Transfer(X)],
+        ),
+        (
+            "relisted by the new owner",
+            vec![Created(3, 0, S), Transfer(B), Created(4, 1, B)],
+        ),
+        (
+            "relisted by its seller",
+            vec![Created(5, 0, S), Created(6, 0, S)],
+        ),
+        ("sold", vec![Created(7, 1, S), Transfer(B), Sold(7, 1, B)]),
+        (
+            "cancelled, then away and back",
+            vec![Created(8, 0, S), Cancelled(8, 0), Transfer(B), Transfer(S)],
+        ),
+        (
+            "superseded, sold on the other Marketplace, back",
+            vec![
+                Created(9, 0, S),
+                Created(10, 1, S),
+                Transfer(X),
+                Sold(9, 0, X),
+                Transfer(S),
+            ],
+        ),
+    ];
+    let order_id = |n: u8| format!("0x{n:064x}");
+    let mut block = 100i64;
+    for (token, (_, events)) in traces.iter().enumerate() {
+        let mut owner = S;
+        for event in events {
+            block += 1;
+            let (kind, market, from, to, detail): (
+                &str,
+                &str,
+                Option<&str>,
+                Option<&str>,
+                Option<String>,
+            ) = match *event {
+                Created(id, m, seller) => (
+                    "order_created",
+                    markets[m].0,
+                    Some(seller),
+                    None,
+                    Some(order_id(id)),
+                ),
+                Transfer(to) => ("transfer", c.as_str(), Some(owner), Some(to), None),
+                Sold(id, m, buyer) => (
+                    "order_successful",
+                    markets[m].0,
+                    Some(owner),
+                    Some(buyer),
+                    Some(order_id(id)),
+                ),
+                Cancelled(id, m) => (
+                    "order_cancelled",
+                    markets[m].0,
+                    Some(owner),
+                    None,
+                    Some(order_id(id)),
+                ),
+            };
+            if let Transfer(to) = *event {
+                owner = to;
+            }
+            sqlx::query(
+                "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address, amount, expires_at, detail) \
+                 VALUES ('matic', $1, 0, $1, $2, $3, $4, $5::numeric, $6, $7, 1000, CASE WHEN $2 = 'order_created' THEN 4000000000000 END, $8)",
+            )
+            .bind(block)
+            .bind(kind)
+            .bind(market)
+            .bind(&c)
+            .bind(token.to_string())
+            .bind(from)
+            .bind(to)
+            .bind(detail)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, item_id, issued_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at) \
+             VALUES ('matic', $1, $2::numeric, $3, 0, $2::numeric, 1, 1, $4, 0, $4)",
+        )
+        .bind(&c)
+        .bind(token.to_string())
+        .bind(owner)
+        .bind(block)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let mut tx = pool.begin().await.unwrap();
+    super::legacy_orders::fold(&mut tx, super::chain_walk::ChainNet::Matic, -1)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    republish_nft(&pool).await;
+    for (token, (label, events)) in traces.iter().enumerate() {
+        let (status, body) = get(
+            market_router(state.clone()),
+            &format!("/v1/orders?contractAddress={c}&tokenId={token}&network=MATIC"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{label}: {body}");
+        let ours: std::collections::BTreeMap<u8, String> = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| {
+                let id = o["id"].as_str().unwrap();
+                (
+                    u8::from_str_radix(id.trim_start_matches("0x"), 16).unwrap(),
+                    o["status"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        let mut graph: std::collections::BTreeMap<u8, String> = subgraph_statuses(events)
+            .into_iter()
+            .map(|(id, status)| (id, status.to_string()))
+            .collect();
+        if *label == "superseded, sold on the other Marketplace, back" {
+            assert_eq!(
+                graph.get(&10).map(String::as_str),
+                Some("transferred"),
+                "{label}: the graph"
+            );
+            assert_eq!(
+                ours.get(&10).map(String::as_str),
+                Some("open"),
+                "{label}: the book"
+            );
+            graph.insert(10, "open".to_string());
+        }
+        assert_eq!(ours, graph, "{label}: {body}");
+    }
+    own.drop().await;
+}
+
+/// The legacy order book's total counts each network up to the reader's
+/// cap and sums them, as the subgraph reader did: 3,000 sold orders on each
+/// network total 6,000 on a shallow page, not 5,000.
+#[tokio::test]
+async fn the_legacy_order_total_caps_each_network_and_sums_them() {
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
+    let pool = state.pool.clone();
+    let c = contract_of(&tag(), 6);
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+         SELECT 'matic', $1, 137, 'Counted', $2, $2, 'urn:decentraland:matic:collections-v2:' || $1, true, true, false, 1, 1, 1, timezone('UTC', now())",
+    )
+    .bind(&c)
+    .bind(CREATOR)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, buyer, price, expires_at, status, \
+             created_block, created_log, created_at, updated_block, updated_log, updated_at) \
+         SELECT n, 'm', n || i, CASE n WHEN 'matic' THEN $1 ELSE $2 END, i, $3, $4, 1, 0, 'sold', i, 0, i, i, 0, i \
+         FROM generate_series(1, 3000) i, unnest(ARRAY['matic', 'ethereum']) n",
+    )
+    .bind(&c)
+    .bind(crate::land_authz::LAND_REGISTRY_MAINNET.to_lowercase())
+    .bind(WALLET_A)
+    .bind(WALLET_B)
+    .execute(&pool)
+    .await
+    .unwrap();
+    super::owned_items::test_support::publish(
+        &pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    let app = || market_router(state.clone());
+    let (status, body) = get(app(), "/v1/orders?status=sold&first=1").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], "6000", "{body}");
+    let (_, body) = get(app(), "/v1/orders?status=sold&first=1&network=MATIC").await;
+    assert_eq!(body["total"], "3000", "{body}");
+    own.drop().await;
+}
+
+/// `/v1/activity` keeps its partial 200 when an order leg's index is not
+/// ready, and names each source that left a leg out in
+/// `x-activity-unavailable-sources`: both while neither is ready, then the
+/// land-authz index while an owner's orders (which may hold an open LAND
+/// order) need it; no header once every leg answers.
+#[tokio::test]
+async fn a_partial_activity_names_the_unavailable_sources() {
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
+    let me = crate::shared::signed_fetch::test_support::address();
+    let marketplace = r#"{"signer":"dcl:marketplace"}"#;
+    let activity = || {
+        let state = state.clone();
+        let me = me.clone();
+        async move {
+            let headers = signed_headers("get", "/v1/activity", marketplace, true).await;
+            let mut req = Request::builder().uri(format!("/v1/activity?address={me}"));
+            for (k, v) in headers.iter() {
+                req = req.header(k, v);
+            }
+            let resp = market_router(state)
+                .oneshot(req.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let status = resp.status();
+            let named = resp
+                .headers()
+                .get(super::activity::UNAVAILABLE_SOURCES_HEADER)
+                .map(|v| v.to_str().unwrap().to_string());
+            (status, named)
+        }
+    };
+    assert_eq!(
+        activity().await,
+        (
+            StatusCode::OK,
+            Some("land-authz-index, nft-index, sales-index".to_string())
+        ),
+        "neither is ready: the owner's orders stop at the LAND index, the buyer's at the nft index; \
+         the transfers leg waits on the sales index, which this node does not enable"
+    );
+    super::owned_items::test_support::publish(
+        &state.pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    assert_eq!(
+        activity().await,
+        (
+            StatusCode::OK,
+            Some("land-authz-index, sales-index".to_string())
+        ),
+        "an owner's orders may hold an open LAND order"
+    );
+    sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) VALUES ('ethereum-mainnet', $1, $2, 1, 1, timezone('UTC', now()), true)")
+        .bind(crate::land_authz::LAND_REGISTRY_MAINNET)
+        .bind(crate::land_authz::ESTATE_REGISTRY_MAINNET)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        activity().await,
+        (StatusCode::OK, Some("sales-index".to_string())),
+        "every order leg answered; only the transfers leg is left out"
+    );
+    own.drop().await;
+}
+
+/// A contract can pin the order read even without the network filter.
+#[tokio::test]
+async fn order_readiness_follows_the_requested_contracts_and_legs() {
+    use super::chain_walk::ChainNet;
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &own.pool;
+    let contract = contract_of(&tag(), 1);
+    let unknown = contract_of(&tag(), 2);
+    let collection = |network: &'static str, chain: i32| {
+        let contract = &contract;
+        async move {
+            sqlx::query(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at)
+             VALUES ($1, $2, $3, 'Orders', $4, $4, $2, true, true, false, 1, 1, 1, timezone('UTC', now()))
+             ON CONFLICT (network, contract_address) DO UPDATE SET chain_id = EXCLUDED.chain_id",
+        )
+        .bind(network)
+        .bind(contract)
+        .bind(chain)
+        .bind(CREATOR)
+        .execute(pool)
+        .await
+        .unwrap();
+        }
+    };
+    collection("matic", 137).await;
+    collection("ethereum", 11155111).await;
+    sqlx::query(
+        "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, buyer, price, expires_at, status,
+             created_block, created_log, created_at, updated_block, updated_log, updated_at)
+         VALUES ('matic', '0xmarket', 'sold', $1, 1, $2, $3, 10, 0, 'sold', 1, 0, 1, 1, 0, 1)",
+    )
+    .bind(&contract)
+    .bind(WALLET_A)
+    .bind(WALLET_B)
+    .execute(pool)
+    .await
+    .unwrap();
+    super::owned_items::test_support::publish(pool, &[ChainNet::Matic], false, Duration::ZERO)
+        .await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    sqlx::query(
+        "DELETE FROM shop.chain_cursor WHERE indexer = 'trade_events' AND network = 'ethereum'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    let call = |uri: String| {
+        let router = market_router(state.clone());
+        async move { get(router, &uri).await }
+    };
+    let (status, body) = call(format!("/v1/orders?contractAddress={contract}&status=open")).await;
+    assert_eq!(
+        (status, body["total"].as_str()),
+        (StatusCode::OK, Some("0")),
+        "{body}"
+    );
+    let (status, body) = call(format!("/v1/orders/open-by-items?item={contract}-0")).await;
+    assert_eq!(
+        (status, body["total"].as_str()),
+        (StatusCode::OK, Some("0")),
+        "{body}"
+    );
+
+    for uri in [
+        format!("/v1/orders?status=sold&contractAddress={unknown}"),
+        format!("/v1/orders?status=sold&contractAddress={contract}&network=ETHEREUM"),
+        format!("/v1/orders/open-by-items?item={contract}-0&item={unknown}-0"),
+    ] {
+        let (status, body) = call(uri).await;
+        assert_eq!(
+            (status, body["source"].as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+            "{body}"
+        );
+    }
+
+    collection("ethereum", 1).await;
+    let (status, body) = call(format!("/v1/orders?status=sold&contractAddress={contract}")).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    // An explicit network limits both the snapshot and the returned rows.
+    sqlx::query(
+        "DELETE FROM shop.chain_cursor WHERE indexer = 'trade_events' AND network = 'matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    for (suffix, count) in [
+        ("status=sold".to_string(), "1"),
+        ("status=cancelled".to_string(), "0"),
+        ("status=transferred".to_string(), "0"),
+        (format!("buyer={WALLET_B}"), "0"),
+    ] {
+        let (status, body) = call(format!(
+            "/v1/orders?contractAddress={contract}&network=MATIC&{suffix}"
+        ))
+        .await;
+        assert_eq!(
+            (status, body["total"].as_str()),
+            (StatusCode::OK, Some(count)),
+            "{suffix}: {body}"
+        );
+    }
+    let (status, body) = call(format!(
+        "/v1/orders?contractAddress={contract}&network=MATIC&status=open"
+    ))
+    .await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("trade-events-index")),
+        "{body}"
+    );
+    own.drop().await;
+}
+
+/// Scope follows the live trade while the rewind removes its backing NFT.
+#[tokio::test]
+async fn a_trade_keeps_its_network_in_scope_after_its_nft_row_is_rewound() {
+    use super::chain_walk::ChainNet;
+    let url = serve_graph(FakeGraph::new()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &own.pool;
+    let contract = contract_of(&tag(), 1);
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at)
+         VALUES ('matic', $1, 137, 'Orders', $2, $2, $1, true, true, false, 1, 1, 1, timezone('UTC', now()))",
+    )
+    .bind(&contract)
+    .bind(CREATOR)
+    .execute(pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+         VALUES ('ethereum', $1, 1, $2, 1, 1, 1, 0, 1)",
+    )
+    .bind(&contract)
+    .bind(WALLET_A)
+    .execute(pool).await.unwrap();
+    super::owned_items::test_support::publish(pool, &ChainNet::ALL, false, Duration::ZERO).await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    let (listing, _) = insert_trade_on(
+        pool,
+        "ETHEREUM",
+        1,
+        "public_nft_order",
+        WALLET_A,
+        Asset {
+            asset_type: 3,
+            contract: contract.clone(),
+            value: "1".into(),
+        },
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "1000".into(),
+        },
+    )
+    .await;
+    sqlx::query("UPDATE shop.trades SET mirrored_from = 'https://trades.example', mirrored_at = timezone('UTC', now()) WHERE id=$1::uuid")
+        .bind(&listing).execute(pool).await.unwrap();
+    let read = || async {
+        get(
+            market_router(state.clone()),
+            &format!("/v1/orders?contractAddress={contract}&status=open"),
+        )
+        .await
+    };
+    let (status, body) = read().await;
+    assert_eq!(
+        (status, body["data"][0]["id"].as_str()),
+        (StatusCode::OK, Some(listing.as_str())),
+        "{body}"
+    );
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("DELETE FROM shop.nft WHERE network='ethereum'")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=NULL, folded_at=NULL WHERE indexer='nft' AND network='ethereum'")
+        .execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let (status, body) = read().await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    super::owned_items::test_support::publish(pool, &[ChainNet::Ethereum], false, Duration::ZERO)
+        .await;
+    let (status, body) = read().await;
+    assert_eq!(
+        (status, body["total"].as_str()),
+        (StatusCode::OK, Some("0")),
+        "{body}"
+    );
+    own.drop().await;
+}
+
+/// Awaiting the graph leaves the pool free even when it has only one connection.
+#[tokio::test]
+async fn graph_orders_release_the_backed_listing_snapshot_before_the_graph_call() {
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph.clone()).await;
+    let Some(db) = super::tests::support::OwnDb::create("order_graph_snapshot").await else {
+        return;
+    };
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(db.pool.connect_options().as_ref().clone())
+        .await
+        .unwrap();
+    let state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings(&url, &url, true),
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    super::trade_events::tests::publish_cursors(&pool).await;
+    graph.pause.store(true, Ordering::SeqCst);
+    let route = tokio::spawn(get(
+        market_router(state.clone()),
+        "/v1/orders?network=MATIC",
+    ));
+    tokio::time::timeout(Duration::from_secs(3), graph.arrived.notified())
+        .await
+        .unwrap();
+    let available = tokio::time::timeout(Duration::from_secs(3), pool.acquire()).await;
+    graph.release.notify_one();
+    drop(available.unwrap().unwrap());
+    assert_eq!(route.await.unwrap().0, StatusCode::OK);
+    sqlx::query("DELETE FROM shop.chain_cursor WHERE indexer = 'trade_events'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = get(
+        market_router(state),
+        "/v1/orders?network=MATIC&status=cancelled",
+    )
+    .await;
+    assert_eq!(
+        (status, body["total"].as_str()),
+        (StatusCode::OK, Some("0")),
+        "{body}"
+    );
+    pool.close().await;
+    db.drop().await;
+}
+
+async fn publish_trades_mirror_for_timeout_test(state: &mut SharedState, pool: &PgPool) {
+    let upstream = "https://example.invalid/v1/trades";
+    Arc::get_mut(state)
+        .unwrap()
+        .settings
+        .trades_sync_upstream_url = Some(upstream.into());
+    sqlx::query(
+        "INSERT INTO shop.trades_mirror (id, upstream_url, completed_at)
+         VALUES (1, $1, timezone('UTC', now()))",
+    )
+    .bind(upstream)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Hold the marker long enough for PostgreSQL to cancel the route's read.
+async fn assert_trades_readiness_timeout(
+    pool: &PgPool,
+    app: Router,
+    uri: &str,
+    lock_sql: &'static str,
+) {
+    let (status, body) = get(app.clone(), uri).await;
+    assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query(lock_sql).execute(&mut *lock).await.unwrap();
+    let response = tokio::time::timeout(
+        super::nft_reads::READ_STATEMENT_TIMEOUT + Duration::from_secs(5),
+        get(app.clone(), uri),
+    )
+    .await;
+    lock.rollback().await.unwrap();
+
+    let (status, body) = response.expect("PostgreSQL cancelled the blocked marker read");
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {body}");
+    let message = format!(
+        "the read ran past its {} s statement bound: narrow the filters or the page window",
+        super::nft_reads::READ_STATEMENT_TIMEOUT.as_secs()
+    );
+    assert_eq!(
+        body["message"].as_str(),
+        Some(message.as_str()),
+        "{uri}: {body}"
+    );
+
+    let (status, body) = get(app, uri).await;
+    assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+}
+
+#[tokio::test]
+async fn the_order_book_preserves_a_trades_mirror_timeout() {
+    let url = serve_empty_graph().await;
+    let Some((mut state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &own.pool;
+    publish_trades_mirror_for_timeout_test(&mut state, pool).await;
+    super::owned_items::test_support::publish(
+        pool,
+        &[super::chain_walk::ChainNet::Matic],
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    assert_trades_readiness_timeout(
+        pool,
+        market_router(state),
+        "/v1/orders?network=MATIC&status=open",
+        "LOCK TABLE shop.trades_mirror IN ACCESS EXCLUSIVE MODE",
+    )
+    .await;
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn the_graph_order_path_preserves_a_trade_events_marker_timeout() {
+    let Some(own) = super::tests::support::OwnDb::create("order_marker_timeout").await else {
+        return;
+    };
+    let url = serve_empty_graph().await;
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings(&url, &url, true),
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    assert!(!super::owned_items::walks_here(&state));
+    super::trade_events::tests::publish_cursors(&own.pool).await;
+    let app = market_router(state);
+    assert_trades_readiness_timeout(
+        &own.pool,
+        app.clone(),
+        "/v1/orders?network=MATIC&status=open",
+        "LOCK TABLE shop.chain_cursor IN ACCESS EXCLUSIVE MODE",
+    )
+    .await;
+    sqlx::query("ALTER TABLE shop.chain_cursor RENAME TO unavailable_chain_cursor")
+        .execute(&own.pool)
+        .await
+        .unwrap();
+    for uri in [
+        "/v1/orders?network=MATIC&status=open",
+        "/v1/bids?network=MATIC",
+    ] {
+        let (status, body) = get(app.clone(), uri).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {body}");
+        assert_eq!(body["source"], "trade-events-index", "{uri}: {body}");
+    }
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn open_orders_batch_preserves_each_contracts_cheapest_window() {
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph.clone()).await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &own.pool;
+    let fixture = tag();
+    let matic = contract_of(&fixture, 1);
+    let ethereum = contract_of(&fixture, 2);
+    let token = |item: u64, issued: u64| {
+        ((alloy_primitives::U256::from(item) << 216u32) + alloy_primitives::U256::from(issued))
+            .to_string()
+    };
+    for (network, chain, contract) in [("matic", 137, &matic), ("ethereum", 1, &ethereum)] {
+        sqlx::query(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner,
+                urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at)
+             VALUES ($1, $2, $3, 'Orders', $4, $4, $2, true, true, false, 1, 1, 1, timezone('UTC', now()))",
+        )
+        .bind(network).bind(contract).bind(chain).bind(CREATOR).execute(pool).await.unwrap();
+    }
+    for (network, contract, item, issued, id, price) in [
+        ("matic", &matic, 2, 1, "unrequested", "1"),
+        ("matic", &matic, 3, 2, "legacy", "2"),
+        ("matic", &matic, 3, 3, "v3-token", "20"),
+        ("ethereum", &ethereum, 3, 1, "eth-cheap", "1"),
+        (
+            "ethereum",
+            &ethereum,
+            3,
+            2,
+            "eth-wide",
+            "340282366920938463463374607431768211456",
+        ),
+    ] {
+        let token_id = token(item, issued);
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at,
+                                    transferred_block, transferred_log, transferred_at)
+             VALUES ($1, $2, $3::numeric, $4, 1, 1, 1, 0, 1)",
+        )
+        .bind(network).bind(contract).bind(&token_id).bind(WALLET_A).execute(pool).await.unwrap();
+        if id == "v3-token" {
+            continue;
+        }
+        sqlx::query(
+            "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address,
+                token_id, seller, price, expires_at, status, created_block, created_log, created_at,
+                updated_block, updated_log, updated_at)
+             VALUES ($1, '0xmarket', $2, $3, $4::numeric, $5, $6::numeric, 4102444800000, 'open', 1, 0, 1, 1, 0, 1)",
+        )
+        .bind(network).bind(id).bind(contract).bind(token_id).bind(WALLET_A).bind(price)
+        .execute(pool).await.unwrap();
+    }
+    let (trade, _) = insert_trade(
+        pool,
+        "public_nft_order",
+        WALLET_A,
+        Asset {
+            asset_type: 3,
+            contract: matic.clone(),
+            value: token(3, 3),
+        },
+        Asset {
+            asset_type: 1,
+            contract: CREATOR.into(),
+            value: "2".into(),
+        },
+    )
+    .await;
+    super::owned_items::test_support::publish(
+        pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    republish_nft(pool).await;
+
+    let app = market_router(state.clone());
+    for (cap, expected) in [
+        (2, vec![trade.as_str(), "eth-cheap", "eth-wide"]),
+        (3, vec![trade.as_str(), "eth-cheap", "eth-wide", "legacy"]),
+    ] {
+        let (status, body) = get(app.clone(), &format!(
+            "/v1/orders/open-by-items?item={matic}-3&item={matic}-3&item={ethereum}-3&perContract={cap}"
+        )).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let mut ids: Vec<&str> = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|order| order["id"].as_str().unwrap())
+            .collect();
+        ids.sort_unstable();
+        let mut expected = expected;
+        expected.sort_unstable();
+        assert_eq!(ids, expected, "{body}");
+    }
+    let (status, body) = get(
+        app,
+        &format!("/v1/orders/open-by-items?item={matic}-2&item={matic}-3&perContract=2"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], "2");
+    assert_eq!(body["data"][0]["id"], "unrequested");
+    assert_eq!(body["data"][1]["id"], trade);
+
+    // The full decimal price matters both at the cutoff and when both legs fit.
+    sqlx::query(
+        "UPDATE shop.trade_assets_erc20 SET amount = 340282366920938463463374607431768211456
+         WHERE asset_id IN (SELECT id FROM shop.trade_assets WHERE trade_id=$1::uuid)",
+    )
+    .bind(&trade)
+    .execute(pool)
+    .await
+    .unwrap();
+    let app = market_router(state.clone());
+    for (cap, expected) in [
+        (1, vec!["unrequested"]),
+        (3, vec!["unrequested", "legacy", trade.as_str()]),
+    ] {
+        let (status, body) = get(
+            app.clone(),
+            &format!("/v1/orders/open-by-items?item={matic}-2&item={matic}-3&perContract={cap}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let ids: Vec<&str> = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|order| order["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, expected, "{body}");
+    }
+    // The graph-backed path merges the same local v3 candidate with the
+    // legacy page from the configured subgraph.
+    graph.set(
+        "orders",
+        vec![json!({
+            "id": "graph-legacy", "marketplaceAddress": "0xmarket", "nftAddress": matic,
+            "tokenId": token(3, 2), "owner": WALLET_A, "price": "1", "status": "open",
+            "expiresAt": "4102444800000", "createdAt": "1700000000", "updatedAt": "1700000000",
+        })],
+    );
+    let graph_settings = market_settings(&url, &serve_empty_graph().await, true);
+    let graph_state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        graph_settings,
+    ));
+    graph_state
+        .test_allow_loopback
+        .store(true, Ordering::Relaxed);
+    assert!(!super::owned_items::walks_here(&graph_state));
+    let (status, body) = get(
+        market_router(graph_state),
+        &format!("/v1/orders/open-by-items?item={matic}-3&perContract=2"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], "2", "{body}");
+    assert_eq!(body["data"][0]["id"], "graph-legacy", "{body}");
+    assert_eq!(body["data"][1]["id"], trade, "{body}");
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn open_orders_batch_keeps_the_newest_v3_cap_per_contract() {
+    let url = serve_empty_graph().await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &own.pool;
+    let fixture = tag();
+    let primary = contract_of(&fixture, 1);
+    let secondary = contract_of(&fixture, 2);
+    let contracts = [primary.clone(), secondary.clone()];
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner,
+            urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at)
+         SELECT 'matic', c, 137, 'Orders', $2, $2, c, true, true, false, 1, 1, 1, timezone('UTC', now())
+         FROM unnest($1::text[]) c",
+    )
+    .bind(contracts.as_slice()).bind(CREATOR).execute(pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at,
+            transferred_block, transferred_log, transferred_at)
+         SELECT 'matic', c, 1, $2, 1, 1, 1, 0, 1 FROM unnest($1::text[]) c",
+    )
+    .bind(contracts.as_slice())
+    .bind(WALLET_A)
+    .execute(pool)
+    .await
+    .unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query(
+        "CREATE TEMP TABLE newest_cap_fixture ON COMMIT DROP AS
+         SELECT g, gen_random_uuid() AS trade, gen_random_uuid() AS sent, gen_random_uuid() AS received,
+            CASE WHEN g = 1001 THEN $2::text ELSE $1::text END AS contract, $3::text AS owner
+         FROM generate_series(0, 1001) g",
+    )
+    .bind(&primary).bind(&secondary).bind(WALLET_A).execute(&mut *tx).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO shop.trades (id, network, chain_id, signature, hashed_signature, checks, signer,
+                                   type, expires_at, effective_since, contract, created_at)
+         SELECT trade, 'MATIC', 137, trade::text, trade::text, '{\"uses\":1}', owner, 'public_nft_order',
+                timezone('UTC', now()) + interval '1 day', timezone('UTC', now()) - interval '1 day',
+                '0xe38ef22abe871513555cba89adfe45ab4f548ada',
+                timezone('UTC', now()) - CASE g WHEN 0 THEN interval '2 minutes'
+                                                WHEN 1001 THEN interval '1 minute' ELSE interval '1 second' END
+         FROM newest_cap_fixture;
+         INSERT INTO shop.trade_assets (id, trade_id, direction, asset_type, contract_address, beneficiary)
+         SELECT sent, trade, 'sent'::shop.asset_direction_type, 3, contract, owner FROM newest_cap_fixture
+         UNION ALL
+         SELECT received, trade, 'received'::shop.asset_direction_type, 1, '0x2222222222222222222222222222222222222222', owner
+         FROM newest_cap_fixture;
+         INSERT INTO shop.trade_assets_erc721 (asset_id, token_id) SELECT sent, '1' FROM newest_cap_fixture;
+         INSERT INTO shop.trade_assets_erc20 (asset_id, amount)
+         SELECT received, CASE g WHEN 0 THEN 1 WHEN 1001 THEN 2 ELSE 10 END FROM newest_cap_fixture;
+         INSERT INTO shop.trade_chain_state (trade_id, network, status, folded_block, digest)
+         SELECT trade, 'matic', 'open', 0, trade::text FROM newest_cap_fixture;",
+    )
+    .execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+    super::owned_items::test_support::publish(
+        pool,
+        &[super::chain_walk::ChainNet::Matic],
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    republish_nft(pool).await;
+
+    let (status, body) = get(
+        market_router(state),
+        &format!("/v1/orders/open-by-items?item={primary}-0&item={secondary}-0&perContract=1"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], "2");
+    let prices: BTreeMap<_, _> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|order| {
+            (
+                order["contractAddress"].as_str().unwrap(),
+                order["price"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        prices[primary.as_str()],
+        "10",
+        "the older cheap order was outside the newest 1,000"
+    );
+    assert_eq!(
+        prices[secondary.as_str()],
+        "2",
+        "the other contract keeps its own window"
+    );
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn order_publication_counters_name_the_route_of_each_check() {
+    let url = serve_empty_graph().await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &own.pool;
+    let contract = contract_of(&tag(), 1);
+    sqlx::query(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner,
+             urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at)
+         VALUES ('matic', $1, 137, 'Orders', $2, $2, $1, true, true, false, 1, 1, 1, timezone('UTC', now()))",
+    ).bind(&contract).bind(CREATOR).execute(pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id,
+            seller, buyer, price, expires_at, status, created_block, created_log, created_at,
+            updated_block, updated_log, updated_at)
+         SELECT 'matic', '0xmarket', g::text, $1, g, $2, $3, 1, 4102444800000, 'sold', 1, 0, g, 1, 0, g
+         FROM generate_series(1, 101) g",
+    ).bind(&contract).bind(WALLET_A).bind(WALLET_B).execute(pool).await.unwrap();
+    super::owned_items::test_support::publish(
+        pool,
+        &super::chain_walk::ChainNet::ALL,
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    republish_nft(pool).await;
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry,
+            last_block, folded_block, folded_at, full_replay_started)
+         VALUES ('ethereum-mainnet', $1, $2, 1, 1, timezone('UTC', now()), true)",
+    )
+    .bind(crate::land_authz::LAND_REGISTRY_MAINNET)
+    .bind(crate::land_authz::ESTATE_REGISTRY_MAINNET)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    let recorder = crate::comms::metrics::prometheus_builder()
+        .unwrap()
+        .build_recorder();
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+    let app = market_router(state.clone());
+    let uri = "/v1/orders?network=MATIC&status=sold";
+    assert_eq!(get(app.clone(), uri).await.0, StatusCode::OK);
+    sqlx::query(
+        "UPDATE shop.legacy_order SET updated_at=200 WHERE network='matic' AND order_id='1'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        get(app.clone(), uri).await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    republish_nft(pool).await;
+    assert_eq!(
+        get(app, &format!("/v1/orders/open-by-items?item={contract}-0"))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let (_, _, unavailable) = super::activity::user_activity(&state, WALLET_A, None, None).await;
+    assert!(!unavailable.contains("orders"), "{unavailable:?}");
+
+    let rendered = recorder.handle().render();
+    let check = |metric: &str, route: &str, count: &str| {
+        let network = "network=\"matic\"";
+        let route = format!("route=\"{route}\"");
+        assert!(
+            rendered.lines().any(|line| line.starts_with(metric)
+                && line.contains(network)
+                && line.contains(&route)
+                && line.ends_with(count)),
+            "{metric} {route}: {rendered}"
+        );
+    };
+    check(
+        "catalyst_shop_order_book_fold_read_checks_total",
+        "orders",
+        " 2",
+    );
+    check(
+        "catalyst_shop_order_book_unpublished_fold_reads_total",
+        "orders",
+        " 1",
+    );
+    check(
+        "catalyst_shop_order_book_fold_read_checks_total",
+        "open_by_items",
+        " 1",
+    );
+    // Two seller pages and the empty buyer page each check this network.
+    check(
+        "catalyst_shop_order_book_fold_read_checks_total",
+        "activity",
+        " 3",
+    );
+    own.drop().await;
+}
+
+/// A book read pins the trades readiness and the backed listings leg
+/// together. Quarantine is visible to the next read.
+#[tokio::test]
+async fn the_book_and_backed_listings_share_their_read_snapshot() {
+    use super::chain_walk::ChainNet;
+    let url = serve_empty_graph().await;
+    let Some((state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = own.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let contract = contract_of(&tag(), 1);
+    let (listing, _) = insert_trade(
+        &pool,
+        "public_nft_order",
+        WALLET_A,
+        Asset {
+            asset_type: 3,
+            contract: contract.clone(),
+            value: "1".into(),
+        },
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "1000".into(),
+        },
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+         VALUES ('matic', $1, 1, $2, 1, 1, 1, 0, 1)",
+    )
+    .bind(&contract)
+    .bind(WALLET_A)
+    .execute(&pool)
+    .await
+    .unwrap();
+    super::owned_items::test_support::publish(&pool, &[ChainNet::Matic], false, Duration::ZERO)
+        .await;
+    let mut read = match super::orders::book_snapshot(
+        &state,
+        Some(super::wire::Network::Matic),
+        &[],
+        false,
+        true,
+        super::orders::BookRoute::Orders,
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(r) => panic!("the trades mirror is ready: {}", r.status()),
+    };
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' \
+         WHERE indexer = 'trade_events' AND network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let rows = super::orders::read_trades(
+        &mut read.tx,
+        &state,
+        &super::orders::OrderFilters::default(),
+        read.now,
+    )
+    .await
+    .unwrap();
+    read.tx.rollback().await.unwrap();
+    assert_eq!(
+        rows.into_iter().map(|k| k.order.id).collect::<Vec<_>>(),
+        vec![listing],
+        "the rows are the checked snapshot's"
+    );
+    let (status, body) = get(market_router(state.clone()), "/v1/orders?network=MATIC").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("trade-events-index")),
+        "{body}"
+    );
+    own.drop().await;
+}
+
+/// On the Sepolia/Amoy pair a walking node reads its orders from the book,
+/// never 1/137 by default and never from the subgraph: before publication
+/// `/v1/orders`, open-by-items and the activity orders leg name the nft
+/// index; after it they serve only the collections the nft index walks there
+/// (of that chain and verified on it), in the page and the total, with the
+/// served chains as `chainId`; and no request reaches the order graph. A
+/// publication bound to the mainnets does not serve it.
+#[tokio::test]
+async fn the_order_book_reads_the_served_testnet_pair() {
+    use super::chain_walk::ChainNet;
+    let Some(own) = super::tests::support::OwnDb::create("testnet_orders").await else {
+        return;
+    };
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let mut settings = super::owned_items::test_support::walking(market_settings(&url, &url, true));
+    settings.eth_network = "sepolia".into();
+    settings.market.indexes.chain_id_ethereum = ChainNet::Ethereum.testnet_chain_id();
+    settings.market.indexes.chain_id_matic = ChainNet::Matic.testnet_chain_id();
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    assert!(
+        super::owned_items::walks_here(&state),
+        "a Sepolia/Amoy walker reads the book"
+    );
+    let pool = own.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let app = || market_router(state.clone());
+    let t = tag();
+    let (verified, unverified, retained) =
+        (contract_of(&t, 1), contract_of(&t, 2), contract_of(&t, 3));
+    // Not published: each route names the nft index.
+    for uri in [
+        "/v1/orders?status=sold".to_string(),
+        format!("/v1/orders/open-by-items?item={verified}-3"),
+    ] {
+        let (status, body) = get(app(), &uri).await;
+        assert_eq!(
+            (status, body["source"].as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+            "{uri}: {body}"
+        );
+    }
+    // The signed activity read: its status and the sources it names.
+    let me = crate::shared::signed_fetch::test_support::address();
+    let activity = || {
+        let (state, me) = (state.clone(), me.clone());
+        async move {
+            let headers = signed_headers(
+                "get",
+                "/v1/activity",
+                r#"{"signer":"dcl:marketplace"}"#,
+                true,
+            )
+            .await;
+            let mut req = Request::builder().uri(format!("/v1/activity?address={me}"));
+            for (k, v) in headers.iter() {
+                req = req.header(k, v);
+            }
+            let resp = market_router(state)
+                .oneshot(req.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let named = resp
+                .headers()
+                .get(super::activity::UNAVAILABLE_SOURCES_HEADER)
+                .map(|v| v.to_str().unwrap().to_string());
+            (resp.status(), named)
+        }
+    };
+    let (status, named) = activity().await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        named.as_deref().is_some_and(|v| v.contains("nft-index")),
+        "{named:?}"
+    );
+    let publish = |testnet: bool| {
+        let pool = pool.clone();
+        async move {
+            for net in ChainNet::ALL {
+                let chain = if testnet {
+                    net.testnet_chain_id()
+                } else {
+                    net.chain_id()
+                };
+                sqlx::query(
+                    "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id) \
+                     VALUES ('nft', $1, 1, 100, '0x' || repeat('0', 64), 100, 100, timezone('UTC', now()), true, $2) \
+                     ON CONFLICT (indexer, network) DO UPDATE SET chain_id = EXCLUDED.chain_id",
+                )
+                .bind(net.db_name())
+                .bind(chain)
+                .execute(&pool)
+                .await
+                .unwrap();
+                sqlx::query(
+                    "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) VALUES ('nft', $1, 100, '0x' || repeat('0', 64), 0) ON CONFLICT DO NOTHING",
+                )
+                .bind(net.db_name())
+                .execute(&pool)
+                .await
+                .unwrap();
+                sqlx::query(
+                    "INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash) VALUES ($1, 100, '0x' || repeat('0', 64)) ON CONFLICT DO NOTHING",
+                )
+                .bind(net.db_name())
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        }
+    };
+    publish(true).await;
+    // A retained mainnet row stays out even when marked verified.
+    for (contract, chain, checked) in [
+        (&verified, 80_002, true),
+        (&unverified, 80_002, false),
+        (&retained, 137, true),
+    ] {
+        sqlx::query(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at, testnet_verified) \
+             SELECT 'matic', $1, $2, 'Pirates', $3, $3, 'urn:decentraland:amoy:collections-v2:' || $1, true, true, false, 1, 1, 1, timezone('UTC', now()), $4",
+        )
+        .bind(contract)
+        .bind(chain)
+        .bind(CREATOR)
+        .bind(checked)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let sepolia_land = super::nft_index::deployments::Deployments::for_chain(
+        ChainNet::Ethereum,
+        ChainNet::Ethereum.testnet_chain_id(),
+    )
+    .and_then(|d| d.land)
+    .unwrap()
+    .land_registry
+    .to_lowercase();
+    let token = (alloy_primitives::U256::from(3u64) << 216u32 | alloy_primitives::U256::from(1u64))
+        .to_string();
+    for (network, id, contract, token) in [
+        ("matic", "verified", &verified, token.as_str()),
+        ("matic", "unverified", &unverified, token.as_str()),
+        ("matic", "retained", &retained, token.as_str()),
+        ("ethereum", "parcel", &sepolia_land, "77"),
+    ] {
+        sqlx::query(
+            "INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, buyer, price, expires_at, status, \
+                 created_block, created_log, created_at, updated_block, updated_log, updated_at) \
+             VALUES ($1, '0xmarket', $2, $3, $4::numeric, $5, $6, 10, 0, 'sold', 1, 0, 1, 1, 0, 1)",
+        )
+        .bind(network)
+        .bind(id)
+        .bind(contract)
+        .bind(token)
+        .bind(WALLET_A)
+        .bind(WALLET_B)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    republish_nft(&pool).await;
+    let read = |uri: String| {
+        let router = app();
+        async move {
+            let (status, body) = get(router, &uri).await;
+            assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+            let mut page: Vec<(String, i64)> = body["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|o| {
+                    (
+                        o["id"].as_str().unwrap().to_string(),
+                        o["chainId"].as_i64().unwrap(),
+                    )
+                })
+                .collect();
+            page.sort();
+            (page, body["total"].as_str().map(str::to_string))
+        }
+    };
+    assert_eq!(
+        read("/v1/orders?status=sold".into()).await,
+        (
+            vec![
+                ("parcel".to_string(), 11_155_111),
+                ("verified".to_string(), 80_002),
+            ],
+            Some("2".to_string())
+        ),
+        "the walked catalogue and the served registries, on the served chains"
+    );
+    for (contract, expected) in [(&verified, 1), (&unverified, 0), (&retained, 0)] {
+        let (page, total) = read(format!("/v1/orders?status=sold&itemId={contract}-3")).await;
+        assert_eq!(
+            (page.len(), total),
+            (expected, Some(expected.to_string())),
+            "{contract}"
+        );
+    }
+    let (status, body) = get(
+        app(),
+        &format!("/v1/orders/open-by-items?item={verified}-3"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (uncatalogued, _) = insert_trade_on(
+        &pool,
+        "ETHEREUM",
+        11_155_111,
+        "public_nft_order",
+        WALLET_A,
+        Asset {
+            asset_type: 3,
+            contract: verified.clone(),
+            value: token.clone(),
+        },
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "1000".into(),
+        },
+    )
+    .await;
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=NULL, folded_at=NULL WHERE indexer='nft' AND network='ethereum'")
+        .execute(&pool).await.unwrap();
+    for uri in [
+        format!("/v1/orders?status=open&contractAddress={verified}"),
+        format!("/v1/orders/open-by-items?item={verified}-3"),
+    ] {
+        let (status, body) = get(app(), &uri).await;
+        assert_eq!(
+            (status, body["total"].as_str()),
+            (StatusCode::OK, Some("0")),
+            "{uri}: {body}"
+        );
+    }
+    delete_trade(&pool, &uncatalogued).await;
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block=100, folded_at=timezone('UTC',now()) WHERE indexer='nft' AND network='ethereum'")
+        .execute(&pool).await.unwrap();
+    // An Ethereum item filter reads the v1 wearable's item, which must be
+    // of the served chain and verified there too, as the collection is.
+    let v1 = contract_of(&t, 4);
+    let urn = "urn:decentraland:sepolia:collections-v1:halloween";
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at, testnet_verified)
+         VALUES ('ethereum', '{v1}', 11155111, 'Halloween', '{CREATOR}', '{CREATOR}', '{urn}', true, true, false, 1, 1, 1, timezone('UTC', now()), true);
+         INSERT INTO shop.nft (network, contract_address, token_id, owner, wearable_id, minted_block, minted_at, transferred_block, transferred_log, transferred_at)
+         VALUES ('ethereum', '{v1}', 9, '{WALLET_A}', 'hat', 1, 1, 1, 0, 1);
+         INSERT INTO shop.legacy_order (network, marketplace_address, order_id, contract_address, token_id, seller, buyer, price, expires_at, status,
+             created_block, created_log, created_at, updated_block, updated_log, updated_at)
+         VALUES ('ethereum', '0xmarket', 'hat', '{v1}', 9, '{WALLET_A}', '{WALLET_B}', 10, 0, 'sold', 1, 0, 1, 1, 0, 1)"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    republish_nft(&pool).await;
+    for (chain, checked, expected) in [(11_155_111, false, 0), (1, true, 0), (11_155_111, true, 1)]
+    {
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, \
+                 price, name, category, created_at, updated_at, reviewed_at, mirrored_at, testnet_verified) \
+             VALUES ('ethereum', $1, 5, $2, 'wearable_v1', $3 || ':hat', $4, 'common', 1, 1, 0, 0, 'Hat', 'hat', 1, 1, 1, timezone('UTC', now()), $5) \
+             ON CONFLICT (network, contract_address, item_id) DO UPDATE SET chain_id = EXCLUDED.chain_id, testnet_verified = EXCLUDED.testnet_verified",
+        )
+        .bind(&v1)
+        .bind(chain)
+        .bind(urn)
+        .bind(CREATOR)
+        .bind(checked)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (page, total) = read(format!("/v1/orders?status=sold&itemId={v1}-5")).await;
+        assert_eq!(
+            (page.len(), total),
+            (expected, Some(expected.to_string())),
+            "an item of chain {chain}, verified {checked}"
+        );
+    }
+    let (status, named) = activity().await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        named.as_deref().is_none_or(|v| !v.contains("nft-index")),
+        "the activity orders leg answers from the book: {named:?}"
+    );
+    assert!(
+        !up.requests.lock().unwrap().iter().any(|e| e == "orders"),
+        "no order read asks the subgraph: {:?}",
+        up.requests.lock().unwrap()
+    );
+    // A v3 listing carries its trade's chain, which the leg keeps to the
+    // served one, never the network's default.
+    let listing = sqlx::query(
+        "SELECT 'listing' AS id, NULL::text AS marketplace_address, '0xc' AS nft_address, '5' AS token_id, '10' AS price, \
+                '0xo' AS owner, NULL::text AS payee, 0::bigint AS created_at, 0::bigint AS expires_at, 'MATIC' AS network, \
+                80002::bigint AS chain_id, '5' AS issued_id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        super::orders::trade_row_order(&listing).chain_id,
+        super::wire::ChainId::MaticAmoy
+    );
+    // Publications bound to the mainnets do not serve this node.
+    publish(false).await;
+    let (status, body) = get(app(), "/v1/orders?status=sold").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
     );
     own.drop().await;
 }
@@ -5422,48 +7835,32 @@ async fn owned_polygon_market(up: &Arc<FakeGraph>) -> Option<(PgPool, SharedStat
     Some((pool, state, polygon))
 }
 
-/// The routes that call the sales reader or the signer check decide the gate
-/// and their page memo first, on a short read: with the subgraph stalled and
-/// the sales memo lapsed, a warm page answers from its memo and an unready
-/// publication answers the index's 503, well inside a short request deadline.
+/// A warm sales memo can supply ranking inputs even when the graph stalls.
+/// An unpublished catalogue refuses before asking the stalled sales reader.
 #[tokio::test]
-async fn a_stalled_sales_read_never_masks_the_gate_or_a_warm_page() {
+async fn a_stalled_sales_read_never_masks_the_gate() {
     use super::readers::Ttl;
     let up = FakeGraph::new();
     let Some((pool, state, _)) = owned_polygon_market(&up).await else {
         return;
     };
-    let app = || market_router(state.clone());
     let within = |uri: &'static str| {
-        let app = app();
+        let app = market_router(state.clone());
         async move {
             tokio::time::timeout(Duration::from_secs(3), get(app, uri))
                 .await
                 .unwrap_or_else(|_| panic!("{uri} waited on the stalled subgraph"))
         }
     };
-    let warm = ["/v3/catalog/creators", "/v3/catalog/trending?first=3"];
-    let mut pages = Vec::new();
-    for uri in warm {
-        let (status, body) = get(app(), uri).await;
-        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
-        pages.push(body);
-    }
-    assert_eq!(
-        pages[1]["data"].as_array().map(Vec::len),
-        Some(1),
-        "{}",
-        pages[1]
-    );
-
+    let trend = "/v3/catalog/trending?first=3";
+    let (status, page) = within(trend).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["data"].as_array().map(Vec::len), Some(1), "{page}");
     up.hang.store(true, Ordering::SeqCst);
+    let (status, body) = within(trend).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"], page["data"]);
     state.readers.forget_all(Ttl::M10);
-    for (uri, page) in warm.into_iter().zip(&pages) {
-        let (status, body) = within(uri).await;
-        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
-        assert_eq!(body["data"], page["data"], "{uri} answers its warm page");
-    }
-
     sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = 'collections'")
         .execute(&pool)
         .await
@@ -5489,7 +7886,7 @@ async fn a_stalled_sales_read_never_masks_the_gate_or_a_warm_page() {
 
 /// Requests that wait on another's memo fetch hold no connection. A lock on
 /// a table only the fetch reads (the creator directory's deployments, read by
-/// the creator search and the search suggest; the v2 page's trades) holds the
+/// the creator search and the search suggest) holds the
 /// leader; four identical cold requests wait on it, and another catalogue
 /// route still gets a connection on a pool of two. Once the lock goes, every
 /// waiter answers. A burst of eight identical cold `/v1/catalog` pages (whose
@@ -5521,7 +7918,6 @@ async fn memo_waiters_hold_no_connection() {
             "/v3/catalog/creators/search?search=cc",
         ),
         ("content.deployments", "/v3/catalog/suggest?search=item"),
-        ("shop.trades", "/v2/catalog?first=2"),
     ] {
         state.readers.clear();
         state.catalog_cache.invalidate();
@@ -6395,6 +8791,79 @@ async fn sepolia_owner_pages_require_the_matching_publications_and_keep_the_wire
     db.drop().await;
 }
 
+/// Cancelling an optional V3 statement leaves the parcel page's required
+/// rental read usable on the same snapshot.
+#[tokio::test]
+async fn a_parcel_list_keeps_rentals_when_optional_orders_time_out() {
+    use crate::land_authz::LAND_MAINNET;
+    use crate::rentals::index::RENTALS_MAINNET;
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph).await;
+    let Some((state, db)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &db.pool;
+    let land = LAND_MAINNET.land_registry;
+    for token in ["1", "2"] {
+        crate::test_db::publish_land_owner(pool, land, token, WALLET_A).await;
+    }
+    sqlx::query("UPDATE land_authz.token_right SET x=0,y=token_id::int WHERE token_address=$1")
+        .bind(land)
+        .execute(pool)
+        .await
+        .unwrap();
+    super::owned_items::test_support::publish(
+        pool,
+        &[super::chain_walk::ChainNet::Ethereum],
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    sqlx::query(
+        "INSERT INTO shop.nft_order(network,contract_address,token_id,order_id,marketplace_address,status,seller,price,expires_at,created_at,updated_at,updated_block,updated_log)
+         VALUES('ethereum',$1,1,'legacy-1',$2,'open',$3,25,4102444800000,1,2,13,0)",
+    )
+    .bind(land).bind(CREATOR).bind(WALLET_A).execute(pool).await.unwrap();
+    let rental = crate::rentals::index::tests::seed_listing(
+        pool,
+        land,
+        "2",
+        ["0"; 3],
+        "0x42",
+        WALLET_A,
+        RENTALS_MAINNET,
+    )
+    .await
+    .to_string();
+
+    let app = market_router(state);
+    let uri = "/v1/nfts?category=parcel&first=2";
+    let check = |status, body: &Value| {
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let rows = body["data"].as_array().unwrap();
+        assert_eq!(rows.len(), 2, "{body}");
+        assert!(
+            rows.iter().any(|r| r["order"]["id"] == "legacy-1"),
+            "{body}"
+        );
+        assert!(rows.iter().any(|r| r["rental"]["id"] == rental), "{body}");
+    };
+    let (status, before) = get(app.clone(), uri).await;
+    check(status, &before);
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE shop.trades IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let started = std::time::Instant::now();
+    let (status, after) = get(app, uri).await;
+    lock.rollback().await.unwrap();
+    assert!(started.elapsed() >= super::nft_reads::READ_STATEMENT_TIMEOUT);
+    check(status, &after);
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
     use crate::land_authz::LAND_MAINNET;
@@ -6581,6 +9050,1542 @@ async fn owner_pages_include_only_current_unclaimed_land_before_pagination() {
     db.drop().await;
 }
 
+async fn publish_bid_collections(pool: &PgPool, chain: i64) {
+    sqlx::query(
+        "INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at, chain_id) \
+         VALUES ('collections', 'matic', 'test', timezone('UTC', now()), $1) \
+         ON CONFLICT (mirror, network) DO UPDATE SET last_complete_pass_at = EXCLUDED.last_complete_pass_at, \
+             chain_id = EXCLUDED.chain_id",
+    )
+    .bind(chain)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// A walking node with the sales index on, over its own database: Polygon's
+/// legacy bids come from `shop.nft_bid`.
+async fn state_with_the_bid_book(url: &str) -> Option<(SharedState, super::tests::support::OwnDb)> {
+    let own = super::tests::support::OwnDb::create("bid_book").await?;
+    publish_bid_collections(&own.pool, 137).await;
+    let eth_url = serve_empty_graph().await;
+    let settings = super::owned_items::test_support::walking(market_settings(url, &eth_url, true));
+    let market = MarketSettings {
+        indexes: super::chain_walk::IndexSettings {
+            sales_enabled: true,
+            ..settings.market.indexes.clone()
+        },
+        ..settings.market.clone()
+    };
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings.with_market(market),
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    Some((state, own))
+}
+
+#[tokio::test]
+async fn the_bid_book_preserves_trades_readiness_timeouts() {
+    let url = serve_empty_graph().await;
+    let Some((mut state, own)) = state_with_the_bid_book(&url).await else {
+        return;
+    };
+    let pool = &own.pool;
+    publish_trades_mirror_for_timeout_test(&mut state, pool).await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    super::owned_items::test_support::publish(
+        pool,
+        &[super::chain_walk::ChainNet::Matic],
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through,
+                                        folded_block, folded_at, full_history, chain_id)
+         VALUES ('sales', 'matic', 1, 100, 100, 100, timezone('UTC', now()), true, 137)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    assert!(super::bids::polygon_book_here(&state));
+    let app = market_router(state);
+    for lock in [
+        "LOCK TABLE shop.trades_mirror IN ACCESS EXCLUSIVE MODE",
+        "LOCK TABLE shop.chain_cursor IN ACCESS EXCLUSIVE MODE",
+    ] {
+        assert_trades_readiness_timeout(pool, app.clone(), "/v1/bids?network=MATIC", lock).await;
+    }
+    own.drop().await;
+}
+
+/// Polygon's legacy bids on a node that walks the nft and sales indexes come
+/// from `shop.nft_bid` with the subgraph's wire shape and statuses (a bid
+/// another acceptance dropped reads `cancelled`), behind the sales index's
+/// and the nft index's envelopes. A bid the fold left without a seller is
+/// served with the token's owner at the bid once the nft walk's log reaches
+/// its block and holds the contract's whole history; until then any read
+/// whose scope holds it fails closed, even with both cursors fresh and the
+/// sales one ahead, and a read whose filters leave it out answers. Bids on
+/// an asset outside the walked catalogue are out of every scope: they
+/// neither fail a read nor appear in a page or a total.
+#[tokio::test]
+async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some((state, own)) = state_with_the_bid_book(&url).await else {
+        return;
+    };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
+    assert!(super::bids::polygon_book_here(&state));
+    let pool = state.pool.clone();
+    let c = contract_of(&tag(), 5);
+    const CARL: &str = "0xdddddddddddddddddddddddddddddddddddddddd";
+    let catalogue = |contract: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+                 SELECT 'matic', $1, 137, 'Pirates', $2, $2, 'urn:decentraland:matic:collections-v2:' || $1, true, true, false, 1, 1, 1, timezone('UTC', now())",
+            )
+            .bind(contract)
+            .bind(CREATOR)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    catalogue(c.clone()).await;
+    // Bids on an ERC721 the catalogue does not hold, which the bid contract
+    // takes and the nft walk never reads: one the fold left without a
+    // seller, below the nft walk, and an acceptance with its seller.
+    let stray = contract_of(&tag(), 6);
+    for (bidder, seller, status, block) in [
+        (CARL, None, "open", 20i64),
+        (WALLET_B, Some(WALLET_A), "accepted", 21),
+    ] {
+        sqlx::query(
+            "INSERT INTO shop.nft_bid (network, contract_address, token_id, bidder, bid_id, seller, price, expires_at, status, \
+                 created_block, created_log_index, created_at, updated_block, updated_log_index, updated_at) \
+             VALUES ('matic', $1, 1, $2, '0x' || lpad(to_hex($5), 64, '0'), $3, 1000, $6, $4, $5, 0, $5, $5, 0, $5)",
+        )
+        .bind(&stray)
+        .bind(bidder)
+        .bind(seller)
+        .bind(status)
+        .bind(block)
+        .bind(chrono::Utc::now().timestamp() + 86_400)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let now_s = chrono::Utc::now().timestamp();
+    let bid = |token: i64,
+               bidder: &'static str,
+               seller: Option<&'static str>,
+               status: &'static str,
+               price: i64,
+               block: i64,
+               expires: i64| {
+        let (pool, c) = (pool.clone(), c.clone());
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.nft_bid (network, contract_address, token_id, bidder, bid_id, seller, price, expires_at, status, \
+                     created_block, created_log_index, created_at, updated_block, updated_log_index, updated_at) \
+                 VALUES ('matic', $1, $2, $3, '0x' || lpad(to_hex($2 * 100 + $6), 64, '0'), $4, $5, $7, $8, $6, 0, $6, $6 + 1, 0, $6 + 1)",
+            )
+            .bind(&c)
+            .bind(token)
+            .bind(bidder)
+            .bind(seller)
+            .bind(price)
+            .bind(block)
+            .bind(expires)
+            .bind(status)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    let later = now_s + 86_400;
+    bid(1, WALLET_B, Some(WALLET_A), "open", 100, 10, later).await;
+    bid(2, WALLET_B, Some(WALLET_A), "accepted", 200, 11, later).await;
+    bid(3, WALLET_B, Some(WALLET_A), "cancelled", 300, 12, later).await;
+    bid(4, WALLET_B, Some(WALLET_A), "invalidated", 400, 13, later).await;
+    bid(5, WALLET_B, Some(WALLET_A), "open", 500, 14, now_s - 10).await;
+    // The fold met these before the nft walk reached them.
+    bid(6, CARL, None, "open", 600, 50, later).await;
+    bid(7, CARL, None, "open", 700, 150, later).await;
+    for (token, block) in [(6, 40), (7, 140)] {
+        sqlx::query(
+            "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address) \
+             VALUES ('matic', $1, 0, $1, 'transfer', $2, $2, $3, '0x0000000000000000000000000000000000000000', $4)",
+        )
+        .bind(block)
+        .bind(&c)
+        .bind(token)
+        .bind(CREATOR)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let set_cursor = |indexer: &'static str, last: i64| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id) \
+                 VALUES ($1, 'matic', 1, $2, '0x' || repeat('0', 64), $2, $2, timezone('UTC', now()), true, 137) \
+                 ON CONFLICT (indexer, network) DO UPDATE SET last_block = $2, fold_through = $2, folded_block = $2, folded_at = EXCLUDED.folded_at, full_history = true, chain_id = 137",
+            )
+            .bind(indexer)
+            .bind(last)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    let app = || market_router(state.clone());
+    let ids = |body: &Value| -> Vec<(String, String, String)> {
+        body["data"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| {
+                (
+                    b["tokenId"].as_str().unwrap().to_string(),
+                    b["status"].as_str().unwrap().to_string(),
+                    b["seller"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    let polygon = "/v1/bids?network=MATIC&sortBy=most_expensive";
+    let (status, body) = get(app(), polygon).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("sales-index")),
+        "{body}"
+    );
+    set_cursor("sales", 200).await;
+    let (status, body) = get(app(), polygon).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "{body}"
+    );
+    // Both fresh, the sales walk ahead: bid 7 (block 150) has no seller yet.
+    set_cursor("nft", 100).await;
+    let (status, body) = get(app(), polygon).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "an unresolved seller in scope fails the read closed: {body}"
+    );
+    let (status, body) = get(app(), &format!("{polygon}&seller={CREATOR}")).await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "a seller filter cannot tell whether bid 7 is its: {body}"
+    );
+    let (status, body) = get(app(), &format!("{polygon}&bidder={WALLET_B}")).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "bid 7 is out of this scope, as is the stray acceptance: {body}"
+    );
+    assert_eq!(
+        ids(&body),
+        vec![
+            ("4".into(), "cancelled".into(), WALLET_A.into()),
+            ("3".into(), "cancelled".into(), WALLET_A.into()),
+            ("2".into(), "sold".into(), WALLET_A.into()),
+            ("1".into(), "open".into(), WALLET_A.into()),
+        ],
+        "the expired bid is left out: {body}"
+    );
+    assert_eq!(body["data"]["total"], 4, "{body}");
+    let first = &body["data"]["results"][3];
+    assert_eq!(
+        (
+            first["id"].as_str().map(str::to_string),
+            first["bidAddress"].as_str(),
+            first["blockchainId"].as_str().map(str::to_string),
+            first["blockNumber"].as_str(),
+            first["fingerprint"].as_str(),
+            first["price"].as_str(),
+            first["createdAt"].as_i64(),
+            first["updatedAt"].as_i64(),
+            first["expiresAt"].as_i64(),
+            first["chainId"].as_i64(),
+        ),
+        (
+            Some(format!("{c}-1-{WALLET_B}")),
+            Some(super::sales_index::BID_V2_MATIC),
+            Some(format!("0x{:064x}", 110)),
+            Some("11"),
+            Some(""),
+            Some("100"),
+            Some(10_000),
+            Some(11_000),
+            Some(later * 1000),
+            Some(137),
+        ),
+        "{body}"
+    );
+    // The nft walk reaches block 150: bid 7's seller is the owner at its block.
+    // The stray bid without a seller does not fail the read.
+    set_cursor("nft", 200).await;
+    let (status, body) = get(app(), polygon).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        ids(&body)[..2].to_vec(),
+        vec![
+            ("7".into(), "open".into(), CREATOR.into()),
+            ("6".into(), "open".into(), CREATOR.into()),
+        ],
+        "{body}"
+    );
+    let (_, body) = get(app(), &format!("{polygon}&seller={CREATOR}&status=open")).await;
+    assert_eq!(body["data"]["total"], 2, "{body}");
+    let (_, body) = get(app(), "/v1/bids?network=MATIC&status=cancelled").await;
+    assert_eq!(
+        body["data"]["total"], 2,
+        "a dropped bid counts as cancelled: {body}"
+    );
+    let (_, body) = get(app(), "/v1/bids?network=MATIC&status=sold").await;
+    assert_eq!(
+        ids(&body),
+        vec![("2".into(), "sold".into(), WALLET_A.into())],
+        "the stray acceptance is neither listed nor counted: {body}"
+    );
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    sqlx::query(
+        "INSERT INTO shop.collection_projection (network, owned_at, projected_through) \
+         VALUES ('matic', timezone('UTC', now()), 200)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    set_cursor("collections", 200).await;
+    let sold = "/v1/bids?network=MATIC&status=sold";
+    let (status, before_hand_back) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::OK, "{before_hand_back}");
+    assert_eq!(before_hand_back["data"]["total"], 1, "{before_hand_back}");
+    assert!(
+        super::collections_projection::hand_back(&pool, super::chain_walk::ChainNet::Matic)
+            .await
+            .unwrap()
+    );
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "collections-mirror", "{body}");
+    // Repopulating the catalogue is insufficient before the mirror publishes.
+    catalogue(c.clone()).await;
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "collections-mirror", "{body}");
+    publish_bid_collections(&pool, 137).await;
+    let (status, after_hand_back) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::OK, "{after_hand_back}");
+    assert_eq!(after_hand_back, before_hand_back);
+
+    // An nft rewind the sales fold has not rechecked yet: the stored seller
+    // of an open bid created past it is set aside and read again from the
+    // rewound log, as the next fold will; an acceptance's seller stands.
+    bid(8, WALLET_B, Some(WALLET_A), "open", 800, 60, later).await;
+    bid(9, WALLET_B, Some(WALLET_A), "accepted", 900, 61, later).await;
+    set_cursor("sales", 200).await;
+    sqlx::query(
+        "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address) \
+         VALUES ('matic', 55, 0, 55, 'transfer', $1, $1, 8, '0x0000000000000000000000000000000000000000', $2)",
+    )
+    .bind(&c)
+    .bind(CREATOR)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO shop.bid_seller_recheck (network, from_block) VALUES ('matic', 50)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (token, seller) in [(8, CREATOR), (9, WALLET_A)] {
+        let (status, body) = get(
+            app(),
+            &format!("/v1/bids?network=MATIC&contractAddress={c}&tokenId={token}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["data"]["results"][0]["seller"], seller,
+            "{token}: {body}"
+        );
+    }
+    for (seller, total) in [(CREATOR, 1), (WALLET_A, 0)] {
+        let (status, body) = get(
+            app(),
+            &format!("/v1/bids?network=MATIC&contractAddress={c}&tokenId=8&seller={seller}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["total"], total, "{body}");
+    }
+    sqlx::query("DELETE FROM shop.nft_bid WHERE network = 'matic' AND token_id IN (8, 9)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    set_cursor("sales", 200).await;
+    // Ethereum's legacy bids still read the collections subgraph.
+    let (status, body) = get(app(), "/v1/bids?network=ETHEREUM").await;
+    assert_eq!(
+        (status, body["data"]["total"].as_i64()),
+        (StatusCode::OK, Some(0)),
+        "{body}"
+    );
+    let (status, body) = get(app(), "/v1/bids").await;
+    assert_eq!(
+        (status, body["data"]["total"].as_i64()),
+        (StatusCode::OK, Some(6)),
+        "{body}"
+    );
+    // The book is read only at the sales walk's published fold. A walk that
+    // advanced without folding leaves it at the published 200, still read; a
+    // fold committed through 210 whose publication stalls (the walk reads
+    // the head first) is not read until it is published.
+    sqlx::query("UPDATE shop.chain_cursor SET last_block = 210 WHERE indexer = 'sales' AND network = 'matic'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::OK, "the walk advanced unfolded: {body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    sqlx::query(
+        "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address, \
+             token_id, bid_id, buyer, seller, price, expires_at, tx_hash) \
+         VALUES ('matic', 10, 0, 10, 'bid_created', $1, $2, 1, $3, $4, NULL, 100, $6, '0x' || repeat('1', 64)), \
+                ('matic', 210, 0, 210, 'bid_accepted', $1, $2, 1, $3, $4, $5, 100, NULL, '0x' || repeat('2', 64))",
+    )
+    .bind(super::sales_index::BID_V2_MATIC)
+    .bind(&c)
+    .bind(format!("0x{:064x}", 110))
+    .bind(WALLET_B)
+    .bind(WALLET_A)
+    .bind(later)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let ix = super::sales_index::SalesIndex::for_chain(137).unwrap();
+    let owner = super::chain_walk::test_owner(&pool, &ix, &state.settings.market.indexes).await;
+    super::sales_index::fold(&pool, Some(200), &owner)
+        .await
+        .unwrap();
+    // Simulate a delayed head RPC by stopping before the publication steps.
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("sales-index")),
+        "a fold through 210 committed while 200 is published: {body}"
+    );
+    super::chain_walk::record_fold(&pool, &owner, 210)
+        .await
+        .unwrap();
+    assert!(
+        super::chain_walk::mark_folded(&pool, &ix, &owner, 210, chrono::Utc::now())
+            .await
+            .unwrap()
+    );
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::OK, "published at 210: {body}");
+    assert_eq!(
+        ids(&body),
+        vec![
+            ("2".into(), "sold".into(), WALLET_A.into()),
+            ("1".into(), "sold".into(), WALLET_A.into()),
+        ],
+        "{body}"
+    );
+    assert_eq!(body["data"]["total"], 2, "{body}");
+    // A contract added to the walk late, its backfill done through block 40
+    // of the 99 below its walk: the log holds a transfer at 35 but not yet
+    // the one at 60, so the owner before a bid at 70 is not known.
+    let late = contract_of(&tag(), 7);
+    catalogue(late.clone()).await;
+    sqlx::query(
+        "INSERT INTO shop.nft_contract (network, contract_address, walked_from_block, backfill_from_block, backfilled_to_block) \
+         VALUES ('matic', $1, 100, 10, 40)",
+    )
+    .bind(&late)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let transfer = |block: i64, to: &'static str| {
+        let (pool, late) = (pool.clone(), late.clone());
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address) \
+                 VALUES ('matic', $1, 0, $1, 'transfer', $2, $2, 1, '0x0000000000000000000000000000000000000000', $3)",
+            )
+            .bind(block)
+            .bind(late)
+            .bind(to)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    transfer(35, WALLET_A).await;
+    sqlx::query(
+        "INSERT INTO shop.nft_bid (network, contract_address, token_id, bidder, bid_id, seller, price, expires_at, status, \
+             created_block, created_log_index, created_at, updated_block, updated_log_index, updated_at) \
+         VALUES ('matic', $1, 1, $2, '0x' || lpad(to_hex(70), 64, '0'), NULL, 1000, $3, 'open', 70, 0, 70, 70, 0, 70)",
+    )
+    .bind(&late)
+    .bind(CARL)
+    .bind(later)
+    .execute(&pool)
+    .await
+    .unwrap();
+    set_cursor("sales", 210).await;
+    let of_late =
+        |seller: &str| format!("/v1/bids?network=MATIC&contractAddress={late}&seller={seller}");
+    let (status, body) = get(app(), &of_late(WALLET_A)).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("nft-index")),
+        "the transfer at 35 is not the owner before the bid while the backfill is owed: {body}"
+    );
+    transfer(60, CREATOR).await;
+    sqlx::query("UPDATE shop.nft_contract SET backfilled_to_block = 99 WHERE network = 'matic' AND contract_address = $1")
+        .bind(&late)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = get(app(), &of_late(WALLET_A)).await;
+    assert_eq!(
+        (status, body["data"]["total"].as_i64()),
+        (StatusCode::OK, Some(0)),
+        "{body}"
+    );
+    let (status, body) = get(app(), &of_late(CREATOR)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        ids(&body),
+        vec![("1".into(), "open".into(), CREATOR.into())],
+        "{body}"
+    );
+    // An old sales writer running after an upgraded writer commits the
+    // same bid fold. The schema records its writes as pending. Its raw walk
+    // leaves the existing publication readable until it changes the book.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = 220 WHERE indexer = 'sales' AND network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    sqlx::query(
+        "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address, \
+             token_id, bid_id, buyer, price, expires_at, tx_hash) \
+         VALUES ('matic', 50, 0, 50, 'bid_created', $1, $2, 6, $3, $4, 600, $5, '0x' || repeat('3', 64)), \
+                ('matic', 220, 0, 220, 'bid_cancelled', $1, $2, 6, $3, $4, NULL, NULL, '0x' || repeat('4', 64))",
+    )
+    .bind(super::sales_index::BID_V2_MATIC)
+    .bind(&c)
+    .bind(format!("0x{:064x}", 650))
+    .bind(CARL)
+    .bind(later)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let legacy_owner =
+        super::chain_walk::test_owner(&pool, &ix, &state.settings.market.indexes).await;
+    let mut tx = pool.begin().await.unwrap();
+    super::sales_index::fold_in(&mut tx, Some(210), &legacy_owner)
+        .await
+        .unwrap();
+    legacy_owner.check(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let cancelled =
+        format!("/v1/bids?network=MATIC&contractAddress={c}&tokenId=6&status=cancelled");
+    let (status, body) = get(app(), &cancelled).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "sales-index", "{body}");
+
+    super::chain_walk::record_fold(&pool, &legacy_owner, 220)
+        .await
+        .unwrap();
+    assert!(
+        super::chain_walk::mark_folded(&pool, &ix, &legacy_owner, 220, chrono::Utc::now())
+            .await
+            .unwrap()
+    );
+    let (status, body) = get(app(), &cancelled).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        ids(&body),
+        vec![("6".into(), "cancelled".into(), CREATOR.into())]
+    );
+    assert_eq!(body["data"]["total"], 1, "{body}");
+
+    let (status, body) = get(app(), &format!("{sold}&sortBy=recently_updated&limit=1")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["results"][0]["tokenId"], "1", "{body}");
+    assert_eq!(body["data"]["total"], 2, "{body}");
+
+    // ERC721BidV2 price and expiry are full-width on chain. The SQL window
+    // and final merge must rank the same bid first for every requested limit.
+    const WIDE_PRICE: &str = "340282366920938463463374607431768211456";
+    sqlx::query(
+        "UPDATE shop.nft_bid SET price = $2::numeric, expires_at = $3 \
+         WHERE network = 'matic' AND contract_address = $1 AND token_id = 1",
+    )
+    .bind(&c)
+    .bind(WIDE_PRICE)
+    .bind(i64::MAX)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // A fold can write a bid at the same height as the current publication.
+    // A matching height is insufficient until the writer republishes it.
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "sales-index", "{body}");
+    assert!(
+        super::chain_walk::mark_folded(&pool, &ix, &legacy_owner, 220, chrono::Utc::now())
+            .await
+            .unwrap()
+    );
+    for limit in [1, 2] {
+        let url = format!("/v1/bids?network=MATIC&status=sold&sortBy=most_expensive&limit={limit}");
+        let (status, body) = get(app(), &url).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["total"], 2, "{body}");
+        let results = body["data"]["results"].as_array().unwrap();
+        assert_eq!(results.len(), limit);
+        assert_eq!(results[0]["tokenId"], "1", "{body}");
+        assert_eq!(results[0]["price"], WIDE_PRICE, "{body}");
+        assert_eq!(results[0]["expiresAt"], i64::MAX, "{body}");
+    }
+    sqlx::raw_sql(
+        "ALTER TABLE shop.bid_seller_recheck RENAME TO saved_bid_seller_recheck;
+         CREATE FUNCTION shop.bid_snapshot_error() RETURNS bigint LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'private fixture detail' USING ERRCODE = '57014'; END;
+         $$;
+         CREATE VIEW shop.bid_seller_recheck AS
+           SELECT 'matic'::text AS network, shop.bid_snapshot_error() AS from_block;",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    let message = body["message"].as_str().unwrap();
+    assert!(message.contains("statement bound"), "{body}");
+    assert!(!message.contains("private fixture detail"), "{body}");
+
+    sqlx::raw_sql(
+        "CREATE OR REPLACE FUNCTION shop.bid_snapshot_error() RETURNS bigint LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'private fixture detail'; END;
+         $$;",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["message"], "database error", "{body}");
+
+    own.drop().await;
+}
+
+/// On the Sepolia/Amoy pair a walking node with the sales index serves
+/// Polygon's legacy bids from the book, never from the subgraph: before
+/// publication the read names the sales index; after it, only bids on the
+/// collections the nft index walks on Amoy (of that chain and verified on
+/// it), with Amoy's `chainId` and bid contract.
+#[tokio::test]
+async fn amoy_bids_come_from_the_bid_book_of_the_served_catalogue() {
+    use super::chain_walk::ChainNet;
+    let up = FakeGraph::new();
+    let url = serve_graph(up.clone()).await;
+    let Some(own) = super::tests::support::OwnDb::create("amoy_bids").await else {
+        return;
+    };
+    publish_bid_collections(&own.pool, 80_002).await;
+    let mut settings = super::owned_items::test_support::walking(market_settings(&url, &url, true));
+    settings.eth_network = "sepolia".into();
+    settings.market.indexes.chain_id_ethereum = ChainNet::Ethereum.testnet_chain_id();
+    settings.market.indexes.chain_id_matic = ChainNet::Matic.testnet_chain_id();
+    settings.market.indexes.sales_enabled = true;
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    assert!(super::bids::polygon_book_here(&state));
+    let pool = own.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let app = || market_router(state.clone());
+    let uri = "/v1/bids?network=MATIC";
+    let (status, body) = get(app(), uri).await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("sales-index")),
+        "{body}"
+    );
+    for indexer in ["sales", "nft"] {
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ($1, 'matic', 1, 200, '0x' || repeat('0', 64), 200, 200, timezone('UTC', now()), true, 80002)",
+        )
+        .bind(indexer)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let t = tag();
+    let (verified, unverified) = (contract_of(&t, 1), contract_of(&t, 2));
+    for (contract, checked, bid) in [(&verified, true, 10i64), (&unverified, false, 11)] {
+        sqlx::query(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at, testnet_verified) \
+             SELECT 'matic', $1, 80002, 'Pirates', $2, $2, 'urn:decentraland:amoy:collections-v2:' || $1, true, true, false, 1, 1, 1, timezone('UTC', now()), $3",
+        )
+        .bind(contract)
+        .bind(CREATOR)
+        .bind(checked)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.nft_bid (network, contract_address, token_id, bidder, bid_id, seller, price, expires_at, status, \
+                 created_block, created_log_index, created_at, updated_block, updated_log_index, updated_at) \
+             VALUES ('matic', $1, 1, $2, '0x' || lpad(to_hex($5), 64, '0'), $3, 100, $4, 'open', 10, 0, 10, 10, 0, 10)",
+        )
+        .bind(contract)
+        .bind(WALLET_B)
+        .bind(WALLET_A)
+        .bind(chrono::Utc::now().timestamp() + 86_400)
+        .bind(bid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) \
+         WHERE indexer = 'sales' AND network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), uri).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let results = body["data"]["results"].as_array().unwrap();
+    assert_eq!(
+        results
+            .iter()
+            .map(|b| (
+                b["contractAddress"].as_str().unwrap().to_string(),
+                b["chainId"].as_i64(),
+                b["bidAddress"].as_str().map(str::to_string),
+            ))
+            .collect::<Vec<_>>(),
+        vec![(
+            verified.clone(),
+            Some(80_002),
+            super::sales_index::SalesIndex::for_chain(80_002).map(|i| i.bid_contract().to_string()),
+        )],
+        "only the verified Amoy collection, on Amoy: {body}"
+    );
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert!(
+        !up.requests.lock().unwrap().iter().any(|e| e == "bids"),
+        "no Polygon bid read asks the subgraph: {:?}",
+        up.requests.lock().unwrap()
+    );
+    // Ethereum's legacy bids still come from the subgraph here: labelled
+    // with the chain the node serves (Sepolia), never the alias's default.
+    let far = (chrono::Utc::now().timestamp() + 86_400) * 1000;
+    up.set(
+        "bids",
+        vec![json!({
+            "id": "0xparcel-1-0xbidder", "bidAddress": "0xbid", "nftAddress": "0xparcel", "tokenId": "1",
+            "bidder": WALLET_B, "seller": WALLET_A, "price": "5", "status": "open", "blockchainId": "0x01",
+            "blockNumber": "1", "expiresAt": far.to_string(), "createdAt": "1", "updatedAt": "1"
+        })],
+    );
+    let (status, body) = get(app(), "/v1/bids").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mut chains: Vec<(String, Option<i64>)> = body["data"]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| {
+            (
+                b["network"].as_str().unwrap().to_string(),
+                b["chainId"].as_i64(),
+            )
+        })
+        .collect();
+    chains.sort();
+    assert_eq!(
+        chains,
+        vec![
+            ("ETHEREUM".to_string(), Some(11_155_111)),
+            ("MATIC".to_string(), Some(80_002)),
+        ],
+        "{body}"
+    );
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn mirrored_land_and_estate_bids_use_the_land_owner_without_an_nft_publication() {
+    let graph = serve_empty_graph().await;
+    let Some((state, own)) = state_with_the_bid_book(&graph).await else {
+        return;
+    };
+    let pool = &own.pool;
+    use crate::land_authz::LAND_MAINNET;
+
+    super::trade_events::tests::publish_cursors(pool).await;
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, \
+                                             folded_block, folded_at, full_replay_started) \
+         VALUES ($1, $2, $3, 100, 100, timezone('UTC', now()), true)",
+    )
+    .bind(LAND_MAINNET.network)
+    .bind(LAND_MAINNET.land_registry)
+    .bind(LAND_MAINNET.estate_registry)
+    .execute(pool)
+    .await
+    .unwrap();
+    let graph_backed = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings(&graph, &graph, true),
+    ));
+    graph_backed
+        .test_allow_loopback
+        .store(true, Ordering::Relaxed);
+    assert!(!super::owned_items::walks_here(&graph_backed));
+    let apps = [market_router(state), market_router(graph_backed)];
+    for (contract, token, owner, x, y) in [
+        (
+            LAND_MAINNET.land_registry,
+            77i64,
+            WALLET_A,
+            Some(0),
+            Some(77),
+        ),
+        (LAND_MAINNET.estate_registry, 500, WALLET_B, None, None),
+    ] {
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) \
+             VALUES ($1, $2::bigint, $3, $4, $5, 100, 0)",
+        )
+        .bind(contract)
+        .bind(token)
+        .bind(x)
+        .bind(y)
+        .bind(owner)
+        .execute(pool)
+        .await
+        .unwrap();
+        // A row under the LAND registry must not displace the LAND owner.
+        sqlx::query(
+            "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, \
+                                   transferred_block, transferred_log, transferred_at) \
+             VALUES ('ethereum', $1, $2::bigint, $3, 10, 10, 100, 0, 100)",
+        )
+        .bind(contract)
+        .bind(token)
+        .bind(CREATOR)
+        .execute(pool)
+        .await
+        .unwrap();
+        let (trade, _) = insert_trade_on(
+            pool,
+            "ETHEREUM",
+            1,
+            "bid",
+            CREATOR,
+            Asset {
+                asset_type: 1,
+                contract: "0x2222222222222222222222222222222222222222".into(),
+                value: "100".into(),
+            },
+            Asset {
+                asset_type: 3,
+                contract: contract.into(),
+                value: token.to_string(),
+            },
+        )
+        .await;
+        let url = format!("/v1/bids?network=ETHEREUM&contractAddress={contract}&seller={owner}");
+        sqlx::query("UPDATE land_authz.index_cursor SET folded_at = timezone('UTC', now()) - interval '2 hours'")
+            .execute(pool)
+            .await
+            .unwrap();
+        for app in &apps {
+            let (status, body) = get(app.clone(), &url).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+            assert_eq!(body["source"], "land-authz-index", "{body}");
+        }
+        sqlx::query("UPDATE land_authz.index_cursor SET folded_at = timezone('UTC', now())")
+            .execute(pool)
+            .await
+            .unwrap();
+        for app in &apps {
+            let (status, body) = get(app.clone(), &url).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(body["data"]["total"], 1, "{body}");
+            assert_eq!(body["data"]["results"][0]["tradeId"], trade, "{body}");
+            assert_eq!(body["data"]["results"][0]["seller"], owner, "{body}");
+        }
+    }
+
+    let land = LAND_MAINNET.land_registry;
+    let url =
+        format!("/v1/bids?network=ETHEREUM&contractAddress={land}&itemId=0&seller={WALLET_A}");
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE shop.projection_write IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let (status, body) = get(apps[0].clone(), &url).await;
+    lock.rollback().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert_eq!(body["data"]["results"][0]["seller"], WALLET_A, "{body}");
+
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE land_authz.index_cursor IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let (status, body) = get(apps[1].clone(), &url).await;
+    lock.rollback().await.unwrap();
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "land-authz-index", "{body}");
+
+    // A graph-backed reader can be configured for a different LAND chain
+    // from the chain its local trade mirror serves.
+    let sepolia = crate::land_authz::LAND_SEPOLIA;
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET network = $1, land_registry = $2, estate_registry = $3, \
+             folded_at = timezone('UTC', now())",
+    )
+    .bind(sepolia.network)
+    .bind(sepolia.land_registry)
+    .bind(sepolia.estate_registry)
+    .execute(pool)
+    .await
+    .unwrap();
+    let wrong_land_settings = Settings {
+        eth_network: "sepolia".into(),
+        eth_collections_subgraph_url: Some(graph),
+        data_writes_enabled: true,
+        ..Settings::for_tests()
+    };
+    wrong_land_settings.check_writer_pair().unwrap();
+    let wrong_land = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        wrong_land_settings,
+    ));
+    wrong_land
+        .test_allow_loopback
+        .store(true, Ordering::Relaxed);
+    assert!(!super::owned_items::walks_here(&wrong_land));
+    let app = market_router(wrong_land);
+    let (status, body) = get(app.clone(), &url).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "land-authz-index", "{body}");
+    let (status, body) = get(app, &format!("{url}&tokenId=78")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 0, "{body}");
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn an_ethereum_nft_bid_read_skips_the_land_cursor() {
+    let graph = serve_empty_graph().await;
+    let Some((state, own)) = state_with_the_bid_book(&graph).await else {
+        return;
+    };
+    let pool = &own.pool;
+    super::trade_events::tests::publish_cursors(pool).await;
+    let contract = contract_of(&tag(), 1);
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, \
+                               transferred_block, transferred_log, transferred_at) \
+         VALUES ('ethereum', $1, 1, $2, 10, 10, 100, 0, 100)",
+    )
+    .bind(&contract)
+    .bind(WALLET_A)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, \
+                                      fold_through, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'ethereum', 1, 100, 100, 100, timezone('UTC', now()), true, 1)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let (trade, _) = insert_trade_on(
+        pool,
+        "ETHEREUM",
+        1,
+        "bid",
+        CREATOR,
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "100".into(),
+        },
+        Asset {
+            asset_type: 3,
+            contract: contract.clone(),
+            value: "1".into(),
+        },
+    )
+    .await;
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE land_authz.index_cursor IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let (status, body) = get(
+        market_router(state),
+        &format!("/v1/bids?network=ETHEREUM&contractAddress={contract}&seller={WALLET_A}"),
+    )
+    .await;
+    lock.rollback().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert_eq!(body["data"]["results"][0]["tradeId"], trade, "{body}");
+    assert_eq!(body["data"]["results"][0]["seller"], WALLET_A, "{body}");
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn a_mirrored_token_bid_waits_for_its_sellers_nft_publication() {
+    let graph = serve_empty_graph().await;
+    let Some((state, own)) = state_with_the_bid_book(&graph).await else {
+        return;
+    };
+    let pool = &own.pool;
+    super::trade_events::tests::publish_cursors(pool).await;
+    let c = contract_of(&tag(), 1);
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, \
+                               transferred_block, transferred_log, transferred_at) \
+         VALUES ('matic', $1, 1, $2, 10, 10, 100, 0, 100)",
+    )
+    .bind(&c)
+    .bind(WALLET_A)
+    .execute(pool)
+    .await
+    .unwrap();
+    for indexer in ["nft", "sales"] {
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, \
+                                          fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ($1, 'matic', 1, 200, '0x' || repeat('0', 64), 200, 200, timezone('UTC', now()), true, 137)",
+        )
+        .bind(indexer)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    let (trade, _) = insert_trade(
+        pool,
+        "bid",
+        CREATOR,
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "100".into(),
+        },
+        Asset {
+            asset_type: 3,
+            contract: c.clone(),
+            value: "1".into(),
+        },
+    )
+    .await;
+    let url = |seller| format!("/v1/bids?network=MATIC&contractAddress={c}&seller={seller}");
+    let app = market_router(state);
+    let (status, body) = get(app.clone(), &url(WALLET_A)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert_eq!(body["data"]["results"][0]["tradeId"], trade, "{body}");
+    let (status, body) = get(app.clone(), &url(WALLET_B)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 0, "{body}");
+
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = 201 WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app.clone(), &url(WALLET_A)).await;
+    assert_eq!(status, StatusCode::OK, "raw advance: {body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    let publish = || {
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET fold_through = last_block, folded_block = last_block, \
+                 folded_at = timezone('UTC', now()) WHERE indexer = 'nft' AND network = 'matic'",
+        )
+        .execute(pool)
+    };
+    publish().await.unwrap();
+    sqlx::query("UPDATE shop.nft SET owner = $2 WHERE network = 'matic' AND contract_address = $1 AND token_id = 1")
+        .bind(&c)
+        .bind(WALLET_B)
+        .execute(pool)
+        .await
+        .unwrap();
+
+    // Both seller scopes wait for the NFT publication, even when the
+    // pending owner would remove the only bid from the previous seller.
+    let recorder = dcl_metrics::Registry::new(&[super::bids::FAMILIES])
+        .unwrap()
+        .builder(dcl_metrics::PrometheusBuilder::new())
+        .unwrap()
+        .build_recorder();
+    let handle = recorder.handle();
+    let recording = dcl_metrics::set_default_local_recorder(&recorder);
+    for seller in [WALLET_A, WALLET_B] {
+        let (status, body) = get(app.clone(), &url(seller)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["source"], "nft-index", "{body}");
+    }
+    drop(recording);
+    let metrics = handle.render();
+    assert!(
+        metrics.contains("catalyst_shop_bid_nft_unavailable_reads_total{network=\"matic\"} 2"),
+        "{metrics}"
+    );
+    publish().await.unwrap();
+    let (status, body) = get(app.clone(), &url(WALLET_A)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 0, "{body}");
+    let (status, body) = get(app.clone(), &url(WALLET_B)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert_eq!(body["data"]["results"][0]["tradeId"], trade, "{body}");
+    assert_eq!(body["data"]["results"][0]["seller"], WALLET_B, "{body}");
+    // Token 1 derives item 0. The itemId filter skips the legacy book,
+    // but it still matches this ERC721 bid and needs its seller's NFT fold.
+    let item = format!("{}&itemId=0", url(WALLET_B));
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) - interval '2 hours' \
+         WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app.clone(), &item).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "nft-index", "{body}");
+
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET chain_id = 80002 WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    publish().await.unwrap();
+    let (status, body) = get(app.clone(), &item).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "nft-index", "{body}");
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET chain_id = 137 WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    publish().await.unwrap();
+    let (status, body) = get(app, &item).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert_eq!(body["data"]["results"][0]["seller"], WALLET_B, "{body}");
+
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn item_only_bids_on_a_walker_do_not_require_an_ethereum_graph() {
+    let Some(own) = super::tests::support::OwnDb::create("item_only_bids").await else {
+        return;
+    };
+    let url = serve_empty_graph().await;
+    let mut settings = super::owned_items::test_support::walking(market_settings(&url, &url, true));
+    settings.eth_collections_subgraph_url = None;
+    settings.market.indexes.sales_enabled = true;
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    assert!(super::bids::polygon_book_here(&state));
+    super::trade_events::tests::publish_cursors(&own.pool).await;
+    let (trade, _) = insert_trade(
+        &own.pool,
+        "bid",
+        WALLET_B,
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "9000000000000000000".into(),
+        },
+        Asset {
+            asset_type: 4,
+            contract: contract_of(&tag(), 2),
+            value: "3".into(),
+        },
+    )
+    .await;
+    let (status, body) = get(market_router(state), "/v1/bids?itemId=3").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert_eq!(body["data"]["results"][0]["tradeId"], trade, "{body}");
+    own.drop().await;
+}
+
+/// A mirror bid on an item takes its seller (the item's creator) only from
+/// an item of the trade's chain, verified there on a testnet: an item row of
+/// another chain under the same network, contract and id names no seller.
+/// On a node that does not walk the indexes the readiness and the rows are
+/// one short snapshot read beside the subgraph.
+#[tokio::test]
+async fn an_item_bid_takes_its_creator_from_an_item_of_its_chain() {
+    let Some(own) = super::tests::support::OwnDb::create("item_bid_creator").await else {
+        return;
+    };
+    let url = serve_empty_graph().await;
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings(&url, &url, true),
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    assert!(!super::owned_items::walks_here(&state));
+    let pool = own.pool.clone();
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let c = contract_of(&tag(), 1);
+    insert_trade(
+        &pool,
+        "bid",
+        WALLET_B,
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "9000000000000000000".into(),
+        },
+        Asset {
+            asset_type: 4,
+            contract: c.clone(),
+            value: "3".into(),
+        },
+    )
+    .await;
+    let mut sellers = Vec::new();
+    for chain in [80_002, 137] {
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, \
+                 price, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, 3, $2, 'wearable_v2', 'urn:decentraland:matic:collections-v2:' || $1 || ':3', $3, 'common', 1, 1, 0, 0, 'Hat', 'hat', 1, 1, 1, timezone('UTC', now())) \
+             ON CONFLICT (network, contract_address, item_id) DO UPDATE SET chain_id = EXCLUDED.chain_id",
+        )
+        .bind(&c)
+        .bind(chain)
+        .bind(CREATOR)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (status, body) = get(
+            market_router(state.clone()),
+            &format!("/v1/bids?bidder={WALLET_B}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        sellers.push(
+            body["data"]["results"][0]["seller"]
+                .as_str()
+                .map(str::to_string),
+        );
+    }
+    assert_eq!(
+        sellers,
+        vec![Some(String::new()), Some(CREATOR.to_string())],
+        "an Amoy item row names no seller for a chain-137 bid; the chain-137 row does"
+    );
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn an_amoy_item_bid_requires_a_verified_amoy_creator() {
+    // The served chain pair is process-wide. Install the testnet pair in
+    // an isolated test process so concurrent mainnet tests keep their pair.
+    const CHILD: &str = "CATALYST_AMOY_ITEM_BID_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                concat!(
+                    module_path!(),
+                    "::an_amoy_item_bid_requires_a_verified_amoy_creator"
+                )
+                .trim_start_matches(concat!(env!("CARGO_CRATE_NAME"), "::")),
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed"));
+        return;
+    }
+    let Some(own) = super::tests::support::OwnDb::create("amoy_item_bid").await else {
+        return;
+    };
+    let url = serve_empty_graph().await;
+    let mut settings = market_settings(&url, &url, true);
+    settings.eth_network = "sepolia".into();
+    settings.market.indexes.chain_id_ethereum = 11_155_111;
+    settings.market.indexes.chain_id_matic = 80_002;
+    super::catalog::install_served_chains(&settings.market.indexes);
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    assert!(!super::owned_items::walks_here(&state));
+
+    super::trade_events::tests::publish_cursors(&own.pool).await;
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET chain_id = CASE network WHEN 'ethereum' THEN 11155111 ELSE 80002 END, \
+             sepolia_trade_v1 = network = 'ethereum' \
+         WHERE indexer = 'trade_events'",
+    )
+    .execute(&own.pool)
+    .await
+    .unwrap();
+    let contract = contract_of(&tag(), 1);
+    let (trade, _) = insert_trade_on(
+        &own.pool,
+        "MATIC",
+        80_002,
+        "bid",
+        WALLET_B,
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "9000000000000000000".into(),
+        },
+        Asset {
+            asset_type: 4,
+            contract: contract.clone(),
+            value: "3".into(),
+        },
+    )
+    .await;
+    let url = format!("/v1/bids?network=MATIC&bidder={WALLET_B}");
+    // This adversarial row carries a verification flag on the wrong chain.
+    // Each negative fixture isolates one half of the seller join.
+    for (chain, verified, seller, total) in [
+        (137, true, "", 0),
+        (80_002, false, "", 0),
+        (80_002, true, CREATOR, 1),
+    ] {
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, \
+                 price, name, category, created_at, updated_at, reviewed_at, mirrored_at, testnet_verified) \
+             VALUES ('matic', $1, 3, $2, 'wearable_v2', 'urn:decentraland:amoy:collections-v2:' || $1 || ':3', $3, \
+                 'common', 1, 1, 0, 0, 'Hat', 'hat', 1, 1, 1, timezone('UTC', now()), $4) \
+             ON CONFLICT (network, contract_address, item_id) DO UPDATE SET chain_id = EXCLUDED.chain_id, \
+                 testnet_verified = EXCLUDED.testnet_verified",
+        )
+        .bind(&contract)
+        .bind(chain)
+        .bind(CREATOR)
+        .bind(verified)
+        .execute(&own.pool)
+        .await
+        .unwrap();
+        let (status, body) = get(market_router(state.clone()), &url).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["results"][0]["tradeId"], trade, "{body}");
+        assert_eq!(body["data"]["results"][0]["chainId"], 80_002, "{body}");
+        assert_eq!(body["data"]["results"][0]["seller"], seller, "{body}");
+
+        let (status, body) = get(
+            market_router(state.clone()),
+            &format!("{url}&seller={CREATOR}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["data"]["total"], total, "{body}");
+        assert_eq!(body["data"]["results"].as_array().unwrap().len(), total);
+    }
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn a_graph_backed_bids_page_releases_its_local_snapshot_before_the_graph() {
+    let Some(own) = super::tests::support::OwnDb::create("graph_bid_snapshot").await else {
+        return;
+    };
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph.clone()).await;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(own.pool.connect_options().as_ref().clone())
+        .await
+        .unwrap();
+    let state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings(&url, &url, true),
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    assert!(!super::owned_items::walks_here(&state));
+    super::trade_events::tests::publish_cursors(&pool).await;
+    let (trade, _) = insert_trade(
+        &pool,
+        "bid",
+        WALLET_B,
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "9000000000000000000".into(),
+        },
+        Asset {
+            asset_type: 4,
+            contract: contract_of(&tag(), 2),
+            value: "3".into(),
+        },
+    )
+    .await;
+
+    let uri = "/v1/bids?network=MATIC";
+    let app = market_router(state);
+    graph.pause.store(true, Ordering::SeqCst);
+    let request = tokio::spawn(get(app.clone(), uri));
+    tokio::time::timeout(Duration::from_secs(5), graph.arrived.notified())
+        .await
+        .expect("the page reached the legacy bids subgraph");
+    let quarantine = tokio::time::timeout(
+        Duration::from_secs(5),
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' \
+             WHERE indexer = 'trade_events' AND network = 'matic'",
+        )
+        .execute(&pool),
+    )
+    .await;
+    graph.release.notify_one();
+    quarantine
+        .expect("the only pool connection was released before awaiting the subgraph")
+        .unwrap();
+
+    let (status, body) = request.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert_eq!(body["data"]["results"][0]["tradeId"], trade, "{body}");
+
+    let (status, body) = get(app, uri).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "trade-events-index", "{body}");
+    pool.close().await;
+    own.drop().await;
+}
+
+/// The bids of a node that walks the indexes read one snapshot: the trades
+/// mirror's readiness and its bids are read on it, so a trade-events rewind
+/// that lands between them neither drops nor keeps a bid against what the
+/// check saw; the next read answers the envelope.
+#[tokio::test]
+async fn the_bids_legs_read_the_snapshot_their_readiness_checked() {
+    let url = serve_empty_graph().await;
+    let Some((state, own)) = state_with_the_bid_book(&url).await else {
+        return;
+    };
+    super::trade_events::tests::publish_cursors(&state.pool).await;
+    let pool = state.pool.clone();
+    // The token-bid leg can rely on an empty, published NFT projection.
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, \
+                                      fold_through, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'matic', 1, 200, 200, 200, timezone('UTC', now()), true, 137)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let c = contract_of(&tag(), 8);
+    let (trade, _) = insert_trade(
+        &pool,
+        "bid",
+        WALLET_B,
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "9000000000000000000".into(),
+        },
+        Asset {
+            asset_type: 3,
+            contract: c.clone(),
+            value: "1".into(),
+        },
+    )
+    .await;
+    let f = super::bids::parse_filters(&[("network".to_string(), "MATIC".to_string())]).unwrap();
+    let (mut tx, bounds, now) = match super::bids::bids_snapshot(&state, false).await {
+        Ok(snapshot) => snapshot,
+        Err(r) => panic!("the trades mirror is ready: {}", r.status()),
+    };
+    assert!(bounds.is_none());
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' \
+         WHERE indexer = 'trade_events' AND network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let rows = super::bids::trades_rows(&mut tx, &state, &f, now, None)
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(
+        rows.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+        vec![trade.as_str()],
+        "the rows are the checked snapshot's"
+    );
+    let (status, body) = get(market_router(state.clone()), "/v1/bids?network=MATIC").await;
+    assert_eq!(
+        (status, body["source"].as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, Some("trade-events-index")),
+        "{body}"
+    );
+    own.drop().await;
+}
+
 /// A shallow NAME page reads the index on a walker whose Ethereum latest
 /// sales are admitted, whatever its sort: the graph ranks the two names one
 /// way by its own `soldAt`, the ledger the other, and each token shows one
@@ -6724,7 +10729,7 @@ async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
         .unwrap();
     let filters =
         super::nfts::parse_filters(&[("category".to_string(), "ens".to_string())]).unwrap();
-    let (rows, _) = super::nft_reads::names_page_if_admitted(
+    let (rows, _, _) = super::nft_reads::names_page_if_admitted(
         &state,
         &filters,
         2,
