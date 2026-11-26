@@ -5,6 +5,16 @@
 //! uppercase, the path is the request path without its query and the body is
 //! the raw bytes sent. The timestamp is at most [`WINDOW_MS`] away from the
 //! receiver's clock either way.
+//!
+//! The headers, the `sha256=` hex encoding, the millisecond timestamp, the
+//! window and the secret are those of builder-server's validator callback
+//! (`withValidatorSignature`), which the validator already signs; its
+//! `<timestamp>.<body>` preimage gains the method and the path because the
+//! validator calls several routes. This module keeps no record of what it
+//! verified: a signature is valid for its whole window, so the caller
+//! refuses a MAC it has seen within the window, in storage every replica
+//! shares. [`crate::signed_request`]'s nonce cache lives in one process, so
+//! it can't refuse a replay sent to another replica.
 
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
