@@ -2,8 +2,9 @@
 // run; the "Custom" time-of-day slider is locked meanwhile. Where the scene sets the time of day
 // both are off and a line says which setting gives them back.
 
+import { Panel, Slider, Switch } from '@dcl/one-ui'
 import { useEffect, useId } from 'react'
-import { Panel, Slider, Toggle, hasOpenPopup } from '../../design'
+import { hasOpenPopup } from '../../design'
 import type { SkyboxState } from '../session/useEngineSession'
 import styles from './SkyboxMenu.module.css'
 
@@ -32,10 +33,16 @@ export function SkyboxMenu({ skybox }: { skybox: SkyboxState }): React.JSX.Eleme
     <Panel className={styles.root} role="dialog" aria-label="Skybox">
       <div className={styles.title}>NIGHT/DAY</div>
       <div className={styles.divider} />
-      <label className={styles.row}>
-        <span>Auto</span>
-        <Toggle size="sm" checked={skybox.progressing} onChange={skybox.setProgressing} disabled={skybox.sceneLocked} aria-describedby={describedBy} />
-      </label>
+      <Switch
+        appearance="hud"
+        size="sm"
+        label="Auto"
+        className={styles.row}
+        checked={skybox.progressing}
+        onCheckedChange={skybox.setProgressing}
+        disabled={skybox.sceneLocked}
+        aria-describedby={describedBy}
+      />
       <div className={styles.divider} />
       <div className={styles.custom} data-locked={skybox.progressing || skybox.sceneLocked}>
         <div className={styles.head}>

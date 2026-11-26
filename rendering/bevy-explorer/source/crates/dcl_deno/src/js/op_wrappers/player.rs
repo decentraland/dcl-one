@@ -1,24 +1,21 @@
+use crate::js::errors::OpError;
 use std::{cell::RefCell, rc::Rc};
 
-use deno_core::{anyhow, op2, OpDecl, OpState};
+use deno_core::{op2, OpDecl, OpState};
 
 // list of op declarations
 pub fn ops() -> Vec<OpDecl> {
     vec![op_get_connected_players(), op_get_players_in_scene()]
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
-async fn op_get_connected_players(
-    state: Rc<RefCell<OpState>>,
-) -> Result<Vec<String>, anyhow::Error> {
-    dcl_js::player::op_get_connected_players(state).await
+async fn op_get_connected_players(state: Rc<RefCell<OpState>>) -> Result<Vec<String>, OpError> {
+    Ok(dcl_js::player::op_get_connected_players(state).await?)
 }
 
-#[op2(async)]
+#[op2]
 #[serde]
-async fn op_get_players_in_scene(
-    state: Rc<RefCell<OpState>>,
-) -> Result<Vec<String>, anyhow::Error> {
-    dcl_js::player::op_get_players_in_scene(state).await
+async fn op_get_players_in_scene(state: Rc<RefCell<OpState>>) -> Result<Vec<String>, OpError> {
+    Ok(dcl_js::player::op_get_players_in_scene(state).await?)
 }

@@ -5339,14 +5339,13 @@ Invariants:
   the two the rows hold an unpublished fold: a read then answers the
   envelope rather than rows past the published block. A walk that advanced
   without folding leaves the book at the published block, still read.
-- A database that predates the table fills it in the schema run that creates
-  it. The seed statements after each `CREATE TABLE` (follow-ups, so they run
-  only then) record each network's nft `fold_through` and its recovery
-  point's hash as the book's marker (no point: the book does not stand and
-  the first fold refolds it whole), then apply the fold's rules to every
-  token up to that block. They hold no
-  creation, supersession or end past what the nft fold folded; the next fold
-  takes the rest.
+- A database that predates the table gets it empty and with no marker. The
+  schema run reads no log: a whole book is one statement of minutes on a
+  real node, past the run's 60 s statement limit, and it would run inside
+  the run's single transaction. Without a marker the book does not stand, so
+  readers answer the `nft-index` envelope, and the first nft fold after the
+  upgrade refolds it whole in the fold's own transaction (its own statement
+  limit), then publishes it with the fold.
 
 Reads, each on one `REPEATABLE READ, READ ONLY` snapshot that also checks the
 nft cursor (published within 30 minutes on the networks read, from the chain
@@ -5412,7 +5411,7 @@ quarter sold and 30% cancelled by id, 130,050 left open:
 
 | Operation | Time |
 |---|---|
-| the seed in the schema run (1M orders from 6.6M log rows, bounded by the nft fold) | 20.4 s, plus 2.8 s for the seven indexes |
+| the first fold after an upgrade, from an empty table (1M orders from 6.6M log rows) | 20.4 s, plus 2.8 s for the seven indexes when it was the schema run's seed |
 | a rebuild over a filled table (no row changes): Polygon / Ethereum | 11.1 s / 7.7 s |
 | a rebuild of Polygon from an empty table (after a rewind) | 25.5 s |
 | a steady pass (the last 1,000 Polygon blocks, nested loops) | 6.6 ms |

@@ -1,10 +1,9 @@
-// TextInput — the plain single-line field. `SearchField` covers search (pill + magnifier);
-// this is everything else: names, link titles, dates. Controlled or uncontrolled, like the
-// other input primitives here.
+// TextInput — the shared InputExplorerNames in its HUD look: the plain single-line field (names, link titles,
+// dates). `SearchField` covers search. Controlled or uncontrolled, like the other input primitives here.
 
 import { useState } from 'react'
 import { Icon, type IconName } from './icons'
-import styles from './TextInput.module.css'
+import { InputExplorerNames } from '@dcl/one-ui'
 
 export interface TextInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'value' | 'size'> {
   value?: string
@@ -37,26 +36,28 @@ export function TextInput({
   const isControlled = value !== undefined
   const v = isControlled ? value : internal
 
-  const input = (
-    <input
+  return (
+    <InputExplorerNames
+      appearance="hud"
       {...rest}
-      className={[styles.input, styles[variant], size === 'lg' ? styles.large : '', invalid ? styles.invalid : '', action ? styles.withAction : '', className ?? ''].filter(Boolean).join(' ')}
+      className={className}
+      variant={variant}
+      fieldSize={size}
+      invalid={invalid}
+      fieldAction={
+        action && {
+          icon: <Icon name={action.icon} size={action.size ?? 18} />,
+          label: action.label,
+          onClick: action.onClick,
+          disabled: action.disabled,
+          size: action.size
+        }
+      }
       value={v}
-      aria-invalid={invalid || undefined}
       onChange={(e) => {
         if (!isControlled) setInternal(e.target.value)
         onChange?.(e.target.value)
       }}
     />
-  )
-  if (action == null) return input
-  const iconSize = action.size ?? 18
-  return (
-    <div className={styles.wrap} style={{ '--action-icon': `${iconSize}px` } as React.CSSProperties}>
-      {input}
-      <button type="button" className={styles.action} aria-label={action.label} title={action.label} onClick={action.onClick} disabled={rest.disabled || action.disabled}>
-        <Icon name={action.icon} size={iconSize} />
-      </button>
-    </div>
   )
 }

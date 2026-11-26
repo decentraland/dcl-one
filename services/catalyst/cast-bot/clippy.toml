@@ -1,0 +1,3 @@
+# Same as the workspace clippy.toml; the Nix clippy check sees only this directory.
+large-error-threshold = 256
+allow-unwrap-in-tests = true

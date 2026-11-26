@@ -3,6 +3,7 @@ name = "dcl-preview-tunnel"
 version = "0.32.0"
 edition = "2024"
 description = "Self-hosted preview tunnel for dcl-scene-cli: agents dial out one WebSocket trunk, the service allocates public /t/<id> routes and multiplexes inbound HTTP + WebSocket traffic back over the trunk. Port 5167."
+publish = false
 workspace = "../../services/catalyst"
 
 [[bin]]

@@ -357,12 +357,16 @@ class FinancialMigrationCases:
         self.credits_load(tgt, 'studio', [self.studio_row(studio, 'Alpha')])
         env = {'CREDITS_SERVER_DATABASE_URL': self.url(src), 'TARGET_DATABASE_URL': self.url(tgt)}
 
-        def run(*steps):
+        def run(*steps, dry_run=False):
             args = [arg for step in steps for arg in ('--step', step)]
-            with unittest.mock.patch.dict(os.environ, env):
+            if dry_run:
+                args.append('--dry-run')
+            err = io.StringIO()
+            with unittest.mock.patch.dict(os.environ, env), contextlib.redirect_stderr(err):
                 code, out = self.migrate('run', 'credits-server', *args, '--batch-size', '2',
                                          sources_dir=migrate.SOURCES)
-            self.assertEqual(code, 0, out)
+            self.assertEqual(code, 0, out + err.getvalue())
+            return err.getvalue()
 
         extract = self.financial_step('credits-server', 'grant_audit').extract.read_text()
         self.assertEqual(self.sql(src, f'SELECT credit_id FROM ({extract}) g ORDER BY credit_id;').split(),
@@ -371,7 +375,10 @@ class FinancialMigrationCases:
         self.assertEqual(self.count(tgt, 'ops.admin_audit'), 0)
         self.credits_load(tgt, 'studio_budget_entry', [self.entry_row(
             '22222222-2222-2222-2222-222222222222', studio, -50, 'grant', credit='studio')])
-        run('grant_audit')
+        summary = 'imported 2, skipped already linked 0, skipped no matching ledger row 0'
+        self.assertIn(summary, run('grant_audit', dry_run=True))
+        self.assertEqual(self.count(tgt, 'ops.admin_audit'), 0)
+        self.assertIn(summary, run('grant_audit'))
         audit = """SELECT a.id, l.tx_ref, a.actor, a.target, a.domain, a.action, a.at::date,
                           a.detail->>'reason', COALESCE(a.detail->>'annotation', '-'),
                           a.detail->>'upstreamCreditId', a.detail ? 'studioName',
@@ -393,7 +400,8 @@ class FinancialMigrationCases:
             INSERT INTO user_credits VALUES ('fresh', '{wallet}', 'USD', 'grant', 10, 1767225600000, NULL);
             INSERT INTO on_demand_credits VALUES ('fresh', '{actor}', 'welcome', NULL);
         """)
-        run('ledger', 'grant_audit')
+        logs = run('ledger', 'grant_audit')
+        self.assertIn('imported 1, skipped already linked 1, skipped no matching ledger row 0', logs)
         replayed = self.sql(tgt, audit).strip().splitlines()
         self.assertEqual([replayed[0], replayed[2]], original)
         self.assertEqual(replayed[1].split('\t')[1:], [
@@ -403,6 +411,34 @@ class FinancialMigrationCases:
         self.assertEqual(self.count(tgt, 'ops.admin_audit'), 3)
         self.assertEqual(self.count(tgt, 'credits.ledger'), 5)
         self.assertEqual(self.sql(tgt, 'SELECT available FROM credits.wallets;').strip(), '21.0')
+
+        self.sql(src, f"""
+            INSERT INTO user_credits VALUES
+              ('node-linked', '{wallet}', 'USD', 'grant', 10, 1767225600000, NULL),
+              ('missing', '{wallet}', 'USD', 'grant', 10, 1767225600000, NULL);
+            INSERT INTO on_demand_credits VALUES
+              ('node-linked', '{actor}', 'upstream reason', NULL),
+              ('missing', '{actor}', 'upstream reason', NULL);
+        """)
+        self.sql(tgt, f"""
+            WITH node_audit AS (
+                INSERT INTO ops.admin_audit (actor, domain, action, target, detail)
+                VALUES ('0x{'c' * 40}', 'credits', 'grant', '{wallet}', '{{"reason":"node reason"}}')
+                RETURNING id
+            )
+            INSERT INTO credits.ledger (address, kind, bucket, amount, tx_ref, admin_audit_id)
+            SELECT '{wallet}', 'grant', 'paid', 1, 'credits-server:credit:node-linked', id FROM node_audit;
+        """)
+        existing = """SELECT row_to_json(a)
+                      FROM credits.ledger l JOIN ops.admin_audit a ON a.id = l.admin_audit_id
+                      WHERE l.tx_ref = 'credits-server:credit:node-linked';"""
+        node_audit = self.sql(tgt, existing)
+        logs = run('grant_audit')
+        self.assertIn('imported 0, skipped already linked 2, skipped no matching ledger row 0', logs)
+        self.assertIn('imported 0, skipped already linked 1, skipped no matching ledger row 1', logs)
+        self.assertIn('WARNING:  credits-server/grant_audit: no matching paid ledger grant for upstream credit "missing"', logs)
+        self.assertEqual(self.sql(tgt, existing), node_audit)
+        self.assertEqual(self.count(tgt, 'ops.admin_audit'), 4)
 
     def test_studio_extracts_read_upstream_milliseconds_and_lower_case_operators(self):
         db = self.fresh_db('credits_studio_extract')

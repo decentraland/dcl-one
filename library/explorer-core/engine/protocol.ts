@@ -107,6 +107,13 @@ export interface SendChatReactionRequest {
   remove: boolean
 }
 
+/** React with an emoji, shown over the local user's avatar (page → engine via the scene's
+ *  BevyApi.sendReaction). An emoji the wire does not carry does nothing. */
+export interface SendReactionRequest {
+  kind: 'sendReaction'
+  emoji: string
+}
+
 /** Redraw a chat bubble (nearby, community or direct message) with other words (its translation,
  *  or the original back), if that message is still the sender's bubble. Its time up is kept. */
 export interface ChatBubbleTextRequest {
@@ -186,6 +193,7 @@ export type PageToScene =
   | RpcRequest
   | SendChatRequest
   | SendChatReactionRequest
+  | SendReactionRequest
   | ChatBubbleTextRequest
   | ReloadSceneRequest
   | ConsoleCommandRequest
@@ -664,7 +672,7 @@ export interface DmDeleteRequest {
 
 /** Mirrors the engine's ExplorerSetting (BevyApi.getSettings). A setting is a
  *  Select when it has namedVariants, otherwise a numeric Slider; a 2-variant or
- *  0..1 setting renders as a Toggle. */
+ *  0..1 setting renders as a switch. */
 import type { SettingInfo as Setting, NamedVariant as SettingVariant } from './generated/index'
 export type { Setting, SettingVariant }
 

@@ -1,0 +1,67 @@
+/* Not from Figma's menu-item (Menus): the Explorer HUD's light list of single-choice sections. These rules sit
+   outside the cascade layer: its options are native buttons, which a host's own reset would otherwise restyle,
+   and the caller places the list with its own class. The 10.4px corners of an option, the check's orange and
+   the timings have no token. */
+.menu {
+  width: 240px;
+  padding: 10px 10px 16px;
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-neutrals-snow);
+  animation: optionMenuFade 200ms cubic-bezier(0.455, 0.03, 0.515, 0.955); /* = HUD --dur-pop, --ease-inoutquad */
+}
+@keyframes optionMenuFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.separator {
+  height: 1px;
+  margin: 8px -10px 6px;
+  background: var(--dcl-neutrals-pearl);
+}
+.label {
+  padding: 6px 10px 8px;
+  color: var(--dcl-neutrals-silver);
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 220px;
+  height: 36px;
+  padding: 0 11px;
+  border: none;
+  border-radius: 10.4px;
+  background: transparent;
+  color: var(--dcl-neutrals-shadow);
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 100ms linear; /* = HUD --dur-tap */
+}
+.option:hover {
+  background: var(--dcl-neutrals-pearl);
+}
+.option:active {
+  background: var(--dcl-neutrals-gray);
+}
+/* The chosen option's mark, 14px, at the row's right. */
+.check {
+  position: absolute;
+  left: 197px;
+  display: flex;
+  color: #ff743a; /* = HUD --accent */
+}

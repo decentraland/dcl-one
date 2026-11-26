@@ -236,6 +236,7 @@ class EngineCacheTests(unittest.TestCase):
         with patch.object(build, 'ROOT', self.root), patch.object(build, 'SOURCE', self.source), \
                 patch.object(build, 'APP', app), patch.object(build, 'run', side_effect=command), \
                 patch.dict(os.environ, {'GITHUB_SHA': SHA}):
+            os.environ.pop('PNPM', None)
             build.web(engine_cache=self.cache, preview_cache=preview)
             self.assertEqual(sum(c[0] == 'wasm-pack' for c in calls), 2)
             self.assertTrue(any(c[0] == 'bash' for c in calls))
@@ -265,6 +266,15 @@ class EngineCacheTests(unittest.TestCase):
         self.assertEqual(meta['preview']['revision'], SHA)
         self.assertEqual(meta['build_revision'], 'b' * 40)
         self.assertTrue(meta['optimized'])
+
+    def test_a_shell_that_carries_pnpm_runs_it_in_place_of_corepack(self):
+        with patch.dict(os.environ, {'PNPM': 'pnpm'}):
+            self.assertEqual(build.pnpm(), ('pnpm',))
+
+    def test_without_a_shell_pnpm_corepack_runs_the_pinned_version(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('PNPM', None)
+            self.assertEqual(build.pnpm(), ('corepack', 'pnpm@12.21.0'))
 
     def test_target_only_runs_the_cargo_steps_of_a_shared_build_and_nothing_else(self):
         calls = []

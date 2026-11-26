@@ -1,6 +1,6 @@
 // The sign-in screens' corner: Exit, mute the music,
 // help, and the build.
-import { Button, Icon, MaskIcon } from '../../design'
+import { Icon } from '../../design'
 import { bugReportUrl } from '@explorer-core/lib/bugReport'
 import { BUILD_VERSION, isNativeHud } from '@hud-host'
 import { useSession } from '../session/SessionContext'
@@ -10,6 +10,7 @@ import audioOn from '../../assets/startup/audio-on.png'
 import audioOff from '../../assets/startup/audio-off.png'
 import type { LoginMusic } from './useLoginMusic'
 import styles from './StartupFooter.module.css'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 export function StartupFooter({ music }: { music: LoginMusic }): React.JSX.Element {
   const session = useSession()
@@ -21,11 +22,11 @@ export function StartupFooter({ music }: { music: LoginMusic }): React.JSX.Eleme
   return (
     <footer className={styles.footer}>
       <div className={styles.buttons}>
-        <Button size="bare" variant="tint" className={`${styles.button} ${styles.exit}`} onClick={exitApplication}>
+        <Button appearance="hud" size="bare" variant="tint" className={`${styles.button} ${styles.exit}`} onClick={exitApplication}>
           <MaskIcon src={exitIcon} size={24} />
           Exit
         </Button>
-        <Button
+        <Button appearance="hud"
           size="bare"
           variant="tint"
           className={styles.button}
@@ -35,7 +36,7 @@ export function StartupFooter({ music }: { music: LoginMusic }): React.JSX.Eleme
         >
           <MaskIcon src={music.muted ? audioOff : audioOn} size={24} />
         </Button>
-        <Button size="bare" variant="tint" className={styles.button} aria-label="Help" onClick={openHelp}>
+        <Button appearance="hud" size="bare" variant="tint" className={styles.button} aria-label="Help" onClick={openHelp}>
           <Icon name="help" size={24} />
         </Button>
       </div>

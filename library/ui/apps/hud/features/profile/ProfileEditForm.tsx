@@ -3,7 +3,7 @@
 // save, so a field-by-field save would deploy eleven times for one visit.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, DateField, FieldLabel, Select, TextArea, TextInput, Trash } from '../../design'
+import { DateField, Select, TextArea, TextInput, Trash } from '../../design'
 import type { Profile, ProfileEdit, ProfileInfo } from '@explorer-core/engine/protocol'
 import { FIELD_OPTIONS } from '@explorer-core/features/profile/profileFieldOptions'
 import {
@@ -15,6 +15,7 @@ import {
 } from '@explorer-core/features/profile/profileFields'
 import passportStyles from './ProfilePassport.module.css'
 import styles from './ProfileEditForm.module.css'
+import { Button, FieldLabel } from '@dcl/one-ui'
 
 type LinkDraft = { title: string; url: string }
 
@@ -202,7 +203,7 @@ export function ProfileEditForm({
         })}
       </div>
       {draft.links.length < MAX_LINKS && (
-        <Button
+        <Button appearance="hud"
           variant="secondary"
           size="sm"
           disabled={saving}
