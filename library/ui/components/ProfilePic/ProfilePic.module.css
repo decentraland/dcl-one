@@ -114,3 +114,78 @@
     right: calc(var(--profile-pic-dot-inset) - var(--profile-pic-dot) / 5);
   }
 }
+
+/* Not in Figma: the Explorer HUD's picture (`appearance="hud"`), sized by the caller. Its half-white border, the
+   rail's ring, the online green and the 1.65px inset have no token. The dot's ring is outside its size: the
+   component sets that box model on the element, because a host's own reset outranks a rule in this layer. */
+@layer dcl.components {
+  .hud {
+    position: relative;
+    display: inline-flex;
+    box-sizing: border-box;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    border: var(--avatar-border-width, 2px) solid var(--avatar-border, rgba(255, 255, 255, 0.5));
+    border-radius: var(--dcl-radius-full);
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-neutrals-shadow);
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .hudImage {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: var(--dcl-radius-full);
+    object-fit: cover;
+  }
+
+  .hudFramed {
+    border: none;
+  }
+
+  .hudFramed .hudImage {
+    inset: var(--avatar-inset-y, 1.65px) var(--avatar-inset-x, 1.65px);
+    width: calc(100% - 2 * var(--avatar-inset-x, 1.65px));
+    height: calc(100% - 2 * var(--avatar-inset-y, 1.65px));
+  }
+
+  .hudFramed::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: var(--avatar-ring-width, 1px) solid var(--avatar-ring, rgba(255, 255, 255, 0.47));
+    border-radius: var(--dcl-radius-full);
+    pointer-events: none;
+  }
+
+  .hudDot {
+    position: absolute;
+    z-index: var(--avatar-dot-z, auto);
+    right: 0;
+    bottom: 0;
+    border: var(--avatar-dot-ring, 2px) solid var(--dcl-neutrals-shadow);
+    border-radius: var(--dcl-radius-full);
+  }
+
+  .hudDotTop {
+    top: var(--avatar-dot-top, 0);
+    right: var(--avatar-dot-right, 2px);
+    bottom: auto;
+  }
+
+  .hudOnline {
+    background: var(--avatar-online, #57df41);
+  }
+
+  .hudAway {
+    background: var(--dcl-brand-melon);
+  }
+
+  .hudOffline {
+    background: var(--dcl-neutrals-silver);
+  }
+}

@@ -16,6 +16,7 @@ const run = (...args: string[]) =>
 const ASSETS = fileURLToPath(new URL("../../../library/ui/apps/sites/assets/", import.meta.url));
 const SHARED_ASSETS = fileURLToPath(new URL("../../../library/ui/assets/", import.meta.url));
 const FONTS = fileURLToPath(new URL("../../../library/ui/foundations/typography/fonts/", import.meta.url));
+const REPOSITORY = fileURLToPath(new URL("../../../", import.meta.url));
 const STATUS_PAGES = STATIC_ERROR_STATUSES.filter((s) => s !== 404);
 const webpUri = (file: string, dir = ASSETS) => `data:image/webp;base64,${fs.readFileSync(path.join(dir, file)).toString("base64")}`;
 const escape = (text: string) =>
@@ -110,34 +111,55 @@ it("runs the AnimatedBackground animation on the 404 from one inline script with
   }
 });
 
-it("fails on a Git LFS pointer in place of the art, naming the file and the command that fetches it", () => {
+/** Runs the check with `file` (under the repository) replaced by a Git LFS pointer in an override tree. */
+function checkWithPointer(file: string) {
+  const overrides = fs.mkdtempSync(path.join(os.tmpdir(), "gen-error-pages-assets-"));
+  const stand = path.join(overrides, path.relative(REPOSITORY, file));
+  fs.mkdirSync(path.dirname(stand), { recursive: true });
+  fs.writeFileSync(stand, "version https://git-lfs.github.com/spec/v1\noid sha256:0000\nsize 1\n");
+  try {
+    return spawnSync(process.execPath, [SCRIPT, "--check"], {
+      cwd: SITES,
+      env: { ...process.env, ERROR_PAGES_OUT: OUT, ERROR_PAGES_ASSET_OVERRIDES: overrides },
+      encoding: "utf8",
+    });
+  } finally {
+    fs.rmSync(overrides, { recursive: true, force: true });
+  }
+}
+
+it("fails on a Git LFS pointer in place of the art, naming the file and the command that fetches it, without touching the tracked file", () => {
   const art = path.join(ASSETS, "errors", ART_FILES[statusCopy(503).art].file);
   const bytes = fs.readFileSync(art);
-  fs.writeFileSync(art, "version https://git-lfs.github.com/spec/v1\noid sha256:0000\nsize 1\n");
-  try {
-    const result = run("--check");
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(`library/ui/apps/sites/assets/errors/${path.basename(art)} is a Git LFS pointer`);
-    expect(result.stderr).toContain('git lfs pull --include="library/ui/apps/sites/assets/**"');
-  } finally {
-    fs.writeFileSync(art, bytes);
-  }
+  const result = checkWithPointer(art);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain(`library/ui/apps/sites/assets/errors/${path.basename(art)} is a Git LFS pointer`);
+  expect(result.stderr).toContain('git lfs pull --include="library/ui/apps/sites/assets/**"');
   expect(fs.readFileSync(art).equals(bytes)).toBe(true);
 }, 60_000);
 
-it("fails on a Git LFS pointer in place of the Inter file the 404 embeds, naming the file and the command that fetches it", () => {
+it("fails on a Git LFS pointer in place of the Inter file the 404 embeds, naming the file and the command that fetches it, without touching the tracked file", () => {
   const font = path.join(FONTS, "inter-latin-wght-normal.woff2");
   const bytes = fs.readFileSync(font);
-  fs.writeFileSync(font, "version https://git-lfs.github.com/spec/v1\noid sha256:0000\nsize 1\n");
-  try {
-    const result = run("--check");
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("library/ui/foundations/typography/fonts/inter-latin-wght-normal.woff2 is a Git LFS pointer");
-    expect(result.stderr).toContain('git lfs pull --include="library/ui/foundations/typography/fonts/**"');
-  } finally {
-    fs.writeFileSync(font, bytes);
-  }
+  const result = checkWithPointer(font);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("library/ui/foundations/typography/fonts/inter-latin-wght-normal.woff2 is a Git LFS pointer");
+  expect(result.stderr).toContain('git lfs pull --include="library/ui/foundations/typography/fonts/**"');
   expect(fs.readFileSync(font).equals(bytes)).toBe(true);
+}, 60_000);
+
+it("reads the tracked files when the override tree does not hold them", () => {
+  const overrides = fs.mkdtempSync(path.join(os.tmpdir(), "gen-error-pages-assets-"));
+  try {
+    const result = spawnSync(process.execPath, [SCRIPT, "--check"], {
+      cwd: SITES,
+      env: { ...process.env, ERROR_PAGES_OUT: OUT, ERROR_PAGES_ASSET_OVERRIDES: overrides },
+      encoding: "utf8",
+    });
+    expect(result.status, result.stderr).toBe(0);
+  } finally {
+    fs.rmSync(overrides, { recursive: true, force: true });
+  }
 }, 60_000);
 
 it("is self-contained: no external stylesheet, script, font or image, and every custom property it reads is defined", () => {

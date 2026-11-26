@@ -1,16 +1,9 @@
 name: SDK / CI
+# The SDK's CI and its PR previews. sdk-release.yml calls the same jobs for next and for releases.
+# A same-repo PR publishes what it packed as @dcl-regenesislabs/* under the pr dist-tag. Those
+# packages are previews only: any branch can publish to them. The @dcl/* names publish only from
+# sdk-release.yml, through an environment a PR run cannot use.
 on:
-  push:
-    branches: [main]
-    paths:
-      - library/js-sdk-toolchain/**
-      - library/protocol/**
-      - apps/dcl-scene-cli/**
-      - apps/bevy-explorer/e2e/scenes/environment/**
-      - library/dcl-scene-build/**
-      - library/hashing/**
-      - tooling/check-local-hashing.mjs
-      - .github/workflows/sdk.yml
   pull_request:
     paths:
       - library/js-sdk-toolchain/**
@@ -21,15 +14,29 @@ on:
       - library/hashing/**
       - tooling/check-local-hashing.mjs
       - .github/workflows/sdk.yml
+      - .github/workflows/sdk-release.yml
+  workflow_call:
+    inputs:
+      version:
+        description: The release version to stamp; empty stamps a snapshot version
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
-  group: sdk-ci-${{ github.ref }}
-  # a newer push supersedes a PR run; main runs finish
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # a newer push supersedes a PR's run; a run called from sdk-release.yml is never cancelled
+  group: sdk-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 env:
-  # the SDK's make install downloads protoc 3.20.1 for the runner's arch; nothing publishes
+  # the SDK's make install downloads protoc 3.20.1 for the runner's arch
   CI: true
+  # playground-assets is built and tested with the rest but not published
+  SDK_PACKAGES: ecs js-runtime react-ecs sdk-commands sdk
+  PREVIEW_SCOPE: '@dcl-regenesislabs'
+  # What the packed sdk-commands names for the hashing library it links: the version on npm whose
+  # hashV1, the one function it uses, returns what library/hashing does. Move it when that changes.
+  HASHING_VERSION: 1.1.3
+  PNPM: corepack pnpm@12.21.0
 jobs:
   lint:
     name: Lint
@@ -50,6 +57,53 @@ jobs:
         run: make lint
       - name: Package manifests agree
         run: make lint-packages
+  clippy:
+    name: Scene CLI clippy
+    # The Development workflow lints the whole catalyst workspace, this crate included, but only on the
+    # changes it selects; this job covers a change to the CLI's own sources.
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 60
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-ci-${{ hashFiles('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/**', 'infra/packages/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-ci-
+          save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          gc-max-store-size: 0
+      - name: Root the shell and the flake inputs
+        run: |
+          mkdir -p .cache/nix-roots
+          nix develop .#ci --profile .cache/nix-roots/env --command true
+          nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
+      - name: Put the Nix Rust toolchain on PATH for the cache action
+        run: |
+          toolchain=$(dirname "$(nix develop .#ci --command bash -c 'command -v cargo')")
+          test -x "$toolchain/rustc"
+          echo "$toolchain" >> "$GITHUB_PATH"
+      - name: Restore the Rust dependency cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        env:
+          RUSTUP_HOME: /dev/null
+        with:
+          workspaces: services/catalyst -> target-clippy
+          shared-key: sdk-clippy-${{ hashFiles('flake.lock') }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          cache-on-failure: true
+      - name: Clippy over the scene CLI
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/services/catalyst/target-clippy
+        run: |
+          nix develop .#ci --command \
+            cargo clippy --manifest-path services/catalyst/Cargo.toml --locked -p dcl-scene-cli --all-targets -- -D warnings
+      - name: Unused dependencies in the scene CLI
+        run: |
+          nix build --inputs-from . nixpkgs#cargo-machete -o .cache/cargo-machete
+          .cache/cargo-machete/bin/cargo-machete apps/dcl-scene-cli
   build-test:
     name: Build, test, pack
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
@@ -107,15 +161,125 @@ jobs:
           exit 1
       - name: Test the CLI
         run: make test-cli
+      - name: Stamp the snapshot version into @dcl/sdk
+        # <latest patch+1>-<run>.commit-<sha>, after the tests, which expect the placeholder;
+        # make prepare copies it to the other packages.
+        # Fork PRs keep the placeholder: nothing publishes them.
+        if: inputs.version == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
+        with:
+          cwd: ./library/js-sdk-toolchain/packages/@dcl/sdk
+          deterministic-snapshot: true
+          only-update-versions: true
+        env:
+          # A PR checkout is a detached merge commit, so oddish cannot read the branch from git.
+          BRANCH_NAME: ${{ github.head_ref }}
+      - name: Stamp the release version into @dcl/sdk
+        if: inputs.version != ''
+        run: cd packages/@dcl/sdk && pnpm pkg set version="$VERSION"
+        env:
+          VERSION: ${{ inputs.version }}
+      - name: Name the PR's packages as previews
+        # make prepare then pins each sibling as an npm alias to its preview name
+        if: github.event_name == 'pull_request'
+        run: |
+          for name in $SDK_PACKAGES; do
+            (cd "packages/@dcl/$name" && pnpm pkg set name="$PREVIEW_SCOPE/$name")
+          done
       - name: Prepare releasable packages
         run: make prepare
-        env:
-          # nothing is published from this job, and @dcl/protocol and @dcl/hashing have no version published
-          # from here yet: the packed manifests say so instead of naming a version that is not on npm
-          PROTOCOL_VERSION: 0.0.0-unpublished.${{ github.sha }}
-          HASHING_VERSION: 0.0.0-unpublished.${{ github.sha }}
       - name: Packed manifests name no local dependency
         run: |
           rm -rf .packed && mkdir .packed
           for tgz in packages/@dcl/*/*.tgz; do mkdir -p ".packed/$(basename "$tgz" .tgz)" && tar -xzf "$tgz" -C ".packed/$(basename "$tgz" .tgz)"; done
-          node scripts/check-no-local-packages.cjs .packed
+          # only a PR's packages may alias, and only their preview siblings
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            node scripts/check-no-local-packages.cjs .packed --preview-scope "$PREVIEW_SCOPE"
+          else
+            node scripts/check-no-local-packages.cjs .packed
+          fi
+          rm -rf dist && mkdir dist
+          for name in $SDK_PACKAGES; do mv packages/@dcl/"$name"/*.tgz dist/; done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sdk-packages-${{ github.sha }}
+          path: library/js-sdk-toolchain/dist/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+  preview:
+    name: Publish the PR preview
+    needs: [lint, build-test]
+    # fork PRs publish nothing
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      pull-requests: write
+      id-token: write # npm OIDC trusted publishing — no token secret
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.16.0
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sdk-packages-${{ github.sha }}
+          path: dist
+      - name: Publish in dependency order
+        id: publish
+        run: |
+          set -euo pipefail
+          manifest() { tar -xOf "$1" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); p.name + "@" + p.version'; }
+          first=$(manifest ./dist/*-js-runtime-[0-9]*.tgz)
+          version=${first##*@}
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+$ ]]; then
+            echo "a preview needs a snapshot version, got $first" >&2
+            exit 1
+          fi
+          for name in $SDK_PACKAGES; do
+            tgz=./dist/${PREVIEW_SCOPE#@}-$name-$version.tgz
+            if [ "$(manifest "$tgz")" != "$PREVIEW_SCOPE/$name@$version" ]; then
+              echo "$tgz is not $PREVIEW_SCOPE/$name@$version" >&2
+              exit 1
+            fi
+          done
+          # a rerun repeats the version, so packages already on npm are skipped
+          for name in $SDK_PACKAGES; do
+            if [ -n "$($PNPM view "$PREVIEW_SCOPE/$name@$version" version 2> /dev/null)" ]; then
+              echo "$PREVIEW_SCOPE/$name@$version is already on npm; skipping"
+            else
+              $PNPM publish "./dist/${PREVIEW_SCOPE#@}-$name-$version.tgz" --provenance --access public --tag pr --no-git-checks --registry https://registry.npmjs.org
+            fi
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/bevy-explorer-ci-status
+      - name: Write the install command
+        env:
+          VERSION: ${{ steps.publish.outputs.version }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # npm aliases, so scenes keep importing @dcl/sdk; a creator's project installs with npm
+          cli=npm
+          {
+            echo '![SDK](https://img.shields.io/badge/SDK-Published-brightgreen?logo=npm&logoColor=white&style=for-the-badge)'
+            echo
+            echo "SDK packages for $HEAD_SHA:"
+            echo
+            echo '```'
+            printf '%s install' "$cli"
+            for name in $SDK_PACKAGES; do printf ' \\\n  @dcl/%s@npm:%s/%s@%s' "$name" "$PREVIEW_SCOPE" "$name" "$VERSION"; done
+            echo
+            echo '```'
+            echo
+            echo 'The pr dist-tag points at the last PR preview published, so prefer the exact version.'
+          } > sdk-section.md
+      - name: Add it to the PR's CI status comment
+        uses: ./.github/actions/bevy-explorer-ci-status
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+          section: sdk
+          body-file: sdk-section.md
+          github-token: ${{ github.token }}

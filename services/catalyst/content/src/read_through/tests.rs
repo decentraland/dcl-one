@@ -1126,3 +1126,46 @@ async fn upstream_json_reads_refuse_a_redirect() {
     }
     let _ = std::fs::remove_dir_all(tmp);
 }
+
+/// [`active_entity_docs`]: local or read through, each with and without the caller's denylist.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn active_entity_docs_reads_local_or_through_without_the_callers_denylist() {
+    let fake = start_fake().await;
+    require_test_db!(Some(node) = Node::new("shared-lookup", &fake, HANG_GUARD, false).await);
+    for (through, denied) in [(false, false), (false, true), (true, false), (true, true)] {
+        let case = format!("through={through} denied={denied}");
+        let fx = Fixture::new("wearable", &pointer(), now_ms());
+        fake.publish(&fx, &signed_chain(&fx.id).await);
+        let pointers = [fx.pointer.clone()];
+        let held = active_entity_docs(&node.pool, None, false, &pointers, None)
+            .await
+            .unwrap();
+        assert!(held.is_empty(), "{case}: not held yet");
+        if !through {
+            node.read_through
+                .active_docs(false, &pointers)
+                .await
+                .unwrap();
+        }
+        let denylist = Denylist::default();
+        if denied {
+            denylist.add(&fx.id);
+        }
+        let calls = fake.active_calls();
+        for (use_ids, value) in [(false, &fx.pointer), (true, &fx.id)] {
+            let docs = active_entity_docs(
+                &node.pool,
+                through.then_some(node.read_through.as_ref()),
+                use_ids,
+                std::slice::from_ref(value),
+                denied.then_some(&denylist),
+            )
+            .await
+            .unwrap();
+            let ids: Vec<&str> = docs.iter().map(|d| d.id.as_str()).collect();
+            let want: Vec<&str> = if denied { vec![] } else { vec![&fx.id] };
+            assert_eq!(ids, want, "{case} use_ids={use_ids}");
+        }
+        assert_eq!(fake.active_calls() - calls, usize::from(through), "{case}");
+    }
+}

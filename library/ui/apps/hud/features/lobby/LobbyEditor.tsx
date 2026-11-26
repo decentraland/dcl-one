@@ -14,7 +14,6 @@ import homeIcon from '../../assets/lobby/home-icon.png'
 import jumpBackIcon from '../../assets/lobby/jump-back-icon.png'
 import liveIcon from '../../assets/lobby/live-icon.png'
 import recommendedIcon from '../../assets/lobby/recommended-icon.png'
-import { MaskIcon } from '../../design'
 import { moveFocus } from '../../lib/arrowKeys'
 import {
   LOBBY_CORNERS,
@@ -32,6 +31,7 @@ import {
 } from '@explorer-core/features/lobby/layout'
 import { cellRect, gridAt, gridRect, nearestCell, spanSize, CELL_SIZE, GUTTER, type Rect } from './grid'
 import styles from './LobbyEditor.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 const FAMILY_ICONS: Record<LobbyWidgetFamily, string> = {
   Landing: homeIcon,

@@ -64,11 +64,20 @@ export function useOverlayPosition(
   { placement = "bottom-start", offset = 0, crossOffset = 0, flip = true, edge = 8 }: OverlayPositionOptions = {},
 ): OverlayPosition {
   const [position, setPosition] = useState<OverlayPosition>(UNPLACED);
+  // The last position asked for, compared instead of the state an updater gets. React 18 replays a synchronous
+  // update on the state from before a pending lower-priority one (a remeasure from the resize listener), so an
+  // updater kept seeing the old position and returning a new object: every commit measured, set and rendered again
+  // until "Maximum update depth exceeded" (deleting a chat from Creator Hub's AI panel menu).
+  const placed = useRef<OverlayPosition>(UNPLACED);
+  const place = (next: OverlayPosition) => {
+    placed.current = next;
+    setPosition(next);
+  };
   const measure = useRef(() => {});
   const anchored = open && !!anchor;
   const element = anchor instanceof Element ? anchor : null;
 
-  // The same position keeps the same state object, so a measure after a render does not render again.
+  // The same position sets nothing, so a measure after a render does not render again.
   useLayoutEffect(() => {
     measure.current = () => {
       const surface = floating.current;
@@ -79,17 +88,16 @@ export function useOverlayPosition(
         rect, { width: own.width, height: own.height }, { width: window.innerWidth, height: window.innerHeight },
         { placement, offset, crossOffset, flip, edge },
       );
-      setPosition((prev) =>
-        prev.ready && prev.left === next.left && prev.top === next.top && prev.placement === next.placement && prev.anchorWidth === rect.width
-          ? prev
-          : { ...next, anchorWidth: rect.width, ready: true });
+      const prev = placed.current;
+      if (prev.ready && prev.left === next.left && prev.top === next.top && prev.placement === next.placement && prev.anchorWidth === rect.width) return;
+      place({ ...next, anchorWidth: rect.width, ready: true });
     };
     if (anchored) measure.current();
   });
 
   useLayoutEffect(() => {
     if (!anchored) return;
-    return () => setPosition(UNPLACED);
+    return () => place(UNPLACED);
   }, [anchored]);
 
   useLayoutEffect(() => {

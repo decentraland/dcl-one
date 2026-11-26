@@ -5,7 +5,8 @@ use crate::interfaces::{
 };
 use crate::rooms::{ActiveDeployment, ResolveError, ResolvedRoom, RoomRequest};
 use crate::world_identity::{RealmId, SceneId, SceneNamespace};
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 #[derive(Clone, Copy)]
 enum Placement {
@@ -50,13 +51,13 @@ impl SceneIdentity for HistoricalScenes {
     async fn resolve(&self, request: RoomRequest<'_>) -> Result<ResolvedRoom, ResolveError> {
         match request {
             RoomRequest::Adapter { .. } => {
-                self.calls.lock().unwrap().push("historical");
+                self.calls.lock().push("historical");
                 // Local unpublish keeps this deployment's deleter NULL. The
                 // Adapter contract intentionally still returns its old footprint.
                 Ok(historical("UnpublishedHash"))
             }
             RoomRequest::Parcel { realm, parcel } => {
-                self.calls.lock().unwrap().push("current");
+                self.calls.lock().push("current");
                 match self.placement {
                     Placement::Unpublished => Err(ResolveError::NoSceneAtParcel {
                         realm: realm.to_string(),
@@ -85,6 +86,12 @@ impl SceneIdentity for HistoricalScenes {
         _: &WorldName,
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         Ok(None)
+    }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
     }
 }
 
@@ -143,7 +150,7 @@ async fn unpublished_or_replaced_genesis_metadata_abstains_on_initial_and_period
                 move |axum::extract::Path(method): axum::extract::Path<String>| {
                     let capture = capture.clone();
                     async move {
-                        capture.lock().unwrap().push(method);
+                        capture.lock().push(method);
                         axum::Json(json!({"rooms":[{"name":"scene:main:UnpublishedHash"}]}))
                     }
                 },
@@ -160,14 +167,14 @@ async fn unpublished_or_replaced_genesis_metadata_abstains_on_initial_and_period
             );
         }
         assert_eq!(
-            scenes.calls.lock().unwrap().as_slice(),
+            scenes.calls.lock().as_slice(),
             ["historical", "current", "historical", "current"],
             "abstention must not install a successful SID cooldown"
         );
         refresh(&state).await.unwrap();
-        assert_eq!(scenes.calls.lock().unwrap().len(), 6);
+        assert_eq!(scenes.calls.lock().len(), 6);
         assert_eq!(
-            requests.lock().unwrap().as_slice(),
+            requests.lock().as_slice(),
             ["ListRooms"],
             "historical or replacement footprints must never reach role reads or metadata writes"
         );
@@ -182,7 +189,7 @@ async fn current_genesis_placement_failure_remains_retryable_before_metadata_ack
         assert_eq!(started(state.clone(), "retry").await.unwrap_err().code, 503);
     }
     assert_eq!(
-        scenes.calls.lock().unwrap().len(),
+        scenes.calls.lock().len(),
         4,
         "the same signed event must retry current authority"
     );

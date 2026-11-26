@@ -1,0 +1,232 @@
+/* A tip beside its anchor. The host supplies the surface tokens (--panel, --text, --shadow-panel, --font-family,
+ * --z-overlay) and may restyle the tip through the --tooltip-* properties on the tip or an ancestor. Not in a
+ * cascade layer: consumer rules keep the precedence they had over the stylesheet this replaced. */
+.root {
+  position: relative;
+  display: inline-flex;
+}
+
+.tip {
+  position: absolute;
+  z-index: var(--z-overlay);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  padding: var(--tooltip-pad, 6px 10px);
+  border-radius: var(--tooltip-radius, 10px);
+  background: var(--tooltip-bg, var(--panel));
+  color: var(--tooltip-text, var(--text));
+  font-family: var(--font-family);
+  font-size: var(--tooltip-size, 12px);
+  font-weight: var(--tooltip-weight, 600);
+  line-height: 15px;
+  box-shadow: var(--tooltip-shadow, var(--shadow-panel));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.shortcut {
+  opacity: 0.6;
+}
+
+.right {
+  left: 100%;
+  top: 50%;
+  transform: translate(8px, -50%) scale(0.96);
+  transform-origin: left center;
+}
+.left {
+  right: 100%;
+  top: 50%;
+  transform: translate(-8px, -50%) scale(0.96);
+  transform-origin: right center;
+}
+.top {
+  bottom: 100%;
+  left: 50%;
+  transform: translate(-50%, -8px) scale(0.96);
+  transform-origin: center bottom;
+}
+.bottom {
+  top: 100%;
+  left: 50%;
+  transform: translate(-50%, 8px) scale(0.96);
+  transform-origin: center top;
+}
+
+.root:hover .tip,
+.root:focus-within .tip {
+  opacity: 1;
+}
+.root:hover .right,
+.root:focus-within .right {
+  transform: translate(var(--tt-gap, 12px), -50%) scale(1);
+}
+.root:hover .left,
+.root:focus-within .left {
+  transform: translate(calc(-1 * var(--tt-gap, 12px)), -50%) scale(1);
+}
+.root:hover .top,
+.root:focus-within .top {
+  transform: translate(-50%, calc(-1 * var(--tt-gap, 12px))) scale(1);
+}
+.root:hover .bottom,
+.root:focus-within .bottom {
+  transform: translate(-50%, var(--tt-gap, 12px)) scale(1);
+}
+
+.rich {
+  display: block;
+}
+.wrapText {
+  width: max-content;
+  max-width: var(--tt-max-width);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.interactive {
+  pointer-events: auto;
+}
+.bare {
+  display: block;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  white-space: normal;
+}
+
+.arrow::before {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: inherit;
+  transform: rotate(45deg);
+}
+.arrow.top::before {
+  bottom: -4px;
+  left: calc(50% - 4px);
+}
+.arrow.bottom::before {
+  top: -4px;
+  left: calc(50% - 4px);
+}
+.arrow.right::before {
+  top: calc(50% - 4px);
+  left: -4px;
+}
+.arrow.left::before {
+  top: calc(50% - 4px);
+  right: -4px;
+}
+
+/* Not in Figma: the Explorer HUD's tip (`appearance="hud"`). The pointer alone opens it. Each rule has the
+ * specificity of the HUD rule it replaced, so a HUD stylesheet keeps the precedence it had. It takes its surface
+ * from `.tip`. Its 140ms, its easing curve and the rail's 9.6px corners are the HUD's --dur-fast, --ease-out and
+ * --r-button, written as values: the shared library has no token for them and does not read the host's. */
+.hudRoot {
+  position: relative;
+  display: inline-flex;
+}
+
+.hud {
+  padding: var(--tooltip-pad, 8px 12px);
+  border-radius: var(--tooltip-radius, 12px);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 17px;
+  transition:
+    opacity 140ms ease,
+    transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:where(.hud).right {
+  transform: translate(10px, -50%) scale(0.96);
+}
+:where(.hud).left {
+  transform: translate(-10px, -50%) scale(0.96);
+}
+:where(.hud).top {
+  transform: translate(-50%, -10px) scale(0.96);
+}
+:where(.hud).bottom {
+  transform: translate(-50%, 10px) scale(0.96);
+}
+
+.hudRoot:hover .hud {
+  opacity: 1;
+}
+.hudRoot:hover :where(.hud).right {
+  transform: translate(14px, -50%) scale(1);
+}
+.hudRoot:hover :where(.hud).left {
+  transform: translate(-14px, -50%) scale(1);
+}
+.hudRoot:hover :where(.hud).top {
+  transform: translate(-50%, -14px) scale(1);
+}
+.hudRoot:hover :where(.hud).bottom {
+  transform: translate(-50%, 14px) scale(1);
+}
+
+.hudEnd.top,
+.hudEnd.bottom {
+  left: auto;
+  right: 0;
+}
+.hudEnd.top {
+  transform: translate(0, -10px) scale(0.96);
+  transform-origin: right bottom;
+}
+.hudEnd.bottom {
+  transform: translate(0, 10px) scale(0.96);
+  transform-origin: right top;
+}
+.hudRoot:hover .hudEnd.top {
+  transform: translate(0, -14px) scale(1);
+}
+.hudRoot:hover .hudEnd.bottom {
+  transform: translate(0, 14px) scale(1);
+}
+
+.hudMultiline {
+  display: block;
+  width: max-content;
+  max-width: 360px;
+  white-space: pre-line;
+  font-weight: 500;
+  text-align: left;
+}
+.hudMultiline.bottom {
+  left: 0;
+  transform: translate(0, 10px) scale(0.96);
+  transform-origin: left top;
+}
+.hudRoot:hover .hudMultiline.bottom {
+  transform: translate(0, 14px) scale(1);
+}
+
+.hudRail {
+  border-radius: var(--tooltip-radius, 9.6px);
+  box-shadow: none;
+  transition: none;
+}
+.hudRail.right,
+.hudRoot:hover .hudRail.right {
+  transform: translate(10px, -50%);
+}
+.hudRail.top,
+.hudRoot:hover .hudRail.top {
+  transform: translate(-50%, -4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tip {
+    transition: none;
+  }
+}

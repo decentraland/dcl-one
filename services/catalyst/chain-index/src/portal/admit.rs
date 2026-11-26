@@ -410,7 +410,7 @@ impl Drop for RpcFlush<'_> {
     fn drop(&mut self) {
         let n = self.sent.load(Ordering::SeqCst);
         if n > 0 {
-            metrics::counter!(RPC_SENDS, "net" => self.net, "kind" => self.kind)
+            dcl_metrics::counter!(RPC_SENDS, "net" => self.net, "kind" => self.kind)
                 .increment(n as u64);
         }
     }
@@ -450,14 +450,14 @@ fn record_sends(net: &'static str, s: SendCounts) {
         ("headers", s.headers),
     ] {
         if n > 0 {
-            metrics::counter!(super::shadow::SENDS, "net" => net, "kind" => kind)
+            dcl_metrics::counter!(super::shadow::SENDS, "net" => net, "kind" => kind)
                 .increment(n as u64);
         }
     }
 }
 
 fn record(net: &'static str, outcome: Outcome) {
-    metrics::counter!(WINDOWS, "net" => net, "result" => outcome.label()).increment(1);
+    dcl_metrics::counter!(WINDOWS, "net" => net, "result" => outcome.label()).increment(1);
 }
 
 fn rpc_log(log: &PortalLog, hash: &str, time: u64) -> RpcLog {
@@ -569,7 +569,7 @@ impl<S: LogSource> AdmittedPortal<'_, S> {
             // The durable anchor: the lake's history up to N is the RPC's.
             // Counted as it is sent, whatever comes back.
             anchor_sends.fetch_add(1, Ordering::SeqCst);
-            metrics::counter!(RPC_SENDS, "net" => net, "kind" => "anchor").increment(1);
+            dcl_metrics::counter!(RPC_SENDS, "net" => net, "kind" => "anchor").increment(1);
             in_anchor.store(true, Ordering::SeqCst);
             let anchor = self.inner.header(n.number).await;
             in_anchor.store(false, Ordering::SeqCst);
@@ -577,7 +577,7 @@ impl<S: LogSource> AdmittedPortal<'_, S> {
             if anchor.requests > 1 {
                 let more = anchor.requests - 1;
                 anchor_sends.fetch_add(more, Ordering::SeqCst);
-                metrics::counter!(RPC_SENDS, "net" => net, "kind" => "anchor")
+                dcl_metrics::counter!(RPC_SENDS, "net" => net, "kind" => "anchor")
                     .increment(more as u64);
             }
             if anchor.value.hash.to_ascii_lowercase() != n.hash {
@@ -664,7 +664,7 @@ impl<S: LogSource> AdmittedPortal<'_, S> {
                 .await?
         };
         let whole = whole.load(Ordering::SeqCst);
-        metrics::counter!(LOGS, "net" => net, "source" => "rpc").increment(w.logs.len() as u64);
+        dcl_metrics::counter!(LOGS, "net" => net, "source" => "rpc").increment(w.logs.len() as u64);
         Ok(Window {
             charge: logical.max(sent.logs + whole),
             requests: sent.anchor + sent.logs + whole,
@@ -786,7 +786,8 @@ impl<S: LogSource> LogSource for AdmittedPortal<'_, S> {
             // Both sides hold every log of their addresses up to their own
             // end: the window reaches the lower one.
             reached = reached.min(r.reached);
-            let cut = reached as i64;
+            // Saturates: every i64 block is at or below a larger `reached`.
+            let cut = i64::try_from(reached).unwrap_or(i64::MAX);
             logs.retain(|l| log_position(l).0 <= cut);
             from_rpc = r
                 .logs
@@ -838,8 +839,9 @@ impl<S: LogSource> LogSource for AdmittedPortal<'_, S> {
         admission.settle(plan.outcome, &ticket);
         drop(ticket);
         record(net, plan.outcome);
-        metrics::counter!(LOGS, "net" => net, "source" => "portal").increment(portal_count as u64);
-        metrics::counter!(LOGS, "net" => net, "source" => "rpc").increment(rpc_count as u64);
+        dcl_metrics::counter!(LOGS, "net" => net, "source" => "portal")
+            .increment(portal_count as u64);
+        dcl_metrics::counter!(LOGS, "net" => net, "source" => "rpc").increment(rpc_count as u64);
         Ok(Window {
             logs,
             reached,
@@ -847,6 +849,19 @@ impl<S: LogSource> LogSource for AdmittedPortal<'_, S> {
             charge: logical.max(sent.logs),
             portal_sends: sent.portal,
         })
+    }
+
+    async fn archive_window(
+        &self,
+        from: u64,
+        to: u64,
+        groups: &[LogGroup],
+        chunk: &mut usize,
+        budget: usize,
+    ) -> Result<Window, RpcError> {
+        self.inner
+            .archive_window(from, to, groups, chunk, budget)
+            .await
     }
 
     async fn block_times(&self, logs: &[RpcLog]) -> Result<Read<HashMap<i64, i64>>, RpcError> {
@@ -864,5 +879,11 @@ impl<S: LogSource> LogSource for AdmittedPortal<'_, S> {
     }
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "test support"
+)]
 #[cfg(test)]
 mod tests;

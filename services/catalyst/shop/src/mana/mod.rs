@@ -15,12 +15,20 @@
 //! ([`venues`]); a controlled deployment (the anvil tests) builds its own,
 //! so no route reads an address from a request.
 
+// Money and chain values: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 pub mod actions;
 pub mod calls;
 pub mod chain;
 pub mod executions;
 pub mod facts;
 pub mod feed_rate;
+pub(crate) mod history;
 pub mod quote;
 pub mod tracker;
 pub mod venues;
@@ -106,7 +114,8 @@ fn settlement_book_for(
         ChainId::POLYGON => Ok(venues::Book::production(rpc)),
         ChainId::AMOY => {
             anyhow::ensure!(
-                market.settings.eth_network.trim() != "mainnet",
+                crate::shared::network::ChainPair::from_eth_network(&market.settings.eth_network)
+                    != Some(crate::shared::network::ChainPair::Mainnet),
                 "COLLECTIONS_CHAIN_ID is Amoy (80002) but ETH_NETWORK is mainnet: \
                  the Shop's testnet venues need a testnet node"
             );
@@ -116,7 +125,7 @@ fn settlement_book_for(
                 .indexes
                 .chain_id(crate::market::chain_walk::ChainNet::Matic);
             anyhow::ensure!(
-                indexed == ChainId::AMOY.0 as i64,
+                u64::try_from(indexed) == Ok(ChainId::AMOY.0),
                 "COLLECTIONS_CHAIN_ID is Amoy (80002) but MARKETPLACE_INDEX_CHAIN_ID_MATIC is {indexed}: \
                  an index of another chain would confirm Amoy's trades"
             );
@@ -220,7 +229,8 @@ impl State {
         .await
     }
 
-    /// The signer of a write, as an address; 401 with the lambdas envelope otherwise.
+    /// The signer of a write, as an address; 401 with the lambdas envelope
+    /// otherwise, or 429 when the client source's contract-wallet checks are spent.
     pub async fn require_signer(
         &self,
         headers: &HeaderMap,
@@ -236,6 +246,12 @@ impl State {
                     "the signer is not an address",
                 )
             }),
+            // The client source spent its contract-wallet checks: retry later.
+            Err(e @ signed_fetch::SignedFetchError::RateLimited) => Err(error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too Many Requests",
+                &e.to_string(),
+            )),
             Err(e) => {
                 tracing::debug!(error = %e, "auth chain verification failed on a mana route");
                 Err(error(

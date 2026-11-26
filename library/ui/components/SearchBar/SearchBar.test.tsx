@@ -49,3 +49,84 @@ describe('SearchBar', () => {
     })
   })
 })
+
+function Hud({ variant, fieldSize }: { variant?: 'dark' | 'light'; fieldSize?: 'md' | 'sm' }) {
+  const [value, setValue] = useState('')
+  return (
+    <SearchBar
+      appearance="hud"
+      variant={variant}
+      fieldSize={fieldSize}
+      label="Search friends"
+      placeholder="Search friends"
+      value={value}
+      onValueChange={setValue}
+      onClear={() => setValue('')}
+      leading={<svg data-testid="magnifier" />}
+      clearIcon={<i data-testid="cross" />}
+      autoComplete={undefined}
+    />
+  )
+}
+
+describe('when a SearchBar takes the hud appearance', () => {
+  it('should wrap the field in a label, with its variant and size and no autocomplete default', () => {
+    render(<Hud variant="light" fieldSize="sm" />)
+    const field = screen.getByRole('textbox', { name: 'Search friends' })
+    const root = field.parentElement!
+    expect(root.tagName).toBe('LABEL')
+    expect(root).toHaveAttribute('data-variant', 'light')
+    expect(root).toHaveAttribute('data-size', 'sm')
+    expect(field).not.toHaveAttribute('autocomplete')
+  })
+
+  it('should default to the dark variant and the md size', () => {
+    render(<Hud />)
+    const root = screen.getByRole('textbox', { name: 'Search friends' }).parentElement!
+    expect(root).toHaveAttribute('data-variant', 'dark')
+    expect(root).toHaveAttribute('data-size', 'md')
+  })
+
+  it('should draw the leading visual before the field, hidden from assistive technology', () => {
+    render(<Hud />)
+    const leading = screen.getByTestId('magnifier').parentElement!
+    expect(leading).toHaveAttribute('aria-hidden', 'true')
+    expect(leading.nextElementSibling).toBe(screen.getByRole('textbox', { name: 'Search friends' }))
+  })
+
+  it("should show the caller's clear icon only while the field has a value, and empty it", async () => {
+    render(<Hud />)
+    expect(screen.queryByRole('button', { name: 'Clear search' })).not.toBeInTheDocument()
+    await userEvent.type(screen.getByRole('textbox', { name: 'Search friends' }), 'moj')
+    const clear = screen.getByRole('button', { name: 'Clear search' })
+    expect(clear).toContainElement(screen.getByTestId('cross'))
+    await userEvent.click(clear)
+    expect(screen.getByRole('textbox', { name: 'Search friends' })).toHaveValue('')
+    expect(screen.queryByRole('button', { name: 'Clear search' })).not.toBeInTheDocument()
+  })
+})
+
+describe('when a default SearchBar gets a leading visual', () => {
+  it('should keep its box a div and its default clear sign', async () => {
+    const Demo = () => {
+      const [value, setValue] = useState('a')
+      return (
+        <SearchBar
+          label="Search"
+          value={value}
+          onValueChange={setValue}
+          onClear={() => setValue('')}
+          leading={<svg data-testid="magnifier" />}
+          variant="light"
+          fieldSize="sm"
+        />
+      )
+    }
+    render(<Demo />)
+    const root = screen.getByRole('textbox', { name: 'Search' }).parentElement!
+    expect(root.tagName).toBe('DIV')
+    expect(root).not.toHaveAttribute('data-variant')
+    expect(root).not.toHaveAttribute('data-size')
+    expect(screen.getByRole('button', { name: 'Clear search' })).toHaveTextContent('×')
+  })
+})

@@ -1,0 +1,16 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+/* Not in Figma: the Explorer HUD's character count. The red has no token. */
+@layer dcl.components {
+  .root {
+    margin-top: 6px;
+    text-align: right;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--dcl-transparencies-white-60);
+  }
+
+  .root[data-over] {
+    color: #ff2424; /* = HUD --error */
+  }
+}

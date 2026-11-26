@@ -10,3 +10,6 @@ disallowed-methods = [
   { path = "axum::routing::delete", reason = "use crate::shared::routing::delete" },
   { path = "axum::routing::any", reason = "use crate::shared::routing::any" },
 ]
+
+allow-unwrap-in-tests = true
+allow-print-in-tests = true

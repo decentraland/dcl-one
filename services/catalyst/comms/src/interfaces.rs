@@ -118,6 +118,9 @@ pub trait SceneIdentity: Send + Sync {
         &self,
         world: &WorldName,
     ) -> Result<Option<ActiveDeployment>, ResolveError>;
+    /// How many scenes the world has here, counted up to two: a Cast watcher
+    /// needs a parcel in a world with several.
+    async fn world_scene_count(&self, world: &WorldName) -> Result<usize, ResolveError>;
 }
 
 /// Name ownership is supplied by Shop, which owns both its NFT index and
@@ -260,6 +263,7 @@ pub trait SocialDirectory: Send + Sync {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support {
     use super::*;
     use crate::access::AccessGrant;
@@ -267,17 +271,17 @@ pub mod test_support {
     /// In-memory social seam; records notifications for assertions.
     #[derive(Default)]
     pub struct StubDirectory {
-        pub privacy: std::sync::Mutex<std::collections::BTreeMap<Address, String>>,
-        pub streaming_notifications: std::sync::Mutex<Vec<StreamingNotification>>,
-        pub fail_streaming_recipient: std::sync::Mutex<Option<Address>>,
-        pub streaming_attempts: std::sync::Mutex<Vec<Address>>,
+        pub privacy: parking_lot::Mutex<std::collections::BTreeMap<Address, String>>,
+        pub streaming_notifications: parking_lot::Mutex<Vec<StreamingNotification>>,
+        pub fail_streaming_recipient: parking_lot::Mutex<Option<Address>>,
+        pub streaming_attempts: parking_lot::Mutex<Vec<Address>>,
         pub streaming_delay_ms: std::sync::atomic::AtomicU64,
-        pub community_events: std::sync::Mutex<Vec<serde_json::Value>>,
+        pub community_events: parking_lot::Mutex<Vec<serde_json::Value>>,
         pub fail_community_notifications: std::sync::atomic::AtomicUsize,
         pub fail_moderation_notifications: std::sync::atomic::AtomicBool,
-        pub user_notifications: std::sync::Mutex<Vec<UserNotification>>,
+        pub user_notifications: parking_lot::Mutex<Vec<UserNotification>>,
         pub user_notification_keys:
-            std::sync::Mutex<std::collections::BTreeMap<(Address, uuid::Uuid), uuid::Uuid>>,
+            parking_lot::Mutex<std::collections::BTreeMap<(Address, uuid::Uuid), uuid::Uuid>>,
     }
 
     #[async_trait::async_trait]
@@ -308,7 +312,6 @@ pub mod test_support {
             Ok(self
                 .privacy
                 .lock()
-                .unwrap()
                 .get(address)
                 .cloned()
                 .unwrap_or_else(|| "all".to_string()))
@@ -320,7 +323,6 @@ pub mod test_support {
         ) -> Result<(), sqlx::Error> {
             self.privacy
                 .lock()
-                .unwrap()
                 .insert(address.clone(), privacy.to_string());
             Ok(())
         }
@@ -343,7 +345,7 @@ pub mod test_support {
                     "injected notification persistence failure".into(),
                 ));
             }
-            let mut events = self.community_events.lock().unwrap();
+            let mut events = self.community_events.lock();
             if !events.iter().any(|saved| saved["key"] == event["key"]) {
                 events.push(event.clone());
             }
@@ -355,7 +357,6 @@ pub mod test_support {
         ) -> Result<(), sqlx::Error> {
             self.streaming_attempts
                 .lock()
-                .unwrap()
                 .push(notification.recipient.clone());
             let delay = self
                 .streaming_delay_ms
@@ -363,7 +364,7 @@ pub mod test_support {
             if delay > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
             }
-            let mut failure = self.fail_streaming_recipient.lock().unwrap();
+            let mut failure = self.fail_streaming_recipient.lock();
             if failure.as_ref() == Some(&notification.recipient) {
                 failure.take();
                 return Err(sqlx::Error::Protocol(
@@ -371,7 +372,7 @@ pub mod test_support {
                 ));
             }
             drop(failure);
-            let mut notifications = self.streaming_notifications.lock().unwrap();
+            let mut notifications = self.streaming_notifications.lock();
             if !notifications.iter().any(|n| {
                 n.event_key == notification.event_key && n.recipient == notification.recipient
             }) {
@@ -384,8 +385,8 @@ pub mod test_support {
             _: &mut sqlx::PgConnection,
             notifications: &[UserNotification],
         ) -> Result<(), sqlx::Error> {
-            let mut saved = self.user_notifications.lock().unwrap();
-            let mut keys = self.user_notification_keys.lock().unwrap();
+            let mut saved = self.user_notifications.lock();
+            let mut keys = self.user_notification_keys.lock();
             keys.retain(|(wallet, _), id| {
                 saved.iter().any(|n| n.id == *id && n.recipient == *wallet)
             });
@@ -587,9 +588,12 @@ pub mod test_support {
         }
     }
 
-    /// A [`SceneIdentity`] that gives every question the answer its field
-    /// holds, whatever was asked. The default is an unknown world: no room
-    /// resolves (`WorldHasNoScene`) and no scene is deployed.
+    /// A [`SceneIdentity`] that knows one room (`room`) and answers every
+    /// question with it, except two it honours: when that room has a
+    /// deployment, a parcel of another realm or outside it stands no scene
+    /// (`NoSceneAtParcel`); a world lobby is that world's room with no scene. The default is
+    /// an unknown world: no room resolves (`WorldHasNoScene`) and no scene is
+    /// deployed.
     pub struct StubScenes {
         pub room: Result<ResolvedRoom, ResolveError>,
         pub scene: Result<Option<ActiveDeployment>, ResolveError>,
@@ -613,8 +617,32 @@ pub mod test_support {
             classify_fixture(self, room).await
         }
 
-        async fn resolve(&self, _request: RoomRequest<'_>) -> Result<ResolvedRoom, ResolveError> {
-            self.room.as_ref().cloned().map_err(copy_resolve)
+        async fn resolve(&self, request: RoomRequest<'_>) -> Result<ResolvedRoom, ResolveError> {
+            let room = self.room.as_ref().cloned().map_err(copy_resolve)?;
+            match request {
+                RoomRequest::Parcel { realm, parcel } => {
+                    // A room without a deployment answers any parcel, as before.
+                    let stands = room.deployment.as_ref().is_none_or(|deployment| {
+                        *realm == room.realm && deployment.parcels.contains(&parcel)
+                    });
+                    if !stands {
+                        return Err(ResolveError::NoSceneAtParcel {
+                            realm: realm.to_string(),
+                            parcel: parcel.canonical(),
+                        });
+                    }
+                }
+                RoomRequest::WorldLobby { world } => {
+                    return Ok(ResolvedRoom {
+                        realm: crate::world_identity::RealmId::World(world.clone()),
+                        scene_id: None,
+                        deployment: None,
+                        room: crate::rooms::worlds_service_world_room(world),
+                    });
+                }
+                _ => {}
+            }
+            Ok(room)
         }
 
         async fn world_scene(
@@ -630,6 +658,12 @@ pub mod test_support {
             _world: &WorldName,
         ) -> Result<Option<ActiveDeployment>, ResolveError> {
             self.scene.as_ref().cloned().map_err(copy_resolve)
+        }
+        async fn world_scene_count(
+            &self,
+            world: &crate::world_identity::WorldName,
+        ) -> Result<usize, crate::rooms::ResolveError> {
+            Ok(usize::from(self.world_active_scene(world).await?.is_some()))
         }
     }
 

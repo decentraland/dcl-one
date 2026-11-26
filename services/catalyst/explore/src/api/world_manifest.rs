@@ -262,7 +262,7 @@ pub async fn get(State(state): State<Shared>, headers: HeaderMap) -> Response {
     let Some(held) = state.world_manifest.snapshot() else {
         return super::unavailable(
             MIRROR,
-            "EXPLORER_MIRRORS_ENABLED",
+            Some("EXPLORER_MIRRORS_ENABLED"),
             "the world manifest has not been mirrored yet (the world-manifest pass runs with the explorer mirrors)",
         );
     };

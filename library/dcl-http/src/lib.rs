@@ -10,17 +10,18 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use parking_lot::Mutex;
 
 #[cfg(feature = "db")]
 pub mod api_error;
 mod body;
 pub mod jsonrpc;
 
-pub use body::read_body_capped;
+pub use body::{TransferRateGuard, read_body_capped, read_peer_body_capped};
 
 pub const USER_AGENT: &str = concat!("catalyst/", env!("CARGO_PKG_VERSION"));
 
@@ -870,7 +871,6 @@ impl Outbound {
     fn with_test_pin(self, host: &str, addr: SocketAddr) -> Self {
         self.test_pins
             .lock()
-            .unwrap()
             .insert(host.to_ascii_lowercase(), addr);
         self
     }
@@ -1036,13 +1036,13 @@ impl Outbound {
             return Ok(self.direct.clone());
         }
         let key = host.to_ascii_lowercase();
-        if let Some(p) = self.pinned.lock().unwrap().get(&key)
+        if let Some(p) = self.pinned.lock().get(&key)
             && p.resolved_at.elapsed() < PIN_TTL
         {
             return Ok(p.client.clone());
         }
         #[cfg(test)]
-        let test_pin = self.test_pins.lock().unwrap().get(&key).copied();
+        let test_pin = self.test_pins.lock().get(&key).copied();
         #[cfg(not(test))]
         let test_pin: Option<SocketAddr> = None;
         let addr = match test_pin {
@@ -1053,7 +1053,7 @@ impl Outbound {
                 ))
             })?,
         };
-        let mut pinned = self.pinned.lock().unwrap();
+        let mut pinned = self.pinned.lock();
         if let Some(p) = pinned.get_mut(&key)
             && p.addr.ip() == addr.ip()
         {
@@ -1092,7 +1092,7 @@ impl Outbound {
 
     #[cfg(test)]
     fn pinned_hosts(&self) -> Vec<String> {
-        let mut hosts: Vec<String> = self.pinned.lock().unwrap().keys().cloned().collect();
+        let mut hosts: Vec<String> = self.pinned.lock().keys().cloned().collect();
         hosts.sort();
         hosts
     }
@@ -1185,7 +1185,7 @@ mod tests {
         let asked = Arc::new(Mutex::new(Vec::<String>::new()));
         let seen = asked.clone();
         let resolver = ReservedNamesResolver::over(move |host| {
-            seen.lock().unwrap().push(host);
+            seen.lock().push(host);
             Box::pin(async {
                 Ok(
                     Box::new(std::iter::once(SocketAddr::from(([192, 0, 2, 1], 0))))
@@ -1209,9 +1209,9 @@ mod tests {
             );
         }
         assert!(
-            asked.lock().unwrap().is_empty(),
+            asked.lock().is_empty(),
             "asked the system resolver for {:?}",
-            asked.lock().unwrap()
+            asked.lock()
         );
         let addrs: Vec<SocketAddr> = resolver
             .resolve("peer.example.org".parse().unwrap())
@@ -1219,7 +1219,7 @@ mod tests {
             .unwrap()
             .collect();
         assert_eq!(addrs, [SocketAddr::from(([192, 0, 2, 1], 0))]);
-        assert_eq!(*asked.lock().unwrap(), ["peer.example.org"]);
+        assert_eq!(*asked.lock(), ["peer.example.org"]);
     }
 
     #[tokio::test]
@@ -1918,7 +1918,7 @@ mod tests {
                     let headers = request.headers().clone();
                     let bytes = axum::body::to_bytes(request.into_body(), 1 << 20).await.unwrap();
                     let header = |name: &str| headers.get(name).map(|value| value.to_str().unwrap().to_string());
-                    observed.lock().unwrap().push(serde_json::json!({"path":path,"method":method,"content_type":header("content-type"),"content_length":header("content-length"),"token":header("x-token"),"body":String::from_utf8(bytes.to_vec()).unwrap()}));
+                    observed.lock().push(serde_json::json!({"path":path,"method":method,"content_type":header("content-type"),"content_length":header("content-length"),"token":header("x-token"),"body":String::from_utf8(bytes.to_vec()).unwrap()}));
                     let parts: Vec<_> = path.split('/').collect();
                     let status: u16 = parts[2].parse().unwrap();
                     let remaining: usize = parts[3].parse().unwrap();
@@ -1954,7 +1954,7 @@ mod tests {
             );
             drop(result);
             assert_eq!(
-                *requests.lock().unwrap(),
+                *requests.lock(),
                 *case["requests"].as_array().unwrap(),
                 "status={} hops={}",
                 case["status"],
@@ -1984,7 +1984,7 @@ mod tests {
                 let headers = request.headers().clone();
                 let bytes = axum::body::to_bytes(request.into_body(), 1 << 20).await.unwrap();
                 let header = |name: &str| headers.get(name).map(|value| value.to_str().unwrap().to_string());
-                observed.lock().unwrap().push(serde_json::json!({"path":path,"method":method,"content_type":header("content-type"),"content_length":header("content-length"),"token":header("x-token"),"body":String::from_utf8(bytes.to_vec()).unwrap()}));
+                observed.lock().push(serde_json::json!({"path":path,"method":method,"content_type":header("content-type"),"content_length":header("content-length"),"token":header("x-token"),"body":String::from_utf8(bytes.to_vec()).unwrap()}));
                 if path.ends_with("/1") {
                     (axum::http::StatusCode::TEMPORARY_REDIRECT, [("location", format!("http://other.example.test:{}/jump/307/0",address.port()))]).into_response()
                 } else { "unused".into_response() }
@@ -2005,10 +2005,7 @@ mod tests {
             .await
             .unwrap();
         drop(response);
-        assert_eq!(
-            *requests.lock().unwrap(),
-            *expected["requests"].as_array().unwrap()
-        );
+        assert_eq!(*requests.lock(), *expected["requests"].as_array().unwrap());
         assert_eq!(
             http.pinned_hosts(),
             vec!["other.example.test", "public.example.test"]
@@ -2216,7 +2213,7 @@ mod tests {
         let start = tokio::time::Instant::now();
         let result: Option<()> =
             retry_with_backoff("test", attempts, base_ms, move || async move {
-                times_ref.lock().unwrap().push(start.elapsed());
+                times_ref.lock().push(start.elapsed());
                 Ok(RetryDecision::Retry {
                     after,
                     rate_limited,
@@ -2225,7 +2222,7 @@ mod tests {
             .await
             .unwrap();
         assert!(result.is_none());
-        times.into_inner().unwrap()
+        times.into_inner()
     }
 
     #[tokio::test(start_paused = true)]

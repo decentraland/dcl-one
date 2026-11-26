@@ -164,3 +164,62 @@ describe('Toast', () => {
     })
   })
 })
+
+describe('when a Toast takes the hud appearance', () => {
+  it('should draw the message with no mark, even for an error', () => {
+    render(
+      <Toast appearance="hud" placement="inline" variant="error" duration={0}>
+        Could not send
+      </Toast>
+    )
+    const region = screen.getByRole('status')
+    expect(region).toHaveTextContent('Could not send')
+    expect(region.querySelector('svg')).toBeNull()
+    expect(region.firstElementChild).toHaveAttribute('data-appearance', 'hud')
+    expect(region.firstElementChild).toHaveAttribute('data-variant', 'error')
+  })
+
+  it('should put a leading visual before the message', () => {
+    render(
+      <Toast appearance="hud" placement="inline" duration={0} icon={<img alt="Mojito" />}>
+        Mojito is online
+      </Toast>
+    )
+    const card = screen.getByRole('status').firstElementChild!
+    expect(card.firstElementChild).toBe(screen.getByRole('img', { name: 'Mojito' }))
+  })
+
+  it('should take the pointer only when it holds an action', () => {
+    const { rerender } = render(
+      <Toast appearance="hud" placement="inline" duration={0}>
+        Saved
+      </Toast>
+    )
+    expect(screen.getByRole('status').firstElementChild).not.toHaveAttribute('data-rich')
+    rerender(
+      <Toast appearance="hud" placement="inline" duration={0} action={<button>Undo</button>}>
+        Saved
+      </Toast>
+    )
+    expect(screen.getByRole('status').firstElementChild).toHaveAttribute('data-rich')
+  })
+
+  it('should stay an empty live region with no message', () => {
+    render(<Toast appearance="hud" placement="inline" duration={0} />)
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
+  })
+})
+
+describe('when a default Toast gets a leading visual', () => {
+  it("should draw it in place of the variant's mark", () => {
+    render(
+      <Toast variant="confirmation" duration={0} icon={<img alt="Saved" />}>
+        Saved
+      </Toast>
+    )
+    const card = screen.getByRole('status').firstElementChild!
+    expect(card.firstElementChild).toBe(screen.getByRole('img', { name: 'Saved' }))
+    expect(card.querySelector('svg')).toBeNull()
+    expect(card).not.toHaveAttribute('data-appearance')
+  })
+})

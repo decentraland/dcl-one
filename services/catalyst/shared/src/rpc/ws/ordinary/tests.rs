@@ -335,50 +335,54 @@ async fn stopped_writer_bounds_pending_queue_and_retires_socket() {
 fn source_declared_metric_kinds_match_actual_queue_registration() {
     #[derive(Default)]
     struct Kinds(std::sync::Mutex<std::collections::HashMap<String, &'static str>>);
-    impl metrics::Recorder for Kinds {
+    impl dcl_metrics::Recorder for Kinds {
         fn describe_counter(
             &self,
-            _: metrics::KeyName,
-            _: Option<metrics::Unit>,
-            _: metrics::SharedString,
+            _: dcl_metrics::KeyName,
+            _: Option<dcl_metrics::Unit>,
+            _: dcl_metrics::SharedString,
         ) {
         }
         fn describe_gauge(
             &self,
-            _: metrics::KeyName,
-            _: Option<metrics::Unit>,
-            _: metrics::SharedString,
+            _: dcl_metrics::KeyName,
+            _: Option<dcl_metrics::Unit>,
+            _: dcl_metrics::SharedString,
         ) {
         }
         fn describe_histogram(
             &self,
-            _: metrics::KeyName,
-            _: Option<metrics::Unit>,
-            _: metrics::SharedString,
+            _: dcl_metrics::KeyName,
+            _: Option<dcl_metrics::Unit>,
+            _: dcl_metrics::SharedString,
         ) {
         }
         fn register_counter(
             &self,
-            key: &metrics::Key,
-            _: &metrics::Metadata<'_>,
-        ) -> metrics::Counter {
+            key: &dcl_metrics::Key,
+            _: &dcl_metrics::Metadata<'_>,
+        ) -> dcl_metrics::Counter {
             self.0.lock().unwrap().insert(key.name().into(), "counter");
-            metrics::Counter::noop()
+            dcl_metrics::Counter::noop()
         }
-        fn register_gauge(&self, key: &metrics::Key, _: &metrics::Metadata<'_>) -> metrics::Gauge {
+        fn register_gauge(
+            &self,
+            key: &dcl_metrics::Key,
+            _: &dcl_metrics::Metadata<'_>,
+        ) -> dcl_metrics::Gauge {
             self.0.lock().unwrap().insert(key.name().into(), "gauge");
-            metrics::Gauge::noop()
+            dcl_metrics::Gauge::noop()
         }
         fn register_histogram(
             &self,
-            key: &metrics::Key,
-            _: &metrics::Metadata<'_>,
-        ) -> metrics::Histogram {
+            key: &dcl_metrics::Key,
+            _: &dcl_metrics::Metadata<'_>,
+        ) -> dcl_metrics::Histogram {
             self.0
                 .lock()
                 .unwrap()
                 .insert(key.name().into(), "histogram");
-            metrics::Histogram::noop()
+            dcl_metrics::Histogram::noop()
         }
     }
     let fixture: Value = serde_json::from_str(include_str!(concat!(
@@ -387,7 +391,7 @@ fn source_declared_metric_kinds_match_actual_queue_registration() {
     )))
     .unwrap();
     let recorder = Kinds::default();
-    metrics::with_local_recorder(&recorder, || {
+    dcl_metrics::with_local_recorder(&recorder, || {
         let mut queue = Queue::new(OrdinaryQueueConfig::default(), 131072.0);
         let _completion = queue.enqueue(vec![1], true);
         queue.process(Instant::now(), |_| SendOutcome::Code(1), || 4096);

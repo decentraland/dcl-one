@@ -3,9 +3,9 @@ import { homedir } from 'os'
 import path from 'path'
 import i18next from 'i18next'
 
-import { CliComponents } from '.'
+import type { CliComponents } from '.'
 import { CliError } from '../logic/error'
-import { IFileSystemComponent } from './fs'
+import type { IFileSystemComponent } from './fs'
 
 export type ConfigKeys =
   | 'DCL_ANON_ID' // anonymous ID used for analytics

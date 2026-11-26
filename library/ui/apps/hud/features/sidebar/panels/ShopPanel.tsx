@@ -9,8 +9,8 @@ import { checkoutSiteUrl } from '@hud-host'
 import coin from '../../../assets/sidebar-shop/credits.svg?no-inline'
 import emotesArt from '../../../assets/sidebar-shop/banner-emotes.webp'
 import wearablesArt from '../../../assets/sidebar-shop/banner-wearables.webp'
-import { Button, MenuPanel } from '../../../design'
 import styles from './ShopPanel.module.css'
+import { Button, MenuPanel } from '@dcl/one-ui'
 
 /** A Shop section a banner leads to. */
 export type ShopPanelSection = 'emotes' | 'wearables'
@@ -45,7 +45,7 @@ export function ShopPanel({ credits, explore, onClose }: ShopPanelProps): React.
       <div key={banner.section} className={`${styles.banner} ${styles[banner.section]}`}>
         <img className={styles.art} src={banner.art} alt="" draggable={false} />
         <h3 className={styles.bannerTitle}>{banner.title}</h3>
-        <Button
+        <Button appearance="hud"
           variant="accent"
           size="bare"
           className={styles.cta}
@@ -70,7 +70,7 @@ export function ShopPanel({ credits, explore, onClose }: ShopPanelProps): React.
             <span className={styles.amount}>{WHOLE.format(credits)}</span>
           </p>
         )}
-        <Button variant="primary" size="bare" className={styles.buy} onClick={buyCredits}>
+        <Button appearance="hud" variant="primary" size="bare" className={styles.buy} onClick={buyCredits}>
           BUY CREDITS
         </Button>
       </div>

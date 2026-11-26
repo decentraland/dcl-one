@@ -129,20 +129,19 @@ impl LegacyProducer {
             }
             self.cursor = (self.cursor + count) % missing.len();
             while let Some((candidate, result)) = allocations.next().await {
-                if let Ok(Ok(epoch)) = result {
-                    if !state.restart.is_cancelled()
-                        && state.registry.bind_legacy_candidate(&candidate, epoch)
-                    {
-                        self.published.insert(
-                            candidate.address.clone(),
-                            PublishedCandidate {
-                                link: candidate.link.clone(),
-                                epoch,
-                                sequence: 0,
-                                updated: None,
-                            },
-                        );
-                    }
+                if let Ok(Ok(epoch)) = result
+                    && !state.restart.is_cancelled()
+                    && state.registry.bind_legacy_candidate(&candidate, epoch)
+                {
+                    self.published.insert(
+                        candidate.address.clone(),
+                        PublishedCandidate {
+                            link: candidate.link.clone(),
+                            epoch,
+                            sequence: 0,
+                            updated: None,
+                        },
+                    );
                 }
             }
         }
@@ -180,10 +179,9 @@ impl LegacyProducer {
                     record,
                     current.link.id,
                 )
+                && state.outbox.publish_control_position(announcement)
             {
-                if state.outbox.publish_control_position(announcement) {
-                    current.updated = Some(candidate.updated);
-                }
+                current.updated = Some(candidate.updated);
             }
         }
     }

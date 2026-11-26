@@ -10,7 +10,10 @@ use dcl_component::{
     SceneComponentId,
 };
 use dcl_types::interface::ComponentPosition;
-use livestream_manager::{ActiveReceiver, ReceiverImage, ReceiverVolume, TransmissionImageResized};
+use livestream_manager::{
+    is_livekit_video, ActiveReceiver, ReceiverImage, ReceiverVolume, SelectedVideoReceiver,
+    TransmissionImageResized,
+};
 use scene_runner::{
     renderer_context::RendererSceneContext,
     update_world::{material::VideoTextureOutput, AddCrdtInterfaceExt},
@@ -25,7 +28,7 @@ use crate::audio_source_native::AudioSourcePluginImpl;
 use crate::audio_source_wasm::AudioSourcePluginImpl;
 use crate::{
     audio_source::AudioSourcePlugin, AVPlayer, AVPlayerConfig, AudioStream, InScene,
-    ShouldBePlaying, Stream, VideoPlayer, LIVEKIT_VIDEO_STREAM,
+    ShouldBePlaying, Stream, VideoPlayer,
 };
 #[cfg(any(feature = "ffmpeg", feature = "html"))]
 use crate::{video_player::VideoPlayerPlugin, video_stream::VideoSink, AVPlayerSinks, AVSinks};
@@ -96,6 +99,11 @@ impl Plugin for AVPlayerPlugin {
     }
 }
 
+// Retain the raw optional position and the whole request: configuration changes can carry
+// a previous seek, while an identical explicit replacement requests that seek again.
+#[derive(Component)]
+struct LastAVPlayer<T: AVPlayer>(T);
+
 fn av_player_on_insert<T: AVPlayer>(
     trigger: Trigger<OnInsert, T>,
     mut commands: Commands,
@@ -104,11 +112,12 @@ fn av_player_on_insert<T: AVPlayer>(
         Option<&T::Source>,
         Option<&T::Config>,
         Option<&T::Position>,
+        Option<&LastAVPlayer<T>>,
     )>,
 ) {
     let entity = trigger.target();
     debug!("{} {} updated.", disqualified::ShortName::of::<T>(), entity);
-    let Ok((av_player, maybe_source, mut maybe_config, mut maybe_position)) =
+    let Ok((av_player, maybe_source, mut maybe_config, mut maybe_position, previous)) =
         av_players.get_mut(entity)
     else {
         return;
@@ -141,7 +150,12 @@ fn av_player_on_insert<T: AVPlayer>(
     }
 
     let new_position = av_player.position();
-    if maybe_position.is_none_or(|position| ((**position) - *new_position).abs() >= 0.5) {
+    let requested_position = av_player.requested_position();
+    let seek_requested = requested_position.is_some()
+        && previous.is_none_or(|previous| {
+            requested_position != previous.0.requested_position() || *av_player == previous.0
+        });
+    if seek_requested || maybe_position.is_none() {
         debug!(
             "{}'s {} updated",
             entity,
@@ -149,6 +163,9 @@ fn av_player_on_insert<T: AVPlayer>(
         );
         commands.entity(entity).try_insert(new_position);
     }
+    commands
+        .entity(entity)
+        .try_insert(LastAVPlayer(av_player.clone()));
 }
 
 fn av_player_on_remove<T: AVPlayer>(
@@ -165,9 +182,11 @@ fn av_player_on_remove<T: AVPlayer>(
         T::Source,
         T::Config,
         T::Position,
+        LastAVPlayer<T>,
         InScene,
         ShouldBePlaying<T>,
         Stream,
+        SelectedVideoReceiver,
     )>();
     #[cfg(feature = "ffmpeg")]
     commands.entity(entity).try_remove::<AVSinks<T>>();
@@ -414,7 +433,7 @@ fn video_player_should_be_playing(
     for (entity, source, config, has_in_scene, has_should_be_playing, global_transform) in
         av_players
     {
-        if !config.playing() || (&**source == LIVEKIT_VIDEO_STREAM && !has_in_scene) {
+        if !config.playing() || (is_livekit_video(source) && !has_in_scene) {
             if has_should_be_playing {
                 scratch_shouldnt_be_playing.push(entity);
             }
@@ -467,7 +486,7 @@ fn video_player_should_be_playing(
 }
 
 fn receiver_image_added(
-    trigger: Trigger<OnAdd, ReceiverImage>,
+    trigger: Trigger<OnInsert, ReceiverImage>,
     mut commands: Commands,
     video_players: Query<&ReceiverImage, (With<VideoPlayer>, With<Stream>)>,
 ) {
@@ -607,6 +626,40 @@ mod tests {
         ));
 
         world
+    }
+
+    #[test]
+    fn selected_tracks_keep_the_video_limit_and_current_scene_requirement() {
+        let mut world = base_world();
+        let mut screens = Vec::new();
+        for distance in [1., 2., 0.] {
+            let mut screen = world.spawn((
+                VideoPlayerSource("livekit-video://speaker/TR_camera".to_owned()),
+                VideoPlayerConfig {
+                    playing: true,
+                    volume: 1.,
+                    playback_rate: 1.,
+                    r#loop: false,
+                },
+                Transform::from_translation(Vec3::new(distance, 0., 0.)),
+            ));
+            if distance > 0. {
+                screen.insert(InScene);
+            }
+            screens.push(screen.id());
+        }
+        world
+            .run_system_cached(video_player_should_be_playing)
+            .unwrap();
+        assert!(world
+            .entity(screens[0])
+            .contains::<ShouldBePlaying<VideoPlayer>>());
+        assert!(!world
+            .entity(screens[1])
+            .contains::<ShouldBePlaying<VideoPlayer>>());
+        assert!(!world
+            .entity(screens[2])
+            .contains::<ShouldBePlaying<VideoPlayer>>());
     }
 
     #[test]
@@ -852,7 +905,7 @@ mod tests {
 
         let screen_1 = world
             .spawn((
-                VideoPlayerSource(LIVEKIT_VIDEO_STREAM.to_owned()),
+                VideoPlayerSource(livestream_manager::LIVEKIT_CURRENT_STREAM.to_owned()),
                 VideoPlayerConfig {
                     playing: true,
                     volume: 1.,
@@ -954,5 +1007,131 @@ mod tests {
         assert_eq!(set.get(&entity_1).unwrap(), &entity_1);
         assert_eq!(set.get(&entity_2).unwrap(), &entity_2);
         assert_eq!(set.get(&entity_3).unwrap(), &entity_3);
+    }
+    #[test]
+    fn published_toolkit_retained_position_does_not_rewind_configuration_changes() {
+        #[derive(Resource, Default)]
+        struct Seeks(usize);
+        let mut app = App::new();
+        app.init_resource::<Seeks>();
+        app.add_observer(av_player_on_insert::<VideoPlayer>);
+        app.add_observer(
+            |_: Trigger<OnInsert, crate::VideoPlayerPosition>, mut seeks: ResMut<Seeks>| {
+                seeks.0 += 1;
+            },
+        );
+        let mut data = PbVideoPlayer {
+            src: "video.mp4".to_owned(),
+            playing: Some(true),
+            volume: Some(1.),
+            ..Default::default()
+        };
+        let player = app.world_mut().spawn(VideoPlayer(data.clone())).id();
+        let initial = app.world().resource::<Seeks>().0;
+        data.position = Some(0.);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(VideoPlayer(data.clone()));
+        assert_eq!(app.world().resource::<Seeks>().0, initial + 1);
+        data.playing = Some(false);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(VideoPlayer(data.clone()));
+        data.volume = Some(0.5);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(VideoPlayer(data.clone()));
+        data.playing = Some(true);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(VideoPlayer(data.clone()));
+        data.r#loop = Some(true);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(VideoPlayer(data.clone()));
+        data.spatial = Some(true);
+        app.world_mut().entity_mut(player).insert(VideoPlayer(data));
+        assert_eq!(app.world().resource::<Seeks>().0, initial + 1);
+    }
+
+    #[test]
+    fn explicit_seek_to_zero_is_forwarded_each_time_without_seeking_on_config_changes() {
+        #[derive(Resource, Default)]
+        struct Seeks(usize);
+        let mut app = App::new();
+        app.init_resource::<Seeks>();
+        app.add_observer(av_player_on_insert::<VideoPlayer>);
+        app.add_observer(
+            |_: Trigger<OnInsert, crate::VideoPlayerPosition>, mut seeks: ResMut<Seeks>| {
+                seeks.0 += 1;
+            },
+        );
+        let player = app
+            .world_mut()
+            .spawn(VideoPlayer(PbVideoPlayer {
+                src: "video.mp4".to_owned(),
+                playing: Some(true),
+                ..Default::default()
+            }))
+            .id();
+        let initial = app.world().resource::<Seeks>().0;
+        let restart = PbVideoPlayer {
+            src: "video.mp4".to_owned(),
+            playing: Some(true),
+            position: Some(0.),
+            ..Default::default()
+        };
+        app.world_mut()
+            .entity_mut(player)
+            .insert(VideoPlayer(restart.clone()));
+        assert_eq!(app.world().resource::<Seeks>().0, initial + 1);
+        app.world_mut()
+            .entity_mut(player)
+            .insert(VideoPlayer(restart));
+        assert_eq!(app.world().resource::<Seeks>().0, initial + 2);
+        for playing in [false, true] {
+            app.world_mut()
+                .entity_mut(player)
+                .insert(VideoPlayer(PbVideoPlayer {
+                    src: "video.mp4".to_owned(),
+                    playing: Some(playing),
+                    volume: Some(0.5),
+                    ..Default::default()
+                }));
+        }
+        assert_eq!(app.world().resource::<Seeks>().0, initial + 2);
+    }
+    #[test]
+    fn changing_video_source_without_a_seek_resets_its_position() {
+        let mut app = App::new();
+        app.add_observer(av_player_on_insert::<VideoPlayer>);
+        let player = app
+            .world_mut()
+            .spawn(VideoPlayer(PbVideoPlayer {
+                src: "first.mp4".to_owned(),
+                position: Some(12.),
+                ..Default::default()
+            }))
+            .id();
+        assert_eq!(
+            app.world()
+                .get::<crate::VideoPlayerPosition>(player)
+                .unwrap()
+                .0,
+            12.
+        );
+        app.world_mut()
+            .entity_mut(player)
+            .insert(VideoPlayer(PbVideoPlayer {
+                src: "second.mp4".to_owned(),
+                ..Default::default()
+            }));
+        assert_eq!(
+            app.world()
+                .get::<crate::VideoPlayerPosition>(player)
+                .unwrap()
+                .0,
+            0.
+        );
     }
 }

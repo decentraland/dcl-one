@@ -332,12 +332,17 @@ pub fn spawn(
     }
 }
 
+#[allow(
+    unsafe_code,
+    reason = "V8 near-heap-limit callback reads its raw data pointer"
+)]
 pub(super) extern "C" fn near_heap_limit_cb(
     data: *mut c_void,
     current_heap_limit: usize,
     _initial_heap_limit: usize,
 ) -> usize {
     if !data.is_null() {
+        // SAFETY: `data` is `Arc::as_ptr` of the watchdog run_scene_thread holds while its isolate lives.
         let wd = unsafe { &*(data as *const Watchdog) };
         wd.fired.store(true, Ordering::SeqCst);
         if let Some(h) = wd.isolate.lock().as_ref() {
@@ -404,10 +409,12 @@ pub(super) fn guard_oom(
 }
 
 /// V8 aborts the process if this returns, so the scene's thread is parked for good.
+#[allow(unsafe_code, reason = "V8 OOM handler reads a C string")]
 unsafe extern "C" fn scene_oom(location: *const std::ffi::c_char, _details: &v8::OomDetails) {
     let location = if location.is_null() {
         String::new()
     } else {
+        // SAFETY: V8 passes a NUL-terminated string or null, and null is handled above.
         unsafe { std::ffi::CStr::from_ptr(location) }
             .to_string_lossy()
             .into_owned()

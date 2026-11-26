@@ -28,7 +28,7 @@
 //! A pure object, like [`super::pacing`]: its times are `f64` seconds on the caller's clock and it
 //! knows nothing of Bevy or the connection, so a test drives it without an app.
 
-use super::pacing::TokenBucket;
+use common::token_bucket::TokenBucket;
 
 /// Tokens the bucket regains each second: half of the server's 20 inputs a second, and the rate of
 /// ordinary movement.
@@ -41,13 +41,9 @@ pub const REGULAR_SPACING_SECONDS: f64 = 0.1;
 pub const IDLE_KEEPALIVE_SECONDS: f64 = 1.0;
 /// A change of velocity since the last send beyond this, in m/s, is an edge.
 ///
-/// It sits above what ordinary acceleration adds between two regular sends and below an impulse.
-/// Free fall is the steepest ordinary case: the default jump of 1.9 m leaves the ground at a
-/// little over 10 m/s (the mark `apply_movement` takes for a jump), which is gravity of about 26
-/// to 32 m/s per second, about 3 m/s in one regular spacing. A jump impulse (over 10 m/s), the
-/// landing that follows it, and a start, stop or sharp turn at the default jog speed (8.18 m/s)
-/// are all well past it. A start or stop at walking speed (2.5 m/s) stays under it and takes the
-/// next regular slot. The bucket caps what a threshold that is slightly off can cost.
+/// With the movement scene's defaults, a jump's rise (`JUMP_RISE_DECEL`, 40 m/s²) reaches it in
+/// one [`REGULAR_SPACING_SECONDS`], a 1 m jump lands at 4.5 m/s, and a launch (8.9 m/s) or a key
+/// release or reversal at jog speed (8 m/s) passes it.
 pub const EDGE_VELOCITY_CHANGE: f32 = 4.0;
 
 /// What changed since the last send.

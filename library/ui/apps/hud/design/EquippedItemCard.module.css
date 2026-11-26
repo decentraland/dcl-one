@@ -176,6 +176,9 @@
   pointer-events: auto;
   transition: none;
 }
+.pinnedShop .shopBtn:active {
+  transform: translateY(1px);
+}
 
 /* SHOP — revealed inside the extended card on hover. */
 .shopBtn {

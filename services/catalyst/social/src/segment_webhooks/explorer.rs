@@ -79,10 +79,11 @@ pub(super) async fn forward(
             (row.received_at - row.reported_at).num_milliseconds() as f64 / 1000.0;
         let segment_to_webhook =
             (chrono::Utc::now() - row.received_at).num_milliseconds() as f64 / 1000.0;
-        metrics::counter!("handled_explorer_events_count", "event_type" => sub_type).increment(1);
-        metrics::histogram!("explorer_segment_event_delay_in_seconds", "event_type" => sub_type)
+        dcl_metrics::counter!("handled_explorer_events_count", "event_type" => sub_type)
+            .increment(1);
+        dcl_metrics::histogram!("explorer_segment_event_delay_in_seconds", "event_type" => sub_type)
             .record(explorer_to_segment);
-        metrics::histogram!("segment_webhook_event_delay_in_seconds", "event_type" => sub_type)
+        dcl_metrics::histogram!("segment_webhook_event_delay_in_seconds", "event_type" => sub_type)
             .record(segment_to_webhook);
     }
     reply(StatusCode::OK, json!({ "ok": true }))

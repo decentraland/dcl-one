@@ -74,8 +74,8 @@
   background: var(--error);
   color: var(--text);
 }
-.exit:hover {
-  background: #ff4444;
+.exit:hover:not(:disabled) {
+  background: var(--brand-hover);
 }
 /* Autofocused, so its ring is on screen from the first paint — the UA default blue fights the
    palette. */
@@ -88,6 +88,8 @@
   border: 1px solid var(--error);
   color: var(--error-text);
 }
-.proceed:hover {
-  background: rgba(255, 36, 36, 0.12);
+.proceed:hover:not(:disabled) {
+  border-color: var(--text);
+  background: var(--fill-4);
+  color: var(--text);
 }

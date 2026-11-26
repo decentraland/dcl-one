@@ -5,6 +5,7 @@
 //! entity is deployed as a superseded row. A discard that fails backs off like a failed attempt.
 //! A retry cycle walks every due record in its database, so each test runs over a fresh database
 //! of its own.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 mod common;
 
