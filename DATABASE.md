@@ -3544,25 +3544,71 @@ A read that writes (the campaign tags) runs `SERIALIZABLE`: two replacements
 of one tag's set cannot both commit, even when the tag was empty, and the one
 that fails starts again on a new snapshot.
 
-These readers of the same tables are outside the gate, and read whichever
-source wrote the rows:
-- the relay contract allowlist and `/v1/contracts/{address}`;
-- the sale, bid and royalty notices;
-- the owned-items pass check;
-- the MANA facts and quote;
-- the policy entry's facts;
-- the NFT pages' catalogue joins, and the bids, lists, listings, users,
-  neighbours, stores, coupons and subscriptions reads;
-- the NFT walk's contract set;
-- the sales index: its walk's contract set, `sale_fold`, `sale_history` and
-  the reads that join the catalogue (public sales, item rankings, collection
-  counts, seller evidence, wallet assets and the creator sales scope);
-- the activity's NFT transfers and cancelled trades;
-- the trade-events walk's item metadata;
-- the explorer lambdas (`lambdas_explorer.rs`) and explore's OpenSea metadata
-  (`explore/src/opensea.rs`);
-- Social's badge jobs (deployments, recount and sales);
-- the storage collector's image references.
+These readers decide a permission, a price or a wait from the catalogue
+without the gate's transaction. On a network the index owns, each reads the
+index's verdict (the gate's state columns, `catalogue::STATE_COLUMNS`) in the
+statement or snapshot that reads its rows. On any other network each keeps
+its own mirror check:
+- authorizing: the credits guards' contract role and item record
+  (`policy_entry::item_facts`), the relay contract allowlist and
+  `/v1/contracts/{address}`, a public item order's creator
+  (`POST /v1/trades`), and a coupon's collection creators
+  (`POST /v1/coupons`: a coupon prices its collections on every page that
+  shows them);
+- priced: the MANA resolver's contract role, item record and CollectionStore
+  price, in one statement (the guards and the resolver share it, so they
+  never judge one item on different facts);
+- descriptive: the inventories' and NFT pages' item check
+  (`owned_items::check`, in the read's snapshot). An inventory memo (an
+  owner's copies, the by-owner answer, the backpack) and the nft leg of
+  `/v1/prices` are keyed by the catalogue copy their snapshot read
+  (`catalogue::CatalogueCopies`: the index's projection generation, or the
+  mirrors' passes) beside the nft index's publications, so a republication
+  of the catalogue alone misses them;
+- the sale, bid and royalty notices' wait (`catalogue::ItemWait`).
+  - On an owned network, every sale waits until the index's publication
+    covers its block, and so does a bid on a contract the catalogue does not
+    list yet. Every collection and item added by then is in the catalogue,
+    so a missing one never comes; a row read before then may be a rewound
+    branch's, so it never picks a recipient.
+  - Under the mirrors, only a sale whose item has no row waits, until a
+    complete items pass an hour after the sale; a bid on an unlisted
+    contract never waits.
+  - Either way, nothing waits past a day.
+  - A sale's description, its collection membership and its wait come from
+    one snapshot (the royalty notices' from the statement that joins the
+    items).
+
+While the index refuses:
+- the relay, the item order and the coupon answer 503 with the index's
+  reason, and `/v1/contracts/{address}` answers the unavailable envelope
+  naming `collections-index`;
+- the credits rule refuses the line as `Incomplete`, and the MANA resolver's
+  line names `collections-index`;
+- the item check refuses as the gate does;
+- a notice holds its cursor.
+
+These readers of the same tables read whichever source wrote the rows and
+decide nothing from them:
+- display joins: the bids, lists, listings and users pages, neighbours, the
+  stores page, subscription delivery, the activity's NFT transfers and
+  cancelled trades, the trade-events walk's item metadata, the explorer
+  lambdas (`lambdas_explorer.rs`), explore's OpenSea metadata
+  (`explore/src/opensea.rs`), and the sales index's reads that join the
+  catalogue (public sales, item rankings, collection counts, seller
+  evidence, wallet assets and the creator sales scope). On an owned network
+  such a page may show a name, image or rarity from a projection a rewind
+  has not replaced yet. Between a hand-back and the mirror's next pass it
+  may miss the network's items;
+- the walks' address sets: the NFT walk's and the sales index walk's
+  contract sets, and the sales index's coverage checks (`sale_fold`,
+  `sale_history`), take the catalogue as it stands;
+- Social's badge jobs (deployments, recount and sales) read the items
+  mirror's pass marker (`shop.mirror_state`), which an owned network does not
+  advance.
+
+The storage collector names `shop.items.image` among the columns that hold
+no blob reference, and reads no catalogue row.
 
 A network the index owns follows the publish marker. A pass walks before it
 folds and publishes, so `folded_block = last_block` would refuse every read
