@@ -602,9 +602,12 @@ fn schema_layout() -> String {
 }
 
 fn main() -> anyhow::Result<()> {
-    // The posture writes the environment clap reads, so it expands first,
-    // while this is the only thread.
-    posture::apply_to_process_env()?;
+    // The posture writes the environment clap reads, so it expands first.
+    // SAFETY: no other thread has started yet.
+    #[allow(unsafe_code, reason = "the posture writes the process environment")]
+    unsafe {
+        posture::apply_to_process_env()?;
+    }
     // The complete clap tree exceeds the default Windows debug stack. This
     // parser-only thread returns plain values and finishes before V8 or runtime
     // initialization.

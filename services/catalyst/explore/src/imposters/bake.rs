@@ -300,10 +300,16 @@ pub fn bake_args(tile: TileKey, cfg: &BakeConfig, staging: &Path) -> Vec<String>
     args
 }
 
-#[allow(
-    unsafe_code,
-    reason = "libc killpg reaps the timed-out bake process group"
-)]
+/// Kills the process group a bake child leads (`process_group(0)`).
+#[cfg(unix)]
+#[allow(unsafe_code, reason = "libc killpg on the bake process group")]
+fn kill_group(pid: u32) {
+    // SAFETY: killpg takes plain integers and touches no memory.
+    unsafe {
+        libc::killpg(pid as i32, libc::SIGKILL);
+    }
+}
+
 pub async fn run_bake(cfg: &BakeConfig, store: Arc<FileCache>, tile: TileKey) -> Result<usize> {
     let staging = store
         .tmp_dir()
@@ -351,11 +357,7 @@ pub async fn run_bake(cfg: &BakeConfig, store: Arc<FileCache>, tile: TileKey) ->
         Err(_) => {
             #[cfg(unix)]
             if let Some(pid) = pid {
-                // SAFETY: killpg on the process group the child leads
-                // (`process_group(0)`); no memory is touched.
-                unsafe {
-                    libc::killpg(pid as i32, libc::SIGKILL);
-                }
+                kill_group(pid);
             }
             // No process groups here: kill the child itself.
             #[cfg(not(unix))]

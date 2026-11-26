@@ -133,7 +133,11 @@ impl HostState {
         f: impl FnOnce(&RefCell<HostState>) -> R,
     ) -> R {
         let ptr = isolate.get_data(0) as *const RefCell<HostState>;
-        // SAFETY: only scene isolates call this, and run_scene_thread sets their slot 0 to a
+        assert!(
+            !ptr.is_null(),
+            "HostState::with on an isolate without host state"
+        );
+        // SAFETY: non-null, so this is a scene isolate: run_scene_thread sets its slot 0 to a
         // `HostState` box it keeps alive while scene code and host ops run.
         let cell = unsafe { &*ptr };
         f(cell)

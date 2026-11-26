@@ -1263,7 +1263,7 @@ mod tests {
     #[test]
     #[allow(
         unsafe_code,
-        reason = "the `_FILE` lookup reads the process environment"
+        reason = "the test writes <NAME>_FILE into the process environment"
     )]
     fn secrets_are_hidden_from_help_and_read_from_files() {
         let help = match parse(&["x", "--help"]) {
