@@ -214,10 +214,16 @@ export const fetchEmptyWorlds = createAsyncThunk(
     { address, contributable }: { address: string; contributable?: ContributableNames },
     { dispatch, getState },
   ) => {
-    const ensList = await dispatch(fetchENSList({ address, contributable })).unwrap();
+    const worldsAPI = new Worlds('management');
+    const ensList = await dispatch(
+      fetchENSList({
+        address,
+        contributable,
+        purpose: worldsAPI.usesCanonicalManagement ? 'management' : undefined,
+      }),
+    ).unwrap();
 
     const prevProjects = getState().management.projects;
-    const worldsAPI = new Worlds('management');
 
     const projectsPromises: Promise<ManagedProject | null>[] = ensList.map(async ens => {
       const worldProject = prevProjects.find(project => project.id === ens.subdomain);

@@ -7,7 +7,7 @@ import { createTestStore } from '../../../../tests/utils/testStore';
 import type { Land, LandDeployment } from '../../../lib/land';
 import { LandType, RoleType } from '../../../lib/land';
 import { clearLandScene } from '../../../lib/landUnpublish';
-import { fetchContributableNames } from '../ens';
+import { fetchContributableNames, fetchENSList } from '../ens';
 import { fetchLandList } from '../land';
 import { accountChanged } from '../account';
 import type * as ManagementUtils from './utils';
@@ -1533,6 +1533,7 @@ describe('management slice', () => {
 
       const result = await store.dispatch(fetchEmptyWorlds({ address: TEST_ADDRESS })).unwrap();
 
+      expect(fetchENSList).toHaveBeenCalledWith(expect.objectContaining({ purpose: 'management' }));
       expect(result.map(world => world.id)).not.toContain('empty-world.dcl.eth');
       expect(result).toHaveLength(2);
     });
