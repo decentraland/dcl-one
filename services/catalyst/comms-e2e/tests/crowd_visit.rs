@@ -4,6 +4,7 @@
 //! the profile, and the crowd leaves the way clients do. A wallet the crowd never meets fails the
 //! run by name; a refused deployment, or a stay the deadline cannot hold, fails it before anyone
 //! enters; a run that does not name it leaves it out.
+#![allow(clippy::unwrap_used, reason = "test support")]
 
 mod support;
 

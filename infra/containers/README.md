@@ -241,6 +241,14 @@ needs four settings:
 Without them, the route answers 503 naming them. A partial set fails startup. The
 route writes nothing to the database, so it answers while `DATA_WRITES_ENABLED` is off.
 
+The startup allow-list uses the node's marketplace and CollectionStore addresses, the
+configured CreditsManager on `COLLECTIONS_CHAIN_ID`, and Builder's Polygon CollectionManager
+for `publicationFees`. `WERT_EXTRA_CONTRACTS` adds comma-separated `network:address:target`
+entries. Use `ethereum`, `polygon`, `amoy` or `sepolia` for the network and `default` or
+`publicationFees` for the target. An Amoy publication sandbox can add
+`amoy:0x5309ae874fc4eb21adcd63f8b6c3f766cc3b1849:publicationFees`. When Wert is enabled,
+a configured `CREDITS_MANAGER_CONTRACT` must be a 20-byte hex EVM address on Polygon or Amoy.
+
 The Transak card on-ramp (`/v1/transak/widget-url`, `/v1/transak/orders/{id}` and
 `PUT /v1/transak/access-token`, under `/shop-api` and `/marketplace-api`) needs
 six settings:
