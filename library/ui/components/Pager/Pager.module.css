@@ -1,6 +1,6 @@
 @layer dcl.reset, dcl.foundations, dcl.components;
 
-/* Not in Figma: the Explorer HUD's pager. Its violet washes, the white hover of the `shop` arrows and the 10px
+/* Not from Figma's pagination and page-number (Navigation): the Explorer HUD's pager. Its violet washes, the white hover of the `shop` arrows and the 10px
    corners of the `shop` current page have no token. */
 @layer dcl.components {
   .root {

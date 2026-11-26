@@ -1,4 +1,4 @@
-/* Not in Figma: the Explorer HUD's slider. These rules sit outside the cascade layer and keep the specificity
+/* Not from Figma's slider-bar and slider (Controllers): the Explorer HUD's slider. These rules sit outside the cascade layer and keep the specificity
    of the HUD rules they replaced: the HUD's skybox menu restyles the track and the steppers through element
    selectors, and keeps the precedence it had. A caller sets `--slider-rail-track` on an ancestor to change the
    unfilled colour of the `rail` track. The stepper's 25 % black wash and 18px glyph, and the 19 % and 42 % white tracks, have no token. */

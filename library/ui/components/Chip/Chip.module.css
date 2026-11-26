@@ -1,6 +1,6 @@
 @layer dcl.reset, dcl.foundations, dcl.components;
 
-/* Not in Figma: the Explorer HUD's filter chip. The clear box's 45 % white outline has no token. */
+/* Not from Figma's pill-icon-text (Pills): the Explorer HUD's filter chip. The clear box's 45 % white outline has no token. */
 @layer dcl.components {
   .root {
     display: inline-flex;

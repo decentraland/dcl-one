@@ -1,4 +1,4 @@
-/* Not in Figma: the Explorer HUD's scroll handle. These rules sit outside the cascade layer with the specificity
+/* Not from Figma's Scrollbar (Scrollbar): the Explorer HUD's scroll handle. These rules sit outside the cascade layer with the specificity
    they had: each caller places the track with its own class, and keeps the precedence it had. A caller sets
    `--scroll-thumb-w` to narrow the `solid` handle. The 10px corners and the 68 % black of the `dark` handle have
    no token. */
