@@ -19,7 +19,6 @@ type Props = { collection: Collection; address: string | undefined; className?: 
 /** Marks a collection in the creator's lists when a curator's comment is waiting for an answer. */
 export function ReviewReplyBadge({ collection, address, className }: Props) {
   const { t } = useTranslation()
-  // Minters can't read the timeline (builder-server answers 401), so only the collection's managers ask.
   const inReview =
     IN_REVIEW.includes(getCollectionDisplayStatus(collection)) && canManageCollectionItems(collection, address)
   const recent = useRecentCollectionEvents(address, collection.id, inReview)

@@ -41,6 +41,8 @@ import {
   type PublishDeps
 } from './publishCollection'
 
+const NOT_PUBLISHED = 'The collection is not published.'
+
 const CHAIN_ID = 80002
 const ADDRESS = '0x00000000000000000000000000000000000000aa'
 const SALT = '0x' + '11'.repeat(32)
@@ -684,13 +686,31 @@ describe('publishCollection', () => {
 describe('syncPublishedItems', () => {
   it('polls for an hour at most while the graph lags, by default', async () => {
     vi.useFakeTimers()
-    const publish = vi.fn().mockRejectedValue(new BuilderServerError('not yet', 401))
+    const publish = vi.fn().mockRejectedValue(new BuilderServerError(NOT_PUBLISHED, 409))
     const run = syncPublishedItems('col-1', { publishCollectionItems: publish })
-    const failure = expect(run).rejects.toThrow('not yet')
+    const failure = expect(run).rejects.toThrow(NOT_PUBLISHED)
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
     await failure
     expect(publish).toHaveBeenCalledTimes(721)
     vi.useRealTimers()
+  })
+
+  it('should retry while the node cannot tell whether the chain holds the collection', async () => {
+    const publish = vi
+      .fn()
+      .mockRejectedValueOnce(new BuilderServerError('Try again later.', 503))
+      .mockResolvedValueOnce({})
+    await syncPublishedItems('col-1', { publishCollectionItems: publish }, 3, 0)
+    expect(publish).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    ['a refused signature', new BuilderServerError('Unauthenticated', 401)],
+    ['an item the chain does not hold', new BuilderServerError('The item is not published.', 409)]
+  ])('should stop at %s', async (_case, refusal) => {
+    const publish = vi.fn().mockRejectedValue(refusal)
+    await expect(syncPublishedItems('col-1', { publishCollectionItems: publish }, 3, 0)).rejects.toBe(refusal)
+    expect(publish).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -787,7 +807,7 @@ describe('consolidatePublishedCollection', () => {
   })
 
   it('waits for the transaction, then retries the server sync while the graph lags', async () => {
-    const publish = vi.fn().mockRejectedValueOnce(new BuilderServerError('not yet', 401)).mockResolvedValueOnce({})
+    const publish = vi.fn().mockRejectedValueOnce(new BuilderServerError(NOT_PUBLISHED, 409)).mockResolvedValueOnce({})
     await consolidatePublishedCollection(
       'col-1',
       '0xtx',
@@ -829,7 +849,7 @@ describe('consolidatePublishedCollection', () => {
     }
   })
 
-  it('gives up on a reverted transaction or a non-401 failure', async () => {
+  it('should give up on a reverted transaction or a failure the graph catching up does not explain', async () => {
     await expect(
       consolidatePublishedCollection(
         'col-1',

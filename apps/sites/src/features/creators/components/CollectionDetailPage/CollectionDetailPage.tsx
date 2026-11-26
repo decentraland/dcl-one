@@ -146,7 +146,7 @@ import styles from './CollectionDetailPage.module.css'
 import row from './ItemListRow/ItemListRow.module.css'
 import shared from '../../styles/shared.module.css'
 
-const NOT_FOUND_STATUSES = [401, 403, 404]
+const NOT_FOUND_STATUSES = [403, 404]
 const NO_ITEMS: Item[] = []
 
 const CollectionDetailPage = () => {

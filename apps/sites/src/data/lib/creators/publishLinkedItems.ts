@@ -484,7 +484,7 @@ const isTransientFailure = (error: unknown) => !isRefusedRequest(error)
 
 /**
  * POST /collections/:id/publish, retried while the subgraph has not caught up with the slots just bought (409
- * "exceeds the available slots", or 401 while the registration is unknown to it). The server also creates the
+ * "exceeds the available slots", or 403 while the registration is unknown to it). The server also creates the
  * collection's forum post inside that request: a Discourse outage makes it answer 500 after the item curations
  * were already written, so a retry then gets 409 "already has published items". That 409 only means this run's
  * earlier attempt went through, so it counts as success; a 409 on the first attempt is a real pending review.
@@ -517,7 +517,7 @@ async function publishWithRetry(
       }
       const failedNow = isServerFailure(error)
       serverFailed ||= failedNow
-      const retriable = failedNow || isInsufficientSlotsError(error) || hasStatus(error, 401)
+      const retriable = failedNow || isInsufficientSlotsError(error) || hasStatus(error, 403)
       if (!retriable || attempt >= INDEXING_RETRIES - 1) throw error
       await sleep(INDEXING_RETRY_DELAY_MS)
     }
