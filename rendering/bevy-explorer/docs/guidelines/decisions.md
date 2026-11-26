@@ -1316,14 +1316,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **`shouldReset` restarts a playing clip on every Animator write.** The protocol's comment says
   the state is restored when it goes from stopped to playing. Scenes restart a clip that is
   already playing by writing it again with `playing` and `shouldReset`
-  (`Animator.playSingleAnimation`), which Unity's player for legacy clips honours, so this
-  engine does too. A
-  stopped state keeps its clock whatever its `shouldReset` says: `Animator.stopAllAnimations`
-  leaves the flag set, and a later `playSingleAnimation(..., false)` must resume. A state
-  with `playing` unset does not play.
+  (`Animator.playSingleAnimation`), so a write restarts it. A stopped state keeps its clock
+  whatever its `shouldReset` says: `Animator.stopAllAnimations` leaves the flag set, and a
+  later `playSingleAnimation(..., false)` must resume. A state with `playing` unset does not
+  play. Unity's player for legacy clips reads these three cases the same way.
 - **A clip played once tells its scene when it ends.** The engine writes the scene's Animator
-  back with that state's `playing` false, once, as the Unity client does, so a scene need not
-  time the clip. The clip then stops contributing and the model holds the pose it ended on.
+  back with that state's `playing` false, once, so a scene need not time the clip. The clip
+  then stops contributing and the model holds the pose it ended on. The Unity client writes
+  the same report.
   Without the report the scene's own state would still say `playing`, and its next write about
   any other clip would play the finished one again. A clip can end while its scene's tick is
   running, and that tick's write still says `playing`: the engine keeps the clip ended, applies

@@ -77,7 +77,7 @@ struct FinishReports(u64);
 
 /// The model's Animator plays a clip once, so the clip's end is watched for.
 #[derive(Component)]
-struct PlaysOnce;
+pub(super) struct PlaysOnce;
 
 /// The clips the scene has been told ended, each with the timestamp of the Animator that told
 /// it. A scene write that does not pass a clip's timestamp was made before the scene read that

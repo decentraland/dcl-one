@@ -69,7 +69,7 @@ use ipfs::{EntityDefinition, IpfsAssetServer};
 use scene_material::{SceneBound, SceneBounds, SceneMaterial};
 
 use super::{
-    animation::Clips,
+    animation::{Clips, PlaysOnce},
     lights::LightEntity,
     mesh_collider::{MeshCollider, MeshColliderShape},
     transform_and_parent::TransformHelperPub,
@@ -391,6 +391,10 @@ fn on_gltf_container_removed(
         GltfReady,
         GltfAssetFailed,
         GltfSource,
+        AnimationPlayer,
+        AnimationGraphHandle,
+        Clips,
+        PlaysOnce,
     )>();
 }
 
@@ -1538,6 +1542,14 @@ pub(crate) fn update_ready_gltfs(
                     AnimationGraphHandle(graphs.add(graph)),
                     animation_clips,
                 ));
+            } else {
+                // the model this one replaces may have had clips, whose end would be reported
+                commands.entity(bevy_scene_entity).try_remove::<(
+                    AnimationPlayer,
+                    AnimationGraphHandle,
+                    Clips,
+                    PlaysOnce,
+                )>();
             }
             *tracker.0.entry("Live Meshes").or_default() = resource_lookup
                 .meshes_by_hash

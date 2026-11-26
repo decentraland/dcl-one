@@ -191,6 +191,10 @@ producer or `.after(PostUpdateSets::X)` as a consumer. If an ordering point is g
 missing, it is a new variant in the enum, placed in the chain, never a standalone `SystemSet`
 in a feature crate.
 
+Outside the chain, `report_finished_clips` (`update_world/animation.rs`) runs after bevy's
+animation systems (`.after(anim_last_system!())`), where a clip's end is known in the frame it
+happens. It tells the scene, and reads no transform.
+
 One known gap: bevy's `UiSystem::Layout` also runs in `PostUpdate` before `TransformPropagate`
 and is unordered against this chain. A system that writes UI `Node` fields from world-space data
 (a projected marker, a world-to-screen overlay) needs an explicit `.before(UiSystem::Layout)` as
