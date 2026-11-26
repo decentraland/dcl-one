@@ -7,8 +7,7 @@ use web_time::Instant;
 use super::*;
 use crate::{
     initialize_scene::{
-        LiveScenes, PointerResult, PortableScenes, RequiredScenes, SceneHash, SceneLoading,
-        ScenePointers,
+        LiveScenes, PointerResult, PortableScenes, SceneHash, SceneLoading, ScenePointers,
     },
     renderer_context::RendererSceneContext,
 };
@@ -30,7 +29,8 @@ fn world() -> World {
     world.init_resource::<LiveScenes>();
     world.init_resource::<FirstRingTiming>();
     world.init_resource::<Arrivals>();
-    world.init_resource::<RequiredScenes>();
+    // the lifecycle's last pass was around the player's parcel
+    world.resource_mut::<LiveScenes>().required.around = Some(IVec2::ZERO);
     let mut pointers = ScenePointers::default();
     pointers.insert(
         IVec2::ZERO,
@@ -77,8 +77,9 @@ fn scene(world: &mut World, hash: &str, parcels: &[IVec2], tick: u32) -> Entity 
         .scenes
         .insert(hash.to_owned(), root);
     world
-        .resource_mut::<RequiredScenes>()
-        .0
+        .resource_mut::<LiveScenes>()
+        .required
+        .hashes
         .insert(hash.to_owned());
     root
 }
@@ -335,8 +336,9 @@ fn an_arrival_waits_for_a_neighbour_not_spawned_yet() {
     );
     world.insert_resource(Arrivals(1));
     world
-        .resource_mut::<RequiredScenes>()
-        .0
+        .resource_mut::<LiveScenes>()
+        .required
+        .hashes
         .insert("east".to_owned());
     scene(&mut world, "home", &[IVec2::ZERO], 7);
 
@@ -394,4 +396,20 @@ fn a_neighbour_the_lifecycle_does_not_load_holds_nothing() {
             .map(|ready| ready.arrival),
         Some(1)
     );
+}
+
+#[test]
+fn the_lifecycle_set_of_another_parcel_holds_the_first_ring() {
+    let mut world = world();
+    world.insert_resource(Arrivals(1));
+    scene(&mut world, "home", &[IVec2::ZERO], 7);
+    // the lifecycle's last pass saw the player one parcel away
+    world.resource_mut::<LiveScenes>().required.around = Some(IVec2::NEG_X);
+
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert!(world.resource::<FirstRingTiming>().ready.is_none());
+
+    world.resource_mut::<LiveScenes>().required.around = Some(IVec2::ZERO);
+    world.run_system_once(report_scene_load_times).unwrap();
+    assert!(world.resource::<FirstRingTiming>().ready.is_some());
 }

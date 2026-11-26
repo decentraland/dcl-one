@@ -27,7 +27,8 @@ jobs:
     permissions:
       contents: read
     outputs:
-      # `nvidia` once the probe found the NVIDIA adapter; empty when the browser fell back
+      # `nvidia` once the probe found the NVIDIA adapter, `default` when the browser fell back;
+      # empty when the probe did not finish
       adapter: ${{ steps.gpu.outputs.adapter }}
     defaults:
       run:
@@ -89,6 +90,7 @@ jobs:
             Add-Content -Path $env:GITHUB_OUTPUT -Value 'adapter=nvidia'
           } else {
             Write-Output "::warning title=GPU probe::no NVIDIA adapter LUID; the browser starts on its default adapter"
+            Add-Content -Path $env:GITHUB_OUTPUT -Value 'adapter=default'
           }
       - name: Measure the live web client
         timeout-minutes: 45
@@ -160,8 +162,8 @@ jobs:
           if [ "$MEASURE_RESULT" != success ]; then
             printf '\nThe measuring job ended with `%s`: readings after the last one above were not taken.\n' "$MEASURE_RESULT" >> body.md
           fi
-          if [ "$GPU_ADAPTER" != nvidia ]; then
-            printf '\nThe browser ran on the default adapter: the GPU probe found no NVIDIA adapter, so a slow reading is not judged.\n' >> body.md
+          if [ "$slow" != 0 ] && [ "$GPU_ADAPTER" != nvidia ]; then
+            printf '\nThe GPU probe did not find the NVIDIA adapter (adapter: `%s`), so a slow reading is not judged.\n' "${GPU_ADAPTER:-none}" >> body.md
           fi
           # only this workflow's own issue: one anybody else titles the same is not commented on
           number=$(gh issue list --state open --author app/github-actions --search "\"$TITLE\" in:title" --json number,title \

@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use web_time::Instant;
 
 use crate::{
-    initialize_scene::{PointerResult, RequiredScenes, SceneHash, SceneLoading},
+    initialize_scene::{PointerResult, SceneHash, SceneLoading},
     renderer_context::{RendererSceneContext, FROZEN_BLOCK},
     ring_parcels, vec3_to_parcel, ContainingScene,
 };
@@ -42,8 +42,8 @@ pub struct FirstRingTiming {
 /// The first ring was ready at `at`, in world after arrival number `arrival` ([`Arrivals`]): the
 /// first frame of that arrival when it was already loaded, else the frame it completed. Each of
 /// the nine parcels around the player is resolved, and empty, its scene one the lifecycle does
-/// not load there ([`RequiredScenes`]: banned, or outside the load distance and the live ring),
-/// or its scene spawned and ready.
+/// not load there (`LiveScenes::required`: banned, or outside the load distance and the live
+/// ring), or its scene spawned and ready.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FirstRingReady {
     pub(crate) arrival: u64,
@@ -70,7 +70,6 @@ pub fn report_scene_load_times(
     mut commands: Commands,
     player: Query<(Entity, &GlobalTransform, Has<OutOfWorld>), With<PrimaryUser>>,
     arrivals: Res<Arrivals>,
-    required: Res<RequiredScenes>,
     containing_scene: ContainingScene,
     scenes: Query<(
         Entity,
@@ -129,22 +128,27 @@ pub fn report_scene_load_times(
     // player's scene has loaded. The `FIRST_RING_READY` line keeps its own rule above, so
     // benchmark runs stay comparable across builds
     if !out_of_world && timing.ready.map_or(0, |ready| ready.arrival) < arrivals.0 {
-        let parcels_ready = ring_parcels(player_parcel, 1).all(|parcel| {
-            match containing_scene.pointers.get(parcel) {
-                None => false,
-                Some(PointerResult::Nothing) => true,
-                Some(PointerResult::Exists { hash, .. }) if !required.0.contains(hash) => true,
-                Some(PointerResult::Exists { hash, .. }) => containing_scene
-                    .live_scenes
-                    .scenes
-                    .get(hash)
-                    .and_then(|scene| scenes.get(*scene).ok())
-                    .is_some_and(|(_, _, _, context, loading, _)| {
-                        matches!(loading, Some(SceneLoading::Failed))
-                            || context.is_some_and(scene_is_ready)
-                    }),
-            }
-        });
+        // the lifecycle runs later in the frame: its set is judged only around the parcel it saw
+        let required = &containing_scene.live_scenes.required;
+        let parcels_ready = required.around == Some(player_parcel)
+            && ring_parcels(player_parcel, 1).all(|parcel| {
+                match containing_scene.pointers.get(parcel) {
+                    None => false,
+                    Some(PointerResult::Nothing) => true,
+                    Some(PointerResult::Exists { hash, .. }) if !required.hashes.contains(hash) => {
+                        true
+                    }
+                    Some(PointerResult::Exists { hash, .. }) => containing_scene
+                        .live_scenes
+                        .scenes
+                        .get(hash)
+                        .and_then(|scene| scenes.get(*scene).ok())
+                        .is_some_and(|(_, _, _, context, loading, _)| {
+                            matches!(loading, Some(SceneLoading::Failed))
+                                || context.is_some_and(scene_is_ready)
+                        }),
+                }
+            });
         if parcels_ready {
             timing.ready = Some(FirstRingReady {
                 arrival: arrivals.0,

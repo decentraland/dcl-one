@@ -137,25 +137,35 @@ export async function measureTimeToWorld(
   }
 }
 
-/** Teleport time from wherever the player is to `to`. */
-export async function measureTeleport(explorer: Explorer, from: Location, to: Location, options: { deadline?: number; now?: () => number } = {}): Promise<TeleportMeasurement> {
+/** Teleport time from wherever the player is to `to`. `lost` is a teleport sent whose arrival was
+ *  never seen: the player is somewhere unknown. */
+export async function measureTeleport(
+  explorer: Explorer,
+  from: Location,
+  to: Location,
+  options: { deadline?: number; now?: () => number } = {}
+): Promise<{ measurement: TeleportMeasurement; lost: boolean }> {
   const { deadline = Infinity, now = Date.now } = options
   const base = { from: from.name, to: to.name }
-  if (deadline - now() <= 0) return { ...base, teleportMs: null, error: "skipped: the run's deadline passed" }
+  if (deadline - now() <= 0) return { measurement: { ...base, teleportMs: null, error: "skipped: the run's deadline passed" }, lost: false }
+  let sent = false
+  let arrived = false
   try {
     const [x, y] = parsePosition(to.position)
     // read before the clock starts: every teleport is an arrival above it
     const before = await readArrivals(explorer)
     const sentAt = now()
+    sent = true
     await explorer.run(`/teleport ${x} ${y}`)
     const { arrivals } = await until(() => explorer.worldState(), (state) => state.arrivals > before && state.inWorld, {
       timeoutMs: firstRingTimeout(deadline, now),
       what: `the arrival at ${to.name} (${to.position})`
     })
+    arrived = true
     const readyAt = await waitFirstRingReady(explorer, { arrival: arrivals, what: `the first ring after the teleport to ${to.name} (${to.position})`, timeoutMs: firstRingTimeout(deadline, now) })
-    return { ...base, teleportMs: readyAt - sentAt }
+    return { measurement: { ...base, teleportMs: readyAt - sentAt }, lost: false }
   } catch (error) {
-    return { ...base, teleportMs: null, error: message(error) }
+    return { measurement: { ...base, teleportMs: null, error: message(error) }, lost: sent && !arrived }
   }
 }
 

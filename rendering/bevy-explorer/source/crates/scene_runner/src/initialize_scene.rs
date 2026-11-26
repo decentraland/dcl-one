@@ -98,7 +98,6 @@ impl Plugin for SceneLifecyclePlugin {
         app.init_resource::<CurrentImposterScene>();
         app.init_resource::<CurrentSceneLoading>();
         app.init_resource::<LiveScenes>();
-        app.init_resource::<RequiredScenes>();
         app.init_resource::<ScenePointers>();
         app.init_resource::<PortableScenes>();
         app.init_asset::<SerializedCrdtStore>();
@@ -844,13 +843,19 @@ pub(crate) fn initialize_scene(
 pub struct LiveScenes {
     pub scenes: HashMap<String, Entity>,
     pub block_new_scenes: bool,
+    pub(crate) required: RequiredScenes,
 }
 
 /// The scene hashes the lifecycle loads around the player, as of its last pass: the load distance
 /// and the live ring, banned scenes left out, before it defers the rest to a loading current
-/// scene. A scene a pointer names but this leaves out is never spawned there.
-#[derive(Resource, Default, Debug)]
-pub struct RequiredScenes(pub HashSet<String>);
+/// scene. A scene a pointer names but this leaves out is not spawned while the player is at
+/// `around`.
+#[derive(Default, Debug)]
+pub(crate) struct RequiredScenes {
+    /// The player's parcel on that pass; `None` before one.
+    pub(crate) around: Option<IVec2>,
+    pub(crate) hashes: HashSet<String>,
+}
 
 pub struct PortableSource {
     pub pid: String,
@@ -1829,7 +1834,6 @@ pub fn process_scene_lifecycle(
     bans: SceneBanGate,
     time: Res<Time>,
     config: Res<AppConfig>,
-    mut required_scenes: ResMut<RequiredScenes>,
 ) {
     let rings = Rings::from_config(&config);
     let mut required_scene_ids: HashMap<(String, Option<String>), bool> = HashMap::new();
@@ -1838,6 +1842,7 @@ pub fn process_scene_lifecycle(
     let Ok(focus) = focus.single() else {
         return;
     };
+    let player_parcel = vec3_to_parcel(focus.translation());
 
     let mut pointers_iter = pointers.pointers.iter();
     let head = pointers_iter.next();
@@ -1937,9 +1942,11 @@ pub fn process_scene_lifecycle(
     };
     required_scene_ids.retain(|scene, _| allowed(scene));
     keep_scene_ids.retain(allowed);
-    required_scenes.0.clear();
-    required_scenes
-        .0
+    let required = &mut live_scenes.required;
+    required.around = Some(player_parcel);
+    required.hashes.clear();
+    required
+        .hashes
         .extend(required_scene_ids.keys().map(|(hash, _)| hash.clone()));
 
     // record which scene entities we should keep

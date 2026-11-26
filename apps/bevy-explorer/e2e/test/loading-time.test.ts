@@ -117,13 +117,37 @@ describe('loading time', () => {
         return 'new location'
       },
       // the previous arrival's first ring stays the latest for a few polls after the teleport
-      scene_loading_state: () => loading({ arrival: arrivals === 2 && ++staleReads > 3 ? 2 : 1 })
+      scene_loading_state: () => loading({ arrival: arrivals === 2 && ++staleReads > 3 ? 2 : 1, sinceReadyMs: 2_000 })
     })
-    const leg = await measureTeleport(new Explorer(fake), GENESIS, MUSEUM)
+    // the clock reads 10 s before now when the teleport is sent; the reply says ready 2 s before it came
+    const before = Date.now()
+    const { measurement: leg, lost } = await measureTeleport(new Explorer(fake), GENESIS, MUSEUM, { now: () => before - 10_000 })
+    const after = Date.now()
     assert.equal(leg.error, undefined)
+    assert.equal(lost, false)
     assert.ok(staleReads > 3)
-    assert.ok(leg.teleportMs! >= 0)
+    assert.ok(leg.teleportMs! >= 8_000 && leg.teleportMs! <= after - before + 8_000)
     assert.deepEqual(fake.sent('teleport'), ['/teleport 20 80'])
+  })
+
+  test('a teleport whose arrival is never seen leaves the player lost; one whose first ring times out does not', async () => {
+    const never = new FakeConsole({ world_state: world(1), teleport: 'new location', scene_loading_state: loading({ arrival: 1 }) })
+    const unseen = await measureTeleport(new Explorer(never), GENESIS, MUSEUM, { deadline: Date.now() + 1000 })
+    assert.equal(unseen.lost, true)
+    assert.equal(unseen.measurement.teleportMs, null)
+
+    let arrivals = 1
+    const slow = new FakeConsole({
+      world_state: () => world(arrivals),
+      teleport: () => {
+        arrivals = 2
+        return 'new location'
+      },
+      scene_loading_state: loading({ arrival: 1 })
+    })
+    const timedOut = await measureTeleport(new Explorer(slow), GENESIS, MUSEUM, { deadline: Date.now() + 1000 })
+    assert.equal(timedOut.lost, false)
+    assert.match(timedOut.measurement.error!, /first ring/)
   })
 
   test('the tour starts from the last location and visits each once', () => {

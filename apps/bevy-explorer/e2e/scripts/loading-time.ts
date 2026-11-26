@@ -15,7 +15,7 @@ import path from 'node:path'
 import { parseArgs } from 'node:util'
 import type { Explorer } from '../driver/explorer.ts'
 import { closeOnSignal } from './drive.ts'
-import { FIRST_RING_UNSUPPORTED, type LoadingTimeResults, measureTeleport, measureTimeToWorld, parseConfig, slowLines, summaryMarkdown, teleportLegs, unmeasuredLines } from '../driver/loading-time.ts'
+import { FIRST_RING_UNSUPPORTED, type LoadingTimeResults, measureTeleport, type TeleportMeasurement, measureTimeToWorld, parseConfig, slowLines, summaryMarkdown, teleportLegs, unmeasuredLines } from '../driver/loading-time.ts'
 import { PACKAGE_ROOT, REPORT_DIR } from '../driver/paths.ts'
 import { closeSession, closeSessions, openSession } from '../driver/session.ts'
 import { readTarget } from '../driver/target.ts'
@@ -96,13 +96,17 @@ try {
     else await closeSession(options, target)
     await persist()
   }
-  // after a failed leg the player is not where the next leg starts from
+  // after a teleport whose arrival was never seen the player is not where the next leg starts
   let lost: string | undefined
   for (const [from, to] of teleportLegs(locations)) {
     log(`teleport ${from.name} → ${to.name}`)
     const missing = unsupported ? FIRST_RING_UNSUPPORTED : (lost ?? `no client: the boot at ${locations.at(-1)!.name} failed`)
-    const leg = tourClient && !lost ? await measureTeleport(tourClient, from, to, { deadline }) : { from: from.name, to: to.name, teleportMs: null, error: missing }
-    if (leg.teleportMs === null && !lost) lost = `skipped: the teleport to ${to.name} failed`
+    let leg: TeleportMeasurement = { from: from.name, to: to.name, teleportMs: null, error: missing }
+    if (tourClient && !lost) {
+      const measured = await measureTeleport(tourClient, from, to, { deadline })
+      leg = measured.measurement
+      if (measured.lost) lost = `skipped: the arrival at ${to.name} was not seen`
+    }
     results.teleports.push(leg)
     log(JSON.stringify(leg))
     await persist()

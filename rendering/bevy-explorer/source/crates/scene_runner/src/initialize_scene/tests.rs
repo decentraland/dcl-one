@@ -13,7 +13,6 @@ fn lifecycle_world() -> World {
 fn setup_lifecycle(world: &mut World) {
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
-    world.init_resource::<RequiredScenes>();
     world.init_resource::<Events<LoadSceneEvent>>();
     world.init_resource::<CurrentImposterScene>();
     world.init_resource::<PreviewMode>();
@@ -392,6 +391,10 @@ fn loading_current_scene_defers_other_scenes() {
 
     assert!(world.resource::<CurrentSceneLoading>().0);
     assert!(spawned_hashes(&world).is_empty());
+    // the deferred neighbour is still one the lifecycle loads around the player
+    let required = &world.resource::<LiveScenes>().required;
+    assert_eq!(required.around, Some(IVec2::ZERO));
+    assert!(required.hashes.contains("neighbour"));
 }
 
 #[test]
@@ -455,6 +458,10 @@ fn scene_ban_unloads_only_the_matching_scene_until_admitted() {
     assert!(world.get_entity(current).is_err());
     assert!(!world.resource::<CurrentSceneLoading>().0);
     assert_eq!(spawned_hashes(&world), vec!["neighbour"]);
+    // the banned scene is not one the lifecycle loads
+    let required = &world.resource::<LiveScenes>().required.hashes;
+    assert!(!required.contains("current"));
+    assert!(required.contains("neighbour"));
 
     world.run_system_once(process_scene_lifecycle).unwrap();
     assert!(!world
