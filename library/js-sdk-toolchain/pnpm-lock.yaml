@@ -346,8 +346,8 @@ importers:
         specifier: workspace:*
         version: link:../../../../hashing
       '@dcl/inspector':
-        specifier: 7.71.4
-        version: 7.71.4(@dcl/ecs@packages+@dcl+ecs)(react@18.3.1)
+        specifier: 7.73.1
+        version: 7.73.1(@dcl/ecs@packages+@dcl+ecs)(react@18.3.1)
       '@dcl/linker-dapp':
         specifier: 0.16.0
         version: 0.16.0
@@ -704,8 +704,8 @@ packages:
     resolution: {integrity: sha512-2sfCvyLKEJlmUrgkWQh57NnjvYeynJWyGCr/WMcUFFur1xlbJEC3kgqbkkNEmVKuOhM/DeYoL5fQDV/BGcxHQg==}
     engines: {node: '>=18.0.0'}
 
-  '@dcl/inspector@7.71.4':
-    resolution: {integrity: sha512-ghldoq38pBrX92GBd8VosxUHNle8lTgh/4OxW4EQeT9AbZIVTa7W1KmQKVGmNVFehfHQ+Wl8rmbuXyu6iD90Vg==}
+  '@dcl/inspector@7.73.1':
+    resolution: {integrity: sha512-cWD1mxjibS9qBpUj9V7IA34QdSNhDenIBjZtrhwFkyEBJ1SejytCw39R38Q0tszpEIbydEW1a++21UOI62sszQ==}
     peerDependencies:
       react: 18.3.1
     peerDependenciesMeta:
@@ -4203,7 +4203,7 @@ snapshots:
 
   '@dcl/gltf-validator-ts@1.0.14': {}
 
-  '@dcl/inspector@7.71.4(@dcl/ecs@packages+@dcl+ecs)(react@18.3.1)':
+  '@dcl/inspector@7.73.1(@dcl/ecs@packages+@dcl+ecs)(react@18.3.1)':
     dependencies:
       '@babel/parser': 7.28.5
       '@dcl/asset-packs': 2.30.2(@dcl/ecs@packages+@dcl+ecs)

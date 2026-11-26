@@ -27,6 +27,9 @@ overrides:
   # The inspector's entry point calls only merge.withOptions, which version 8 keeps.
   '@dcl/inspector>ts-deepmerge': '^8.0.0'
 minimumReleaseAge: 1440
+# First-party release published by apps/creator-hub; the Admin Tools build needs the asset-packs it brings.
+minimumReleaseAgeExclude:
+  - '@dcl/inspector@7.73.1'
 allowBuilds:
   '@dcl/sdk-commands': false
   esbuild: false
