@@ -462,7 +462,7 @@ impl Delivery {
         for (alerts, text) in messages {
             if let Some(until) = held_until {
                 for alert in &alerts {
-                    retry(
+                    let rescheduled = retry(
                         credits,
                         alert.id,
                         lease_until,
@@ -471,7 +471,7 @@ impl Delivery {
                         true,
                     )
                     .await?;
-                    outcome.retried += 1;
+                    outcome.retried += rescheduled;
                 }
                 continue;
             }
@@ -487,7 +487,7 @@ impl Delivery {
                     let until = clock(now) + wait.unwrap_or_else(|| backoff(attempts));
                     tracing::warn!(attempts, %until, "Slack rate limited a credits alert; the pass waits as it asked");
                     for alert in &alerts {
-                        retry(
+                        let rescheduled = retry(
                             credits,
                             alert.id,
                             lease_until,
@@ -496,7 +496,7 @@ impl Delivery {
                             false,
                         )
                         .await?;
-                        outcome.retried += 1;
+                        outcome.retried += rescheduled;
                     }
                     held_until = Some(until);
                 }
@@ -504,7 +504,7 @@ impl Delivery {
                     let failed_at = clock(now);
                     for alert in &alerts {
                         tracing::warn!(kind = alert.kind, attempts = alert.attempts, %error, "a credits alert was not delivered; retried with backoff");
-                        retry(
+                        let rescheduled = retry(
                             credits,
                             alert.id,
                             lease_until,
@@ -513,7 +513,7 @@ impl Delivery {
                             false,
                         )
                         .await?;
-                        outcome.retried += 1;
+                        outcome.retried += rescheduled;
                     }
                 }
             }
@@ -583,8 +583,8 @@ async fn retry(
     at: chrono::NaiveDateTime,
     error: &str,
     unposted: bool,
-) -> Result<(), ApiError> {
-    sqlx::query(
+) -> Result<usize, ApiError> {
+    let result = sqlx::query(
         "UPDATE credits.alerts SET next_attempt_at = $2, last_error = $3, attempts = attempts - $4 \
          WHERE id = $1 AND status = 'pending' AND next_attempt_at = $5",
     )
@@ -595,7 +595,7 @@ async fn retry(
     .bind(lease_until)
     .execute(&credits.pool)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() as usize)
 }
 
 async fn finish(
@@ -1192,9 +1192,10 @@ mod unit_tests {
         .await
         .unwrap();
 
-        retry(&credits, id, old_lease, old_lease + BACKOFF, "held", true)
+        let rescheduled = retry(&credits, id, old_lease, old_lease + BACKOFF, "held", true)
             .await
             .unwrap();
+        assert_eq!(rescheduled, 0);
 
         let still_claimed: bool = sqlx::query_scalar(
             "SELECT attempts = 2 AND last_error IS NULL AND next_attempt_at = $2 \
