@@ -1,9 +1,9 @@
-import { PBUiInput } from '@dcl/ecs'
+import type { PBUiInput } from '@dcl/ecs'
 
 import { parseProps } from '../utils'
 import { ReactEcs } from '../../react-ecs'
-import { EntityPropTypes } from '../types'
-import { UiInputProps } from './types'
+import type { EntityPropTypes } from '../types'
+import type { UiInputProps } from './types'
 import { getTextAlign, getFont, getFontSize } from '../Label/utils'
 
 function parseUiInput(props: Partial<UiInputProps>): PBUiInput {
@@ -41,7 +41,18 @@ function parseUiInput(props: Partial<UiInputProps>): PBUiInput {
  * @category Component
  */ /* @__PURE__ */
 export function Input(props: EntityPropTypes & Partial<UiInputProps>) {
-  const { uiTransform, uiBackground, onMouseDown, onMouseUp, onMouseEnter, onMouseLeave, ...otherProps } = props
+  const {
+    uiTransform,
+    uiBackground,
+    onMouseDown,
+    onMouseUp,
+    onMouseEnter,
+    onMouseLeave,
+    onMouseDrag,
+    onMouseDragLocked,
+    onMouseDragEnd,
+    ...otherProps
+  } = props
   const inputProps = parseUiInput(otherProps)
   const commonProps = parseProps({
     uiTransform,
@@ -49,7 +60,10 @@ export function Input(props: EntityPropTypes & Partial<UiInputProps>) {
     onMouseDown,
     onMouseUp,
     onMouseEnter,
-    onMouseLeave
+    onMouseLeave,
+    onMouseDrag,
+    onMouseDragLocked,
+    onMouseDragEnd
   })
   return <entity {...commonProps} uiInput={inputProps} />
 }

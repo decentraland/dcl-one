@@ -1,8 +1,10 @@
-import { createDataLayerHost, DataServiceDefinition, DataLayerContext } from '@dcl/inspector'
-import { createRpcServer, RpcServer, RpcServerPort } from '@dcl/rpc'
+import type { DataLayerContext } from '@dcl/inspector'
+import { createDataLayerHost, DataServiceDefinition } from '@dcl/inspector'
+import type { RpcServer, RpcServerPort } from '@dcl/rpc'
+import { createRpcServer } from '@dcl/rpc'
 import * as codegen from '@dcl/rpc/dist/codegen'
 
-import { CliComponents } from '../../../components'
+import type { CliComponents } from '../../../components'
 import { createFileSystemInterfaceFromFsComponent } from './fs'
 
 export type DataLayer = {

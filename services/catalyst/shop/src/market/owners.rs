@@ -46,6 +46,17 @@ pub struct Owner {
     pub token_id: String,
 }
 
+#[derive(serde::Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct TopOwner {
+    address: String,
+    nfts: i64,
+    items: i64,
+    collections: i64,
+    last_acquired_at: i64,
+    spent_wei: String,
+}
+
 const OWNER_FIELDS: &str = "issuedId tokenId owner { address }";
 
 pub async fn fetch_and_count(
@@ -144,6 +155,58 @@ pub async fn get_owners(
     match fetch_and_count(&state, &filters).await {
         Ok((data, total)) => Json(DataTotal { data, total }).into_response(),
         Err(r) => r,
+    }
+}
+
+pub async fn get_top_owners(
+    State(state): State<SharedState>,
+    Query(pairs): Query<Vec<(String, String)>>,
+) -> Response {
+    let p = Params::new(&pairs);
+    let Some(creator) = p
+        .get_string("creator", None)
+        .filter(|s| super::is_valid_eth_address(s))
+    else {
+        return ApiError::bad_request("A valid creator address is required").into_response();
+    };
+    let sort = p
+        .get_string("sortBy", None)
+        .unwrap_or_else(|| "nfts".into());
+    if !matches!(
+        sort.as_str(),
+        "nfts" | "items" | "collections" | "recent" | "spent"
+    ) {
+        return ApiError::bad_request(
+            "sortBy must be one of nfts, items, collections, recent, spent",
+        )
+        .into_response();
+    }
+    let ascending = match p.get_string("orderDirection", None).as_deref() {
+        None | Some("desc") => false,
+        Some("asc") => true,
+        _ => return ApiError::bad_request("orderDirection must be asc or desc").into_response(),
+    };
+    let first = (p
+        .get_number("first", None)
+        .filter(|n| !n.is_nan())
+        .unwrap_or(20.0) as i64)
+        .clamp(1, 100);
+    let skip = (p.get_number("skip", None).unwrap_or_default() as i64).max(0);
+    if let Err(response) = readers::check_window(first, skip) {
+        return response;
+    }
+    match super::sale_reads::top_owners(
+        &state,
+        &creator.to_lowercase(),
+        &sort,
+        ascending,
+        first,
+        skip,
+    )
+    .await
+    {
+        Ok(page) => Json(page).into_response(),
+        Err(response) => response,
     }
 }
 

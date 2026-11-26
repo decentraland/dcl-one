@@ -1,6 +1,6 @@
 import { createStderrCliLogger } from '../../../packages/@dcl/sdk-commands/src/components/log'
 import * as bl from '../../../packages/@dcl/sdk-commands/src/logic/beautiful-logs'
-import * as p from '../../../packages/@dcl/sdk-commands/src/logic/project-validations'
+import type * as p from '../../../packages/@dcl/sdk-commands/src/logic/project-validations'
 
 describe('utils/log', () => {
   it('Call the log functions to test everything works', () => {

@@ -17,7 +17,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import Modal from "../../../components/Modal";
 import { authorizeUsdCredit, cancelUsdIntents } from "@shop/credits/credits";
 import { invalidateAfterPurchase } from "../../checkout/lib/after-purchase";
@@ -905,7 +905,7 @@ export default function CombinedBuy({ line, offer, mixed, onClose, onDone, porta
         {phase.kind === "success" ? (
           <>
             <p role="status">Purchase complete. {line.display.name} is on its way to your wallet.</p>
-            <Button onClick={onClose}>Done</Button>
+            <Button size="md" onClick={onClose}>Done</Button>
           </>
         ) : phase.kind === "pending" || (remembered && phase.kind === "review") ? (
           // Still confirming, from this run or one sent earlier: never a second one beside it.
@@ -917,10 +917,10 @@ export default function CombinedBuy({ line, offer, mixed, onClose, onDone, porta
               </p>
             ) : null}
             <div className="shop-orderbuy__actions">
-              <Button onClick={() => void checkAgain()} disabled={checking || !checkable} data-testid="combined-check-again">
+              <Button size="md" onClick={() => void checkAgain()} disabled={checking || !checkable} data-testid="combined-check-again">
                 Check again
               </Button>
-              <Button variant="ghost" onClick={onClose}>
+              <Button size="md" variant="outline" onClick={onClose}>
                 Close
               </Button>
             </div>
@@ -957,10 +957,10 @@ export default function CombinedBuy({ line, offer, mixed, onClose, onDone, porta
               </p>
             ) : null}
             <div className="shop-orderbuy__actions">
-              <Button onClick={() => void start()} disabled={!!blocked || busy} data-testid="combined-confirm">
+              <Button size="md" onClick={() => void start()} disabled={!!blocked || busy} data-testid="combined-confirm">
                 {busy ? "Working…" : `Pay ${credits} + ${mana}`}
               </Button>
-              <Button variant="ghost" onClick={onClose} disabled={busy}>
+              <Button size="md" variant="outline" onClick={onClose} disabled={busy}>
                 Cancel
               </Button>
             </div>

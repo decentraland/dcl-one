@@ -7,7 +7,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import { sameAddress } from "@shop/model/address";
 import { shopPath } from "../../routes";
 import type { Bid } from "../lib/api";
@@ -60,7 +60,7 @@ export default function BidRow({ bid, viewer, archived = false }: { bid: Bid; vi
                 Review
               </Link>
             ) : null}
-            <Button size="sm" variant="ghost" onClick={() => (archived ? unarchiveBid(viewer, bid.id) : archiveBid(viewer, bid.id))}>
+            <Button size="sm" variant="outline" onClick={() => (archived ? unarchiveBid(viewer, bid.id) : archiveBid(viewer, bid.id))}>
               {archived ? "Unarchive" : "Archive"}
             </Button>
           </>

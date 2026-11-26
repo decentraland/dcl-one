@@ -260,7 +260,9 @@ mod tests {
         assert_eq!(polygon.land_network(), None);
         assert_eq!(
             format!("{:#x}", ethereum.legacy_marketplace.unwrap()),
-            crate::market::nft_index::legacy_marketplaces(ChainNet::Ethereum)[0].0
+            crate::market::nft_index::deployments::Deployments::mainnet(ChainNet::Ethereum).markets
+                [0]
+            .0
         );
         assert!(
             book.chain(ChainId::AMOY).is_none(),

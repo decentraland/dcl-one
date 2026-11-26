@@ -1,15 +1,5 @@
 // from: shop@94584a5c:app/src/lib/suggestionNavigation.ts
-export type SuggestionRowKind = "facet" | "item" | "collection" | "creator" | "see-all" | "recent" | "popular"
-
-export type SuggestionActivation = "click" | "keyboard"
-
-export type SuggestionRow = {
-  // The DOM id of the row, referenced by the input's aria-activedescendant.
-  id: string
-  kind: SuggestionRowKind
-  // What choosing the row does, whether by click or by Enter.
-  activate: (via: SuggestionActivation) => void
-}
+import type { ShopSearchRow } from "@dcl/one-ui"
 
 export const NO_ACTIVE_ROW = -1
 
@@ -74,7 +64,7 @@ export function searchKeyAction(key: SearchKey, state: SearchKeyState): SearchKe
  * A DOM id for a row that no other row can share: the key's bytes in hex, so "a b" and "a-b" differ and
  * any script survives, prefixed by the kind.
  */
-export function suggestionRowId(kind: SuggestionRowKind, key: string): string {
+export function suggestionRowId(kind: ShopSearchRow["kind"], key: string): string {
   const hex = Array.from(new TextEncoder().encode(key), b => b.toString(16).padStart(2, "0")).join("")
   return `search-row-${kind}-${hex}`
 }

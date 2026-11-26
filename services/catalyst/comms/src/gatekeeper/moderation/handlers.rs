@@ -148,8 +148,9 @@ pub async fn list_admins(
                 scene::get_lease_holders_for_parcels(&state, &place.positions).await
             }
         }),
-        None => (BTreeSet::new(), BTreeSet::new()),
+        None => (Ok(BTreeSet::new()), BTreeSet::new()),
     };
+    let extra_addresses = extra_addresses?;
     let mut all_addresses: BTreeSet<String> =
         admins.iter().map(|a| a.admin.to_lowercase()).collect();
     all_addresses.extend(extra_addresses.iter().cloned());

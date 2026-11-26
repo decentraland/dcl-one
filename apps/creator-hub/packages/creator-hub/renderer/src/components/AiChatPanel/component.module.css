@@ -817,6 +817,14 @@
   letter-spacing: 0.08em;
 }
 
+/* Deleting a chat is local only: a creator who shares is told where shared turns are erased. */
+.menuNote {
+  padding: 2px 16px 6px 24px;
+  color: var(--text-tone-secondary);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
 /* The agent select: the same pill as the chat picker. */
 .providerSelect.providerSelect {
   flex: 1;
