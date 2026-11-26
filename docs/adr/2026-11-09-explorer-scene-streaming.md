@@ -168,8 +168,8 @@ the same kind.
   and only on a GPU with BC textures, since its atlases are BC1 or BC7 KTX2 with their mip chain.
   It does not follow the variants client's session switch (the manifests' and texture variants'
   breaker, which stays off once tripped): an outage of the LOD service is the far LOD breaker's
-  (below), which resumes far LODs once the service answers again. Until the GPU reports its BC support the far LOD waits. The glTF loader hands
-  embedded KTX2 to the host, which unwraps BC to DDS, so they stay compressed in memory. Like a
+  (below), which resumes far LODs once the service answers again. Until the GPU reports its BC
+  support the far LOD waits. The glTF loader hands embedded KTX2 to the host, which unwraps BC to DDS, so they stay compressed in memory. Like a
   `glb` variant it is asked for at its own path: its Brotli copy exists only when it is smaller,
   and the server sends it to a browser that accepts `br`. None offered or published, or one the
   loader refuses, leaves the scene's parcels to the imposters. The content server judged is the

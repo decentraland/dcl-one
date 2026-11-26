@@ -713,9 +713,7 @@ impl IpfsIo {
 
     /// abgen's one simplified mesh for a scene, its far LOD, under the variants base. Offered on
     /// the variants base (variants on, the scene eligible) and only on a GPU with BC textures:
-    /// the mesh's atlases are BC KTX2 only. It does not depend on the variants client having
-    /// turned itself off for the session: far LODs keep to their own breaker.
-    /// Like a `glb` variant it is fetched at its own path: its Brotli copy exists only when it is
+    /// the mesh's atlases are BC KTX2 only. Like a `glb` variant it is fetched at its own path: its Brotli copy exists only when it is
     /// smaller, and the server sends it to a browser that accepts `br`.
     ///
     /// Not offered again for a scene the server answered a definitive status for (404) this
@@ -789,7 +787,7 @@ impl IpfsIo {
 
     /// Whether a far LOD's download may start now. While far LODs are paused it is false, except
     /// once per cool-down (the probe), which a true answer spends, so call it only right before
-    /// starting a download. Independent of the variants session switch.
+    /// starting a download.
     pub fn far_lod_may_request(&self) -> bool {
         self.bevy_variants
             .far_lods
@@ -818,8 +816,7 @@ impl IpfsIo {
     }
 
     /// Whether no far LOD can be offered this session: no variants base, a GPU known to have no
-    /// BC textures, or preview. Far LODs are not turned off with the variants client for the
-    /// session: an outage is the far LOD breaker's to handle, and it recovers.
+    /// BC textures, or preview.
     pub fn far_lods_off(&self) -> bool {
         self.is_preview
             || self.bevy_variants.base().is_none()
