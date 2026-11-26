@@ -5398,8 +5398,8 @@ binary that writes no coverage, at once and regardless of age. A caller that
 reads entities in the same `REPEATABLE READ` transaction reads them from the
 snapshot the answer was taken in.
 
-Roles: the sync leader and every reader (the builder's third-party URN check)
-must connect as the same database role, or the readers' role must hold
+Roles: the sync leader and every reader must connect as the same database
+role, or the readers' role must hold
 `pg_read_all_stats`. PostgreSQL shows a role without it the `backend_start`
 of its own role's sessions only, so a reader of another role reads every
 coverage as `OwnerMismatch` (test
