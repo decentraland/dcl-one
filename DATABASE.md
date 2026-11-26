@@ -3083,15 +3083,22 @@ owner routes answer their source's unavailable envelope. A legacy database
 bound to mainnet needs a separate testnet database or, for the eligible
 legacy default mirrors, the rebind described above.
 
-On Sepolia the NFT and LAND authorization walks start at LAND proxy
-deployment block 3,831,219. On Amoy the NFT walk starts at marketplace V2
-block 5,706,656, before the collection factory. The historical estate
-repair below runs only on Ethereum mainnet.
+The testnet walks select the contract sets for the configured chain pair.
 
-The Sepolia bid walk and the Amoy bid and mint walk publish raw sale
-events. Economic routes on testnet keep their configured authority. Raw
-coverage cannot establish sale prices, aggregates, tax, royalties or
-historical settlement terms. The separate sales accounting publication
+| Walk | Sepolia (11155111) | Amoy (80002) |
+| --- | --- | --- |
+| NFT | LAND and Estate, legacy Marketplace, DCLRegistrar and verified collections. Starts at 3,831,219. | Both legacy Marketplace contracts and verified collections. Starts at 5,706,656. |
+| Sales events | ERC721Bid creation, acceptance and cancellation from 3,831,237. | Collection Issue and CollectionStore Bought from the walk start at 5,706,656. ERC721BidV2 events from 5,706,662. |
+| Rentals | Rentals from 3,831,254. | No Rentals deployment. |
+| Trade events | Off-chain Marketplace V1, V2 and V3, starting at 6,770,056. | Off-chain Marketplace V1, V2 and V3, starting at 12,490,079. |
+
+Sepolia LAND authorization starts at the same LAND proxy deployment block
+as the NFT walk. The historical estate repair below runs only on Ethereum
+mainnet. See [the Sepolia LAND replay measurement](METRICS.md#sepolia-land-authorization-replay).
+
+The testnet sales walk publishes raw events. Economic routes on testnet
+keep their configured authority for sale prices, aggregates, tax, royalties
+and historical settlement terms. The separate sales accounting publication
 runs on mainnet.
 
 On Amoy the sales projection reads BidV2 and prices CollectionStore mints
