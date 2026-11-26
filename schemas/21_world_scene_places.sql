@@ -174,13 +174,6 @@ $$;
 CREATE TRIGGER world_scene_identity_guarded BEFORE INSERT ON explore.world_scene_place
 FOR EACH ROW EXECUTE FUNCTION explore.guard_world_scene_identity();
 
--- The binding collision probe accepts case, hyphen, brace and URN spellings.
--- Probe a normalized text key first, then validate the exact candidate UUID.
-CREATE INDEX place_scene_uuid_lookup_idx
-    ON explore.place (lower(translate(id, '-{}', '')));
-CREATE INDEX place_world_local_scene_uuid_lookup_idx
-    ON explore.place_world_local (lower(translate(id, '-{}', '')));
-
 -- A Places import can arrive before, during or after verification. A reserved
 -- public UUID always owns the same durable interaction key, even after its
 -- discovery proof expires.

@@ -230,6 +230,13 @@ CREATE TABLE explore.world_place_updates (
 
 CREATE INDEX world_place_updates_oldest_idx ON explore.world_place_updates (queued_at, world_name);
 
+-- The scene UUID collision probe accepts case, hyphen, brace and URN spellings.
+-- Probe a normalized text key first, then validate the exact candidate UUID.
+CREATE INDEX place_scene_uuid_lookup_idx
+    ON explore.place (lower(translate(id, '-{}', '')));
+CREATE INDEX place_world_local_scene_uuid_lookup_idx
+    ON explore.place_world_local (lower(translate(id, '-{}', '')));
+
 -- The read surface for every place/world query: the mirrored leg and the local leg.
 CREATE VIEW explore.place_indexed AS
     SELECT id, base_position, title, description, creator_address, content_rating,
