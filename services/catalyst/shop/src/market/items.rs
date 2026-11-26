@@ -1017,7 +1017,6 @@ pub async fn get_items(
 /// `/v3/catalog/items` for these parameters: the page and its total, or the
 /// response a source that cannot answer gives (the search dropdown reads
 /// the same grid).
-#[allow(clippy::result_large_err)]
 /// `rate` is read before the catalogue read opens: no pool work waits while
 /// the read holds its connection.
 pub async fn catalog_items_page(

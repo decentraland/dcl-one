@@ -16,8 +16,6 @@
 //! bearer and the wallet as `x-catalyrst-admin` (the override's recorded
 //! operator), behind `DATA_WRITES_ENABLED` (`marketplace::DataWrites`).
 
-#![allow(clippy::result_large_err)]
-
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::Method;

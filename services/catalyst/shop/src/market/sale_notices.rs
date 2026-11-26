@@ -1136,7 +1136,6 @@ mod tests {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn mint<'a>(
         block: i64,
         log: i32,

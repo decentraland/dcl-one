@@ -5,8 +5,6 @@
 //! as the relay's own routes are not. An upstream URL may carry a gateway key in its path,
 //! so the console's row keeps its host only, the relay's rule.
 
-#![allow(clippy::result_large_err)]
-
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::response::Response;

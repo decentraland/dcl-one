@@ -564,7 +564,10 @@ mod tests {
     /// [`trade`] received as `(asset type, token contract)`: (1, the chain's
     /// MANA) is a MANA price; another ERC-20, or type 2 (USD-pegged MANA),
     /// is not.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per seeded trade field"
+    )]
     async fn priced_trade(
         pool: &sqlx::PgPool,
         tag: &str,

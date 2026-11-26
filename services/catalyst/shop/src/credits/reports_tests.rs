@@ -502,7 +502,10 @@ async fn ledger_row(
         .unwrap();
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per seeded purchase column"
+)]
 async fn card_purchase(
     pool: &sqlx::PgPool,
     address: &str,
@@ -530,7 +533,10 @@ async fn card_purchase(
 
 /// A credit this node signed: `rate` USD per MANA at `decimals`, created
 /// `age_mins` ago.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per seeded authorization column"
+)]
 async fn authorization(
     pool: &sqlx::PgPool,
     salt: &str,
@@ -558,7 +564,10 @@ async fn authorization(
 
 /// One CreditUsed log of `salt` in `tx`, and the debit it settled (none when
 /// `debited` is `None`).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per seeded log and debit column"
+)]
 async fn used(
     pool: &sqlx::PgPool,
     tx: &str,

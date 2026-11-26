@@ -85,7 +85,6 @@ type PortID = u32;
 
 type TransportEvent<T, M> = (T, M);
 
-#[allow(clippy::enum_variant_names)]
 enum ServerEvents<T: Transport + ?Sized> {
     Attach(Arc<T>),
     New(TransportID, Arc<T>),
