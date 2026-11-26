@@ -354,7 +354,8 @@ enum Target {
 struct Folder {
     path: PathBuf,
     made: Io<Result<(), String>>,
-    stale: Option<Io<usize>>,
+    /// when the count was asked for, and the count
+    stale: Option<(f64, Io<usize>)>,
 }
 
 impl Folder {
@@ -512,48 +513,74 @@ impl CaptureJob {
         true
     }
 
+    /// The folder of a sequence on disk.
+    fn disk_folder(&mut self) -> Option<&mut Folder> {
+        match &mut self.kind {
+            Kind::Sequence {
+                target: Target::Disk(folder),
+                ..
+            } => Some(folder),
+            _ => None,
+        }
+    }
+
+    /// Whether the job may ask for frames: `Ok(false)` while it waits out its settle frames, the
+    /// camera's transition or the making of its folder. The folder is polled from the first
+    /// frame, so a folder that cannot be made fails the capture at once.
+    fn ready(&mut self, blending: bool, now: f64) -> Result<bool, String> {
+        let has_folder = self.folder_made(now)?;
+        if self.settle_frames > 0 {
+            self.settle_frames -= 1;
+            return Ok(false);
+        }
+        Ok(self.camera_ready(blending, now) && has_folder)
+    }
+
     /// Whether a sequence on disk has its folder: `Ok(false)` while the IO task pool is making
-    /// it, and the failure when it could not be made or was not within
+    /// it, and a refusal when it could not be made or was not within
     /// `READBACK_TIMEOUT_SECONDS` of the capture's start. A capture with no folder has all it
     /// needs.
     fn folder_made(&mut self, now: f64) -> Result<bool, String> {
         let started = self.started;
-        let Kind::Sequence {
-            target: Target::Disk(folder),
-            ..
-        } = &mut self.kind
-        else {
+        let Some(folder) = self.disk_folder() else {
             return Ok(true);
         };
         match folder.made.poll() {
             Some(Ok(())) => Ok(true),
             Some(Err(reason)) => Err(reply::refusal(reason.clone(), None)),
-            None if now - started > READBACK_TIMEOUT_SECONDS => Err(format!(
-                "{} was not made within {READBACK_TIMEOUT_SECONDS} s",
-                folder.path.display()
+            None if now - started > READBACK_TIMEOUT_SECONDS => Err(reply::refusal(
+                format!(
+                    "{} was not made within {READBACK_TIMEOUT_SECONDS} s",
+                    folder.path.display()
+                ),
+                None,
             )),
             None => Ok(false),
         }
     }
 
-    /// Whether the reply has what it reads from disk: for a sequence in a folder, the count of
-    /// the frame files there that it did not write. The IO task pool counts them; the first call,
-    /// made once every frame is written, asks for it.
-    fn folder_searched(&mut self) -> bool {
+    /// The count of frame files in a sequence's folder that it did not write: `Ok(None)` while
+    /// the IO task pool counts, 0 for a capture with no folder, and the failure when the count
+    /// did not end within `READBACK_TIMEOUT_SECONDS` of being asked for. The first call, made
+    /// once every frame is written, asks for it.
+    fn stale_count(&mut self, now: f64) -> Result<Option<usize>, String> {
         let (count, format) = (self.count(), self.options.format);
-        let Kind::Sequence {
-            target: Target::Disk(folder),
-            ..
-        } = &mut self.kind
-        else {
-            return true;
+        let Some(folder) = self.disk_folder() else {
+            return Ok(Some(0));
         };
-        let stale = folder.stale.get_or_insert_with(|| {
+        let (asked, stale) = folder.stale.get_or_insert_with(|| {
             let path = folder.path.clone();
             let written: Vec<String> = (0..count).map(|index| frame_name(index, format)).collect();
-            Io::spawn(async move { stale_frames(&path, &written) })
+            (now, Io::spawn(async move { stale_frames(&path, &written) }))
         });
-        stale.poll().is_some()
+        match stale.poll() {
+            Some(&stale) => Ok(Some(stale)),
+            None if now - *asked > READBACK_TIMEOUT_SECONDS => Err(format!(
+                "{} was not searched within {READBACK_TIMEOUT_SECONDS} s",
+                folder.path.display()
+            )),
+            None => Ok(None),
+        }
     }
 
     /// When the next frame is due, if one is: the first at once, then one per interval from the
@@ -623,9 +650,8 @@ fn drive_capture(
         return;
     };
     let now = time.elapsed_secs_f64();
-    // polled from the first frame, so a folder that cannot be made fails the capture at once
-    let has_folder = match job.folder_made(now) {
-        Ok(made) => made,
+    let ready = match job.ready(camera_tweens.iter().any(is_blending), now) {
+        Ok(ready) => ready,
         Err(reason) => {
             finish(
                 &mut commands,
@@ -640,11 +666,7 @@ fn drive_capture(
     if job.options.world_only && !scene_uis.suspended {
         scene_uis.suspended = true;
     }
-    if job.settle_frames > 0 {
-        job.settle_frames -= 1;
-        return;
-    }
-    if !job.camera_ready(camera_tweens.iter().any(is_blending), now) || !has_folder {
+    if !ready {
         return;
     }
 
@@ -704,43 +726,48 @@ fn drive_capture(
         .frames
         .iter()
         .all(|slot| matches!(slot.state, SlotState::Done(_)));
-    let written = all_asked && all_done;
-    // a frame held back by `MAX_FRAMES_IN_FLIGHT` waits on the ones before it, so the newest
-    // frame's age bounds the wait whether or not every frame was asked for
-    let overdue = job
+    let result = if all_asked && all_done {
+        // a frame that failed is the reply, so the folder is not searched
+        let failed = job
+            .frames
+            .iter()
+            .any(|slot| matches!(slot.state, SlotState::Done(Err(_))));
+        match if failed {
+            Ok(Some(0))
+        } else {
+            job.stale_count(now)
+        } {
+            Ok(Some(stale)) => {
+                let screen = windows.single().ok().map(|(_, window)| Screen::of(window));
+                let parcel = player
+                    .single()
+                    .ok()
+                    .map(|transform| vec3_to_parcel(transform.translation()));
+                build_reply(job, screen, parcel, stale, &mut store)
+            }
+            Ok(None) => return,
+            Err(reason) => Err(reason),
+        }
+    } else if job
         .frames
         .last()
-        .is_some_and(|last| now - last.at > READBACK_TIMEOUT_SECONDS);
-    if written && job.folder_searched() {
-        let screen = windows.single().ok().map(|(_, window)| Screen::of(window));
-        let parcel = player
-            .single()
-            .ok()
-            .map(|transform| vec3_to_parcel(transform.translation()));
-        let result = build_reply(job, screen, parcel, &mut store);
-        finish(
-            &mut commands,
-            &mut gate,
-            &mut store,
-            &mut scene_uis.reborrow(),
-            result,
-        );
-    } else if overdue {
-        let waited_for = if written {
-            "the capture folder was not searched"
-        } else {
-            "the frames were not read back"
-        };
-        finish(
-            &mut commands,
-            &mut gate,
-            &mut store,
-            &mut scene_uis.reborrow(),
-            Err(format!(
-                "{waited_for} within {READBACK_TIMEOUT_SECONDS} s of the last capture"
-            )),
-        );
-    }
+        // a frame held back by `MAX_FRAMES_IN_FLIGHT` waits on the ones before it, so the
+        // newest frame's age bounds the wait whether or not every frame was asked for
+        .is_some_and(|last| now - last.at > READBACK_TIMEOUT_SECONDS)
+    {
+        Err(format!(
+            "the frames were not read back within {READBACK_TIMEOUT_SECONDS} s of the last capture"
+        ))
+    } else {
+        return;
+    };
+    finish(
+        &mut commands,
+        &mut gate,
+        &mut store,
+        &mut scene_uis.reborrow(),
+        result,
+    );
 }
 
 /// Reply, show what a world-only capture hid, and open the gate. `HiddenSceneUis` is written,
@@ -755,7 +782,8 @@ fn finish(
     let Some(mut job) = gate.job.take() else {
         return;
     };
-    if job.options.world_only {
+    // a capture that failed before its first frame never suspended it
+    if job.options.world_only && scene_uis.suspended {
         scene_uis.suspended = false;
     }
     if let Some(marker) = job.hud_marker.take() {
@@ -856,10 +884,13 @@ fn web_note() -> Option<&'static str> {
         .then_some("the web capture is the engine's canvas: the page's HUD is never in it")
 }
 
+/// The reply to a capture whose frames are all done; `stale` is what `CaptureJob::stale_count`
+/// counted.
 fn build_reply(
     job: &mut CaptureJob,
     screen: Option<Screen>,
     parcel: Option<IVec2>,
+    stale: usize,
     store: &mut CaptureStore,
 ) -> Result<String, String> {
     let mut encoded = Vec::with_capacity(job.frames.len());
@@ -929,16 +960,11 @@ fn build_reply(
                 let last = job.frames.last().map_or(first_at, |slot| slot.at);
                 reply::round_fine(((last - first_at) / (*count - 1) as f64) as f32)
             });
-            let (directory, stored, read, stale) = match target {
+            let (directory, stored, read) = match target {
                 Target::Disk(folder) => (
                     folder.path.display().to_string(),
                     "disk",
                     "frames are files, read only the ones you need",
-                    // counted by the IO task pool before the reply is built
-                    match folder.stale {
-                        Some(Io::Done(stale)) => stale,
-                        _ => 0,
-                    },
                 ),
                 Target::Memory(_) => {
                     store.frames = encoded
@@ -949,7 +975,6 @@ fn build_reply(
                         store.directory(),
                         "memory",
                         "frames stay in memory until the next sequence; read one with /screenshot --frame <path>",
-                        0,
                     )
                 }
             };
@@ -1227,7 +1252,8 @@ mod tests {
             frames: Vec::new(),
         };
         let reply: Value =
-            serde_json::from_str(&build_reply(&mut job, None, None, &mut store).unwrap()).unwrap();
+            serde_json::from_str(&build_reply(&mut job, None, None, 0, &mut store).unwrap())
+                .unwrap();
         assert_eq!(reply["late"], 1);
         assert_eq!(reply["meanIntervalSeconds"], 0.13);
         assert_eq!(reply["stored"], "memory");
@@ -1374,16 +1400,43 @@ mod tests {
         };
         let mut stuck = job(on_disk(2, stuck), false, &mut world);
         assert_eq!(stuck.folder_made(READBACK_TIMEOUT_SECONDS), Ok(false));
+        // the same refusal shape as a folder that cannot be made
         let late = stuck
             .folder_made(READBACK_TIMEOUT_SECONDS + 0.1)
             .unwrap_err();
-        assert!(late.ends_with("was not made within 10 s"), "{late}");
+        let late: Value = serde_json::from_str(&late).unwrap();
+        let reason = late["refused"].as_str().unwrap();
+        assert!(reason.ends_with("was not made within 10 s"), "{reason}");
 
         std::fs::remove_dir_all(&scratch).unwrap();
     }
 
     #[test]
-    fn the_frames_an_earlier_sequence_left_are_counted_off_the_main_thread() {
+    fn a_sequence_asks_for_no_frame_before_its_folder_is_made() {
+        io_pool();
+        let mut world = World::new();
+        let waiting = Folder {
+            path: PathBuf::from("frames"),
+            made: Io::spawn(std::future::pending()),
+            stale: None,
+        };
+        let mut job = job(on_disk(2, waiting), false, &mut world);
+        // past the settle frames, with the camera at rest, the folder still holds it back
+        for _ in 0..SETTLE_FRAMES {
+            assert_eq!(job.ready(false, 0.1), Ok(false));
+        }
+        assert_eq!(job.ready(false, 0.1), Ok(false));
+        assert!(job.blend.is_some());
+
+        let Some(folder) = job.disk_folder() else {
+            unreachable!()
+        };
+        folder.made = Io::Done(Ok(()));
+        assert_eq!(job.ready(false, 0.2), Ok(true));
+    }
+
+    #[test]
+    fn the_frames_an_earlier_sequence_left_are_counted_before_the_reply() {
         io_pool();
         let scratch = scratch("stale");
         for name in [
@@ -1408,10 +1461,11 @@ mod tests {
         }
 
         // the first call asks the pool; the reply is built only once the count is in
-        wait_for(|| job.folder_searched().then_some(()));
+        let stale = wait_for(|| job.stale_count(0.0).unwrap());
         let mut store = CaptureStore::default();
         let reply: Value =
-            serde_json::from_str(&build_reply(&mut job, None, None, &mut store).unwrap()).unwrap();
+            serde_json::from_str(&build_reply(&mut job, None, None, stale, &mut store).unwrap())
+                .unwrap();
         // the third png and the jpg are an earlier sequence's; the text file is no frame
         assert_eq!(reply["staleFrames"], 2);
         assert_eq!(reply["stored"], "disk");
@@ -1437,24 +1491,46 @@ mod tests {
             let path = job.frame_path(index).map(|(name, _)| name);
             job.frames.push(slot(1.0 + 0.1 * index as f64, done(path)));
         }
-        wait_for(|| job.folder_searched().then_some(()));
+        let stale = wait_for(|| job.stale_count(0.0).unwrap());
         let reply: Value =
-            serde_json::from_str(&build_reply(&mut job, None, None, &mut store).unwrap()).unwrap();
+            serde_json::from_str(&build_reply(&mut job, None, None, stale, &mut store).unwrap())
+                .unwrap();
         assert!(reply.get("staleFrames").is_none() && reply.get("warning").is_none());
+
+        // a capture with no folder has nothing to count
+        let mut in_memory = self::job(sequence(2, 0.1), false, &mut world);
+        assert_eq!(in_memory.stale_count(0.0), Ok(Some(0)));
 
         std::fs::remove_dir_all(&scratch).unwrap();
     }
 
-    /// Runs `finish` on a world-only or full-view sequence with `result`; returns the reply,
-    /// whether the scene UI is still suspended, whether `HiddenSceneUis` was written, and the HUD
-    /// markers left.
+    #[test]
+    fn the_count_of_earlier_frames_has_its_own_time_limit() {
+        io_pool();
+        let mut world = World::new();
+        let folder = Folder {
+            path: PathBuf::from("frames"),
+            made: Io::Done(Ok(())),
+            stale: Some((5.0, Io::spawn(std::future::pending()))),
+        };
+        let mut job = job(on_disk(2, folder), false, &mut world);
+        // the limit runs from when the count was asked for, not from the last frame
+        assert_eq!(job.stale_count(5.0 + READBACK_TIMEOUT_SECONDS), Ok(None));
+        let late = job.stale_count(5.1 + READBACK_TIMEOUT_SECONDS).unwrap_err();
+        assert!(late.ends_with("was not searched within 10 s"), "{late}");
+    }
+
+    /// Runs `finish` on a world-only or full-view sequence with `result`, the scene UI suspended
+    /// when `suspended`; returns the reply, whether the scene UI is still suspended, whether
+    /// `HiddenSceneUis` was written, and the HUD markers left.
     fn finished(
         world_only: bool,
+        suspended: bool,
         result: Result<String, String>,
     ) -> (Result<String, String>, bool, bool, usize) {
         let mut world = World::new();
         world.insert_resource(HiddenSceneUis {
-            suspended: world_only,
+            suspended,
             ..Default::default()
         });
         let (tx, mut rx) = oneshot::channel();
@@ -1501,22 +1577,33 @@ mod tests {
     fn a_capture_that_fails_or_times_out_still_opens_the_gate_and_shows_the_ui() {
         let timeout =
             Err("the frames were not read back within 10 s of the last capture".to_owned());
-        let (reply, suspended, written, markers) = finished(true, timeout.clone());
+        let (reply, suspended, written, markers) = finished(true, true, timeout.clone());
         assert_eq!(reply, timeout);
         assert!(!suspended && written);
         assert_eq!(markers, 0);
 
-        let (reply, suspended, written, markers) = finished(true, Ok("{}".to_owned()));
+        let (reply, suspended, written, markers) = finished(true, true, Ok("{}".to_owned()));
         assert_eq!(reply, Ok("{}".to_owned()));
         assert!(!suspended && written);
         assert_eq!(markers, 0);
     }
 
     #[test]
-    fn a_full_view_capture_does_not_write_the_scene_ui_rule() {
-        let (reply, suspended, written, _) = finished(false, Err("no primary window".to_owned()));
+    fn a_capture_that_never_suspended_the_scene_ui_does_not_write_its_rule() {
+        let (reply, suspended, written, _) =
+            finished(false, false, Err("no primary window".to_owned()));
         assert!(reply.is_err());
         assert!(!suspended && !written);
+
+        // a world-only capture whose folder failed before its first frame
+        let (reply, suspended, written, markers) = finished(
+            true,
+            false,
+            Err(r#"{"refused":"cannot create frames"}"#.to_owned()),
+        );
+        assert!(reply.is_err());
+        assert!(!suspended && !written);
+        assert_eq!(markers, 0);
     }
 
     #[test]
