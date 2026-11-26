@@ -12,9 +12,9 @@
     "headers": {
       "content-type": "text/plain; charset=utf-8",
       "cache-control": "public,max-age=31536000,immutable",
-      "location": "https://conformance.s3.amazonaws.com/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei"
+      "location": "https://s3.example/conformance/contents/bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei"
     },
-    "body_bytes_b64": "TW92ZWQgUGVybWFuZW50bHkuIFJlZGlyZWN0aW5nIHRvIGh0dHBzOi8vY29uZm9ybWFuY2UuczMuYW1hem9uYXdzLmNvbS9jb250ZW50cy9iYWZrcmVpZ2wyaWt1dmxucWk0NWpyendvd212NHVxZGpkNm9vcGZ3YWwzdXNqcWk1Zmlpd200eXFlaQ=="
+    "body_bytes_b64": "TW92ZWQgUGVybWFuZW50bHkuIFJlZGlyZWN0aW5nIHRvIGh0dHBzOi8vczMuZXhhbXBsZS9jb25mb3JtYW5jZS9jb250ZW50cy9iYWZrcmVpZ2wyaWt1dmxucWk0NWpyendvd212NHVxZGpkNm9vcGZ3YWwzdXNqcWk1Zmlpd200eXFlaQ=="
   },
   "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
   "captured_at": "2026-01-01T00:00:00.000Z",
