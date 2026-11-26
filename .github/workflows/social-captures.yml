@@ -1,4 +1,6 @@
 name: Social source captures
+# The job reads only the files below, so a change to any other file does not start it. The
+# catalogue test fails when the catalogue or the checker names a file outside these lists.
 on:
   push:
     branches: [main]
@@ -8,6 +10,7 @@ on:
       - 'library/async/**'
       - 'library/dcl-http/tests/fixtures/social-analytics-source-cases.json'
       - 'ownership.json'
+      - 'services/catalyst/tests/fixtures/conformance/builder/**'
       - 'services/catalyst/tests/fixtures/conformance/social/**'
       - 'tooling/builder-server-*'
       - 'tooling/owners.py'
@@ -21,6 +24,7 @@ on:
       - 'library/async/**'
       - 'library/dcl-http/tests/fixtures/social-analytics-source-cases.json'
       - 'ownership.json'
+      - 'services/catalyst/tests/fixtures/conformance/builder/**'
       - 'services/catalyst/tests/fixtures/conformance/social/**'
       - 'tooling/builder-server-*'
       - 'tooling/owners.py'
@@ -38,6 +42,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26.12.0
+      # No install or source recapture: every test imports only Node and local tooling.
       - name: Test catalog validation and capture preflight failures
         run: node --test tooling/tests/social-*.test.cjs
       - name: Test builder capture preflight, teardown and offline guard
