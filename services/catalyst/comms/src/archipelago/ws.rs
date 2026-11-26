@@ -517,7 +517,7 @@ async fn handle_socket(
                 let current = registration.as_mut().expect("registered fenced socket");
                 if !matches!(tokio::time::timeout(
                     AUTHORITY_OPERATION_TIMEOUT,
-                    current.fence.as_mut().unwrap().poll(&state, &mut socket, &current.link, &current.address, &current.session),
+                    current.fence.as_mut().expect("guarded by the fenced-socket precondition").poll(&state, &mut socket, &current.link, &current.address, &current.session),
                 ).await, Ok(true)) {
                     state.registry.detach_selected_realm(&current.link);
                     state.gatekeeper.announce_session(&current.address, &current.session);

@@ -240,7 +240,10 @@ impl CurrentAssignments {
                         && !view.records[&wallet].legacy_invalidated))
             {
                 if assignment.is_some() {
-                    view.records.get_mut(&wallet).unwrap().last_pass = pass;
+                    view.records
+                        .get_mut(&wallet)
+                        .expect("record inserted above")
+                        .last_pass = pass;
                 }
                 continue;
             }
@@ -254,7 +257,10 @@ impl CurrentAssignments {
             {
                 view.next_version = version;
             }
-            let record = view.records.get_mut(&wallet).unwrap();
+            let record = view
+                .records
+                .get_mut(&wallet)
+                .expect("record inserted above");
             if let Some(previous) = record.current.take() {
                 record.retained = Some(previous);
             }

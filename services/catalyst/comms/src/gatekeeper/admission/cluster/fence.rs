@@ -1189,8 +1189,8 @@ impl PgAssignmentFence {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(|_| FenceError::Unavailable)?;
-            let after = if unchanged {
-                let mut after = current.as_ref().unwrap().clone();
+            let after = if let Some(row) = current.as_ref().filter(|_| unchanged) {
+                let mut after = row.clone();
                 after.renewed = Some(renewed);
                 after.lapsed = false;
                 after.renewal_due = false;

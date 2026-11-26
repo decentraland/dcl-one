@@ -744,7 +744,7 @@ impl WebSocket {
                 } => {
                     let message = match input {
                         SocketInput::Assignment(Some(received)) => {
-                            if !self.assignments.as_mut().unwrap().accept(received, &self.queue, &self.state) { return None; }
+                            if !self.assignments.as_mut().expect("assignment events come only from present assignments").accept(received, &self.queue, &self.state) { return None; }
                             tokio::task::yield_now().await;
                             continue;
                         }
@@ -880,7 +880,7 @@ async fn enqueue(
 ) -> bool {
     let owner = frame.owner.clone();
     let owner = owner.as_ref();
-    let mut frame = Some(frame);
+    let mut frame = frame;
     loop {
         let changed = queue.budget.changed.notified();
         tokio::pin!(changed);
@@ -919,12 +919,12 @@ async fn enqueue(
             if let Some(owner) = owner {
                 pending.owner = Some(owner.clone());
             }
-            match pending.push(frame.take().unwrap(), &queue.budget) {
+            match pending.push(frame, &queue.budget) {
                 Ok(()) => {
                     queue.budget.changed.notify_waiters();
                     return true;
                 }
-                Err(held) => frame = Some(held),
+                Err(held) => frame = held,
             }
             let Some(deadline) = queue.budget.deadline() else {
                 continue;
@@ -3069,6 +3069,7 @@ mod bounds_tests {
 }
 
 #[cfg(feature = "test-support")]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod assignment_test_support {
     use super::*;
     use crate::archipelago::registry::{ReceivedSocketEvent, SocketEvent, SocketEvents};

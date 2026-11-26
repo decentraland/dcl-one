@@ -154,13 +154,14 @@ struct ValidatedEvent {
 
 impl ValidatedEvent {
     fn parse(event: &Value) -> Result<Self, ApiError> {
-        let id = event_id(event);
-        let at = event_time_ms(event);
-        if id.is_none_or(|id| id.len() > 128) || at.is_none() {
+        let (Some(id), Some(at)) = (
+            event_id(event).filter(|id| id.len() <= 128),
+            event_time_ms(event),
+        ) else {
             return Err(ApiError::bad_request(
                 "missing livekit webhook id or createdAt",
             ));
-        }
+        };
         let name = event
             .get("event")
             .and_then(Value::as_str)
@@ -169,22 +170,15 @@ impl ValidatedEvent {
         let room_sid = room_sid(event).map(str::to_owned);
         let kind = match name {
             "participant_joined" | "participant_left" => {
-                let sid = participant_sid(event);
-                let identity = participant_identity(event);
-                if sid
-                    .as_ref()
-                    .is_none_or(|sid| sid.len() > MAX_PARTICIPANT_SID_BYTES)
-                    || room.as_ref().is_none_or(|room| room.len() > 512)
-                    || identity
-                        .as_ref()
-                        .is_none_or(|identity| identity.len() > 512)
-                {
+                let (Some(sid), Some(room), Some(identity)) = (
+                    participant_sid(event).filter(|sid| sid.len() <= MAX_PARTICIPANT_SID_BYTES),
+                    room.clone().filter(|room| room.len() <= 512),
+                    participant_identity(event).filter(|identity| identity.len() <= 512),
+                ) else {
                     return Err(ApiError::bad_request(
                         "missing livekit participant event fields",
                     ));
-                }
-                let identity = identity.unwrap();
-                let room = room.clone().unwrap();
+                };
                 let participant = ParticipantEvent {
                     watcher: identity
                         .starts_with("watch:")
@@ -193,7 +187,7 @@ impl ValidatedEvent {
                                 [super::streaming::cast::WATCHER_WALLET_ATTRIBUTE]
                         })
                         .and_then(|wallet| crate::Address::parse(wallet.as_str()?).ok()),
-                    sid: sid.unwrap(),
+                    sid,
                     current_key: identity_key(&room, &identity),
                     room,
                     voice_address: address_from_identity(&identity)
@@ -229,8 +223,8 @@ impl ValidatedEvent {
             _ => EventKind::Ignored,
         };
         Ok(Self {
-            id: id.unwrap().to_owned(),
-            at: at.unwrap(),
+            id: id.to_owned(),
+            at,
             name: name.to_owned(),
             kind,
             room,
@@ -755,6 +749,7 @@ fn leave_event_time_ms(event: &Value) -> i64 {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support {
     use base64::Engine;
     use base64::engine::general_purpose::{STANDARD as B64_STANDARD, URL_SAFE_NO_PAD};
