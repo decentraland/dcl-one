@@ -83,6 +83,7 @@ struct Shared {
     // std on purpose: control positions fail closed once poisoned.
     control: std::sync::Mutex<ControlPositions>,
     control_enabled: Notify,
+    control_poison_logged: AtomicBool,
     statistics: Mutex<crate::pulse::statistics::Statistics>,
     statistics_epoch: uuid::Uuid,
     statistics_sequence: AtomicU64,
@@ -92,14 +93,15 @@ struct Shared {
 impl Shared {
     // Poison is permanent: revoke the generation so the process exits and is restarted.
     fn control_poisoned(&self) {
+        if self.control_poison_logged.swap(true, Ordering::Relaxed) {
+            return;
+        }
         let Some(authority) = &self.generation else {
             tracing::error!("control positions lock poisoned");
             return;
         };
-        if !authority.lost().is_cancelled() {
-            tracing::error!("control positions lock poisoned; revoking the Pulse generation");
-            authority.lost().cancel();
-        }
+        tracing::error!("control positions lock poisoned; revoking the Pulse generation");
+        authority.lost().cancel();
     }
 }
 
@@ -143,6 +145,7 @@ impl NatsClusterFeed {
             current,
             control: std::sync::Mutex::new(ControlPositions::default()),
             control_enabled: Notify::new(),
+            control_poison_logged: AtomicBool::new(false),
             statistics: Mutex::new(crate::pulse::statistics::Statistics::with_incarnation(
                 statistics_epoch,
             )),
@@ -1046,6 +1049,7 @@ mod tests {
             current: Arc::new(CurrentAssignments::default()),
             control: std::sync::Mutex::new(ControlPositions::default()),
             control_enabled: Notify::new(),
+            control_poison_logged: AtomicBool::new(false),
             statistics: Mutex::new(crate::pulse::statistics::Statistics::default()),
             statistics_epoch: uuid::Uuid::nil(),
             statistics_sequence: AtomicU64::new(0),
