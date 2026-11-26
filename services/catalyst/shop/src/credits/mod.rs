@@ -76,6 +76,7 @@
 
 pub mod admin;
 pub mod admin_store;
+pub mod alerts;
 pub mod authorize;
 pub mod batch;
 pub mod captcha;
@@ -109,6 +110,8 @@ pub mod wallet;
 pub mod wallet_flags;
 pub mod writes;
 
+#[cfg(test)]
+mod alerts_tests;
 #[cfg(test)]
 mod reports_tests;
 #[cfg(test)]
@@ -159,6 +162,10 @@ pub struct RawSettings {
     pub captcha_secret: Option<String>,
     /// `CREDITS_CAPTCHA_VERIFY_URL` (`https://hcaptcha.com/siteverify`).
     pub captcha_verify_url: String,
+    /// `CREDITS_ALERTS_SLACK_WEBHOOK` (or `_FILE`): the Slack incoming webhook
+    /// the credits alerts are posted to (`alerts.rs`); unset, each is logged
+    /// at error and not sent.
+    pub alerts_slack_webhook: Option<String>,
     /// `STRIPE_SECRET_KEY` (or `_FILE`): enables the Stripe client.
     pub stripe_secret_key: Option<String>,
     /// `STRIPE_WEBHOOK_SECRET` (or `_FILE`): the webhook signature secret.
@@ -254,6 +261,7 @@ impl Default for RawSettings {
             read_admin_addresses: String::new(),
             captcha_secret: None,
             captcha_verify_url: DEFAULT_CAPTCHA_VERIFY_URL.to_string(),
+            alerts_slack_webhook: None,
             stripe_secret_key: None,
             stripe_webhook_secret: None,
             stripe_api_base: stripe::DEFAULT_STRIPE_API_BASE.to_string(),
@@ -309,6 +317,8 @@ pub struct Settings {
     pub read_admin_addresses: Vec<String>,
     pub captcha_secret: Option<String>,
     pub captcha_verify_url: String,
+    /// The credits alerts' Slack webhook, checked to be a public https URL.
+    pub alerts_slack_webhook: Option<String>,
     pub stripe_secret_key: Option<String>,
     pub stripe_webhook_secret: Option<String>,
     pub stripe_api_base: String,
@@ -416,6 +426,13 @@ impl Settings {
                 && crate::http::is_safe_http_url(&captcha_verify_url))
         {
             anyhow::bail!("CREDITS_CAPTCHA_VERIFY_URL must be a public https:// endpoint");
+        }
+        let alerts_slack_webhook =
+            non_empty(raw.alerts_slack_webhook).map(|url| url.trim().to_string());
+        if let Some(url) = &alerts_slack_webhook
+            && !(url.starts_with("https://") && crate::http::is_safe_http_url(url))
+        {
+            anyhow::bail!("CREDITS_ALERTS_SLACK_WEBHOOK must be a public https:// endpoint");
         }
         let credits_signer_key = non_empty(raw.credits_signer_key);
         let credits_manager_contract = match non_empty(raw.credits_manager_contract) {
@@ -592,6 +609,7 @@ impl Settings {
             read_admin_addresses: parse_read_admin_addresses(&raw.read_admin_addresses)?,
             captcha_secret,
             captcha_verify_url,
+            alerts_slack_webhook,
             stripe_secret_key,
             stripe_webhook_secret: non_empty(raw.stripe_webhook_secret),
             stripe_api_base,
@@ -725,6 +743,8 @@ pub struct State {
     pub revoker: Option<Arc<settlement::Revoker>>,
     /// The MANA/USD feed a USD-pegged group's marketplace settles at (`feed.rs`).
     pub feed: Arc<dyn feed::MarketplaceFeed>,
+    /// Where the credits alerts are posted (`alerts.rs`).
+    pub alerts: alerts::Delivery,
     /// Existing chain transport for the seasonal program paused() view.
     pub goals_chain: Option<Arc<crate::evm::chain::ChainComponent>>,
     pub goal_flags: goals::flags::Flags,
@@ -838,6 +858,7 @@ impl State {
             },
             _ => None,
         };
+        let alerts = alerts::Delivery::new(settings.alerts_slack_webhook.clone(), http.clone());
         let goal_flags = goals::flags::Flags::new(settings.goal_flags_source.clone(), http);
         Self {
             goal_flags,
@@ -857,6 +878,7 @@ impl State {
             gate,
             revoker,
             feed,
+            alerts,
             goals_chain: chain,
             dapps_flags: None,
         }
@@ -922,6 +944,12 @@ impl State {
             self.settings.checkout_worker_interval,
         );
         wallet_flags::spawn(jobs, self.credits.clone(), self.settings.writes_enabled);
+        alerts::spawn(
+            jobs,
+            self.credits.clone(),
+            self.alerts.clone(),
+            self.settings.writes_enabled,
+        );
         self.spawn_usage_index(jobs);
         if self.settings.writes_enabled {
             tracing::warn!(

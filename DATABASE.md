@@ -1762,6 +1762,48 @@ IP and links. Addresses are lower-cased and checked by the table; the handler
 normalises the body's. The bootstrap defines the table; an existing database
 gains it from the object pass, so no step exists.
 
+## Credits alerts workload
+
+`credits.alerts` (`schemas/60_ops.sql`) is the outbox of the conditions an
+operator must hear about (`shop/src/credits/alerts.rs`), one row per
+(`kind`, `dedupe_key`), written in the transaction that detects the case:
+- **settlement** (`settlement.rs`, `settle_usage`):
+  - `recovered_consumption`, keyed by salt: a credit used after its pledge was
+    `released` or `expired`;
+  - `cap_near_limit`, keyed by salt: settled consumption (the credit's
+    `usage_settlements`, this one included) at 99.5% or more of
+    `amount_wei`, one aggregate over `usage_settlements_authorization_idx`;
+  - `unpaid_consumption`, keyed by `chain:block:log`: a used credit its wallet
+    cannot cover, written in its own statement once the debit rolled back,
+    so the fold's retries add nothing;
+- **the expiry sweep** (`alerts::expiry_ctes`, the CTEs both the fulfilment
+  tick and `expire_stale_authorizations` run):
+  - `submitted_unconsumed`, keyed by salt: a pledge it expires that has a
+    `submitted_tx_hash` and no `credits.usages` row (`usages_salt_idx`), unless
+    another pledge of the same wallet with that hash was consumed;
+  - `repeated_expiry`, keyed by wallet, item and the newest attempt this sweep
+    expired: three or more expired or released pledges of the wallet for one
+    line item created within 30 minutes. The read is bounded to the wallets
+    the sweep expired, through `authorizations_address_status_expiry_idx`.
+
+The writer of delivery is the leased `credits-alerts` job, every 15 seconds
+where `OPS_WRITES_ENABLED` is on. It claims up to 20 due `pending` rows
+(`alerts_due_idx`, `FOR UPDATE SKIP LOCKED`), counting an attempt and pushing
+`next_attempt_at` out by a five-minute lease, then posts each to
+`CREDITS_ALERTS_SLACK_WEBHOOK` outside any transaction:
+- a 2xx ends the row `sent`;
+- any other answer, or no answer within 10 seconds, schedules a retry after
+  30 seconds, doubling up to 30 minutes, and keeps the reason in `last_error`
+  (never the webhook, whose path is the credential);
+- a row still undelivered a day after it was written ends `failed`, and with
+  no webhook a row ends `skipped`. Both log the alert at error, so none is
+  dropped silently.
+
+Rows are few: at most one per credit or log for the settlement kinds, one per
+expired submitted credit, and one per failing attempt past the threshold.
+They are kept as the record. The bootstrap defines the table; an existing
+database gains it from the object pass, so no step exists.
+
 ## Credits checkout and broker claim edges
 
 A credits checkout line buys through the shop broker under the claim key

@@ -505,6 +505,35 @@ CREATE INDEX revocations_due_idx ON credits.revocations (created_at) WHERE statu
 -- Each chain's unfinished credit hashes, in worker sweep order.
 CREATE INDEX revocations_chain_hash_idx ON credits.revocations (chain_id, credit_hash) WHERE status IN ('pending', 'sent');
 
+-- Credits alerts: one row per alarm, written in the transaction that detects
+-- it (settlement: a credit used after its hold was released, a used credit
+-- its wallet cannot cover, a credit consumed near its MANA cap; the expiry
+-- sweep: a credit the Shop submitted that expired unconsumed, a wallet whose
+-- purchases of one item keep expiring), at most once per (kind, dedupe_key).
+-- The credits-alerts job posts it to CREDITS_ALERTS_SLACK_WEBHOOK: `sent` once
+-- Slack accepted it, `skipped` (logged at error) with no webhook, `failed`
+-- (logged at error) when still undelivered a day later.
+CREATE TABLE credits.alerts (
+    id bigserial NOT NULL,
+    kind text NOT NULL,
+    dedupe_key text NOT NULL,
+    payload jsonb NOT NULL,
+    status text NOT NULL DEFAULT 'pending',
+    attempts integer NOT NULL DEFAULT 0,
+    next_attempt_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    last_error text,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    finished_at timestamp without time zone,
+    CONSTRAINT alerts_pkey PRIMARY KEY (id),
+    CONSTRAINT alerts_kind_dedupe_key UNIQUE (kind, dedupe_key),
+    CONSTRAINT alerts_kind_check CHECK (kind IN ('recovered_consumption', 'unpaid_consumption', 'cap_near_limit', 'submitted_unconsumed', 'repeated_expiry')),
+    CONSTRAINT alerts_status_check CHECK (status IN ('pending', 'sent', 'skipped', 'failed')),
+    CONSTRAINT alerts_attempts_check CHECK (attempts >= 0)
+);
+
+-- The delivery job's claim: pending alerts due now, oldest first.
+CREATE INDEX alerts_due_idx ON credits.alerts (next_attempt_at, id) WHERE status = 'pending';
+
 -- Slider captchas: GET reuses a live answer and refreshes its two-hour TTL
 -- and generated_at; POST consumes the challenge, requires a solve after one
 -- second and a strict error below three. Three failures block claiming for

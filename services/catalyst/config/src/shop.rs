@@ -459,6 +459,11 @@ pub struct ShopConfig {
     )]
     pub credits_captcha_verify_url: String,
 
+    /// The Slack incoming webhook the credits alerts are posted to (or
+    /// `_FILE`), a public https URL; unset, each alert is logged at error.
+    #[arg(long, env = "CREDITS_ALERTS_SLACK_WEBHOOK", hide_env_values = true)]
+    pub credits_alerts_slack_webhook: Option<String>,
+
     /// Enables the Stripe client (or `_FILE`); unset, the card routes answer 501/503.
     #[arg(long, env = "STRIPE_SECRET_KEY", hide_env_values = true)]
     pub stripe_secret_key: Option<String>,
