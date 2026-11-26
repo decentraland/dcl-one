@@ -71,6 +71,5 @@ envelope, rather than being served without its seller or left out of a
 - A bid dropped by another acceptance reads `cancelled` where the subgraph
   kept it `open`.
 
-Known gap, accepted: Ethereum's ERC721Bid bids (v1 wearables, LAND, estates
-and names) are not indexed yet, so Ethereum's legacy bids still read the
-subgraph.
+Known gap, accepted. Ethereum ERC721Bid events are indexed. The legacy
+Ethereum bid reader still serves the configured subgraph.

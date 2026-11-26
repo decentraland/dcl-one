@@ -8982,6 +8982,105 @@ async fn amoy_bids_come_from_the_bid_book_of_the_served_catalogue() {
 }
 
 #[tokio::test]
+async fn a_mirrored_token_bid_waits_for_its_sellers_nft_publication() {
+    let graph = serve_empty_graph().await;
+    let Some((state, own)) = state_with_the_bid_book(&graph).await else {
+        return;
+    };
+    let pool = &own.pool;
+    super::trade_events::tests::publish_cursors(pool).await;
+    let c = contract_of(&tag(), 1);
+    sqlx::query(
+        "INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, \
+                               transferred_block, transferred_log, transferred_at) \
+         VALUES ('matic', $1, 1, $2, 10, 10, 100, 0, 100)",
+    )
+    .bind(&c)
+    .bind(WALLET_A)
+    .execute(pool)
+    .await
+    .unwrap();
+    for indexer in ["nft", "sales"] {
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_hash, \
+                                          fold_through, folded_block, folded_at, full_history, chain_id) \
+             VALUES ($1, 'matic', 1, 200, '0x' || repeat('0', 64), 200, 200, timezone('UTC', now()), true, 137)",
+        )
+        .bind(indexer)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    let (trade, _) = insert_trade(
+        pool,
+        "bid",
+        CREATOR,
+        Asset {
+            asset_type: 1,
+            contract: "0x2222222222222222222222222222222222222222".into(),
+            value: "100".into(),
+        },
+        Asset {
+            asset_type: 3,
+            contract: c.clone(),
+            value: "1".into(),
+        },
+    )
+    .await;
+    let url = |seller| format!("/v1/bids?network=MATIC&contractAddress={c}&seller={seller}");
+    let app = market_router(state);
+    let (status, body) = get(app.clone(), &url(WALLET_A)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert_eq!(body["data"]["results"][0]["tradeId"], trade, "{body}");
+    let (status, body) = get(app.clone(), &url(WALLET_B)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 0, "{body}");
+
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = 201 WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app.clone(), &url(WALLET_A)).await;
+    assert_eq!(status, StatusCode::OK, "raw advance: {body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    let publish = || {
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET fold_through = last_block, folded_block = last_block, \
+                 folded_at = timezone('UTC', now()) WHERE indexer = 'nft' AND network = 'matic'",
+        )
+        .execute(pool)
+    };
+    publish().await.unwrap();
+    sqlx::query("UPDATE shop.nft SET owner = $2 WHERE network = 'matic' AND contract_address = $1 AND token_id = 1")
+        .bind(&c)
+        .bind(WALLET_B)
+        .execute(pool)
+        .await
+        .unwrap();
+
+    // Both seller scopes wait for the NFT publication, even when the
+    // pending owner would remove the only bid from the previous seller.
+    for seller in [WALLET_A, WALLET_B] {
+        let (status, body) = get(app.clone(), &url(seller)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["source"], "nft-index", "{body}");
+    }
+    publish().await.unwrap();
+    let (status, body) = get(app.clone(), &url(WALLET_A)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 0, "{body}");
+    let (status, body) = get(app, &url(WALLET_B)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert_eq!(body["data"]["results"][0]["tradeId"], trade, "{body}");
+    assert_eq!(body["data"]["results"][0]["seller"], WALLET_B, "{body}");
+    own.drop().await;
+}
+
+#[tokio::test]
 async fn item_only_bids_on_a_walker_do_not_require_an_ethereum_graph() {
     let Some(own) = super::tests::support::OwnDb::create("item_only_bids").await else {
         return;
