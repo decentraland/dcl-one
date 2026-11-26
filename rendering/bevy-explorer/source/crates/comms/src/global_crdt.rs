@@ -13,8 +13,8 @@ use common::{
     rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin, RpcStreamSender},
     structs::{
         AudioDecoderError, EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent, EmoteLifecycleSource,
-        EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerLanguage, PointAtSync,
-        SceneDrivenAnimationRequest, TimeOfDay,
+        EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerAddress, PlayerLanguage,
+        PointAtSync, SceneDrivenAnimationRequest, TimeOfDay,
     },
     util::{AsH160, ModifyComponentExt},
 };
@@ -1003,6 +1003,7 @@ pub fn process_transport_updates(
                                         profile_version: 0,
                                         audio_sender: audio_sender.clone(),
                                     },
+                                    PlayerAddress(update.address),
                                     ForeignAudioSource {
                                         audio_available_receiver: audio_receiver,
                                         audio_receiver: None,
