@@ -2233,6 +2233,7 @@ dependencies = [
  "dcl-auth",
  "dcl-http",
  "dcl-metrics",
+ "ed25519-dalek",
  "feruca",
  "flate2",
  "futures",
