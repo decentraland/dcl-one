@@ -809,7 +809,10 @@ pub(super) async fn derive_line(
 /// The whole flow for `lines` on behalf of `signer` (lowercase, from the
 /// verified auth chain); `single` shapes the messages. `metadata` is the
 /// signed auth-chain metadata, read only for a Credits part (below).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per part of the signed request"
+)]
 pub async fn authorize_group(
     state: &State,
     signer: &str,

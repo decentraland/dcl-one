@@ -1325,7 +1325,10 @@ pub fn hashed(signature: &str) -> String {
         .unwrap_or_default()
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the resolution needs the chain, session, asset and line"
+)]
 async fn resolve_rental(
     pool: &PgPool,
     rentals: &crate::rentals::db::Database,

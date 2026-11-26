@@ -155,7 +155,10 @@ fn lower(a: Address) -> String {
 /// A row the tracker found was sent by another wallet than its reporter is
 /// claimed again, and re-checked, by a reporter proven to have sent it
 /// (`proven_sender`).
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per recorded execution field"
+)]
 pub async fn record(
     pool: &PgPool,
     chain_id: u64,
