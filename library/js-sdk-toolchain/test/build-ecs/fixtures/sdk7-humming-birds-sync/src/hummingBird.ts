@@ -1,7 +1,7 @@
+import type { Entity } from '@dcl/sdk/ecs'
 import {
   Animator,
   ColliderLayer,
-  Entity,
   GltfContainer,
   InputAction,
   MeshCollider,

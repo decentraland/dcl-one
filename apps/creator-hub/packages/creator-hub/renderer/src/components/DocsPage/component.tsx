@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { t } from '/@/modules/store/translation/utils';
 import { openLearnResource } from '/@/lib/openLearnResource';
 

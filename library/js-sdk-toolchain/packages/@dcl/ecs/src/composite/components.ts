@@ -1,5 +1,5 @@
-import { Entity } from '../engine'
-import { IEngine, LastWriteWinElementSetComponentDefinition } from '../engine/types'
+import type { Entity } from '../engine'
+import type { IEngine, LastWriteWinElementSetComponentDefinition } from '../engine/types'
 import { Schemas } from '../schemas'
 
 /**

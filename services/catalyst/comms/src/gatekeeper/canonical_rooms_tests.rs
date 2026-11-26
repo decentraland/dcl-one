@@ -176,6 +176,12 @@ impl SceneIdentity for Catalogue {
         )
         .await
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 fn canonical_state() -> CommsState {
@@ -254,6 +260,12 @@ impl SceneIdentity for BoundaryCatalogue {
         world: &WorldName,
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         self.world_scene(world, &self.scene).await
+    }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
     }
 }
 
@@ -671,6 +683,12 @@ impl SceneIdentity for RetryCatalogue {
         world: &WorldName,
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         Catalogue.world_active_scene(world).await
+    }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
     }
 }
 
@@ -1116,16 +1134,19 @@ async fn canonical_stream_route_creates_and_persists_ingress_for_the_joined_scen
             observed.lock().unwrap().last().unwrap()["roomName"],
             "w1:d:mixed.dcl.ethSceneB"
         );
+        // The key is the scene's, stored under its place.
+        let world = WorldName::parse("mixed.dcl.eth").unwrap();
+        let scene_place = deployment(&world, "SceneB").place_key();
         let stored: String = sqlx::query_scalar(
             "SELECT room_id FROM social.scene_stream_access WHERE place_id = $1 AND active",
         )
-        .bind(&place_id)
+        .bind(&scene_place)
         .fetch_one(&pool)
         .await
         .unwrap();
         assert_eq!(stored, "w1:d:mixed.dcl.ethSceneB");
         sqlx::query("DELETE FROM social.scene_stream_access WHERE place_id = $1")
-            .bind(&place_id)
+            .bind(&scene_place)
             .execute(&pool)
             .await
             .unwrap();
@@ -1331,6 +1352,12 @@ impl SceneIdentity for RedeployCatalogue {
                 .await;
         }
         Catalogue.world_active_scene(world).await
+    }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
     }
 }
 
@@ -1691,6 +1718,12 @@ impl SceneIdentity for FlakySceneB {
         world: &WorldName,
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         Catalogue.world_active_scene(world).await
+    }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
     }
 }
 

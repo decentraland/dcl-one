@@ -10,7 +10,7 @@ import {
   PendingEventCard,
   Notice,
   RejectEventModal,
-  SitesButton as Button,
+  Button,
 } from "@dcl/one-ui";
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -186,7 +186,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
         ) : queue.isError ? (
           <div className={adminPageStyles.status}>
             <Notice tone="error">{failure(queue.error)}</Notice>
-            <Button variant="secondary" onClick={() => void queue.refetch()}>{adminCopy.pending.retry}</Button>
+            <Button size="lg" variant="secondary" onClick={() => void queue.refetch()}>{adminCopy.pending.retry}</Button>
           </div>
         ) : pending.length ? cards(pending) : (
           <p className={styles.empty}>{adminCopy.pending.empty}</p>
@@ -212,13 +212,13 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
           feedback={errorAlert}
           actions={<>
             {reviewPending && mayApprove(review) ? (
-              <Button disabled={busy} onClick={() => void moderate(review, "approve")}>{adminCopy.pending.approve}</Button>
+              <Button size="lg" disabled={busy} onClick={() => void moderate(review, "approve")}>{adminCopy.pending.approve}</Button>
             ) : null}
             {reviewPending && mayReject(review) ? (
-              <Button variant="tertiary" disabled={busy} onClick={() => { setError(null); setRejecting(review); }}>{adminCopy.pending.reject}</Button>
+              <Button size="lg" variant="tertiary" disabled={busy} onClick={() => { setError(null); setRejecting(review); }}>{adminCopy.pending.reject}</Button>
             ) : null}
             {mayEdit(review) ? (
-              <Button variant="tertiary" disabled={busy} onClick={() => navigate(editEventHref(review.id))}>{adminCopy.pending.edit}</Button>
+              <Button size="lg" variant="tertiary" disabled={busy} onClick={() => navigate(editEventHref(review.id))}>{adminCopy.pending.edit}</Button>
             ) : null}
           </>}
         />

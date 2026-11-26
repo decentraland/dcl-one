@@ -29,8 +29,21 @@ interface Entry {
   size: number;
 }
 
+/** Queued records a prune dropped unsent: too old, or past the count or size limit. */
+export interface OutboxDrops {
+  expired: number;
+  overLimit: number;
+}
+
 export class Outbox {
-  constructor(private readonly dir: string) {}
+  /**
+   * `onDrop` hears of every record a prune drops without it ever being sent, so it is never
+   * silent: a service that refuses uploads for a week (a quota, an outage) costs turns.
+   */
+  constructor(
+    private readonly dir: string,
+    private readonly onDrop: (drops: OutboxDrops) => void = () => {},
+  ) {}
 
   enqueue(record: AiTurnRecord): void {
     fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
@@ -112,9 +125,13 @@ export class Outbox {
   /** Drops records past the age limit, then the oldest until the count and size limits hold. */
   prune(now = Date.now()): void {
     this.removeStaleTempFiles(now);
+    const drops: OutboxDrops = { expired: 0, overLimit: 0 };
     let entries = this.entries();
     for (const entry of entries) {
-      if (now - entry.mtimeMs > OUTBOX_LIMITS.maxAgeMs) fs.rmSync(entry.file, { force: true });
+      if (now - entry.mtimeMs > OUTBOX_LIMITS.maxAgeMs) {
+        fs.rmSync(entry.file, { force: true });
+        drops.expired++;
+      }
     }
     entries = this.entries();
     let total = entries.reduce((sum, e) => sum + e.size, 0);
@@ -125,7 +142,9 @@ export class Outbox {
       const oldest = entries.shift()!;
       fs.rmSync(oldest.file, { force: true });
       total -= oldest.size;
+      drops.overLimit++;
     }
+    if (drops.expired > 0 || drops.overLimit > 0) this.onDrop(drops);
   }
 
   // A crash between write and rename leaves a `.tmp` that no listing sees; it is never renamed.

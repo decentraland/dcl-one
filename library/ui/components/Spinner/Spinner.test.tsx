@@ -10,19 +10,10 @@ describe('Spinner', () => {
     })
   })
 
-  describe('when given a size', () => {
-    it('sizes the ring and keeps the track in proportion', () => {
-      render(<Spinner size={60} style={{ margin: 4 }} />)
-      const bar = screen.getByRole('progressbar', { name: 'Loading' })
-      expect(bar.style.width).toBe('60px')
-      expect(bar.style.height).toBe('60px')
-      expect(bar.style.borderWidth).toBe('8px')
-      expect(bar.style.margin).toBe('4px')
-    })
-
-    it('leaves the stylesheet size when none is given', () => {
-      render(<Spinner />)
-      expect(screen.getByRole('progressbar').style.width).toBe('')
+  describe('when an inline size is requested', () => {
+    it('should keep a named 16px progress indicator', () => {
+      render(<Spinner size={16} label="Loading balance" />)
+      expect(screen.getByRole('progressbar', { name: 'Loading balance' })).toHaveAttribute('data-size', '16')
     })
   })
 

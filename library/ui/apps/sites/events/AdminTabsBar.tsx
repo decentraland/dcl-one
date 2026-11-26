@@ -1,6 +1,6 @@
 import ChromeLink from '../../../components/AppChrome/ChromeLink'
 import { chromeLinkClick, useChromeNav } from '../../../components/AppChrome/chrome-nav'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { adminCopy } from './admin-copy'
 import styles from './AdminTabsBar.module.css'
 
@@ -56,7 +56,7 @@ export function AdminTabsBar({ active, showPending, showUsers }: AdminTabsBarPro
       <Button
         className={styles.create}
         variant="tertiary"
-        size="sm"
+        size="md"
         href={ADMIN_ROUTES.create}
         onClick={(event) => chromeLinkClick(event, ADMIN_ROUTES.create, navigate)}
       >

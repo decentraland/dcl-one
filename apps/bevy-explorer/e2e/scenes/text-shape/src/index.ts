@@ -1,7 +1,7 @@
+import type { Entity } from '@dcl/sdk/ecs'
 import {
   Billboard,
   BillboardMode,
-  Entity,
   Font,
   InputAction,
   Material,

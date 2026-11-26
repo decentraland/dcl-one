@@ -10,7 +10,7 @@ import {
   GeneralPlayers,
   GeneralPublic
 } from '../../../foundations/icons'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { Button as SharedButton } from '../../../components/Button/Button'
 import { EventCardHost } from '../../../components/EventCard/EventCard'
 import { hostOf } from './cards'
@@ -155,9 +155,13 @@ function LocationChip({ location }: { location: Location }) {
 function JumpInButton({ jumpIn }: { jumpIn: JumpIn }) {
   const { text } = useEventsCopy()
   return (
-    <Button href={jumpIn.href} onClick={jumpIn.onJumpIn}>
+    <Button
+      size="lg"
+      href={jumpIn.href}
+      onClick={jumpIn.onJumpIn}
+      trailingIcon={<GeneralJumpIn size={20} aria-hidden="true" />}
+    >
       {text('Jump In')}
-      <GeneralJumpIn size={20} aria-hidden="true" />
     </Button>
   )
 }

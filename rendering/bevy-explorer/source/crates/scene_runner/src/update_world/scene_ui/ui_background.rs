@@ -15,7 +15,7 @@ use crate::{
     SceneEntity,
 };
 
-use super::UiLink;
+use super::{UiLink, UiTransform};
 
 #[derive(Clone, Copy, Debug)]
 pub enum BackgroundTextureMode {
@@ -87,6 +87,13 @@ impl From<PbUiBackground> for UiBackground {
     }
 }
 
+impl UiBackground {
+    /// The plain colour this background fills its node with, if it has no texture.
+    pub(super) fn solid_color(&self) -> Option<Color> {
+        self.texture.is_none().then_some(self.color).flatten()
+    }
+}
+
 #[derive(Component)]
 pub struct UiBackgroundMarker;
 
@@ -128,7 +135,7 @@ pub fn set_ui_background(
     >,
     radii: Query<(&Node, Option<&BorderRadius>)>,
     mut removed: RemovedComponents<UiBackground>,
-    links: Query<&UiLink>,
+    links: Query<(&UiLink, Option<&UiTransform>)>,
     children: Query<&Children>,
     prev_backgrounds: Query<Entity, With<UiBackgroundMarker>>,
     contexts: Query<&RendererSceneContext>,
@@ -149,7 +156,7 @@ pub fn set_ui_background(
     }
 
     for ent in removed.read() {
-        let Ok(link) = links.get(ent) else {
+        let Ok((link, transform)) = links.get(ent) else {
             continue;
         };
 
@@ -163,6 +170,9 @@ pub fn set_ui_background(
 
         if let Ok(mut commands) = commands.get_entity(link.ui_entity) {
             commands.try_insert(BackgroundColor::DEFAULT);
+            if let Some(transform) = transform {
+                transform.apply_border_color(&mut commands, None, link.opacity.0);
+            }
         }
     }
 
@@ -192,6 +202,10 @@ pub fn set_ui_background(
         };
 
         debug!("[{}] set background {:?}", scene_ent.id, &*background);
+
+        if let Ok((_, Some(transform))) = links.get(ent) {
+            transform.apply_border_color(&mut commands, background.solid_color(), link.opacity.0);
+        }
 
         if let Some(texture) = background.texture.as_ref() {
             let Ok(ctx) = contexts.get(scene_ent.root) else {
