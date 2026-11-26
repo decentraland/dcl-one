@@ -1607,3 +1607,122 @@ async fn a_referral_recount_never_lowers_imported_steps() {
     assert_eq!(progress(&pool, r, "referral").await.unwrap().0, 9);
     assert!(tiers(&pool, r, "referral").await.is_empty());
 }
+
+/// Once the collections index owns Polygon, a recount reads the catalogue
+/// only while the index's descriptive verdict holds: a rewind stops it,
+/// though the mirrors' passes a takeover leaves are recorded.
+#[tokio::test]
+async fn a_recount_follows_the_index_on_an_owned_polygon() {
+    let Some(pool) = private_pool("badges_recount_owned").await else {
+        return;
+    };
+    use crate::chain_index::catalogue::owning;
+    let p = pass(&pool);
+    let creator = fresh_address();
+    let c = contract();
+    item(&pool, &c, 0, "wearable_v2", creator.as_str()).await;
+    mirror_ready(&pool, "items").await;
+    mirror_ready(&pool, "collections").await;
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    owning::rewind(&pool, "matic").await;
+    assert_eq!(
+        recount::run_one(&p, Recount::WearableDesigner)
+            .await
+            .unwrap(),
+        0,
+        "the index refuses"
+    );
+    assert_eq!(
+        progress(&pool, creator.as_str(), "wearable_designer").await,
+        None
+    );
+    owning::own(&pool, "matic", 137, 100, 2 * 3600).await;
+    assert_eq!(
+        recount::run_one(&p, Recount::WearableDesigner)
+            .await
+            .unwrap(),
+        1,
+        "an old publication still describes"
+    );
+    assert_eq!(
+        progress(&pool, creator.as_str(), "wearable_designer")
+            .await
+            .unwrap()
+            .0,
+        1
+    );
+}
+
+/// Once the collections index owns Polygon, a sale waits until the index's
+/// publication covers its block, whether or not its item has a row (a row
+/// read before then may be a rewound branch's); one the index has not
+/// covered for a day passes without a badge.
+#[tokio::test]
+async fn on_an_owned_polygon_a_sale_waits_for_the_publication_over_its_block() {
+    let Some(pool) = private_pool("badges_sales_owned").await else {
+        return;
+    };
+    use crate::chain_index::catalogue::owning;
+    let p = pass(&pool);
+    chain_ready(&pool, "sales", 100).await;
+    sales::batch(&p, Log::Sale).await.unwrap();
+    let c = contract();
+    let creator = fresh_address();
+    let (buyer, late) = (fresh_address(), fresh_address());
+    let sale = |block: i64, at: i64, by: String, tx: String| {
+        let pool = pool.clone();
+        let c = c.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, item_id, buyer, tx_hash) \
+                 VALUES ('matic', $1, 0, $2, 'mint', $3, $3, 1, 2, $4, $5)",
+            )
+            .bind(block)
+            .bind(at)
+            .bind(&c)
+            .bind(by)
+            .bind(tx)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    item(&pool, &c, 2, "wearable_v2", creator.as_str()).await;
+    mirror_ready(&pool, "items").await;
+    let recent = now().and_utc().timestamp() - 60;
+    sale(
+        101,
+        recent,
+        buyer.to_string(),
+        format!("0x{}", "a".repeat(64)),
+    )
+    .await;
+    chain_ready(&pool, "sales", 101).await;
+
+    owning::own(&pool, "matic", 137, 100, 60).await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (0, false));
+    assert_eq!(
+        cursor(&pool, Log::Sale.source()).await,
+        Some((100, i32::MAX))
+    );
+    assert_eq!(progress(&pool, buyer.as_str(), "fashionista").await, None);
+
+    owning::own(&pool, "matic", 137, 101, 60).await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (1, false));
+    assert_eq!(
+        progress(&pool, buyer.as_str(), "fashionista")
+            .await
+            .unwrap()
+            .0,
+        1
+    );
+
+    // A day past the sale, the index still rewound: passed without a badge.
+    let old = recent - crate::shared::collections::ITEM_HOLD_MAX_SECS;
+    sale(102, old, late.to_string(), format!("0x{}", "b".repeat(64))).await;
+    chain_ready(&pool, "sales", 102).await;
+    owning::rewind(&pool, "matic").await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (1, false));
+    assert_eq!(cursor(&pool, Log::Sale.source()).await, Some((102, 0)));
+    assert_eq!(progress(&pool, late.as_str(), "fashionista").await, None);
+}

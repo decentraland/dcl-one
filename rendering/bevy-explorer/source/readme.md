@@ -373,6 +373,8 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   `withAnimator`; the clips `playing`, `stopped` by their scene and `finished`; `finishReports`,
   the finished clips reported to scenes; and up to 32 `clips`, each with its `entity`, `clip`,
   `state`, `weight`, `speed`, `seekSeconds`, `durationSeconds` and `looping`).
+- Movement: `/movement_state` reads the locomotion settings, the last movement step and the
+  height over the ground.
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 **The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC

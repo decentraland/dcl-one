@@ -4455,10 +4455,11 @@ async fn an_inventory_read_reuses_its_gate_snapshot_and_gates_every_request() {
 }
 
 /// An inventory memo is filed under the catalogue copy its items were named
-/// from, read in the gate's snapshot: on a network the collections index
-/// owns, a republication of the catalogue alone (an item renamed at the same
-/// nft publication) misses a warm memo: the gate's publications, which also
-/// key the by-owner answer and the backpack, change with it.
+/// from, read in the gate's snapshot. On a network the collections index
+/// owns, a row rewritten without a republication is still served from the
+/// warm memo, and a republication of the catalogue alone (an item renamed at
+/// the same nft publication) misses it, in the owner's copies and in the
+/// by-owner answer (`/lambdas/users/{a}/wearables`), whose key is the same.
 #[tokio::test]
 async fn a_warm_inventory_follows_a_catalogue_only_republication() {
     use super::catalogue::owning;
@@ -4501,15 +4502,34 @@ async fn a_warm_inventory_follows_a_catalogue_only_republication() {
             publications,
         )
     };
+    let by_owner = |state: SharedState| async move {
+        let (status, body) = get(
+            super::router(state),
+            &format!("/lambdas/users/{WALLET_A}/wearables"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["elements"][0]["name"].as_str().map(str::to_string)
+    };
     let (before, first) = names(state.clone()).await;
     assert_eq!(before, ["Hat"]);
-    assert_eq!(names(state.clone()).await.1, first, "a warm memo");
+    assert_eq!(by_owner(state.clone()).await.as_deref(), Some("Hat"));
 
+    // Rewritten without a republication: the warm memos answer.
     sqlx::query("UPDATE shop.items SET name = 'Cap' WHERE contract_address = $1")
         .bind(&c)
         .execute(&pool)
         .await
         .unwrap();
+    let (warm, again) = names(state.clone()).await;
+    assert_eq!(
+        (warm, again),
+        (vec!["Hat".to_string()], first),
+        "a memo hit"
+    );
+    assert_eq!(by_owner(state.clone()).await.as_deref(), Some("Hat"));
+
+    // The catalogue alone republishes: both miss.
     owning::own(&pool, "matic", 137, 100, 60).await;
     let (after, second) = names(state.clone()).await;
     assert_eq!(
@@ -4518,6 +4538,7 @@ async fn a_warm_inventory_follows_a_catalogue_only_republication() {
     );
     assert_ne!(second, first, "the catalogue copy is in the key");
     assert_eq!(after, ["Cap"]);
+    assert_eq!(by_owner(state.clone()).await.as_deref(), Some("Cap"));
     own.drop().await;
 }
 
