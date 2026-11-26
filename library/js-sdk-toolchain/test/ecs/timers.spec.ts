@@ -1,4 +1,5 @@
-import { Engine, createTimers, TimerId } from '../../packages/@dcl/ecs/src'
+import type { TimerId } from '../../packages/@dcl/ecs/src'
+import { Engine, createTimers } from '../../packages/@dcl/ecs/src'
 
 describe('Timer helpers', () => {
   describe('setTimeout', () => {

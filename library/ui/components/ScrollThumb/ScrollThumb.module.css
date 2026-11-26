@@ -1,0 +1,53 @@
+/* Not from Figma's Scrollbar (Scrollbar): the Explorer HUD's scroll handle. These rules sit outside the cascade layer with the specificity
+   they had: each caller places the track with its own class, and keeps the precedence it had. A caller sets
+   `--scroll-thumb-w` to narrow the `solid` handle. The 10px corners and the 68 % black of the `dark` handle have
+   no token. */
+.root {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  pointer-events: none;
+  touch-action: none;
+}
+/* Only while there is something to scroll: a track with a hidden pill takes no press. */
+.root[data-scrolls] {
+  pointer-events: auto;
+}
+.thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 14px;
+  border: 1px solid var(--dcl-neutrals-snow);
+  border-radius: 10px; /* = HUD --r-control */
+  background: var(--dcl-transparencies-black-40);
+  visibility: hidden;
+  will-change: transform;
+}
+
+/* Along the scroller's bottom: the track spans its width, the thumb is 14px high. */
+.x {
+  top: auto;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: auto;
+  height: 14px;
+}
+.x .thumb {
+  width: auto;
+  height: 14px;
+}
+.dark .thumb {
+  background: rgba(0, 0, 0, 0.68);
+}
+/* A caller may narrow it with --scroll-thumb-w (default 14px). */
+.solid,
+.solid .thumb {
+  width: var(--scroll-thumb-w, 14px);
+}
+.solid .thumb {
+  border: none;
+  background: var(--dcl-neutrals-snow);
+}

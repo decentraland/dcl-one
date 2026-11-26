@@ -1,0 +1,45 @@
+/* Not in Figma: the frame of the Explorer HUD's browse pages. These rules sit outside the cascade layer: the
+   toolbar sizes the controls placed in it (`.search > *`), and those controls' own rules are a mix of layered
+   and unlayered. The panel's purple wash and its 8 % white border have no token. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+.controls > * {
+  flex: none;
+}
+.search {
+  width: 240px;
+}
+.select {
+  width: 168px;
+}
+.search > *,
+.select > * {
+  width: 100%;
+}
+
+/* The purple results panel. */
+.panel {
+  background: rgba(179, 47, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.08); /* = HUD --line */
+  border-radius: var(--dcl-radius-xl);
+  padding: 24px;
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 0;
+}

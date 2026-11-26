@@ -717,8 +717,8 @@ mod tests {
         };
         use pipeline_test::{compile_pipelines, headless_app, render_target};
         use scene_material::{
-            SceneBound, SceneBounds, EMPTY_SCENE_CELLS, SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
-            SCENE_MATERIAL_OUTLINE_MESH_TAG, SCENE_MATERIAL_TOON_MESH_TAG,
+            SceneBound, SceneBounds, EMPTY_SCENE_CELLS, SCENE_MATERIAL_OUTLINE_MESH_TAG,
+            SCENE_MATERIAL_TOON_MESH_TAG,
         };
 
         let mut app = headless_app();
@@ -846,10 +846,7 @@ mod tests {
                 },
             ))
             .id();
-        let revealed = reveal_mesh_tag(
-            SCENE_MATERIAL_TOON_MESH_TAG | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
-            1.0,
-        );
+        let revealed = reveal_mesh_tag(SCENE_MATERIAL_TOON_MESH_TAG, 1.0);
         world.spawn((
             Mesh3d(cube.clone()),
             MeshMaterial3d(scene),

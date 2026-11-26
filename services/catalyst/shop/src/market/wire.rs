@@ -294,6 +294,32 @@ pub fn get_number_parameter(
         .ok_or_else(|| InvalidParameterError::new(name, raw))
 }
 
+/// A nonnegative decimal integer representable exactly in a JavaScript number.
+pub(super) fn unsigned_decimal(p: &Params<'_>, key: &str) -> Result<Option<i64>, ()> {
+    p.get_string(key, None)
+        .map(|text| {
+            if !text.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(());
+            }
+            text.parse::<i64>()
+                .ok()
+                .filter(|n| *n <= 9_007_199_254_740_991)
+                .ok_or(())
+        })
+        .transpose()
+}
+
+pub(super) fn strict_page(p: &Params<'_>) -> Result<(i64, i64), ApiError> {
+    match (unsigned_decimal(p, "first"), unsigned_decimal(p, "skip")) {
+        (Ok(first), Ok(skip)) if first != Some(0) => {
+            Ok((first.unwrap_or(20).min(100), skip.unwrap_or(0)))
+        }
+        _ => Err(ApiError::bad_request(
+            "first and skip must be whole numbers, first at least 1",
+        )),
+    }
+}
+
 /// `Number.parseInt` without a radix: leading whitespace (U+FEFF included),
 /// an optional sign, an optional `0x` prefix, then the leading digits. A
 /// value too wide saturates, as JS yields a lossy float there. Unlike
@@ -566,7 +592,7 @@ pub fn bn_add(a: &str, b: &str) -> String {
     if carry > 0 {
         out.push(b'0' + carry as u8);
     }
-    while out.len() > 1 && *out.last().unwrap() == b'0' {
+    while out.len() > 1 && out.last() == Some(&b'0') {
         out.pop();
     }
     out.into_iter().rev().map(|b| b as char).collect()

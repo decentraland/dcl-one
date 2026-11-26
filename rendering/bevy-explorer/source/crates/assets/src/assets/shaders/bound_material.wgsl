@@ -13,7 +13,7 @@
 
 #import "embedded://shaders/simplex.wgsl"::simplex_noise_3d
 #import "embedded://shaders/bound_material_effect.wgsl"::{camera_dither, reveal_discard, toon_outline}
-#import "embedded://shaders/toon.wgsl"::{facial_feature_lighting, toon_lighting}
+#import "embedded://shaders/toon.wgsl"::{facial_feature_lighting, toon_emission, toon_lighting}
 #import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
 #import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount, SCENE_DITHER_CAPSULE, SCENE_PLAIN_EMISSIVE, SCENE_ALPHA_TEXTURE}
 
@@ -106,6 +106,9 @@ fn fragment(
     let sample_index = 0u;
 #endif
 
+    // avatars: the toon meshes and the face features
+    let avatar = (mesh_tag & (#{TOON_MESH_TAG} | #{FACIAL_FEATURE_MESH_TAG})) != 0u;
+
 #ifdef VERTEX_UVS
     // the alpha texture's brightness scales the alpha, not its own alpha channel
     if (scene_bounds.flags & SCENE_ALPHA_TEXTURE) != 0u {
@@ -124,12 +127,14 @@ fn fragment(
     // x                no                  x * base color
     // 0                t                   2 * t
     // x != 0           t                   x * t
+    // Avatars take neither substitute: their emission is the emissive colour times the emissive
+    // texture, or the colour alone without one
     // an SDK material (SCENE_PLAIN_EMISSIVE) differs in two rows: x with no texture stays x,
     // and it binds no emissive texture when x is 0, so 0 with a texture is 0
     var emissive: vec3<f32> = material.emissive.rgb;
 #ifdef VERTEX_UVS
     if ((material.flags & STANDARD_MATERIAL_FLAGS_EMISSIVE_TEXTURE_BIT) != 0u) {
-        if dot(emissive, emissive) == 0.0 {
+        if !avatar && dot(emissive, emissive) == 0.0 {
             emissive = vec3(2.0);
         }
         var bias: SampleBias;
@@ -150,7 +155,7 @@ fn fragment(
         ).rgb);
     } else {
         // emissive is set, no emissive texture, use base color texture as emissive texture (only if present)
-        if ((material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u && (scene_bounds.flags & SCENE_PLAIN_EMISSIVE) == 0u) {
+        if !avatar && (material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u && (scene_bounds.flags & SCENE_PLAIN_EMISSIVE) == 0u {
             emissive = emissive * pbr_input.material.base_color.rgb;
         }
     }
@@ -198,15 +203,19 @@ fn fragment(
 #endif
 
     // apply lighting
+    // the toon light models leave out the emission, added after the avatar outline
+    var toon_emitted = vec3<f32>(0.0);
     if (pbr_input.material.flags & bevy_pbr::pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
         if (mesh_tag & #{FACIAL_FEATURE_MESH_TAG}) != 0u {
             // the eyes, eyebrows and mouth without a mask texture: the face features' own
             // light model, by the ambient light (toon.wgsl)
             out.color = facial_feature_lighting(pbr_input);
+            toon_emitted = toon_emission(pbr_input);
         } else if (mesh_tag & #{TOON_MESH_TAG}) != 0u {
             // avatars: cel shading, a light model of its own (toon.wgsl) lit by the sun and
             // the ambient light; the sun's cast shadow pushes surfaces towards the shades
             out.color = toon_lighting(pbr_input);
+            toon_emitted = toon_emission(pbr_input);
         } else {
             out.color = apply_pbr_lighting(pbr_input);
         }
@@ -214,18 +223,17 @@ fn fragment(
         out.color = pbr_input.material.base_color;
     }
 
-    if should_discard {
-        out.color.a = out.color.a * 0.5;
-        out.color.r = 4.0;
-    } else {
-        if noise < outside_amt / 2.0 {
-            out.color = mix(out.color, vec4(10.0, 1.0, 0.0, 1.0), (outside_amt / 2.0 - noise) / 0.125);
-        }
-    }
-
     let view_z = -view_transformations::depth_ndc_to_view_z(in.position.z);
 
-    if (mesh_tag & #{OUTLINE_MESH_TAG}) != 0u {
+    // the outline finds its edges in the depth and normal prepass, which only opaque and
+    // alpha-tested meshes write: under a blended fragment the prepass holds what lies behind it,
+    // so a blended mesh would trace the edges of the scene behind it
+    let alpha_mode = pbr_input.material.flags & bevy_pbr::pbr_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS;
+    let in_prepass = alpha_mode == bevy_pbr::pbr_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_OPAQUE
+        || alpha_mode == bevy_pbr::pbr_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_MASK
+        || alpha_mode == bevy_pbr::pbr_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_ALPHA_TO_COVERAGE;
+
+    if (mesh_tag & #{OUTLINE_MESH_TAG}) != 0u && in_prepass {
         // the avatar outline
         out.color = toon_outline(
             in.position,
@@ -236,6 +244,20 @@ fn fragment(
             sample_index,
             dither_opacity,
         );
+    }
+
+    // the emission goes on after the line, which only darkens the lit surface: a glowing mesh
+    // glows to its edge, and a mesh a pixel or two across (a particle), all of whose pixels are
+    // edge pixels, keeps its glow instead of turning into line
+    out.color = vec4<f32>(out.color.rgb + toon_emitted, out.color.a);
+
+    if should_discard {
+        out.color.a = out.color.a * 0.5;
+        out.color.r = 4.0;
+    } else {
+        if noise < outside_amt / 2.0 {
+            out.color = mix(out.color, vec4(10.0, 1.0, 0.0, 1.0), (outside_amt / 2.0 - noise) / 0.125);
+        }
     }
 
     // apply in-shader post processing (fog, alpha-premultiply, and also tonemapping, debanding if the camera is non-hdr)

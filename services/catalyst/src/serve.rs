@@ -279,7 +279,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let local: Vec<&str> = local_urls.iter().map(String::as_str).collect();
 
     // ONE EIP-1654 validator (contract-wallet signatures): explore, the
-    // social routes and the social socket share it.
+    // social routes and the social socket share it. Each check that reaches
+    // the RPC spends the client source's budget (`shared::eip1654_budget`,
+    // whose layer `serve_routes::build_routes` adds).
     let eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>> = config
         .content
         .eth_rpc_url()?
@@ -292,7 +294,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             }
             .build()
             .context("building the EIP-1654 RPC client")?;
-            anyhow::Ok(crate::auth::cached_rpc_validator(url, client))
+            anyhow::Ok(crate::shared::eip1654_budget::cached_budgeted_validator(
+                url, client,
+            ))
         })
         .transpose()?;
 
@@ -460,6 +464,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         explore::ExploreState::new(pool.clone(), explore_settings, eip1654.clone())
             .with_storage(storage.clone())
             .with_outbound(http_client.clone())
+            .with_read_through(read_through.clone())
             .with_cors(explore_cors),
     );
     explore.spawn_jobs(&jobs, http_client.clone());
@@ -924,6 +929,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     // same pool, client, blob store, validator and job lifecycle. The credits
     // ledger is local authority behind OPS_WRITES_ENABLED (the social
     // switch's twin).
+    // One analytics client: Social posts under `ANALYTICS_CONTEXT`, the
+    // credits revenue events under credits-server's context.
+    let analytics = social_analytics(&config, &http_client)?;
     let stage5_ops = ops_states(
         &config,
         &pool,
@@ -935,6 +943,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             economy: &economy_state,
             eip1654: eip1654.clone(),
             public_url: &public_url,
+            analytics: analytics.as_ref(),
         },
     )
     .await?;
@@ -1026,9 +1035,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             "FLEET_JOBS_ENABLED=false: this process serves no /ws, /ws/v4 or socket-reading connector route and mints no island; the primary serves them"
         );
     }
-    // The gatekeeper's room events feed the worlds access log and, on a
-    // process with social writes, the presence badges (stored before the
-    // webhook is acknowledged, applied by a leased job).
+    // The gatekeeper's room events feed the worlds access log. The badge
+    // and Credits stores enqueue their own facts before webhook acknowledgement.
     let presence_badges = config.writes.social_writes_enabled;
     let room_event_sinks: Vec<Arc<dyn comms::gatekeeper::events::RoomEventSink>> =
         vec![stage5.core.clone()];
@@ -1055,6 +1063,32 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             presence_badge_settings.clone(),
         )) as Arc<dyn comms::gatekeeper::events::RoomEventStore>
     });
+    let room_event_store = if stage5_ops.credits.settings.writes_enabled {
+        let roster = live_presence.clone();
+        let events_mirror = explore
+            .settings
+            .events_upstream
+            .as_ref()
+            .map(|source| source.base().to_owned());
+        shop::credits::goals::rooms::spawn(
+            &stage5_ops.credits,
+            &jobs,
+            events_mirror.clone(),
+            move |room, sid, wallet| {
+                roster
+                    .session_observed_at(room, sid, wallet)
+                    .map(|at| at.naive_utc())
+            },
+        );
+        Some(Arc::new(adapters::CreditsRoomEvents {
+            credits: stage5_ops.credits.clone(),
+            events_mirror,
+            badges: presence_badge_store,
+        })
+            as Arc<dyn comms::gatekeeper::events::RoomEventStore>)
+    } else {
+        presence_badge_store
+    };
     let comms_stage = comms_states(
         &config,
         &pool,
@@ -1066,7 +1100,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         Arc::new(comms::gatekeeper::events::RoomEventFanout::new(
             room_event_sinks,
         )),
-        presence_badge_store,
+        room_event_store,
         live_presence.clone(),
         eip1654.clone(),
         content.denylist.clone(),
@@ -1154,6 +1188,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         eip1654,
         &explore,
         explorer_api.onboarding.clone(),
+        analytics,
     )?;
     social
         .rpc
@@ -1176,6 +1211,19 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         outfits.eip1654.clone(),
     ));
     subscriptions.spawn_jobs(&jobs);
+    stage5_ops.credits.start_receipts(
+        shop::credits::receipts::Sender {
+            mailer: Arc::new(adapters::ShopMailer(social.notifications.email.clone())),
+            names: Some(market.clone()),
+            links: shop::credits::receipts::Links::new(
+                &config.shop.shop_base_url,
+                Some(&config.shop.shop_email_assets_url),
+                &config.social.account_base_url,
+            ),
+        },
+        Duration::from_secs(config.shop.shop_notify_delivery_interval_secs),
+        &jobs,
+    );
     shop::coupons::favorites::spawn_job(&market, config.shop.shop_base_url.clone(), &jobs);
     explore
         .live

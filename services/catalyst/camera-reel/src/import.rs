@@ -599,8 +599,8 @@ async fn fetch(http: &Outbound, bucket_url: &url::Url, key: &str) -> Fetched {
         }
         Err(()) => return Fetched::Failed("the bucket URL cannot take a path".into()),
     }
-    let last_failure = std::sync::Mutex::new(String::new());
-    let failed = |why: String| *last_failure.lock().unwrap() = why;
+    let last_failure = parking_lot::Mutex::new(String::new());
+    let failed = |why: String| *last_failure.lock() = why;
     let attempt = || {
         let url = url.clone();
         let failed = &failed;
@@ -660,10 +660,7 @@ async fn fetch(http: &Outbound, bucket_url: &url::Url, key: &str) -> Fetched {
     .await
     {
         Ok(Some(fetched)) => fetched,
-        Ok(None) => Fetched::Failed(format!(
-            "gave up after retries: {}",
-            last_failure.lock().unwrap()
-        )),
+        Ok(None) => Fetched::Failed(format!("gave up after retries: {}", last_failure.lock())),
         Err(e) => Fetched::Failed(e.to_string()),
     }
 }

@@ -1,8 +1,9 @@
-import { Entity, Schemas, Engine } from '../../../packages/@dcl/ecs/src'
+import type { CrdtMessage, Entity } from '../../../packages/@dcl/ecs/src'
+import { Schemas, Engine } from '../../../packages/@dcl/ecs/src'
 import * as components from '../../../packages/@dcl/ecs/src/components'
 import { ReadWriteByteBuffer } from '../../../packages/@dcl/ecs/src/serialization/ByteBuffer'
 import { readMessage } from '../../../packages/@dcl/ecs/src/serialization/crdt/message'
-import { CrdtMessage, CrdtMessageType } from '../../../packages/@dcl/ecs/src'
+import { CrdtMessageType } from '../../../packages/@dcl/ecs/src'
 import { LIVEKIT_MAX_SIZE } from '../../../packages/@dcl/ecs/src/systems/crdt'
 
 // Mock transport for testing

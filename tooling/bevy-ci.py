@@ -74,6 +74,7 @@ IMAGES_INPUTS = (
     'services/catalyst/**',
     'schemas/**',
     'library/**',
+    ':(exclude)library/js-sdk-toolchain',
     '.cargo/**',
     'apps/sites/**',
     'apps/ui3/**',
@@ -279,7 +280,9 @@ def platform_input(path):
     """A source path whose change can behave differently on Windows or macOS."""
     path = path.removeprefix(SOURCE)
     return (path == 'Cargo.toml' or re.fullmatch(r'build\w*\.rs', path.rsplit('/', 1)[-1]) is not None
-            or path.startswith(('.cargo/', 'rust-toolchain', 'local-harness/benchmark/', 'local-harness/web-driver/'))
+            or path.startswith(('.cargo/', 'rust-toolchain', 'local-harness/benchmark/', 'local-harness/web-driver/',
+                                # The native platform layer: OS paths, profiles, files and deep links.
+                                'crates/platform/src/native.rs', 'crates/platform/src/native/'))
             or re.search(r'(^|/)(windows|macos)(\.rs$|/)', path) is not None)
 
 

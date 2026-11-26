@@ -12,8 +12,9 @@
 //!   EIP-712 domain table, the selector allowlist, the contract allowlist
 //!   (`CONTRACT_ADDRESSES_URL` JSON ∪ `shop.collections`, the mirror
 //!   that replaces the crate's one `squid.collection` read; while the
-//!   mirror has no complete pass an address outside the JSON is a 503, never
-//!   "not a collection"), `MIN_SALE_VALUE_IN_WEI`,
+//!   mirror has no complete pass, or the collections index owns the network
+//!   and cannot authorize a read, an address outside the JSON is a 503,
+//!   never "not a collection"), `MIN_SALE_VALUE_IN_WEI`,
 //!   `MAX_GAS_PRICE_ALLOWED_IN_WEI`, the caller's simulation, the per-day
 //!   quota reserved in `economy.transactions` under a per-user advisory lock
 //!   with the request's clock bound. v2 never signs a user's transaction;
@@ -25,9 +26,10 @@
 //!   upstream forward, in that order under the Auto preference.
 //! - `GET /v1/transactions/{address}`: local.
 //! - `GET /v1/contracts/{address}`: `shop.collections` ∪ the
-//!   whitelist cache; the unavailable envelope (`marketplace::unavailable`,
-//!   `Source::CollectionsMirror`) while the collections mirror has no
-//!   complete pass on the relay's network.
+//!   whitelist cache; the unavailable envelope (`marketplace::unavailable`)
+//!   while the collections mirror has no complete pass on the relay's
+//!   network (`Source::CollectionsMirror`), or the collections index owns it
+//!   and cannot authorize a read (`Source::CollectionsIndex`).
 //! - `/v1/payments/{config,nonce,balance,verify}`: config and JSON-RPC
 //!   readers over `RPC_ENDPOINT_POLYGON` (no table); `verify` stays open
 //!   under the write gate.
@@ -619,11 +621,19 @@ impl State {
 /// `DATA_WRITES_ENABLED` says. The relayer controls stay open on both gates.
 pub fn router(state: SharedState) -> Router {
     let settings = &state.settings;
-    let (trial, data_writes, ops_writes) = (
-        settings.trial_mode,
-        settings.data_writes_enabled,
-        settings.ops_writes_enabled,
-    );
+    let gate = crate::shared::writes::Gate {
+        enabled: if settings.trial_mode {
+            settings.ops_writes_enabled
+        } else {
+            settings.data_writes_enabled
+        },
+        open_while_disabled: RELAYER_CONTROLS,
+        refuse: if settings.trial_mode {
+            || writes_disabled(crate::shared::writes::WRITES_DISABLED_MESSAGE)
+        } else {
+            || writes_disabled(DataWrites::DISABLED_MESSAGE)
+        },
+    };
     let api = Router::new()
         .route(
             "/v1/transactions",
@@ -647,22 +657,26 @@ pub fn router(state: SharedState) -> Router {
             post(handlers::admin::relayer_signer),
         )
         .with_state(state);
-    let guarded = if trial {
-        crate::shared::writes::guard_with(
-            api,
-            crate::shared::writes::Gate {
-                enabled: ops_writes,
-                open_while_disabled: RELAYER_CONTROLS,
-                refuse: crate::credits::writes::disabled_response,
-            },
-        )
-    } else {
-        DataWrites::guard(api, data_writes)
-    };
     // Outside the gate, so a refused write still carries the CORS headers.
-    guarded.layer(axum::middleware::from_fn(
+    crate::shared::writes::guard_with(api, gate).layer(axum::middleware::from_fn(
         crate::shared::cors::decentraland_cors,
     ))
+}
+
+fn writes_disabled(message: &'static str) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    (
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        [(axum::http::header::RETRY_AFTER, "3600")],
+        axum::Json(serde_json::json!({
+            "ok": false,
+            "error": "Service Unavailable",
+            "message": message,
+            "code": errors::code::UNKNOWN,
+        })),
+    )
+        .into_response()
 }
 
 /// The relayer controls: process-local atomics behind the admin bearer, open
