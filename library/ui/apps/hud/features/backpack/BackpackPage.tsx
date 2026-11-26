@@ -86,6 +86,7 @@ const HINTS = [
   { icon: <MaskIcon src={leftClickIcon} size={20} />, text: 'Click items x1 to view their info. x2 to equip/unequip.' },
   { icon: <KeyCap label="1" />, text: 'Hover an emote, then press the numeral key of the slot where you want to equip it.' }
 ]
+const HINTS_MODAL = [HINTS[0], { icon: <MaskIcon src={leftClickIcon} size={20} />, text: 'Double-click items to equip.' }, HINTS[2]]
 
 const RARITIES: Rarity[] = ['base', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic']
 const RARITY_RANK: Record<string, number> = Object.fromEntries(RARITIES.map((r, i) => [r, i]))
@@ -681,7 +682,7 @@ export function BackpackPage({
             <div className={styles.avatarDrag}>
               <AvatarDragSurface onRotate={backpack.rotate} onZoom={backpack.zoom} view={() => previewBox.current?.getBoundingClientRect() ?? null} />
             </div>
-            <HintsButton className={styles.hints} hints={HINTS} />
+            <HintsButton className={styles.hints} hints={modal ? HINTS_MODAL : HINTS} />
             <RandomizeBar
               history={backpack.outfitHistory}
               locked={tab !== 'wearables' || backpack.bodyShape == null}

@@ -9403,7 +9403,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "90ee95cf13171dce094be4dcf5a61128f30e61b88aff1f2b020cd19352ff4a06"
+      "sha256": "afb9a1648c851993b2e9c4b3ac4824d52728c59b062359fe773a69656eb57941"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -10775,7 +10775,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackHints.test.tsx",
-      "sha256": "530f7b11609660f8146f4ecc2da29765fe8e59c2d9313929328b3bed0857bf68"
+      "sha256": "b484a35ed6ace35c5504633b8f58599003bf8792f31f6f633e9aff9cfb772a17"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
@@ -39292,6 +39292,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/backpackHints.test.tsx",
       "to": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackHints.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackHints.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackHints.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
       "kind": "test:runtime"
     },
     {
