@@ -115,7 +115,7 @@ describe('buildCollectionInitializeData', () => {
     expect(decoded[7][0][3]).toBe('1:w:Pirate Hat:Yarr:hat:BaseMale')
   })
 
-  it('encodes the exact calldata builder-server derives the contract address from on a Decentraland host', () => {
+  it('should encode the exact calldata builder-server derives the contract address from on a Decentraland host', () => {
     vi.stubGlobal('location', { ...window.location, host: 'decentraland.zone' })
     const collection = buildNewCollection('Pirate Hats', OWNER)
     expect(buildCollectionInitializeData(collection, [makeItem()], OWNER)).toBe(

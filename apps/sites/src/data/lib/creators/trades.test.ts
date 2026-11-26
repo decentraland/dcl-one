@@ -227,8 +227,8 @@ describe('fetchTrade', () => {
   })
 })
 
-describe('marketplaceUrl', () => {
-  describe('when the page is served by this deployment, as on localhost or its own domain', () => {
+describe('when choosing the marketplace API', () => {
+  describe('and the page is served by this deployment, as on localhost or its own domain', () => {
     afterEach(() => {
       delete (window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__
     })
@@ -238,13 +238,13 @@ describe('marketplaceUrl', () => {
       expect(marketplaceUrl('dcl.example')).toBe(`${window.location.origin}/marketplace-api`)
     })
 
-    it('should be the marketplace-api of the public node base when the page names one', () => {
+    it('should be the marketplace-api of the public node base the page names', () => {
       ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = 'https://node.example/'
       expect(marketplaceUrl()).toBe('https://node.example/marketplace-api')
     })
   })
 
-  describe('when the page is on a Decentraland host', () => {
+  describe('and the page is on a Decentraland host', () => {
     it("should be that environment's marketplace-api", () => {
       expect(marketplaceUrl('decentraland.zone')).toBe('https://marketplace-api.decentraland.zone')
     })

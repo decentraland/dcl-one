@@ -29,7 +29,7 @@ describe('UploadErrorModal', () => {
 
     it("should say the node's own reason instead of the generic copy", () => {
       renderModal()
-      expect(screen.getByTestId('upload-error-modal-description')).toHaveTextContent(/^The upload is too large$/)
+      expect(screen.getByText('The upload is too large')).toBeInTheDocument()
     })
 
     it('should offer Try again', async () => {
@@ -43,11 +43,11 @@ describe('UploadErrorModal', () => {
         refusal = { message: 'Too many file uploads of this wallet in progress', retryAfterSecs: 30 }
       })
 
-      it('should tell the creator when to try again', () => {
+      it('should tell the creator how long to wait before trying again', () => {
         renderModal()
-        expect(screen.getByTestId('upload-error-modal-description')).toHaveTextContent(
-          /^Too many file uploads of this wallet in progress\. Try again in 30 seconds\.$/
-        )
+        expect(
+          screen.getByText('Too many file uploads of this wallet in progress. Try again in 30 seconds.')
+        ).toBeInTheDocument()
       })
     })
 
@@ -58,9 +58,7 @@ describe('UploadErrorModal', () => {
 
       it("should say the node's words alone", () => {
         renderModal()
-        expect(screen.getByTestId('upload-error-modal-description')).toHaveTextContent(
-          /^Too many requests, try again in a minute$/
-        )
+        expect(screen.getByText('Too many requests, try again in a minute')).toBeInTheDocument()
       })
     })
 
@@ -71,9 +69,9 @@ describe('UploadErrorModal', () => {
 
       it('should tell the wait in minutes', () => {
         renderModal()
-        expect(screen.getByTestId('upload-error-modal-description')).toHaveTextContent(
-          /^Too many file uploads of this wallet in progress\. Try again in 60 minutes\.$/
-        )
+        expect(
+          screen.getByText('Too many file uploads of this wallet in progress. Try again in 60 minutes.')
+        ).toBeInTheDocument()
       })
     })
   })
@@ -81,9 +79,7 @@ describe('UploadErrorModal', () => {
   describe('when the upload failed without a reason from the node', () => {
     it('should keep the generic copy', () => {
       renderModal()
-      expect(screen.getByTestId('upload-error-modal-description')).toHaveTextContent(
-        'Something went wrong while uploading your items. Please try again.'
-      )
+      expect(screen.getByText('Something went wrong while uploading your items. Please try again.')).toBeInTheDocument()
     })
   })
 })

@@ -31,15 +31,15 @@ describe('when the page is on a deployed host', () => {
   const SEPOLIA = 11155111
 
   describe.each(['dcl.dev', 'dcl.live', 'create.dcl.dev', 'dcl.live:443', 'dcl.dev.'])('and the host is %s', host => {
-    it("should be production when the node's network is mainnet", () => {
+    it("should be production for a node on mainnet", () => {
       expect(resolveEnv({ host, search: '' }, Env.DEVELOPMENT, MAINNET)).toBe(Env.PRODUCTION)
     })
 
-    it("should be development when the node's network is sepolia", () => {
+    it("should be development for a node on sepolia", () => {
       expect(resolveEnv({ host, search: '' }, Env.PRODUCTION, SEPOLIA)).toBe(Env.DEVELOPMENT)
     })
 
-    it("should keep the node's environment when ?env= names another", () => {
+    it("should keep the node's environment if ?env= names another", () => {
       expect(resolveEnv({ host, search: '?env=dev' }, Env.PRODUCTION, MAINNET)).toBe(Env.PRODUCTION)
       expect(resolveEnv({ host, search: '?env=prod' }, Env.PRODUCTION, SEPOLIA)).toBe(Env.DEVELOPMENT)
       expect(resolveEnv({ host, search: '?env=stg' }, Env.PRODUCTION, SEPOLIA)).toBe(Env.DEVELOPMENT)

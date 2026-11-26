@@ -232,7 +232,7 @@ describe('createCollection encoding', () => {
     expect(args[7][0][0]).toBe('legendary')
   })
 
-  it("carries the base URI the save's initialize data names, which the collection's address is derived from", () => {
+  it("should carry the base URI the save's initialize data names, which the collection's address is derived from", () => {
     const [, , baseUri] = decodeAbiParameters(
       parseAbiParameters('string, string, string'),
       slice(buildCollectionInitializeData(collection, items, ADDRESS) as Hex, 4)
@@ -248,7 +248,7 @@ describe('createCollection encoding', () => {
     )
   })
 
-  it('encodes the external call the credits server co-signs on a Decentraland host', () => {
+  it('should encode the external call the credits server co-signs on a Decentraland host', () => {
     onDecentralandHost()
     const args = buildCreateCollectionArgs(collection, items, ADDRESS, CHAIN_ID)
     const now = 1_700_000_000_000
@@ -322,8 +322,8 @@ describe('createCollection encoding', () => {
   })
 })
 
-describe('getCollectionAddress', () => {
-  describe("when given the initialize data and salt of the node's own derivation", () => {
+describe('when deriving a collection address', () => {
+  describe("and given the initialize data and salt of the node's own derivation", () => {
     let data: string
     let salt: string
 
@@ -387,7 +387,7 @@ describe('publishCollection', () => {
     )
   })
 
-  it('charges the fee in cents and sends the useCredits transaction to the CreditsManager on a Decentraland host', async () => {
+  it('should charge the fee in cents and send the useCredits transaction to the CreditsManager on a Decentraland host', async () => {
     onDecentralandHost()
     vi.useFakeTimers({ now: 1_700_000_000_000, toFake: ['Date'] })
     const authorize = vi.fn().mockResolvedValue(authorization)
@@ -517,7 +517,7 @@ describe('publishCollection', () => {
     })
   })
 
-  it('pays with MANA by calling createCollection directly on a Decentraland host', async () => {
+  it('should pay with MANA by calling createCollection directly on a Decentraland host', async () => {
     onDecentralandHost()
     const send = vi.fn().mockResolvedValue('0xtx')
     const deps = makeDeps({ sendTransaction: send })
