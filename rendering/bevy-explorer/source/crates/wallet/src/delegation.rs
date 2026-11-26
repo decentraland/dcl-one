@@ -1,6 +1,6 @@
 // Orchestrator-minted, short-lived delegations that let a headless authoritative server sign
 // requests to one service for one scene without ever holding the authoritative key: World
-// storage, and Credits (scene rewards). Both share the wire envelope (base64 JSON, mirrors
+// storage, and Credits (scene payments). Both share the wire envelope (base64 JSON, mirrors
 // hammurabi-headless), its decoding and the delegated signer:
 // { "v": 1, "ephemeral": { "privateKey", "publicKey", "address" },
 //   "scope": { "payload", "signature" } }
@@ -222,7 +222,7 @@ const CREDITS_AUDIENCE: &str = "credits";
 
 /// A scene's Credits delegation: an orchestrator-minted ephemeral key and the root-signed
 /// `Audience: credits` claim that authorizes it for one scene until it expires. The engine signs
-/// only reward requests to credits-server with it, never a scene's own signed fetch.
+/// only Credits requests to credits-server with it, never a scene's own signed fetch.
 #[derive(Clone)]
 pub struct CreditsDelegation {
     wallet: Wallet,

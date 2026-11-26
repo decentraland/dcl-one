@@ -91,7 +91,7 @@ pub fn create_runtime(
         op_wrappers::portables::ops(),
         op_wrappers::user_identity::ops(),
         op_wrappers::player::ops(),
-        op_wrappers::scene_rewards::ops(),
+        op_wrappers::scene_credits::ops(),
         op_wrappers::events::ops(),
         op_wrappers::comms::ops(),
         op_wrappers::comms_api::ops(),
@@ -638,8 +638,8 @@ fn op_require(
         "~system/SignedFetch" => {
             Ok(include_str!("../../../dcl_js/src/modules/SignedFetch.js").to_owned())
         }
-        "~system/SceneRewards" => {
-            Ok(include_str!("../../../dcl_js/src/modules/SceneRewards.js").to_owned())
+        "~system/SceneCredits" => {
+            Ok(include_str!("../../../dcl_js/src/modules/SceneCredits.js").to_owned())
         }
         "~system/Testing" => Ok(include_str!("../../../dcl_js/src/modules/Testing.js").to_owned()),
         "~system/UserActionModule" => {

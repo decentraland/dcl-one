@@ -7,7 +7,7 @@ mod item_purchase;
 mod map_pins;
 pub mod portables;
 #[cfg(not(target_arch = "wasm32"))]
-mod scene_rewards;
+mod scene_credits;
 pub mod smart_wearables;
 pub mod teleport;
 pub mod world_access;
@@ -130,7 +130,7 @@ impl Plugin for RestrictedActionsPlugin {
             )
                 .in_set(SceneSets::RestrictedActions),
         );
-        app.add_plugins(SceneRewardsPlugin);
+        app.add_plugins(SceneCreditsPlugin);
         app.init_resource::<PendingPortableCommands>();
         app.init_resource::<ExplorerUiState>();
         // headless has no InputManagerPlugin; open_explorer_ui still needs the (empty) streams
@@ -1423,31 +1423,31 @@ fn get_user_data(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-use scene_rewards::SceneRewardsPlugin;
+use scene_credits::SceneCreditsPlugin;
 
-/// `~system/SceneRewards` on the web build, which never hosts an authoritative server and so never
-/// pays a scene reward.
+/// `~system/SceneCredits` on the web build, which never hosts an authoritative server and so never
+/// pays Credits.
 #[cfg(target_arch = "wasm32")]
-struct SceneRewardsPlugin;
+struct SceneCreditsPlugin;
 
 #[cfg(target_arch = "wasm32")]
-impl Plugin for SceneRewardsPlugin {
+impl Plugin for SceneCreditsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            refuse_grant_reward.in_set(SceneSets::RestrictedActions),
+            refuse_grant_credits.in_set(SceneSets::RestrictedActions),
         );
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-fn refuse_grant_reward(mut events: EventReader<RpcCallEvent>) {
+fn refuse_grant_credits(mut events: EventReader<RpcCallEvent>) {
     for ev in events.read() {
-        if let RpcCall::GrantReward(request) = &ev.call {
+        if let RpcCall::GrantCredits(request) = &ev.call {
             request
                 .response
-                .send(common::rpc::GrantRewardAnswer::refused(
-                    common::rpc::GrantRewardError::NotAvailable,
+                .send(common::rpc::GrantCreditsAnswer::refused(
+                    common::rpc::GrantCreditsError::NotAvailable,
                 ));
         }
     }

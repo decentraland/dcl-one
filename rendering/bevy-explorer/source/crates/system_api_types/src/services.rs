@@ -34,7 +34,7 @@ pub enum Service {
     AbgenCdn,
     /// World storage (storage delegation signing)
     Storage,
-    /// Credits server: scene reward payments, signed with a scene's Credits delegation — headless
+    /// Credits server: scene Credits payments, signed with a scene's Credits delegation — headless
     /// server only
     Credits,
     /// Ethereum json-rpc websocket
@@ -170,7 +170,7 @@ impl Service {
     /// Whether the web build can point the service elsewhere. The web page signs in at its own
     /// origin's `/auth` and hands the engine the identity, so the browser sign-in services are
     /// not the wasm's to redirect: they have no web param and no row in the HUD's table.
-    /// The web build never pays scene rewards, so Credits has no web side either.
+    /// The web build never pays scene Credits, so Credits has no web side either.
     pub const fn has_web_param(self) -> bool {
         !matches!(
             self,
@@ -246,7 +246,7 @@ pub struct ServiceOverrides {
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]
     pub storage: Option<String>,
 
-    /// Credits server, which a headless server asks to pay scene rewards; absent =
+    /// Credits server, which a headless server asks to pay scene Credits; absent =
     /// `https://credits.<base>`. https only: a request carrying the Credits claim never goes out in
     /// cleartext
     #[arg(long, value_name = "url", help_heading = HELP_HEADING)]

@@ -233,10 +233,10 @@ enum ControlCommand {
         #[serde(rename = "storageDelegation")]
         storage_delegation: Option<String>,
         /// The orchestrator's id for this scene's Credits assignment, present when the scene may
-        /// ask for rewards. Every renewal names it, so one for an earlier add-scene is refused.
+        /// ask for Credits payments. Every renewal names it, so one for an earlier add-scene is refused.
         #[serde(rename = "creditsAssignment")]
         credits_assignment: Option<String>,
-        /// base64 Credits delegation for that assignment: the only credential `grantReward`
+        /// base64 Credits delegation for that assignment: the only credential `grantCredits`
         /// signs with. Absent when the first mint failed; the engine then asks for one.
         #[serde(rename = "creditsDelegation")]
         credits_delegation: Option<String>,
@@ -483,7 +483,7 @@ fn main() -> AppExit {
     if args.orchestrated {
         app.insert_resource(ControlChannel(std::sync::Mutex::new(spawn_stdin_reader())))
             .init_resource::<OrchestratedScenes>()
-            // only an orchestrated server holds Credits delegations, so only it can pay rewards
+            // only an orchestrated server holds Credits delegations, so only it can pay Credits
             .init_resource::<CreditsDelegations>()
             // structural gate: the engine must never sign gatekeeper handshakes in
             // orchestrated mode — adapters are always minted by the trusted parent
@@ -1017,7 +1017,7 @@ fn drain_control_commands(
                     None => RoomCredential::Unminted,
                 };
                 // only an accepted add-scene opens a Credits assignment; without one the scene
-                // cannot ask for rewards
+                // cannot ask for Credits payments
                 if let Some(assignment) = credits_assignment {
                     let result =
                         credits.assign(&scene_id, assignment, credits_delegation.as_deref());

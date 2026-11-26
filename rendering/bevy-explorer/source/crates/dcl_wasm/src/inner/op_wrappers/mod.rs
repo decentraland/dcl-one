@@ -9,7 +9,7 @@ pub mod player;
 pub mod portables;
 pub mod restricted_actions;
 pub mod runtime;
-pub mod scene_rewards;
+pub mod scene_credits;
 pub mod system_api;
 pub mod testing;
 pub mod user_identity;

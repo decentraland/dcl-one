@@ -391,27 +391,27 @@ pub enum RpcCall {
         response: RpcResultSender<VideoTracksActiveStreamsResponse>,
     },
     // last, so the variants before it keep their wire indices
-    GrantReward(GrantRewardRequest),
+    GrantCredits(GrantCreditsRequest),
 }
 
-/// A scene asks its authoritative server to pay `recipient` a reward from Credits program
-/// `program_id` for `outcome_id` (`~system/SceneRewards.grantReward`). Only an orchestrated headless
+/// A scene asks its authoritative server to pay `recipient` Credits from the Credits program
+/// `program_id` for `outcome_id` (`~system/SceneCredits.grantCredits`). Only an orchestrated headless
 /// server holding the scene's Credits delegation can; anywhere else the answer is `NotAvailable`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GrantRewardRequest {
+pub struct GrantCreditsRequest {
     pub program_id: String,
     pub recipient: String,
     pub outcome_id: String,
-    pub response: RpcResultSender<GrantRewardAnswer>,
+    pub response: RpcResultSender<GrantCreditsAnswer>,
 }
 
-/// `grantReward`'s answer, shaped like the protocol's `GrantRewardResponse` (scene_rewards.proto).
-/// A paid answer carries the whole receipt: `replayed`, `receipt_id` and `credits` (whole Credits
-/// as a decimal string), and no `error`. A refusal carries only `error`, a `GrantRewardError`
-/// number.
+/// `grantCredits`'s answer, shaped like the protocol's `GrantCreditsResponse`
+/// (scene_credits.proto). A paid answer carries the whole receipt: `replayed`, `receipt_id` and
+/// `credits` (whole Credits as a decimal string), and no `error`. A refusal carries only `error`, a
+/// `GrantCreditsError` number.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GrantRewardAnswer {
+pub struct GrantCreditsAnswer {
     pub ok: bool,
     pub error: Option<i32>,
     pub replayed: Option<bool>,
@@ -419,10 +419,10 @@ pub struct GrantRewardAnswer {
     pub credits: Option<String>,
 }
 
-/// The protocol's `GrantRewardError`, numbered as in scene_rewards.proto.
+/// The protocol's `GrantCreditsError`, numbered as in scene_credits.proto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
-pub enum GrantRewardError {
+pub enum GrantCreditsError {
     Unspecified = 0,
     NotAvailable = 1,
     InvalidRequest = 2,
@@ -439,7 +439,7 @@ pub enum GrantRewardError {
     RecipientNotEligible = 13,
 }
 
-impl GrantRewardAnswer {
+impl GrantCreditsAnswer {
     pub fn paid(replayed: bool, receipt_id: String, credits: u64) -> Self {
         Self {
             ok: true,
@@ -450,7 +450,7 @@ impl GrantRewardAnswer {
         }
     }
 
-    pub fn refused(error: GrantRewardError) -> Self {
+    pub fn refused(error: GrantCreditsError) -> Self {
         Self {
             ok: false,
             error: Some(error as i32),

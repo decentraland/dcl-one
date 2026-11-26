@@ -1,5 +1,5 @@
-//! `~system/SceneRewards.grantReward`: a scene's authoritative server asks credits-server to pay a
-//! player a reward out of a Credits program.
+//! `~system/SceneCredits.grantCredits`: a scene's authoritative server asks credits-server to pay a
+//! player Credits out of a Credits program.
 //!
 //! Only an orchestrated headless server can, and only for a scene it holds a valid Credits delegation
 //! for. The request is this operation's alone, never a scene's signed fetch: the engine builds the
@@ -7,7 +7,7 @@
 //! and sends the delegation's claim as `x-authoritative-scope` to the one credits-server route.
 //! Whether the recipient is connected comes from the scene's own room, the room the orchestrator
 //! assigned it. Credits-server decides everything else; this answers with its verdict mapped to the
-//! protocol's `GrantRewardError`.
+//! protocol's `GrantCreditsError`.
 
 use bevy::{
     platform::collections::HashMap,
@@ -16,8 +16,8 @@ use bevy::{
 };
 use common::{
     rpc::{
-        GrantRewardAnswer, GrantRewardError, GrantRewardRequest, RpcCall, RpcCallEvent, RpcOrigin,
-        RpcResultSender,
+        GrantCreditsAnswer, GrantCreditsError, GrantCreditsRequest, RpcCall, RpcCallEvent,
+        RpcOrigin, RpcResultSender,
     },
     sets::SceneSets,
     structs::server_mode,
@@ -28,7 +28,7 @@ use wallet::delegation::CreditsDelegations;
 
 use crate::ScenePresence;
 
-/// A scene's reward requests on their way to credits-server at once; more are refused as
+/// A scene's Credits requests on their way to credits-server at once; more are refused as
 /// `RateLimited` rather than queued, so a busy scene cannot pile up payments behind a slow server.
 const MAX_IN_FLIGHT_PER_SCENE: usize = 4;
 
@@ -46,7 +46,7 @@ pub(crate) struct ValidRequest {
 /// `A-Za-z0-9._:-` (else `InvalidRequest`), and a UUID in any ASCII case for the program. A program
 /// id that is not one is answered as credits-server answers it, `NotAuthorized`, as an unknown
 /// program would be.
-pub(crate) fn validate(request: &GrantRewardRequest) -> Result<ValidRequest, GrantRewardError> {
+pub(crate) fn validate(request: &GrantCreditsRequest) -> Result<ValidRequest, GrantCreditsError> {
     let address = request
         .recipient
         .strip_prefix("0x")
@@ -57,7 +57,7 @@ pub(crate) fn validate(request: &GrantRewardRequest) -> Result<ValidRequest, Gra
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'));
     if !(address && outcome) {
-        return Err(GrantRewardError::InvalidRequest);
+        return Err(GrantCreditsError::InvalidRequest);
     }
     let uuid = request.program_id.len() == 36
         && request.program_id.char_indices().all(|(i, c)| match i {
@@ -65,7 +65,7 @@ pub(crate) fn validate(request: &GrantRewardRequest) -> Result<ValidRequest, Gra
             _ => c.is_ascii_hexdigit(),
         });
     if !uuid {
-        return Err(GrantRewardError::NotAuthorized);
+        return Err(GrantCreditsError::NotAuthorized);
     }
     Ok(ValidRequest {
         program_id: request.program_id.to_ascii_lowercase(),
@@ -77,7 +77,7 @@ pub(crate) fn validate(request: &GrantRewardRequest) -> Result<ValidRequest, Gra
 /// Building, signing and sending the request, and reading credits-server's answer.
 mod remote {
     use bevy::log::{error, warn};
-    use common::rpc::{GrantRewardAnswer, GrantRewardError};
+    use common::rpc::{GrantCreditsAnswer, GrantCreditsError};
     use serde::Deserialize;
 
     use super::ValidRequest;
@@ -94,22 +94,22 @@ mod remote {
 
     /// Credits-server's refusal code as the protocol number. A code this engine does not know is
     /// `Unspecified`: a refusal, but not one the scene can act on.
-    pub(super) fn error_for_code(code: &str) -> GrantRewardError {
+    pub(super) fn error_for_code(code: &str) -> GrantCreditsError {
         match code {
-            "NOT_AVAILABLE" => GrantRewardError::NotAvailable,
-            "INVALID_REQUEST" => GrantRewardError::InvalidRequest,
-            "RATE_LIMITED" => GrantRewardError::RateLimited,
-            "UNAVAILABLE" => GrantRewardError::Unavailable,
-            "NOT_AUTHORIZED" => GrantRewardError::NotAuthorized,
-            "RECIPIENT_NOT_CONNECTED" => GrantRewardError::RecipientNotConnected,
-            "PROGRAM_PAUSED" => GrantRewardError::ProgramPaused,
-            "OUTSIDE_SCHEDULE" => GrantRewardError::OutsideSchedule,
-            "BUDGET_EXHAUSTED" => GrantRewardError::BudgetExhausted,
-            "PROGRAM_CAP_REACHED" => GrantRewardError::ProgramCapReached,
-            "PLAYER_CAP_REACHED" => GrantRewardError::PlayerCapReached,
-            "REQUIREMENT_NOT_MET" => GrantRewardError::RequirementNotMet,
-            "RECIPIENT_NOT_ELIGIBLE" => GrantRewardError::RecipientNotEligible,
-            _ => GrantRewardError::Unspecified,
+            "NOT_AVAILABLE" => GrantCreditsError::NotAvailable,
+            "INVALID_REQUEST" => GrantCreditsError::InvalidRequest,
+            "RATE_LIMITED" => GrantCreditsError::RateLimited,
+            "UNAVAILABLE" => GrantCreditsError::Unavailable,
+            "NOT_AUTHORIZED" => GrantCreditsError::NotAuthorized,
+            "RECIPIENT_NOT_CONNECTED" => GrantCreditsError::RecipientNotConnected,
+            "PROGRAM_PAUSED" => GrantCreditsError::ProgramPaused,
+            "OUTSIDE_SCHEDULE" => GrantCreditsError::OutsideSchedule,
+            "BUDGET_EXHAUSTED" => GrantCreditsError::BudgetExhausted,
+            "PROGRAM_CAP_REACHED" => GrantCreditsError::ProgramCapReached,
+            "PLAYER_CAP_REACHED" => GrantCreditsError::PlayerCapReached,
+            "REQUIREMENT_NOT_MET" => GrantCreditsError::RequirementNotMet,
+            "RECIPIENT_NOT_ELIGIBLE" => GrantCreditsError::RecipientNotEligible,
+            _ => GrantCreditsError::Unspecified,
         }
     }
 
@@ -131,12 +131,12 @@ mod remote {
     /// Credits-server's answer. A payment is a success status with `ok: true` and the whole
     /// receipt: `replayed`, the receipt id and the whole Credits paid, more than zero. Only a stated
     /// refusal code is a refusal. Anything else (a success missing part of its receipt, a gateway
-    /// error page, a body cut short) says nothing certain about whether the reward was paid, so it
-    /// is `Unavailable`: the scene retries with the same outcome, which credits-server answers with
-    /// the receipt if it was.
-    pub(super) fn interpret(status: u16, body: &[u8]) -> GrantRewardAnswer {
+    /// error page, a body cut short) says nothing certain about whether the Credits were paid, so
+    /// it is `Unavailable`: the scene retries with the same outcome, which credits-server answers
+    /// with the receipt if they were.
+    pub(super) fn interpret(status: u16, body: &[u8]) -> GrantCreditsAnswer {
         let Ok(response) = serde_json::from_slice::<GrantResponse>(body) else {
-            return GrantRewardAnswer::refused(GrantRewardError::Unavailable);
+            return GrantCreditsAnswer::refused(GrantCreditsError::Unavailable);
         };
         let success = (200..300).contains(&status);
         match response {
@@ -151,16 +151,16 @@ mod remote {
                     receipt_id(id),
                     credits.as_u64().filter(|credits| *credits > 0),
                 ) {
-                    (Some(id), Some(credits)) => GrantRewardAnswer::paid(replayed, id, credits),
-                    _ => GrantRewardAnswer::refused(GrantRewardError::Unavailable),
+                    (Some(id), Some(credits)) => GrantCreditsAnswer::paid(replayed, id, credits),
+                    _ => GrantCreditsAnswer::refused(GrantCreditsError::Unavailable),
                 }
             }
             GrantResponse {
                 ok: false,
                 code: Some(code),
                 ..
-            } if !success => GrantRewardAnswer::refused(error_for_code(&code)),
-            _ => GrantRewardAnswer::refused(GrantRewardError::Unavailable),
+            } if !success => GrantCreditsAnswer::refused(error_for_code(&code)),
+            _ => GrantCreditsAnswer::refused(GrantCreditsError::Unavailable),
         }
     }
 
@@ -177,15 +177,15 @@ mod remote {
                     .redirect(reqwest::redirect::Policy::none())
                     .timeout(std::time::Duration::from_secs(15))
                     .build()
-                    .map_err(|error| error!("scene reward: cannot build the HTTP client: {error}"))
+                    .map_err(|error| error!("scene credits: cannot build the HTTP client: {error}"))
                     .ok()
             })
             .as_ref()
     }
 
-    /// Every header of one reward request: the delegation's signed-fetch chain over POST, the URL's
-    /// path and metadata carrying the body's SHA-256, its claim as `x-authoritative-scope`, and the
-    /// content type.
+    /// Every header of one Credits request: the delegation's signed-fetch chain over POST, the
+    /// URL's path and metadata carrying the body's SHA-256, its claim as `x-authoritative-scope`,
+    /// and the content type.
     pub(super) async fn signed_headers(
         url: &str,
         body: &[u8],
@@ -213,14 +213,14 @@ mod remote {
         Some(body)
     }
 
-    /// Sign and send one reward request. Every failure after the request may have left is
+    /// Sign and send one Credits request. Every failure after the request may have left is
     /// `Unavailable`; failures before it are too, as the scene can only retry either way.
     pub(super) async fn send(
         url: String,
         body: Vec<u8>,
         delegation: wallet::delegation::CreditsDelegation,
-    ) -> GrantRewardAnswer {
-        let unavailable = || GrantRewardAnswer::refused(GrantRewardError::Unavailable);
+    ) -> GrantCreditsAnswer {
+        let unavailable = || GrantCreditsAnswer::refused(GrantCreditsError::Unavailable);
         let Some(client) = http_client() else {
             return unavailable();
         };
@@ -228,7 +228,7 @@ mod remote {
             Ok(headers) => headers,
             Err(error) => {
                 // a local key failing to sign is this engine's bug, never the scene's
-                error!("scene reward: signing failed: {error}");
+                error!("scene credits: signing failed: {error}");
                 return unavailable();
             }
         };
@@ -239,7 +239,7 @@ mod remote {
         let response = match request.body(body).send().await {
             Ok(response) => response,
             Err(error) => {
-                warn!("scene reward: credits-server did not answer: {error}");
+                warn!("scene credits: credits-server did not answer: {error}");
                 return unavailable();
             }
         };
@@ -269,29 +269,29 @@ mod remote {
     }
 }
 
-/// `~system/SceneRewards`: sends each scene's `grantReward` to credits-server and answers the scene
-/// with the verdict.
-pub struct SceneRewardsPlugin;
+/// `~system/SceneCredits`: sends each scene's `grantCredits` to credits-server and answers the
+/// scene with the verdict.
+pub struct SceneCreditsPlugin;
 
-impl Plugin for SceneRewardsPlugin {
+impl Plugin for SceneCreditsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (handle_grant_reward, answer_grant_rewards)
+            (handle_grant_credits, answer_grant_credits)
                 .chain()
                 .in_set(SceneSets::RestrictedActions),
         );
     }
 }
 
-/// One reward request on its way to credits-server, as an entity of its own that is despawned
+/// One Credits request on its way to credits-server, as an entity of its own that is despawned
 /// with the scene that asked (`DespawnWith`). A scene that goes away cancels its requests and
 /// drops their answer senders, which its module reads as `Unavailable`.
 #[derive(Component)]
-pub(crate) struct PendingGrantReward {
+pub(crate) struct PendingGrantCredits {
     scene: Entity,
-    response: RpcResultSender<GrantRewardAnswer>,
-    task: Task<GrantRewardAnswer>,
+    response: RpcResultSender<GrantCreditsAnswer>,
+    task: Task<GrantCreditsAnswer>,
 }
 
 /// Whether `recipient` is connected to THIS scene's room, in this scene's crdt context: the room
@@ -322,14 +322,14 @@ fn recipient_connected(
     })
 }
 
-pub(crate) fn handle_grant_reward(
+pub(crate) fn handle_grant_credits(
     mut commands: Commands,
     mut events: EventReader<RpcCallEvent>,
     delegations: Option<Res<CreditsDelegations>>,
     players: Query<&ForeignPlayer>,
     scene_rooms: SceneRooms,
     presence: ScenePresence,
-    pending: Query<&PendingGrantReward>,
+    pending: Query<&PendingGrantCredits>,
 ) {
     // requests this pass starts, which `pending` cannot see yet: spawning is deferred
     let mut started: HashMap<Entity, usize> = HashMap::default();
@@ -340,12 +340,12 @@ pub(crate) fn handle_grant_reward(
         .unwrap_or(i64::MAX);
 
     for ev in events.read() {
-        let RpcCall::GrantReward(request) = &ev.call else {
+        let RpcCall::GrantCredits(request) = &ev.call else {
             continue;
         };
-        let refuse = |error| request.response.send(GrantRewardAnswer::refused(error));
+        let refuse = |error| request.response.send(GrantCreditsAnswer::refused(error));
         let RpcOrigin::Scene { entity, hash } = &ev.origin else {
-            refuse(GrantRewardError::NotAvailable);
+            refuse(GrantCreditsError::NotAvailable);
             continue;
         };
         // a client, or a server holding no Credits delegation for this scene, cannot pay
@@ -353,7 +353,7 @@ pub(crate) fn handle_grant_reward(
             .as_ref()
             .filter(|d| server_mode() && d.is_assigned(hash))
         else {
-            refuse(GrantRewardError::NotAvailable);
+            refuse(GrantCreditsError::NotAvailable);
             continue;
         };
         let valid = match validate(request) {
@@ -365,18 +365,18 @@ pub(crate) fn handle_grant_reward(
         };
         // held but lapsed: its renewal is on the way, so the scene can retry
         let Some(delegation) = delegations.valid_for(hash, now_millis) else {
-            refuse(GrantRewardError::Unavailable);
+            refuse(GrantCreditsError::Unavailable);
             continue;
         };
         let in_flight = pending.iter().filter(|p| p.scene == *entity).count()
             + started.get(entity).copied().unwrap_or(0);
         if in_flight >= MAX_IN_FLIGHT_PER_SCENE {
-            refuse(GrantRewardError::RateLimited);
+            refuse(GrantCreditsError::RateLimited);
             continue;
         }
         let Some(url) = remote::grant_url(&valid.program_id) else {
-            warn!("scene reward: the credits service is not an https url; not sending");
-            refuse(GrantRewardError::NotAvailable);
+            warn!("scene credits: the credits service is not an https url; not sending");
+            refuse(GrantCreditsError::NotAvailable);
             continue;
         };
 
@@ -391,7 +391,7 @@ pub(crate) fn handle_grant_reward(
         let body = remote::request_body(&valid, connected);
         let task = IoTaskPool::get().spawn_compat(remote::send(url, body, delegation.clone()));
         commands.spawn((
-            PendingGrantReward {
+            PendingGrantCredits {
                 scene: *entity,
                 response: request.response.clone(),
                 task,
@@ -403,9 +403,9 @@ pub(crate) fn handle_grant_reward(
 }
 
 /// Answers each request credits-server has settled, and despawns it.
-pub(crate) fn answer_grant_rewards(
+pub(crate) fn answer_grant_credits(
     mut commands: Commands,
-    mut pending: Query<(Entity, &mut PendingGrantReward)>,
+    mut pending: Query<(Entity, &mut PendingGrantCredits)>,
 ) {
     for (entity, mut request) in &mut pending {
         if let Some(answer) = request.task.complete() {
@@ -422,17 +422,17 @@ mod lifecycle_tests {
         tasks::{IoTaskPool, TaskPool},
     };
     use common::{
-        rpc::{GrantRewardAnswer, RpcResultSender},
+        rpc::{GrantCreditsAnswer, RpcResultSender},
         util::{DespawnWith, UtilsPlugin},
     };
 
-    use super::{answer_grant_rewards, PendingGrantReward};
+    use super::{answer_grant_credits, PendingGrantCredits};
 
     fn app() -> App {
         IoTaskPool::get_or_init(TaskPool::new);
         let mut app = App::new();
         app.add_plugins(UtilsPlugin)
-            .add_systems(Update, answer_grant_rewards);
+            .add_systems(Update, answer_grant_credits);
         app
     }
 
@@ -442,11 +442,11 @@ mod lifecycle_tests {
         let scene = app.world_mut().spawn_empty().id();
         let (response, mut answer) = RpcResultSender::channel();
         let task = IoTaskPool::get()
-            .spawn(async { GrantRewardAnswer::paid(false, "receipt-1".to_owned(), 5) });
+            .spawn(async { GrantCreditsAnswer::paid(false, "receipt-1".to_owned(), 5) });
         let request = app
             .world_mut()
             .spawn((
-                PendingGrantReward {
+                PendingGrantCredits {
                     scene,
                     response,
                     task,
@@ -467,7 +467,7 @@ mod lifecycle_tests {
         let received = answer.poll_once().expect("answered").expect("answered");
         assert_eq!(
             serde_json::to_value(received).unwrap(),
-            serde_json::to_value(GrantRewardAnswer::paid(false, "receipt-1".to_owned(), 5))
+            serde_json::to_value(GrantCreditsAnswer::paid(false, "receipt-1".to_owned(), 5))
                 .unwrap()
         );
     }
@@ -477,11 +477,11 @@ mod lifecycle_tests {
         let mut app = app();
         let scene = app.world_mut().spawn_empty().id();
         let (response, mut answer) = RpcResultSender::channel();
-        let task = IoTaskPool::get().spawn(std::future::pending::<GrantRewardAnswer>());
+        let task = IoTaskPool::get().spawn(std::future::pending::<GrantCreditsAnswer>());
         let request = app
             .world_mut()
             .spawn((
-                PendingGrantReward {
+                PendingGrantCredits {
                     scene,
                     response,
                     task,
@@ -496,7 +496,7 @@ mod lifecycle_tests {
         app.update();
 
         assert!(app.world().get_entity(request).is_err());
-        // the scene's module reads a dropped answer as GRE_UNAVAILABLE
+        // the scene's module reads a dropped answer as GCE_UNAVAILABLE
         assert!(answer.poll_once().is_err());
     }
 }
@@ -506,8 +506,8 @@ mod tests {
     use super::{remote::*, *};
     use common::rpc::RpcResultSender;
 
-    fn request(program_id: &str, recipient: &str, outcome_id: &str) -> GrantRewardRequest {
-        GrantRewardRequest {
+    fn request(program_id: &str, recipient: &str, outcome_id: &str) -> GrantCreditsRequest {
+        GrantCreditsRequest {
             program_id: program_id.to_owned(),
             recipient: recipient.to_owned(),
             outcome_id: outcome_id.to_owned(),
@@ -554,7 +554,7 @@ mod tests {
         ] {
             assert_eq!(
                 validate(&request(program, recipient, outcome)),
-                Err(GrantRewardError::InvalidRequest),
+                Err(GrantCreditsError::InvalidRequest),
                 "{program} {recipient} {outcome}"
             );
         }
@@ -570,7 +570,7 @@ mod tests {
         ] {
             assert_eq!(
                 validate(&request(program, RECIPIENT, "x")),
-                Err(GrantRewardError::NotAuthorized),
+                Err(GrantCreditsError::NotAuthorized),
                 "{program}"
             );
         }
@@ -621,7 +621,7 @@ mod tests {
         );
         assert_eq!(
             first,
-            GrantRewardAnswer {
+            GrantCreditsAnswer {
                 ok: true,
                 error: None,
                 replayed: Some(false),
@@ -644,7 +644,7 @@ mod tests {
     #[test]
     fn the_answer_reaches_the_scene_under_the_protocol_field_names() {
         assert_eq!(
-            serde_json::to_value(GrantRewardAnswer::paid(true, "9f1c-r".to_owned(), 5)).unwrap(),
+            serde_json::to_value(GrantCreditsAnswer::paid(true, "9f1c-r".to_owned(), 5)).unwrap(),
             serde_json::json!({
                 "ok": true,
                 "error": null,
@@ -659,11 +659,11 @@ mod tests {
     fn a_refusal_is_an_error_status_with_its_code() {
         assert_eq!(
             interpret(409, br#"{"ok":false,"code":"PLAYER_CAP_REACHED"}"#),
-            GrantRewardAnswer::refused(GrantRewardError::PlayerCapReached)
+            GrantCreditsAnswer::refused(GrantCreditsError::PlayerCapReached)
         );
         assert_eq!(
             interpret(503, br#"{"ok":false,"code":"UNAVAILABLE"}"#),
-            GrantRewardAnswer::refused(GrantRewardError::Unavailable)
+            GrantCreditsAnswer::refused(GrantCreditsError::Unavailable)
         );
     }
 
@@ -704,7 +704,7 @@ mod tests {
         ] {
             assert_eq!(
                 interpret(status, body),
-                GrantRewardAnswer::refused(GrantRewardError::Unavailable),
+                GrantCreditsAnswer::refused(GrantCreditsError::Unavailable),
                 "{status} {}",
                 String::from_utf8_lossy(body)
             );
@@ -839,7 +839,7 @@ mod tests {
         let answer = run(send(format!("{base}{ROUTE}"), body.clone(), delegation()));
         assert_eq!(
             answer,
-            GrantRewardAnswer::paid(false, "9f1c-r".to_owned(), 5)
+            GrantCreditsAnswer::paid(false, "9f1c-r".to_owned(), 5)
         );
 
         let received = seen
@@ -887,7 +887,7 @@ mod tests {
         assert!(stolen.lock().unwrap().is_empty());
         assert_eq!(
             answer,
-            GrantRewardAnswer::refused(GrantRewardError::Unavailable)
+            GrantCreditsAnswer::refused(GrantCreditsError::Unavailable)
         );
     }
 
@@ -909,7 +909,7 @@ mod tests {
         ));
         assert_eq!(
             answer,
-            GrantRewardAnswer::refused(GrantRewardError::Unavailable)
+            GrantCreditsAnswer::refused(GrantCreditsError::Unavailable)
         );
     }
 
