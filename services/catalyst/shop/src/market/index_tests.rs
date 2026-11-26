@@ -9413,6 +9413,9 @@ mod supervisor {
         async fn publish(&self, conn: &mut sqlx::PgConnection, upto: i64) -> anyhow::Result<()> {
             self.inner().publish(conn, upto).await
         }
+        async fn published(&self, pool: &PgPool, upto: i64) {
+            self.inner().published(pool, upto).await
+        }
         fn abandon(&self) {
             assert!(!self.abandon_panics, "a hooked index's cleanup panicked");
             self.inner().abandon()
@@ -15215,3 +15218,100 @@ mod cancelled_trades;
 mod historical_routes;
 mod royalties;
 mod sale_routes;
+
+/// The Ethereum v1 walk reports the unrepresented gauge after the commit of
+/// a publication (`chain_walk::close` calls `ChainIndex::published`), and a
+/// fresh process's first pass restores it though nothing new was walked.
+#[tokio::test(flavor = "current_thread")]
+async fn the_v1_gauge_follows_the_committed_publication() {
+    use super::collections_index::{
+        CollectionEvent, KIND_ADD_ITEM, KIND_OWNERSHIP_TRANSFERRED, insert_events,
+    };
+    use super::collections_v1::{self, CollectionsV1Index};
+    let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+        return;
+    };
+    let start = collections_v1::START_BLOCK as i64;
+    let xmash = "0xdd9c7bc159dacb19c9f6b9d7e23948c87aa2397f";
+    let event = |block: i64, kind: &'static str| CollectionEvent {
+        block_number: block,
+        block_time: time_of(block as u64),
+        kind,
+        contract_address: xmash.into(),
+        ..Default::default()
+    };
+    let mut conn = pool.acquire().await.unwrap();
+    insert_events(
+        &mut conn,
+        ChainNet::Ethereum,
+        &[
+            CollectionEvent {
+                account: Some(ALICE.into()),
+                ..event(start + 5, KIND_OWNERSHIP_TRANSFERRED)
+            },
+            CollectionEvent {
+                metadata: Some("xmash_up_cap_hat".into()),
+                max_supply: Some("10".into()),
+                ..event(start + 6, KIND_ADD_ITEM)
+            },
+            CollectionEvent {
+                metadata: Some("no_such_wearable".into()),
+                max_supply: Some("10".into()),
+                ..event(start + 7, KIND_ADD_ITEM)
+            },
+        ],
+    )
+    .await
+    .unwrap();
+    drop(conn);
+    let chain = FakeChain::new(start as u64 + 200, vec![], 10_000, 1_000);
+    chain.chain_id.store(1, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let http = crate::http::Outbound::for_tests();
+    let source = chain_walk::RpcSource::new(Rpc::at(&http, &url));
+    let settings = IndexSettings::default();
+    let gauge = |handle: &dcl_metrics::PrometheusHandle| {
+        handle
+            .render()
+            .lines()
+            .find(|l| l.starts_with("catalyst_index_collections_v1_unrepresented_items "))
+            .map(str::to_string)
+    };
+    let process = || {
+        let recorder = dcl_metrics::Registry::new(&[collections_v1::FAMILIES])
+            .unwrap()
+            .builder(dcl_metrics::PrometheusBuilder::new())
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        (recorder, handle)
+    };
+    const ONE: Option<&str> = Some("catalyst_index_collections_v1_unrepresented_items 1");
+
+    let (recorder, handle) = process();
+    {
+        let _local = dcl_metrics::set_default_local_recorder(&recorder);
+        let ix = CollectionsV1Index::projecting(true);
+        let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
+        let out = chain_walk::run_pass(&pool, &source, &ix, &settings, &owner, None, &|_| {})
+            .await
+            .unwrap();
+        assert!(out.published, "{out:?}");
+        assert_eq!(gauge(&handle).as_deref(), ONE, "set after the commit");
+    }
+
+    // Another process: a pass that walks nothing new restores it.
+    *chain.head.lock() += 10;
+    let (recorder, handle) = process();
+    {
+        let _local = dcl_metrics::set_default_local_recorder(&recorder);
+        let ix = CollectionsV1Index::projecting(true);
+        let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
+        assert_eq!(gauge(&handle), None);
+        let out = chain_walk::run_pass(&pool, &source, &ix, &settings, &owner, None, &|_| {})
+            .await
+            .unwrap();
+        assert!(out.published, "{out:?}");
+        assert_eq!(gauge(&handle).as_deref(), ONE, "restored by a quiet pass");
+    }
+}

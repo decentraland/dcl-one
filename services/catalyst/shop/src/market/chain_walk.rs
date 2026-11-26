@@ -1404,6 +1404,10 @@ pub trait ChainIndex: Send + Sync {
     ) -> anyhow::Result<Spent> {
         Ok(Spent::default())
     }
+    /// After the publication at `upto` committed: what the index reports of
+    /// the committed state (a gauge), read on `pool`. It never fails the
+    /// pass; the index logs what it could not read. By default nothing.
+    async fn published(&self, _pool: &PgPool, _upto: i64) {}
     /// One optional historical log window after publication, using spare log budget.
     async fn after_publish(
         &self,
@@ -2550,6 +2554,9 @@ pub(crate) async fn close(
         && within_publish_lag(net, latest, out.indexed_to as u64)
     {
         out.published = mark_folded(pool, ix, owner, out.indexed_to, Utc::now()).await?;
+        if out.published {
+            ix.published(pool, out.indexed_to).await;
+        }
     } else {
         unpublish(pool, owner, out.indexed_to).await?;
     }
