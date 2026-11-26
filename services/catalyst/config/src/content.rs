@@ -40,13 +40,13 @@ pub struct ContentConfig {
     pub sync_from_timestamp_ms: i64,
 
     /// Seconds between the starts of two item history replay passes, or none
-    /// when a pass took longer: 0 (off) or 600 to 1440. Each pass reads every
-    /// source catalyst's whole wearable and emote `/pointer-changes` history
-    /// (about 81 MB and 160 requests per source in November 2026), so the
-    /// default 1200 costs each source about 5.8 GB a day, 600 about 11.6 GB,
+    /// when a pass took longer: 0 (off, the default) or 600 to 1440. Each pass
+    /// reads every source catalyst's whole wearable and emote `/pointer-changes`
+    /// history (about 81 MB and 160 requests per source in November 2026), so
+    /// 1200 costs each source about 5.8 GB a day, 600 about 11.6 GB,
     /// 1440 about 4.9 GB. A pass proves item coverage for 30 minutes from its
     /// start; off, the builder can't tell a new third-party item URN is unused.
-    #[arg(long, env = "SYNC_ITEM_REPLAY_INTERVAL_SECS", default_value_t = 1200)]
+    #[arg(long, env = "SYNC_ITEM_REPLAY_INTERVAL_SECS", default_value_t = 0)]
     pub sync_item_replay_interval_secs: u64,
 
     /// Milliseconds between two pages of an item history replay pass: 50 to
