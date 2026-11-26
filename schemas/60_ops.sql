@@ -896,3 +896,46 @@ CREATE TABLE credits.captcha_attempts (
     failed_attempts smallint NOT NULL CHECK (failed_attempts BETWEEN 1 AND 3),
     last_failed_at timestamp without time zone NOT NULL
 );
+
+-- A change to what a wallet's balance answers announces the wallet's address
+-- on the `credits_balance` channel, for the balance streams
+-- (`GET /credits/users/{address}/credits/stream`, shop/src/credits/stream.rs):
+-- its wallet row, the status of its credits' pledges, its flag, its goal
+-- credits (granted or claimed) and their use on chain. What only the clock
+-- changes (an expiry) the streams read again on their own. The payload is an
+-- address, far below pg_notify's 8000 bytes, so it never fails the write, and
+-- a transaction's repeats arrive once.
+CREATE FUNCTION credits.notify_balance() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM pg_notify('credits_balance', OLD.address);
+    ELSE
+        PERFORM pg_notify('credits_balance', NEW.address);
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- The same for a CreditUsed log, which names its wallet `sender`.
+CREATE FUNCTION credits.notify_balance_of_sender() RETURNS trigger AS $$
+BEGIN
+    PERFORM pg_notify('credits_balance', NEW.sender);
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER wallets_balance_notify
+    AFTER INSERT OR UPDATE ON credits.wallets
+    FOR EACH ROW EXECUTE FUNCTION credits.notify_balance();
+CREATE TRIGGER authorizations_balance_notify
+    AFTER INSERT OR UPDATE OF status ON credits.authorizations
+    FOR EACH ROW EXECUTE FUNCTION credits.notify_balance();
+CREATE TRIGGER wallet_flags_balance_notify
+    AFTER INSERT OR UPDATE OR DELETE ON credits.wallet_flags
+    FOR EACH ROW EXECUTE FUNCTION credits.notify_balance();
+CREATE TRIGGER goal_grants_balance_notify
+    AFTER INSERT OR UPDATE ON credits.goal_grants
+    FOR EACH ROW EXECUTE FUNCTION credits.notify_balance();
+CREATE TRIGGER usages_balance_notify
+    AFTER INSERT ON credits.usages
+    FOR EACH ROW EXECUTE FUNCTION credits.notify_balance_of_sender();

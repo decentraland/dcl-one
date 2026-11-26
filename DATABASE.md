@@ -1811,6 +1811,49 @@ deleted. Addresses are lower-cased and checked by the table; the handlers
 normalise them. The bootstrap defines the tables; an existing database gains
 them from the object pass, so no step exists.
 
+## Credits balance notifications
+
+`credits.notify_balance()` and `credits.notify_balance_of_sender()`
+(`schemas/60_ops.sql`) announce a wallet's address on the `credits_balance`
+channel after any change to what `GET /credits/users/{address}/credits`
+answers from:
+- a row of `credits.wallets` inserted or updated;
+- a row of `credits.authorizations` inserted or changing `status`;
+- a row of `credits.wallet_flags` inserted, updated (a re-flag is the
+  admin's upsert) or deleted;
+- a row of `credits.goal_grants` inserted or updated (a claim);
+- a row of `credits.usages` inserted, announced by its `sender`.
+
+The reader is the balance stream (`GET /credits/users/{address}/credits/stream`,
+`shop/src/credits/stream.rs`). One `LISTEN` connection per process, opened
+with its first stream from a pool of its own (one connection, outside the
+request pool, so it never takes a slot a request needs), wakes the streams of
+the announced wallet alone; an idle connection is pinged every minute, and
+connecting plus `LISTEN` must answer within 10 seconds. A connection given up
+on a stall stays open until its `UNLISTEN *` cleanup ends, and closes then: a
+process holds at most two listener connections, and at that cap it waits
+while its streams rely on their own re-reads. Each
+stream re-reads its balance when its wallet is announced, and on its own
+about every minute: what only the clock changes, a credit or a pledge
+expiring, reaches it that way. A read that fails is retried with backoff,
+and announcements meanwhile wait for it. Each read is one REPEATABLE READ,
+READ ONLY snapshot, so the spendable balance and the hold agree.
+
+The streams' reads are bounded so they never crowd the request pool: at most
+four run at once, the unprompted ones are spread by a fifth either way, a
+wallet holds at most 8 streams and a process 4096 (429 past either), and
+every stream ends when the node shuts down.
+
+The cost is one `pg_notify` per affected row, inside the writing
+transaction; Postgres delivers a transaction's notifications at commit, once
+per distinct payload, and drops them for a rolled-back one. The payload is a
+40-hex address, far below the 8000-byte limit, so it never fails a write. A
+notification sent while no process listens is lost: a listener that connects
+or reconnects makes every stream re-read its balance, so a stream misses no
+change for longer than the reconnect. The bootstrap defines the functions and
+the triggers; an existing database gains them from the object pass, so no
+step exists.
+
 ## Credits purchase receipts
 
 `credits.purchase_receipts` (`schemas/60_ops.sql`) is the outbox of the

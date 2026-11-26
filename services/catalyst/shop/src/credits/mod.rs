@@ -72,7 +72,10 @@
 //! reconciler did, so it is local authority too: it runs in `serve` and
 //! folds only with `OPS_WRITES_ENABLED`, indexing
 //! the log either way), and `credits-purchase-receipts` (the receipt
-//! outbox, `receipts.rs`, with `OPS_WRITES_ENABLED`). Not carried: the `ts-rs`
+//! outbox, `receipts.rs`, with `OPS_WRITES_ENABLED`). Metrics: the
+//! Prometheus families in `metrics.rs`, recorded by serve after each fact's
+//! commit (its doc maps credits-server's series to them).
+//! Not carried: the `ts-rs`
 //! bindings, the per-service `/health`, `/ping` (the content server owns
 //! them), `CREDITS_PG_CONNECTION_STRING`, `MARKET_BASE_URL`,
 //! `PRICE_BASE_URL`, `ECONOMY_BASE_URL`, `CATALYRST_ECONOMY_ADMIN_TOKEN` and
@@ -97,6 +100,7 @@ pub mod goals;
 pub mod handlers;
 pub mod history;
 pub mod ledger_stats;
+pub mod metrics;
 pub mod money;
 pub mod orders;
 pub mod packs;
@@ -108,6 +112,7 @@ pub mod reconcile;
 pub mod reports;
 pub mod settlement;
 pub mod store;
+pub mod stream;
 pub mod stripe;
 pub mod studios;
 pub mod trial;
@@ -116,6 +121,8 @@ pub mod wallet;
 pub mod wallet_flags;
 pub mod writes;
 
+#[cfg(test)]
+mod metrics_tests;
 #[cfg(test)]
 mod receipts_tests;
 #[cfg(test)]
@@ -785,6 +792,8 @@ pub struct State {
     /// The `dapps` rollout flags the market reads (`market::features`); none without a market, and then every
     /// flag reads off.
     pub(crate) dapps_flags: Option<Arc<crate::market::features::DappsFlags>>,
+    /// The balance streams' listener and subscribers (`stream.rs`).
+    pub(crate) balance_changes: stream::BalanceChanges,
     /// The purchase receipt's mailer, names and links (`receipts.rs`), set
     /// once by [`Self::start_receipts`]: `serve` builds the mailer after
     /// this state.
@@ -909,6 +918,7 @@ impl State {
             feed,
             goals_chain: chain,
             dapps_flags: None,
+            balance_changes: stream::BalanceChanges::default(),
             receipts: std::sync::OnceLock::new(),
         }
     }
@@ -965,6 +975,9 @@ impl State {
     }
 
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
+        // The balance streams end with the node, so its graceful shutdown
+        // never waits on them.
+        self.balance_changes.end_on(jobs.root_token().child_token());
         fulfillment::OutboxWorker {
             credits: self.credits.clone(),
             pricing: self.pricing.clone(),
@@ -1020,6 +1033,8 @@ impl State {
         let index = self.usage.clone();
         let writes_enabled = self.settings.writes_enabled;
         let gate = Arc::new(crate::shared::writes::PassGate::new(usage::JOB_NAME));
+        // The pass's gauges are cleared when the lease they were set under ends.
+        let gauges = Arc::new(metrics::LeaseGauges::usage_index());
         let interval = settings.interval;
         tracing::info!(chain_id = settings.chain_id, contract = ?settings.contract, start_block = settings.start_block, "credits usage index started");
         jobs.spawn_periodic_leased(
@@ -1030,6 +1045,7 @@ impl State {
             move |ctx| {
                 let index = index.clone();
                 let gate = gate.clone();
+                gauges.arm(&ctx.cancel);
                 async move {
                     index
                         .gated_pass(Some(&ctx), &gate, writes_enabled)
@@ -1131,6 +1147,10 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/users/{wallet_id}/credits",
             get(handlers::users::user_credits),
+        )
+        .route(
+            "/users/{wallet_id}/credits/stream",
+            get(stream::credits_stream),
         )
         .route("/wallet/{wallet_id}/balance", get(handlers::users::balance))
         .route("/packs", get(handlers::packs::list_packs))
@@ -1247,6 +1267,10 @@ pub fn shop_router(state: SharedState) -> Router {
         .route(
             "/v1/users/{wallet_id}/credits",
             get(handlers::users::user_credits),
+        )
+        .route(
+            "/v1/users/{wallet_id}/credits/stream",
+            get(stream::credits_stream),
         )
         .route("/v1/packs", get(handlers::packs::unity_list_packs))
         .route(

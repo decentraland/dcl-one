@@ -79,6 +79,16 @@ The 525,000 resulting rows took 518 MB, with the primary key and the two seconda
 
 Both plans spend most of their time reading every held token: a parallel sequential scan of the 3M Polygon tokens, joined to their items and collections, then a top-N sort. With the latest sales, the Ethereum v1 source probes `nft_last_sale_pkey` once for each of its 200,000 tokens. Measured with `EXPLAIN ANALYZE` on this machine, one wearable page took 6.7 s with legacy orders only and 6.1 s with the latest sales, so the difference stayed within the noise of the shared machine. An index ordering the table by `sold_at` would serve a page only if the recently sold sort first walked the sold tokens. Today's sort does not use one, so the table has none.
 
+## Credits metrics snapshot
+
+The `credits-settlement` pass sets the settlement gauges (`credits_pledges_live`, `credits_pledged_usd_cents`, `credits_usages_unpaid`, `credits_revocations_pending`) from one statement, `shop::credits::metrics::SNAPSHOT_SQL`, every `CHECKOUT_WORKER_INTERVAL_SECS` (30 s by default). It was measured on a synthetic seed on a laptop with PostgreSQL 17.6, three runs of `EXPLAIN (ANALYZE, BUFFERS)`:
+
+| Rows | Live pledges | Unpaid uses | Pending revocations | Time |
+| --- | ---: | ---: | ---: | ---: |
+| 100,000 authorizations, 90,000 indexed uses (all but 25 settled), 90,000 revocations | 2,000 | 25 | 9,000 | 42 to 45 ms |
+
+The live pledges and their cents are read through the partial `authorizations_expiry_idx` (2,000 rows), and the pending revocations through `revocations_due_idx`. Each is bounded by what is live, not by the table. The unpaid count costs most of the time: a parallel hash anti-join of every indexed use at or below the fold against `usage_settlements`, then a primary key probe of the authorization for each unsettled use. It grows linearly with the uses the index has stored, about 0.5 ms per 1,000.
+
 ## Marketplace sales day rollups
 
 On PostgreSQL 17.6, a temporary table held 200,000 executions on one network,
