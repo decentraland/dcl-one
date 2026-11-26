@@ -6,6 +6,7 @@ import {
   Button,
   CardActionButton,
   CommunityCard,
+  EquippedItemCard,
   EventCard,
   EventCardAction,
   EventCardActionLink,
@@ -17,7 +18,9 @@ import {
   ShopCard,
   ShopCardPrice,
   ShopCardSkeleton,
-  type ShopCardRarity
+  WearableCard,
+  type ShopCardRarity,
+  type WearableCardRarity
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
 import { covers, people } from './data'
@@ -33,6 +36,42 @@ const rarities: ShopCardRarity[] = [
   'mythic',
   'unique'
 ]
+
+const itemRarities: WearableCardRarity[] = [
+  'common',
+  'uncommon',
+  'rare',
+  'epic',
+  'legendary',
+  'mythic',
+  'unique',
+  'exotic',
+  'base'
+]
+const glyph = <BackpackUpperBody size={16} aria-hidden="true" />
+const titled = (rarity: string) => `${rarity.charAt(0).toUpperCase()}${rarity.slice(1)}`
+
+function SelectableWearableCards() {
+  const [selected, setSelected] = useState('rare')
+  return (
+    <div className={layout.tiles}>
+      {(['epic', 'rare', 'common'] as const).map((rarity, index) => (
+        <WearableCard
+          key={rarity}
+          pick
+          name={`${titled(rarity)} gloves`}
+          thumbnail={covers.wearable}
+          rarity={rarity}
+          categoryIcon={glyph}
+          count={index === 0 ? 3 : undefined}
+          coverNote={index === 2 ? 'Equipped' : undefined}
+          selected={selected === rarity}
+          onClick={() => setSelected(rarity)}
+        />
+      ))}
+    </div>
+  )
+}
 
 const dayActions = (
   <>
@@ -434,6 +473,157 @@ export const cardEntries: GalleryEntry[] = [
           <div className={layout.cards}>
             <ShopCardSkeleton />
             <ShopCardSkeleton />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'WearableCard',
+    group: 'Cards',
+    summary:
+      'An item tile of the Explorer HUD backpack: its thumbnail on its rarity, an equipped ring, and an action on hover.',
+    components: ['WearableCard'],
+    examples: [
+      {
+        id: 'rarities',
+        title: 'Every rarity and none, drawn without a host picture',
+        note: 'Point at a card for its lift and its EQUIP action. A host passes its own tile, flap, ring and panel pictures.',
+        render: () => (
+          <div className={layout.tiles}>
+            {itemRarities.map((rarity) => (
+              <WearableCard
+                key={rarity}
+                name={`${titled(rarity)} gloves`}
+                thumbnail={covers.wearable}
+                rarity={rarity}
+                categoryIcon={glyph}
+              />
+            ))}
+          </div>
+        )
+      },
+      {
+        id: 'states',
+        title:
+          'Equipped, selected, new, smart, in an emote slot, incompatible, one that cannot be taken off, and without a picture',
+        note: 'The incompatible card says why on hover. A missing thumbnail leaves the tile alone.',
+        render: () => (
+          <div className={layout.tiles}>
+            <WearableCard
+              name="Equipped gloves"
+              thumbnail={covers.wearable}
+              rarity="legendary"
+              categoryIcon={glyph}
+              equipped
+            />
+            <WearableCard
+              name="Selected gloves"
+              thumbnail={covers.wearable}
+              rarity="epic"
+              categoryIcon={glyph}
+              selected
+            />
+            <WearableCard
+              name="New gloves"
+              thumbnail={covers.wearable}
+              rarity="uncommon"
+              categoryIcon={glyph}
+              isNew
+            />
+            <WearableCard
+              name="Smart gloves"
+              thumbnail={covers.wearable}
+              rarity="mythic"
+              categoryIcon={glyph}
+              isSmart
+            />
+            <WearableCard
+              name="Unicycle"
+              thumbnail={covers.emote}
+              rarity="rare"
+              categoryIcon={glyph}
+              equipped
+              slotNumber={3}
+            />
+            <WearableCard
+              name="Incompatible gloves"
+              thumbnail={covers.wearable}
+              rarity="common"
+              categoryIcon={glyph}
+              incompatible
+            />
+            <WearableCard
+              name="Body shape"
+              thumbnail={covers.wearable}
+              categoryIcon={glyph}
+              equipped
+              unequippable={false}
+            />
+            <WearableCard name="No picture" rarity="unique" categoryIcon={glyph} />
+          </div>
+        )
+      },
+      {
+        id: 'pick',
+        title: 'Tiles to pick: a count, the chosen one ringed, and one a note covers',
+        note: 'Press a tile to choose it. The covered one takes no press.',
+        render: () => <SelectableWearableCards />
+      }
+    ]
+  },
+  {
+    name: 'EquippedItemCard',
+    group: 'Cards',
+    summary:
+      'An item a profile shows: its thumbnail on its rarity, its name, a rarity tag and a link to its sale.',
+    components: ['EquippedItemCard'],
+    examples: [
+      {
+        id: 'rarities',
+        title: 'Every rarity, none, and one the foundations do not colour',
+        note: 'Every other card is on sale: point at it for its frame and its link.',
+        render: () => (
+          <div className={layout.itemCards}>
+            {[...itemRarities.slice(0, 8), undefined, 'golden'].map((rarity, index) => (
+              <EquippedItemCard
+                key={rarity ?? 'none'}
+                name={rarity ? `${titled(rarity)} gloves` : 'Plain gloves'}
+                thumbnail={covers.wearable}
+                rarity={rarity}
+                shopUrl={index % 2 === 0 ? '#item' : undefined}
+                categoryIcon={glyph}
+              />
+            ))}
+          </div>
+        )
+      },
+      {
+        id: 'pinned',
+        title: 'The link kept in the card, with a price, a long name and no picture',
+        render: () => (
+          <div className={layout.itemCards}>
+            <EquippedItemCard
+              name="Epic gloves"
+              thumbnail={covers.wearable}
+              rarity="epic"
+              shopUrl="#item"
+              shopLabel="Buy"
+              price="25 Credits"
+              pinShop
+              categoryIcon={glyph}
+            />
+            <EquippedItemCard
+              name="A pair of gloves whose name is far too long for one line"
+              thumbnail={covers.wearable}
+              rarity="legendary"
+              shopUrl="#item"
+              shopLabel="View"
+              pinShop
+              categoryIcon={glyph}
+            />
+            <EquippedItemCard name="No picture" rarity="rare" shopUrl="#item" pinShop />
+            <EquippedItemCard rarity="unique" price="120 MANA" />
           </div>
         )
       }
