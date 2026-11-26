@@ -38,6 +38,16 @@ sort indexes installed. The page accessed 33,293 shared buffers and the counts
 rows to fill the window. A trial partial index on open orders by creation time
 left the heavy scans in place.
 
+A skewed fixture added 100,000 backed open orders to one of the 200 requested
+collections. The legacy leg uses a lateral top-N lookup inside the batched
+statement so each index scan can stop at its own cap. The original batched
+window had to rank every eligible row before its cut. In PostgreSQL-only
+runs with eight clients and 24 reads per case, mean transaction latency fell
+from 1,469 to 105 ms for a cap of 25, and from 1,690 to 488 ms for a cap of
+5,000. Both shapes returned the same row counts. At the 5,000 cap, the median
+`EXPLAIN (ANALYZE, BUFFERS)` fell from 432 ms (22,926 hits, 32,014 reads) to
+89 ms (113,323 hits, zero reads).
+
 The concurrent test used the same numbers of orders and tokens, plus 1,200
 backed v3 listings in the requested collections. Eight clients used an
 eight-connection pool and issued three reads each. The harness called the
@@ -49,14 +59,14 @@ in each run succeeded.
 
 | Workload | Reads/s before → batched | Mean connection hold before → batched | Item batch p95 before → batched |
 | --- | ---: | ---: | ---: |
-| 20 contracts | 13.31 → 65.97 | 560 → 108 ms | 690 → 169 ms |
-| 200 contracts | 1.47 → 25.82 | 5,232 → 274 ms | 5,880 → 347 ms |
-| Mixed (200-contract batches) | 1.34 → 4.05 | 5,096 → 892 ms | 6,470 → 479 ms |
+| 20 contracts | 7.03 → 47.59 | 1,063 → 142 ms | 1,334 → 228 ms |
+| 200 contracts | 2.30 → 17.49 | 3,370 → 432 ms | 3,634 → 626 ms |
+| Mixed (200-contract batches) | 2.55 → 7.57 | 2,754 → 483 ms | 3,836 → 202 ms |
 
 The 200-contract case took one local candidate statement per batch where
 it had taken 400. Both implementations returned identical results at the
 same cap of 5,000 per contract. The three deep pages in the batched mixed
-run completed in up to 5.58 s. These are synthetic measurements without
+run completed in up to 2.97 s. These are synthetic measurements without
 HTTP transport time. The current request path uses the indexes and batching
 without a book-result cache.
 

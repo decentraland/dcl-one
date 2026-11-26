@@ -5535,7 +5535,8 @@ the same snapshot. Open v3 listings check the trades mirror and the verdicts
 of the networks read. Legacy-only status and buyer filters skip those
 checks. Each statement uses the `/v1/nfts` statement timeout. Cancellation of
 a trades mirror or trade-events marker read returns the standard statement
-timeout response for orders and bids.
+timeout response for orders and bids. An unreadable trade-events marker
+otherwise returns the named `trade-events-index` response.
 
 - the page: the filters, a sort (`created_at`, `updated_at`, `price` or
   `token_id`, ties by id) and `LIMIT first + skip`, beside the v3 listings
@@ -5543,8 +5544,9 @@ timeout response for orders and bids.
 - the total: each network's count capped at 5,000, or at the deep window
   for a deeper page, summed, as the subgraph reader counted;
 - open-by-items queries the requested contracts together on that snapshot.
-  It takes each contract's cheapest legacy window and newest 1,000 backed
-  v3 listings, merges them by their full integer price, and applies the
+  A lateral legacy query takes each contract's cheapest window using the
+  open-price index. The v3 query ranks each contract's newest 1,000 backed
+  listings. The merge compares their full integer prices and applies the
   item filter after the `perContract` cut. Graph-backed legacy orders keep their page limit
   and use one batched query for the local v3 leg.
 
@@ -5599,6 +5601,23 @@ ID sorts in either direction, with an incremental sort for order ID ties.
 `legacy_order_price_idx` sorts unscoped orders by price and order ID
 when the caller asks for every status. See the
 [order-book read measurements](METRICS.md#marketplace-order-book-reads).
+
+The object pass builds missing indexes in its migration transaction and
+blocks writes to the book until that transaction commits. On a large live
+book, an operator can build these indexes before the migration, outside a
+transaction:
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_order_issued_idx
+  ON shop.legacy_order (token_id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_order_price_idx
+  ON shop.legacy_order (price, order_id);
+```
+
+Schema status checks index names. Before migrating, verify that both indexes
+have `pg_index.indisvalid` set and that `pg_get_indexdef(indexrelid)` matches
+the canonical definitions. Drop and rebuild any invalid or mismatched index
+before relying on its name.
 
 The fold finds the event that ends each order with one backward probe of
 `nft_event_token_idx` per order (`LATERAL ... LIMIT 1`). As a join of the

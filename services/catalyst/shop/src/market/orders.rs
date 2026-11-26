@@ -1357,23 +1357,26 @@ async fn open_candidates(
         unified_trades_cte_of(&now_p, &since_p, Some(&contracts_p)),
         TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT),
     );
-    if legacy_limit.is_some() {
+    if let Some(limit) = legacy_limit {
         sql.push_str(&format!(
-            ", ranked_legacy AS (
-                SELECT {}, NULL::text AS payee, NULL::bigint AS chain_id,
-                       row_number() OVER (PARTITION BY o.contract_address ORDER BY o.price, o.order_id) AS row_num
-                {legacy_from} AND o.contract_address = ANY({contracts_p}::text[])
+            ", legacy_batch AS (
+                SELECT picked.* FROM unnest({contracts_p}::text[]) AS requested(address)
+                CROSS JOIN LATERAL (
+                    SELECT {}, NULL::text AS payee, NULL::bigint AS chain_id
+                    {legacy_from} AND o.contract_address = requested.address
+                    ORDER BY o.price, o.order_id LIMIT {}
+                ) picked
             )",
-            book_order_columns(land)
+            book_order_columns(land),
+            limit.max(0)
         ));
     }
     sql.push_str(&format!(
         " SELECT {columns}, true AS is_trade FROM ranked_trades WHERE row_num <= {TRADE_ORDER_CAP}"
     ));
-    if let Some(limit) = legacy_limit {
+    if legacy_limit.is_some() {
         sql.push_str(&format!(
-            " UNION ALL SELECT {columns}, false AS is_trade FROM ranked_legacy WHERE row_num <= {}",
-            limit.max(0)
+            " UNION ALL SELECT {columns}, false AS is_trade FROM legacy_batch"
         ));
     }
     let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
@@ -1389,7 +1392,6 @@ async fn open_candidates(
         .fetch_all(conn)
         .await?;
     let mut per = HashMap::<String, Vec<Keyed>>::new();
-    // The merge's stable sort keeps legacy first if both sort keys tie.
     for r in rows
         .iter()
         .filter(|r| !r.get::<bool, _>("is_trade"))

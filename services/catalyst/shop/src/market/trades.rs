@@ -431,6 +431,12 @@ impl CheckError {
     pub(super) fn into_response(self, read_error: fn(sqlx::Error) -> Response) -> Response {
         match self {
             Self::Refused(source, why) => unavailable(source, &why),
+            Self::Database(Source::TradeEventsIndex, error)
+                if !super::nft_reads::cancelled(&error) =>
+            {
+                let (source, why) = super::trade_events::unreadable_reason(error);
+                unavailable(source, &why)
+            }
             Self::Database(_, error) => read_error(error),
         }
     }

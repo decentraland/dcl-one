@@ -6458,19 +6458,33 @@ async fn the_graph_order_path_preserves_a_trade_events_marker_timeout() {
     state.test_allow_loopback.store(true, Ordering::Relaxed);
     assert!(!super::owned_items::walks_here(&state));
     super::trade_events::tests::publish_cursors(&own.pool).await;
+    let app = market_router(state);
     assert_trades_readiness_timeout(
         &own.pool,
-        market_router(state),
+        app.clone(),
         "/v1/orders?network=MATIC&status=open",
         "LOCK TABLE shop.chain_cursor IN ACCESS EXCLUSIVE MODE",
     )
     .await;
+    sqlx::query("ALTER TABLE shop.chain_cursor RENAME TO unavailable_chain_cursor")
+        .execute(&own.pool)
+        .await
+        .unwrap();
+    for uri in [
+        "/v1/orders?network=MATIC&status=open",
+        "/v1/bids?network=MATIC",
+    ] {
+        let (status, body) = get(app.clone(), uri).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {body}");
+        assert_eq!(body["source"], "trade-events-index", "{uri}: {body}");
+    }
     own.drop().await;
 }
 
 #[tokio::test]
 async fn open_orders_batch_preserves_each_contracts_cheapest_window() {
-    let url = serve_empty_graph().await;
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph.clone()).await;
     let Some((state, own)) = state_over_own(&url, true).await else {
         return;
     };
@@ -6588,7 +6602,7 @@ async fn open_orders_batch_preserves_each_contracts_cheapest_window() {
     .execute(pool)
     .await
     .unwrap();
-    let app = market_router(state);
+    let app = market_router(state.clone());
     for (cap, expected) in [
         (1, vec!["unrequested"]),
         (3, vec!["unrequested", "legacy", trade.as_str()]),
@@ -6607,6 +6621,35 @@ async fn open_orders_batch_preserves_each_contracts_cheapest_window() {
             .collect();
         assert_eq!(ids, expected, "{body}");
     }
+    // The graph-backed path merges the same local v3 candidate with the
+    // legacy page from the configured subgraph.
+    graph.set(
+        "orders",
+        vec![json!({
+            "id": "graph-legacy", "marketplaceAddress": "0xmarket", "nftAddress": matic,
+            "tokenId": token(3, 2), "owner": WALLET_A, "price": "1", "status": "open",
+            "expiresAt": "4102444800000", "createdAt": "1700000000", "updatedAt": "1700000000",
+        })],
+    );
+    let graph_settings = market_settings(&url, &serve_empty_graph().await, true);
+    let graph_state = Arc::new(super::MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        graph_settings,
+    ));
+    graph_state
+        .test_allow_loopback
+        .store(true, Ordering::Relaxed);
+    assert!(!super::owned_items::walks_here(&graph_state));
+    let (status, body) = get(
+        market_router(graph_state),
+        &format!("/v1/orders/open-by-items?item={matic}-3&perContract=2"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], "2", "{body}");
+    assert_eq!(body["data"][0]["id"], "graph-legacy", "{body}");
+    assert_eq!(body["data"][1]["id"], trade, "{body}");
     own.drop().await;
 }
 
