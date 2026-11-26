@@ -78,14 +78,19 @@ trimming whitespace and trailing slashes.
   snapshot. The decision under the world lock checks the same receipt id to
   catch a re-publish during upstream reads. A blocked world or one with an
   active scene still queued or sending to the mirror source keeps its local
-  scenes. Other local scenes follow the ordinary timestamp comparison.
+  scenes. Accepted forwards are excluded from both sides of the comparison.
+  An older, disjoint local scene with no accepted receipt keeps the world
+  local unless an independent upstream deployment outdates it. This can
+  leave the local scene visible here while the accepted scene is already
+  published upstream.
 - **Handover.** When no other local scene stands, the scheduled pass mirrors
   the complete current `/scenes` listing. A listed local scene keeps its place
   identity and storage when converted in place. For an accepted scene missing
   from the listing, the pass verifies absence with an entity-filtered request
-  before retirement. The pass checks uncatalogued worlds with accepted local
-  scenes separately from the first-N catalogue limit, within any explicit
-  name filter. If the upstream has no scenes, it retires confirmed local
+  before retirement. An unlimited pass checks uncatalogued worlds with
+  accepted local scenes, within any explicit name filter. A bounded pass
+  only checks its first-N catalogue names. If the upstream has no scenes,
+  the pass can retire confirmed local
   scenes and retains the local world settings and grants.
 - **Hosting.** Mirrored scenes are served as copies. Handover ends local
   authoritative SDK7 hosting and local collaborator and `logsPermissions`

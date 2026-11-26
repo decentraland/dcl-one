@@ -36,7 +36,7 @@
 //! same entity on both sides keeps the world local, as does an upstream scene
 //! listed without a deploy time, a blocked world and one with a publish queued
 //! for forwarding to this source. A scene with a matching accepted receipt leaves
-//! the timestamp comparison. When no other local scene stands, the pass converts
+//! both sides of the timestamp comparison, so it cannot retire another local scene. When no other local scene stands, the pass converts
 //! a listed accepted scene to a mirror row in place and retires one whose absence
 //! the source confirms. This includes a world removed before its first catalogue
 //! entry. A handed-over scene keeps its identity and storage and loses local host
@@ -302,7 +302,12 @@ async fn scenes_pass(
         }
     };
 
-    let uncatalogued = uncatalogued_forwards(pool, settings).await?;
+    // Bounded passes mirror only the first configured catalogue names.
+    let uncatalogued = if settings.limit.is_none() {
+        uncatalogued_forwards(pool, settings).await?
+    } else {
+        Vec::new()
+    };
     let total = due_total(pool, settings).await? + uncatalogued.len() as i64;
     loop {
         if ctx.is_cancelled() {
@@ -854,7 +859,10 @@ mod tests {
             return;
         };
         let prefix = format!("batch-{}", uuid::Uuid::new_v4().simple());
-        let names: Vec<String> = (0..6).map(|n| format!("{prefix}-{n}.eth")).collect();
+        let names: Vec<String> = [0, 2, 4, 6, 8, 9]
+            .into_iter()
+            .map(|n| format!("{prefix}-{n}.eth"))
+            .collect();
         sqlx::query("INSERT INTO worlds.remote_worlds (world_name,source,scene_ids) SELECT name,'https://up.example',ARRAY['scene'] FROM unnest($1::text[]) name")
             .bind(&names).execute(&pool).await.unwrap();
         let mut settings = MirrorSettings::for_tests("https://up.example");
@@ -876,8 +884,15 @@ mod tests {
             due_batch(&pool, &settings, &names[1], &[]).await.unwrap()[0].0,
             names[2]
         );
-        let uncatalogued = [format!("{prefix}-15.eth")];
+        let uncatalogued = [format!("{prefix}-3.eth")];
         settings.names.push(uncatalogued[0].clone());
+        assert_eq!(
+            due_batch(&pool, &settings, &names[1], &uncatalogued)
+                .await
+                .unwrap(),
+            vec![(names[2].clone(), vec!["scene".into()])]
+        );
+        settings.limit = None;
         assert_eq!(
             due_batch(&pool, &settings, &names[1], &uncatalogued)
                 .await
@@ -894,7 +909,6 @@ mod tests {
                 .0,
             names[2]
         );
-        settings.limit = None;
         settings.names = vec![names[1].clone(), names[4].clone()];
         assert_eq!(
             due_batch(&pool, &settings, &names[1], &[]).await.unwrap()[0].0,

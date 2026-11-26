@@ -129,9 +129,11 @@ captures matching accepted receipt ids. Under the world lock it rechecks
 those ids to fence a re-publish of the same entity. Each probe uses
 `forward_outbox_entity_id_key`, one key lookup per local scene. A captured
 scene still listed becomes a mirror row. Confirmed absence allows retirement.
-Once per scenes pass, the mirror joins retained accepted receipts to local
-scenes and the catalogue to find worlds that were removed before the first
-catalogue entry. The outbox retains 30 days of terminal rows.
+An accepted local forward is excluded from both sides of the timestamp
+comparison. Once per unlimited scenes pass, the mirror joins retained
+accepted receipts to local scenes and the catalogue to find worlds that
+were removed before the first catalogue entry. The outbox retains 30 days
+of terminal rows.
 
 Partial batches for one entity hold a session advisory lock from their first
 pending-upload/replay read through the staging or committed-publication decision.

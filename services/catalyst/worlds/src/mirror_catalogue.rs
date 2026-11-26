@@ -218,27 +218,21 @@ pub(super) async fn due_batch(
     cursor: &str,
     uncatalogued: &[String],
 ) -> Result<Vec<(String, Vec<String>)>> {
-    // Keep the cursor and both candidate sets in the database's name order.
-    // An unlimited catalogue pass seeks directly from the cursor. A finite
-    // pass keeps the first-N catalogue scope before applying the cursor.
+    // An unlimited pass seeks directly from the cursor and merges its candidates
+    // in database name order. A finite pass keeps its first-N catalogue scope.
     let rows = if let Some(limit) = settings.limit {
         sqlx::query_as(
-            r#"(SELECT world_name, scene_ids FROM (
+            r#"SELECT world_name, scene_ids FROM (
                  SELECT world_name, scene_ids FROM worlds.remote_worlds
                  WHERE unlisted_at IS NULL
                    AND (cardinality($1::text[]) = 0 OR world_name = ANY($1))
                  ORDER BY world_name LIMIT $2) catalogue
-               WHERE world_name > $3 ORDER BY world_name LIMIT $4)
-               UNION ALL
-               SELECT name AS world_name, ARRAY[]::text[] AS scene_ids
-               FROM unnest($5::text[]) AS u(name) WHERE name > $3
-               ORDER BY world_name LIMIT $4"#,
+               WHERE world_name > $3 ORDER BY world_name LIMIT $4"#,
         )
         .bind(&settings.names)
         .bind(limit as i64)
         .bind(cursor)
         .bind(settings.concurrency as i64)
-        .bind(uncatalogued)
         .fetch_all(pool)
         .await?
     } else {

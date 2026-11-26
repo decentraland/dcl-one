@@ -3027,7 +3027,7 @@ async fn a_world_removed_before_its_first_catalogue_entry_retires_only_accepted_
         return;
     };
     let fake = start_fake().await;
-    let node = Node::new(scratch.pool.clone(), &fake.base, "unlisted-before-handover").await;
+    let mut node = Node::new(scratch.pool.clone(), &fake.base, "unlisted-before-handover").await;
     let at = now_ms() - 3_600_000;
     let one = "one.dcl.eth";
     let foreign = "foreign.dcl.eth";
@@ -3052,7 +3052,15 @@ async fn a_world_removed_before_its_first_catalogue_entry_retires_only_accepted_
     )
     .await;
 
-    node.pass(&node.ctx().await).await;
+    let ctx = node.ctx().await;
+    node.settings.limit = Some(1);
+    let limited = node.pass(&ctx).await;
+    assert_eq!(limited.scenes.processed, 1, "{limited:?}");
+    assert_eq!(node.scene_rows(one).await[0].0, accepted);
+    assert!(retired_ids(&node.pool, one).await.is_empty());
+
+    node.settings.limit = None;
+    node.pass(&ctx).await;
     assert!(node.scene_rows(one).await.is_empty());
     assert_eq!(retired_ids(&node.pool, one).await, vec![accepted]);
     assert!(!identity_active(&node.pool, identity).await);
@@ -3134,6 +3142,105 @@ async fn only_an_accepted_listed_publish_is_handed_over() {
         world_mirror_source(&node.pool, "beside.dcl.eth").await,
         None
     );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// A forward accepted upstream can account for its own scene. It supplies no newer
+/// independent deployment that can take over a disjoint scene held only here.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_accepted_forward_cannot_retire_an_older_local_only_scene() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(
+        scratch.pool.clone(),
+        &fake.base,
+        "local-only-beside-forward",
+    )
+    .await;
+    let older = now_ms() - 3_600_000;
+    let worlds = [
+        ("legacy-local.dcl.eth", None),
+        ("rejected-local.dcl.eth", Some("rejected")),
+    ];
+    let mut expected = Vec::new();
+    for (world, status) in worlds {
+        let accepted = {
+            let mut st = fake.state.lock();
+            deploy_upstream(
+                &mut st,
+                world,
+                "Accepted Stage",
+                &["0,0"],
+                older + 1_800_000,
+            )
+            .0
+        };
+        let local = format!("local-only-{world}");
+        let identity = publish_here(&node.pool, world, &local, &["5,5"], older).await;
+        publish_here(&node.pool, world, &accepted, &["0,0"], older + 1_800_000).await;
+        forwarded(&node.pool, &fake.base, world, &accepted, "accepted").await;
+        if let Some(status) = status {
+            forwarded(&node.pool, &fake.base, world, &local, status).await;
+        }
+        expected.push((world, local, accepted, identity));
+    }
+
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(
+        (summary.scenes.refused, summary.scenes.handed_over),
+        (2, 0),
+        "{summary:?}"
+    );
+    for (world, local, accepted, identity) in &expected {
+        let rows = node.scene_rows(world).await;
+        assert_eq!(rows.len(), 2, "{world}: {rows:?}");
+        assert!(
+            rows.iter().any(|(id, _, _)| id == accepted),
+            "{world}: {rows:?}"
+        );
+        assert!(
+            rows.iter().all(|(_, _, source)| source.is_none()),
+            "{world}: {rows:?}"
+        );
+        assert_eq!(
+            active_identity(&node.pool, world, local).await,
+            Some(*identity)
+        );
+        assert!(retired_ids(&node.pool, world).await.is_empty(), "{world}");
+    }
+
+    {
+        let mut st = fake.state.lock();
+        for (world, _, _, _) in &expected {
+            deploy_upstream(
+                &mut st,
+                world,
+                "Replacement Museum",
+                &["5,5"],
+                older + 900_000,
+            );
+        }
+    }
+    let summary = node.pass(&ctx).await;
+    assert_eq!(
+        (
+            summary.scenes.synced,
+            summary.scenes.handed_over,
+            summary.scenes.superseded_local
+        ),
+        (2, 2, 2),
+        "{summary:?}"
+    );
+    for (world, local, _, _) in expected {
+        assert_eq!(retired_ids(&node.pool, world).await, vec![local]);
+    }
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

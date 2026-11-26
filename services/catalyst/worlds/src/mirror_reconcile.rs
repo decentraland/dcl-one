@@ -444,6 +444,7 @@ pub(super) async fn mirror_world(
         Vec::new()
     };
     let receipts: Vec<_> = accepted.iter().map(|(receipt, _)| *receipt).collect();
+    let forwarded_entities: HashSet<&str> = accepted.iter().map(|(_, cid)| cid.as_str()).collect();
     let url = world_url(source, name, "about")?;
     let resp = client
         .get(&url)
@@ -481,17 +482,22 @@ pub(super) async fn mirror_world(
             "upstream /about has no scene base URL",
         ));
     };
-    // A local publish the listing does not outdate keeps the world before anything is fetched;
-    // the write decides again on the fetched entities, under the world row's lock.
+    // A forward accounts for its own scene. Only another upstream deployment can
+    // outdate a local scene whose forward was never accepted.
     if locally_published {
-        let newest = newest_deployment(listed.iter().map(|scene| {
-            (
-                scene.timestamp,
-                scene.created_at,
-                scene.updated_at,
-                scene.id.as_str(),
-            )
-        }));
+        let newest = newest_deployment(
+            listed
+                .iter()
+                .filter(|scene| !forwarded_entities.contains(scene.id.as_str()))
+                .map(|scene| {
+                    (
+                        scene.timestamp,
+                        scene.created_at,
+                        scene.updated_at,
+                        scene.id.as_str(),
+                    )
+                }),
+        );
         let mut conn = pool.acquire().await?;
         if crate::core::store::local_scene_stands(&mut conn, &world_key, newest, source, &receipts)
             .await?
@@ -738,14 +744,19 @@ pub(super) async fn mirror_world(
     let local_stands = match verify {
         Some(_) => has_local_publish(&mut tx, &world_key).await,
         None => {
-            let newest = newest_deployment(records.iter().map(|r| {
-                (
-                    crate::core::store::entity_timestamp_number(&r.entity),
-                    r.created_at,
-                    r.updated_at,
-                    r.cid.as_str(),
-                )
-            }));
+            let newest = newest_deployment(
+                records
+                    .iter()
+                    .filter(|record| !forwarded_entities.contains(record.cid.as_str()))
+                    .map(|r| {
+                        (
+                            crate::core::store::entity_timestamp_number(&r.entity),
+                            r.created_at,
+                            r.updated_at,
+                            r.cid.as_str(),
+                        )
+                    }),
+            );
             crate::core::store::local_scene_stands(&mut tx, &world_key, newest, source, &receipts)
                 .await
         }
