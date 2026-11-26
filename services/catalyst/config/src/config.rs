@@ -281,7 +281,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 82] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 83] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -460,6 +460,10 @@ impl Config {
             (
                 "CREDITS_CAPTCHA_SECRET",
                 &mut self.shop.credits_captcha_secret,
+            ),
+            (
+                "CREDITS_ALERTS_SLACK_WEBHOOK",
+                &mut self.shop.credits_alerts_slack_webhook,
             ),
             ("STRIPE_SECRET_KEY", &mut self.shop.stripe_secret_key),
             (
@@ -837,6 +841,7 @@ mod tests {
         "TRADE_RPC_URLS",
         "CHAIN_LOGS_PORTAL_API_KEY",
         "CREDITS_CAPTCHA_SECRET",
+        "CREDITS_ALERTS_SLACK_WEBHOOK",
         "STRIPE_SECRET_KEY",
         "STRIPE_WEBHOOK_SECRET",
         "CREDITS_SIGNER_KEY",

@@ -660,14 +660,14 @@ pub struct PlayerPositionEvent {
     pub rotation: DclQuat,
     pub velocity: Vec3,
     pub grounded: Option<bool>,
-    /// MoveKind inferred from the packet:
+    /// MoveKind inferred from the packet, first match wins:
+    ///   - `glide_state` is `OPENING_PROP` or `GLIDING`, or `CLOSING_PROP` in the air → `Glide`
     ///   - `jump_count >= 2` → `DoubleJump`
-    ///   - `jump_count == 1` → `Jump`
-    ///   - `glide_state` is `OPENING_PROP` or `GLIDING` → `Glide`
-    ///   - `is_jumping` or `is_long_jump` → `Jump`
+    ///   - `jump_count == 1`, `is_jumping` or `is_long_jump` → `Jump`
     ///
     /// `None` means no movement-state indicator — the velocity fallback picks. Drives `jump_time`
-    /// (Jump) and the matching emote (DoubleJump / Glide) on foreign avatars.
+    /// and the matching emote (DoubleJump / Glide) on foreign avatars; a Jump after DoubleJump or
+    /// Glide continues the fall (see `foreign_dynamics::apply_remote_move_kind`).
     pub remote_move_kind: Option<MoveKind>,
     /// This update is a discontinuous reposition, such as a Pulse `TeleportPerformed` or the
     /// first snapshot for a newly observed join. The avatar snaps to this position.
@@ -779,18 +779,19 @@ fn prune_player_map<V>(
 }
 
 /// The movement state a movement packet announces, `None` when it announces none.
-fn remote_move_kind(
+pub(crate) fn remote_move_kind(
     glide_state: rfc4::movement::GlideState,
     jump_count: i32,
     jumping: bool,
+    grounded: bool,
 ) -> Option<MoveKind> {
-    // Glide is checked before DoubleJump because Unity keeps `jump_count`
-    // at its last value (usually 2) through the whole glide — so the
-    // DoubleJump-first ordering would mask an active glide.
+    use rfc4::movement::GlideState::{ClosingProp, Gliding, OpeningProp};
+    // Glide is checked before DoubleJump because senders keep `jump_count` at its last value
+    // (usually 2) through the whole glide, closing included, so the DoubleJump-first ordering
+    // would mask the glide. A glider closing on the ground is the landing, not a glide.
     match (glide_state, jump_count, jumping) {
-        (rfc4::movement::GlideState::OpeningProp | rfc4::movement::GlideState::Gliding, _, _) => {
-            Some(MoveKind::Glide)
-        }
+        (OpeningProp | Gliding, _, _) => Some(MoveKind::Glide),
+        (ClosingProp, _, _) if !grounded => Some(MoveKind::Glide),
         (_, c, _) if c >= 2 => Some(MoveKind::DoubleJump),
         (_, 1, _) | (_, _, true) => Some(MoveKind::Jump),
         _ => None,
@@ -848,6 +849,7 @@ fn apply_foreign_movement(
         m.glide_state(),
         m.jump_count,
         m.is_jumping || m.is_long_jump,
+        m.is_grounded,
     );
     // Set only by the Pulse delta receiver; absent (→ ZERO, exact) for LiveKit and full-state.
     // A symmetric ± box, so the z-axis negation above doesn't affect it.
@@ -1413,6 +1415,7 @@ fn resolve_remote_anim(
         transition_seconds,
         seek: anim.playback_time,
         sounds: anim.sound_content_hashes,
+        movement_scene: false,
     })
 }
 
@@ -1771,23 +1774,22 @@ mod tests {
 
     #[test]
     fn a_packet_names_the_movement_state_it_announces() {
-        use rfc4::movement::GlideState::{Gliding, OpeningProp, PropClosed};
+        use rfc4::movement::GlideState::{ClosingProp, Gliding, OpeningProp, PropClosed};
+        let kind = |glide, count, jumping| remote_move_kind(glide, count, jumping, false);
 
-        assert_eq!(remote_move_kind(PropClosed, 0, false), None);
+        assert_eq!(kind(PropClosed, 0, false), None);
         // Pulse never sets `is_jumping`; a first jump travels as a jump count of 1
-        assert_eq!(remote_move_kind(PropClosed, 1, false), Some(MoveKind::Jump));
-        assert_eq!(remote_move_kind(PropClosed, 0, true), Some(MoveKind::Jump));
-        assert_eq!(
-            remote_move_kind(PropClosed, 2, false),
-            Some(MoveKind::DoubleJump)
-        );
+        assert_eq!(kind(PropClosed, 1, false), Some(MoveKind::Jump));
+        assert_eq!(kind(PropClosed, 0, true), Some(MoveKind::Jump));
+        assert_eq!(kind(PropClosed, 2, false), Some(MoveKind::DoubleJump));
         // the jump count stays at 2 through a glide, which wins
-        assert_eq!(
-            remote_move_kind(OpeningProp, 2, false),
-            Some(MoveKind::Glide)
-        );
-        assert_eq!(remote_move_kind(Gliding, 2, true), Some(MoveKind::Glide));
-        assert_eq!(remote_move_kind(Gliding, 0, false), Some(MoveKind::Glide));
+        assert_eq!(kind(OpeningProp, 2, false), Some(MoveKind::Glide));
+        assert_eq!(kind(Gliding, 2, true), Some(MoveKind::Glide));
+        assert_eq!(kind(Gliding, 0, false), Some(MoveKind::Glide));
+        // closing the glider in the air is still the glide, not a second air jump
+        assert_eq!(kind(ClosingProp, 2, false), Some(MoveKind::Glide));
+        // closing it on landing is the landing
+        assert_eq!(remote_move_kind(ClosingProp, 0, false, true), None);
     }
 
     #[test]

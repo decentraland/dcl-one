@@ -1811,6 +1811,58 @@ deleted. Addresses are lower-cased and checked by the table; the handlers
 normalise them. The bootstrap defines the tables; an existing database gains
 them from the object pass, so no step exists.
 
+## Credits alerts workload
+
+`credits.alerts` (`schemas/60_ops.sql`) is the outbox of the conditions an
+operator must hear about (`shop/src/credits/alerts.rs`), one row per
+(`kind`, `dedupe_key`), written in the transaction that detects the case:
+- **settlement** (`settlement.rs`, `settle_usage`):
+  - `recovered_consumption`, keyed by salt: a credit used after its pledge was
+    `released` or `expired`;
+  - `cap_near_limit`, keyed by salt: settled consumption (the credit's
+    `usage_settlements`, this one included) at 99.5% or more of
+    `amount_wei`, one aggregate over `usage_settlements_authorization_idx`;
+  - `unpaid_consumption`, keyed by `chain:block:log`: a used credit its wallet
+    cannot cover, written in its own statement once the debit rolled back,
+    so the fold's retries add nothing;
+- **the expiry sweep** (`alerts::expiry_ctes`, the CTEs both the fulfilment
+  tick and `expire_stale_authorizations` run):
+  - `submitted_unconsumed`, keyed by salt: a pledge it expires that has a
+    `submitted_tx_hash` and no `credits.usages` row (`usages_salt_idx`), unless
+    another pledge of the same wallet with that hash was consumed. Only with
+    the CreditUsed index configured: without it the sweep expires on the
+    clock, and an unindexed use cannot be ruled out;
+  - `repeated_expiry`, keyed by wallet, item and the newest attempt this sweep
+    expired: three or more expired or released pledges of the wallet for one
+    line item created within 30 minutes of that newest attempt (anchored on
+    the attempts, since a pledge reaches the sweep only after its TTL and the
+    index's lag). The read is bounded to the wallets the sweep expired and to
+    pledges created 30 minutes before their earliest swept one, through
+    `authorizations_address_status_expiry_idx`.
+
+The writer of delivery is the leased `credits-alerts` job, every 15 seconds
+where `OPS_WRITES_ENABLED` is on. It claims up to 20 due `pending` rows
+(`alerts_due_idx`, `FOR UPDATE SKIP LOCKED`), counting an attempt and pushing
+`next_attempt_at` out by a five-minute lease, then posts each to
+`CREDITS_ALERTS_SLACK_WEBHOOK` outside any transaction:
+- a 2xx ends the row `sent`; no redirect is followed;
+- any other answer, or no answer within 10 seconds, schedules a retry after
+  30 seconds, doubling up to 30 minutes, from the time it failed, and keeps
+  the reason in `last_error` (never the webhook, whose path is the
+  credential); a 429 waits Slack's `Retry-After` when given, and the rest of
+  the pass waits with it;
+- a row still undelivered a day after it was written, with one post already
+  attempted, ends `failed`, and with no webhook a row ends `skipped`. Both
+  log the alert at error, so none is dropped silently.
+
+Delivery is at least once: a post Slack accepted whose row was not ended (a
+crash, or a timeout after Slack took it) is posted again once its lease ends.
+
+Rows are few: at most one per credit or log for the settlement kinds, one per
+expired submitted credit, and one per failing attempt past the threshold.
+They are kept as the record. The bootstrap defines the table; an existing
+database gains it from the object pass, so no step exists.
+
 ## Credits balance notifications
 
 `credits.notify_balance()` and `credits.notify_balance_of_sender()`
