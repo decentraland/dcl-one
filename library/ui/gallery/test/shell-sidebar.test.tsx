@@ -267,11 +267,11 @@ describe('when a reviewer opens the components Showcase', () => {
 
   it('should keep the first component page as the page a bare or unknown link opens', () => {
     const { unmount } = render(<Shell search="" />)
-    expect(heading()).toMatch(/^Button/)
+    expect(heading()).toBe('BarButton')
     unmount()
     render(<Shell search="?component=Nope" />)
     expect(screen.getByRole('alert').textContent).toBe(
-      'No runtime page named “Nope”; showing Button.'
+      'No runtime page named “Nope”; showing BarButton.'
     )
   })
 

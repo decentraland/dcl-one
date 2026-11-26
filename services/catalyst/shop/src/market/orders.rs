@@ -273,7 +273,7 @@ pub async fn open_trade_orders(
     if wanted.is_empty() {
         return Ok(Default::default());
     }
-    let (mut tx, now) = trade_snapshot(state).await?;
+    let (mut tx, now) = trade_snapshot(state, &ChainNet::ALL).await?;
     open_trade_orders_on(state, &mut *tx, wanted, now.naive_utc())
         .await
         .map_err(super::nft_reads::read_error)
@@ -344,6 +344,15 @@ fn keyed(order: Order, sort_token_id: String) -> Keyed {
 /// together. Release it before requesting legacy orders from the graph.
 async fn trade_snapshot(
     state: &MarketplaceState,
+    nets: &[ChainNet],
+) -> Result<(Transaction<'static, Postgres>, DateTime<Utc>), Response> {
+    let (mut tx, now) = order_snapshot(state).await?;
+    super::trades::ready_for_networks_on(state, &mut tx, nets, now).await?;
+    Ok((tx, now))
+}
+
+async fn order_snapshot(
+    state: &MarketplaceState,
 ) -> Result<(Transaction<'static, Postgres>, DateTime<Utc>), Response> {
     let mut tx = state
         .pool
@@ -357,9 +366,8 @@ async fn trade_snapshot(
     super::nft_reads::set_read_timeout(&mut tx)
         .await
         .map_err(super::nft_reads::read_error)?;
-    let now = Utc::now();
-    super::trades::ready_on(state, &mut tx, now).await?;
-    Ok((tx, now))
+    // set_read_timeout establishes the snapshot before this instant.
+    Ok((tx, Utc::now()))
 }
 
 /// The networks a read of `network` names (both without a filter).
@@ -404,57 +412,135 @@ pub const UNPUBLISHED_FOLD_READS: dcl_metrics::CounterFamily<1> = dcl_metrics::C
 );
 pub const FAMILIES: &[dcl_metrics::Descriptor] = &[UNPUBLISHED_FOLD_READS.descriptor];
 
-/// The read-only snapshot a walking node's order book reads on: the
-/// land-authz index ready on it when `land` (its own snapshot, which the
-/// LAND/estate reads share), the nft index published and recent on `nets`
-/// at `now` ([`Rule::Fresh`]) on the chain the node serves on each (its
-/// catalogue, `Settings::catalogue`), with no write to its owners or to the
-/// book that a publication has not acknowledged, by any writer
-/// (`chain_walk::rows_published_on`), the legacy order book caught up with
-/// that publication on each (`legacy_orders::caught_up`), and the trades
-/// mirror and its verdicts ready (`trades::ready_on`), each statement
-/// bounded by `nft_reads::READ_STATEMENT_TIMEOUT`, and the request's instant:
-/// taken once the snapshot is established, so a fold the snapshot sees was
-/// published before it (a fold published while the request waited for a
-/// connection is not read as published in the future), and shared by the
-/// checks, the rows and the totals. `Err` is the unavailable envelope naming
-/// the source that is not ready, a check cancelled at the statement bound
-/// (`read_error`'s 503), or a 500.
-pub(crate) async fn book_snapshot(
-    state: &MarketplaceState,
-    nets: &[ChainNet],
+/// The scope of the book and listings on their shared snapshot.
+pub(super) struct BookRead {
+    pub tx: Transaction<'static, Postgres>,
+    pub now: DateTime<Utc>,
+    nets: Vec<ChainNet>,
     land: bool,
-) -> Result<(Transaction<'static, Postgres>, DateTime<Utc>), Response> {
-    let db = |e: sqlx::Error| ApiError::internal(e.to_string()).into_response();
-    let mut tx = if land {
-        let snapshot = match state.land_network() {
-            Some(net) => super::nft_reads::land_snapshot(&state.pool, net).await,
-            None => None,
+}
+
+impl BookRead {
+    fn scoped_filter(&self, mut filters: OrderFilters) -> OrderFilters {
+        filters.network = match self.nets.as_slice() {
+            [ChainNet::Ethereum] => Some(Network::Ethereum),
+            [ChainNet::Matic] => Some(Network::Matic),
+            _ => filters.network,
         };
-        snapshot.ok_or_else(super::nft_reads::land_unavailable)?.tx
-    } else {
-        let mut tx = state.pool.begin().await.map_err(db)?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-            .execute(&mut *tx)
+        filters
+    }
+}
+
+/// Resolve the contract set using the catalogue evidence the book reads.
+/// An address without a proven assignment keeps the whole read in scope.
+/// A live mainnet trade keeps its network in scope through ownership
+/// rewind. Testnet trades also require the verified catalogue or registry.
+async fn book_networks(
+    conn: &mut PgConnection,
+    served: &Served,
+    network: Option<Network>,
+    contracts: &[String],
+    trades: bool,
+    now: DateTime<Utc>,
+    mirrored_since: Option<chrono::NaiveDateTime>,
+) -> Result<Vec<ChainNet>, sqlx::Error> {
+    if network.is_some() || contracts.is_empty() {
+        return Ok(nets_of(network).to_vec());
+    }
+    let contracts: Vec<_> = contracts.iter().map(|c| c.to_lowercase()).collect();
+    let catalogue = served.catalogue_sql();
+    let matched: Vec<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT DISTINCT requested.address, net.network
+         FROM unnest($1::text[]) AS requested(address)
+         CROSS JOIN (VALUES ('ethereum', $5::bigint), ('matic', $6::bigint))
+              AS net(network, chain_id)
+         WHERE (net.network = 'ethereum' AND requested.address <> ''
+                AND requested.address IN ($2, $3, $4))
+            OR EXISTS (SELECT 1 FROM shop.collections c
+                       WHERE c.network = net.network AND c.contract_address = requested.address
+                         AND {catalogue})
+            OR ($7 AND net.chain_id IN ({ethereum}, {matic}) AND EXISTS (
+                    SELECT 1 FROM shop.trade_assets sent JOIN shop.trades t ON t.id = sent.trade_id
+                    WHERE sent.direction = 'sent' AND sent.asset_type = 3
+                      AND sent.contract_address = requested.address
+                      AND lower(t.network) = net.network AND t.chain_id = net.chain_id
+                      AND t.type = 'public_nft_order' AND t.effective_since <= $8 AND t.expires_at > $8
+                      AND {counted}
+                      AND NOT EXISTS (SELECT 1 FROM shop.trade_cancellations c
+                                      WHERE c.target_hashed_signature = t.hashed_signature)))",
+        ethereum = ChainNet::Ethereum.chain_id(),
+        matic = ChainNet::Matic.chain_id(),
+        counted = super::trades::counted_sql("t.", "$9"),
+    )))
+    .bind(&contracts)
+    .bind(&served.land)
+    .bind(&served.estate)
+    .bind(&served.names)
+    .bind(served.ethereum)
+    .bind(served.matic)
+    .bind(trades)
+    .bind(now.naive_utc())
+    .bind(mirrored_since)
+    .fetch_all(conn)
+    .await?;
+    if contracts
+        .iter()
+        .any(|address| !matched.iter().any(|(c, _)| c == address))
+    {
+        return Ok(ChainNet::ALL.to_vec());
+    }
+    Ok(ChainNet::ALL
+        .into_iter()
+        .filter(|net| matched.iter().any(|(_, network)| network == net.db_name()))
+        .collect())
+}
+
+/// Check the requested book and optional v3 leg on the snapshot used by
+/// every row and count. The statement bound applies to checks and reads.
+pub(super) async fn book_snapshot(
+    state: &MarketplaceState,
+    network: Option<Network>,
+    contracts: &[String],
+    land_possible: bool,
+    trades: bool,
+) -> Result<BookRead, Response> {
+    let (mut tx, now) = order_snapshot(state).await?;
+    let nets = book_networks(
+        &mut tx,
+        &served(state),
+        network,
+        contracts,
+        trades,
+        now,
+        super::trades::mirrored_since(&state.settings, now.naive_utc()),
+    )
+    .await
+    .map_err(read_error)?;
+    let land = land_possible && nets.contains(&ChainNet::Ethereum);
+    if land {
+        let net = state
+            .land_network()
+            .ok_or_else(super::nft_reads::land_unavailable)?;
+        let cursor = crate::land_authz::indexer::cursor_observed(&mut *tx, net.network)
             .await
-            .map_err(db)?;
-        tx
-    };
-    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
-        .bind(format!(
-            "{}ms",
-            super::nft_reads::READ_STATEMENT_TIMEOUT.as_millis()
-        ))
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-    // The statement above established the snapshot (the land path's already
-    // had); every publication it sees was committed before this instant.
-    let now = Utc::now();
+            .map_err(|e| {
+                tracing::warn!(error = %e, "cannot read the land-authz index for the order book");
+                super::nft_reads::land_unavailable()
+            })?;
+        if !cursor.as_ref().is_some_and(|cursor| {
+            crate::land_authz::indexer::observation_ready(
+                cursor,
+                net.land_registry,
+                net.estate_registry,
+            )
+        }) {
+            return Err(super::nft_reads::land_unavailable());
+        }
+    }
     owned_items::check(
         &mut tx,
         state.settings.catalogue(),
-        nets,
+        &nets,
         Rule::Fresh,
         false,
         now,
@@ -468,7 +554,7 @@ pub(crate) async fn book_snapshot(
     // book itself) as the published fold left them: a fold committed past it
     // but not published yet, whichever binary wrote it, is not read.
     let projections: &[&str] = &["nft", "legacy_order"];
-    for &net in nets {
+    for &net in &nets {
         if !super::chain_walk::rows_published_on(
             &mut tx,
             super::chain_walk::INDEXER_NFT,
@@ -485,7 +571,7 @@ pub(crate) async fn book_snapshot(
             )));
         }
     }
-    for &net in nets {
+    for &net in &nets {
         if !super::legacy_orders::caught_up(&mut tx, net)
             .await
             .map_err(read_error)?
@@ -496,8 +582,15 @@ pub(crate) async fn book_snapshot(
             )));
         }
     }
-    super::trades::ready_on(state, &mut tx, now).await?;
-    Ok((tx, now))
+    if trades {
+        super::trades::ready_for_networks_on(state, &mut tx, &nets, now).await?;
+    }
+    Ok(BookRead {
+        tx,
+        now,
+        nets,
+        land,
+    })
 }
 
 /// A statement of an order-book read failed: one Postgres cancelled at the
@@ -513,10 +606,14 @@ fn read_error(e: sqlx::Error) -> Response {
     }
 }
 
+fn reads_trades(f: &OrderFilters) -> bool {
+    f.buyer.is_none() && f.status.as_deref().is_none_or(|s| s == "open")
+}
+
 /// The v3 leg's predicates for `f` and their binds (from `$3`); `None` when
 /// the leg reads nothing (a status other than open, or a buyer).
 fn trades_filters(f: &OrderFilters) -> Option<(String, Vec<String>)> {
-    if f.status.as_deref().is_some_and(|s| s != "open") || f.buyer.is_some() {
+    if !reads_trades(f) {
         return None;
     }
     let mut extra = String::new();
@@ -1093,27 +1190,39 @@ pub async fn list_orders(
     readers::check_window(limit, offset)?;
     let window = offset + limit;
     let (mut merged, legacy_total, trades) = if owned_items::walks_here(state) {
-        let land = reads_land(state, f);
-        let (mut tx, now) = book_snapshot(state, nets_of(f.network), land).await?;
-        let now_ms = now.timestamp_millis();
+        let mut read = book_snapshot(
+            state,
+            f.network,
+            f.contract_address.as_slice(),
+            reads_land(state, f),
+            reads_trades(f),
+        )
+        .await?;
+        let f = read.scoped_filter(f.clone());
+        let now_ms = read.now.timestamp_millis();
         let (rows, total, trades) = async {
-            let rows = book_rows(&mut tx, state, f, window, land, now_ms).await?;
+            let rows = book_rows(&mut read.tx, state, &f, window, read.land, now_ms).await?;
             let cap = readers::count_cap(0, window);
-            let total = book_total(&mut tx, state, f, cap, land, now_ms).await?;
-            let trades = read_trades(&mut tx, state, f, now).await?;
+            let total = book_total(&mut read.tx, state, &f, cap, read.land, now_ms).await?;
+            let trades = read_trades(&mut read.tx, state, &f, read.now).await?;
             Ok::<_, sqlx::Error>((rows, total, trades))
         }
         .await
         .map_err(read_error)?;
-        tx.rollback().await.ok();
+        read.tx.rollback().await.ok();
         (rows, total, trades)
     } else {
         readers::require_networks(state, f.network.map(|n| n.graph()))?;
-        let (mut tx, now) = trade_snapshot(state).await?;
-        let trades = read_trades(&mut tx, state, f, now)
-            .await
-            .map_err(read_error)?;
-        drop(tx);
+        let (trades, now) = if reads_trades(f) {
+            let (mut tx, now) = trade_snapshot(state, nets_of(f.network)).await?;
+            let trades = read_trades(&mut tx, state, f, now)
+                .await
+                .map_err(read_error)?;
+            drop(tx);
+            (trades, now)
+        } else {
+            (Vec::new(), Utc::now())
+        };
         let (rows, total) = legacy_leg(state, f, window, now.timestamp_millis()).await?;
         (rows, total, trades)
     };
@@ -1179,31 +1288,31 @@ pub async fn open_orders_by_items(
     let mut per: Vec<(String, Vec<Keyed>)> = Vec::with_capacity(contracts.len());
     if owned_items::walks_here(state) {
         let land = contracts.iter().any(|c| is_land_registry(state, c));
-        let (mut tx, now) = book_snapshot(state, &ChainNet::ALL, land).await?;
+        let mut read = book_snapshot(state, None, &contracts, land, true).await?;
         for contract in &contracts {
-            let f = filters(contract);
+            let f = read.scoped_filter(filters(contract));
             let rows = async {
                 let mut rows = book_rows(
-                    &mut tx,
+                    &mut read.tx,
                     state,
                     &f,
                     per_contract,
-                    land,
-                    now.timestamp_millis(),
+                    read.land,
+                    read.now.timestamp_millis(),
                 )
                 .await?;
-                rows.extend(read_trades(&mut tx, state, &f, now).await?);
+                rows.extend(read_trades(&mut read.tx, state, &f, read.now).await?);
                 Ok::<_, sqlx::Error>(rows)
             }
             .await
             .map_err(read_error)?;
             per.push((contract.clone(), rows));
         }
-        tx.rollback().await.ok();
+        read.tx.rollback().await.ok();
     } else {
         readers::require_both_collections(state)?;
         let fs: Vec<OrderFilters> = contracts.iter().map(filters).collect();
-        let (mut tx, now) = trade_snapshot(state).await?;
+        let (mut tx, now) = trade_snapshot(state, &ChainNet::ALL).await?;
         let mut trades = Vec::with_capacity(fs.len());
         for f in &fs {
             trades.push(

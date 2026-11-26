@@ -3192,10 +3192,6 @@
           "kind": "regular"
         },
         {
-          "name": "ColorPicker.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "ColorPicker.tsx",
           "kind": "regular"
         },
@@ -3205,14 +3201,6 @@
         },
         {
           "name": "ControlButton.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "DateField.module.css",
-          "kind": "regular"
-        },
-        {
-          "name": "DateField.tsx",
           "kind": "regular"
         },
         {
@@ -3232,15 +3220,7 @@
           "kind": "regular"
         },
         {
-          "name": "HintsButton.module.css",
-          "kind": "regular"
-        },
-        {
           "name": "HintsButton.tsx",
-          "kind": "regular"
-        },
-        {
-          "name": "IconButton.module.css",
           "kind": "regular"
         },
         {
@@ -5054,10 +5034,6 @@
           "kind": "regular"
         },
         {
-          "name": "dateField.test.tsx",
-          "kind": "regular"
-        },
-        {
           "name": "design.ported.test.tsx",
           "kind": "regular"
         },
@@ -5098,6 +5074,10 @@
           "kind": "regular"
         },
         {
+          "name": "hintsButton.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "host.ts",
           "kind": "regular"
         },
@@ -5107,6 +5087,10 @@
         },
         {
           "name": "hudInset.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "iconButton.test.tsx",
           "kind": "regular"
         },
         {
@@ -7798,6 +7782,10 @@
           "kind": "directory"
         },
         {
+          "name": "ColorPicker",
+          "kind": "directory"
+        },
+        {
           "name": "CommunityCard",
           "kind": "directory"
         },
@@ -7811,6 +7799,10 @@
         },
         {
           "name": "CountBadge",
+          "kind": "directory"
+        },
+        {
+          "name": "DateField",
           "kind": "directory"
         },
         {
@@ -7839,6 +7831,10 @@
         },
         {
           "name": "FriendCTA",
+          "kind": "directory"
+        },
+        {
+          "name": "HintsButton",
           "kind": "directory"
         },
         {
@@ -7927,6 +7923,10 @@
         },
         {
           "name": "ProgressBar",
+          "kind": "directory"
+        },
+        {
+          "name": "RailButton",
           "kind": "directory"
         },
         {
@@ -8363,6 +8363,27 @@
       ]
     },
     {
+      "path": "library/ui/components/ColorPicker",
+      "entries": [
+        {
+          "name": "ColorPicker.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "ColorPicker.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ColorPicker.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "hsv.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/components/CommunityCard",
       "entries": [
         {
@@ -8446,6 +8467,23 @@
         },
         {
           "name": "CountBadge.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/DateField",
+      "entries": [
+        {
+          "name": "DateField.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "DateField.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "DateField.tsx",
           "kind": "regular"
         }
       ]
@@ -8585,6 +8623,23 @@
         },
         {
           "name": "FriendCTA.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/HintsButton",
+      "entries": [
+        {
+          "name": "HintsButton.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "HintsButton.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "HintsButton.tsx",
           "kind": "regular"
         }
       ]
@@ -9095,6 +9150,23 @@
         },
         {
           "name": "ProgressBar.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/components/RailButton",
+      "entries": [
+        {
+          "name": "RailButton.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "RailButton.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "RailButton.tsx",
           "kind": "regular"
         }
       ]
@@ -10937,7 +11009,7 @@
     },
     {
       "path": "library/explorer-core/lib/color.ts",
-      "sha256": "2d6fdf87314ce3c3bedbdb79d1c659c14f554fb9bfbdd3118dc3ef93be34bdf0"
+      "sha256": "abfe73e801efb8283049e19718522b71dbcc0fe92eafa71326c62f02dc4c6f61"
     },
     {
       "path": "library/explorer-core/lib/debugPanelLauncher.ts",
@@ -12812,12 +12884,8 @@
       "sha256": "e6ab86b20be1428cfca802486f6486af3a99084155c04f0471e6273506c762af"
     },
     {
-      "path": "library/ui/apps/hud/design/ColorPicker.module.css",
-      "sha256": "fb067cc491322700937c01e9b33ca2640c7383033a83d1b7db00a8171b3ca1af"
-    },
-    {
       "path": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "sha256": "0fa508cfb404d26cfbe15ef8b93e1210ef3b3f00f98f0d2c23b78661f825602c"
+      "sha256": "b7f3264f5785e31d00fa4f827572cd37ec8d032531140dc6ec36e21a00403d58"
     },
     {
       "path": "library/ui/apps/hud/design/ContextMenu.tsx",
@@ -12826,14 +12894,6 @@
     {
       "path": "library/ui/apps/hud/design/ControlButton.tsx",
       "sha256": "0eb195108e6a51c5683749569ebe8863fd8e1af5d6f6bcad3415765ab88da09a"
-    },
-    {
-      "path": "library/ui/apps/hud/design/DateField.module.css",
-      "sha256": "f5867dc1b22e1e2775777507bd991a5e5ea92339d5752c061a09f4bd6cac83a8"
-    },
-    {
-      "path": "library/ui/apps/hud/design/DateField.tsx",
-      "sha256": "d42d29a06f815ff0d83e007587581469fe79069969a61e94a822460b4ac3c467"
     },
     {
       "path": "library/ui/apps/hud/design/Dropdown.tsx",
@@ -12852,20 +12912,12 @@
       "sha256": "d9c24c0b7d680277ff0648a2cde8907a18d3f5835ea0422c63ee33e3e3fa1340"
     },
     {
-      "path": "library/ui/apps/hud/design/HintsButton.module.css",
-      "sha256": "86dbd7300b98fb2a5c3a0141751df84afe068b2f1367d241e241fd09ed6e5d05"
-    },
-    {
       "path": "library/ui/apps/hud/design/HintsButton.tsx",
-      "sha256": "a1c55c349045f70ff29daba707d991cc6f175ee325a60986a70b06e0682135cd"
-    },
-    {
-      "path": "library/ui/apps/hud/design/IconButton.module.css",
-      "sha256": "29f7a5a13a4b15af7fdf9a8d7b460d2c981cadf346412700f8d491f1a454df9e"
+      "sha256": "43319d315358e92faddc2f9cde31f40c0215758e8f95463fa4b554b2a80db4a3"
     },
     {
       "path": "library/ui/apps/hud/design/IconButton.tsx",
-      "sha256": "b2132503059f044d134ba07e81e30dba77a3f53accc212787f2f323be83717f1"
+      "sha256": "91a86bb31bc6bd69536b4ee50295cc93fc0c8481ff48b9b1d42ce00ea976dd39"
     },
     {
       "path": "library/ui/apps/hud/design/KebabMenu.tsx",
@@ -12905,11 +12957,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "403994347ceeeca417c8e7f28076aadede0487c9b641a0fa6d1e4cb5a1c18947"
+      "sha256": "0be03b233e50b54c3b00ce728685ccfa454bfad0367730c7bc820fecf6cbd348"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "385173b8cb4469315f3c28864fd488caf7af85926ce325ec77f7d3a79e1f3141"
+      "sha256": "16e474884dfda787a84dfab9c40d69dd1c8b9eabd15d7aadb28592ec48d0ed8f"
     },
     {
       "path": "library/ui/apps/hud/design/Submenu.tsx",
@@ -12949,7 +13001,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "4b18d534153a9dc19ff9656127e6396107b8893b9991173f0567b84693003007"
+      "sha256": "1af0520d3a19f61206085c095a11894c442c20e787d81247ac62707dcdd8b94c"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -12977,7 +13029,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "cfa2e110323f15d1fd4f0debf757836293776220ffb88341b4ce6e12f392f804"
+      "sha256": "2a90c69c4f3ea3edebbc4306d4a34975cbbf16623c3cdb9be6bec2cffaa678fa"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -13521,7 +13573,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
-      "sha256": "633a9e0b4fb254821b7be266abe8a4912cc45c360efc5f8926e1639ed6d4d65e"
+      "sha256": "4873bbf05d89ce0f22b3dee9d25edc482dcfc559084751889093788a3a5c4bae"
     },
     {
       "path": "library/ui/apps/hud/features/itemPurchase/answer.ts",
@@ -13901,7 +13953,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.tsx",
-      "sha256": "10f4cb425fe904701be9db04363746212f4446fca96fc711a4cc383a2c3111f1"
+      "sha256": "308072e5686cd439803c3dd676ba8c2ca3a0f5608dead8d3509731a7b801b76d"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePanel.module.css",
@@ -14241,7 +14293,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "14cdbde73d77ae11f46487b2fe20af5c69c402d89d94cf38430321a67fc9f4e8"
+      "sha256": "d4cbe6f3a0c5f147581cc27f1cb9b5e7792fa9abf278de2f935258554d7b1675"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -14273,11 +14325,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/colorPicker.test.tsx",
-      "sha256": "464d231453e4cb2de75adde0c9e43fb62e0018fac4e7648754210bd97ebde00c"
-    },
-    {
-      "path": "library/ui/apps/hud/test/dateField.test.tsx",
-      "sha256": "42f067e0a690a0144289cc9298bfff715a9d627ec48960180aa31be030e4ab67"
+      "sha256": "d6cb03702c9a08534e76f40d4b0f27c6fdeaf4737c4f530896c22183d1852391"
     },
     {
       "path": "library/ui/apps/hud/test/design.ported.test.tsx",
@@ -14318,6 +14366,10 @@
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
       "sha256": "18a3415f095a329832179f3298202e86893cb4d81a68d89bc87cf3ad1595dc59"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "sha256": "de3f5ed9a4b4e98e3ed53ab25f7e2ddfe56d228f9d594364daf6dd3cb8ddb621"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -14790,6 +14842,10 @@
     {
       "path": "library/ui/apps/hud/test/hudInset.test.tsx",
       "sha256": "4c42a2f79f9a2ed4194120812359015a60e9a9f9971f1675e85299379dc66d9a"
+    },
+    {
+      "path": "library/ui/apps/hud/test/iconButton.test.tsx",
+      "sha256": "1d0e2b6851b2e5ca13e6068cc35a06c5e5e87f28ab5565f242c46cd3fd59b256"
     },
     {
       "path": "library/ui/apps/hud/test/integratedGpuGuide.test.tsx",
@@ -16772,6 +16828,18 @@
       "sha256": "ee6bc3230966414ffb062abaa0936d5c88e2f7c2e8ca0418860afd4fed299945"
     },
     {
+      "path": "library/ui/components/ColorPicker/ColorPicker.module.css",
+      "sha256": "e07e65b2baa47565a6dbf29a35f147eb01c0c115346a1149b708e5fb7a66d7b4"
+    },
+    {
+      "path": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "sha256": "bed1e4fe91b8b5e4362ce0b2bbcb265c43776eda0a36494bc3ce43d96a8616a1"
+    },
+    {
+      "path": "library/ui/components/ColorPicker/hsv.ts",
+      "sha256": "a24e521215a0203ce93ce15b5d1b7200672c6b8a07cb717a51bde326f6c56ae9"
+    },
+    {
       "path": "library/ui/components/CommunityCard/CommunityCard.module.css",
       "sha256": "b0708d055279c62bd8192473130f472ead1dd26ceec5074845e35508df9da3e4"
     },
@@ -16810,6 +16878,14 @@
     {
       "path": "library/ui/components/CountBadge/CountBadge.tsx",
       "sha256": "e4d4e419272750efa3ccecbf741599a644772f1cefeca3dea8fc742bd3c0ba03"
+    },
+    {
+      "path": "library/ui/components/DateField/DateField.module.css",
+      "sha256": "a29ae9079a132c16a2392d5fb475c9079622e71ea757d850bc3f2ee422585773"
+    },
+    {
+      "path": "library/ui/components/DateField/DateField.tsx",
+      "sha256": "a148bf9b7b8b0febfb7ccb32b935317b7d8023863bed4df78edd589e3c5ad099"
     },
     {
       "path": "library/ui/components/DclLogo/DclLogo.tsx",
@@ -16866,6 +16942,14 @@
     {
       "path": "library/ui/components/FriendCTA/FriendCTA.tsx",
       "sha256": "3d2c544bd8fc90b34bbac62646194d174fedcee8402597b1bc6332a14770b0d8"
+    },
+    {
+      "path": "library/ui/components/HintsButton/HintsButton.module.css",
+      "sha256": "ed8fa245c74d518ebaf12d966daf43f0d73fdedc85d4838d159c2ed3546b7be5"
+    },
+    {
+      "path": "library/ui/components/HintsButton/HintsButton.tsx",
+      "sha256": "dafaa046751f33a5ef93439bfa58586ca968b543979e9b0f69dd01ab9aed850c"
     },
     {
       "path": "library/ui/components/InputExplorerNames/InputExplorerNames.module.css",
@@ -17066,6 +17150,14 @@
     {
       "path": "library/ui/components/ProgressBar/ProgressBar.tsx",
       "sha256": "73a805fe83953b2352af7351760bd1a9fdbd22bf323ac6cb70725b586b68d799"
+    },
+    {
+      "path": "library/ui/components/RailButton/RailButton.module.css",
+      "sha256": "0d9b5ba3d50ce410006a1005c987b7a380a28bb83b64235764d39936104651bc"
+    },
+    {
+      "path": "library/ui/components/RailButton/RailButton.tsx",
+      "sha256": "ee49ec87cb55224a021e24dbe164b3352113d8b42cf1387f45fc57d196c541e8"
     },
     {
       "path": "library/ui/components/ScrollThumb/ScrollThumb.module.css",
@@ -17341,7 +17433,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "23ae153e7cfbacb0bc126d9747d48305c2e84924263df7999ef421a766112821"
+      "sha256": "488221341fd8f86bd5fffcb3ae056a13ab15f3e8d41c26ca0f2a0948ddc5cc8f"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -21399,32 +21491,17 @@
     },
     {
       "from": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "to": "library/explorer-core/lib/color.ts",
+      "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "to": "library/explorer-core/lib/color.ts",
+      "to": "library/ui/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "to": "library/explorer-core/lib/color.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "to": "library/ui/apps/hud/design/ColorPicker.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "to": "library/ui/apps/hud/design/ColorPicker.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "to": "library/ui/apps/hud/design/ColorPicker.module.css",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -21470,36 +21547,6 @@
     {
       "from": "library/ui/apps/hud/design/ControlButton.tsx",
       "to": "library/ui/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DateField.tsx",
-      "to": "library/ui/apps/hud/design/DateField.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DateField.tsx",
-      "to": "library/ui/apps/hud/design/DateField.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DateField.tsx",
-      "to": "library/ui/apps/hud/design/DateField.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DateField.tsx",
-      "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DateField.tsx",
-      "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/DateField.tsx",
-      "to": "library/ui/apps/hud/design/Select.tsx",
       "kind": "test:runtime"
     },
     {
@@ -21594,21 +21641,6 @@
     },
     {
       "from": "library/ui/apps/hud/design/HintsButton.tsx",
-      "to": "library/ui/apps/hud/design/HintsButton.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/HintsButton.tsx",
-      "to": "library/ui/apps/hud/design/HintsButton.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/HintsButton.tsx",
-      "to": "library/ui/apps/hud/design/HintsButton.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/HintsButton.tsx",
       "to": "library/ui/index.ts",
       "kind": "native:runtime"
     },
@@ -21635,21 +21667,6 @@
     {
       "from": "library/ui/apps/hud/design/IconButton.tsx",
       "to": "library/ui/apps/hud/design/Avatar.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/IconButton.tsx",
-      "to": "library/ui/apps/hud/design/IconButton.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/IconButton.tsx",
-      "to": "library/ui/apps/hud/design/IconButton.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/IconButton.tsx",
-      "to": "library/ui/apps/hud/design/IconButton.module.css",
       "kind": "test:runtime"
     },
     {
@@ -22775,21 +22792,6 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/ControlButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/index.ts",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
       "kind": "test:runtime"
     },
     {
@@ -31025,6 +31027,21 @@
     {
       "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
       "to": "library/ui/apps/hud/features/hideUi/hideUiToast.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/hideUi/hideUiToast.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -44693,21 +44710,6 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/test/dateField.test.tsx",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/dateField.test.tsx",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/test/dateField.test.tsx",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "test:runtime"
-    },
-    {
       "from": "library/ui/apps/hud/test/design.ported.test.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
@@ -45005,6 +45007,51 @@
     {
       "from": "library/ui/apps/hud/test/harness.tsx",
       "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/ui/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hintsButton.test.tsx",
+      "to": "library/ui/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -50990,6 +51037,21 @@
     {
       "from": "library/ui/apps/hud/test/hudInset.test.tsx",
       "to": "library/ui/apps/hud/lib/hudInset.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/iconButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/iconButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/iconButton.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -62378,6 +62440,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "to": "library/ui/components/ColorPicker/ColorPicker.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "to": "library/ui/components/ColorPicker/ColorPicker.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "to": "library/ui/components/ColorPicker/ColorPicker.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "to": "library/ui/components/ColorPicker/hsv.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "to": "library/ui/components/ColorPicker/hsv.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "to": "library/ui/components/ColorPicker/hsv.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/components/CommunityCard/CommunityCard.module.css",
       "to": "library/ui/foundations/typography/text-styles.module.css",
       "kind": "native:composes"
@@ -62600,6 +62692,36 @@
     {
       "from": "library/ui/components/CountBadge/CountBadge.tsx",
       "to": "library/ui/components/CountBadge/CountBadge.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/DateField/DateField.tsx",
+      "to": "library/ui/components/DateField/DateField.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/DateField/DateField.tsx",
+      "to": "library/ui/components/DateField/DateField.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/DateField/DateField.tsx",
+      "to": "library/ui/components/DateField/DateField.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/DateField/DateField.tsx",
+      "to": "library/ui/components/Dropdown/Dropdown.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/DateField/DateField.tsx",
+      "to": "library/ui/components/Dropdown/Dropdown.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/DateField/DateField.tsx",
+      "to": "library/ui/components/Dropdown/Dropdown.tsx",
       "kind": "test:runtime"
     },
     {
@@ -62855,6 +62977,36 @@
     {
       "from": "library/ui/components/FriendCTA/FriendCTA.tsx",
       "to": "library/ui/foundations/icons/menus.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/HintsButton/HintsButton.tsx",
+      "to": "library/ui/components/HintsButton/HintsButton.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/HintsButton/HintsButton.tsx",
+      "to": "library/ui/components/HintsButton/HintsButton.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/HintsButton/HintsButton.tsx",
+      "to": "library/ui/components/HintsButton/HintsButton.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/HintsButton/HintsButton.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/HintsButton/HintsButton.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/HintsButton/HintsButton.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
       "kind": "test:runtime"
     },
     {
@@ -63560,6 +63712,36 @@
     {
       "from": "library/ui/components/ProgressBar/ProgressBar.tsx",
       "to": "library/ui/components/ProgressBar/ProgressBar.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/RailButton/RailButton.tsx",
+      "to": "library/ui/components/RailButton/RailButton.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/RailButton/RailButton.tsx",
+      "to": "library/ui/components/RailButton/RailButton.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/RailButton/RailButton.tsx",
+      "to": "library/ui/components/RailButton/RailButton.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/components/RailButton/RailButton.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/components/RailButton/RailButton.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/components/RailButton/RailButton.tsx",
+      "to": "library/ui/components/Tooltip/Tooltip.tsx",
       "kind": "test:runtime"
     },
     {
@@ -64789,6 +64971,21 @@
     },
     {
       "from": "library/ui/index.ts",
+      "to": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
       "to": "library/ui/components/CommunityCard/CommunityCard.tsx",
       "kind": "native:runtime"
     },
@@ -64875,6 +65072,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/CountBadge/CountBadge.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/DateField/DateField.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/DateField/DateField.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/DateField/DateField.tsx",
       "kind": "test:runtime"
     },
     {
@@ -64980,6 +65192,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/FriendCTA/FriendCTA.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/HintsButton/HintsButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/HintsButton/HintsButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/HintsButton/HintsButton.tsx",
       "kind": "test:runtime"
     },
     {
@@ -65340,6 +65567,21 @@
     {
       "from": "library/ui/index.ts",
       "to": "library/ui/components/ProgressBar/ProgressBar.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/RailButton/RailButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/RailButton/RailButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/components/RailButton/RailButton.tsx",
       "kind": "test:runtime"
     },
     {
@@ -67369,11 +67611,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Dropdown.tsx",
       "kind": "type"
     },
@@ -68599,11 +68836,6 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "to": "library/ui/apps/hud/test/dateField.test.tsx",
-      "kind": "type"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/design.ported.test.tsx",
       "kind": "type"
     },
@@ -68650,6 +68882,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hintsButton.test.tsx",
       "kind": "type"
     },
     {
@@ -69240,6 +69477,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hudInset.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/iconButton.test.tsx",
       "kind": "type"
     },
     {
@@ -70224,6 +70466,16 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/ColorPicker/ColorPicker.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/ColorPicker/hsv.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/CommunityCard/CommunityCard.tsx",
       "kind": "type"
     },
@@ -70250,6 +70502,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/CountBadge/CountBadge.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/DateField/DateField.tsx",
       "kind": "type"
     },
     {
@@ -70290,6 +70547,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/FriendCTA/FriendCTA.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/HintsButton/HintsButton.tsx",
       "kind": "type"
     },
     {
@@ -70425,6 +70687,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/components/ProgressBar/ProgressBar.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/components/RailButton/RailButton.tsx",
       "kind": "type"
     },
     {

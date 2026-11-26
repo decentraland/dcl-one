@@ -42,8 +42,8 @@ const sections = (container: HTMLElement, attribute: string) =>
   [...container.querySelectorAll(`[${attribute}]`)].map((node) => node.getAttribute(attribute))
 
 describe('when the component pages are grouped for the sidebar and the Showcase', () => {
-  it('should keep each group at its first page and every page in registry order', () => {
-    const groups = groupEntries([page('A', 'One'), page('B', 'Two'), page('C', 'One')])
+  it('should keep each group at its first page and list the pages of each by name', () => {
+    const groups = groupEntries([page('C', 'One'), page('B', 'Two'), page('A', 'One')])
     expect(groups.map((group) => [group.name, group.entries.map((entry) => entry.name)])).toEqual([
       ['One', ['A', 'C']],
       ['Two', ['B']]
@@ -61,7 +61,7 @@ describe('when the component pages are grouped for the sidebar and the Showcase'
     expect(entries.flatMap((entry) => entry.components)).not.toContain(COMPONENT_OVERVIEW)
     expect(Object.keys(library)).not.toContain(COMPONENT_OVERVIEW)
     expect(componentPages.at(-1)).toBe(COMPONENT_OVERVIEW)
-    expect(componentPages[0]).toBe(entries[0]!.name)
+    expect(componentPages[0]).toBe(componentGroups[0]!.entries[0]!.name)
   })
 })
 
@@ -72,7 +72,8 @@ describe('when the Showcase canvas draws the component pages', () => {
     expect(sections(container, 'data-showcase-group')).toEqual(
       componentGroups.map((group) => group.name)
     )
-    expect(sections(container, 'data-showcase-page')).toEqual(entries.map((entry) => entry.name))
+    expect(sections(container, 'data-showcase-page')).toEqual(componentPages.slice(0, -1))
+    expect(sections(container, 'data-showcase-page')).toHaveLength(entries.length)
     expect(
       [...container.querySelectorAll('[data-showcase-group] > h2')].map((node) => node.textContent)
     ).toEqual(componentGroups.map((group) => group.name))
@@ -192,7 +193,12 @@ describe('when the Showcase canvas draws the component pages', () => {
     const { container } = render(<ComponentShowcase />)
     expect(
       [...container.querySelectorAll('iframe')].map((frame) => frame.title.replace(' canvas', ''))
-    ).toEqual(entries.filter((entry) => entry.minHeight).map((entry) => entry.name))
+    ).toEqual(
+      componentGroups
+        .flatMap((group) => group.entries)
+        .filter((entry) => entry.minHeight)
+        .map((entry) => entry.name)
+    )
   })
 })
 
