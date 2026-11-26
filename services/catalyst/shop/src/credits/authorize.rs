@@ -459,13 +459,12 @@ impl Credits {
     /// Flip past-expiry pledges: `authorized` to `expired`, `retired` to
     /// `released`, bounded by the CreditUsed index when one is configured
     /// (`usage::expiry_bound_sql`: never before the chain has been read past
-    /// the expiry). The outbox worker tick inlines this same UPDATE.
+    /// the expiry), queueing the alerts the expiry shows. The outbox worker
+    /// tick runs these same CTEs (`alerts::expiry_ctes`).
     pub async fn expire_stale_authorizations(&self) -> Result<u64, ApiError> {
         let sql = format!(
-            "UPDATE credits.authorizations SET status = CASE status WHEN 'retired' THEN 'released' ELSE 'expired' END \
-             WHERE status IN ('authorized', 'retired') AND expires_at <= {} \
-             RETURNING status",
-            super::usage::expiry_bound_sql("$1", "$2")
+            "WITH {} SELECT status FROM expired",
+            super::alerts::expiry_ctes("$1", "$2")
         );
         let statuses: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(now())

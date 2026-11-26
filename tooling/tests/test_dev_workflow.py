@@ -634,12 +634,13 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         changes = jobs()['changes']
         self.assertNotIn('continue-on-error', changes)
         last = re.split(r'(?m)^      - ', changes)[-1]
+        command = ('python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local '
+                   'tooling.tests.test_ui_gallery_receipt.WorkflowTest tooling.tests.test_image_cache.CompileWorkflowTest')
         self.assertEqual([line for line in last.splitlines() if line.strip() and not line.lstrip().startswith('#')],
-                         ['name: Run the workflow tests',
-                          '        run: python3 -m unittest tooling.tests.test_dev_workflow tooling.tests.test_ci_local '
-                          'tooling.tests.test_ui_gallery_receipt.WorkflowTest '
-                          'tooling.tests.test_image_cache.CompileWorkflowTest'],
+                         ['name: Run the workflow tests', f'        run: {command}'],
                          msg='Changes must end with exactly this step, after the steps that set its outputs')
+        local = runpy.run_path(str(WORKFLOW.parents[2] / 'tooling/ci-local.py'))['WORKFLOW_TESTS'].command
+        self.assertEqual(local, command, msg="ci-local must run the Changes job's workflow tests")
 
     def test_only_unit_suites_are_gated_by_web_selection(self):
         web = jobs()['web']

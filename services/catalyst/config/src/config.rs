@@ -200,7 +200,7 @@ impl Config {
     /// bearers, service tokens, the console's session key): a short one is
     /// guessable or brute-forced offline, so startup refuses it. Bearers this
     /// node sends elsewhere keep their issuer's length.
-    pub const OPERATOR_SECRETS: [&'static str; 25] = [
+    pub const OPERATOR_SECRETS: [&'static str; 26] = [
         "SESSION_SECRET",
         "CATALYRST_CONTENT_ADMIN_TOKEN",
         "COMMUNITIES_ADMIN_TOKEN",
@@ -213,6 +213,7 @@ impl Config {
         "CATALYRST_WORLDS_ADMIN_TOKEN",
         "SCENE_HOST_ADMIN_TOKEN",
         "MARKET_ADMIN_TOKEN",
+        "HISTORICAL_ADMIN_TOKEN",
         "PRICE_ADMIN_TOKEN",
         "CATALYRST_ECONOMY_ADMIN_TOKEN",
         "CATALYRST_CREDITS_ADMIN_TOKEN",
@@ -281,7 +282,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 82] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 84] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -437,6 +438,10 @@ impl Config {
                 "MARKET_ADMIN_TOKEN",
                 &mut self.marketplace.market_admin_token,
             ),
+            (
+                "HISTORICAL_ADMIN_TOKEN",
+                &mut self.marketplace.historical_admin_token,
+            ),
             ("PRICE_ADMIN_TOKEN", &mut self.price.price_admin_token),
             ("RELAYER_PRIVATE_KEY", &mut self.economy.relayer_private_key),
             ("OZ_RELAYER_API_KEY", &mut self.economy.oz_relayer_api_key),
@@ -460,6 +465,10 @@ impl Config {
             (
                 "CREDITS_CAPTCHA_SECRET",
                 &mut self.shop.credits_captcha_secret,
+            ),
+            (
+                "CREDITS_ALERTS_SLACK_WEBHOOK",
+                &mut self.shop.credits_alerts_slack_webhook,
             ),
             ("STRIPE_SECRET_KEY", &mut self.shop.stripe_secret_key),
             (
@@ -837,6 +846,7 @@ mod tests {
         "TRADE_RPC_URLS",
         "CHAIN_LOGS_PORTAL_API_KEY",
         "CREDITS_CAPTCHA_SECRET",
+        "CREDITS_ALERTS_SLACK_WEBHOOK",
         "STRIPE_SECRET_KEY",
         "STRIPE_WEBHOOK_SECRET",
         "CREDITS_SIGNER_KEY",
@@ -1304,6 +1314,7 @@ mod tests {
         for var in [
             "SEGMENT_SIGNING_KEY",
             "MARKET_ADMIN_TOKEN",
+            "HISTORICAL_ADMIN_TOKEN",
             "PRICE_ADMIN_TOKEN",
             "RELAYER_PRIVATE_KEY",
             "OZ_RELAYER_API_KEY",
