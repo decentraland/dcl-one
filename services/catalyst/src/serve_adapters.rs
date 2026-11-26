@@ -171,6 +171,22 @@ impl explore::api::map::LandMarket for ShopLandMarket {
     }
 }
 
+/// The analytics API as the credits revenue events' sink
+/// (`shop::credits::events`), under credits-server's context.
+pub(super) struct CreditsRevenueEvents(social::analytics::Analytics);
+
+impl CreditsRevenueEvents {
+    pub(super) fn new(analytics: &social::analytics::Analytics) -> Self {
+        Self(analytics.with_context(shop::credits::events::ANALYTICS_CONTEXT))
+    }
+}
+
+impl shop::credits::events::RevenueEvents for CreditsRevenueEvents {
+    fn fire(&self, event: &str, properties: serde_json::Value) {
+        self.0.fire_event(event, properties);
+    }
+}
+
 /// Social's SendGrid sender as the Shop deliveries worker's mailer.
 pub(super) struct ShopMailer(pub(super) social::notifications::email::EmailSender);
 
@@ -212,5 +228,55 @@ pub(super) struct ShopNameOwners(pub(super) Arc<shop::market::MarketplaceState>)
 impl comms::interfaces::NameOwnerReader for ShopNameOwners {
     async fn name_owner(&self, name: &str) -> Result<Option<Address>, String> {
         self.0.name_owner(name).await
+    }
+}
+
+#[cfg(test)]
+mod credits_revenue_events_tests {
+    use super::*;
+
+    /// The credits revenue events reach the analytics API under
+    /// credits-server's context, not Social's.
+    #[tokio::test]
+    async fn credits_revenue_events_post_under_credits_servers_context() {
+        let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let app = axum::Router::new().route(
+            "/events",
+            axum::routing::post(move |body: axum::body::Bytes| {
+                let sent = sent.clone();
+                async move {
+                    let _ = sent.send(serde_json::from_slice::<serde_json::Value>(&body).unwrap());
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let analytics = social::analytics::Analytics::new(
+            &crate::http::Outbound::for_tests(),
+            social::analytics::Settings {
+                context: Some("social".into()),
+                api_url: Some(format!("http://{address}/events")),
+                api_token: Some("token".into()),
+                environment: Some("test".into()),
+                request_timeout_ms: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+        let events = CreditsRevenueEvents::new(&analytics);
+        shop::credits::events::RevenueEvents::fire(
+            &events,
+            shop::credits::events::STRIPE_CREDIT_GRANTED,
+            serde_json::json!({ "orderId": "ord_1" }),
+        );
+        let posted = tokio::time::timeout(std::time::Duration::from_secs(5), received.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(posted["context"], "credits-server");
+        assert_eq!(posted["event"], "stripe_credit_granted");
+        assert_eq!(posted["body"]["orderId"], "ord_1");
     }
 }

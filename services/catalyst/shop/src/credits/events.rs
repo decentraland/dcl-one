@@ -8,13 +8,17 @@
 //!
 //! Each is sent once, after the transaction that made it true commits, and
 //! fired rather than awaited: the analytics API can neither delay nor fail a
-//! payment or a settlement. `orderId` and `salt` are the dedupe keys the
-//! client events share. They go under credits-server's context
-//! ([`ANALYTICS_CONTEXT`]), so the warehouse reads them as it did.
+//! payment or a settlement. `orderId` is the key the client's pack event
+//! shares; a settled credit that bought several items reports one event per
+//! line, as credits-server reported one per intent, so its lines share the
+//! `salt` and `salt` with `tradeId` tells them apart.
+//!
+//! The Shop builds without Social, so it fires through [`RevenueEvents`],
+//! which the node attaches (`serve_adapters`): the analytics API, under
+//! credits-server's context ([`ANALYTICS_CONTEXT`]), so the warehouse reads
+//! the events as it did.
 
 use serde_json::{Value, json};
-
-use crate::social::analytics::Analytics;
 
 /// The context credits-server reported under (its default `ANALYTICS_CONTEXT`).
 pub const ANALYTICS_CONTEXT: &str = "credits-server";
@@ -86,10 +90,16 @@ pub fn purchase_settled(settled: &PurchaseSettled<'_>) -> Value {
     })
 }
 
-/// Fires `event` when analytics is configured; never waits on it.
-pub fn fire(analytics: Option<&Analytics>, event: &str, properties: Value) {
-    if let Some(analytics) = analytics {
-        analytics.fire_event(event, properties);
+/// Where the revenue events go. `fire` must not wait on the delivery: it is
+/// called on the payment and settlement paths, after their commits.
+pub trait RevenueEvents: Send + Sync {
+    fn fire(&self, event: &str, properties: Value);
+}
+
+/// Fires `event` when the node attached somewhere to send it; never waits.
+pub fn fire(events: Option<&dyn RevenueEvents>, event: &str, properties: Value) {
+    if let Some(events) = events {
+        events.fire(event, properties);
     }
 }
 
@@ -106,26 +116,30 @@ fn number(credits: &str) -> Value {
         .map_or(Value::Null, |f| json!(f))
 }
 
-/// An analytics client posting to a local endpoint, and what it received.
+/// A [`RevenueEvents`] that keeps what it was given, for the tests.
 #[cfg(test)]
 pub(crate) mod capture {
+    use std::sync::Arc;
     use std::time::Duration;
 
-    use axum::Router;
-    use axum::extract::Request;
-    use axum::routing::post;
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use tokio::sync::mpsc;
 
-    use crate::social::analytics::{Analytics, Settings};
+    pub(crate) struct Sink(mpsc::UnboundedSender<Value>);
+
+    impl super::RevenueEvents for Sink {
+        fn fire(&self, event: &str, properties: Value) {
+            let _ = self.0.send(json!({ "event": event, "body": properties }));
+        }
+    }
 
     pub(crate) struct Captured {
-        pub(crate) analytics: Analytics,
+        pub(crate) events: Arc<Sink>,
         received: mpsc::UnboundedReceiver<Value>,
     }
 
     impl Captured {
-        /// The next payload posted, or `None` after `wait`.
+        /// The next `{event, body}` fired, or `None` after `wait`.
         pub(crate) async fn next(&mut self, wait: Duration) -> Option<Value> {
             tokio::time::timeout(wait, self.received.recv())
                 .await
@@ -134,39 +148,10 @@ pub(crate) mod capture {
         }
     }
 
-    pub(crate) async fn analytics() -> Captured {
+    pub(crate) fn events() -> Captured {
         let (sent, received) = mpsc::unbounded_channel();
-        let app = Router::new().route(
-            "/events",
-            post(move |request: Request| {
-                let sent = sent.clone();
-                async move {
-                    let bytes = axum::body::to_bytes(request.into_body(), 1 << 20)
-                        .await
-                        .unwrap();
-                    let _ = sent.send(serde_json::from_slice::<Value>(&bytes).unwrap());
-                    axum::http::StatusCode::OK
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let analytics = Analytics::new(
-            &crate::http::Outbound::for_tests(),
-            Settings {
-                context: Some("social".into()),
-                api_url: Some(format!("http://{address}/events")),
-                api_token: Some("token".into()),
-                environment: Some("test".into()),
-                request_timeout_ms: None,
-            },
-        )
-        .unwrap()
-        .unwrap()
-        .with_context(super::ANALYTICS_CONTEXT);
         Captured {
-            analytics,
+            events: Arc::new(Sink(sent)),
             received,
         }
     }
@@ -211,17 +196,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_event_goes_under_credits_servers_context() {
-        let mut captured = capture::analytics().await;
+    async fn an_event_goes_to_the_attached_events_or_nowhere() {
+        let mut captured = capture::events();
         fire(
-            Some(&captured.analytics),
+            Some(captured.events.as_ref()),
             STRIPE_CREDIT_GRANTED,
             json!({ "orderId": "ord_1" }),
         );
-        let posted = captured.next(Duration::from_secs(5)).await.unwrap();
-        assert_eq!(posted["event"], STRIPE_CREDIT_GRANTED);
-        assert_eq!(posted["context"], ANALYTICS_CONTEXT);
-        assert_eq!(posted["body"]["orderId"], "ord_1");
+        let fired = captured.next(Duration::from_secs(5)).await.unwrap();
+        assert_eq!(
+            fired,
+            json!({ "event": STRIPE_CREDIT_GRANTED, "body": { "orderId": "ord_1" } })
+        );
         fire(None, STRIPE_CREDIT_GRANTED, json!({}));
+        assert_eq!(captured.next(Duration::from_millis(50)).await, None);
     }
 }

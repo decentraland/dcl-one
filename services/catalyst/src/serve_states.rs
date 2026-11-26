@@ -16,6 +16,9 @@ pub(super) struct OpsSources<'a> {
     pub(super) economy: &'a Arc<shop::evm::State>,
     pub(super) eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     pub(super) public_url: &'a str,
+    /// The analytics client `serve` builds once; the credits revenue events
+    /// go to it under credits-server's context.
+    pub(super) analytics: Option<&'a social::analytics::Analytics>,
 }
 
 /// The operator-plane states, one per old unit, with their jobs attached.
@@ -34,13 +37,10 @@ pub(super) async fn ops_states(
 ) -> anyhow::Result<OpsStates> {
     let non_empty = Config::non_empty;
 
-    let mut settings = credits_settings(config)?;
-    settings.analytics = analytics_client(config, http_client)?
-        .map(|analytics| analytics.with_context(shop::credits::events::ANALYTICS_CONTEXT));
     let credits = Arc::new(shop::credits::State::new(
         pool.clone(),
         http_client.clone(),
-        settings,
+        credits_settings(config)?,
         shop::credits::Sources {
             market: Some(sources.market.clone()),
             price: Some(sources.price.clone()),
@@ -48,6 +48,12 @@ pub(super) async fn ops_states(
         },
         sources.eip1654.clone(),
     ));
+    // Before the jobs, so the first settlement is reported too.
+    if let Some(analytics) = sources.analytics {
+        credits.attach_revenue_events(Arc::new(super::adapters::CreditsRevenueEvents::new(
+            analytics,
+        )));
+    }
     credits.spawn_jobs(jobs);
     shop::credits::goals::spawn_job(&credits, jobs);
 
@@ -582,16 +588,6 @@ pub(super) fn social_analytics(
             "OPEN_AI_API_KEY unset: community AI compliance runs without its provider and skips classification"
         );
     }
-    analytics_client(config, http_client)
-}
-
-/// The analytics client the `ANALYTICS_*` settings configure; none when they
-/// are unset. Social posts under `ANALYTICS_CONTEXT`, credits under
-/// credits-server's own context (`shop::credits::events`).
-fn analytics_client(
-    config: &Config,
-    http_client: &http::Outbound,
-) -> anyhow::Result<Option<social::analytics::Analytics>> {
     social::analytics::Analytics::new(
         http_client,
         social::analytics::Settings {
@@ -625,6 +621,7 @@ pub(super) fn social_states(
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     explore: &explore::SharedState,
     onboarding: Arc<explore::api::onboarding::OnboardingState>,
+    analytics: Option<social::analytics::Analytics>,
 ) -> anyhow::Result<social::States> {
     config
         .social
@@ -731,7 +728,6 @@ pub(super) fn social_states(
         explore.clone(),
     ));
 
-    let analytics = social_analytics(config, http_client)?;
     if let Some(analytics) = &analytics {
         communities.set_analytics(analytics.clone());
     }
@@ -1028,7 +1024,7 @@ mod event_notice_configuration_tests {
             let onboarding = Arc::new(explore::api::onboarding::OnboardingState::new(pool.clone()));
             let social = social_states(
                 &config, &pool, &storage, &http, &content, &market, comms, None, &explore,
-                onboarding,
+                onboarding, None,
             )
             .unwrap();
             let settings = &social.notifications.settings;

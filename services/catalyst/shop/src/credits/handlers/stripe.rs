@@ -177,7 +177,7 @@ fn report_pack_granted(state: &SharedState, purchase: &SettledPurchase) {
         .or(purchase.payment_intent.as_deref())
         .unwrap_or_default();
     events::fire(
-        state.settings.analytics.as_ref(),
+        state.credits.revenue_events(),
         events::STRIPE_CREDIT_GRANTED,
         events::pack_granted(&events::PackGranted {
             order_id,

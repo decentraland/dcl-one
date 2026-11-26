@@ -321,7 +321,7 @@ struct StateCfg {
     require_purchase_intent: bool,
     admin_token: Option<&'static str>,
     writes_enabled: bool,
-    analytics: Option<crate::social::analytics::Analytics>,
+    revenue_events: Option<Arc<dyn super::events::RevenueEvents>>,
 }
 
 impl Default for StateCfg {
@@ -335,13 +335,13 @@ impl Default for StateCfg {
             require_purchase_intent: false,
             admin_token: None,
             writes_enabled: true,
-            analytics: None,
+            revenue_events: None,
         }
     }
 }
 
 fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroker) -> SharedState {
-    let mut settings = Settings::parse(RawSettings {
+    let settings = Settings::parse(RawSettings {
         writes_enabled: cfg.writes_enabled,
         mock_card: cfg.mock_card,
         // The mock card runs only on Amoy (Settings::parse); the HTTP routes under test do not read the chain.
@@ -361,15 +361,18 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
         ..RawSettings::default()
     })
     .unwrap();
-    settings.analytics = cfg.analytics;
-    Arc::new(State::with_sources(
+    let state = Arc::new(State::with_sources(
         pool,
         Outbound::for_tests(),
         settings,
         Arc::new(market),
         Arc::new(broker),
         None,
-    ))
+    ));
+    if let Some(events) = cfg.revenue_events {
+        state.attach_revenue_events(events);
+    }
+    state
 }
 
 fn test_state(pool: PgPool, cfg: StateCfg) -> SharedState {
@@ -11101,12 +11104,12 @@ async fn the_cancel_return_sends_the_buyer_back_to_the_order_surface() {
 #[tokio::test]
 async fn a_granted_pack_is_reported_once() {
     let Some(pool) = pool().await else { return };
-    let mut captured = super::events::capture::analytics().await;
+    let mut captured = super::events::capture::events();
     let state = test_state(
         pool.clone(),
         StateCfg {
             stripe_webhook_secret: Some(WEBHOOK_SECRET),
-            analytics: Some(captured.analytics.clone()),
+            revenue_events: Some(captured.events.clone()),
             ..StateCfg::default()
         },
     );
@@ -11154,7 +11157,6 @@ async fn a_granted_pack_is_reported_once() {
         .await
         .expect("the grant is reported");
     assert_eq!(posted["event"], "stripe_credit_granted");
-    assert_eq!(posted["context"], "credits-server");
     let mut body = posted["body"].clone();
     body.as_object_mut().unwrap().remove("env");
     assert_eq!(
@@ -11188,8 +11190,9 @@ async fn a_settled_purchase_is_reported_once() {
         return;
     };
     let pool = db.pool.clone();
-    let mut captured = super::events::capture::analytics().await;
-    let credits = Credits::new(pool.clone()).with_analytics(Some(captured.analytics.clone()));
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
     let buyer = scratch_wallet();
     seed_paid_credits(&pool, &buyer.address, "100").await;
     let contract = scratch_wallet().address;
@@ -11262,8 +11265,9 @@ async fn a_grouped_purchase_is_reported_per_line() {
         return;
     };
     let pool = db.pool.clone();
-    let mut captured = super::events::capture::analytics().await;
-    let credits = Credits::new(pool.clone()).with_analytics(Some(captured.analytics.clone()));
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
     let buyer = scratch_wallet().address;
     seed_paid_credits(&pool, &buyer, "100").await;
     let manager = scratch_wallet().address;
@@ -11363,111 +11367,125 @@ async fn a_grouped_purchase_is_reported_per_line() {
     db.drop().await;
 }
 
+/// Waits until `waiting` sessions of the current database wait on a lock.
+async fn until_lock_waiters(pool: &PgPool, waiting: i64) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let now: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if now >= waiting {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{waiting} sessions wait for the lock"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
 /// Two passes settling different logs of one credit at once (the operator's
-/// full fold and the index's): the second waits for the credit's lock and
-/// then counts the first's settlement, so one log settles the purchase (one
-/// debit, one event) and the other a remainder.
+/// full fold and the index's), in both orders: each waits for the credit's
+/// lock in turn (Postgres grants a row lock in the order it was asked for),
+/// and reads what the one before it committed. Block 1 first: block 1 is the
+/// purchase and block 2, counting it, a remainder. Block 2 first: block 2 is
+/// deferred behind block 1, which is the purchase; a pass over both then
+/// settles block 2 as a remainder. One purchase debit and one event, with
+/// block 1's transaction, either way.
 #[tokio::test]
 async fn overlapping_folds_settle_one_purchase_per_credit() {
     let Some(db) = OwnDatabase::create("settle_overlap").await else {
         return;
     };
     let pool = db.pool.clone();
-    let mut captured = super::events::capture::analytics().await;
-    let credits = Credits::new(pool.clone()).with_analytics(Some(captured.analytics.clone()));
-    let buyer = scratch_wallet().address;
-    seed_paid_credits(&pool, &buyer, "100").await;
-    let manager = scratch_wallet().address;
-    let salt = format!("0x{}", super::handlers::random_32_hex());
-    authorization_fixture(&pool, &salt, &buyer, 700, "authorized", 0, 0).await;
-    for block in [1_i64, 2] {
-        sqlx::query(
-            "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
-                 credit_value, credit_expires_at, value_wei) VALUES (137, $1, 0, $2, $3, $4, $5, $5, 1, 0, 5)",
-        )
-        .bind(block)
-        .bind(&manager)
-        .bind(format!("0x{}", format!("{block:02x}").repeat(32)))
-        .bind(&buyer)
-        .bind(&salt)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-    // Hold the credit's lock so both passes start, and wait, before either settles.
-    let mut holder = pool.begin().await.unwrap();
-    sqlx::query("SELECT 1 FROM credits.authorizations WHERE id = $1 FOR UPDATE")
-        .bind(&salt)
-        .execute(&mut *holder)
-        .await
-        .unwrap();
-    let first = tokio::spawn({
-        let credits = credits.clone();
-        let manager = manager.clone();
-        async move { super::settlement::settle(&credits, 137, &manager, -1, 1).await }
-    });
-    let second = tokio::spawn({
-        let credits = credits.clone();
-        let manager = manager.clone();
-        async move { super::settlement::settle(&credits, 137, &manager, 1, 2).await }
-    });
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        let waiting: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        if waiting >= 2 {
-            break;
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
+    let tx = |block: i64| format!("0x{}", format!("{block:02x}").repeat(32));
+    for (round, first) in [(0_i64, 1_i64), (1, 2)] {
+        let buyer = scratch_wallet().address;
+        seed_paid_credits(&pool, &buyer, "100").await;
+        let manager = scratch_wallet().address;
+        let salt = format!("0x{}", super::handlers::random_32_hex());
+        authorization_fixture(&pool, &salt, &buyer, 700, "authorized", 0, 0).await;
+        for block in [1_i64, 2] {
+            sqlx::query(
+                "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+                     credit_value, credit_expires_at, value_wei) VALUES (137, $1, 0, $2, $3, $4, $5, $5, 1, 0, 5)",
+            )
+            .bind(10 * round + block)
+            .bind(&manager)
+            .bind(tx(10 * round + block))
+            .bind(&buyer)
+            .bind(&salt)
+            .execute(&pool)
+            .await
+            .unwrap();
         }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "both passes wait for the lock"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-    holder.commit().await.unwrap();
-    first.await.unwrap().unwrap();
-    second.await.unwrap().unwrap();
+        // The window of one block of this round.
+        let pass = |block: i64| {
+            let credits = credits.clone();
+            let manager = manager.clone();
+            let at = 10 * round + block;
+            tokio::spawn(async move {
+                super::settlement::settle(&credits, 137, &manager, at - 1, at).await
+            })
+        };
+        let mut holder = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM credits.authorizations WHERE id = $1 FOR UPDATE")
+            .bind(&salt)
+            .execute(&mut *holder)
+            .await
+            .unwrap();
+        let earlier = pass(first);
+        until_lock_waiters(&pool, 1).await;
+        let later = pass(3 - first);
+        until_lock_waiters(&pool, 2).await;
+        holder.commit().await.unwrap();
+        earlier.await.unwrap().unwrap();
+        later.await.unwrap().unwrap();
+        super::settlement::settle(&credits, 137, &manager, 10 * round, 10 * round + 2)
+            .await
+            .unwrap();
 
-    // A log deferred behind an earlier one is settled by a pass covering both.
-    super::settlement::settle(&credits, 137, &manager, -1, 2)
+        let settled: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT block_number - $2, kind FROM credits.usage_settlements WHERE authorization_id = $1 ORDER BY block_number",
+        )
+        .bind(&salt)
+        .bind(10 * round)
+        .fetch_all(&pool)
         .await
         .unwrap();
-    let settled: Vec<(i64, String)> = sqlx::query_as(
-        "SELECT block_number, kind FROM credits.usage_settlements WHERE authorization_id = $1 ORDER BY block_number",
-    )
-    .bind(&salt)
-    .fetch_all(&pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        settled,
-        [(1, "purchase".to_string()), (2, "remainder".to_string())],
-        "the first use is the purchase, whichever pass took the lock first"
-    );
-    assert_eq!(
-        available(&pool, &buyer).await,
-        "30",
-        "one purchase debit of 70 credits"
-    );
-    let posted = captured
-        .next(std::time::Duration::from_secs(5))
-        .await
-        .expect("the purchase");
-    assert_eq!(posted["body"]["salt"], salt.as_str());
-    assert_eq!(
-        posted["body"]["txHash"],
-        format!("0x{}", "01".repeat(32)),
-        "the first use's transaction"
-    );
-    assert_eq!(
-        captured.next(std::time::Duration::from_millis(400)).await,
-        None,
-        "reported once"
-    );
+        assert_eq!(
+            settled,
+            [(1, "purchase".to_string()), (2, "remainder".to_string())],
+            "block {first} first: the first use is the purchase"
+        );
+        assert_eq!(
+            available(&pool, &buyer).await,
+            "30",
+            "one purchase debit of 70 credits"
+        );
+        let posted = captured
+            .next(std::time::Duration::from_secs(5))
+            .await
+            .expect("the purchase");
+        assert_eq!(posted["body"]["salt"], salt.as_str());
+        assert_eq!(
+            posted["body"]["txHash"],
+            tx(10 * round + 1),
+            "the first use's transaction"
+        );
+        assert_eq!(
+            captured.next(std::time::Duration::from_millis(300)).await,
+            None,
+            "reported once"
+        );
+    }
     db.drop().await;
 }
 
@@ -11481,8 +11499,9 @@ async fn a_later_use_never_settles_as_the_purchase() {
         return;
     };
     let pool = db.pool.clone();
-    let mut captured = super::events::capture::analytics().await;
-    let credits = Credits::new(pool.clone()).with_analytics(Some(captured.analytics.clone()));
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
     let buyer = scratch_wallet().address;
     seed_paid_credits(&pool, &buyer, "100").await;
     let manager = scratch_wallet().address;
@@ -11554,6 +11573,56 @@ async fn a_later_use_never_settles_as_the_purchase() {
         captured.next(std::time::Duration::from_millis(400)).await,
         None,
         "the remainder is not a purchase"
+    );
+    db.drop().await;
+}
+
+/// A purchase whose debit the ledger already holds (one recorded, and
+/// reported, before this node kept settlement rows) settles without debiting
+/// or reporting it again.
+#[tokio::test]
+async fn a_purchase_the_ledger_already_holds_is_not_reported_again() {
+    let Some(db) = OwnDatabase::create("settle_replayed").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut captured = super::events::capture::events();
+    let credits = Credits::new(pool.clone());
+    credits.attach_revenue_events(captured.events.clone());
+    let buyer = scratch_wallet().address;
+    seed_paid_credits(&pool, &buyer, "100").await;
+    let manager = scratch_wallet().address;
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    // Debited under the settlement's own key before the credit's settlement row.
+    let key = format!("credit-used:{salt}");
+    credits.spend(&buyer, "70", &key, Some(&key)).await.unwrap();
+    authorization_fixture(&pool, &salt, &buyer, 700, "authorized", 0, 0).await;
+    sqlx::query(
+        "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+             credit_value, credit_expires_at, value_wei) VALUES (137, 1, 0, $1, $2, $3, $4, $4, 1, 0, 5)",
+    )
+    .bind(&manager)
+    .bind(format!("0x{}", "01".repeat(32)))
+    .bind(&buyer)
+    .bind(&salt)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let diffs = super::settlement::settle(&credits, 137, &manager, -1, 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        diffs
+            .iter()
+            .map(|d| (d.kind.as_str(), d.consumed, d.replayed))
+            .collect::<Vec<_>>(),
+        [("purchase", true, true)]
+    );
+    assert_eq!(available(&pool, &buyer).await, "30", "debited once");
+    assert_eq!(
+        captured.next(std::time::Duration::from_millis(400)).await,
+        None,
+        "already reported with the purchase"
     );
     db.drop().await;
 }

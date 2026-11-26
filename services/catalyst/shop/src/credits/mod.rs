@@ -81,8 +81,8 @@ pub mod checkout;
 pub mod digest;
 pub mod dto;
 pub mod errors;
-pub mod events;
 pub mod escrow;
+pub mod events;
 pub mod feed;
 pub mod fulfillment;
 pub mod goals;
@@ -325,9 +325,6 @@ pub struct Settings {
     pub checkout_cancel_url: String,
     /// Both set or neither (a half-configured pair falls back to the Shop's).
     pub checkout_builder_urls: Option<(String, String)>,
-    /// The analytics client the revenue events go to (`events.rs`), under
-    /// credits-server's context; the node sets it, and none leaves them unsent.
-    pub analytics: Option<crate::social::analytics::Analytics>,
     /// `PUBLIC_URL` without a trailing `/`: the base of the cancel-return URL
     /// Stripe sends an abandoning buyer to.
     pub public_url: Option<String>,
@@ -613,7 +610,6 @@ impl Settings {
             credits_onchain_authorize_enabled: raw.credits_onchain_authorize_enabled,
             checkout_success_url: raw.checkout_success_url.trim().to_string(),
             checkout_cancel_url: raw.checkout_cancel_url.trim().to_string(),
-            analytics: None,
             checkout_builder_urls: non_empty(raw.checkout_success_url_builder)
                 .zip(non_empty(raw.checkout_cancel_url_builder)),
             public_url: non_empty(raw.public_url).map(|u| u.trim_end_matches('/').to_string()),
@@ -786,7 +782,6 @@ impl State {
             settings.marketplace_markup_bps,
         ));
         let mut credits = Credits::new(pool)
-            .with_analytics(settings.analytics.clone())
             .with_shop_base_url(&settings.shop_base_url)
             .with_notifications_cdn_url(&settings.notifications_cdn_url);
         if settings.usage.is_configured() {
@@ -893,6 +888,12 @@ impl State {
     /// wallet flags listener and the CreditUsed index, all under the shared
     /// lifecycle. `serve` runs them: the usage index's fold debits the
     /// ledger, so it runs beside the other credits writers.
+    /// Where the revenue events go (`events.rs`), handed in by the node:
+    /// attached before the jobs start, so no settlement goes unreported.
+    pub fn attach_revenue_events(&self, events: Arc<dyn events::RevenueEvents>) -> bool {
+        self.credits.attach_revenue_events(events)
+    }
+
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         fulfillment::OutboxWorker {
             credits: self.credits.clone(),
@@ -998,9 +999,23 @@ impl State {
         .await?;
         let unpaid: Vec<&str> = diffs
             .iter()
-            .filter(|d| !d.consumed)
+            .filter(|d| !d.consumed && d.kind != settlement::DEFERRED)
             .map(|d| d.credit_id.as_str())
             .collect();
+        // In this full pass a log is deferred only behind an earlier log of
+        // its credit that could not be debited, which `unpaid` reports.
+        let deferred: Vec<&str> = diffs
+            .iter()
+            .filter(|d| d.kind == settlement::DEFERRED)
+            .map(|d| d.credit_id.as_str())
+            .collect();
+        if !deferred.is_empty() {
+            tracing::warn!(
+                count = deferred.len(),
+                credit_ids = ?deferred,
+                "reconcile: CreditUsed events left behind an earlier use of their credit that is not settled"
+            );
+        }
         if !unpaid.is_empty() {
             tracing::error!(
                 invariant = "credit_used==debited",

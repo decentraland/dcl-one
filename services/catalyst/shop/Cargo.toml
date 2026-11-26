@@ -17,8 +17,6 @@ catalyst-price = { path = "../price" }
 catalyst-chain-index = { path = "../chain-index" }
 catalyst-land-authz = { path = "../land-authz" }
 catalyst-content = { path = "../content" }
-# The analytics client (`social::analytics`), shared so credits reports as credits-server did.
-catalyst-social = { path = "../social" }
 tokio.workspace = true
 axum.workspace = true
 tower-http.workspace = true
@@ -58,8 +56,8 @@ alloy-signer-local.workspace = true
 ts-rs = { workspace = true, optional = true }
 
 [features]
-ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-storage/ts", "catalyst-price/ts", "catalyst-chain-index/ts", "catalyst-land-authz/ts", "catalyst-content/ts", "catalyst-social/ts"]
-test-support = ["catalyst-fed/test-support", "catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-storage/test-support", "catalyst-price/test-support", "catalyst-chain-index/test-support", "catalyst-land-authz/test-support", "catalyst-content/test-support", "catalyst-social/test-support"]
+ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-storage/ts", "catalyst-price/ts", "catalyst-chain-index/ts", "catalyst-land-authz/ts", "catalyst-content/ts"]
+test-support = ["catalyst-fed/test-support", "catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-storage/test-support", "catalyst-price/test-support", "catalyst-chain-index/test-support", "catalyst-land-authz/test-support", "catalyst-content/test-support"]
 
 [dev-dependencies]
 catalyst-shared = { path = "../shared", features = ["test-support"] }

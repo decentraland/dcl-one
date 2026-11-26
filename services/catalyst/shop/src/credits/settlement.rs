@@ -390,7 +390,13 @@ fn settled_lines(
             mana_settled_wei: value_wei.to_string(),
         }];
     }
-    let total = U256::from_str_radix(value_wei, 10).unwrap_or(U256::ZERO);
+    let total = U256::from_str_radix(value_wei, 10).unwrap_or_else(|_| {
+        tracing::warn!(
+            value_wei,
+            "a settled credit's MANA is not a decimal number; its lines report 0"
+        );
+        U256::ZERO
+    });
     let group_cents: i64 = lines.iter().map(|l| l.charged_cents.max(0)).sum();
     // total * cents / group as (total / group) * cents + (total % group) *
     // cents / group: neither product can overflow, since a line's cents are
@@ -606,11 +612,13 @@ impl Credits {
         tx.commit().await?;
         // The settlement row's key makes this the one pass that recorded the
         // purchase, so it is reported once, after the commit: one event per
-        // line, as credits-server reported one per intent.
-        if kind == "purchase" {
+        // line, as credits-server reported one per intent. A purchase debit
+        // the ledger already held (a replay: the purchase was recorded, and
+        // reported, before this settlement row) is not reported again.
+        if kind == "purchase" && !spent.replayed {
             for line in settled_lines(usd_cents, trade_id.as_deref(), &lines, &c.value_wei) {
                 events::fire(
-                    self.analytics.as_ref(),
+                    self.revenue_events(),
                     events::USD_PURCHASE_SETTLED,
                     events::purchase_settled(&events::PurchaseSettled {
                         salt: &c.salt,
