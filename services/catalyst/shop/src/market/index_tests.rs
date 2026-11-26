@@ -8308,6 +8308,29 @@ async fn checkpoint(
     )
 }
 
+#[tokio::test]
+async fn projection_write_triggers_match_the_cursor_first_indexers() {
+    use std::collections::BTreeSet;
+
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let args: Vec<Vec<u8>> = sqlx::query_scalar(
+        "SELECT DISTINCT tgargs FROM pg_trigger
+         WHERE tgfoid = 'shop.note_projection_write()'::regprocedure AND NOT tgisinternal",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .unwrap();
+    let triggered: BTreeSet<&str> = args
+        .iter()
+        .map(|arg| std::str::from_utf8(arg.strip_suffix(&[0]).unwrap()).unwrap())
+        .collect();
+    let cursor_first = chain_walk::CURSOR_FIRST_INDEXERS.iter().copied().collect();
+    assert_eq!(triggered, cursor_first);
+    db.drop().await;
+}
+
 /// A stale publisher reaches the same-height publication trigger while a
 /// new owner tries to write. The new owner must wait at the cursor before
 /// touching the pending row that the publisher needs.

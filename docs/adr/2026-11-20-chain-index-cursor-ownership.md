@@ -34,7 +34,7 @@ A row also did not record which chain its history came from. The network name `m
 
 - Every index checks the source's chain each pass (one `eth_chainId`); before, only trade events, committee and rentals did. A source of another chain fails only that projection's pass, which backs off on its own.
 - A control operation whose statement the database refuses (a lock or statement timeout) fails alone. An error that ends the session (FATAL or PANIC, a broken connection, the keepalive bound) drops every lease of the process at once.
-- NFT and legacy bid folds hold their cursor locks until the transaction ends. A lease claim waits up to 1.5 s for a lock and can time out repeatedly during a rebuild. The 3,600 s statement timeout bounds individual fold statements. See [Market chain index cursors](../../DATABASE.md#market-chain-index-cursors) for the effect on the sales ledger publication.
+- NFT and legacy bid folds hold their cursor locks until the transaction ends. A lease claim waits up to 1.5 s for a lock and can time out repeatedly during a rebuild. The 3,600 s statement timeout bounds individual fold statements. [The writer lock order](https://github.com/decentraland/dcl-one/pull/2530) also affects [sales ledger publication](../../DATABASE.md#market-chain-index-cursors).
 - A reorg past the confirmation depth no longer replays a projection's whole history: it rewinds to the newest recovery point still on the chain. The fold after it is still a rebuild. A window that extends a hashed checkpoint costs one more header read, and an nft backfill window two.
 
 ## Validation

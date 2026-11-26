@@ -54,10 +54,12 @@ pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
 pub const INDEXER_THIRD_PARTY_REGISTRY: &str = "third_party_registry";
 
-/// These indexers have publication-write triggers in `schemas/30_shop.sql`.
-/// Their writers must lock the cursor before touching the triggered rows.
+/// The indexers whose projection triggers in `schemas/30_shop.sql` require
+/// writers to lock the cursor before touching the triggered rows.
+pub(super) const CURSOR_FIRST_INDEXERS: &[&str] = &[INDEXER_NFT, INDEXER_SALES];
+
 pub(super) fn locks_cursor_before_projection_write(indexer: &str) -> bool {
-    matches!(indexer, INDEXER_NFT | INDEXER_SALES)
+    CURSOR_FIRST_INDEXERS.contains(&indexer)
 }
 
 pub use crate::chain_index::catalogue::READY_WINDOW;
