@@ -428,7 +428,7 @@ impl WalletQueue {
                 }
             }}).await;
         } else {
-            tracing::warn!(%wallet, "cluster work started without a future");
+            tracing::error!(%wallet, "cluster work started without a future");
         }
         let ready = {
             let mut state = self.state();
