@@ -45,7 +45,7 @@ pub struct ContentConfig {
     /// history (about 81 MB and 160 requests per source in November 2026), so
     /// 1200 costs each source about 5.8 GB a day, 600 about 11.6 GB,
     /// 1440 about 4.9 GB. A pass proves item coverage for 30 minutes from its
-    /// start; off, item coverage is unknown.
+    /// start; off, the builder can't tell a new third-party item URN is unused.
     #[arg(long, env = "SYNC_ITEM_REPLAY_INTERVAL_SECS", default_value_t = 0)]
     pub sync_item_replay_interval_secs: u64,
 
@@ -574,7 +574,7 @@ pub struct ValidatorConfig {
     // content validator (src/content/validator): the access policy of local
     // deploys (the old catalyrst-server names); its chain checks read
     // ETH_RPC_URL and RPC_ENDPOINT_POLYGON.
-    /// Third Party Registry subgraph on L2 (the approved providers the shop lists); public https.
+    /// Third Party Registry subgraph on L2: the approved providers the shop lists, and every provider the builder reads a third-party collection's managers from (unset: third-party builder requests answer 503); public https.
     #[arg(
         long,
         env = "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
