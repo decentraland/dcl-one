@@ -213,8 +213,8 @@ pub struct LandMarketMarks {
 /// expiry rule, `round(expires_at / 1000) > round(now / 1000)` in seconds
 /// rounded half up (saturated expiries included), so the count moves at the
 /// very instant the build drops an expired order. The trades and rentals are small sets, marked by a
-/// digest of the very rows [`land_market`] reads at `$1` (the trades after
-/// the trade-events verdicts the CTE applies).
+/// digest of the very rows [`land_market`] reads at `$1`. Trade rows have
+/// both an open verdict and published LAND or Estate ownership.
 fn marks_sql() -> String {
     format!(
         "WITH {cte} \
@@ -877,6 +877,25 @@ mod tests {
             "by min_days"
         );
         assert!(rental.expiration_ms > Utc::now().timestamp_millis());
+
+        sqlx::query(
+            "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account)
+             VALUES (101, 0, 1700000900, $1, 'transfer', 7, $2)",
+        )
+        .bind(ESTATE)
+        .bind(addr('c'))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let held = market(&state, 1).await.unwrap().trades;
+        assert_eq!(
+            held.iter().map(|t| t.token_id.as_str()).collect::<Vec<_>>(),
+            ["5"]
+        );
+        sqlx::query("DELETE FROM land_authz.authz_event WHERE block_number = 101")
+            .execute(&db.pool)
+            .await
+            .unwrap();
 
         // A sold trade closes as soon as the trade-events index folds it.
         let estate_trade: uuid::Uuid =

@@ -561,9 +561,14 @@ ON CONFLICT (network, contract_address, token_id) DO UPDATE SET
     created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at,
     updated_block = EXCLUDED.updated_block, updated_log = EXCLUDED.updated_log";
 
-/// The contracts of a network (`$1`) whose backfill is not finished.
-const BACKFILLS_OWED_SQL: &str = "SELECT count(*) FROM shop.nft_contract WHERE network = $1 AND backfill_from_block IS NOT NULL \
-     AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1";
+/// Predicate on one `shop.nft_contract` row with a backfill still outstanding.
+pub(super) const BACKFILL_PENDING_SQL: &str = "backfill_from_block IS NOT NULL AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1";
+
+fn backfills_owed_sql() -> sqlx::AssertSqlSafe<String> {
+    sqlx::AssertSqlSafe(format!(
+        "SELECT count(*) FROM shop.nft_contract WHERE network = $1 AND {BACKFILL_PENDING_SQL}"
+    ))
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FoldCounts {
@@ -646,7 +651,7 @@ pub async fn fold(
             .execute(&mut *tx)
             .await?;
     }
-    let backfills_owed: i64 = sqlx::query_scalar(BACKFILLS_OWED_SQL)
+    let backfills_owed: i64 = sqlx::query_scalar(backfills_owed_sql())
         .bind(net.db_name())
         .fetch_one(&mut *tx)
         .await?;
@@ -897,11 +902,9 @@ impl ChainIndex for NftIndex {
 
     /// A walk that owes a backfill runs its lanes, alone.
     async fn walks_alone(&self, pool: &PgPool) -> anyhow::Result<bool> {
-        Ok(sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM shop.nft_contract \
-             WHERE network = $1 AND backfill_from_block IS NOT NULL \
-               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1)",
-        )
+        Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT EXISTS (SELECT 1 FROM shop.nft_contract WHERE network = $1 AND {BACKFILL_PENDING_SQL})"
+        )))
         .bind(self.net.db_name())
         .fetch_one(pool)
         .await?)
@@ -1147,12 +1150,10 @@ impl ChainIndex for NftIndex {
         cursor: Option<(u64, &str)>,
     ) -> anyhow::Result<chain_walk::Spent> {
         self.reset();
-        let owed: Vec<WalkedContract> = sqlx::query_as(
+        let owed: Vec<WalkedContract> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT contract_address, walked_from_block, backfill_from_block, backfilled_to_block FROM shop.nft_contract \
-             WHERE network = $1 AND backfill_from_block IS NOT NULL \
-               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1 \
-             ORDER BY walked_from_block, contract_address",
-        )
+             WHERE network = $1 AND {BACKFILL_PENDING_SQL} ORDER BY walked_from_block, contract_address"
+        )))
         .bind(self.net.db_name())
         .fetch_all(pool)
         .await?;
@@ -1261,14 +1262,11 @@ pub async fn status(pool: &PgPool, settings: &chain_walk::IndexSettings) -> serd
             .await
             .ok()
             .flatten();
-        let owed: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM shop.nft_contract WHERE network = $1 AND backfill_from_block IS NOT NULL \
-               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1",
-        )
-        .bind(net.db_name())
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+        let owed: i64 = sqlx::query_scalar(backfills_owed_sql())
+            .bind(net.db_name())
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
         out.insert(net.db_name().to_string(), json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
             "ready": chain_walk::fresh_fold_on(&c, settings.chain_id(net), chrono::Utc::now()).is_some(), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,

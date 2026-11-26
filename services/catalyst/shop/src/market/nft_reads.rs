@@ -291,6 +291,14 @@ impl std::ops::DerefMut for ReadConn {
 /// deepest page sorted by price naming no category.
 pub const READ_STATEMENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+pub(super) async fn set_read_timeout(conn: &mut PgConnection) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
+        .bind(format!("{}ms", READ_STATEMENT_TIMEOUT.as_millis()))
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// Past this many tokens, an owner's page sorted by price or listing time
 /// is read in two parts like a page without an owner: one part looks up
 /// the listing of every token the owner holds (7 to 8 s for 32,000 tokens),
@@ -299,7 +307,7 @@ pub const READ_STATEMENT_TIMEOUT: std::time::Duration = std::time::Duration::fro
 pub const LARGE_OWNER_TOKENS: i64 = 1_000;
 
 /// Whether Postgres cancelled the statement ([`READ_STATEMENT_TIMEOUT`]).
-fn cancelled(e: &sqlx::Error) -> bool {
+pub(super) fn cancelled(e: &sqlx::Error) -> bool {
     e.as_database_error()
         .is_some_and(|d| d.code().as_deref() == Some("57014"))
 }
@@ -369,9 +377,7 @@ async fn open_read_conn(
         ReadConn::Pool(tx)
     };
     // Transaction-local: the bound ends with the read.
-    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
-        .bind(format!("{}ms", READ_STATEMENT_TIMEOUT.as_millis()))
-        .execute(&mut *conn)
+    set_read_timeout(&mut conn)
         .await
         .map_err(ReadConnError::Pool)?;
     check_nft(
@@ -435,10 +441,8 @@ async fn check_nft(
     owned_items::check(conn, catalogue, &others, Rule::Fresh, false, now).await
 }
 
-/// [`nft_prices`]'s error when the LAND index stopped being ready after
-/// [`require_prices_sources`] passed. It is a string because the prices memo
-/// shares errors as strings; the route answers [`land_unavailable`] for it,
-/// the envelope `/v1/nfts` answers in the same state.
+/// The LAND publication was withdrawn before the NFT histogram snapshot.
+/// The route uses the same envelope as `/v1/nfts`.
 pub(crate) const NFT_PRICES_LAND_UNAVAILABLE: &str =
     "the nft prices read LAND, and the land-authz index is not published";
 
@@ -1712,8 +1716,7 @@ fn on_sale(f: &NftFilters) -> NftFilters {
 }
 
 /// The sources `nft_prices` reads (the indexes, and the trades mirror for
-/// its order legs), checked apart so a memo of its answer is never served
-/// past their budgets.
+/// its order legs), preserving the missing-source response order.
 pub async fn require_prices_sources(
     state: &MarketplaceState,
     f: &NftFilters,
@@ -1722,18 +1725,16 @@ pub async fn require_prices_sources(
     require_sources(state, &f, sources_for(&f)).await
 }
 
-/// The read the nft leg of `/v1/prices` fills on: its checked snapshot,
-/// and the key of what that snapshot sees (the nft index's publications and
-/// the catalogue's copies), so a memo filed under one read never answers for
-/// another publication of either.
+/// The snapshot and clock for the NFT price histogram.
 pub(crate) struct PricesRead {
     conn: ReadConn,
-    key: String,
+    now: chrono::DateTime<Utc>,
 }
 
 impl PricesRead {
-    pub(crate) fn key(&self) -> &str {
-        &self.key
+    pub(super) async fn trades_ready(&mut self, state: &MarketplaceState) -> Result<(), Response> {
+        super::trades::ready_on(state, &mut self.conn, self.now).await?;
+        Ok(())
     }
 }
 
@@ -1747,7 +1748,7 @@ pub(crate) async fn prices_read(
     let f = on_sale(f);
     let sources = sources_for(&f);
     let land = state.land_network();
-    let mut conn = open_read_conn(&state.pool, land, &f, sources)
+    let conn = open_read_conn(&state.pool, land, &f, sources)
         .await
         .map_err(|e| match e {
             ReadConnError::LandUnavailable => NFT_PRICES_LAND_UNAVAILABLE.to_string(),
@@ -1755,16 +1756,9 @@ pub(crate) async fn prices_read(
             ReadConnError::Pool(e) if cancelled(&e) => NFT_PRICES_TIMED_OUT.to_string(),
             ReadConnError::Pool(e) => format!("acquiring a connection for the nft prices: {e}"),
         })?;
-    let catalogue = land.map(Catalogue::from_land).unwrap_or(Catalogue::Mainnet);
-    let seen = owned_items::Publications::read(&mut conn, catalogue)
-        .await
-        .map_err(|e| e.to_string())?
-        .naming(&mut conn)
-        .await
-        .map_err(|e| e.to_string())?;
     Ok(PricesRead {
         conn,
-        key: format!("{seen:?}"),
+        now: Utc::now(),
     })
 }
 
@@ -1773,6 +1767,7 @@ pub(crate) async fn prices_read(
 /// and names); `category` narrows the sources as `/v1/nfts` does. Read
 /// only after [`require_prices_sources`]; if the LAND index stops being
 /// ready meanwhile, the error is [`NFT_PRICES_LAND_UNAVAILABLE`].
+#[cfg(test)]
 pub async fn nft_prices(state: &MarketplaceState, f: &NftFilters) -> Result<Histogram, String> {
     let mut read = prices_read(state, f).await?;
     nft_prices_on(&mut read, state, f).await
@@ -1794,8 +1789,8 @@ pub(crate) async fn nft_prices_on(
         &f,
         sources,
         land,
-        Utc::now().timestamp_millis(),
-        trades_since(state),
+        read.now.timestamp_millis(),
+        super::trades::mirrored_since(&state.settings, read.now.naive_utc()),
     );
     let mut wheres = Vec::new();
     push_filters(&mut b, &f, &mut wheres);

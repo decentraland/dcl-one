@@ -878,10 +878,9 @@ pub fn unverifiable_sql(t: &str) -> String {
 
 /// The SQL predicate "trade `t` may be served as an open listing" for the
 /// open-listing feeds (a bound `now_p`): its network has published verdicts
-/// and folded its recorded events. The trade needs an open verdict
-/// in that prefix from a venue the index watches. A late import may
-/// already have closed in the log. For
-/// V3, the fold also needs the verified digest that keys its cancellation.
+/// and folded this trade's recorded events. The trade needs an open
+/// verdict from a venue the index watches. A late import may already have
+/// closed in the log. For V3, the fold also needs its cancellation digest.
 /// A trade can arrive between the indexer's digest pass and verdict fold.
 pub fn listable_on_chain_sql(t: &str, now_p: &str) -> String {
     let watched = DEPLOYMENTS
@@ -905,8 +904,26 @@ pub fn listable_on_chain_sql(t: &str, now_p: &str) -> String {
                    AND s.status = 'open' AND s.digest_failed_at IS NULL
                    AND s.folded_block BETWEEN 0 AND c.folded_block
                    AND (NOT venue.requires_digest OR s.digest IS NOT NULL)
-                   AND NOT EXISTS (SELECT FROM shop.trade_event e
-                                   WHERE e.network = c.network AND e.block_number > c.folded_block))",
+                   AND NOT EXISTS (
+                       SELECT FROM shop.trade_event e
+                       WHERE e.network = c.network AND e.marketplace_address = venue.address
+                         AND e.block_number > c.folded_block
+                         AND e.hashed_signature IN ({t}.hashed_signature, s.digest)
+                         AND ((e.kind = 'traded' AND e.signer = {t}.signer)
+                           OR (e.kind = 'signature_cancelled' AND e.caller = {t}.signer))
+                   )
+                   AND NOT EXISTS (
+                       SELECT FROM shop.trade_event e
+                       WHERE e.network = c.network AND e.marketplace_address = venue.address
+                         AND e.block_number > c.folded_block AND e.new_index IS NOT NULL
+                         AND e.kind = 'signer_index_increased' AND e.caller = {t}.signer
+                   )
+                   AND NOT EXISTS (
+                       SELECT FROM shop.trade_event e
+                       WHERE e.network = c.network AND e.marketplace_address = venue.address
+                         AND e.block_number > c.folded_block AND e.new_index IS NOT NULL
+                         AND e.kind = 'contract_index_increased'
+                   ))",
         ready = verdicts_ready_sql("c", now_p),
     )
 }

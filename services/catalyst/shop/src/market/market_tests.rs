@@ -4653,14 +4653,12 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         owner: Some(WALLET_A.into()),
         ..Default::default()
     };
-    use super::orders::OwnerCheck;
-    let ids_of = |rows: Vec<super::orders::Keyed>| {
-        let mut ids: Vec<String> = rows.into_iter().map(|k| k.order.id).collect();
+    let ids_of = |rows: Vec<super::orders::Order>| {
+        let mut ids: Vec<String> = rows.into_iter().map(|o| o.id).collect();
         ids.sort();
         ids
     };
-    let (unpublished, check) = super::orders::trades_leg(&state, &open).await.unwrap();
-    assert_eq!(check, OwnerCheck::Checked);
+    let (unpublished, _) = super::orders::list_orders(&state, &open).await.unwrap();
     assert!(
         unpublished.is_empty(),
         "neither ownership source is published"
@@ -4679,10 +4677,9 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         market_settings(&url, &url, true),
     ));
     assert!(!super::owned_items::walks_here(&not_walking));
-    let (rows, check) = super::orders::trades_leg(&not_walking, &open)
+    let (rows, _) = super::orders::list_orders(&not_walking, &open)
         .await
         .unwrap();
-    assert_eq!(check, OwnerCheck::Checked);
     assert_eq!(ids_of(rows), vec![land.clone()]);
 
     super::owned_items::test_support::publish(
@@ -4695,8 +4692,7 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
     let mut want = vec![held.clone(), land.clone()];
     want.sort();
     for reader in [&state, &not_walking] {
-        let (rows, check) = super::orders::trades_leg(reader, &open).await.unwrap();
-        assert_eq!(check, OwnerCheck::Checked);
+        let (rows, _) = super::orders::list_orders(reader, &open).await.unwrap();
         assert_eq!(
             ids_of(rows),
             want,
@@ -4709,7 +4705,7 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
     .execute(&pool)
     .await
     .unwrap();
-    let (rows, _) = super::orders::trades_leg(&state, &open).await.unwrap();
+    let (rows, _) = super::orders::list_orders(&state, &open).await.unwrap();
     assert_eq!(
         ids_of(rows),
         vec![land],
@@ -4880,6 +4876,17 @@ async fn listing_routes_stop_serving_a_trade_as_soon_as_its_proof_is_withdrawn()
             expected.then_some(id.as_str()),
             "{nft}"
         );
+        let (status, prices) = get(
+            market_router(state.clone()),
+            &format!("/v1/prices?assetType=nft&category=wearable&network=MATIC&contractAddress={contract}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{prices}");
+        assert_eq!(
+            prices["data"]["3000000000000000000"].as_u64(),
+            expected.then_some(1),
+            "{prices}"
+        );
     };
     assert_listed(true).await;
 
@@ -4906,6 +4913,16 @@ async fn listing_routes_stop_serving_a_trade_as_soon_as_its_proof_is_withdrawn()
         .execute(&pool).await.unwrap();
     assert_listed(true).await;
 
+    sqlx::query("INSERT INTO shop.nft_contract(network, contract_address, walked_from_block, backfill_from_block) VALUES ('matic', $1, 50, 1)")
+        .bind(&contract).execute(&pool).await.unwrap();
+    assert_listed(false).await;
+    sqlx::query("UPDATE shop.nft_contract SET backfilled_to_block = 49, refold_owed = true WHERE network='matic' AND contract_address=$1")
+        .bind(&contract).execute(&pool).await.unwrap();
+    assert_listed(false).await;
+    sqlx::query("UPDATE shop.nft_contract SET refold_owed = false WHERE network='matic' AND contract_address=$1")
+        .bind(&contract).execute(&pool).await.unwrap();
+    assert_listed(true).await;
+
     sqlx::query(
         "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address) \
          VALUES ('matic', 101, 0, 2, 'transfer', $1, $1, 1, $2, $3)",
@@ -4926,9 +4943,31 @@ async fn listing_routes_stop_serving_a_trade_as_soon_as_its_proof_is_withdrawn()
     )
     .bind(listings::offchain_marketplace_v3(137).unwrap().address)
     .bind(WALLET_A)
-    .bind(hashed_signature)
+    .bind("another-trade")
     .execute(&pool).await.unwrap();
+    assert_listed(true).await;
+
+    sqlx::query("UPDATE shop.trade_event SET hashed_signature = $1 WHERE network = 'matic' AND block_number = 11")
+        .bind(hashed_signature).execute(&pool).await.unwrap();
     assert_listed(false).await;
+
+    // Signer index changes only affect that signer. Contract index changes
+    // affect every order at the same venue.
+    sqlx::query("UPDATE shop.trade_event SET kind = 'signer_index_increased', hashed_signature = NULL, new_index = 1, caller = $1 WHERE network = 'matic' AND block_number = 11")
+        .bind(WALLET_B).execute(&pool).await.unwrap();
+    assert_listed(true).await;
+    sqlx::query(
+        "UPDATE shop.trade_event SET caller = $1 WHERE network = 'matic' AND block_number = 11",
+    )
+    .bind(WALLET_A)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_listed(false).await;
+    sqlx::query("UPDATE shop.trade_event SET kind = 'contract_index_increased', caller = $1 WHERE network = 'matic' AND block_number = 11")
+        .bind(WALLET_B).execute(&pool).await.unwrap();
+    assert_listed(false).await;
+
     for closed in ["cancelled", "sold"] {
         sqlx::query("UPDATE shop.trade_chain_state SET status = $1, folded_block = 11 WHERE trade_id = $2::uuid")
             .bind(closed).bind(&id).execute(&pool).await.unwrap();
@@ -4952,7 +4991,6 @@ async fn listing_routes_stop_serving_a_trade_as_soon_as_its_proof_is_withdrawn()
 /// retest the surviving LAND order against its independent publication.
 #[tokio::test]
 async fn a_sold_listing_stays_out_through_a_rewind_and_its_refill() {
-    use super::orders::OwnerCheck;
     let up = FakeGraph::new();
     let url = serve_graph(up.clone()).await;
     let Some((state, own)) = state_over_own(&url, true).await else {
@@ -5039,27 +5077,22 @@ async fn a_sold_listing_stays_out_through_a_rewind_and_its_refill() {
         ),
     ];
     let routes = || async {
-        let (orders, _, listed) = super::orders::list_orders_checked(&state, &open)
+        let (orders, _) = super::orders::list_orders(&state, &open)
             .await
             .unwrap_or_else(|_| panic!("/v1/orders answers"));
-        let (by_items, by_items_check) =
-            super::orders::open_orders_by_items_checked(&state, &items, 10)
-                .await
-                .unwrap_or_else(|_| panic!("/v1/orders/open-by-items answers"));
+        let by_items = super::orders::open_orders_by_items(&state, &items, 10)
+            .await
+            .unwrap_or_else(|_| panic!("/v1/orders/open-by-items answers"));
         let ids = |orders: Vec<super::orders::Order>| -> Vec<String> {
             let mut ids: Vec<String> = orders.into_iter().map(|o| o.id).collect();
             ids.sort();
             ids
         };
-        ((ids(orders), listed), (ids(by_items), by_items_check))
+        (ids(orders), ids(by_items))
     };
     fold().await;
-    let want = |check| ((vec![land.clone()], check), (vec![land.clone()], check));
-    assert_eq!(
-        routes().await,
-        want(OwnerCheck::Checked),
-        "published: {sold} drops out"
-    );
+    let want = (vec![land.clone()], vec![land.clone()]);
+    assert_eq!(routes().await, want, "published: {sold} drops out");
     // A rewind deletes the token's row and withdraws the publication.
     sqlx::query("DELETE FROM shop.nft WHERE network = 'matic' AND contract_address = $1")
         .bind(&c)
@@ -5074,15 +5107,11 @@ async fn a_sold_listing_stays_out_through_a_rewind_and_its_refill() {
     .unwrap();
     assert_eq!(
         routes().await,
-        want(OwnerCheck::Checked),
+        want,
         "rewound: {sold} stays out although its token has no row"
     );
     fold().await;
-    assert_eq!(
-        routes().await,
-        want(OwnerCheck::Checked),
-        "refilled: {sold} still drops out"
-    );
+    assert_eq!(routes().await, want, "refilled: {sold} still drops out");
     own.drop().await;
 }
 

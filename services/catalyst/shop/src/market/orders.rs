@@ -203,26 +203,12 @@ const TRADES_LEG_SQL: &str = "SELECT u.id::text AS id, u.trade_contract AS marke
 /// The response header naming how the v3 listings were checked.
 pub const OWNER_CHECK_HEADER: &str = "x-listings-owner-check";
 
-/// Every served v3 listing has published ownership evidence.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OwnerCheck {
-    Checked,
-}
-
-impl OwnerCheck {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Checked => "checked",
-        }
-    }
-
-    fn stamp(self, mut response: Response) -> Response {
-        response.headers_mut().insert(
-            HeaderName::from_static(OWNER_CHECK_HEADER),
-            HeaderValue::from_static(self.as_str()),
-        );
-        response
-    }
+fn stamp_owner_check(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        HeaderName::from_static(OWNER_CHECK_HEADER),
+        HeaderValue::from_static("checked"),
+    );
+    response
 }
 
 /// `$1` is now, `$2` the trades floor; `extra` binds from `$3`.
@@ -353,23 +339,12 @@ async fn trade_snapshot(
         .execute(&mut *tx)
         .await
         .map_err(|e| ApiError::from(e).into_response())?;
-    sqlx::query("SET LOCAL statement_timeout = '10s'")
-        .execute(&mut *tx)
+    super::nft_reads::set_read_timeout(&mut tx)
         .await
-        .map_err(|e| ApiError::from(e).into_response())?;
+        .map_err(super::nft_reads::read_error)?;
     let now = Utc::now();
     super::trades::ready_on(state, &mut tx, now).await?;
     Ok((tx, now))
-}
-
-#[cfg(test)]
-pub async fn trades_leg(
-    state: &MarketplaceState,
-    f: &OrderFilters,
-) -> Result<(Vec<Keyed>, OwnerCheck), Response> {
-    let (mut tx, now) = trade_snapshot(state).await?;
-    let rows = trades_leg_on(state, &mut tx, now, f).await?;
-    Ok((rows, OwnerCheck::Checked))
 }
 
 async fn trades_leg_on(
@@ -603,16 +578,6 @@ pub async fn list_orders(
     state: &MarketplaceState,
     f: &OrderFilters,
 ) -> Result<(Vec<Order>, i64), Response> {
-    list_orders_checked(state, f)
-        .await
-        .map(|(page, total, _)| (page, total))
-}
-
-/// [`list_orders`] and how its v3 listings were checked.
-pub async fn list_orders_checked(
-    state: &MarketplaceState,
-    f: &OrderFilters,
-) -> Result<(Vec<Order>, i64, OwnerCheck), Response> {
     let limit = clamp_first(f.first, 1000).min(readers::READER_MAX_FIRST);
     let offset = clamp_skip(f.skip);
     readers::check_window(limit, offset)?;
@@ -631,7 +596,7 @@ pub async fn list_orders_checked(
         .take(limit as usize)
         .map(|k| k.order)
         .collect();
-    Ok((page, total, OwnerCheck::Checked))
+    Ok((page, total))
 }
 
 pub async fn get_orders(
@@ -642,8 +607,8 @@ pub async fn get_orders(
         Ok(f) => f,
         Err(e) => return ApiError::from(e).into_response(),
     };
-    match list_orders_checked(&state, &filters).await {
-        Ok((data, total, check)) => check.stamp(
+    match list_orders(&state, &filters).await {
+        Ok((data, total)) => stamp_owner_check(
             Json(DataTotalString {
                 data,
                 total: total.to_string(),
@@ -668,17 +633,6 @@ pub async fn open_orders_by_items(
     items: &[(String, String)],
     per_contract: i64,
 ) -> Result<Vec<Order>, Response> {
-    open_orders_by_items_checked(state, items, per_contract)
-        .await
-        .map(|(orders, _)| orders)
-}
-
-/// [`open_orders_by_items`] with the ownership-check header value.
-pub async fn open_orders_by_items_checked(
-    state: &MarketplaceState,
-    items: &[(String, String)],
-    per_contract: i64,
-) -> Result<(Vec<Order>, OwnerCheck), Response> {
     readers::require_both_collections(state)?;
     let contracts: Vec<String> = items
         .iter()
@@ -728,10 +682,7 @@ pub async fn open_orders_by_items_checked(
             .then(a.sort_price.cmp(&b.sort_price))
             .then(a.order.id.cmp(&b.order.id))
     });
-    Ok((
-        all.into_iter().map(|k| k.order).collect(),
-        OwnerCheck::Checked,
-    ))
+    Ok(all.into_iter().map(|k| k.order).collect())
 }
 
 pub async fn get_open_orders_by_items(
@@ -742,8 +693,8 @@ pub async fn get_open_orders_by_items(
         Ok(v) => v,
         Err(e) => return ApiError::from(e).into_response(),
     };
-    match open_orders_by_items_checked(&state, &items, per_contract).await {
-        Ok((data, check)) => check.stamp(
+    match open_orders_by_items(&state, &items, per_contract).await {
+        Ok(data) => stamp_owner_check(
             Json(DataTotalString {
                 total: data.len().to_string(),
                 data,
@@ -762,11 +713,6 @@ mod tests {
         list.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
-    }
-
-    #[test]
-    fn the_owner_check_header_confirms_the_returned_listings() {
-        assert_eq!(OwnerCheck::Checked.as_str(), "checked");
     }
 
     #[test]

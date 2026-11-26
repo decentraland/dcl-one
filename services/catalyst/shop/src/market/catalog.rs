@@ -384,12 +384,12 @@ impl Serialize for CatalogPage {
 
 type Page = Arc<(Vec<CatalogItem>, i64)>;
 
-/// Pages keyed by `(is_v2, filters, the catalogue read's copy)`
+/// Descriptive pages keyed by `(filters, the catalogue read's copy)`
 /// ([`CatalogueRead::key`]) and anonymous pick stats keyed by the page's
 /// ids, under `MARKETPLACE_CATALOG_CACHE_TTL_SECS` (0 disables).
 pub struct Cache {
     enabled: bool,
-    pages: TtlMap<(bool, CatalogFilters, String), Page>,
+    pages: TtlMap<(CatalogFilters, String), Page>,
     picks: TtlMap<Vec<String>, Arc<Vec<PickStats>>>,
 }
 
@@ -424,12 +424,12 @@ impl Cache {
     /// ([`crate::shared::cache::TtlMap::get_or_fetch_holding`]).
     async fn page_or_fetch_holding<F>(
         &self,
-        key: (bool, CatalogFilters, String),
+        key: (CatalogFilters, String),
         held: &mut Option<CatalogueRead>,
         fetch: F,
-    ) -> Result<Option<Page>, ApiError>
+    ) -> Result<Option<Page>, Response>
     where
-        F: AsyncFnOnce(&mut CatalogueRead) -> Result<Page, ApiError>,
+        F: AsyncFnOnce(&mut CatalogueRead) -> Result<Page, Response>,
     {
         if !self.enabled {
             let read = held.as_mut().expect("a request holds its read");
@@ -559,9 +559,9 @@ pub fn uint_or_null(expr: &str) -> String {
 }
 
 /// Ownership of the sent ERC-721 in the same snapshot as the trade verdict.
-fn nft_trade_backed_sql(now_p: &str, token_num: &str) -> String {
+fn nft_trade_backed_sql(now_p: &str, token_num: &str, eth: i64, matic: i64) -> String {
+    use super::chain_walk::{MAX_CLOCK_SKEW, READY_WINDOW};
     use crate::land_authz::{LAND_MAINNET, LAND_SEPOLIA};
-    let (eth, matic) = served_chains();
     let land = if eth == 11_155_111 {
         LAND_SEPOLIA
     } else {
@@ -584,7 +584,8 @@ fn nft_trade_backed_sql(now_p: &str, token_num: &str) -> String {
                 AND c.land_registry = '{land_registry}' AND c.estate_registry = '{estate_registry}'
                 AND sent.contract_address IN (c.land_registry, c.estate_registry)
                 AND c.full_replay_started AND c.folded_block IS NOT NULL
-                AND c.folded_at BETWEEN {now_p} - interval '30 minutes' AND {now_p}
+                AND c.folded_at BETWEEN {now_p} - interval '{window} seconds'
+                                    AND {now_p} + interval '{skew} seconds'
                 AND n.owner = lower(t.signer) AND n.updated_block <= c.folded_block
                 AND NOT EXISTS (
                     SELECT FROM land_authz.authz_event e
@@ -606,11 +607,12 @@ fn nft_trade_backed_sql(now_p: &str, token_num: &str) -> String {
                 AND NOT EXISTS (
                     SELECT FROM shop.nft_contract watched
                     WHERE watched.network = n.network AND watched.contract_address = n.contract_address
-                      AND (watched.refold_owed OR
-                           coalesce(watched.backfilled_to_block, watched.backfill_from_block - 1)
-                           < watched.walked_from_block - 1)
+                      AND (watched.refold_owed OR ({backfill_pending}))
                 )
           ) END)",
+        backfill_pending = super::nft_index::BACKFILL_PENDING_SQL,
+        window = READY_WINDOW.num_seconds(),
+        skew = MAX_CLOCK_SKEW.num_seconds(),
         main_land = LAND_MAINNET.land_registry,
         main_estate = LAND_MAINNET.estate_registry,
         test_land = LAND_SEPOLIA.land_registry,
@@ -645,6 +647,7 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
     let of = contracts_p
         .map(|p| format!(" AND sent.contract_address IN (SELECT unnest({p}::text[]))"))
         .unwrap_or_default();
+    let (eth, matic) = served_chains();
     let token_num = uint_or_null("sent_erc721.token_id");
     let mainnet = format!(
         "t.chain_id IN ({}, {})",
@@ -691,7 +694,7 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
         item_num = uint_or_null("sent_item.item_id"),
         shift = ITEM_ID_SHIFT,
         listable = super::trade_events::listable_on_chain_sql("t", now_p),
-        backed = nft_trade_backed_sql(now_p, &token_num),
+        backed = nft_trade_backed_sql(now_p, &token_num, eth, matic),
         counted = super::trades::counted_sql("t.", since_p)
     )
 }
@@ -1244,7 +1247,7 @@ pub async fn fetch_page(
     read: &mut CatalogueRead,
     f: &CatalogFilters,
     is_v2: bool,
-) -> Result<(Vec<CatalogItem>, i64), ApiError> {
+) -> Result<(Vec<CatalogItem>, i64), Response> {
     // The read's clock: the trades check decided on the same instant.
     let now = read.now.naive_utc();
     let since = super::trades::mirrored_since(&state.settings, now);
@@ -1254,7 +1257,12 @@ pub async fn fetch_page(
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, "catalog query failed");
-            ApiError::bad_request("Couldn't fetch the catalog with the filters provided")
+            if super::nft_reads::cancelled(&e) {
+                super::nft_reads::timed_out()
+            } else {
+                ApiError::bad_request("Couldn't fetch the catalog with the filters provided")
+                    .into_response()
+            }
         })?;
     let total: i64 = match rows.first() {
         Some(r) => r.get("total"),
@@ -1263,8 +1271,8 @@ pub async fn fetch_page(
             sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
                 .fetch_one(&mut *read.tx)
                 .await
-                .map(|r| r.get::<i64, _>("total"))
-                .unwrap_or(0)
+                .map_err(super::nft_reads::read_error)?
+                .get("total")
         }
         None => 0,
     };
@@ -1311,12 +1319,12 @@ async fn catalog_inner(
                 Err(e) => return e.into_response(),
             }
         }
-        let (key, stamp) = ((is_v2, filters.clone(), read.key()), read.stamp());
+        let (key, stamp) = ((filters.clone(), read.key()), read.stamp());
         let mut held = Some(read);
         match state
             .catalog_cache
             .page_or_fetch_holding(key, &mut held, async |read: &mut CatalogueRead| {
-                fetch_page(&state, read, &filters, is_v2)
+                fetch_page(&state, read, &filters, false)
                     .await
                     .map(Arc::new)
             })
@@ -1716,6 +1724,59 @@ mod tests {
         ]);
         assert!(out.contains(&"urn:decentraland:mainnet:collections-v1:0xabc:0".to_string()));
         assert_eq!(escape_like("50%_off\\"), "50\\%\\_off\\\\");
+    }
+
+    #[tokio::test]
+    async fn sepolia_land_uses_its_ownership_publication_with_clock_skew() {
+        use crate::land_authz::{LAND_MAINNET, LAND_SEPOLIA};
+        use crate::market::chain_walk::ChainNet;
+        let Some(db) = crate::test_db::OwnDatabase::create("listing_sepolia").await else {
+            return;
+        };
+        let pool = &db.pool;
+        let now = chrono::Utc::now().naive_utc();
+        let signer = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        for land in [LAND_MAINNET, LAND_SEPOLIA] {
+            sqlx::query(
+                "INSERT INTO land_authz.index_cursor (network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started)
+                 VALUES ($1, $2, $3, 101, 100, $4, true)",
+            )
+            .bind(land.network)
+            .bind(land.land_registry)
+            .bind(land.estate_registry)
+            .bind(now + chrono::Duration::minutes(5))
+            .execute(pool).await.unwrap();
+            sqlx::query(
+                "INSERT INTO land_authz.token_right (token_address,token_id,owner,updated_block,updated_log)
+                 VALUES ($1, 1, $2, 90, 0)",
+            )
+            .bind(land.land_registry).bind(signer)
+            .execute(pool).await.unwrap();
+        }
+        let backed = nft_trade_backed_sql(
+            "$1::timestamp",
+            "1::numeric",
+            ChainNet::Ethereum.testnet_chain_id(),
+            ChainNet::Matic.testnet_chain_id(),
+        );
+        let query = format!(
+            "SELECT {backed} FROM (SELECT 'ETHEREUM' AS network, $2::text AS signer, gen_random_uuid() AS id) t
+             CROSS JOIN (SELECT 3 AS asset_type, $3::text AS contract_address, gen_random_uuid() AS id) sent"
+        );
+        for (registry, expected) in [
+            (LAND_SEPOLIA.land_registry, true),
+            (LAND_MAINNET.land_registry, false),
+        ] {
+            let held: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(&query))
+                .bind(now)
+                .bind(signer)
+                .bind(registry)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert_eq!(held, expected, "{registry}");
+        }
+        db.drop().await;
     }
 
     /// Two open item orders for one item: the catalogue names the cheapest

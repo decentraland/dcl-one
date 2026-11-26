@@ -786,6 +786,7 @@ pub async fn list_nfts(
         f = &narrowed;
         prefetched = Some(listings);
     }
+    let strict_land = snapshot.is_some();
     let (mut data, total, mut snapshot) = match snapshot {
         Some((mut conn, sources)) => {
             let (first, skip) = index_page(f);
@@ -796,37 +797,6 @@ pub async fn list_nfts(
         }
         None => list_page(state, f, now).await?,
     };
-    let listings = match prefetched {
-        Some(listings) => listings,
-        None => {
-            let land: Vec<String> = data
-                .iter()
-                .filter(|r| matches!(r.nft.category.as_str(), "parcel" | "estate"))
-                .map(|r| r.nft.id.clone())
-                .collect();
-            match snapshot.as_mut() {
-                Some(conn) => {
-                    super::rentals::listings_of_nfts(&mut **conn, chain_id, &land, &statuses)
-                        .await
-                        .map_err(super::nft_reads::read_error)?
-                }
-                None => super::rentals::listings_of_nfts(&state.pool, chain_id, &land, &statuses)
-                    .await
-                    .unwrap_or_else(|e| {
-                        tracing::warn!(error = %e, "/v1/nfts: the rentals read failed");
-                        Vec::new()
-                    }),
-            }
-        }
-    };
-    let by_nft: std::collections::HashMap<&str, &crate::rentals::types::RentalListing> =
-        listings.iter().map(|l| (l.nft_id.as_str(), l)).collect();
-    for r in &mut data {
-        if let Some(listing) = by_nft.get(r.nft.id.as_str()) {
-            r.nft.open_rental_id = Some(listing.id.clone());
-            r.rental = serde_json::to_value(listing).ok();
-        }
-    }
     // Both readers carry only the legacy order. An nft listed through the
     // off-chain marketplace carries its open v3 listing, signed by its
     // owner, as its order, so a client sees it on sale (and relists by
@@ -889,6 +859,44 @@ pub async fn list_nfts(
         {
             r.nft.active_order_id = Some(order.id.clone());
             r.order = Some(order);
+        }
+    }
+    let listings = match prefetched {
+        Some(listings) => listings,
+        None => {
+            let land: Vec<String> = data
+                .iter()
+                .filter(|r| matches!(r.nft.category.as_str(), "parcel" | "estate"))
+                .map(|r| r.nft.id.clone())
+                .collect();
+            match snapshot.as_mut() {
+                Some(conn) => {
+                    match super::rentals::listings_of_nfts(&mut **conn, chain_id, &land, &statuses)
+                        .await
+                    {
+                        Ok(listings) => listings,
+                        Err(e) if strict_land => return Err(super::nft_reads::read_error(e)),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "/v1/nfts: the rentals read failed");
+                            Vec::new()
+                        }
+                    }
+                }
+                None => super::rentals::listings_of_nfts(&state.pool, chain_id, &land, &statuses)
+                    .await
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(error = %e, "/v1/nfts: the rentals read failed");
+                        Vec::new()
+                    }),
+            }
+        }
+    };
+    let by_nft: std::collections::HashMap<&str, &crate::rentals::types::RentalListing> =
+        listings.iter().map(|l| (l.nft_id.as_str(), l)).collect();
+    for r in &mut data {
+        if let Some(listing) = by_nft.get(r.nft.id.as_str()) {
+            r.nft.open_rental_id = Some(listing.id.clone());
+            r.rental = serde_json::to_value(listing).ok();
         }
     }
     Ok((data, total))

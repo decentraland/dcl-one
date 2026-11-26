@@ -155,8 +155,7 @@ impl CatalogueRead {
     /// snapshot at the gate's clock: a read that joins the open trades
     /// decides on the trade state its rows come from.
     pub async fn trades_ready(&mut self, state: &MarketplaceState) -> Result<(), Response> {
-        sqlx::query("SET LOCAL statement_timeout = '10s'")
-            .execute(&mut *self.tx)
+        super::nft_reads::set_read_timeout(&mut self.tx)
             .await
             .map_err(super::nft_reads::read_error)?;
         super::trades::ready_on(state, &mut self.tx, self.now)

@@ -2049,8 +2049,8 @@ Invariants:
   importable listings) keep the unscoped CTE.
 - A listing needs a published open verdict from a marketplace the trade
   events index watches on its chain. An event in
-  `shop.trade_event` past that publication withholds that network's trades
-  until the fold publishes. A trade also needs its own folded verdict, and
+  `shop.trade_event` past that publication withholds the matching order,
+  signer's orders at that venue, or venue's orders, according to the event. A trade also needs its own folded verdict, and
   a V3 verdict needs a verified cancellation digest. An item order's
   creator and minter evidence must match its chain. Testnet rows must
   also be verified.
@@ -2059,10 +2059,20 @@ Invariants:
   ownership publication withholds it. The NFT leg also checks the tracked
   contract's outstanding backfill and refold. These reads use the same
   snapshot as their listing rows and totals. Listing-bearing catalog pages
-  recompute their rows on each request so a catalogue refresh is unnecessary
-  for a cancellation or change of owner to take effect.
+  and price histograms recompute their rows on each request so a catalogue
+  refresh is unnecessary for a cancellation or change of owner to take effect.
 - Write cost: each sent asset that the trades mirror or a local signed trade
   inserts adds one index entry. Received assets are not in the index.
+
+The grouped unified first page and the trending candidate query were
+measured with PostgreSQL 17, 20,000 items, 10,000 trades across ten contracts
+and 100,000 NFT transfers. The test used the routes' SQL, with the base
+branch's shared trade CTE for the before measurement. For three
+warm executions, the median for the unified 12-item first page was
+1.32 s before and 1.17 s with the eligibility checks. The median for the
+trending candidate read across five contracts was 213 ms before and
+555 ms with the checks. These are database statement times, including
+the unified total and excluding the trending sales fetch and HTTP work.
 
 The object pass builds `idx_trade_assets_sent_contract` in the migrate
 transaction, not concurrently, so the trades mirror's writes to
@@ -4186,7 +4196,7 @@ builds it from its own indexes.
     trades with same-token transfers past that publication.
     The counts and digests are taken at the clock, so an expiry moves them
     too. Digesting every order and name instead would cost about 170 ms a
-    read on the synthetic database below; the statement takes 27 ms.
+    read on the synthetic database below.
   - With nothing moving and every source ready, the job records the
     revision the last pass left current checked again: an `UPDATE` of
     `explore_api.map_grid.checked_at` guarded on that revision's stamp and
