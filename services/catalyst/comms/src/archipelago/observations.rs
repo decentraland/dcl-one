@@ -224,7 +224,7 @@ impl Observations {
                     tokio::pin!(submission);
                     let submitted =
                         if terminal {
-                            let outcome = loop {
+                            loop {
                                 tokio::select! {
                                     biased;
                                     _ = async { match deadline { Some(at) => tokio::time::sleep_until(at).await, None => std::future::pending().await } } => {
@@ -243,8 +243,7 @@ impl Observations {
                                     _ = warnings.tick() => warn_dropped(&failures, &mut reported),
                                     outcome = &mut submission => break outcome,
                                 }
-                            };
-                            outcome
+                            }
                         } else { tokio::time::timeout_at(publication_deadline, &mut submission).await.unwrap_or(false) };
                     if !submitted {
                         failures.fetch_add(1, Ordering::Relaxed);

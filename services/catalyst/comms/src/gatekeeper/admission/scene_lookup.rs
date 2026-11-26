@@ -306,18 +306,6 @@ pub struct PlaceLookup<'a> {
 /// identity of a world scene can equal the id of an imported place.
 pub const NO_ADMINS: &str = "";
 
-#[cfg(test)]
-pub(crate) mod test_support {
-    use super::*;
-    pub(crate) fn cached_place<'a>(
-        state: &'a CommsState,
-        id: &str,
-        info: PlaceInfo,
-    ) -> PlaceLookup<'a> {
-        PlaceLookup::resolved(state, id, info, id)
-    }
-}
-
 impl<'a> PlaceLookup<'a> {
     /// A place already bound to a current deployment by the ONE resolver.
     /// Moderation requests share this footprint for policy and room effects.
@@ -363,5 +351,17 @@ impl<'a> PlaceLookup<'a> {
             .as_ref()
             .map(Option::as_ref)
             .map_err(String::as_str)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    pub(crate) fn cached_place<'a>(
+        state: &'a CommsState,
+        id: &str,
+        info: PlaceInfo,
+    ) -> PlaceLookup<'a> {
+        PlaceLookup::resolved(state, id, info, id)
     }
 }

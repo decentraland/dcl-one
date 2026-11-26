@@ -455,7 +455,7 @@ impl<K: Clone + Hash + Eq> Supply<K> {
             return Ok(Served::Miss);
         }
         let lock = self.locks.claim(key);
-        let result = {
+        {
             let _guard = lock.lock().await;
             if let Some(bytes) = self.cached(key, rel) {
                 Ok(Served::Hit(bytes, Source::Store))
@@ -477,8 +477,7 @@ impl<K: Clone + Hash + Eq> Supply<K> {
                     Err(e) => Err(e),
                 }
             }
-        };
-        result
+        }
     }
 
     /// The file alone, bypassing the memory caches.

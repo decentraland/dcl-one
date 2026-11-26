@@ -1355,7 +1355,7 @@ impl Policy {
             PermissionDecision::Refused(undetermined) => return Err(undetermined),
         }
         let mut acquired;
-        let conn: &mut sqlx::PgConnection = match conn.as_deref_mut() {
+        let conn: &mut sqlx::PgConnection = match conn {
             Some(conn) => conn,
             None => {
                 acquired = self
