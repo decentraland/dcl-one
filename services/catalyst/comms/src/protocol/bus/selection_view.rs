@@ -461,7 +461,7 @@ mod tests {
             assignment_version: u64::MAX,
         };
         assert_eq!(serde_json::to_vec(&entry).unwrap().len(), 152);
-        assert!(MAX_VIEW_ENTRIES * 153 + 1 < MAX_VIEW_BYTES);
+        const { assert!(MAX_VIEW_ENTRIES * 153 + 1 < MAX_VIEW_BYTES) };
         let view = SelectionView::new(binding(), u64::MAX, entries(MAX_VIEW_ENTRIES)).unwrap();
         let request = ViewRequest {
             generation: view.generation.clone(),

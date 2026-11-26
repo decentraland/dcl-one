@@ -65,7 +65,7 @@ pub struct WebParam {
 }
 
 /// The portable scene set that runs when `--portables` / `?portables=` is absent.
-pub const DEFAULT_PORTABLES: &str = "basiccontroller.dcl.eth";
+pub const DEFAULT_PORTABLES: &str = "movecontroller.dcl.eth";
 
 /// The web-only half of a parameter's declaration, keyed by the [`LaunchOptions`] field.
 fn delivery(field: &str) -> Delivery {

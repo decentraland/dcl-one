@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use sqlx::PgPool;
 
 /// Drops the first armed COMMIT CommandComplete after PostgreSQL executed it.

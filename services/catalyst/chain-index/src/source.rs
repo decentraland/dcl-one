@@ -42,6 +42,8 @@ pub enum Source {
     ThirdPartyRegistryIndex,
     /// The CouponManager state reader (`coupons`).
     CouponManager,
+    /// Wert's partner keys and API (`POST /v1/wert/sign`).
+    Wert,
     /// A source v2 does not have yet; the label names the missing indexer.
     Deferred(&'static str),
 }
@@ -65,6 +67,7 @@ impl Source {
             Self::RentalsIndex => "rentals-index",
             Self::ThirdPartyRegistryIndex => "third-party-registry-index",
             Self::CouponManager => "coupon-manager",
+            Self::Wert => "wert",
             Self::Deferred(label) => label,
         }
     }
@@ -92,6 +95,9 @@ impl Source {
             Self::RentalsIndex => Some("SHOP_RENTALS_INDEX_ENABLED"),
             Self::ThirdPartyRegistryIndex => Some("MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED"),
             Self::CouponManager => Some("TRADE_RPC_URLS"),
+            Self::Wert => Some(
+                "WERT_PRIVATE_KEY_FILE, WERT_PUBLICATION_FEES_PRIVATE_KEY_FILE, WERT_API_URL, WERT_API_KEY",
+            ),
             Self::Deferred(_) => None,
         }
     }
