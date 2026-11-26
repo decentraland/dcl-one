@@ -1,0 +1,62 @@
+name: Rust dependencies
+# cargo-deny over the Catalyst workspace and cast-bot (its own lock), with services/catalyst/deny.toml.
+# Licences, bans and sources fail every run. Advisories fail pushes to main and the daily run,
+# which picks up newly published advisories; on a pull request they only report, so an advisory
+# published against an untouched crate does not block an unrelated dependency change.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * *'
+  push:
+    branches: [main]
+    paths:
+      - '**/Cargo.lock'
+      - '**/Cargo.toml'
+      - 'services/catalyst/deny.toml'
+      - '.github/workflows/rust-deps.yml'
+  pull_request:
+    paths:
+      - '**/Cargo.lock'
+      - '**/Cargo.toml'
+      - 'services/catalyst/deny.toml'
+      - '.github/workflows/rust-deps.yml'
+permissions:
+  contents: read
+concurrency:
+  group: rust-deps-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  deny:
+    name: cargo-deny ${{ matrix.checks }}
+    strategy:
+      fail-fast: false
+      matrix:
+        checks: [advisories, bans licenses sources]
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 30
+    continue-on-error: ${{ github.event_name == 'pull_request' && matrix.checks == 'advisories' }}
+    env:
+      CHECKS: ${{ matrix.checks }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-ci-${{ hashFiles('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/**', 'infra/packages/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-ci-
+          save: false
+          gc-max-store-size: 0
+      # cargo-deny at the flake's nixpkgs pin; cargo (for the metadata) is the CI shell's toolchain.
+      - name: Install cargo-deny
+        run: |
+          nix build --inputs-from . nixpkgs#cargo-deny -o .cache/cargo-deny
+          echo "$PWD/.cache/cargo-deny/bin" >> "$GITHUB_PATH"
+      - name: Check the Catalyst workspace
+        run: |
+          nix develop .#ci --command cargo deny --manifest-path services/catalyst/Cargo.toml \
+            --workspace --config services/catalyst/deny.toml --locked check $CHECKS
+      - name: Check cast-bot
+        if: ${{ !cancelled() }}
+        run: |
+          nix develop .#ci --command cargo deny --manifest-path services/catalyst/cast-bot/Cargo.toml \
+            --workspace --config services/catalyst/deny.toml --locked check $CHECKS

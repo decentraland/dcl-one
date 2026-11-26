@@ -1,0 +1,57 @@
+# cargo-deny policy for the Catalyst workspace and the cast-bot workspace (its own lock).
+# Run from the repository root (.github/workflows/rust-deps.yml):
+#   cargo deny --manifest-path services/catalyst/Cargo.toml --workspace --config services/catalyst/deny.toml check
+#   cargo deny --manifest-path services/catalyst/cast-bot/Cargo.toml --config services/catalyst/deny.toml check
+
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+# Unmaintained notices for direct dependencies only; transitive ones are their parents' call.
+unmaintained = "workspace"
+# Each entry names what keeps the fix out; drop it once the fixed release is in the lock.
+ignore = [
+  # crypto-bigint 0.5: secret-dependent branches.
+  { id = "RUSTSEC-2026-0387", reason = "fixed only in crypto-bigint 0.7; elliptic-curve 0.13 (alloy-signer, k256, p256, p384) requires 0.5" },
+  # libsqlite3-sys: bundled SQLite before 3.54 with a crafted -wal file.
+  { id = "RUSTSEC-2026-0459", reason = "fix needs libsqlite3-sys 0.39 (rusqlite 0.41); sqlx-sqlite 0.9 in the lock holds the single links=sqlite3 crate at 0.37; only dcl-scene-cli opens SQLite, on its own project files" },
+  # Unmaintained, no vulnerability.
+  { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile is unmaintained; catalyst-comms (Pulse WebTransport certificate loading) can move to rustls-pki-types PemObject" },
+  { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained; used across the workspace and through sqlx, a migration of its own" },
+]
+
+[licenses]
+# Licences of the dependencies today, each compatible with AGPL-3.0-only (LICENSE); add one
+# only after checking that. The unpublished first-party crates are skipped ([licenses.private]).
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MIT",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Zlib",
+]
+confidence-threshold = 0.93
+# The cast-bot graph uses a subset of the list.
+unused-allowed-license = "allow"
+
+[licenses.private]
+ignore = true
+
+[bans]
+# Duplicates are reported, not failed, until the workspace converges.
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# The LiveKit client SDK at the Explorer's pin (livekit, livekit-api and their crates).
+allow-git = ["https://github.com/decentraland/dcl-one"]

@@ -3,6 +3,7 @@ name = "catalyst"
 version.workspace = true
 edition = "2024"
 description = "Decentraland Catalyst node: one application package"
+publish = false
 # The integration tests link as a few grouped binaries, each listed below: a file under tests/
 # runs only as a module of one of them (tooling/tests/test_dev_regressions.py checks it).
 autotests = false
