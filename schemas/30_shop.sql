@@ -16993,7 +16993,8 @@ CREATE INDEX mana_transfer_recipient ON shop.mana_transfer (network, recipient, 
 -- the Polygon Committee contracts' MemberSet logs, appended with the cursor
 -- advance and deleted past a reorg rewind. Workload: tens of rows in all.
 -- A wallet is a member when its latest row (chain order, across both
--- contracts) has is_member.
+-- contracts) has is_member; builder reads that set by shared SQL up to the
+-- cursor's published block (DATABASE.md "Curation committee").
 CREATE TABLE shop.committee_event (
     network text NOT NULL CHECK (network = 'matic'),
     block_number bigint NOT NULL CHECK (block_number >= 0),

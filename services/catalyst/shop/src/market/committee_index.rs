@@ -2,7 +2,8 @@
 //! `MemberSet(address indexed member, bool value)` logs, kept in
 //! `shop.committee_event` with the cursor advance. A wallet is a member
 //! when its latest event across both contracts (chain order) set it, as the
-//! collections subgraph's `Account.isCommitteeMember` folds them.
+//! collections subgraph's `Account.isCommitteeMember` folds them. Builder
+//! reads the membership by shared SQL once the cursor is published.
 
 use std::collections::HashMap;
 
