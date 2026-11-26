@@ -665,7 +665,7 @@
   },
   "library/ui/components/ColorPicker/ColorPicker.module.css": {
     "primitives": 0,
-    "tokens": 17
+    "tokens": 19
   },
   "library/ui/components/CommunityCard/CommunityCard.module.css": {
     "primitives": 0,

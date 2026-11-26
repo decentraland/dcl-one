@@ -16786,7 +16786,7 @@
     },
     {
       "path": "library/ui/components/ColorPicker/ColorPicker.module.css",
-      "sha256": "6a7625299d280b7a149bd7dce504295bd95f2f10c2e9f7043f56eafc81955340"
+      "sha256": "e07e65b2baa47565a6dbf29a35f147eb01c0c115346a1149b708e5fb7a66d7b4"
     },
     {
       "path": "library/ui/components/ColorPicker/ColorPicker.tsx",

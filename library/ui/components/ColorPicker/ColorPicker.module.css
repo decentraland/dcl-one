@@ -2,8 +2,7 @@
    with the colour, or the colour alone, opens a light popup 406px wide with preset toggles and hue, saturation
    and brightness bars. Sizes are the HUD canvas's px (1920 by 1080). These rules sit outside the cascade layer:
    its buttons and range inputs are native controls a host's reset would restyle. The swatch's 55 % white
-   border, the selected orange, the shadow, the layer and the 7px, 7.5px, 11px and 13px corners have no
-   token. */
+   border, the shadow, the layer and the 7px, 7.5px, 11px and 13px corners have no token. */
 .root {
   position: relative;
   display: inline-flex;
@@ -47,7 +46,7 @@
   border-color: var(--dcl-neutrals-snow);
 }
 .swatch:focus-visible {
-  outline: 2px solid #ff743a; /* = HUD --accent */
+  outline: 2px solid var(--dcl-primary-alt-primary-alt); /* = HUD --accent */
   outline-offset: 2px;
 }
 .swatchFill {
@@ -108,7 +107,7 @@
   cursor: pointer;
 }
 .preset[aria-checked='true'] {
-  box-shadow: inset 0 0 0 3px #ff743a; /* = HUD --accent */
+  box-shadow: inset 0 0 0 3px var(--dcl-primary-alt-primary-alt); /* = HUD --accent */
 }
 .tint {
   position: absolute;
