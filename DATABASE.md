@@ -3689,8 +3689,12 @@ follows the collections subgraph's v1 handlers:
 An `AddWearable` whose wearable id has no representation is left out of
 `shop.items` and logged. The collection still counts it, and the next item
 is numbered after it. `catalyst_index_collections_v1_unrepresented_items`
-reports how many the last projection left out. It never holds the
-publication. On mainnet every one of the 438 items has a representation.
+reports how many this process's last projection left out. That count
+depends only on the log up to the projected block and the vendored data:
+a publication rolled back after counting is retried and counts the same,
+and a walk's first publication (each process or lease) sets it again, so
+the gauge is absent only until then. It never holds the publication. On
+mainnet every one of the 438 items has a representation.
 
 A publication projects Ethereum when an event was walked past the block its
 rows stand at, or none stand. It then rebuilds the network's rows, about 480,

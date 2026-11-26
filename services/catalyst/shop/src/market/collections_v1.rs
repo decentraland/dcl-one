@@ -85,7 +85,12 @@ pub const TOPICS: [B256; 3] = [
     CollectionV1::OwnershipTransferred::SIGNATURE_HASH,
 ];
 
-/// Items the last projection left out for want of a static representation.
+/// Items left out for want of a static representation, as this process's
+/// last projection counted them. The count is a function of the log up to
+/// the projected block and of the vendored data, so a publication rolled
+/// back after counting is retried and counts the same, and a walk's first
+/// publication (each process or lease) rebuilds the rows and sets it again.
+/// It is absent until then.
 const UNREPRESENTED: GaugeFamily<0> = GaugeFamily::new(
     "catalyst_index_collections_v1_unrepresented_items",
     "Ethereum v1 items the collections projection left out: no static representation of their wearable id.",
@@ -925,6 +930,102 @@ mod tests {
         assert_eq!(name().await, fresh, "after a failed pass it rebuilds again");
     }
 
+    /// `ix`'s publication at `at` in its own transaction, committed or
+    /// rolled back.
+    async fn publish_at(pool: &PgPool, ix: &CollectionsV1Index, at: i64, commit: bool) {
+        let mut tx = pool.begin().await.unwrap();
+        ix.publish(&mut tx, at).await.unwrap();
+        if commit {
+            tx.commit().await.unwrap();
+        } else {
+            tx.rollback().await.unwrap();
+        }
+    }
+
+    /// The unrepresented gauge after a restart and after a rollback: a fresh
+    /// walk's first publication sets it again though nothing was walked,
+    /// and a publication rolled back after counting counts what its retry
+    /// commits.
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_unrepresented_gauge_survives_a_restart_and_a_rollback() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let upto = 26_499_473;
+        let mut events = walked();
+        let last = events
+            .iter()
+            .rev()
+            .find(|e| e.kind == KIND_ADD_ITEM)
+            .unwrap()
+            .clone();
+        events.push(CollectionEvent {
+            block_number: last.block_number + 1,
+            metadata: Some("no_such_wearable".into()),
+            ..last
+        });
+        let mut conn = pool.acquire().await.unwrap();
+        insert_events(&mut conn, ChainNet::Ethereum, &events)
+            .await
+            .unwrap();
+        drop(conn);
+        let gauge = |handle: &dcl_metrics::PrometheusHandle| {
+            handle
+                .render()
+                .lines()
+                .find(|l| l.starts_with("catalyst_index_collections_v1_unrepresented_items "))
+                .map(str::to_string)
+        };
+        let process = || {
+            let recorder = dcl_metrics::Registry::new(&[FAMILIES])
+                .unwrap()
+                .builder(dcl_metrics::PrometheusBuilder::new())
+                .unwrap()
+                .build_recorder();
+            let handle = recorder.handle();
+            (recorder, handle)
+        };
+        const ONE: Option<&str> = Some("catalyst_index_collections_v1_unrepresented_items 1");
+
+        // The first process publishes the log: one item left out.
+        let (recorder, handle) = process();
+        {
+            let _local = dcl_metrics::set_default_local_recorder(&recorder);
+            publish_at(&pool, &CollectionsV1Index::projecting(true), upto, true).await;
+        }
+        assert_eq!(gauge(&handle).as_deref(), ONE);
+
+        // A restart: nothing walked since, and the first publication sets it.
+        let (recorder, handle) = process();
+        {
+            let _local = dcl_metrics::set_default_local_recorder(&recorder);
+            let ix = CollectionsV1Index::projecting(true);
+            assert_eq!(gauge(&handle), None, "absent until a publication");
+            publish_at(&pool, &ix, upto + 1, true).await;
+            assert_eq!(gauge(&handle).as_deref(), ONE, "set again after a restart");
+        }
+
+        // A rollback after counting: the retry commits the same count.
+        let (recorder, handle) = process();
+        {
+            let _local = dcl_metrics::set_default_local_recorder(&recorder);
+            let ix = CollectionsV1Index::projecting(true);
+            publish_at(&pool, &ix, upto + 2, false).await;
+            ix.abandon();
+            let counted = gauge(&handle);
+            publish_at(&pool, &ix, upto + 2, true).await;
+            assert_eq!(counted.as_deref(), ONE);
+            assert_eq!(gauge(&handle).as_deref(), ONE, "what the retry committed");
+        }
+        let left_out: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM shop.items WHERE network = 'ethereum' AND urn LIKE '%no_such_wearable'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(left_out, 0);
+    }
+
     /// Once Ethereum is handed to the index, the catalogue routes serve its
     /// projection of the v1 collections, and refuse them while a rewind
     /// withdraws the publication.
@@ -1010,12 +1111,76 @@ mod tests {
         }
     }
 
+    /// A source that counts the log requests of the windows it reads (the
+    /// walk's log budget charges them), apart from every other request.
+    struct CountingLogs<'a> {
+        inner: crate::chain_index::logs::RpcSource<'a>,
+        log_requests: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::chain_index::logs::LogSource for CountingLogs<'_> {
+        async fn chain_id(
+            &self,
+        ) -> Result<crate::chain_index::logs::Read<u64>, crate::chain_index::rpc::RpcError>
+        {
+            self.inner.chain_id().await
+        }
+        async fn head(
+            &self,
+        ) -> Result<crate::chain_index::logs::Read<u64>, crate::chain_index::rpc::RpcError>
+        {
+            self.inner.head().await
+        }
+        async fn finalized(
+            &self,
+        ) -> Result<
+            crate::chain_index::logs::Read<crate::chain_index::rpc::BlockHeader>,
+            crate::chain_index::rpc::RpcError,
+        > {
+            self.inner.finalized().await
+        }
+        async fn header(
+            &self,
+            number: u64,
+        ) -> Result<
+            crate::chain_index::logs::Read<crate::chain_index::rpc::BlockHeader>,
+            crate::chain_index::rpc::RpcError,
+        > {
+            self.inner.header(number).await
+        }
+        async fn window(
+            &self,
+            from: u64,
+            to: u64,
+            groups: &[LogGroup],
+            chunk: &mut usize,
+        ) -> Result<crate::chain_index::logs::Window, crate::chain_index::rpc::RpcError> {
+            let w = self.inner.window(from, to, groups, chunk).await?;
+            self.log_requests
+                .fetch_add(w.requests, std::sync::atomic::Ordering::SeqCst);
+            Ok(w)
+        }
+        async fn block_times(
+            &self,
+            logs: &[RpcLog],
+        ) -> Result<
+            crate::chain_index::logs::Read<HashMap<i64, i64>>,
+            crate::chain_index::rpc::RpcError,
+        > {
+            self.inner.block_times(logs).await
+        }
+    }
+
     /// The first walk's cost over a real endpoint, for METRICS.md: run with
     /// `COLLECTIONS_V1_MEASURE_RPC=<Ethereum mainnet RPC> cargo test -p
     /// catalyst-shop --lib collections_v1::tests::measure_the_first_walk --
-    /// --ignored --nocapture`. Passes run back to back (a job pauses
+    /// --ignored --nocapture`, and `COLLECTIONS_V1_MEASURE_PASSES=<n>` to stop
+    /// after n passes. Passes run back to back (a job pauses
     /// `MARKETPLACE_INDEX_INTERVAL_SECS` between them) until the walk
-    /// publishes.
+    /// publishes. Each pass prints its `eth_getLogs` requests (what the
+    /// 100-request pass budget charges) apart from its other requests
+    /// (headers: chain, head, each window's bracket, block times).
     #[tokio::test]
     #[ignore = "walks Ethereum mainnet over a real endpoint"]
     async fn measure_the_first_walk() {
@@ -1024,30 +1189,45 @@ mod tests {
         let Ok(url) = std::env::var("COLLECTIONS_V1_MEASURE_RPC") else {
             return;
         };
+        let most: usize = std::env::var("COLLECTIONS_V1_MEASURE_PASSES")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(100);
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
         let http = crate::http::Outbound::for_tests();
         let sent = AtomicUsize::new(0);
-        let source = crate::chain_index::logs::RpcSource::new(
-            crate::chain_index::rpc::Rpc::at(&http, &url).counting(&sent),
-        );
+        let source = CountingLogs {
+            inner: crate::chain_index::logs::RpcSource::new(
+                crate::chain_index::rpc::Rpc::at(&http, &url).counting(&sent),
+            ),
+            log_requests: AtomicUsize::new(0),
+        };
         let ix = CollectionsV1Index::default();
         let settings = chain_walk::IndexSettings::default();
         let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
         let started = std::time::Instant::now();
-        let (mut passes, mut get_logs, mut blocks) = (0, 0, 0);
-        loop {
+        let (mut passes, mut blocks, mut published) = (0, 0, false);
+        let (mut logs_before, mut sent_before) = (0, 0);
+        while passes < most && !published {
             let out = chain_walk::run_pass(&pool, &source, &ix, &settings, &owner, None, &|_| {})
                 .await
                 .unwrap();
             passes += 1;
-            get_logs += out.requests;
             blocks += out.blocks();
-            if out.published {
-                break;
-            }
-            assert!(passes < 100, "no publication after {passes} passes");
+            published = out.published;
+            let (logs, all) = (
+                source.log_requests.load(Ordering::SeqCst),
+                sent.load(Ordering::SeqCst),
+            );
+            println!(
+                "pass {passes}: {} blocks, {} eth_getLogs, {} other requests",
+                out.blocks(),
+                logs - logs_before,
+                (all - sent_before) - (logs - logs_before)
+            );
+            (logs_before, sent_before) = (logs, all);
         }
         let kinds: Vec<(String, i64)> = sqlx::query_as(
             "SELECT kind, count(*) FROM shop.collection_event WHERE network = 'ethereum' GROUP BY kind ORDER BY kind",
@@ -1055,9 +1235,14 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
+        let (logs, all) = (
+            source.log_requests.load(Ordering::SeqCst),
+            sent.load(Ordering::SeqCst),
+        );
         println!(
-            "first walk: {passes} passes, {blocks} blocks, {get_logs} eth_getLogs, {} HTTP requests, {:.1} s; rows {kinds:?}",
-            sent.load(Ordering::Relaxed),
+            "first walk: {passes} passes (published: {published}), {blocks} blocks, {all} requests: \
+             {logs} eth_getLogs and {} others, {:.1} s; rows {kinds:?}",
+            all - logs,
             started.elapsed().as_secs_f64()
         );
     }
