@@ -1,18 +1,24 @@
 import type { HTMLAttributes } from 'react'
 import styles from './Spinner.module.css'
 
-export type SpinnerProps = {
-  /**
-   * `dark` draws the track for a light surface, `light` for a dark one (Figma "Property 1"). `thin` is the
-   * Explorer HUD's ring: a faint track a tenth of its size thick and a rounded arc in the primary colour.
-   */
-  variant?: 'dark' | 'light' | 'thin'
-  /** The ring's diameter in px. Without it the ring takes its variant's size: the Figma 30, or 28 for `thin`. */
+type RingSpinner = {
+  /** `dark` draws the track for a light surface, `light` for a dark one (Figma "Property 1"). */
+  variant?: 'dark' | 'light'
+  size?: 16 | 20 | 24 | 30 | 40
+}
+
+type ThinSpinner = {
+  /** The Explorer HUD's ring: a faint track a tenth of its size thick and a rounded arc in the primary colour. */
+  variant: 'thin'
+  /** The ring's diameter in px. Without it the ring is 28 px. */
   size?: number
+}
+
+export type SpinnerProps = (RingSpinner | ThinSpinner) & {
   label?: string
 } & Omit<HTMLAttributes<HTMLSpanElement>, 'children' | 'role'>
 
-export function Spinner({ variant = 'dark', size, label = 'Loading', className, style, ...rest }: SpinnerProps) {
+export function Spinner({ variant = 'dark', label = 'Loading', size, className, style, ...rest }: SpinnerProps) {
   const classes = [styles.root, styles[variant], className].filter(Boolean).join(' ')
   if (variant === 'thin') {
     const sized = size === undefined ? style : { ...style, width: size, height: size }
@@ -34,7 +40,5 @@ export function Spinner({ variant = 'dark', size, label = 'Loading', className, 
       </span>
     )
   }
-  // The Figma ring is 30 px with a 4 px track; a sized ring keeps that proportion.
-  const sized = size === undefined ? style : { ...style, width: size, height: size, borderWidth: (size * 2) / 15 }
-  return <span role="progressbar" aria-label={label} {...rest} style={sized} className={classes} />
+  return <span role="progressbar" aria-label={label} data-size={size ?? 30} {...rest} style={style} className={classes} />
 }

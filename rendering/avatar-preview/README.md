@@ -126,8 +126,9 @@ so the host page shows through around the avatar, with the avatar's shadow on it
 
 The look follows the Explorer's lobby preview (its noon sun, about 7000 lux, raised to 8000, and the ambient its
 camera layer overrides to) and the Unity renderer's framing and light placement, measured with
-`web/compare.html`: the camera and the key light stay put and the subject turns under them, and bloom
-takes only what is brighter than white (emissive parts). The default background is
+`web/compare.html`: the camera and the key light stay put and the subject turns under them, and the bloom
+is the Unity renderer's: only what is brighter than white (emissive parts), at its intensity and
+scatter, sized by the view as Unity's is. The default background is
 wearable-preview's `#4b4852`. Open difference from the Unity renderer: its colours are deeper and
 more saturated.
 

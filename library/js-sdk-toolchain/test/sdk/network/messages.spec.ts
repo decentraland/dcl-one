@@ -6,7 +6,7 @@ import {
   DeleteComponentNetwork,
   CrdtMessageType
 } from '../../../packages/@dcl/ecs/src'
-import { Entity } from '../../../packages/@dcl/ecs/dist'
+import type { Entity } from '../../../packages/@dcl/ecs/dist'
 
 describe('Network messages', () => {
   const buffer = new ReadWriteByteBuffer()

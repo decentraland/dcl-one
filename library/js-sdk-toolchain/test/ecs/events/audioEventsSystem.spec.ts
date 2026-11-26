@@ -1,11 +1,5 @@
-import {
-  components,
-  createAudioEventsSystem,
-  Engine,
-  IEngine,
-  AudioEventsSystem,
-  MediaState
-} from '../../../packages/@dcl/ecs/src'
+import type { IEngine, AudioEventsSystem } from '../../../packages/@dcl/ecs/src'
+import { components, createAudioEventsSystem, Engine, MediaState } from '../../../packages/@dcl/ecs/src'
 
 describe('Audio events helper system should', () => {
   const engine: IEngine = Engine()

@@ -1,4 +1,4 @@
-import { Dialog, Notice, useEventsCopy, SitesButton as Button } from "@dcl/one-ui";
+import { Dialog, Notice, useEventsCopy, Button } from "@dcl/one-ui";
 import { useEffect, useId, useRef, type MouseEvent } from "react";
 
 import styles from "./DeleteEventDialog.module.css";
@@ -39,8 +39,8 @@ export default function DeleteEventDialog({ busy, error, onCancel, onConfirm }: 
         <p className={styles.copy}>{text("This event will be permanently removed from your events. This action can’t be undone.")}</p>
         {error && <Notice tone="error">{text(error === "session" ? "Your session changed. Sign in again to delete this event." : "We couldn't delete your event. Please try again.")}</Notice>}
         <div className={styles.actions}>
-          <Button variant="inverse" disabled={busy} onClick={cancel}>{text("Cancel")}</Button>
-          <Button disabled={busy} aria-busy={busy || undefined} onClick={confirm}>{busy ? text("Deleting…") : text("Delete event")}</Button>
+          <Button size="lg" variant="inverse" disabled={busy} onClick={cancel}>{text("Cancel")}</Button>
+          <Button size="lg" disabled={busy} aria-busy={busy || undefined} onClick={confirm}>{busy ? text("Deleting…") : text("Delete event")}</Button>
         </div>
       </div>
     </Dialog>

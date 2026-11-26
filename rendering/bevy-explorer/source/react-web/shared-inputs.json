@@ -477,6 +477,10 @@
           "kind": "regular"
         },
         {
+          "name": "gridAge.ts",
+          "kind": "regular"
+        },
+        {
           "name": "home.ts",
           "kind": "regular"
         },
@@ -844,6 +848,10 @@
           "kind": "regular"
         },
         {
+          "name": "gridAge.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "guestIdentity.test.ts",
           "kind": "regular"
         },
@@ -929,6 +937,157 @@
         },
         {
           "name": "utm.test.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/shop",
+      "entries": [
+        {
+          "name": "README.md",
+          "kind": "regular"
+        },
+        {
+          "name": "api",
+          "kind": "directory"
+        },
+        {
+          "name": "boundary.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "cart",
+          "kind": "directory"
+        },
+        {
+          "name": "checkout",
+          "kind": "directory"
+        },
+        {
+          "name": "credits",
+          "kind": "directory"
+        },
+        {
+          "name": "detail",
+          "kind": "directory"
+        },
+        {
+          "name": "discovery",
+          "kind": "directory"
+        },
+        {
+          "name": "globals.d.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "land",
+          "kind": "directory"
+        },
+        {
+          "name": "market",
+          "kind": "directory"
+        },
+        {
+          "name": "model",
+          "kind": "directory"
+        },
+        {
+          "name": "names",
+          "kind": "directory"
+        },
+        {
+          "name": "payment",
+          "kind": "directory"
+        },
+        {
+          "name": "route-aliases.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "tsconfig.json",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/shop/discovery",
+      "entries": [
+        {
+          "name": "api.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "cardPrice.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "freshness.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "intl.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "lib",
+          "kind": "directory"
+        }
+      ]
+    },
+    {
+      "path": "library/shop/discovery/lib",
+      "entries": [
+        {
+          "name": "catalogItem.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "catalogItem.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "categories.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "iconName.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "outfit.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "outfit.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "price-slider.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "price-slider.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "rarity.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "rolloutFlags.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "rolloutFlags.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "sale.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "sale.ts",
           "kind": "regular"
         }
       ]
@@ -4417,6 +4576,10 @@
           "kind": "regular"
         },
         {
+          "name": "useMapGridAge.ts",
+          "kind": "regular"
+        },
+        {
           "name": "useMapLayerData.ts",
           "kind": "regular"
         }
@@ -5231,6 +5394,10 @@
           "kind": "regular"
         },
         {
+          "name": "mapGridAge.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "mapPins.test.tsx",
           "kind": "regular"
         },
@@ -5785,6 +5952,147 @@
         },
         {
           "name": "worldAccess.test.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/shop",
+      "entries": [
+        {
+          "name": "InWorldShop.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "InWorldShop.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopCartDrawer.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopCartDrawer.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopCartDrawer.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopChrome.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopFooter.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopFooter.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopHeldCredits.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopHeldCredits.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopHeldCredits.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopItems.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopSearch.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "ShopSearch.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "assets",
+          "kind": "directory"
+        },
+        {
+          "name": "capabilities.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "cartStore.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "catalogueQuery.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "entry.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "flags.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "flagsQuery.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "homeQuery.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "hostContract.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "index.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "itemEntity.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "itemLinks.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "namesQuery.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "purchaseQuery.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "remote-flags.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "scenePurchase.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "session.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "shopProtocol.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "ui",
+          "kind": "directory"
+        },
+        {
+          "name": "wallet-account.ts",
           "kind": "regular"
         }
       ]
@@ -9168,6 +9476,10 @@
   ],
   "controls": [
     {
+      "path": "library/shop/tsconfig.json",
+      "sha256": "3b1c02f83a3c2a36241951e90a58ed61985dd5e5e2e3cf2b4085f71e19443b38"
+    },
+    {
       "path": "library/ui/foundations/typography/font-source.json",
       "sha256": "aa6b4030480b644d90c640c3b56ce5cf1c86f7400df0e0d0c1f4468174113fdc"
     },
@@ -9225,7 +9537,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "8347d7e5ecb514f0cca00362e395b0dcaee78eaa80170b309a9b4de5bec3480c"
+      "sha256": "d0091d6d1336a7ad0dd498bca820158029258527abbdc314edb36748583ccf27"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -9240,12 +9552,20 @@
       "sha256": "b69ef1d6e4964d7cb0bb7969859cd305c0fdab61ef84de7aacb33fac8da71c43"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarModifiers.ts",
+      "sha256": "0f52bc4a6c6bd5c89f39b63e0c25c2c6d46011fd77cc022e3d3d7eeb803df6f4"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPointer.ts",
+      "sha256": "0ad47969d251ac27a77c26d5d915d43ceaed9a32e471e7daf927ed773830483f"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPreview.tsx",
       "sha256": "9e434066424a3c1c13b4aeb99841773c0558316a7b6aeafd205af16c882bd49c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
-      "sha256": "af8999e43664c5ebfdfa193fbb27edf7c71873f71d07846e87bd83fa0fa71f49"
+      "sha256": "c4bd8fad11d41c57f59ad4cd94920f952cf162bb9c1d957657efd2be3d4590f6"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/collections.ts",
@@ -9289,11 +9609,15 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/graphicsPresets.ts",
-      "sha256": "59eb638dafeb0f711b8b5f63ce825e8dbee332f12650849b3af9fe0d73f53e2e"
+      "sha256": "5b968d8035bdbcda826db18e1773105b0bf25d3912b4fc9f9832957951c74034"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/itemPurchase.ts",
       "sha256": "81b0e053bb81d115c1740cdde7ea8e6b93b18ae5e47f4b3abf05674c77cc74b2"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/mapPlayers.ts",
+      "sha256": "b2368d34b05d86506325bd1c585aad8e4e59b4541393dc61b7f431f21b3a6b04"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/marketplace.ts",
@@ -9314,6 +9638,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/outfits.ts",
       "sha256": "4940b5f381241e8a35be703bbba78d802623ddda3f2ca74391f508d20fd4095c"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/permissions.ts",
+      "sha256": "e4c0cf2808521329cc12dbe1a43532b6d4e160ec0e7b488d014fe5d03a38e0e1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/places.ts",
@@ -9505,7 +9833,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
-      "sha256": "e31f966beb16b6792037354c990e48c8847bdc934a84b5ccb14cc6a9fd7286f0"
+      "sha256": "5341f5caf1386ca26a83ff84943370e26b68df28dcd224b9f39da13567b4511a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
@@ -9568,6 +9896,10 @@
       "sha256": "b0648f5f93f52685a6d9cc61630644c70850cb5e52ad532fb0cf80d59748f48b"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePermissionsInForce.test.ts",
+      "sha256": "248649e2f3fec4824353befaa8b4b2b4dae15fd7cfde78075f1a0a85b7959177"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
       "sha256": "5b6206d2f815a52a02054dd682e877e4853b27c2a61049d3f37980942a7b3d0e"
     },
@@ -9601,7 +9933,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
-      "sha256": "1b9dd9725cf6e07f62be872b8a046a36613fabe0c48adc7fa31a103ae96900dc"
+      "sha256": "52fb1ecea238351094d405eea69a39b6772fa319cd8ff4cbe30a1211e641a5ed"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeTextureOptimization.test.ts",
@@ -9745,7 +10077,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "5b0e80d56177dc468f32b45c457736cd62497e608c7c4caf27ac26ceaa9b12ab"
+      "sha256": "7aa0e07e3c864d9fc70fe659c5dc977046ff4f81eb372d56acbc0af151613927"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -9804,6 +10136,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNearbyMutes.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNotifications.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgePermissionsInForce.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
@@ -9900,7 +10233,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "13f8c51863da335df8dc36e784c908dd1aac98c67a374473f52a434424331e4b"
+      "sha256": "929660a2025341063297a8322c6b6d3eb6b991a5efec4e7d970c0b640f3eb27f"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -9940,7 +10273,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "b5305a8fcae8da728e51384cefe4a588acd923521479ad85ac50941b6c6908c0"
+      "sha256": "42b3577d4f707ecbc7b84ee5826e431e7ff322efd5556233b84c4ad0d67deea1"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -10123,12 +10456,16 @@
       "sha256": "e270e2b27fc08f135b5659ab77c1731a202ff095d0ac4af93f27cb409ea86731"
     },
     {
+      "path": "library/explorer-core/features/map/gridAge.ts",
+      "sha256": "229af6ae45484bf6b1065f8bca0ea7ae50d10b1f8fb5f3d7d28f9223054d6d97"
+    },
+    {
       "path": "library/explorer-core/features/map/home.ts",
       "sha256": "cfbd18f3d2d74cb6388ecb070ddef4eb25976d0b318f72ddbbf1a9b8e05f0dfd"
     },
     {
       "path": "library/explorer-core/features/map/mapApi.ts",
-      "sha256": "ba429af5dec910d65365c6db6454be6f5d157231c44a5680c9cae741a85f90ff"
+      "sha256": "23237352bc3e1931ac4f06b81b99a3039de2a0616336780d7f65a8d994f39c70"
     },
     {
       "path": "library/explorer-core/features/map/mapCoords.ts",
@@ -10439,6 +10776,10 @@
       "sha256": "8009219f000ad7d58b8238a18bbe3798d2c741a40ab8c88c0f53f7bf7afb04c1"
     },
     {
+      "path": "library/explorer-core/test/gridAge.test.ts",
+      "sha256": "ffb692670f4aefe82e7436d0bb06561478a60572cae4a3e8cb7a91d573d96118"
+    },
+    {
       "path": "library/explorer-core/test/guestIdentity.test.ts",
       "sha256": "71df9737628f96ded881dfbafb3e5f676ba2ff3f0bbe9c3e0c1eae1332e28401"
     },
@@ -10525,6 +10866,14 @@
     {
       "path": "library/explorer-core/test/utm.test.ts",
       "sha256": "ef127eabccc61e88b4dcb2bfcc60d89bca3709bec2f74c0fffdb5c15a492258f"
+    },
+    {
+      "path": "library/shop/discovery/intl.ts",
+      "sha256": "2d32d5a5dc9f95ed67393f9572d06f89935223ea9d2d3b1795ff1cbb64d132e5"
+    },
+    {
+      "path": "library/shop/discovery/lib/rarity.ts",
+      "sha256": "731b638ac4feddb5b42807388c191bb7e0bc3311f215d5ee179943d9bbdc49f0"
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
@@ -13204,7 +13553,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapNotices.module.css",
-      "sha256": "051cea8524a2c8216e3363d0c3f130cd78fb53ef1426b72f91d390e4c4b656e5"
+      "sha256": "58664120326c37d050f54c27d5ab51a0d3c65f430510e68fac7ce332e4b9d8b8"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.module.css",
@@ -13212,7 +13561,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "15aa558665dcacebc58dbdea56f36c8aee9bb41310af4c7aa3d094e419a4adce"
+      "sha256": "46c357e73dc5433235f1a1d20b07248c5a1d6458c3da4d5b5bc742cd3a034d92"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
@@ -13269,6 +13618,10 @@
     {
       "path": "library/ui/apps/hud/features/map/useMapCamera.ts",
       "sha256": "87fc66a010db1fe616084100454d329b22647adf7ddbd01848a60f8469d1d202"
+    },
+    {
+      "path": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "sha256": "582d9bea1e355bdfc094fd7fa40483c3c7748e7ce8f6a3e89f36163ae53371fe"
     },
     {
       "path": "library/ui/apps/hud/features/map/useMapLayerData.ts",
@@ -13360,15 +13713,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionDialog.tsx",
-      "sha256": "51d8e8f185d81cc1c9b1ed74d8a1f4d314a7fb76172d3e4fdf8d181c081ee1f7"
+      "sha256": "967ba623f07e630d4c3fba90c4be3323aa39fecee7b539f2c164ea188ef3bcc6"
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionsPopover.module.css",
-      "sha256": "e896ba986bbb922b234dc29b1e725a60de38aac0456f16105dac8f1669df6ee0"
+      "sha256": "f3c83e05a6a47d9d335a2880a90c7e5cd9b5ac508623cce952370f7eb022cc66"
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
-      "sha256": "6f86265c2ac0a7a1b96f09713dae14f1a9e9d36f8b4b131cd2845993a1197e93"
+      "sha256": "183cd954e53d0468f5e09676b3959d7a38628d80e292463b8c8c0e45393a9123"
     },
     {
       "path": "library/ui/apps/hud/features/photoMode/PhotoModeOverlay.module.css",
@@ -13536,7 +13889,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "ff9d93ca8c1a591cb4a907c5751979fddb501df3ec67cf79bf6b9f85894e9710"
+      "sha256": "20699c52913dccd7e6ffdd4e875408b2c01c892ae02afe073c5c8501ca1e6918"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -13580,7 +13933,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "607772ceee3294cb0de927b30ed5e9b1a32983cb600670ae44155f7ff53ba2cb"
+      "sha256": "b7105dbdc511dae63b07a5e2f37f8fe533e82a6dc5805b5b1faf797f5a0e2733"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/inviteLink.ts",
@@ -13812,7 +14165,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "a3a01ef22ddaabed51a1a4659b992b410d4b485ebdc72ba189bebc8edc3e2e2e"
+      "sha256": "faf08458e955ac3d8d1bc3d015ca13d4767cb5f0454435e37588dcc74d02316c"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -13884,7 +14237,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "0153777d12b2e7dbc1a32a95a67b58000c397da07745dda02d1219c65f56a200"
+      "sha256": "27f050a8dd94c3120a01d5ac543f83f0fcebc701ee3f634cc1536893dbbbc0c0"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -14168,7 +14521,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
-      "sha256": "436e78801c2e40d4cb8bf7afd79d8379bd2f5f9ead35ff29ad37c5714770fa56"
+      "sha256": "25101f816971b7c159bb5e5b4b0301cc3879cf628fee1ecf580b358b19443402"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/mapPanel.test.tsx",
@@ -14232,7 +14585,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/permissions.test.tsx",
-      "sha256": "03c157c1028c234d9e9a6b6ba807627f6d071cae38e2d8cbb415357e9d0d20b8"
+      "sha256": "799e6cd71901d75b0561dbc7637527a056386440878ffddb4be8485b17b6a805"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/photoMode.test.tsx",
@@ -14367,6 +14720,10 @@
       "sha256": "5a0540c05192d6514efc813bdad21337f6dc4859e6ef88eb3addba603eca9b5d"
     },
     {
+      "path": "library/ui/apps/hud/test/mapGridAge.test.tsx",
+      "sha256": "bbda1a67c5b91b2322cb72010d2fb688c1157d6f3abdb0036f5f9b047f486503"
+    },
+    {
       "path": "library/ui/apps/hud/test/mapPins.test.tsx",
       "sha256": "f202cf95d71538789f66193bccf6739eb42ca4900e166d4cb47524e8bd2e2e92"
     },
@@ -14465,6 +14822,46 @@
     {
       "path": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "sha256": "97048bb11827e332f4bbf987f7380d5227412789a10e54da40d910faadbef8f3"
+    },
+    {
+      "path": "library/ui/apps/shop/ShopCartDrawer.module.css",
+      "sha256": "9910c38851d75c8a3c1d821b66f3e872880ec3f5e9ee1abf3309ae10e9e35780"
+    },
+    {
+      "path": "library/ui/apps/shop/ShopCartDrawer.tsx",
+      "sha256": "741c2b9250277d150b7efa84f042ab169711764c4cfce611a466fce323e717da"
+    },
+    {
+      "path": "library/ui/apps/shop/ShopChrome.tsx",
+      "sha256": "833527b3eeb72e4d8224019fe7e3facc3af478e4e0887b5fa202a7d19997ec85"
+    },
+    {
+      "path": "library/ui/apps/shop/ShopFooter.module.css",
+      "sha256": "4344bb05c2d1f6a923a820b9bcecf93fc7988d6334dfcb7cdedab5798ae6acf8"
+    },
+    {
+      "path": "library/ui/apps/shop/ShopFooter.tsx",
+      "sha256": "a868984af63358b66c0c5d86daa035fa9e0a125b7d381fe4a37f1434bcc5c1b3"
+    },
+    {
+      "path": "library/ui/apps/shop/ShopHeldCredits.module.css",
+      "sha256": "873bf2593193d0e60d58b875a8b6f998d9d9bf6794816fb006f285510b3f843e"
+    },
+    {
+      "path": "library/ui/apps/shop/ShopHeldCredits.tsx",
+      "sha256": "e57083e759c3f00ca541d96f97d526efa9bc2d0094ff036606e60b9c1bd86280"
+    },
+    {
+      "path": "library/ui/apps/shop/ShopSearch.module.css",
+      "sha256": "33d378fd988c41d72800902b55ff5f33b3416a4b6454628ff349d4b3afa87745"
+    },
+    {
+      "path": "library/ui/apps/shop/ShopSearch.tsx",
+      "sha256": "adecdd1675c231e687d5ee70969c4c76a576f57a245440d59fcb49e5d89a143c"
+    },
+    {
+      "path": "library/ui/apps/shop/index.ts",
+      "sha256": "b11110d174b5ce44ffc1e7af3ef4a7da7e3446d238fb94b83194f06ae878d940"
     },
     {
       "path": "library/ui/apps/sites/CopyAddress.module.css",
@@ -15464,7 +15861,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/AdminTabsBar.tsx",
-      "sha256": "b0988ae6be2aca740c4af0d2877bcb6cfe6d7878f83d995cf37a6569d1817827"
+      "sha256": "39d4251ba4520bfb94b575f7368c014964a14cfecb730b4b4b012b4704b7b072"
     },
     {
       "path": "library/ui/apps/sites/events/AllEvents.module.css",
@@ -15472,7 +15869,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/AllEvents.tsx",
-      "sha256": "5932e4ac84595da1e4595347d6989619441d61f32bf8b466a1ded3a79495f420"
+      "sha256": "d65466b372ef011fb21b8198d2977d96725549008baa3a36edd89d20bf66fc39"
     },
     {
       "path": "library/ui/apps/sites/events/Busy.module.css",
@@ -15488,7 +15885,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/DetailModal.tsx",
-      "sha256": "3252d5f6de7031df3196080aefd214d0b998ac81b10e341228fbacfcecfc33e1"
+      "sha256": "78336b7ec7515355ab1317843df18fc672013bdd7221ec8e293fd5ed989a23fc"
     },
     {
       "path": "library/ui/apps/sites/events/Dialog.module.css",
@@ -15512,7 +15909,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/HostBanner.tsx",
-      "sha256": "86f1000562ef59cac7cf399e451de5a226e1608742b12d8310ab0d00d3a7d30c"
+      "sha256": "0179bbc15470c1645f8bd49ad1eb3fc774421a22660aa0cf54706a0e640dc2e0"
     },
     {
       "path": "library/ui/apps/sites/events/LiveNow.module.css",
@@ -15528,7 +15925,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/MyEvents.tsx",
-      "sha256": "032f88eadbbb09231946ee7d0b37b7f0298dc68e7f8d37397ceb4b9da9bec2e5"
+      "sha256": "199070f4d6ab12d0f1a733c39758b41d5b1b55fb194bebfc559f5b276865953e"
     },
     {
       "path": "library/ui/apps/sites/events/Notice.module.css",
@@ -15548,7 +15945,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "sha256": "58dcafb673d968851c162d302e6c277532cbbaa0f15235a1fa36ba628e4cd479"
+      "sha256": "9d4c63d592b17485bc21660d0be4ea3f2e6f16ff42f9e78af3c47e87e148203f"
     },
     {
       "path": "library/ui/apps/sites/events/Rail.module.css",
@@ -15560,7 +15957,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/RejectEventModal.tsx",
-      "sha256": "bd502aec85b372c68f77fffca92735440fa2360c50630519d85c39b66b63935e"
+      "sha256": "8fcb25f5ccfbd4d14b8728618e7254ee3ef1c7705db7f56452f886bf585bebbe"
     },
     {
       "path": "library/ui/apps/sites/events/SubmitHangoutView.tsx",
@@ -15580,7 +15977,7 @@
     },
     {
       "path": "library/ui/apps/sites/events/UsersTable.tsx",
-      "sha256": "9ffacf220a04717afdffe7d7af2b980a5f3bb88ea26292a7707271cdc95bd819"
+      "sha256": "2edd0a6c180b14f5766466ced7c0ae152498334c7542c1fb9ba9b786a2ee8919"
     },
     {
       "path": "library/ui/apps/sites/events/admin-copy.ts",
@@ -15712,7 +16109,7 @@
     },
     {
       "path": "library/ui/apps/sites/index.ts",
-      "sha256": "1c73a56bfc5759d88575327c8a3ad21f0c9d57415df85c19522c72e1c73a514c"
+      "sha256": "dc7b29dfe8cc3c8ab21a75fd3709c540e6a53df862f782718e8326e579fc2580"
     },
     {
       "path": "library/ui/apps/sites/jump/JumpButtons.module.css",
@@ -16160,7 +16557,7 @@
     },
     {
       "path": "library/ui/components/Button/Button.module.css",
-      "sha256": "8baa7c51f50a365a8fbfc3cdd92e0aa058d2530ee6891beea11d2c93a41a1d63"
+      "sha256": "8c4c0fc8bb100db12b6106ad9ed62de64ba40857fc62dca12f938c1313292f3c"
     },
     {
       "path": "library/ui/components/Button/Button.module.css.d.ts",
@@ -16168,7 +16565,7 @@
     },
     {
       "path": "library/ui/components/Button/Button.tsx",
-      "sha256": "7609053a5796b8a4c2ab8900b40068d749a0d517942289fb20f11569ccdb4ce5"
+      "sha256": "5cbef72822402d721e9ad2c8f3d705dd8e1b26467e74bd38597bc5c02af523ba"
     },
     {
       "path": "library/ui/components/CardActionButton/CardActionButton.module.css",
@@ -16324,11 +16721,11 @@
     },
     {
       "path": "library/ui/components/NavCreditsBalance/NavCreditsBalance.module.css",
-      "sha256": "104be37b48c8801eecf61c0c4ce9dccb6484ccd79650330c6ac8548cab467aa1"
+      "sha256": "fb6a05916da47dd76b691ebb2312f8b93367e4a6730bb3a4410bd28ef88f43bb"
     },
     {
       "path": "library/ui/components/NavCreditsBalance/NavCreditsBalance.tsx",
-      "sha256": "e1c936e66ec7efb1a0b94f22b8a13163fba46f6518fd629f94f92d807303de0d"
+      "sha256": "be11a346ed101039935596a3add13d14bdeeb6b0b8d4144fe248e54a60cc3683"
     },
     {
       "path": "library/ui/components/NavMenuItem/NavMenuItem.module.css",
@@ -16420,11 +16817,11 @@
     },
     {
       "path": "library/ui/components/Spinner/Spinner.module.css",
-      "sha256": "7e4c12fdb0b79fc82c5569417a2df18f8103580224c070402fbcbf756906a716"
+      "sha256": "5a98da5e1c997bceb94d33279ad3702c833f9bb5a073a2b5dd3abdbc1c508641"
     },
     {
       "path": "library/ui/components/Spinner/Spinner.tsx",
-      "sha256": "152c6153b1827c37b34e10dc16de684d395c8c4bdf2d7b65e306a51daac328b1"
+      "sha256": "4c6dc16c04c76b6b744fbb6630f50c5cdf11817d1a27c531b2ab1ff50a83a8af"
     },
     {
       "path": "library/ui/components/Switch/Switch.module.css",
@@ -16448,7 +16845,7 @@
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css",
-      "sha256": "6b4daafb0062b222762dfa1ad9541bd72f4ebc13614368eb7c1bfcfba331bb9d"
+      "sha256": "9ad472fefc2f948547d82b09c05642941243523dc031dd8b6fc99f57a44d7e26"
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.module.css.d.ts",
@@ -16456,7 +16853,7 @@
     },
     {
       "path": "library/ui/components/TabsBar/TabsBar.tsx",
-      "sha256": "165411af3537dd120dc4f7a7727e33749c722cb827c6f0fc79c9b0c19a0b35fc"
+      "sha256": "e5140f737ddab9d4a4efbc8c0ab306be0f89fc67e999fc3d080c308767067a6d"
     },
     {
       "path": "library/ui/components/Tag/Tag.module.css",
@@ -16616,7 +17013,7 @@
     },
     {
       "path": "library/ui/index.ts",
-      "sha256": "e49aca3ae3c1de5c824da2ed0616aa3dfe8dbb93b359ffdc6b66dfd2708f90a6"
+      "sha256": "773ffe9e48a3ccd4ea36a065aa28d3a85019a48a1d75312d63ba75ee17397b87"
     },
     {
       "path": "library/ui/link.helpers.ts",
@@ -17584,6 +17981,21 @@
     },
     {
       "from": "library/explorer-core/features/map/mapApi.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapApi.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapApi.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/map/mapApi.ts",
       "to": "library/explorer-core/features/map/mapCoords.ts",
       "kind": "native:runtime"
     },
@@ -18648,6 +19060,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/gridAge.test.ts",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/test/guestIdentity.test.ts",
       "to": "library/explorer-core/features/auth/guest.ts",
       "kind": "native:runtime"
@@ -19410,6 +19852,21 @@
     {
       "from": "library/explorer-core/test/utm.test.ts",
       "to": "library/explorer-core/lib/utm.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/shop/discovery/lib/rarity.ts",
+      "to": "library/shop/discovery/intl.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/shop/discovery/lib/rarity.ts",
+      "to": "library/shop/discovery/intl.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/shop/discovery/lib/rarity.ts",
+      "to": "library/shop/discovery/intl.ts",
       "kind": "test:runtime"
     },
     {
@@ -33229,6 +33686,36 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/assets/events/time-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
@@ -33495,6 +33982,21 @@
     {
       "from": "library/ui/apps/hud/features/map/MapPage.tsx",
       "to": "library/ui/apps/hud/features/map/useMapCamera.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
       "kind": "test:runtime"
     },
     {
@@ -35325,6 +35827,21 @@
     {
       "from": "library/ui/apps/hud/features/map/useMapCamera.ts",
       "to": "library/explorer-core/features/map/mapZoom.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "to": "library/explorer-core/features/map/gridAge.ts",
       "kind": "test:runtime"
     },
     {
@@ -50178,6 +50695,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/mapGridAge.test.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/mapGridAge.test.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/mapGridAge.test.tsx",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/mapPins.test.tsx",
       "to": "library/explorer-core/features/map/mapPins.ts",
       "kind": "native:runtime"
@@ -50985,6 +51517,231 @@
     {
       "from": "library/ui/apps/hud/test/textureOptimization.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopCartDrawer.tsx",
+      "to": "library/shop/discovery/lib/rarity.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopCartDrawer.tsx",
+      "to": "library/shop/discovery/lib/rarity.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopCartDrawer.tsx",
+      "to": "library/shop/discovery/lib/rarity.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopCartDrawer.tsx",
+      "to": "library/ui/apps/shop/ShopCartDrawer.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopCartDrawer.tsx",
+      "to": "library/ui/apps/shop/ShopCartDrawer.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopCartDrawer.tsx",
+      "to": "library/ui/apps/shop/ShopCartDrawer.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopChrome.tsx",
+      "to": "library/ui/components/AppChrome/ChromeBody.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopChrome.tsx",
+      "to": "library/ui/components/AppChrome/ChromeBody.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopChrome.tsx",
+      "to": "library/ui/components/AppChrome/ChromeBody.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopChrome.tsx",
+      "to": "library/ui/components/AppChrome/SiteLayout.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopChrome.tsx",
+      "to": "library/ui/components/AppChrome/SiteLayout.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopChrome.tsx",
+      "to": "library/ui/components/AppChrome/SiteLayout.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopChrome.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopChrome.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopChrome.tsx",
+      "to": "library/ui/components/TabsBar/TabsBar.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopFooter.tsx",
+      "to": "library/ui/apps/shop/ShopFooter.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopFooter.tsx",
+      "to": "library/ui/apps/shop/ShopFooter.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopFooter.tsx",
+      "to": "library/ui/apps/shop/ShopFooter.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopHeldCredits.tsx",
+      "to": "library/ui/apps/shop/ShopHeldCredits.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopHeldCredits.tsx",
+      "to": "library/ui/apps/shop/ShopHeldCredits.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopHeldCredits.tsx",
+      "to": "library/ui/apps/shop/ShopHeldCredits.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopSearch.tsx",
+      "to": "library/shop/discovery/intl.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopSearch.tsx",
+      "to": "library/shop/discovery/intl.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopSearch.tsx",
+      "to": "library/shop/discovery/intl.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopSearch.tsx",
+      "to": "library/ui/apps/shop/ShopSearch.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopSearch.tsx",
+      "to": "library/ui/apps/shop/ShopSearch.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopSearch.tsx",
+      "to": "library/ui/apps/shop/ShopSearch.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopSearch.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopSearch.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/ShopSearch.tsx",
+      "to": "library/ui/foundations/icons/general.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopCartDrawer.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopCartDrawer.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopCartDrawer.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopChrome.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopChrome.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopChrome.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopFooter.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopFooter.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopFooter.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopHeldCredits.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopHeldCredits.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopHeldCredits.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopSearch.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopSearch.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/shop/index.ts",
+      "to": "library/ui/apps/shop/ShopSearch.tsx",
       "kind": "test:runtime"
     },
     {
@@ -53869,21 +54626,6 @@
     },
     {
       "from": "library/ui/apps/sites/events/AdminTabsBar.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/AdminTabsBar.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/AdminTabsBar.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/AdminTabsBar.tsx",
       "to": "library/ui/components/AppChrome/ChromeLink.tsx",
       "kind": "native:runtime"
     },
@@ -53910,6 +54652,21 @@
     {
       "from": "library/ui/apps/sites/events/AdminTabsBar.tsx",
       "to": "library/ui/components/AppChrome/chrome-nav.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/AdminTabsBar.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/AdminTabsBar.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/events/AdminTabsBar.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -54019,17 +54776,17 @@
     },
     {
       "from": "library/ui/apps/sites/events/AllEvents.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/AllEvents.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/AllEvents.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -54195,21 +54952,6 @@
     {
       "from": "library/ui/apps/sites/events/DetailModal.tsx",
       "to": "library/ui/apps/sites/events/locale.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/DetailModal.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/DetailModal.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/events/DetailModal.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -54394,17 +55136,17 @@
     },
     {
       "from": "library/ui/apps/sites/events/HostBanner.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/HostBanner.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/HostBanner.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -54604,17 +55346,17 @@
     },
     {
       "from": "library/ui/apps/sites/events/MyEvents.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/MyEvents.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/MyEvents.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -54754,17 +55496,17 @@
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/PermissionsModal.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -54919,17 +55661,17 @@
     },
     {
       "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/RejectEventModal.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -55069,17 +55811,17 @@
     },
     {
       "from": "library/ui/apps/sites/events/UsersTable.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/UsersTable.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/sites/events/UsersTable.tsx",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
+      "to": "library/ui/components/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -57780,21 +58522,6 @@
     {
       "from": "library/ui/apps/sites/index.ts",
       "to": "library/ui/apps/sites/reels/ReelsPage.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/sites/index.ts",
-      "to": "library/ui/apps/sites/shared/Button/Button.tsx",
       "kind": "test:runtime"
     },
     {
@@ -62545,6 +63272,21 @@
     {
       "from": "library/ui/foundations/index.ts",
       "to": "library/ui/foundations/typography/typography.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/apps/shop/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/apps/shop/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/index.ts",
+      "to": "library/ui/apps/shop/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -64479,6 +65221,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/map/gridAge.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/map/home.ts",
       "kind": "type"
     },
@@ -64874,6 +65621,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/gridAge.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/guestIdentity.test.ts",
       "kind": "type"
     },
@@ -64980,6 +65732,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/utm.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/shop/discovery/intl.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/shop/discovery/lib/rarity.ts",
       "kind": "type"
     },
     {
@@ -65890,6 +66652,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/map/useMapCamera.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/map/useMapGridAge.ts",
       "kind": "type"
     },
     {
@@ -67029,6 +67796,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/mapGridAge.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/mapPins.test.tsx",
       "kind": "type"
     },
@@ -67150,6 +67922,36 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/textureOptimization.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/shop/ShopCartDrawer.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/shop/ShopChrome.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/shop/ShopFooter.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/shop/ShopHeldCredits.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/shop/ShopSearch.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/shop/index.ts",
       "kind": "type"
     },
     {
