@@ -100,7 +100,13 @@ impl Shared {
             tracing::error!("control positions lock poisoned");
             return;
         };
-        tracing::error!("control positions lock poisoned; revoking the Pulse generation");
+        if authority.lost().is_cancelled() {
+            tracing::error!(
+                "control positions lock poisoned; the Pulse generation was already lost"
+            );
+        } else {
+            tracing::error!("control positions lock poisoned; revoking the Pulse generation");
+        }
         authority.lost().cancel();
     }
 }
@@ -1141,6 +1147,10 @@ mod tests {
 
         assert_eq!(feed.control_snapshot(), ControlSnapshot::default());
         assert!(lost.is_cancelled(), "the pass fences and ends this process");
+        assert!(feed.shared.control_poison_logged.load(Ordering::Relaxed));
+        // Later passes still fail closed without logging again.
+        assert_eq!(feed.control_snapshot(), ControlSnapshot::default());
+        assert!(feed.shared.control_poison_logged.load(Ordering::Relaxed));
     }
 
     // On a paused clock the 50 ms window only closes once the drain loop is idle, after it

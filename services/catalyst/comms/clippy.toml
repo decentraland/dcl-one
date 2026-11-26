@@ -1,4 +1,4 @@
-# Same as the workspace clippy.toml; clippy reads only the nearest file.
+# The workspace clippy.toml plus the comms-only rules below; clippy reads only the nearest file.
 large-error-threshold = 256
 allow-unwrap-in-tests = true
 
