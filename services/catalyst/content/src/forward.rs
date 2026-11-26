@@ -43,10 +43,11 @@
 //! [`Forwarder::close_foreign`] closes count as `failed`);
 //! `upstream_forward_open_rows{lane}` and
 //! `upstream_forward_oldest_open_age_seconds{lane}` (from `created_at`, 0
-//! when none) read the queued and sending rows of the current target once per
-//! worker loop. Only the lease holder reports them and it zeroes the gauges
-//! when it stops. Alert on `rejected` or `failed` increasing, and on the age
-//! nearing [`Lane::max_age_ms`].
+//! when none) describe the current target's queued and sending rows. The
+//! lease holder samples every five seconds, independently of sends and sweeps,
+//! and zeroes both gauges when sampling stops. Alert on increasing `rejected`
+//! or `failed` counts. Set the queue age threshold below [`Lane::max_age_ms`]
+//! to allow for time that elapsed between signing and queueing.
 
 use std::collections::HashSet;
 use std::sync::Arc;
