@@ -97,7 +97,7 @@ import styles from './ItemEditorPage.module.css'
 import type { WearablePreviewController } from '../WearablePreview'
 
 const PREVIEW_ID = 'item-editor-preview'
-const NOT_FOUND_STATUSES = [401, 403, 404]
+const NOT_FOUND_STATUSES = [403, 404]
 const EMPTY_ITEMS: Item[] = []
 const SPRING_BONES_PUSH_DELAY_MS = 500
 
