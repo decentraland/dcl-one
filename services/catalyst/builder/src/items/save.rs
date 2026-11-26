@@ -261,8 +261,27 @@ const NAMED_CONTENTS: &str = "INSERT INTO builder.item_contents (item_id, file, 
        $7) \
      FROM unnest($2::text[], $3::text[]) WITH ORDINALITY AS t(f, h, n)";
 
+/// Locks the files item `id` names, in its contents or as its video, and
+/// `naming`, one advisory lock per hash taken in one order every save and
+/// delete shares: a write that adds or drops a name holds them until it
+/// ends, so [`forget_unnamed`] sees every name another write committed.
+pub(crate) async fn lock_contents(
+    conn: &mut sqlx::PgConnection,
+    id: Uuid,
+    naming: &[&str],
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(k) FROM (SELECT DISTINCT hashtextextended('builder content ' || h, 0) AS k          FROM (SELECT hash AS h FROM builder.item_contents WHERE item_id = $1            UNION SELECT video FROM builder.items WHERE id = $1 AND video IS NOT NULL            UNION SELECT unnest($2::text[])) named ORDER BY k) ordered",
+    )
+    .bind(id)
+    .bind(naming)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 /// Drops the upload records of `hashes` that no item names any more, in its
-/// contents or as its video.
+/// contents or as its video. The caller holds [`lock_contents`] over them.
 pub(crate) async fn forget_unnamed(
     conn: &mut sqlx::PgConnection,
     hashes: &[String],
@@ -358,6 +377,13 @@ impl ItemsComponent {
                 ),
             }
         };
+        let naming: Vec<&str> = input
+            .contents
+            .iter()
+            .map(|(_, h)| h.as_str())
+            .chain(input.video.as_ref().and_then(Option::as_deref))
+            .collect();
+        lock_contents(&mut tx, id, &naming).await?;
         let (thumbnail_named, thumbnail) = (input.thumbnail.is_some(), input.thumbnail.clone());
         let (video_named, video) = named(&input.video);
         let (price_named, price) = named(&input.price);
@@ -596,6 +622,7 @@ impl ItemsComponent {
         if state.locked {
             return Err(ApiError::locked(Subject::Item, &id.to_string(), "deleted"));
         }
+        lock_contents(&mut tx, id, &[]).await?;
         let mut hashes: Vec<String> = sqlx::query_scalar(
             "DELETE FROM builder.item_contents WHERE item_id = $1 RETURNING hash",
         )
