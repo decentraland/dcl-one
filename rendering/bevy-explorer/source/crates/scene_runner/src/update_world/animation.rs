@@ -1,26 +1,29 @@
 // TODO
-// - support blending animations
 // - suport morph targets
 use bevy::{
-    animation::{graph::AnimationNodeType, AnimationEntityMut, AnimationTarget, RepeatAnimation},
+    animation::{
+        graph::AnimationNodeType, ActiveAnimation, AnimationEntityMut, AnimationTarget,
+        RepeatAnimation,
+    },
     platform::collections::{HashMap, HashSet},
     prelude::*,
     scene::{InstanceId, SceneSpawner},
 };
 
-use common::sets::SceneSets;
+use common::{anim_last_system, sets::SceneSets, structs::NoRenderApp};
 use dcl_component::{
     proto_components::sdk::components::{PbAnimationState, PbAnimator},
     SceneComponentId,
 };
-use dcl_types::interface::ComponentPosition;
+use dcl_types::interface::{ComponentPosition, CrdtType};
 
-use crate::SceneEntity;
+use crate::{RendererSceneContext, SceneEntity};
 
 use super::{gltf_container::GltfReady, AddCrdtInterfaceExt};
 
 pub struct AnimatorPlugin;
 
+mod diagnostics;
 #[cfg(test)]
 mod tests;
 
@@ -31,7 +34,12 @@ impl Plugin for AnimatorPlugin {
             ComponentPosition::Any,
         );
 
+        app.init_resource::<FinishReports>();
         app.add_systems(Update, update_animations.in_set(SceneSets::PostLoop));
+        app.add_systems(PostUpdate, report_finished_clips.after(anim_last_system!()));
+        if app.world().get_resource::<NoRenderApp>().is_none() {
+            app.add_plugins(diagnostics::AnimatorDiagnosticsPlugin);
+        }
     }
 }
 
@@ -46,6 +54,19 @@ impl From<PbAnimator> for Animator {
     fn from(pb_animator: PbAnimator) -> Self {
         Self { pb_animator }
     }
+}
+
+/// How many clips have been reported to their scenes as finished, for the debug panel.
+#[derive(Resource, Default)]
+struct FinishReports(u64);
+
+/// A state plays only when the scene sets `playing`.
+fn is_playing(state: &PbAnimationState) -> bool {
+    state.playing.unwrap_or(false)
+}
+
+fn is_looping(state: &PbAnimationState) -> bool {
+    state.r#loop.unwrap_or(true)
 }
 
 // Sample only properties keyed by the default clip. Other bones keep their last pose.
@@ -152,7 +173,13 @@ fn update_animations(
                 .collect(),
             None => clips
                 .default
-                .map(|clip| (clip, (0.0, PbAnimationState::default())))
+                .map(|clip| {
+                    let state = PbAnimationState {
+                        playing: Some(true),
+                        ..Default::default()
+                    };
+                    (clip, (0.0, state))
+                })
                 .into_iter()
                 .collect(),
         };
@@ -163,7 +190,7 @@ fn update_animations(
             .collect();
 
         for (ix, (duration, state)) in targets.into_iter() {
-            let playing = state.playing.unwrap_or(true);
+            let playing = is_playing(&state);
             // clamp: bevy normalizes by the summed weight, so negative weights extrapolate
             let new_weight = if !playing {
                 0.0
@@ -181,10 +208,12 @@ fn update_animations(
                 state.speed.unwrap_or(1.0)
             };
 
-            let active_animation = match (prev_anims.remove(&ix), state.should_reset()) {
-                // if shouldReset, we always (re)start
+            // shouldReset acts on a playing state only: a stopped one keeps its clock
+            let reset = playing && state.should_reset();
+            let active_animation = match (prev_anims.remove(&ix), reset) {
+                // a playing state with shouldReset (re)starts on every write
                 (_, true) |
-                // if not playing we start
+                // a clip that is new to the player, or has finished, starts
                 (false, _) => {
                     let anim = player.start(ix);
 
@@ -199,7 +228,7 @@ fn update_animations(
 
             active_animation.set_weight(new_weight);
             active_animation.set_speed(new_speed);
-            if state.r#loop.unwrap_or(true) {
+            if is_looping(&state) {
                 active_animation.repeat();
             } else {
                 active_animation.set_repeat(RepeatAnimation::Never);
@@ -220,5 +249,58 @@ fn update_animations(
         for ix in prev_anims {
             player.stop(ix);
         }
+    }
+}
+
+/// Tells the scene when a clip it asked to play once has reached its end: that state's
+/// `playing` becomes false in the scene's Animator. The clip stops contributing, so the model
+/// holds the pose it ended on.
+fn report_finished_clips(
+    mut players: Query<(&SceneEntity, &mut Animator, &mut AnimationPlayer, &Clips)>,
+    mut scenes: Query<&mut RendererSceneContext>,
+    mut reports: ResMut<FinishReports>,
+) {
+    for (scene_ent, mut animator, mut player, clips) in players.iter_mut() {
+        // update_animations applies a scene write before its clips can be judged
+        if animator.is_changed() {
+            continue;
+        }
+        let finished: Vec<(usize, AnimationNodeIndex)> = animator
+            .pb_animator
+            .states
+            .iter()
+            .enumerate()
+            .filter(|(_, state)| is_playing(state) && !is_looping(state))
+            .filter_map(|(state_ix, state)| {
+                let (node, _) = clips.named.get(state.clip.as_str())?;
+                player
+                    .animation(*node)
+                    .is_some_and(ActiveAnimation::is_finished)
+                    .then_some((state_ix, *node))
+            })
+            .collect();
+        if finished.is_empty() {
+            continue;
+        }
+        let Ok(mut context) = scenes.get_mut(scene_ent.root) else {
+            continue;
+        };
+
+        // The scene is told below; marking the Animator changed would apply it again and
+        // restart its clips.
+        let animator = animator.bypass_change_detection();
+        for (state_ix, node) in &finished {
+            animator.pb_animator.states[*state_ix].playing = Some(false);
+            if let Some(active) = player.animation_mut(*node) {
+                active.set_weight(0.0);
+            }
+        }
+        context.update_crdt(
+            SceneComponentId::ANIMATOR,
+            CrdtType::LWW_ANY,
+            scene_ent.id,
+            &animator.pb_animator,
+        );
+        reports.0 += finished.len() as u64;
     }
 }

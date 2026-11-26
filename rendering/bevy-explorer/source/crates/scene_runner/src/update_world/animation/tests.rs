@@ -5,7 +5,8 @@ use bevy::{
     scene::{ScenePlugin, SceneSpawner},
     time::TimeUpdateStrategy,
 };
-use dcl_component::{ComponentNameRegistry, CrdtType, DclReader, SceneEntityId};
+use console::ConsolePlugin;
+use dcl_component::{ComponentNameRegistry, DclReader, SceneEntityId};
 use dcl_types::{interface::CrdtStore, SceneId};
 use prost::Message;
 
@@ -43,6 +44,9 @@ fn scene_fixture() -> (App, Entity, SceneEntityId, Entity) {
         AssetPlugin::default(),
         ScenePlugin,
         AnimationPlugin,
+        ConsolePlugin {
+            add_bevy_console: false,
+        },
     ))
     .init_resource::<CrdtExtractors>()
     .init_resource::<ComponentNameRegistry>()
@@ -160,13 +164,46 @@ fn load_model(app: &mut App, container: Entity) -> Entity {
     bone
 }
 
+fn playing(clip: &str) -> PbAnimationState {
+    PbAnimationState {
+        clip: clip.into(),
+        playing: Some(true),
+        ..Default::default()
+    }
+}
+
 fn swim_animator() -> PbAnimator {
     PbAnimator {
+        states: vec![playing("swim")],
+    }
+}
+
+fn swim_once() -> PbAnimator {
+    PbAnimator {
         states: vec![PbAnimationState {
-            clip: "swim".into(),
-            ..Default::default()
+            r#loop: Some(false),
+            ..playing("swim")
         }],
     }
+}
+
+/// The Animator the scene has been sent, with its timestamp.
+fn reported(app: &App, root: Entity, id: SceneEntityId) -> Option<(u32, PbAnimator)> {
+    let context = app.world().get::<RendererSceneContext>(root).unwrap();
+    let entry = context
+        .crdt_store
+        .lww
+        .get(&SceneComponentId::ANIMATOR)?
+        .last_write
+        .get(&id)?;
+    Some((
+        entry.timestamp.0,
+        PbAnimator::decode(entry.data.as_slice()).unwrap(),
+    ))
+}
+
+fn scale(app: &App, bone: Entity) -> f32 {
+    app.world().get::<Transform>(bone).unwrap().scale.x
 }
 
 #[test]
@@ -209,10 +246,7 @@ fn sdk_animator_controls_the_visible_model_during_a_source_swap() {
     assert!(swimming.scale.x > 1.0);
 
     let mut both = swim_animator();
-    both.states.push(PbAnimationState {
-        clip: "bite".into(),
-        ..Default::default()
-    });
+    both.states.push(playing("bite"));
     send_animator(&mut app, root, id, Some(&both));
     app.update();
     let moving = *app.world().get::<Transform>(bone).unwrap();
@@ -279,10 +313,7 @@ fn sdk_animator_transitions_sample_the_default_pose_and_release_playback() {
 
     // Make both properties move so deletion must rewind the bite and hold the swim.
     let mut both = control.clone();
-    both.states.push(PbAnimationState {
-        clip: "bite".into(),
-        ..Default::default()
-    });
+    both.states.push(playing("bite"));
     send_animator(&mut app, root, id, Some(&both));
     app.update();
     let before_removal = *app.world().get::<Transform>(bone).unwrap();
@@ -321,4 +352,140 @@ fn sdk_animator_transitions_sample_the_default_pose_and_release_playback() {
         .playing_animations()
         .next()
         .is_none());
+}
+
+#[test]
+fn a_state_plays_only_when_the_scene_sets_playing() {
+    let (mut app, root, id, container) = scene_fixture();
+    let bone = load_model(&mut app, container);
+    app.update();
+
+    let unset = PbAnimator {
+        states: vec![PbAnimationState {
+            clip: "swim".into(),
+            ..Default::default()
+        }],
+    };
+    send_animator(&mut app, root, id, Some(&unset));
+    for _ in 0..3 {
+        app.update();
+        let held = app.world().get::<Transform>(bone).unwrap();
+        assert_eq!(
+            held.translation,
+            Vec3::ONE,
+            "the first clip no longer plays"
+        );
+        assert_eq!(held.scale, Vec3::ONE, "an unset `playing` must not play");
+    }
+}
+
+#[test]
+fn a_clip_played_once_tells_the_scene_when_it_ends() {
+    let (mut app, root, id, container) = scene_fixture();
+    let bone = load_model(&mut app, container);
+    app.update();
+
+    send_animator(&mut app, root, id, Some(&swim_once()));
+    app.update();
+    assert!(scale(&app, bone) > 1.0);
+    assert!(reported(&app, root, id).is_none());
+
+    // the clip lasts a second and each update advances 100 ms
+    for _ in 0..12 {
+        app.update();
+    }
+    let (timestamp, animator) = reported(&app, root, id).expect("the end was not reported");
+    assert_eq!(animator.states.len(), 1);
+    assert_eq!(animator.states[0].clip, "swim");
+    assert_eq!(animator.states[0].playing, Some(false));
+    assert_eq!(animator.states[0].r#loop, Some(false));
+    assert_eq!(app.world().resource::<FinishReports>().0, 1);
+
+    // told once, and the model holds the pose the clip ended on
+    for _ in 0..3 {
+        app.update();
+        assert_eq!(reported(&app, root, id).unwrap().0, timestamp);
+        assert!((scale(&app, bone) - 2.0).abs() < 1e-4);
+    }
+
+    // The scene now holds `playing: false` for the clip, so a write about another clip does
+    // not play it again.
+    let mut stopped = swim_once();
+    stopped.states[0].playing = Some(false);
+    stopped.states.push(playing("bite"));
+    send_animator(&mut app, root, id, Some(&stopped));
+    app.update();
+    app.update();
+    assert!((scale(&app, bone) - 2.0).abs() < 1e-4);
+
+    // playing it again starts from the first frame, without shouldReset
+    send_animator(&mut app, root, id, Some(&swim_once()));
+    app.update();
+    let replayed = scale(&app, bone);
+    assert!(replayed > 1.0 && replayed < 1.5, "replayed at {replayed}");
+    assert_eq!(reported(&app, root, id).unwrap().0, timestamp);
+}
+
+#[test]
+fn only_a_clip_that_ends_by_itself_is_reported() {
+    let (mut app, root, id, container) = scene_fixture();
+    load_model(&mut app, container);
+    app.update();
+
+    // a looping clip never ends
+    send_animator(&mut app, root, id, Some(&swim_animator()));
+    for _ in 0..15 {
+        app.update();
+    }
+    assert!(reported(&app, root, id).is_none());
+
+    // a clip its scene stops has not ended
+    send_animator(&mut app, root, id, Some(&swim_once()));
+    app.update();
+    app.update();
+    let mut stopped = swim_once();
+    stopped.states[0].playing = Some(false);
+    send_animator(&mut app, root, id, Some(&stopped));
+    for _ in 0..15 {
+        app.update();
+    }
+    assert!(reported(&app, root, id).is_none());
+    assert_eq!(app.world().resource::<FinishReports>().0, 0);
+}
+
+#[test]
+fn should_reset_restarts_a_playing_clip_and_leaves_a_stopped_one() {
+    let (mut app, root, id, container) = scene_fixture();
+    let bone = load_model(&mut app, container);
+    app.update();
+
+    send_animator(&mut app, root, id, Some(&swim_animator()));
+    app.update();
+    app.update();
+    let paused_at = scale(&app, bone);
+
+    // stopped with shouldReset, as `Animator.stopAllAnimations` writes it
+    let mut stopped = swim_animator();
+    stopped.states[0].playing = Some(false);
+    stopped.states[0].should_reset = Some(true);
+    send_animator(&mut app, root, id, Some(&stopped));
+    app.update();
+    assert_eq!(scale(&app, bone), paused_at);
+
+    send_animator(&mut app, root, id, Some(&swim_animator()));
+    app.update();
+    let resumed = scale(&app, bone);
+    assert!(
+        resumed > paused_at,
+        "a stopped state must keep its clock: {resumed} after {paused_at}"
+    );
+
+    let mut restart = swim_animator();
+    restart.states[0].should_reset = Some(true);
+    send_animator(&mut app, root, id, Some(&restart));
+    app.update();
+    assert!(
+        scale(&app, bone) < paused_at,
+        "shouldReset must restart a playing clip"
+    );
 }

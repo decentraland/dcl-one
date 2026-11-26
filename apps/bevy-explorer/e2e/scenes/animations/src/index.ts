@@ -23,11 +23,10 @@ import { setupVisualTest } from './visual-test-setup'
  *   - "main" clips (single-frame still poses) have settled at frame 0
  *   - The triggered "Open" / "activate" clips have fully played (≈1.25 s
  *     each, loop=false) and frozen on their last frame
- *   - Col 4's deferred "Close" / "deactivate" call (fired at scene-time
- *     ≈1.5 s) has also completed (~2.75 s total), bringing the rig back
- *     to its closed/deactivated pose — visually distinct from Col 3's
- *     held-open frame so resetCursor=true and resetCursor=false don't
- *     produce the same baseline
+ *   - Col 4's deferred "Open" / "activate" call (fired at scene-time
+ *     ≈0.1 s, with resetCursor=false) has also completed, leaving the rig
+ *     open/activated: the same pose as Col 3, reached through a second
+ *     playSingleAnimation call that does not reset the cursor
  *   - The "no Animator" subjects show whatever the renderer does by default
  *     when no Animator component is present (per the GLTF panel scene's
  *     observation, this is "auto-play"; with `main` as the first clip in
@@ -64,18 +63,17 @@ import { setupVisualTest } from './visual-test-setup'
  *             from frame 0 and freezes at its end
  *             frame.
  *
- *   4   28   Played with resetCursor=false           door swung CLOSED,
- *             playSingleAnimation("Open", true) at    lever deactivated
- *             init opens the rig, then a one-shot
- *             system fires at scene-time ≈1.5 s and
- *             calls playSingleAnimation("Close",
- *             resetCursor=FALSE) so the close clip
- *             plays from its current cursor (0, since
- *             "Close" was never played before).
- *             Final pose distinguishes this column
- *             from Col 3 — open vs. closed — proving
- *             the second playSingleAnimation call
- *             (with resetCursor=false) actually ran.
+ *   4   28   Played with resetCursor=false           door swung open,
+ *             playSingleAnimation("Close", true) at   lever activated
+ *             init starts closing the rig, then a
+ *             one-shot system fires at scene-time
+ *             ≈0.1 s and calls playSingleAnimation(
+ *             "Open", resetCursor=FALSE): "Close"
+ *             stops where it is and "Open" plays once
+ *             from its own cursor (0, since "Open"
+ *             was never played before). Had the
+ *             second call not run, the rig would end
+ *             closed/deactivated.
  */
 
 // ── animation clip names (must match the GLB's animation list) ──────────────
@@ -97,10 +95,9 @@ const COLUMN_XS = [4, 10, 16, 22, 28] as const
 
 /**
  * Scene-time delay before Col 4 triggers its second playSingleAnimation
- * (the resetCursor=FALSE one). Has to be ≥ the first clip's ~1.25 s
- * duration so the Open/activate runs to completion before Close/deactivate
- * is requested. 1.5 s leaves a small margin. The test fixture sleeps long
- * enough for Close (also ~1.25 s) to finish before the snapshot fires.
+ * (the resetCursor=FALSE one). It interrupts Close/deactivate (~1.25 s) just
+ * after it starts. The test fixture sleeps long enough for Open/activate
+ * (also ~1.25 s) to finish before the snapshot fires.
  */
 const COL4_DEFERRED_CALL_AT_SECONDS = 0.1
 
@@ -202,16 +199,12 @@ export function main() {
   }
 
   // ── Col 4 — playSingleAnimation with resetCursor=FALSE ────────────────────
-  // To produce a visually distinct outcome from Col 3 (and to actually
-  // exercise a second playSingleAnimation call), we run Open/activate at
-  // init AND register a one-shot system that — once scene-time crosses
-  // COL4_DEFERRED_CALL_AT_SECONDS (~1.5 s, past the open clip's ~1.25 s
-  // duration) — fires playSingleAnimation with the *reverse* clip and
-  // resetCursor=false. Close/deactivate then run for ~1.25 s and freeze
-  // the rig back at its closed pose. By snapshot time the door reads
-  // CLOSED on Col 4 and OPEN on Col 3 — the only pixel-level signal that
-  // distinguishes resetCursor=true from resetCursor=false on a single
-  // still frame.
+  // To exercise a second playSingleAnimation call, we run Close/deactivate
+  // at init AND register a one-shot system that — once scene-time crosses
+  // COL4_DEFERRED_CALL_AT_SECONDS — fires playSingleAnimation with the
+  // *reverse* clip and resetCursor=false. Open/activate then run for
+  // ~1.25 s and freeze the rig at its open pose, as in Col 3. Had the second
+  // call not taken effect, the door would read CLOSED here.
   {
     const colX = COLUMN_XS[4]
 

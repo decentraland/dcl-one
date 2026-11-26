@@ -1084,6 +1084,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **A plate stands clear of the mention ring.** The plate floats 2 units over the name's box,
   as in unity-explorer, and the ring of a mention reaches 3 units out of that box. While the
   ring shows, the plate rises by the ring's width, so it never covers the ring's top edge.
+- **SDK Animator: a reversed clip, a dropped state, a new model and weights.** A clip with a
+  negative `speed` (re)starts on its last frame, as the protocol defines the initial state; a
+  clip left out of a later `states` list stops; the Animator is applied to the model a new
+  `src` loads without waiting for the scene's next write; `weight` is kept between 0 and 1,
+  and clips playing together mix by their normalised weights. Unity's player for legacy clips
+  passes `speed` and `weight` through, starts every clip on its first frame, leaves a dropped
+  clip as it was and gives each clip a layer of its own. Do not copy those.
 
 ## Deliberate choices that look like mistakes
 
@@ -1306,3 +1313,16 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   a slice plus the avatar work); the commands `process_avatar` queues, which are applied after
   it; wearables much heavier than the base set; a target above 60 fps (the slice is 1.7 ms at
   144 fps); and the native client.
+- **`shouldReset` restarts a playing clip on every Animator write.** The protocol's comment says
+  the state is restored when it goes from stopped to playing. Scenes restart a clip that is
+  already playing by writing it again with `playing` and `shouldReset`
+  (`Animator.playSingleAnimation`), which Unity's player for legacy clips honours, so this
+  engine does too. A
+  stopped state keeps its clock whatever its `shouldReset` says: `Animator.stopAllAnimations`
+  leaves the flag set, and a later `playSingleAnimation(..., false)` must resume. A state
+  with `playing` unset does not play.
+- **A clip played once tells its scene when it ends.** The engine writes the scene's Animator
+  back with that state's `playing` false, once, as the Unity client does, so a scene need not
+  time the clip. The clip then stops contributing and the model holds the pose it ended on.
+  Without the report the scene's own state would still say `playing`, and its next write about
+  any other clip would play the finished one again.

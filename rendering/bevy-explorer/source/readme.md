@@ -369,6 +369,10 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   to the engine through `engine_console_command` and write Bevy input events, unlike `/press_key`
   and `/click_at`, which need a DevTools client for real input. `docs/guidelines/interaction.md`
   has the options, replies and diagnoses.
+- Scene animations: `/scene_animations` (the `models` that animate and how many are
+  `withAnimator`; the clips `playing`, `stopped` by their scene and `finished`; `finishReports`,
+  the finished clips reported to scenes; and up to 32 `clips`, each with its `entity`, `clip`,
+  `state`, `weight`, `speed`, `seekSeconds`, `durationSeconds` and `looping`).
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 **The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC
