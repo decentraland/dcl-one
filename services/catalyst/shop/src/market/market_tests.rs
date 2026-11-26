@@ -6367,6 +6367,107 @@ async fn graph_orders_release_the_backed_listing_snapshot_before_the_graph_call(
     db.drop().await;
 }
 
+async fn publish_trades_mirror_for_timeout_test(state: &mut SharedState, pool: &PgPool) {
+    let upstream = "https://example.invalid/v1/trades";
+    Arc::get_mut(state)
+        .unwrap()
+        .settings
+        .trades_sync_upstream_url = Some(upstream.into());
+    sqlx::query(
+        "INSERT INTO shop.trades_mirror (id, upstream_url, completed_at)
+         VALUES (1, $1, timezone('UTC', now()))",
+    )
+    .bind(upstream)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Hold the marker long enough for PostgreSQL to cancel the route's read.
+async fn assert_trades_readiness_timeout(
+    pool: &PgPool,
+    app: Router,
+    uri: &str,
+    lock_sql: &'static str,
+) {
+    let (status, body) = get(app.clone(), uri).await;
+    assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query(lock_sql).execute(&mut *lock).await.unwrap();
+    let response = tokio::time::timeout(
+        super::nft_reads::READ_STATEMENT_TIMEOUT + Duration::from_secs(5),
+        get(app.clone(), uri),
+    )
+    .await;
+    lock.rollback().await.unwrap();
+
+    let (status, body) = response.expect("PostgreSQL cancelled the blocked marker read");
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {body}");
+    let message = format!(
+        "the read ran past its {} s statement bound: narrow the filters or the page window",
+        super::nft_reads::READ_STATEMENT_TIMEOUT.as_secs()
+    );
+    assert_eq!(
+        body["message"].as_str(),
+        Some(message.as_str()),
+        "{uri}: {body}"
+    );
+
+    let (status, body) = get(app, uri).await;
+    assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+}
+
+#[tokio::test]
+async fn the_order_book_preserves_a_trades_mirror_timeout() {
+    let url = serve_empty_graph().await;
+    let Some((mut state, own)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &own.pool;
+    publish_trades_mirror_for_timeout_test(&mut state, pool).await;
+    super::owned_items::test_support::publish(
+        pool,
+        &[super::chain_walk::ChainNet::Matic],
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    assert_trades_readiness_timeout(
+        pool,
+        market_router(state),
+        "/v1/orders?network=MATIC&status=open",
+        "LOCK TABLE shop.trades_mirror IN ACCESS EXCLUSIVE MODE",
+    )
+    .await;
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn the_graph_order_path_preserves_a_trade_events_marker_timeout() {
+    let Some(own) = super::tests::support::OwnDb::create("order_marker_timeout").await else {
+        return;
+    };
+    let url = serve_empty_graph().await;
+    let state = Arc::new(super::MarketplaceState::new(
+        own.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        market_settings(&url, &url, true),
+    ));
+    state.test_allow_loopback.store(true, Ordering::Relaxed);
+    assert!(!super::owned_items::walks_here(&state));
+    super::trade_events::tests::publish_cursors(&own.pool).await;
+    assert_trades_readiness_timeout(
+        &own.pool,
+        market_router(state),
+        "/v1/orders?network=MATIC&status=open",
+        "LOCK TABLE shop.chain_cursor IN ACCESS EXCLUSIVE MODE",
+    )
+    .await;
+    own.drop().await;
+}
+
 /// A book read pins the trades readiness and the backed listings leg
 /// together. Quarantine is visible to the next read.
 #[tokio::test]
@@ -8595,6 +8696,42 @@ async fn state_with_the_bid_book(url: &str) -> Option<(SharedState, super::tests
     ));
     state.test_allow_loopback.store(true, Ordering::Relaxed);
     Some((state, own))
+}
+
+#[tokio::test]
+async fn the_bid_book_preserves_trades_readiness_timeouts() {
+    let url = serve_empty_graph().await;
+    let Some((mut state, own)) = state_with_the_bid_book(&url).await else {
+        return;
+    };
+    let pool = &own.pool;
+    publish_trades_mirror_for_timeout_test(&mut state, pool).await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    super::owned_items::test_support::publish(
+        pool,
+        &[super::chain_walk::ChainNet::Matic],
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through,
+                                        folded_block, folded_at, full_history, chain_id)
+         VALUES ('sales', 'matic', 1, 100, 100, 100, timezone('UTC', now()), true, 137)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    assert!(super::bids::polygon_book_here(&state));
+    let app = market_router(state);
+    for lock in [
+        "LOCK TABLE shop.trades_mirror IN ACCESS EXCLUSIVE MODE",
+        "LOCK TABLE shop.chain_cursor IN ACCESS EXCLUSIVE MODE",
+    ] {
+        assert_trades_readiness_timeout(pool, app.clone(), "/v1/bids?network=MATIC", lock).await;
+    }
+    own.drop().await;
 }
 
 /// Polygon's legacy bids on a node that walks the nft and sales indexes come

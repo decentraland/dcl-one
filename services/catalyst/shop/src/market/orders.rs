@@ -347,7 +347,9 @@ async fn trade_snapshot(
     nets: &[ChainNet],
 ) -> Result<(Transaction<'static, Postgres>, DateTime<Utc>), Response> {
     let (mut tx, now) = order_snapshot(state).await?;
-    super::trades::ready_for_networks_on(state, &mut tx, nets, now).await?;
+    super::trades::ready_checked_for_networks_on(state, &mut tx, nets, now)
+        .await
+        .map_err(|error| error.into_response(read_error))?;
     Ok((tx, now))
 }
 
@@ -583,7 +585,9 @@ pub(super) async fn book_snapshot(
         }
     }
     if trades {
-        super::trades::ready_for_networks_on(state, &mut tx, &nets, now).await?;
+        super::trades::ready_checked_for_networks_on(state, &mut tx, &nets, now)
+            .await
+            .map_err(|error| error.into_response(read_error))?;
     }
     Ok(BookRead {
         tx,
