@@ -6,10 +6,11 @@
 //! This crate is a *generic* byte pipe: it does no framing or sequencing. Pulse channel
 //! semantics (length framing on the stream, datagram sequencing/dedup) live in the C# layer.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -189,10 +190,7 @@ impl Host {
 
     /// Retains the byte owner's allocation and queue permits until the stream write completes.
     pub fn send_stream_bytes(&self, peer_id: u64, data: Bytes) -> bool {
-        let peers = self
-            .peers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let peers = self.peers.lock();
         match peers.get(&peer_id) {
             Some(handle) => handle.cmd_tx.send(PeerCommand::Stream(data)).is_ok(),
             None => false,
@@ -201,10 +199,7 @@ impl Host {
 
     /// Send an unreliable datagram to the peer. Returns `false` on failure (gone / too large).
     pub fn send_datagram(&self, peer_id: u64, data: &[u8]) -> bool {
-        let peers = self
-            .peers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let peers = self.peers.lock();
         match peers.get(&peer_id) {
             Some(handle) => handle
                 .session
@@ -216,10 +211,7 @@ impl Host {
 
     /// Close the peer's session with an application error code. Returns `false` if gone.
     pub fn disconnect(&self, peer_id: u64, reason: u32) -> bool {
-        let peers = self
-            .peers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let peers = self.peers.lock();
         match peers.get(&peer_id) {
             Some(handle) => {
                 // `Session::close` must run inside the tokio runtime context.
@@ -235,10 +227,7 @@ impl Host {
 
     /// Current smoothed RTT to the peer in microseconds, if still connected.
     pub fn rtt_us(&self, peer_id: u64) -> Option<u64> {
-        let peers = self
-            .peers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let peers = self.peers.lock();
         peers
             .get(&peer_id)
             .map(|handle| handle.session.rtt().as_micros() as u64)
@@ -269,16 +258,13 @@ async fn serve_connection(
     let remote_addr = session.remote_address().to_string();
 
     let (cmd_tx, cmd_rx) = unbounded_channel::<PeerCommand>();
-    peers
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(
-            peer_id,
-            PeerHandle {
-                session: session.clone(),
-                cmd_tx,
-            },
-        );
+    peers.lock().insert(
+        peer_id,
+        PeerHandle {
+            session: session.clone(),
+            cmd_tx,
+        },
+    );
     let _ = events_tx.send(Event::Connect {
         peer_id,
         remote_addr,
@@ -297,10 +283,7 @@ async fn serve_connection(
     // This task is the disconnect monitor.
     let _ = session.closed().await;
     let _ = events_tx.send(Event::Disconnect { peer_id, reason: 0 });
-    peers
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&peer_id);
+    peers.lock().remove(&peer_id);
 }
 
 /// Forward inbound datagrams as [`Event::Datagram`] until the session closes.
