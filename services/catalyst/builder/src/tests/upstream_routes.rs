@@ -2,7 +2,8 @@
 //! registers under `/v1` at `98897af692f26063a088aebb2ea5bb3f683168a2`, and
 //! whether this crate's router answers its method and path. A `Routed` route
 //! reaches a handler, which says nothing about matching upstream's
-//! behaviour; a `Removed` route is outside the port and stays unanswered:
+//! behaviour; an `Unrouted` one is inside the port but this router doesn't
+//! answer it; a `Removed` route is outside the port and stays unanswered:
 //! the node keeps no scenes (projects, manifests, templates, deployments,
 //! asset packs, assets and their files), analytics or NFT reads.
 //! [`SCENE_ROUTES`] lists the scene routes the node itself added beyond
@@ -22,12 +23,13 @@ use crate::{Settings, State};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Route {
     Routed,
+    Unrouted,
     Removed,
 }
-use Route::{Removed, Routed};
+use Route::{Removed, Routed, Unrouted};
 
 pub(super) const UPSTREAM: &[(&str, &str, Route)] = &[
-    ("GET", "/info", Routed),
+    ("GET", "/info", Unrouted),
     ("GET", "/assetPacks", Removed),
     ("GET", "/assetPacks/:id", Removed),
     ("GET", "/assets/:id", Removed),
@@ -49,48 +51,52 @@ pub(super) const UPSTREAM: &[(&str, &str, Route)] = &[
     (
         "GET",
         "/published-collections/:address/items/:id/utility",
-        Routed,
+        Unrouted,
     ),
     ("GET", "/collections/:id/items", Routed),
     ("PUT", "/items/:idOrURN", Routed),
     ("DELETE", "/items/:id", Routed),
-    ("POST", "/items/:id/files", Routed),
-    ("POST", "/items/:id/videos", Routed),
-    ("GET", "/items/:collectionAddress/:itemId/contents", Routed),
+    ("POST", "/items/:id/files", Unrouted),
+    ("POST", "/items/:id/videos", Unrouted),
+    (
+        "GET",
+        "/items/:collectionAddress/:itemId/contents",
+        Unrouted,
+    ),
     ("GET", "/collections", Routed),
     ("GET", "/:address/collections", Routed),
     ("GET", "/collections/:id", Routed),
-    ("POST", "/collections/:id/publish", Routed),
-    ("POST", "/collections/:id/owner/sync", Routed),
-    ("POST", "/collections/:id/tos", Routed),
-    ("POST", "/collections/:id/lock", Routed),
-    ("GET", "/collections/:id/approvalData", Routed),
+    ("POST", "/collections/:id/publish", Unrouted),
+    ("POST", "/collections/:id/owner/sync", Unrouted),
+    ("POST", "/collections/:id/tos", Unrouted),
+    ("POST", "/collections/:id/lock", Unrouted),
+    ("GET", "/collections/:id/approvalData", Unrouted),
     ("PUT", "/collections/:id", Routed),
-    ("DELETE", "/collections/:id", Routed),
-    ("GET", "/addresses", Routed),
-    ("GET", "/curations", Routed),
-    ("GET", "/collections/:id/itemCurations", Routed),
-    ("GET", "/collections/:id/curation", Routed),
-    ("PATCH", "/collections/:id/curation", Routed),
-    ("POST", "/collections/:id/curation", Routed),
-    ("POST", "/collections/:id/curation/post", Routed),
-    ("GET", "/items/:id/curation", Routed),
-    ("PATCH", "/items/:id/curation", Routed),
-    ("POST", "/items/:id/curation", Routed),
-    ("POST", "/collections/:id/validations", Routed),
-    ("POST", "/collections/:id/curation/appeal", Routed),
-    ("GET", "/collections/:id/events", Routed),
-    ("POST", "/collections/:id/comments", Routed),
-    ("POST", "/collections/:id/validation-result", Routed),
-    ("GET", "/committee", Routed),
-    ("GET", "/thirdParties", Routed),
-    ("GET", "/thirdParties/:id/slots", Routed),
-    ("GET", "/thirdParties/:id", Routed),
-    ("DELETE", "/thirdParties/:id", Routed),
-    ("PATCH", "/thirdParties/:id", Routed),
-    ("GET", "/rarities", Routed),
-    ("GET", "/rarities/:name", Routed),
-    ("POST", "/collections/:id/post", Routed),
+    ("DELETE", "/collections/:id", Unrouted),
+    ("GET", "/addresses", Unrouted),
+    ("GET", "/curations", Unrouted),
+    ("GET", "/collections/:id/itemCurations", Unrouted),
+    ("GET", "/collections/:id/curation", Unrouted),
+    ("PATCH", "/collections/:id/curation", Unrouted),
+    ("POST", "/collections/:id/curation", Unrouted),
+    ("POST", "/collections/:id/curation/post", Unrouted),
+    ("GET", "/items/:id/curation", Unrouted),
+    ("PATCH", "/items/:id/curation", Unrouted),
+    ("POST", "/items/:id/curation", Unrouted),
+    ("POST", "/collections/:id/validations", Unrouted),
+    ("POST", "/collections/:id/curation/appeal", Unrouted),
+    ("GET", "/collections/:id/events", Unrouted),
+    ("POST", "/collections/:id/comments", Unrouted),
+    ("POST", "/collections/:id/validation-result", Unrouted),
+    ("GET", "/committee", Unrouted),
+    ("GET", "/thirdParties", Unrouted),
+    ("GET", "/thirdParties/:id/slots", Unrouted),
+    ("GET", "/thirdParties/:id", Unrouted),
+    ("DELETE", "/thirdParties/:id", Unrouted),
+    ("PATCH", "/thirdParties/:id", Unrouted),
+    ("GET", "/rarities", Unrouted),
+    ("GET", "/rarities/:name", Unrouted),
+    ("POST", "/collections/:id/post", Unrouted),
     ("GET", "/projects/:id/manifest", Removed),
     ("GET", "/manifests", Removed),
     ("GET", "/publics/:id/manifest", Removed),
@@ -100,14 +106,14 @@ pub(super) const UPSTREAM: &[(&str, &str, Route)] = &[
     ("GET", "/projects/:id/deployment", Removed),
     ("DELETE", "/projects/:id/deployment", Removed),
     ("GET", "/storage/assetPacks/:filename", Removed),
-    ("GET", "/storage/contents/:filename", Routed),
-    ("HEAD", "/storage/contents/:filename", Routed),
-    ("GET", "/storage/contents/:filename/exists", Routed),
+    ("GET", "/storage/contents/:filename", Unrouted),
+    ("HEAD", "/storage/contents/:filename", Unrouted),
+    ("GET", "/storage/contents/:filename/exists", Unrouted),
     ("GET", "/analytics/weekly", Removed),
     ("GET", "/analytics/status", Removed),
     ("GET", "/nfts", Removed),
     ("GET", "/nfts/:contractAddress/:tokenId", Removed),
-    ("POST", "/newsletter", Routed),
+    ("POST", "/newsletter", Unrouted),
 ];
 
 const PARAMETER: &str = "6f1c0a52-5d0e-4c4b-9c55-0d6a1a3b7e21";
@@ -173,6 +179,21 @@ async fn answers(app: &Router, method: &str, path: &str) -> (bool, StatusCode) {
         status != StatusCode::IM_A_TEAPOT && status != StatusCode::METHOD_NOT_ALLOWED,
         status,
     )
+}
+
+#[tokio::test]
+async fn the_ledger_matches_the_router() {
+    let app = app().await;
+    let mut disagreements = Vec::new();
+    for &(method, path, route) in UPSTREAM {
+        let (routed, status) = answers(&app, method, &request_path(path)).await;
+        if routed != (route == Routed) {
+            disagreements.push(format!(
+                "{method} {path}: {route:?} in the ledger, answered {status}"
+            ));
+        }
+    }
+    assert!(disagreements.is_empty(), "{}", disagreements.join("\n"));
 }
 
 #[tokio::test]
