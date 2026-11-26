@@ -145,6 +145,12 @@ impl SceneIdentity for ToolkitScenes {
         )
         .await
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 fn metadata(realm: &str, scene: &str, parcel: &str) -> Value {
@@ -548,11 +554,11 @@ struct Media {
 
 async fn media_fixture() -> (
     String,
-    Arc<std::sync::Mutex<Media>>,
+    Arc<parking_lot::Mutex<Media>>,
     tokio::task::JoinHandle<()>,
 ) {
     use axum::response::IntoResponse;
-    let media = Arc::new(std::sync::Mutex::new(Media::default()));
+    let media = Arc::new(parking_lot::Mutex::new(Media::default()));
     let capture = media.clone();
     let fixture = axum::Router::new().route("/twirp/livekit.RoomService/{method}", axum::routing::post(move |Path(method):Path<String>, Json(body):Json<Value>| {
         let capture = capture.clone();
@@ -560,14 +566,14 @@ async fn media_fixture() -> (
             let reban = if method == "UpdateRoomMetadata" {
                 let fields: Value = serde_json::from_str(body["metadata"].as_str().unwrap()).unwrap();
                 if fields["bannedAddresses"] == json!([]) {
-                    capture.lock().unwrap().reban_on_remove.take()
+                    capture.lock().reban_on_remove.take()
                 } else { None }
             } else { None };
             if let Some((pool, key, wallet)) = reban {
                 sqlx::query("INSERT INTO social.scene_bans(place_id,banned_address,banned_by) VALUES($1,$2,$2)")
                     .bind(key).bind(wallet).execute(&pool).await.unwrap();
             }
-            let mut data = capture.lock().unwrap();
+            let mut data = capture.lock();
             data.requests.push((method.clone(),body.clone()));
             match method.as_str() {
                 "ListRooms" => {
@@ -637,7 +643,7 @@ async fn toolkit_rejections_have_no_media_effect_and_reader_faults_stay_unavaila
             "{method} {path}: {value}"
         );
     }
-    assert!(media.lock().unwrap().requests.is_empty());
+    assert!(media.lock().requests.is_empty());
     server.abort();
 
     for (result, expected) in [
@@ -724,7 +730,7 @@ async fn toolkit_signature_and_policy_fault_matrix_has_no_media_effect() {
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{value}");
     }
-    assert!(media.lock().unwrap().requests.is_empty());
+    assert!(media.lock().requests.is_empty());
     server.abort();
     let mut state = comms_state(lazy_pool(), Settings::for_tests());
     state.scenes = Arc::new(ToolkitScenes);
@@ -873,7 +879,6 @@ async fn toolkit_store_fault_cannot_reach_media() {
     assert!(
         media
             .lock()
-            .unwrap()
             .requests
             .iter()
             .all(|(method, _)| method == "ListRooms"),
@@ -1093,7 +1098,7 @@ async fn toolkit_scene_provider_fault_and_extended_targets_fail_before_media() {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{value}");
     }
-    assert!(media.lock().unwrap().requests.is_empty());
+    assert!(media.lock().requests.is_empty());
     server.abort();
     let mut state = comms_state(lazy_pool(), Settings::for_tests());
     state.scenes = Arc::new(StubScenes {
@@ -1170,6 +1175,97 @@ async fn toolkit_body_writes_keep_contract_wallet_signature_validation() {
     }
 }
 
+/// The node's validator (`eip1654_budget`, behind the layer that names each
+/// request's client source) lets a source start only the pre-auth budget of
+/// contract-wallet checks a minute: past it the gatekeeper answers 429 before
+/// any `isValidSignature` call, and another source keeps its own budget.
+#[tokio::test]
+async fn contract_wallet_checks_are_budgeted_per_source_before_any_rpc_call() {
+    use crate::shared::eip1654_budget::{SourceBudgeted, scope_client_source};
+    use crate::shared::limits::PREAUTH_PER_MINUTE;
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+
+    struct Refusing(AtomicUsize);
+    #[async_trait::async_trait]
+    impl crate::auth::eip1654::Eip1654Validator for Refusing {
+        async fn validate_signature(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: &[u8],
+        ) -> Result<bool, crate::auth::AuthError> {
+            self.0.fetch_add(1, SeqCst);
+            Ok(false)
+        }
+    }
+
+    let meta = metadata("MiXeD.dcl.eth", "SceneB", "1,1");
+    let mut headers = signed(KEY, "POST", "/scene-admin", &meta.to_string()).await;
+    let mut link: Value =
+        serde_json::from_str(headers["x-identity-auth-chain-1"].to_str().unwrap()).unwrap();
+    link["type"] = json!("ECDSA_EIP_1654_SIGNED_ENTITY");
+    headers.insert(
+        "x-identity-auth-chain-1",
+        HeaderValue::from_str(&link.to_string()).unwrap(),
+    );
+    let calls = Arc::new(Refusing(AtomicUsize::new(0)));
+    let mut state = comms_state(lazy_pool(), Settings::for_tests());
+    state.scenes = Arc::new(ToolkitScenes);
+    state.eip1654 = Some(Arc::new(SourceBudgeted::new(calls.clone())));
+    let app = scope_client_source(super::super::router(Arc::new(state)), Vec::new());
+    let send = |peer: &str| {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/scene-admin")
+            .body(Body::from(
+                json!({"admin": address_of(OUTSIDER_KEY)}).to_string(),
+            ))
+            .unwrap();
+        request.headers_mut().extend(headers.clone());
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo::<std::net::SocketAddr>(
+                peer.parse().unwrap(),
+            ));
+        let app = app.clone();
+        async move { app.oneshot(request).await.unwrap().status() }
+    };
+    let started = std::time::Instant::now();
+    let mut refused = 0;
+    loop {
+        match send("203.0.113.90:5000").await {
+            StatusCode::UNAUTHORIZED => refused += 1,
+            StatusCode::TOO_MANY_REQUESTS => break,
+            other => panic!("unexpected {other}"),
+        }
+        assert!(
+            refused <= 2 * PREAUTH_PER_MINUTE,
+            "the source's budget trips"
+        );
+    }
+    let spent = calls.0.load(SeqCst);
+    assert!(refused > 0, "refused contracts first");
+    let admitted = crate::shared::eip1654_budget::admitted_within(started.elapsed());
+    assert!(
+        admitted.contains(&spent),
+        "the pre-auth budget of isValidSignature calls: {spent}, {admitted:?}"
+    );
+    assert_eq!(
+        send("203.0.113.90:5000").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        calls.0.load(SeqCst),
+        spent,
+        "no isValidSignature call past the budget"
+    );
+    assert_eq!(
+        send("198.51.100.90:5000").await,
+        StatusCode::UNAUTHORIZED,
+        "another source keeps its own budget"
+    );
+}
+
 #[tokio::test]
 async fn toolkit_all_writes_persist_get_state_and_target_canonical_metadata_and_connected_ban_fixture()
  {
@@ -1220,7 +1316,7 @@ async fn toolkit_all_writes_persist_get_state_and_target_canonical_metadata_and_
             .parse::<alloy_primitives::Address>()
             .unwrap()
             .to_checksum(None);
-        let before_media = media.lock().unwrap().requests.len();
+        let before_media = media.lock().requests.len();
         for (method, path, key) in [
             ("POST", "/scene-admin", "admin"),
             ("DELETE", "/scene-admin", "admin"),
@@ -1243,7 +1339,7 @@ async fn toolkit_all_writes_persist_get_state_and_target_canonical_metadata_and_
                 assert_eq!(actual, status, "{realm} {method} {path}: {value}");
             }
         }
-        assert_eq!(media.lock().unwrap().requests.len(), before_media);
+        assert_eq!(media.lock().requests.len(), before_media);
         let rows:i64=sqlx::query_scalar("SELECT (SELECT count(*) FROM social.scene_admins WHERE place_id=$1 AND admin_address=$2 AND active)+(SELECT count(*) FROM social.scene_bans WHERE place_id=$1 AND banned_address=$2)")
             .bind(scene).bind(&target).fetch_one(&pool).await.unwrap();
         assert_eq!(
@@ -1268,7 +1364,7 @@ async fn toolkit_all_writes_persist_get_state_and_target_canonical_metadata_and_
                     .any(|entry| entry["admin"] == target.as_str())
             );
             for room in &rooms {
-                let data = media.lock().unwrap();
+                let data = media.lock();
                 assert_eq!(
                     data.metadata[*room]["sceneAdmins"],
                     json!([target.as_str()])
@@ -1296,7 +1392,6 @@ async fn toolkit_all_writes_persist_get_state_and_target_canonical_metadata_and_
             for room in &rooms {
                 media
                     .lock()
-                    .unwrap()
                     .connected
                     .entry((*room).into())
                     .or_default()
@@ -1349,7 +1444,7 @@ async fn toolkit_all_writes_persist_get_state_and_target_canonical_metadata_and_
                 );
             }
             for room in &rooms {
-                let data = media.lock().unwrap();
+                let data = media.lock();
                 assert!(!data.connected[*room].contains(target.as_str()));
                 assert_eq!(
                     data.metadata[*room]["bannedAddresses"],
@@ -1372,7 +1467,7 @@ async fn toolkit_all_writes_persist_get_state_and_target_canonical_metadata_and_
                     .any(|entry| entry["bannedAddress"] == target.as_str())
             );
             for room in &rooms {
-                let data = media.lock().unwrap();
+                let data = media.lock();
                 assert_eq!(data.metadata[*room]["sceneAdmins"], json!([]));
                 assert_eq!(data.metadata[*room]["bannedAddresses"], json!([]));
             }
@@ -1421,7 +1516,6 @@ async fn notification_failure_rolls_back_scene_ban_before_kick_or_room_metadata(
     assert!(
         media
             .lock()
-            .unwrap()
             .requests
             .iter()
             .all(|(method, _)| method == "ListRooms"),
@@ -1451,7 +1545,7 @@ async fn unban_commits_during_inventory_outage_and_preserves_a_reban_during_meta
         .await
         .unwrap();
         {
-            let mut data = media.lock().unwrap();
+            let mut data = media.lock();
             data.fail_inventory = !reban;
             if reban {
                 data.reban_on_remove = Some((pool.clone(), key.into(), target.clone()));
@@ -1493,7 +1587,7 @@ async fn unban_commits_during_inventory_outage_and_preserves_a_reban_during_meta
             reban
         );
         {
-            let data = media.lock().unwrap();
+            let data = media.lock();
             assert!(
                 data.reban_on_remove.is_none(),
                 "fixture re-banned during the stale metadata write"
@@ -1534,4 +1628,65 @@ fn past_gate_store_fault(method: &str, path: &str, rooms_unlisted: bool) -> (Sta
             json!({"error": "Internal Server Error"}),
         ),
     }
+}
+
+/// While the attached land-authz index is not published, a Genesis scene's
+/// admin listing cannot tell which admins LAND protects: it answers the
+/// index's 503 instead of a list that marks every admin removable, and the
+/// removal of that admin names the same source.
+#[tokio::test]
+async fn genesis_admin_listing_and_removal_name_the_unready_land_index() {
+    let Some(pool) = scratch().await else {
+        return;
+    };
+    let target = Address::parse(&address_of(&random_key())).unwrap();
+    let mut state = comms_state(pool.clone(), Settings::for_tests());
+    state.scenes = Arc::new(ToolkitScenes);
+    state.policy = Arc::new(ActorPolicy {
+        pool: Some(pool.clone()),
+        unavailable: false,
+        protected: BTreeSet::new(),
+    });
+    let writable = super::super::router(Arc::new(state));
+    let genesis = metadata("main", "GenesisA", "42,42");
+    let (status, value) = call(
+        &writable,
+        "POST",
+        "/scene-admin",
+        &genesis,
+        json!({"admin":target.as_str()}),
+        KEY,
+    )
+    .await;
+    assert!(status.is_success(), "{status}: {value}");
+
+    let mut state = comms_state(pool.clone(), Settings::for_tests());
+    state.scenes = Arc::new(ToolkitScenes);
+    state.policy = Arc::new(crate::interfaces::test_support::StubPolicy {
+        admin: PermissionDecision::Allowed,
+        land: Err(AuthorityNotEstablished::land_index_not_ready()),
+        ..Default::default()
+    });
+    let unready = super::super::router(Arc::new(state));
+    let expected = json!({"error": scene::LAND_INDEX_UNREADY_MSG});
+    let (status, value) = call(&unready, "GET", "/scene-admin", &genesis, Value::Null, KEY).await;
+    assert_eq!(
+        (status, value),
+        (StatusCode::SERVICE_UNAVAILABLE, expected.clone()),
+        "the listing"
+    );
+    let (status, value) = call(
+        &unready,
+        "DELETE",
+        "/scene-admin",
+        &genesis,
+        json!({"admin":target.as_str()}),
+        KEY,
+    )
+    .await;
+    assert_eq!(
+        (status, value),
+        (StatusCode::SERVICE_UNAVAILABLE, expected),
+        "the removal"
+    );
 }

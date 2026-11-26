@@ -372,7 +372,7 @@ async function applyFreeze(frozen: boolean): Promise<void> {
  * console command sets the running clock (`time` in hours) and its `speed`
  * (real-seconds → in-world advance); `speed 0` freezes it. Noon (12h) gives even,
  * neutral lighting. This targets the shared global TimeKeeper, so it affects the
- * whole editor view. A stopped clock also overrides a scene's SkyboxTime and
+ * whole editor view. `--force` makes this time beat a scene's SkyboxTime and
  * scene.json fixed time; the host's forward bridge runs the clock again on Play,
  * or when this boot finds the scene already running, and pins it on Stop/Pause
  * (applySceneLighting and syncSceneClock in forward-edits.ts). Best-effort:
@@ -382,7 +382,7 @@ async function pinSkyboxTime(): Promise<void> {
   const api = getBevyApi();
   if (!api) return;
   try {
-    await api.consoleCommand('time', ['12', '0']);
+    await api.consoleCommand('time', ['12', '0', '--force']);
   } catch (e) {
     console.error('[bevy-agent] pin skybox time failed:', e);
   }

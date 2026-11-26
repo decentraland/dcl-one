@@ -1,0 +1,164 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+/* Not in Figma: the Explorer HUD's dialog card and its parts. The purple gradient, the card's shadow and 18px
+   corners, its white inks, its 10px control corners and its 46px buttons have no token. The card sets no box
+   model: its host does (the HUD's page reset; the `/play` shell has none, and its dialogs are sized for that). */
+@layer dcl.components {
+  .card {
+    /* Capped against the host's box, not the viewport: viewport units ignore an ancestor's scale, so a card capped
+       in dvh would be taller than a scaled screen. Taller content scrolls inside the card. */
+    max-height: calc(100% - 40px);
+    overflow-y: auto;
+    background: linear-gradient(160deg, #3a1660 0%, #25103f 55%, #1a0c2e 100%);
+    border: 1px solid var(--dcl-transparencies-white-10);
+    outline: none;
+    border-radius: 18px;
+    padding: 28px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+    color: var(--dcl-neutrals-snow);
+    max-width: 100%;
+  }
+  .card:focus,
+  .card:focus-visible {
+    outline: none;
+  }
+
+  /* ---- ModalShell ---- */
+  .shell {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 30px;
+  }
+  .shellBody {
+    min-width: 0;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  /* ---- ModalTitle ---- */
+  .title {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .titleText {
+    min-width: 0;
+  }
+  .titleCentered {
+    position: relative;
+    display: block;
+  }
+  .titleCentered .titleText {
+    width: 100%;
+  }
+  .titleCentered .titleHeading {
+    justify-content: center;
+    text-align: center;
+  }
+  .titleCentered .subtitle {
+    text-align: center;
+  }
+  .titleCentered .close {
+    position: absolute;
+    top: 0;
+    right: 0;
+  }
+  .titleCentered .back {
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
+  .titleHeading {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  .icon {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+  }
+  .subtitle {
+    margin-top: 6px;
+    font-size: 14px;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.45);
+  }
+  .close,
+  .back {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: currentColor;
+    cursor: pointer;
+    opacity: 0.7;
+  }
+  .close:hover,
+  .back:hover {
+    opacity: 1;
+  }
+  .close:focus-visible,
+  .back:focus-visible {
+    outline: 2px solid var(--dcl-brand-orange);
+    outline-offset: 2px;
+  }
+
+  /* ---- ModalActions ---- */
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  /* Only the lead-note footer wraps (note above buttons on tight widths); equal
+     button rows must stay side by side. */
+  .actionsLead {
+    flex-wrap: wrap;
+  }
+  .actionBtn {
+    flex: 1 1 0;
+  }
+  /* Equal buttons fill their column so a Cancel | Confirm pair stays balanced. */
+  .actionBtn > * {
+    width: 100%;
+  }
+  .actionsColumn {
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: nowrap;
+  }
+  .actionsColumn .actionBtn {
+    flex: 0 0 auto;
+  }
+  .actions button,
+  .actionBtn > * {
+    min-height: 46px;
+  }
+  /* Lead note keeps a sensible min width and grows; the button group stays glued
+     together and right-aligned, wrapping below on tight widths. */
+  .lead {
+    flex: 1 1 16rem;
+    min-width: 0;
+    color: rgba(255, 255, 255, 0.7);
+    line-height: 1.45;
+  }
+  .group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+}

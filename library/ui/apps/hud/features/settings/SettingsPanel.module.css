@@ -156,7 +156,7 @@
 }
 
 /* The control's slot: 40px tall, the control centred in it. The rules below restyle the shared
-   Select, Toggle and Slider for the settings rows. */
+   Select, Switch and Slider for the settings rows. */
 .control {
   display: flex;
   align-items: center;
@@ -186,7 +186,7 @@
   stroke-width: 2;
 }
 
-/* design/Toggle reads these: a 54x30 switch with a flat 26px knob */
+/* the shared Switch reads these: a 54x30 switch with a flat 26px knob */
 .control {
   --toggle-w: 54px;
   --toggle-h: 30px;

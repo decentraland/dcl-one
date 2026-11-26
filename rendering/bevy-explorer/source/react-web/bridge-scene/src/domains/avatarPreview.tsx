@@ -24,6 +24,7 @@ import { currentLook } from './avatarDraft'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { LOBBY_STAGE_PRESETS } from '@explorer-core/engine/lobbyStage'
 import { BevyApi } from '../bevy-api'
+import { SHOP_FRAMING, SHOP_NAMES_FRAMING, shiftWithin } from './previewView'
 
 type Rect = { x: number; y: number; width: number; height: number }
 
@@ -56,9 +57,7 @@ const FRAMING: Record<PreviewFocus, { range: number; centerY: number }> = {
 }
 // An outfit's picture: the whole body, centred.
 const THUMBNAIL_FRAMING = { range: 6.25, centerY: 1.85 }
-// The Shop's whole body in its 573×942 window, as the design draws it: the avatar ~751px tall, its feet on
-// the stage's floor logo (~970px down the screen). The Shop frames nothing else.
-const SHOP_FRAMING = { range: 4.9, centerY: 1.84 }
+// The Shop frames the whole body only, as its page draws it: ./previewView's SHOP_FRAMING and SHOP_NAMES_FRAMING.
 // The sign-in screens' whole body: the head about 23% down the screen, the feet about 77%, on a podium
 // about a quarter of the screen wide.
 const SIGNIN_FRAMING = { range: 7.3, centerY: 1.95 }
@@ -811,11 +810,24 @@ export function registerAvatarPreview(ctx: Ctx): void {
   })
 
   // The Shop draws its stage around the avatar's window: the same image goes behind the avatar, standing on
-  // the floor the image has, so the Backpack's podium steps aside.
+  // the floor the image has, so the Backpack's podium steps aside. The avatar is framed as the page draws it.
   ctx.on('previewStage', (msg) => {
+    const page = msg.framing === 'names' ? SHOP_NAMES_FRAMING : SHOP_FRAMING
+    // The stage staying up (resized, or another page): its place moves, and the camera eases to the page's framing,
+    // from wherever it is, only when that framing changes. A resize midway leaves the ease running.
+    if (shopStage != null && msg.rect != null) {
+      shopStage = msg.rect
+      if (page !== framingTo) {
+        framingFrom = framing
+        framingTo = page
+        framingT = 0
+      }
+      return
+    }
+    // The stage coming up or going: the page's framing at once.
     shopStage = msg.rect
     showPodium(shopStage == null)
-    framing = framingFrom = framingTo = shopStage != null ? SHOP_FRAMING : FRAMING.body
+    framing = framingFrom = framingTo = shopStage != null ? page : FRAMING.body
     framingT = 1
     applyFraming(framing)
   })
@@ -885,12 +897,6 @@ function showPodium(visible: boolean): void {
     const layer = PODIUM_LAYERS[i]
     Transform.getMutable(e).scale = visible ? podiumLayerScale(layer) : Vector3.Zero()
   })
-}
-
-// A zoomed view's centre moves at most as far as keeps it inside the framing it zooms (none at zoom 1).
-function shiftWithin(f: { range: number }, z: number, shift: number): number {
-  const room = (f.range - f.range / z) / 2
-  return Math.max(-room, Math.min(room, shift))
 }
 
 // The framing on the camera, zoomed `z` times with its centre moved `shift` up (the page's zoom unless told

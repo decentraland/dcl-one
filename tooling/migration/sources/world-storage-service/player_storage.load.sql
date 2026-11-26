@@ -42,12 +42,12 @@ SELECT s.world_name, s.place_id,
 FROM (SELECT DISTINCT world_name, place_id FROM stage) s
 LEFT JOIN LATERAL (
     SELECT coalesce(
-               (SELECT pg_temp.wss_effective_base(d.entity_pointers, d.entity_metadata #>> '{scene,base}')
+               (SELECT pg_temp.wss_effective_base(d.entity_pointers, d.entity_metadata #>> '{v,scene,base}')
                 FROM content.active_pointers ap
                 JOIN content.deployments d ON d.entity_id = ap.entity_id
                 WHERE ap.pointer = ANY (fp.canonical)
                   AND d.entity_type = 'scene' AND d.deleter_deployment IS NULL
-                  AND pg_temp.wss_parcel(d.entity_metadata #>> '{scene,base}') = pg_temp.wss_parcel(p.base_position)
+                  AND pg_temp.wss_parcel(d.entity_metadata #>> '{v,scene,base}') = pg_temp.wss_parcel(p.base_position)
                 ORDER BY d.entity_timestamp DESC, d.entity_id
                 LIMIT 1),
                pg_temp.wss_effective_base(fp.parcels, p.base_position)) AS base

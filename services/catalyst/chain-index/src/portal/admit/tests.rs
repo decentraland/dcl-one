@@ -1427,7 +1427,7 @@ struct Counters(Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicU64>>>>);
 
 struct CounterCell(Arc<std::sync::atomic::AtomicU64>);
 
-impl metrics::CounterFn for CounterCell {
+impl dcl_metrics::CounterFn for CounterCell {
     fn increment(&self, value: u64) {
         self.0.fetch_add(value, Ordering::SeqCst);
     }
@@ -1436,29 +1436,33 @@ impl metrics::CounterFn for CounterCell {
     }
 }
 
-impl metrics::Recorder for Counters {
+impl dcl_metrics::Recorder for Counters {
     fn describe_counter(
         &self,
-        _: metrics::KeyName,
-        _: Option<metrics::Unit>,
-        _: metrics::SharedString,
+        _: dcl_metrics::KeyName,
+        _: Option<dcl_metrics::Unit>,
+        _: dcl_metrics::SharedString,
     ) {
     }
     fn describe_gauge(
         &self,
-        _: metrics::KeyName,
-        _: Option<metrics::Unit>,
-        _: metrics::SharedString,
+        _: dcl_metrics::KeyName,
+        _: Option<dcl_metrics::Unit>,
+        _: dcl_metrics::SharedString,
     ) {
     }
     fn describe_histogram(
         &self,
-        _: metrics::KeyName,
-        _: Option<metrics::Unit>,
-        _: metrics::SharedString,
+        _: dcl_metrics::KeyName,
+        _: Option<dcl_metrics::Unit>,
+        _: dcl_metrics::SharedString,
     ) {
     }
-    fn register_counter(&self, key: &metrics::Key, _: &metrics::Metadata<'_>) -> metrics::Counter {
+    fn register_counter(
+        &self,
+        key: &dcl_metrics::Key,
+        _: &dcl_metrics::Metadata<'_>,
+    ) -> dcl_metrics::Counter {
         let mut labels: Vec<String> = key
             .labels()
             .map(|l| format!("{}={}", l.key(), l.value()))
@@ -1466,17 +1470,21 @@ impl metrics::Recorder for Counters {
         labels.sort();
         let name = format!("{}{{{}}}", key.name(), labels.join(","));
         let cell = self.0.lock().unwrap().entry(name).or_default().clone();
-        metrics::Counter::from_arc(Arc::new(CounterCell(cell)))
+        dcl_metrics::Counter::from_arc(Arc::new(CounterCell(cell)))
     }
-    fn register_gauge(&self, _: &metrics::Key, _: &metrics::Metadata<'_>) -> metrics::Gauge {
-        metrics::Gauge::noop()
+    fn register_gauge(
+        &self,
+        _: &dcl_metrics::Key,
+        _: &dcl_metrics::Metadata<'_>,
+    ) -> dcl_metrics::Gauge {
+        dcl_metrics::Gauge::noop()
     }
     fn register_histogram(
         &self,
-        _: &metrics::Key,
-        _: &metrics::Metadata<'_>,
-    ) -> metrics::Histogram {
-        metrics::Histogram::noop()
+        _: &dcl_metrics::Key,
+        _: &dcl_metrics::Metadata<'_>,
+    ) -> dcl_metrics::Histogram {
+        dcl_metrics::Histogram::noop()
     }
 }
 
@@ -1490,7 +1498,7 @@ fn a_failed_rpc_read_counts_the_requests_it_sent() {
         .enable_all()
         .build()
         .unwrap();
-    metrics::with_local_recorder(&recorder, || {
+    dcl_metrics::with_local_recorder(&recorder, || {
         runtime.block_on(async {
             let (portal, origin) = lake_at(Lake::new(R1, 150, &[(A, 0)])).await;
             *portal.contracts_reply.lock().unwrap() = Some(http(404, "", ""));
@@ -1532,7 +1540,7 @@ fn a_dropped_rpc_read_counts_the_request_it_sent() {
         .build()
         .unwrap();
     let shared = AtomicUsize::new(0);
-    metrics::with_local_recorder(&recorder, || {
+    dcl_metrics::with_local_recorder(&recorder, || {
         runtime.block_on(async {
             let (_portal, origin) = lake_at(Lake::new(R1, 150, &[(A, 0)])).await;
             let adm = admission(&origin, 1_000.0, COOLDOWN);

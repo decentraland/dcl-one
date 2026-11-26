@@ -2,11 +2,11 @@
 // typing, keyboard navigation over one flat list, Enter running the search on the grid, and the clear
 // button dropping only the query.
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { catalogClient, ShopHarness } from "../fixtures";
+import { catalogClient, ShopHarness, SUGGESTIONS, type CatalogAnswers } from "../fixtures";
 import { clearRecentSearches, recordSearch } from "../lib/recent-searches";
 import SearchDropdown from "./SearchDropdown";
 
@@ -21,8 +21,8 @@ function Where() {
   return <output data-testid="where">{pathname + search}</output>;
 }
 
-function box(entry = "/shop/overview", scenario: "ok" | "error" = "ok") {
-  const client = catalogClient(scenario);
+function box(entry = "/shop/overview", scenario: "ok" | "error" = "ok", answers: CatalogAnswers = {}) {
+  const client = catalogClient(scenario, answers);
   render(
     <ShopHarness path="/shop/*" entry={entry} client={client}>
       <>
@@ -40,9 +40,8 @@ describe("the search panel as decentraland.org's Shop draws it", () => {
     const { input } = box();
     fireEvent.focus(input);
     const panel = screen.getByTestId("search-panel");
-    const chips = panel.querySelectorAll(".shop-search__chip");
-    expect(chips.length).toBeGreaterThan(3);
-    expect([...chips].every((c) => c.getAttribute("role") === "option")).toBe(true);
+    const chips = within(panel).getAllByRole("option").filter((option) => option.dataset.kind === "popular");
+    expect(chips.map((chip) => chip.textContent)).toEqual(expect.arrayContaining(["duck", "sword", "kimono", "wings"]));
     const recent = within(panel).getAllByRole("option")[0]!;
     expect(recent.textContent).toBe("pirate");
     expect(within(recent).queryByRole("button")).toBeNull();
@@ -120,5 +119,32 @@ describe("the search box", () => {
     const { input } = box("/shop/overview", "error");
     fireEvent.change(input, { target: { value: "hat" } });
     expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't load suggestions.");
+  });
+});
+
+describe("when a previous search finishes after the current one", () => {
+  it("should keep the current suggestions and send See all to the current query", async () => {
+    let finishOlder!: (value: typeof SUGGESTIONS) => void;
+    const older = new Promise<typeof SUGGESTIONS>((resolve) => { finishOlder = resolve; });
+    const read = vi.fn((url: URL) => url.searchParams.get("search") === "first" ? older : SUGGESTIONS);
+    const { input } = box("/shop/overview", "ok", { "/v3/catalog/suggest": read });
+    fireEvent.change(input, { target: { value: "first" } });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+    fireEvent.change(input, { target: { value: "second" } });
+    const seeAll = await screen.findByRole("option", { name: "See all 1 results" });
+    await act(async () => finishOlder({ ...SUGGESTIONS, items: { ...SUGGESTIONS.items, total: 99 } }));
+    expect(screen.queryByText("See all 99 results")).toBeNull();
+    fireEvent.click(seeAll);
+    expect(screen.getByTestId("where")).toHaveTextContent("/shop/items?q=second");
+  });
+});
+
+describe("when suggestions can be retried", () => {
+  it("should show the recovered results for the same query", async () => {
+    const read = vi.fn().mockRejectedValueOnce(new Error("read failed")).mockResolvedValueOnce(SUGGESTIONS);
+    const { input } = box("/shop/overview", "ok", { "/v3/catalog/suggest": read });
+    fireEvent.change(input, { target: { value: "hat" } });
+    fireEvent.click(within(await screen.findByRole("alert")).getByRole("button"));
+    expect(await screen.findByRole("option", { name: "See all 1 results" })).toBeTruthy();
   });
 });

@@ -8,7 +8,6 @@
 //! tree below keeps the package nesting (`decentraland::pulse` reaches
 //! `AuthChain` as `super::common::AuthChain`).
 
-#[allow(clippy::all)]
 pub mod decentraland {
     pub mod common {
         include!(concat!(env!("OUT_DIR"), "/decentraland.common.rs"));

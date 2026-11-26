@@ -1,16 +1,20 @@
 //! `/lambdas/profiles`: the profile entity comes from `content.deployments`
 //! (peer sync), every wearable and emote it names is checked against the
-//! collections subgraphs (token ids included, re-emitted `<urn>:<tokenId>`
-//! as `ENSURE_ERC_721` does), its third-party wearables against their
+//! `nft` index (`owned_items`: token ids included, re-emitted
+//! `<urn>:<tokenId>` as `ENSURE_ERC_721` does, the newest transfer first
+//! when the profile names no token), its third-party wearables against their
 //! mappings and the chain (`third_party::sanitize_third_party_urns`,
 //! appended after the others as the old lambdas did) and `hasClaimedName`
 //! against the marketplace subgraph. The answer is decentraland/lamb2's
-//! `{ timestamp, avatars }`, the timestamp the entity's. With no collections
-//! subgraph the items are served as deployed (a node with no ownership
-//! source, such as an island); a reader that is configured but unreachable
-//! fails the request closed (503) rather than serving cosmetics nobody
-//! proved. The one exception is a linked third-party item whose chain read
-//! failed: only that profile's linked items are left out.
+//! `{ timestamp, avatars }`, the timestamp the entity's. A node that does
+//! not walk the index (`owned_items::walks_here`: an island, a journey, a
+//! testnet) serves the items as deployed. One that walks it reads the
+//! networks the items name once their index is complete
+//! (`owned_items::Rule::Complete`: an index published once since its last
+//! rewind, however long ago); before that the request fails closed (503)
+//! rather than serving cosmetics nobody proved or stripping items their
+//! owners hold. The one exception is a linked third-party item whose chain
+//! read failed: only that profile's linked items are left out.
 //!
 //! `POST /lambdas/profiles/metadata` serves the compact projection of the same
 //! processed profiles, as asset-bundle-registry's `/profiles/metadata`.
@@ -26,9 +30,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
-use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
+use crate::content::read_through::active_entity_docs;
 
-use super::graph;
+use super::owned_items::{self, Rule};
 use super::third_party;
 use super::{MarketplaceState, SharedState, bad_request, lambdas_internal_error, not_found};
 
@@ -72,9 +76,16 @@ pub(super) const PROFILE_LOOKUP_CHUNK: usize = 1000;
 /// failed, by `route` and `layer` (`entities`, `ownership`). The Registry
 /// and Lambdas can use their normal response statuses for these failures.
 pub(super) const PROFILE_LOOKUP_FAILURES: &str = "profiles_lookup_failures_total";
+const LOOKUP_FAILURE_COUNTER: dcl_metrics::CounterFamily<2> = dcl_metrics::CounterFamily::new(
+    PROFILE_LOOKUP_FAILURES,
+    "Profile lookups that failed, by route and failed lookup layer.",
+    Some(dcl_metrics::Unit::Count),
+    &["route", "layer"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[LOOKUP_FAILURE_COUNTER.descriptor];
 
 pub(super) fn count_lookup_failure(route: &'static str, layer: &'static str) {
-    metrics::counter!(PROFILE_LOOKUP_FAILURES, "route" => route, "layer" => layer).increment(1);
+    LOOKUP_FAILURE_COUNTER.handle([route, layer]).increment(1);
 }
 
 /// A pointer that can name a profile: an address (`0x` and 40 hex digits,
@@ -140,7 +151,7 @@ fn collect_ownership_urns(metadata: &Value) -> Vec<String> {
 /// An owned item as `profiles.ts` re-emits it: `<owned urn>:<the named token
 /// id, or the first one held>`; `None` when the URN is not held or the named
 /// token is not among the held ones. The URN must equal the inventory's
-/// exactly, as lamb2's `Map` lookup does: the subgraphs spell L1 `ethereum`,
+/// exactly, as lamb2's `Map` lookup does: the index spells L1 `ethereum`,
 /// so a `mainnet` spelling is not owned.
 fn owned_item(item: &str, owned: &OwnedTokens) -> Option<String> {
     let (urn, token_id) = split_urn_and_token_id(item);
@@ -155,8 +166,8 @@ fn owned_item(item: &str, owned: &OwnedTokens) -> Option<String> {
     })
 }
 
-/// Keeps the base items and the owned ones (`owned: None`, no collections
-/// reader: every item as deployed). An owned emote becomes exactly
+/// Keeps the base items and the owned ones (`owned: None`, no ownership
+/// source: every item as deployed). An owned emote becomes exactly
 /// `{ urn, slot }`. `emotes` is always present, `[]` when not deployed.
 fn filter_avatars_by_ownership(avatars: &mut [Value], owned: Option<&OwnedTokens>) {
     for avatar_val in avatars.iter_mut() {
@@ -442,7 +453,26 @@ pub async fn process_profiles_positional(
     state: &MarketplaceState,
     entities: &[Value],
 ) -> Result<Vec<Option<Value>>, String> {
-    let collections = graph::any_collections_reader(&state.index);
+    Ok(process_profiles_observed(state, entities)
+        .await?
+        .into_iter()
+        .map(|(profile, _)| profile)
+        .collect())
+}
+
+/// [`process_profiles_positional`], each profile with the publications its
+/// chunk's ownership read observed (`None`: the chunk named no on-chain
+/// item, so nothing was read and the profile does not depend on the index).
+async fn process_profiles_observed(
+    state: &MarketplaceState,
+    entities: &[Value],
+) -> Result<Vec<(Option<Value>, Option<owned_items::Publications>)>, String> {
+    let collections = owned_items::walks_here(state);
+    // A node that walks the nft index reads the NAMEs in the items'
+    // snapshot (one observation for the whole answer); one that does not
+    // reads them from the subgraph beside the items, or claims none, as it
+    // serves the items as deployed.
+    let index_names = collections && state.name_authority.as_ref().is_some_and(|a| a.observes());
     state.warm_faces(
         entities
             .iter()
@@ -469,13 +499,22 @@ pub async fn process_profiles_positional(
             }
         }
         let mut owned: HashMap<String, OwnedTokens> = HashMap::new();
+        let mut observed: Option<owned_items::Publications> = None;
         let mut names_by_address: HashMap<String, Vec<String>> = HashMap::new();
         let mut third_party_by_address: HashMap<String, Vec<String>> = HashMap::new();
         if !addresses.is_empty() {
-            // `owned_names` answers empty without a marketplace subgraph.
-            let names_futs = addresses
-                .iter()
-                .map(|a| graph::owned_names(&state.index, a));
+            // Without the subgraph an address that is not read from the
+            // index claims no name.
+            let names_futs = addresses.iter().map(|a| async move {
+                match state.name_authority.as_ref() {
+                    Some(authority) if !authority.observes() => authority
+                        .owned_names(a, crate::chain_index::names::Purpose::Display)
+                        .await
+                        .map(|answer| answer.value)
+                        .map_err(|e| e.to_string()),
+                    _ => Ok(std::sync::Arc::new(Vec::new())),
+                }
+            });
             // A profile whose linked items could not be checked keeps
             // its v1 items only; the others in the batch are unaffected.
             let third_party_futs = addresses.iter().zip(&worn).map(|(a, worn)| async move {
@@ -497,10 +536,31 @@ pub async fn process_profiles_positional(
             use futures::stream::StreamExt;
             let (owned_res, names, third_party) = tokio::join!(
                 async {
-                    if collections && !requested.is_empty() {
-                        graph::owned_tokens(&state.index, &requested).await
+                    if index_names {
+                        // The items and the NAMEs, Ethereum always, in one
+                        // snapshot.
+                        owned_items::owned_tokens_and_names(
+                            &state.pool,
+                            state.settings.catalogue(),
+                            &requested,
+                            &addresses,
+                            Rule::Complete,
+                        )
+                        .await
+                        .map(|(owned, names, seen)| (owned, Some(names), Some(seen)))
+                        .map_err(|e| e.to_string())
+                    } else if collections && !requested.is_empty() {
+                        owned_items::owned_tokens_observed(
+                            &state.pool,
+                            state.settings.catalogue(),
+                            &requested,
+                            Rule::Complete,
+                        )
+                        .await
+                        .map(|(owned, seen)| (owned, None, seen))
+                        .map_err(|e| e.to_string())
                     } else {
-                        Ok(HashMap::new())
+                        Ok((HashMap::new(), None, None))
                     }
                 },
                 futures::future::join_all(names_futs),
@@ -508,12 +568,25 @@ pub async fn process_profiles_positional(
                     .buffer_unordered(THIRD_PARTY_CONCURRENCY)
                     .collect::<HashMap<String, Vec<String>>>()
             );
-            owned = owned_res?;
-            for (address, names) in addresses.iter().zip(names) {
-                names_by_address.insert(
-                    address.clone(),
-                    names?.iter().map(|n| n.name.clone()).collect(),
-                );
+            let (read, indexed_names, seen) = owned_res?;
+            owned = read;
+            observed = seen.map(|seen| seen.publications);
+            match indexed_names {
+                Some(mut indexed) => {
+                    for address in &addresses {
+                        let names = indexed.remove(address.as_str()).unwrap_or_default();
+                        names_by_address
+                            .insert(address.clone(), names.into_iter().map(|n| n.name).collect());
+                    }
+                }
+                None => {
+                    for (address, names) in addresses.iter().zip(names) {
+                        names_by_address.insert(
+                            address.clone(),
+                            names?.iter().map(|n| n.name.clone()).collect(),
+                        );
+                    }
+                }
             }
             third_party_by_address = third_party;
         }
@@ -548,7 +621,7 @@ pub async fn process_profiles_positional(
             apply_claimed_name(metadata, names);
         }
         profiles.extend(chunk.iter().zip(prepared).map(|(entity, p)| {
-            p.map(|(_, mut metadata)| {
+            let profile = p.map(|(_, mut metadata)| {
                 json!({
                     "timestamp": entity.get("timestamp").cloned().unwrap_or(Value::Null),
                     "avatars": metadata
@@ -557,7 +630,8 @@ pub async fn process_profiles_positional(
                         .map(Value::take)
                         .unwrap_or_else(|| json!([])),
                 })
-            })
+            });
+            (profile, observed)
         }));
     }
     Ok(profiles)
@@ -573,31 +647,42 @@ pub(super) async fn active_entities(
     if pointers.is_empty() {
         return Ok(Vec::new());
     }
-    let mut docs = match &state.read_through {
-        Some(read_through) => read_through.active_docs(false, pointers).await,
-        None => active_entity_docs_by_pointers(&state.pool, pointers).await,
-    }
+    let docs = active_entity_docs(
+        &state.pool,
+        state.read_through.as_deref(),
+        false,
+        pointers,
+        Some(&state.denylist),
+    )
+    .await
     .map_err(|e| {
         tracing::error!(error = %e, "lambdas: active entities query failed");
     })?;
-    retain_non_denylisted(&mut docs, &state.denylist);
     Ok(docs.iter().filter_map(|d| d.to_value()).collect())
 }
 
-/// Processes a batch and fills the per-id cache (`Null` for absent pointers).
-async fn process_and_cache_profiles(
+/// Processes a batch and fills the per-id cache (`Null` for absent
+/// pointers). A profile whose items were checked is filed under the
+/// publications that check observed; one that named no on-chain item, and
+/// an absent pointer, under `looked_up` (the key read before, which they do
+/// not depend on).
+pub(super) async fn process_and_cache_profiles(
     state: &MarketplaceState,
     pointers: &[String],
     entities: &[Value],
+    looked_up: owned_items::Publications,
 ) -> Result<Vec<(String, Value)>, String> {
-    let processed = process_profiles_positional(state, entities).await?;
+    let processed = process_profiles_observed(state, entities).await?;
     let mut out = Vec::with_capacity(entities.len());
     let mut filled: HashSet<String> = Default::default();
-    for (entity, profile) in entities.iter().zip(processed) {
+    for (entity, (profile, observed)) in entities.iter().zip(processed) {
         let key = entity_eth_address(entity).unwrap_or_default();
         let profile = profile.unwrap_or(Value::Null);
         if !key.is_empty() && filled.insert(key.clone()) {
-            state.profile_cache.insert(key.clone(), profile.clone());
+            state.profile_cache.insert(
+                (key.clone(), observed.unwrap_or(looked_up)),
+                profile.clone(),
+            );
         }
         if !profile.is_null() {
             out.push((key, profile));
@@ -605,7 +690,9 @@ async fn process_and_cache_profiles(
     }
     for pointer in pointers {
         if filled.insert(pointer.clone()) {
-            state.profile_cache.insert(pointer.clone(), Value::Null);
+            state
+                .profile_cache
+                .insert((pointer.clone(), looked_up), Value::Null);
         }
     }
     Ok(out)
@@ -639,10 +726,18 @@ async fn profiles_via_cache(
     pointers: &[String],
 ) -> Result<Vec<(String, Value)>, Failure> {
     let wanted = unique_pointers(pointers);
+    // The key of every hit and fill: a profile read under another
+    // publication of the nft index is never served.
+    let publications = owned_items::Publications::current(state)
+        .await
+        .map_err(|_| Failure::Db)?;
     let mut found: HashMap<String, Value> = Default::default();
     let mut missing: Vec<String> = Vec::new();
     for pointer in &wanted {
-        match state.profile_cache.get_fresh(pointer) {
+        match state
+            .profile_cache
+            .get_fresh(&(pointer.clone(), publications))
+        {
             Some(v) => {
                 found.insert(pointer.clone(), v);
             }
@@ -653,7 +748,7 @@ async fn profiles_via_cache(
         let entities = active_entities(state, &missing)
             .await
             .map_err(|()| Failure::Db)?;
-        for (key, profile) in process_and_cache_profiles(state, &missing, &entities)
+        for (key, profile) in process_and_cache_profiles(state, &missing, &entities, publications)
             .await
             .map_err(Failure::Reader)?
         {
@@ -679,11 +774,14 @@ async fn processed_profiles(
     if pointers.len() <= PROFILE_BATCH_MAX {
         return profiles_via_cache(state, pointers).await;
     }
+    let publications = owned_items::Publications::current(state)
+        .await
+        .map_err(|_| Failure::Db)?;
     let entities = active_entities(state, pointers)
         .await
         .map_err(|()| Failure::Db)?;
     let mut by_pointer: HashMap<String, Value> = HashMap::new();
-    for (pointer, profile) in process_and_cache_profiles(state, pointers, &entities)
+    for (pointer, profile) in process_and_cache_profiles(state, pointers, &entities, publications)
         .await
         .map_err(Failure::Reader)?
     {
@@ -702,27 +800,14 @@ async fn fetch_profile_for_id(
     state: &MarketplaceState,
     id: &str,
 ) -> Result<Option<Value>, Failure> {
+    // Through the per-id cache, so a fill is filed under the publications its
+    // ownership read observed (`process_and_cache_profiles`).
     let key = id.to_lowercase();
-    let cached = state
-        .profile_cache
-        .get_or_fetch(key.clone(), || async {
-            let entities = active_entities(state, std::slice::from_ref(&key))
-                .await
-                .map_err(|()| Failure::Db)?;
-            let Some(entity) = entities.into_iter().next() else {
-                return Ok(Value::Null);
-            };
-            let processed = process_profiles_positional(state, std::slice::from_ref(&entity))
-                .await
-                .map_err(Failure::Reader)?;
-            Ok(processed
-                .into_iter()
-                .next()
-                .flatten()
-                .unwrap_or(Value::Null))
-        })
-        .await?;
-    Ok(if cached.is_null() { None } else { Some(cached) })
+    Ok(profiles_via_cache(state, std::slice::from_ref(&key))
+        .await?
+        .into_iter()
+        .next()
+        .map(|(_, profile)| profile))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -832,6 +917,13 @@ pub async fn profiles(
             }
         };
     }
+    let publications = match owned_items::Publications::current(&state).await {
+        Ok(publications) => publications,
+        Err(_) => {
+            count_lookup_failure("lambdas_profiles", Failure::Db.layer());
+            return Json(json!([])).into_response();
+        }
+    };
     let entities = match active_entities(&state, &pointers).await {
         Ok(e) => e,
         Err(()) => {
@@ -846,7 +938,7 @@ pub async fn profiles(
         return StatusCode::NOT_MODIFIED.into_response();
     }
 
-    match process_and_cache_profiles(&state, &pointers, &entities).await {
+    match process_and_cache_profiles(&state, &pointers, &entities, publications).await {
         Ok(profiles) => {
             let profiles: Vec<Value> = profiles.into_iter().map(|(_, profile)| profile).collect();
             Json(Value::Array(profiles)).into_response()
@@ -965,6 +1057,31 @@ pub async fn profiles_metadata(
         }
     }
     Json(compact).into_response()
+}
+
+/// The profile's name when the address holds it as a NAME (`hasClaimedName`,
+/// the same check `profiles` serves), as the purchase receipt greets its
+/// buyer. `None` for an unclaimed name, no profile, or a failed read: an
+/// unclaimed name is a non-unique default, and a greeting is never worth an
+/// error.
+pub async fn claimed_name(state: &MarketplaceState, address: &str) -> Option<String> {
+    let pointer = address.to_lowercase();
+    let found = processed_profiles(state, std::slice::from_ref(&pointer))
+        .await
+        .ok()?;
+    let (_, profile) = found
+        .into_iter()
+        .find(|(found, _)| found.eq_ignore_ascii_case(&pointer))?;
+    let avatar = profile.get("avatars")?.as_array()?.first()?;
+    if avatar.get("hasClaimedName").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    avatar
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
 }
 
 pub async fn profile_by_id(State(state): State<SharedState>, Path(id): Path<String>) -> Response {

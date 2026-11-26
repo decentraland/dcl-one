@@ -67,9 +67,13 @@ fn world_with_player(position: Vec3, velocity: Vec3) -> (World, Entity) {
     time.advance_by(Duration::from_millis(100));
     world.insert_resource(time);
     world.init_resource::<AvatarMovementInfo>();
+    world.init_resource::<LastMovementStep>();
     world.init_resource::<EngineMovementControl>();
     world.init_resource::<CentralCollisions>();
     world.init_resource::<CollisionPush>();
+    world.init_resource::<ScenePointers>();
+    world.init_resource::<LiveScenes>();
+    world.init_resource::<PortableScenes>();
 
     let player = world
         .spawn((
@@ -310,7 +314,6 @@ fn place_scene(world: &mut World, scene: Entity, parcels: &[(i32, i32)]) {
     live.scenes.insert("scene".to_owned(), scene);
     world.insert_resource(pointers);
     world.insert_resource(live);
-    world.init_resource::<PortableScenes>();
 }
 
 #[test]
@@ -336,7 +339,7 @@ fn a_collider_above_what_its_region_is_drawn_to_is_not_the_players_ground() {
         let scene = world.spawn(colliders).id();
         place_scene(&mut world, scene, &parcels);
 
-        world.run_system_once(record_ground_collider).unwrap();
+        world.run_system_once(apply_movement).unwrap();
 
         let recorded = world.get::<GroundCollider>(player).unwrap();
         assert_eq!(recorded.0.as_ref().map(|(entity, ..)| *entity), ground);
@@ -367,10 +370,12 @@ fn add_block_across_the_height_limit(colliders: &mut SceneColliderData, entity: 
 fn a_player_who_falls_onto_a_collider_cut_at_its_regions_height_limit_lands_on_it() {
     // from half a metre above the limit, a metre down in the frame
     let falling = Vec3::new(0.0, -10.0, 0.0);
+    let block = Entity::from_raw(77);
     let (mut world, player) = world_with_player(ON_THE_HEIGHT_LIMIT.with_y(20.5), falling);
     let mut colliders = scene(&IN_TWO_PIECES);
-    add_block_across_the_height_limit(&mut colliders, Entity::PLACEHOLDER);
-    world.spawn(colliders);
+    add_block_across_the_height_limit(&mut colliders, block);
+    let scene = world.spawn(colliders).id();
+    place_scene(&mut world, scene, &IN_TWO_PIECES);
 
     // the frame the player lands in, and the next
     for _ in 0..2 {
@@ -383,6 +388,8 @@ fn a_player_who_falls_onto_a_collider_cut_at_its_regions_height_limit_lands_on_i
             above < PLAYER_GROUND_THRESHOLD,
             "{above} m above the ground"
         );
+        let recorded = world.get::<GroundCollider>(player).unwrap();
+        assert_eq!(recorded.0.as_ref().map(|(entity, ..)| *entity), Some(block));
     }
 }
 
@@ -401,8 +408,6 @@ fn a_collider_cut_at_its_regions_height_limit_is_the_ground_of_a_player_who_stan
         above < PLAYER_GROUND_THRESHOLD,
         "{above} m above the ground"
     );
-
-    world.run_system_once(record_ground_collider).unwrap();
     let recorded = world.get::<GroundCollider>(player).unwrap();
     assert_eq!(recorded.0.as_ref().map(|(entity, ..)| *entity), Some(block));
 }

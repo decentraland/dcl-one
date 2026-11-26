@@ -408,6 +408,49 @@ async fn a_missing_far_lod_is_remembered_and_failures_pause_far_lods() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[tokio::test]
+async fn far_lods_outlive_the_variants_session_switch() {
+    let (io, dir) = io_with_cache("far-lod-session-switch");
+    io.set_bevy_variants_base("https://abgen.example");
+    io.context.write().await.about = Some(ServerAbout {
+        content: Some(EndpointConfig {
+            healthy: true,
+            public_url: "https://peer.example/content".to_owned(),
+        }),
+        ..Default::default()
+    });
+    let _ = io.bevy_variants.bc.set(true);
+    let url = |scene: &str| match io.bevy_far_lod(scene) {
+        FarLodSource::Url(url) => url,
+        other => panic!("{scene}: {other:?}"),
+    };
+
+    // manifest and texture failures turn the variants client off for the session
+    for _ in 0..BREAKER_FAILURES {
+        io.bevy_variants.transport_failed("connection refused");
+    }
+    assert!(io.bevy_variants.disabled().is_some());
+
+    // far LODs are still offered, and their own breaker sees the outage
+    assert!(matches!(io.bevy_far_lod(SCENE), FarLodSource::Url(_)));
+    assert!(!io.far_lods_off());
+    assert!(io.far_lod_may_request());
+    for n in 0..far_lod::FAR_LOD_BREAKER_FAILURES {
+        io.far_lod_fetched(&url(&format!("bafkrei{n}")), Err(None));
+    }
+    let status = io.far_lod_status();
+    assert_eq!(status.failures, far_lod::FAR_LOD_BREAKER_FAILURES);
+    assert!(status.paused_for.is_some());
+    assert!(!io.far_lod_may_request());
+    assert!(!io.far_lods_off());
+
+    // an answer resumes them
+    io.far_lod_fetched(&url("bafkrei0"), Ok(()));
+    assert!(io.far_lod_status().paused_for.is_none());
+    assert!(io.far_lod_may_request());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 fn content_path(file: &str) -> PathBuf {
     PathBuf::from(&IpfsPath::new(IpfsType::new_content_file(
         SCENE.to_owned(),

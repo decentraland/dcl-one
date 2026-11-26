@@ -15,8 +15,6 @@
 //! change no durable state), `reset-settings` and every moderation,
 //! suspension, broadcast and badge write answer the social 503.
 
-#![allow(clippy::result_large_err)]
-
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, Query, State};

@@ -163,11 +163,12 @@ the same kind.
 
 - **Mesh.** `{base}/LOD/lods-bevy/lods/{sceneId}_1.glb` (the scene id lowercase): the asset
   pipeline's Bevy copy of the scene mesh. The Bevy variants client names it
-  (`IpfsIo::bevy_far_lod`): `base` is the variants base, and it is offered on the terms of a
-  variants manifest (variants on and not turned off for the session, the scene not in preview,
-  not local, and not served from a loopback or file content server) and only on a GPU with BC
-  textures, since its atlases are BC1 or BC7 KTX2 with their
-  mip chain. Until the GPU reports its BC support the far LOD waits. The glTF loader hands
+  (`IpfsIo::bevy_far_lod`): `base` is the variants base, and it is offered while a base is set,
+  the scene not in preview, not local, and not served from a loopback or file content server,
+  and only on a GPU with BC textures, since its atlases are BC1 or BC7 KTX2 with their mip chain.
+  It does not follow the variants client's session switch (the manifests' and texture variants'
+  breaker, which stays off once tripped): an outage of the LOD service is the far LOD breaker's
+  (below), which resumes far LODs once the service answers again. Until the GPU reports its BC support the far LOD waits. The glTF loader hands
   embedded KTX2 to the host, which unwraps BC to DDS, so they stay compressed in memory. Like a
   `glb` variant it is asked for at its own path: its Brotli copy exists only when it is smaller,
   and the server sends it to a browser that accepts `br`. None offered or published, or one the
@@ -211,8 +212,11 @@ the same kind.
   client logs each trip and recovery once, and `/scene_lod_state` shows the missing count, the
   failures in a row and the seconds to the next probe (`far.missing`, `far.failures`,
   `far.paused_s`). A far LOD whose download failed with an error or a timeout shows its
-  imposters until its scene leaves the band (the far ring or the tile edge) and comes back; it is
-  not retried in place.
+  imposters until its scene leaves the band (the far ring or the tile edge) and comes back, or
+  until far LODs resume after a pause. Then every far LOD whose mesh did not load, except a scene
+  the server has none for, waits to start again where it is (`FarLodStatus::recoveries`): the
+  far LODs that started before the breaker tripped all fail during an outage, which after a
+  teleport can be most of those in view, not five.
 - **Range in parcel rings.** It draws where the near LOD's keep band ends: its scene's nearest
   parcel past the near keep ring (4 by default, about 64 m) and within the far ring ("Far LOD
   Ring", default 20, about 320 m), the scene not wholly behind the camera. Nearer, it draws only

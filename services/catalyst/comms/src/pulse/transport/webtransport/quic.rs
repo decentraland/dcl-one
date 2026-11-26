@@ -6,10 +6,11 @@
 //! This crate is a *generic* byte pipe: it does no framing or sequencing. Pulse channel
 //! semantics (length framing on the stream, datagram sequencing/dedup) live in the C# layer.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -126,9 +127,16 @@ impl Host {
         let bind_addr = config.bind_addr;
 
         let server_config = server_config(certs, key, config.idle_timeout)?;
+        let endpoint_config = quinn::EndpointConfig::default();
+        let socket =
+            std::net::UdpSocket::bind(bind_addr).map_err(|e| HostError::Endpoint(e.to_string()))?;
         // Binding a quinn endpoint needs a runtime context.
         let endpoint = runtime
-            .block_on(async move { quinn::Endpoint::server(server_config, bind_addr) })
+            .block_on(async move {
+                let runtime = quinn::default_runtime()
+                    .ok_or_else(|| std::io::Error::other("no async runtime found"))?;
+                quinn::Endpoint::new(endpoint_config, Some(server_config), socket, runtime)
+            })
             .map_err(|e| HostError::Endpoint(e.to_string()))?;
         let server = web_transport_quinn::Server::new(endpoint);
 
@@ -182,10 +190,7 @@ impl Host {
 
     /// Retains the byte owner's allocation and queue permits until the stream write completes.
     pub fn send_stream_bytes(&self, peer_id: u64, data: Bytes) -> bool {
-        let peers = self
-            .peers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let peers = self.peers.lock();
         match peers.get(&peer_id) {
             Some(handle) => handle.cmd_tx.send(PeerCommand::Stream(data)).is_ok(),
             None => false,
@@ -194,10 +199,7 @@ impl Host {
 
     /// Send an unreliable datagram to the peer. Returns `false` on failure (gone / too large).
     pub fn send_datagram(&self, peer_id: u64, data: &[u8]) -> bool {
-        let peers = self
-            .peers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let peers = self.peers.lock();
         match peers.get(&peer_id) {
             Some(handle) => handle
                 .session
@@ -209,10 +211,7 @@ impl Host {
 
     /// Close the peer's session with an application error code. Returns `false` if gone.
     pub fn disconnect(&self, peer_id: u64, reason: u32) -> bool {
-        let peers = self
-            .peers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let peers = self.peers.lock();
         match peers.get(&peer_id) {
             Some(handle) => {
                 // `Session::close` must run inside the tokio runtime context.
@@ -228,10 +227,7 @@ impl Host {
 
     /// Current smoothed RTT to the peer in microseconds, if still connected.
     pub fn rtt_us(&self, peer_id: u64) -> Option<u64> {
-        let peers = self
-            .peers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let peers = self.peers.lock();
         peers
             .get(&peer_id)
             .map(|handle| handle.session.rtt().as_micros() as u64)
@@ -262,16 +258,13 @@ async fn serve_connection(
     let remote_addr = session.remote_address().to_string();
 
     let (cmd_tx, cmd_rx) = unbounded_channel::<PeerCommand>();
-    peers
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(
-            peer_id,
-            PeerHandle {
-                session: session.clone(),
-                cmd_tx,
-            },
-        );
+    peers.lock().insert(
+        peer_id,
+        PeerHandle {
+            session: session.clone(),
+            cmd_tx,
+        },
+    );
     let _ = events_tx.send(Event::Connect {
         peer_id,
         remote_addr,
@@ -290,10 +283,7 @@ async fn serve_connection(
     // This task is the disconnect monitor.
     let _ = session.closed().await;
     let _ = events_tx.send(Event::Disconnect { peer_id, reason: 0 });
-    peers
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(&peer_id);
+    peers.lock().remove(&peer_id);
 }
 
 /// Forward inbound datagrams as [`Event::Datagram`] until the session closes.
@@ -359,16 +349,14 @@ fn server_config(
     key: rustls_pki_types::PrivateKeyDer<'static>,
     idle_timeout: Duration,
 ) -> Result<quinn::ServerConfig, HostError> {
-    let mut tls = rustls::ServerConfig::builder_with_provider(
-        web_transport_quinn::crypto::default_provider(),
-    )
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .map_err(|e| HostError::Cert(e.to_string()))?
-    .with_no_client_auth()
-    .with_single_cert(certs, key)
-    .map_err(|e| HostError::Cert(e.to_string()))?;
+    let mut tls = rustls::ServerConfig::builder_with_provider(super::tls_provider())
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(|e| HostError::Cert(e.to_string()))?
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| HostError::Cert(e.to_string()))?;
     tls.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
-    let tls = quinn::crypto::rustls::QuicServerConfig::try_from(tls)
+    let tls = web_transport_quinn::crypto::QuicServerConfig::try_from(tls)
         .map_err(|e| HostError::Cert(e.to_string()))?;
     let mut config = quinn::ServerConfig::with_crypto(Arc::new(tls));
     config.transport_config(Arc::new(transport_config(idle_timeout)));
@@ -491,6 +479,70 @@ mod tests {
             }
         }
         accepted
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn client_reports_a_refusal_while_opening_its_reliable_stream() {
+        check_client_refusal(false).await;
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn client_reports_a_refusal_before_the_connect_response() {
+        check_client_refusal(true).await;
+    }
+
+    #[cfg(feature = "test-support")]
+    async fn check_client_refusal(close_before_response: bool) {
+        use super::super::client::{Client, ClientConfig, ClientError};
+        use crate::pulse::hardening::DisconnectReason;
+
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let hash = Sha256::digest(cert.cert.der()).to_vec();
+        let (certs, key) = parse_pem(&cert.cert.pem(), &cert.signing_key.serialize_pem()).unwrap();
+        let mut config = server_config(certs, key, IDLE_TIMEOUT).unwrap();
+        // CONNECT uses the only bidirectional stream, so client setup has to wait for credit.
+        Arc::get_mut(&mut config.transport)
+            .unwrap()
+            .max_concurrent_bidi_streams(1_u8.into());
+        let endpoint = quinn::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = endpoint.local_addr().unwrap();
+        let mut server = web_transport_quinn::Server::new(endpoint);
+        let timeout = Duration::from_secs(2);
+        let dialing = tokio::task::spawn_blocking(move || {
+            Client::connect_within(
+                ClientConfig {
+                    url: format!("https://{address}/"),
+                    server_cert_hash: Some(hash),
+                },
+                Some(timeout),
+            )
+            .err()
+        });
+
+        let request = tokio::time::timeout(timeout, server.accept())
+            .await
+            .expect("client should send CONNECT")
+            .unwrap();
+        let refusal = DisconnectReason::PreAuthIpLimitExhausted.code();
+        let _session = if close_before_response {
+            let code = web_transport_quinn::proto::error_to_http3(refusal);
+            request.conn().close(code.try_into().unwrap(), b"refused");
+            None
+        } else {
+            let session = request.ok().await.unwrap();
+            session.close(refusal, b"");
+            Some(session)
+        };
+        match dialing.await.unwrap() {
+            Some(ClientError::Closed { code, reason }) => {
+                assert_eq!(code, refusal);
+                assert_eq!(reason, if close_before_response { "refused" } else { "" });
+            }
+            Some(error) => panic!("expected the server refusal, got {error}"),
+            None => panic!("client opened a stream despite the server refusal"),
+        }
     }
 
     #[test]

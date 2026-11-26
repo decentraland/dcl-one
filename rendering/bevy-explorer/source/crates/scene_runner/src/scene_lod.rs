@@ -1288,9 +1288,20 @@ fn update_lod_visuals(
     parts: Query<&GltfPart>,
     config: Res<AppConfig>,
     ipfs: Res<IpfsResource>,
+    mut seen_recoveries: Local<u32>,
 ) {
+    let far_status = ipfs.far_lod_status();
+    if far_status.recoveries != *seen_recoveries {
+        *seen_recoveries = far_status.recoveries;
+        retry_failed_far_lods(
+            lods.iter_mut()
+                .filter(|(_, lod, ..)| matches!(lod.visuals, Visuals::Nothing))
+                .map(|(_, lod, ..)| lod.into_inner()),
+            |hash| ipfs.far_lod_missing(hash),
+        );
+    }
     // while paused no far LOD starts; once the cool-down has run out, one: the probe
-    let far_max_starts = match ipfs.far_lod_status().paused_for {
+    let far_max_starts = match far_status.paused_for {
         None => usize::MAX,
         Some(left) if left.is_zero() => 1,
         Some(_) => 0,
@@ -1325,6 +1336,25 @@ fn update_lod_visuals(
         }
         spawn_containers(&mut commands, root, models, GltfPart::Visuals);
         lod.visuals = Visuals::Loading;
+    }
+}
+
+/// Once far LODs resume after an outage, the far LODs whose mesh did not load meanwhile
+/// ([`Visuals::Nothing`]) wait to start again, so the scenes that failed while the LOD service was
+/// down are asked for again where the player is, not only after leaving the band. A scene the
+/// server has no mesh for stays as it is.
+fn retry_failed_far_lods<'a>(
+    lods: impl Iterator<Item = &'a mut SceneLod>,
+    is_missing: impl Fn(&str) -> bool,
+) {
+    for lod in lods {
+        if lod.level == LodLevel::Far
+            && matches!(lod.state, LodState::Ready(_))
+            && matches!(lod.visuals, Visuals::Nothing)
+            && !is_missing(&lod.hash)
+        {
+            lod.visuals = Visuals::Off;
+        }
     }
 }
 
@@ -1968,6 +1998,40 @@ mod tests {
             container.insert(processed);
         }
         container.id()
+    }
+
+    /// Once far LODs resume, those whose mesh did not load wait to start again; a scene the
+    /// server has no mesh for, a near LOD and one drawn are left as they are.
+    #[test]
+    fn failed_far_lods_are_asked_for_again_on_recovery() {
+        let far = |visuals, hash: &str| {
+            let mut lod = lod(LodState::Ready(Vec::new()), visuals);
+            lod.level = LodLevel::Far;
+            lod.hash = hash.to_owned();
+            lod
+        };
+        let mut failed = far(Visuals::Nothing, "failed");
+        let mut missing = far(Visuals::Nothing, "missing");
+        let mut shown = far(Visuals::Shown, "shown");
+        let mut near = lod(LodState::Ready(Vec::new()), Visuals::Nothing);
+        let mut no_mesh = far(Visuals::Off, "no-mesh");
+        no_mesh.state = LodState::Nothing;
+        retry_failed_far_lods(
+            [
+                &mut failed,
+                &mut missing,
+                &mut shown,
+                &mut near,
+                &mut no_mesh,
+            ]
+            .into_iter(),
+            |hash| hash == "missing",
+        );
+        assert!(matches!(failed.visuals, Visuals::Off));
+        assert!(matches!(missing.visuals, Visuals::Nothing));
+        assert!(matches!(shown.visuals, Visuals::Shown));
+        assert!(matches!(near.visuals, Visuals::Nothing));
+        assert!(matches!(no_mesh.visuals, Visuals::Off));
     }
 
     /// Visuals whose every model failed show nothing: they wait for the last container, then

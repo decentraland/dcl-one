@@ -1,12 +1,13 @@
 import { timingSafeEqual } from 'crypto'
 import { PassThrough } from 'stream'
-import { Router } from '@well-known-components/http-server'
-import { IHttpServerComponent } from '@well-known-components/interfaces'
+import type { Router } from '@well-known-components/http-server'
+import type { IHttpServerComponent } from '@well-known-components/interfaces'
 
-import { CliComponents } from '../../components'
-import { LinkerResponse } from '../../linker-dapp/routes'
-import { deploymentCancelledError, IDeploymentComponent } from './deployment'
-import { DeploymentState } from './state'
+import type { CliComponents } from '../../components'
+import type { LinkerResponse } from '../../linker-dapp/routes'
+import type { IDeploymentComponent } from './deployment'
+import { deploymentCancelledError } from './deployment'
+import type { DeploymentState } from './state'
 
 export const DEPLOY_RESOURCE_PATH = '/api/deploy'
 export const SSE_HEARTBEAT_INTERVAL_MS = 15000

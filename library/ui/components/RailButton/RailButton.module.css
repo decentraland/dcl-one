@@ -1,0 +1,97 @@
+/* Not in Figma: the Explorer HUD's navigation rail button, a 42px circle of 70 % black with a soft shadow.
+   Hovering it shows its tip only; the selected one draws a 2px white ring outside the circle, 46px across,
+   and the ring casts the shadow. These rules sit outside the cascade layer: the button is a native control a
+   host's reset would restyle, and callers size and place it by class. The circle's black, the shadows, the
+   inner ring's 70 % white and the dot's green have no token. */
+.root {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: none;
+  border-radius: var(--dcl-radius-full);
+  background: rgba(0, 0, 0, 0.7); /* = HUD --rail-bg */
+  box-shadow: 2px 2px 2.5px rgba(0, 0, 0, 0.25); /* = HUD --shadow-rail-button */
+  color: var(--dcl-neutrals-snow);
+  cursor: pointer;
+}
+.root > * {
+  position: relative;
+  z-index: 1;
+}
+.active {
+  box-shadow: none;
+}
+.active::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid var(--dcl-neutrals-white);
+  border-radius: var(--dcl-radius-full);
+  box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.25); /* = HUD --shadow-rail-button-selected */
+  pointer-events: none;
+}
+
+/* A profile picture: its colour fills the circle and the picture sits 5px in from the sides and 3px from the
+   top and bottom, under a 2px white ring at 70 % that stays inside the selected ring. ProfilePic reads these. */
+.portrait {
+  --avatar-inset-x: 5px;
+  --avatar-inset-y: 3px;
+  --avatar-ring-width: 2px;
+  --avatar-ring: rgba(255, 255, 255, 0.7); /* = HUD --rail-me-ring */
+}
+
+/* The count: 16px with its 2px shadow ring, 5px in from the circle's top and right. A caller's container may
+   set --rail-badge-top and --rail-badge-right for a button drawn otherwise.
+   a11y exception countbadge-contrast (docs/ui-standards.md): snow on ruby is 3.6:1. */
+.badge {
+  position: absolute;
+  top: var(--rail-badge-top, 5px);
+  right: var(--rail-badge-right, 5px);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  border: 2px solid var(--dcl-neutrals-shadow);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-brand-ruby);
+  color: var(--dcl-neutrals-snow);
+  font-family: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif; /* = HUD --font-family */
+  font-size: var(--dcl-font-size-caption);
+  font-weight: 600;
+  line-height: 12px;
+}
+
+.badgeLavender {
+  background: var(--dcl-brand-lavender);
+}
+
+/* The "connected" dot: 7.3px inside a 2.4px shadow ring, on the circle's edge at the top right. */
+.indicator {
+  position: absolute;
+  top: 3px;
+  right: 0;
+  z-index: 2;
+  width: 7.3px;
+  height: 7.3px;
+  border-radius: var(--dcl-radius-full);
+  background: #30cd00; /* = HUD --voice-live */
+  box-shadow: 0 0 0 2.4px var(--dcl-neutrals-shadow);
+}
+
+.cornerArt {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  z-index: 2;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}

@@ -1,5 +1,6 @@
-import { Entity, IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
-import { ColliderLayer, PBTriggerArea, TriggerArea, TriggerAreaMeshType } from '../generated/index.gen'
+import type { Entity, IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
+import type { ColliderLayer, PBTriggerArea } from '../generated/index.gen'
+import { TriggerArea, TriggerAreaMeshType } from '../generated/index.gen'
 
 /**
  * @public

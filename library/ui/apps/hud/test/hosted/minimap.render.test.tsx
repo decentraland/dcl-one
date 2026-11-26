@@ -120,14 +120,16 @@ describe('minimap menu', () => {
   it('lists the scene options first: Set as Home, Copy Link, Reload Scene', async () => {
     await openMenu(DEFAULT_REALM)
     const menu = screen.getByRole('menu', { name: 'Minimap settings' })
-    const names = [...menu.querySelectorAll('[role^="menuitem"], [role="switch"]')].map((el) => el.getAttribute('aria-label') ?? el.textContent)
+    const names = [...menu.querySelectorAll('[role^="menuitem"], [role="switch"]')].map(
+      (el) => el.getAttribute('aria-label') ?? (el as HTMLInputElement).labels?.[0]?.textContent ?? el.textContent
+    )
     expect(names.slice(0, 3)).toEqual(['Set as Home', 'Copy Link', 'Reload Scene'])
   })
 
   it('Set as Home makes the parcel the player stands on home', async () => {
     const session = await openMenu(DEFAULT_REALM)
     const toggle = screen.getByRole('switch', { name: 'Set as Home' })
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    expect(toggle).not.toBeChecked()
     fireEvent.click(toggle)
     expect(session.map.setHome).toHaveBeenCalledWith(DEFAULT_REALM, { x: 10, y: 20 })
   })

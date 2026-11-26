@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { renderToString } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ConnectionStatus } from './ConnectionStatus'
 import { ProfilePic } from './ProfilePic'
 
@@ -109,5 +109,99 @@ describe('ConnectionStatus', () => {
     render(<ConnectionStatus status="online" label="" data-testid="dot" />)
     expect(screen.queryByRole('img')).toBeNull()
     expect(screen.getByTestId('dot')).toHaveAttribute('aria-hidden', 'true')
+  })
+})
+
+describe('when a ProfilePic takes the hud appearance', () => {
+  it('should size itself from its diameter and show the picture', () => {
+    const { container } = render(<ProfilePic appearance="hud" name="Mojito" src="/mojito.png" size={53} />)
+    const root = container.firstElementChild as HTMLElement
+    expect(root.style.width).toBe('53px')
+    expect(root.style.height).toBe('53px')
+    expect(root.style.fontSize).toBe('22px')
+    expect(root).not.toHaveAttribute('data-size')
+    expect(screen.getByRole('img', { name: 'Mojito' })).toHaveAttribute('src', '/mojito.png')
+  })
+
+  it('should show the first letter or digit past a leading @ or #, with no picture role', () => {
+    const { container } = render(
+      <>
+        <ProfilePic appearance="hud" name="@mojito" />
+        <ProfilePic appearance="hud" name="#7 lounge" />
+        <ProfilePic appearance="hud" name="" />
+      </>
+    )
+    expect([...container.children].map((node) => node.textContent)).toEqual(['M', '7', '?'])
+    expect(screen.queryByRole('img')).toBeNull()
+  })
+
+  it('should paint the name colour and keep the caller class and style', () => {
+    const { container } = render(
+      <ProfilePic appearance="hud" name="Mojito" nameColor="rgb(1, 2, 3)" className="mine" style={{ margin: 4 }} />
+    )
+    const root = container.firstElementChild as HTMLElement
+    expect(root.style.background).toBe('rgb(1, 2, 3)')
+    expect(root.style.margin).toBe('4px')
+    expect(root).toHaveClass('mine')
+  })
+
+  it('should draw a status dot scaled to the diameter, smaller at the top', () => {
+    const { container } = render(
+      <>
+        <ProfilePic appearance="hud" name="a" size={40} status="online" />
+        <ProfilePic appearance="hud" name="b" size={40} status="offline" dotPosition="top" />
+        <ProfilePic appearance="hud" name="c" size={20} status="away" />
+        <ProfilePic appearance="hud" name="d" size={40} />
+      </>
+    )
+    const dots = [...container.children].map((node) => node.querySelector('span') as HTMLElement | null)
+    expect(dots.map((dot) => dot?.style.width)).toEqual(['7px', '6px', '6px', undefined])
+    // The ring is outside the dot's size whatever reset the host loads.
+    expect(dots.slice(0, 3).map((dot) => dot?.style.boxSizing)).toEqual(['content-box', 'content-box', 'content-box'])
+    expect(dots[0]!.className).toMatch(/hudOnline/)
+    expect(dots[1]!.className).toMatch(/hudOffline/)
+    expect(dots[1]!.className).toMatch(/hudDotTop/)
+    expect(dots[2]!.className).toMatch(/hudAway/)
+  })
+
+  it('should report a picture that loads or fails and keep showing it', () => {
+    const onPictureLoad = vi.fn()
+    const onPictureError = vi.fn()
+    render(
+      <ProfilePic
+        appearance="hud"
+        name="Mojito"
+        src="/mojito.png"
+        onPictureLoad={onPictureLoad}
+        onPictureError={onPictureError}
+      />
+    )
+    const picture = screen.getByRole('img', { name: 'Mojito' })
+    fireEvent.load(picture)
+    fireEvent.error(picture)
+    expect(onPictureLoad).toHaveBeenCalledTimes(1)
+    expect(onPictureError).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('img', { name: 'Mojito' })).toBeInTheDocument()
+  })
+
+  it('should mark a framed picture', () => {
+    const { container } = render(<ProfilePic appearance="hud" name="Mojito" framed />)
+    expect(container.firstElementChild!.className).toMatch(/hudFramed/)
+  })
+})
+
+describe('when a default ProfilePic reports its picture', () => {
+  it('should call the handlers and fall back to the initial after a failure', () => {
+    const onPictureLoad = vi.fn()
+    const onPictureError = vi.fn()
+    render(
+      <ProfilePic name="Mojito" src="/mojito.png" onPictureLoad={onPictureLoad} onPictureError={onPictureError} />
+    )
+    const picture = screen.getByAltText('Mojito')
+    fireEvent.load(picture)
+    fireEvent.error(picture)
+    expect(onPictureLoad).toHaveBeenCalledTimes(1)
+    expect(onPictureError).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('img', { name: 'Mojito' }).tagName).toBe('SPAN')
   })
 })

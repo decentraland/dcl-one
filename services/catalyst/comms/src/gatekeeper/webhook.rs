@@ -4,14 +4,16 @@
 //! (`gatekeeper::streaming`), then the live presence and the room event sink.
 //! The room event store receives every verified participant event.
 
+use crate::metrics::declarations;
+
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
+use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
-use std::sync::Mutex;
 
 use crate::protocol::bus::room_events::MAX_PARTICIPANT_SID_BYTES;
 
@@ -152,13 +154,14 @@ struct ValidatedEvent {
 
 impl ValidatedEvent {
     fn parse(event: &Value) -> Result<Self, ApiError> {
-        let id = event_id(event);
-        let at = event_time_ms(event);
-        if id.is_none_or(|id| id.len() > 128) || at.is_none() {
+        let (Some(id), Some(at)) = (
+            event_id(event).filter(|id| id.len() <= 128),
+            event_time_ms(event),
+        ) else {
             return Err(ApiError::bad_request(
                 "missing livekit webhook id or createdAt",
             ));
-        }
+        };
         let name = event
             .get("event")
             .and_then(Value::as_str)
@@ -167,22 +170,15 @@ impl ValidatedEvent {
         let room_sid = room_sid(event).map(str::to_owned);
         let kind = match name {
             "participant_joined" | "participant_left" => {
-                let sid = participant_sid(event);
-                let identity = participant_identity(event);
-                if sid
-                    .as_ref()
-                    .is_none_or(|sid| sid.len() > MAX_PARTICIPANT_SID_BYTES)
-                    || room.as_ref().is_none_or(|room| room.len() > 512)
-                    || identity
-                        .as_ref()
-                        .is_none_or(|identity| identity.len() > 512)
-                {
+                let (Some(sid), Some(room), Some(identity)) = (
+                    participant_sid(event).filter(|sid| sid.len() <= MAX_PARTICIPANT_SID_BYTES),
+                    room.clone().filter(|room| room.len() <= 512),
+                    participant_identity(event).filter(|identity| identity.len() <= 512),
+                ) else {
                     return Err(ApiError::bad_request(
                         "missing livekit participant event fields",
                     ));
-                }
-                let identity = identity.unwrap();
-                let room = room.clone().unwrap();
+                };
                 let participant = ParticipantEvent {
                     watcher: identity
                         .starts_with("watch:")
@@ -191,7 +187,7 @@ impl ValidatedEvent {
                                 [super::streaming::cast::WATCHER_WALLET_ATTRIBUTE]
                         })
                         .and_then(|wallet| crate::Address::parse(wallet.as_str()?).ok()),
-                    sid: sid.unwrap(),
+                    sid,
                     current_key: identity_key(&room, &identity),
                     room,
                     voice_address: address_from_identity(&identity)
@@ -227,8 +223,8 @@ impl ValidatedEvent {
             _ => EventKind::Ignored,
         };
         Ok(Self {
-            id: id.unwrap().to_owned(),
-            at: at.unwrap(),
+            id: id.to_owned(),
+            at,
             name: name.to_owned(),
             kind,
             room,
@@ -385,7 +381,7 @@ pub async fn livekit_webhook(
         .or(event.ingress_id.as_deref())
         .unwrap_or_default();
     let id = &event.id;
-    let (a, b) = (stripe(id), stripe(&resource));
+    let (a, b) = (stripe(id), stripe(resource));
     let _first = state.webhooks.locks[a.min(b)].lock().await;
     let _second = if a != b {
         Some(state.webhooks.locks[a.max(b)].lock().await)
@@ -396,12 +392,7 @@ pub async fn livekit_webhook(
     if now > deadline {
         return Err(unauthorized("expired livekit webhook signature"));
     }
-    let prepared = state
-        .webhooks
-        .state
-        .lock()
-        .unwrap()
-        .prepare(&event, deadline, now);
+    let prepared = state.webhooks.state.lock().prepare(&event, deadline, now);
     if prepared != Prepared::Apply {
         // Equal-second sessions are ordered by id, not by which one LiveKit
         // kept: a superseded join still passes the Cast join guard.
@@ -426,7 +417,7 @@ pub async fn livekit_webhook(
         {
             store_room_event(&state, room_event).await?;
             // A failed store's redelivery can be superseded by then; the sink still gets it once.
-            let owed = state.webhooks.state.lock().unwrap().unobserved.remove(id);
+            let owed = state.webhooks.state.lock().unobserved.remove(id);
             if owed && let Some(sink) = state.room_events.as_ref() {
                 sink.observe_room_event(room_event);
             }
@@ -446,23 +437,17 @@ pub async fn livekit_webhook(
         && let Some(room) = &event.room
     {
         let sid = event.room_sid.as_deref().filter(|sid| sid.len() <= 128);
-        let due = state
-            .webhooks
-            .state
-            .lock()
-            .unwrap()
-            .metadata_due(&room, sid);
+        let due = state.webhooks.state.lock().metadata_due(room, sid);
         if due {
             // Already serialized by this room's webhook stripe. Record only a
             // confirmed same-incarnation write; failures remain retryable.
             let updated =
-                super::moderation::maintenance::initialize_room(state.as_ref(), &room, sid).await?;
+                super::moderation::maintenance::initialize_room(state.as_ref(), room, sid).await?;
             if let Some(updated) = updated.filter(|updated| sid == Some(updated.as_str())) {
                 state
                     .webhooks
                     .state
                     .lock()
-                    .unwrap()
                     .metadata
                     .insert(room.clone(), (updated, tokio::time::Instant::now()));
             }
@@ -476,7 +461,6 @@ pub async fn livekit_webhook(
                 .webhooks
                 .state
                 .lock()
-                .unwrap()
                 .unobserved
                 .insert(id.to_owned(), ());
             return Err(error);
@@ -485,12 +469,7 @@ pub async fn livekit_webhook(
             sink.observe_room_event(room_event);
         }
     }
-    state
-        .webhooks
-        .state
-        .lock()
-        .unwrap()
-        .applied(&event, deadline);
+    state.webhooks.state.lock().applied(&event, deadline);
     // Applied and unlocked first: a slow publish cannot get the event redelivered.
     drop((_first, _second));
     if let Some((room_event, true)) = &room_event {
@@ -512,7 +491,7 @@ async fn room_event(
         return Ok(None);
     };
     let room = &participant.room;
-    let Some(parsed) = crate::rooms::resolve_room_name(state.scenes.as_ref(), &room)
+    let Some(parsed) = crate::rooms::resolve_room_name(state.scenes.as_ref(), room)
         .await
         .map_err(|error| {
             tracing::warn!(%error, room, "canonical room identity unavailable");
@@ -578,7 +557,9 @@ async fn share_room_event(
         PublishOutcome::Unconfirmed => "unconfirmed",
     };
     if state.bus.is_enabled() {
-        metrics::counter!("comms_room_event_publish_failed_total", "reason" => reason).increment(1);
+        declarations::ROOM_EVENT_PUBLISH_FAILED
+            .handle([reason])
+            .increment(1);
         tracing::debug!(
             ?outcome,
             event_id = event.event_id,
@@ -756,6 +737,7 @@ fn leave_event_time_ms(event: &Value) -> i64 {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support {
     use base64::Engine;
     use base64::engine::general_purpose::{STANDARD as B64_STANDARD, URL_SAFE_NO_PAD};

@@ -5,11 +5,11 @@
 //! Foundation" on every event record (`Event/model.ts:493`,
 //! `getEventCreatorDisplayName`). Upstream refreshed the list from the
 //! feature-flags service every five minutes; this node reads the `events`
-//! feature-flags document the explorer API's feature-flags mirror fetches
-//! beside the explorer one (`api::feature_flags::run_pass`, row
-//! `explore_api.feature_flags` app `events`) on the same cadence, lazily
-//! from the event reads, and keeps the last list when the row is absent, as
-//! upstream kept its cache when a refresh failed.
+//! feature-flags document that `api::feature_flags::refresh_events` stores
+//! from `EVENTS_FEATURE_FLAGS_URL` (row `explore_api.feature_flags` app
+//! `events`), independently of `EXPLORER_MIRRORS_ENABLED`, on the same
+//! cadence, lazily from the event reads, and keeps the last list when the
+//! row is absent, as upstream kept its cache when a refresh failed.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -82,7 +82,7 @@ impl Foundation {
         self.replace(addresses_in(document));
     }
 
-    /// Reads the mirrored `events` flags document once per
+    /// Reads the stored `events` flags document once per
     /// [`REFRESH_INTERVAL`]; a missing row or a database error keeps the
     /// current list (`:48-52`).
     pub async fn refresh_if_stale(&self, pool: &PgPool) {

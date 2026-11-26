@@ -1,10 +1,12 @@
-import { ISchema } from '../schemas'
+import type { ISchema } from '../schemas'
 import { ReadWriteByteBuffer } from '../serialization/ByteBuffer'
-import { AppendValueMessageBody, AppendValueOperation, CrdtMessageType } from '../serialization/crdt'
-import { ComponentType, GrowOnlyValueSetComponentDefinition } from './component'
+import type { AppendValueMessageBody } from '../serialization/crdt'
+import { AppendValueOperation, CrdtMessageType } from '../serialization/crdt'
+import type { GrowOnlyValueSetComponentDefinition } from './component'
+import { ComponentType } from './component'
 import { __DEV__ } from '../runtime/invariant'
-import { Entity } from './entity'
-import { DeepReadonly, DeepReadonlySet } from './readonly'
+import type { Entity } from './entity'
+import type { DeepReadonly, DeepReadonlySet } from './readonly'
 
 const emptyReadonlySet = freezeSet(new Set())
 

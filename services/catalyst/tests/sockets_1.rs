@@ -1,6 +1,20 @@
 //! Archipelago and Pulse socket tests, one binary for several files so a build links few
 //! test executables. tooling/catalyst-test.sh runs `sockets_*` binaries within the core
 //! budget their wall-clock limits need. Each file stays a module named after it.
+#![allow(
+    clippy::unwrap_used,
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "test support"
+)]
+
+// Support shared by several modules, loaded once; the modules `use crate::<name>`.
+#[path = "support/archipelago.rs"]
+mod archipelago;
+#[path = "support/db.rs"]
+mod db;
+#[path = "support/gate.rs"]
+mod gate;
 
 #[path = "archipelago_ban_check.rs"]
 mod archipelago_ban_check;
