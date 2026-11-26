@@ -406,7 +406,7 @@ async fn a_third_party_collection_is_posted_under_its_provider_before_any_item_i
         json!({}),
     )
     .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     assert!(e.forum.calls().is_empty());
 }
 
@@ -441,7 +441,7 @@ async fn without_a_forum_an_admitted_post_or_reply_is_unavailable_and_nothing_is
     .await;
     assert_eq!(
         status,
-        StatusCode::UNAUTHORIZED,
+        StatusCode::FORBIDDEN,
         "a refusal comes before the forum"
     );
     sqlx::query("UPDATE builder.collections SET forum_link = 'https://forum.example.test/t/x/1', forum_id = 1 WHERE id = $1")
@@ -530,7 +530,7 @@ async fn a_forum_claim_rechecks_the_managers_current_access() {
     let error = crate::curation::forum_posts::post(&e.state, &grant)
         .await
         .unwrap_err();
-    assert_eq!(error.status(), 401);
+    assert_eq!(error.status(), 403);
     assert!(e.forum.calls().is_empty());
 }
 
@@ -781,7 +781,7 @@ async fn a_reply_is_refused_in_builder_servers_order_before_the_forum_is_asked()
             Some(OWNER_KEY),
             id.to_string(),
             reply(json!("x")),
-            401,
+            403,
             "Unauthorized",
             Some(json!({ "id": id, "ethAddress": address(OWNER_KEY) })),
         ),
@@ -789,7 +789,7 @@ async fn a_reply_is_refused_in_builder_servers_order_before_the_forum_is_asked()
             Some(STRANGER_KEY),
             "not-a-uuid".into(),
             reply(json!("x")),
-            401,
+            403,
             "Unauthorized",
             Some(json!({ "id": "not-a-uuid", "ethAddress": stranger })),
         ),

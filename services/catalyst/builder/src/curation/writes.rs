@@ -169,10 +169,10 @@ fn refused(refusal: Refusal, id: Uuid) -> ApiError {
     let data = json!({ "id": id });
     match refusal {
         Refusal::StatusIsCommittees => {
-            ApiError::unauthorized("Only committee members can approve or reject a curation")
+            ApiError::forbidden("Only committee members can approve or reject a curation")
         }
         Refusal::AssigneeIsCommittees => {
-            ApiError::unauthorized("Only committee members can modify the assignee")
+            ApiError::forbidden("Only committee members can modify the assignee")
         }
         Refusal::NoCuration => ApiError::not_found("Curation does not exist"),
         Refusal::Ongoing => ApiError::bad_request("There is already an ongoing review request"),
@@ -231,7 +231,7 @@ async fn newest_status(state: &SharedState, curator: &Curator) -> Result<Option<
     .and_then(Status::parse))
 }
 
-/// 401 when a committee read that started after the decision no longer
+/// 403 when a committee read that started after the decision no longer
 /// lists `assignee`.
 async fn unassignable(
     state: &crate::State,
@@ -242,7 +242,7 @@ async fn unassignable(
         && !access::assignable(state, assignee).await?
     {
         return Err(
-            ApiError::unauthorized("The assignee must be a committee member")
+            ApiError::forbidden("The assignee must be a committee member")
                 .with_data(json!({ "id": id })),
         );
     }
@@ -395,7 +395,7 @@ pub async fn update_collection(
         && !access::assignable(state, assignee).await?
     {
         return Err(
-            ApiError::unauthorized("The assignee must be a committee member")
+            ApiError::forbidden("The assignee must be a committee member")
                 .with_data(json!({ "id": id })),
         );
     }
@@ -552,7 +552,7 @@ pub async fn open_collection(
         && !access::assignable(state, assignee).await?
     {
         return Err(
-            ApiError::unauthorized("The assignee must be a committee member")
+            ApiError::forbidden("The assignee must be a committee member")
                 .with_data(json!({ "id": id })),
         );
     }

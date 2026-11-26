@@ -176,7 +176,7 @@ pub struct Published {
 }
 
 fn not_published(id: Uuid) -> ApiError {
-    ApiError::unauthorized("The collection is not published.").with_data(json!({ "id": id }))
+    ApiError::conflict("The collection is not published.").with_data(json!({ "id": id }))
 }
 
 /// The collection's contract, whether the node publishes it itself, its
@@ -237,9 +237,10 @@ async fn snapshot(conn: &mut sqlx::PgConnection, id: Uuid) -> Result<Snapshot, A
 /// chain holds the collection every item is given the on-chain id of its
 /// place in creation order, which the client deployed it at. The copy
 /// tells when it holds the collection and an item at every place; else the
-/// Polygon RPC's item count at the stored address does. 401 while neither
-/// can tell (the client retries), 409 for a place at or past the chain's
-/// count. A collection whose items all hold their ids answers as it is.
+/// Polygon RPC's item count at the stored address does. 409 `The
+/// collection is not published.` while neither holds it and 503 while the
+/// RPC can't tell (the client retries both), 409 for a place at or past the
+/// chain's count. A collection whose items all hold their ids answers as it is.
 /// Its items are answered as their listing answers `listing`'s reader, after
 /// the ids are kept and the notices sent.
 pub async fn publish(
@@ -262,7 +263,8 @@ pub async fn publish(
     let chain_count = if (missing && !copy_tells) || (before.copy.is_none() && !before.published) {
         match state.deployments.of(state, &contract).await {
             Onchain::Deployed(items) => Some(items),
-            _ => return Err(not_published(id)),
+            Onchain::Unknown => return Err(ApiError::service_unavailable(CHAIN_UNKNOWN)),
+            Onchain::Absent | Onchain::Unconfigured => return Err(not_published(id)),
         }
     } else {
         None

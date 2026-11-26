@@ -24,7 +24,7 @@ fn missing(id: &str) -> ApiError {
 }
 
 fn not_its_manager(id: &str) -> ApiError {
-    ApiError::unauthorized("You are not the manager of this Third Party.")
+    ApiError::forbidden("You are not the manager of this Third Party.")
         .with_data(json!({ "id": id }))
 }
 
@@ -75,7 +75,7 @@ pub async fn slots(
     Path(id): Path<String>,
 ) -> Result<Json<ApiData<Value>>, ApiError> {
     if id.len() > ID_MAX {
-        return Err(ApiError::unauthorized(
+        return Err(ApiError::forbidden(
             "Unauthorized access. Account is not manager of the collection",
         )
         .with_data(json!({ "eth_address": signer.as_str() })));
@@ -108,7 +108,7 @@ pub async fn slots(
 /// the virtual third party that also manages the provider
 /// ([`access::changes_virtual_third_party`]) removes it once the registry
 /// has the provider;
-/// a missing one is 404, another signer 401, a provider the registry
+/// a missing one is 404, another signer 403, a provider the registry
 /// doesn't have yet 400.
 pub async fn delete(
     State(state): State<SharedState>,
@@ -165,7 +165,7 @@ pub async fn delete(
 /// `isProgrammatic`, a boolean (400 otherwise), and anything else is ignored; a manager of the virtual
 /// third party that also manages the provider
 /// ([`access::changes_virtual_third_party`]) sets it; a missing one is 404,
-/// another signer 401, 503 while the registry can't be read.
+/// another signer 403, 503 while the registry can't be read.
 pub async fn update(
     State(state): State<SharedState>,
     Signed(signer): Signed,

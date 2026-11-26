@@ -45,7 +45,7 @@ async fn draft_delete_keeps_an_upload_another_item_names_and_serializes_with_pub
             .await
             .unwrap_err()
             .status(),
-        401
+        403
     );
     let before = read_item(&store, deleted_id).await.unwrap();
 

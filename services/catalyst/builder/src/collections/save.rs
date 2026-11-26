@@ -381,7 +381,7 @@ impl ItemsComponent {
                 .with_data(json!({ "id": id })));
             }
             (Some((Some(_), _)), None) => {
-                return Err(ApiError::unauthorized("Unauthorized to upsert collection")
+                return Err(ApiError::forbidden("Unauthorized to upsert collection")
                     .with_data(json!({ "id": id, "eth_address": signer })));
             }
             (Some((Some(stored), _)), Some((provider, _))) if stored != provider => {

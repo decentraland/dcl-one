@@ -264,7 +264,7 @@ async fn an_upload_past_a_bound_or_unlike_its_item_stores_nothing() {
     }
 
     let (got, body) = upload(&app, STRANGER_KEY, id, &[(&hash, &model)]).await;
-    assert_eq!(got, 401, "{body}");
+    assert_eq!(got, 403, "{body}");
     let (got, body) = upload(&app, OWNER_KEY, id, &[(&hash, &model)]).await;
     assert_eq!((got, &body), (200, &json!({ "ok": true })));
     assert_eq!(uploaders(&app.pool, &hash).await, vec![address(OWNER_KEY)]);
@@ -1101,7 +1101,7 @@ async fn an_item_part_is_taken_across_the_providers_collections_and_only_its_man
     )
     .await;
     assert_eq!(
-        got, 401,
+        got, 403,
         "creating a collection under the provider makes no manager of it: {body}"
     );
 
@@ -1153,7 +1153,7 @@ async fn an_item_part_is_taken_across_the_providers_collections_and_only_its_man
     );
     let (got, body) = put(&app, STRANGER_KEY, &format!("/v1/items/{path}"), &by_urn).await;
     assert_eq!(
-        got, 401,
+        got, 403,
         "a wallet that manages no provider is refused: {body}"
     );
 
@@ -1582,7 +1582,7 @@ async fn the_second_wallet_creating_an_item_id_at_once_is_refused() {
     assert_eq!(
         (status, answer["error"].as_str()),
         (
-            401,
+            403,
             Some("The user is unauthorized to upsert the collection.")
         ),
         "{answer}"

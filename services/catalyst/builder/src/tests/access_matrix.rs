@@ -247,7 +247,7 @@ fn unauthenticated() -> Option<Expect> {
     refused(401, "Unauthenticated")
 }
 fn unauthorized() -> Option<Expect> {
-    refused(401, "Unauthorized")
+    refused(403, "Unauthorized")
 }
 fn not_found(id: &str, table: &str) -> Option<Expect> {
     refused(404, format!("Couldn't find \"{id}\" on {table}"))
@@ -256,7 +256,7 @@ fn invalid_uuid(id: &str) -> Option<Expect> {
     refused(400, format!("Invalid uuid {id}"))
 }
 fn unauthorized_user(signer: &str, table: &str, id: &str) -> Option<Expect> {
-    refused(401, format!("Unauthorized user {signer} for {table} {id}"))
+    refused(403, format!("Unauthorized user {signer} for {table} {id}"))
 }
 fn collection_published(action: &str) -> Option<Expect> {
     refused(
@@ -1356,7 +1356,7 @@ impl Op {
                 Op::ThirdPartyRead => refused(404, "The Third Party doesn't exists."),
                 Op::ThirdPartySlots if caller == Owner => ok(),
                 Op::ThirdPartySlots => refused(
-                    401,
+                    403,
                     "Unauthorized access. Account is not manager of the collection",
                 ),
                 Op::ThirdPartyDelete if caller == Owner => refused(
@@ -1364,7 +1364,7 @@ impl Op {
                     "The Third Party can only be deleted if it's already on the graph.",
                 ),
                 Op::ThirdPartyUpdate if caller == Owner => ok(),
-                _ => refused(401, not_manager),
+                _ => refused(403, not_manager),
             };
         }
         match self {
@@ -1386,6 +1386,7 @@ impl Op {
         if !self.by_id() {
             return match self {
                 Op::ListCollections if caller == Committee => ok(),
+                Op::ListCollections if !signed => refused(401, "Unauthorized"),
                 Op::ListCollections => unauthorized(),
                 Op::ListItems | Op::AddressCollections | Op::AddressItems if !signed => {
                     unauthenticated()
@@ -1428,7 +1429,7 @@ impl Op {
             Op::SaveCollection => match kind {
                 Missing => ok(),
                 Malformed => None,
-                _ if !owner => refused(401, "Unauthorized to upsert collection"),
+                _ if !owner => refused(403, "Unauthorized to upsert collection"),
                 ThirdPartySubmitted => ok(),
                 _ if kind.published() => collection_published("updated"),
                 Publishing | Locked => collection_locked("updated"),
@@ -1456,7 +1457,7 @@ impl Op {
             Op::ForumPost if kind.published() || kind.third_party() => ok(),
             Op::ForumPost => refused(409, "The collection is not published"),
             Op::ApprovalData if !committee => unauthorized(),
-            Op::ApprovalData if kind.third_party() => refused(401, NOT_PUBLISHED),
+            Op::ApprovalData if kind.third_party() => refused(409, NOT_PUBLISHED),
             Op::ApprovalData => refused(409, "Collection is not Third Party"),
             Op::OwnerSync | Op::Publish if kind.third_party() && !owner => {
                 unauthorized_user(&caller.address(), "collections", &collection)
@@ -1479,7 +1480,7 @@ impl Op {
             }
             Op::OwnerSync => ok(),
             Op::Publish if kind.third_party() => ok(),
-            Op::Publish => refused(401, NOT_PUBLISHED),
+            Op::Publish => refused(409, NOT_PUBLISHED),
             Op::CollectionItems => match kind {
                 Missing => not_found(&collection, "collections"),
                 Malformed => refused(
@@ -1500,12 +1501,12 @@ impl Op {
                 Missing => ok(),
                 Malformed => None,
                 Orphan if caller == Owner => ok(),
-                Orphan => refused(401, "The user is unauthorized to upsert the collection."),
+                Orphan => refused(403, "The user is unauthorized to upsert the collection."),
                 _ if kind.third_party() && !owner => {
-                    refused(401, "The user is unauthorized to upsert the collection.")
+                    refused(403, "The user is unauthorized to upsert the collection.")
                 }
                 _ if !owner && !manager => {
-                    refused(401, "You're not authorized to to change this collection.")
+                    refused(403, "You're not authorized to to change this collection.")
                 }
                 Publishing | Locked => item_locked("inserted or updated"),
                 _ => ok(),
@@ -1627,7 +1628,7 @@ impl Op {
         };
         match self {
             Op::CollectionCurationUpdate | Op::ItemCurationUpdate if !committee => refused(
-                401,
+                403,
                 "Only committee members can approve or reject a curation",
             ),
             Op::CollectionCurationUpdate | Op::ItemCurationUpdate if !curated => {
@@ -2335,8 +2336,8 @@ async fn a_kind_conflict_is_answered_only_to_a_signer_with_access() {
         let body = json!({ "collection": { "id": id, "name": "Matrix renamed", "urn": urn } });
         let before = snapshot(&m.pool).await;
         for (caller, status, error) in [
-            (Stranger, 401, "Unauthorized to upsert collection"),
-            (Committee, 401, "Unauthorized to upsert collection"),
+            (Stranger, 403, "Unauthorized to upsert collection"),
+            (Committee, 403, "Unauthorized to upsert collection"),
             (Owner, 409, expected),
         ] {
             let (got, answer) = call(
@@ -2363,7 +2364,7 @@ async fn a_kind_conflict_is_answered_only_to_a_signer_with_access() {
 
 /// Every move of an existing item between collections that involves a
 /// third-party collection, or into or out of one, is refused with
-/// builder-server's 401 before roles; moves among standard collections and
+/// 409 before roles; moves among standard collections and
 /// out of a standard collection follow the roles.
 #[tokio::test]
 async fn an_item_moves_into_or_out_of_a_third_party_collection_never() {
@@ -2403,7 +2404,7 @@ async fn an_item_moves_into_or_out_of_a_third_party_collection_never() {
             Some(error) => {
                 assert_eq!(
                     (status.as_u16(), &body["error"], &body["data"]),
-                    (401, &json!(error), &json!({ "id": id })),
+                    (409, &json!(error), &json!({ "id": id })),
                     "{label}"
                 );
                 assert_eq!(snapshot(&m.pool).await, before, "{label}");
@@ -2428,7 +2429,7 @@ async fn a_committee_read_holds_no_database_connection() {
         for (caller, expected) in [
             (Owner, StatusCode::OK),
             (Committee, StatusCode::OK),
-            (Stranger, StatusCode::UNAUTHORIZED),
+            (Stranger, StatusCode::FORBIDDEN),
         ] {
             let answer = tokio::time::timeout(
                 std::time::Duration::from_secs(10),
@@ -2488,7 +2489,7 @@ async fn the_loser_of_a_concurrent_creation_is_refused_as_a_stranger() {
     assert_eq!(
         (status.as_u16(), &body["error"], &body["data"]),
         (
-            401,
+            403,
             &json!("Unauthorized to upsert collection"),
             &json!({ "id": id, "eth_address": Stranger.address() })
         ),
@@ -2593,7 +2594,7 @@ async fn a_sibling_collection_of_the_provider_grants_nothing_over_the_others() {
     ] {
         let before = snapshot(&m.pool).await;
         let (status, body) = call(&m.app, Sibling, method, &path, payload).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {path}: {body}");
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {path}: {body}");
         assert_eq!(
             snapshot(&m.pool).await,
             before,
@@ -2739,7 +2740,7 @@ async fn a_posted_collection_answers_its_link_to_its_posters_and_takes_replies_f
                 Anonymous | Validator => (401, json!("Unauthenticated")),
                 Owner | Manager => (409, json!("Forum post already exists")),
                 _ => (
-                    401,
+                    403,
                     json!(format!(
                         "Unauthorized user {} for collections {id}",
                         caller.address()
@@ -2764,7 +2765,7 @@ async fn a_posted_collection_answers_its_link_to_its_posters_and_takes_replies_f
             let expected = match caller {
                 Anonymous | Validator => (401, json!("Unauthenticated")),
                 Committee => (200, Value::Null),
-                _ => (401, json!("Unauthorized")),
+                _ => (403, json!("Unauthorized")),
             };
             if (status.as_u16(), body["error"].clone()) != expected {
                 failures.push(format!("{mount} reply as {caller:?}: {status} {body}"));
