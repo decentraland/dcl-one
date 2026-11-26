@@ -1887,7 +1887,6 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.23.1",
- "bytes",
  "catalyst-comms",
  "catalyst-content",
  "chrono",
@@ -1911,7 +1910,6 @@ dependencies = [
  "tokio-tungstenite 0.30.0",
  "toml",
  "url",
- "web-transport-quinn",
 ]
 
 [[package]]
@@ -1964,7 +1962,6 @@ dependencies = [
  "libc",
  "parking_lot",
  "rand 0.10.3",
- "regex",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
