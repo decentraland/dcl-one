@@ -22,6 +22,56 @@ use crate::shared::cache::TtlMap;
 use super::graph::{self, Network};
 use super::{MarketplaceState, Source, unavailable};
 
+/// Index snapshot SQL errors use the statement-bound 503 or a sanitized 500.
+pub(super) fn index_read_error(e: sqlx::Error) -> Response {
+    if super::nft_reads::cancelled(&e) {
+        super::nft_reads::timed_out()
+    } else {
+        super::wire::ApiError::from(e).into_response()
+    }
+}
+
+pub(super) fn index_source_error(e: super::owned_items::ReadError) -> Response {
+    match e {
+        super::owned_items::ReadError::Db(e) => index_read_error(e),
+        super::owned_items::ReadError::NotReady(source, why) => unavailable(source, &why),
+    }
+}
+
+/// Require the LAND publication for the served registries on the book's snapshot.
+pub(super) async fn require_land_on(
+    conn: &mut sqlx::PgConnection,
+    state: &MarketplaceState,
+    chain_id: i64,
+) -> Result<(), Response> {
+    let unavailable = super::nft_reads::land_unavailable;
+    let served = super::nft_index::deployments::Deployments::for_chain(
+        super::chain_walk::ChainNet::Ethereum,
+        chain_id,
+    )
+    .and_then(|deployments| deployments.land);
+    let land = state
+        .land_network()
+        .filter(|land| Some(*land) == served)
+        .ok_or_else(unavailable)?;
+    let observed = crate::land_authz::indexer::cursor_observed(conn, land.network)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "cannot read the land-authz index for the marketplace book");
+            unavailable()
+        })?;
+    if !observed.is_some_and(|observed| {
+        crate::land_authz::indexer::observation_ready(
+            &observed,
+            land.land_registry,
+            land.estate_registry,
+        )
+    }) {
+        return Err(unavailable());
+    }
+    Ok(())
+}
+
 /// The freshness budgets the route table names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ttl {
@@ -201,6 +251,12 @@ impl Caches {
         self.map(ttl).get_fresh(&key.to_string()).is_some()
     }
 
+    /// Drops every answer under `ttl`, as their expiry would.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn forget_all(&self, ttl: Ttl) {
+        self.map(ttl).clear();
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn clear(&self) {
         for m in [&self.s30, &self.s60, &self.m5, &self.m10, &self.m15] {
@@ -215,13 +271,13 @@ impl Caches {
 /// ended, a panic included: as failed unless [`RefreshClaim::succeeded`] was called.
 pub struct RefreshClaim {
     state: super::SharedState,
-    key: &'static str,
+    key: String,
     claim: ClaimId,
     succeeded: bool,
 }
 
 impl RefreshClaim {
-    pub fn new(state: super::SharedState, key: &'static str, claim: ClaimId) -> Self {
+    pub fn new(state: super::SharedState, key: String, claim: ClaimId) -> Self {
         Self {
             state,
             key,
@@ -239,7 +295,7 @@ impl Drop for RefreshClaim {
     fn drop(&mut self) {
         self.state
             .readers
-            .end_refresh(self.key, self.claim, self.succeeded);
+            .end_refresh(&self.key, self.claim, self.succeeded);
     }
 }
 
@@ -281,6 +337,30 @@ where
         .readers
         .map(ttl)
         .get_or_fetch(key, || async { fetch().await.map(Arc::new) })
+        .await
+}
+
+/// [`memoized`] for a fetch that reads through what the caller holds (its
+/// catalogue read), which only the fetching request keeps
+/// ([`crate::shared::cache::TtlMap::get_or_fetch_holding`]): a request that
+/// waits on another's fetch drops it first. `Ok(None)`: that fetch failed
+/// and the caller, its read gone, opens a new one and asks again.
+pub async fn memoized_holding<G, F, E>(
+    state: &MarketplaceState,
+    ttl: Ttl,
+    key: String,
+    held: &mut Option<G>,
+    fetch: F,
+) -> Result<Option<Arc<Value>>, E>
+where
+    F: AsyncFnOnce(&mut G) -> Result<Value, E>,
+{
+    state
+        .readers
+        .map(ttl)
+        .get_or_fetch_holding(key, held, async move |g: &mut G| {
+            fetch(g).await.map(Arc::new)
+        })
         .await
 }
 
@@ -889,7 +969,7 @@ mod refresh_tests {
         let third = readers.begin_refresh(KEY, Duration::ZERO).expect("claimed");
         let held = Arc::clone(&state);
         let refresh = tokio::spawn(async move {
-            let _claim = RefreshClaim::new(held, KEY, third);
+            let _claim = RefreshClaim::new(held, KEY.to_string(), third);
             panic!("a row that does not decode");
         });
         assert!(refresh.await.is_err());

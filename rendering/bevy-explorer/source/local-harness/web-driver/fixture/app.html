@@ -157,8 +157,9 @@
       if (bound) window.__dclTrustedInput(JSON.stringify({ id: 1, op: 'click', x: 60, y: 60, button: 'left' }))
       setTimeout(() => parent.postMessage({ bound, answered, events: window.__events }, '*'), 1500)
     }
-    // the engine is up once the console answers, as for engineRpc.ts
-    ready.then(() => { window.engine_console_command = runConsoleCommand })
+    // the engine is up once the console answers, as for engineRpc.ts; ?engine=off stays on the start screen
+    const engineOff = new URLSearchParams(location.search).get('engine') === 'off'
+    ready.then(() => { if (!engineOff) window.engine_console_command = runConsoleCommand })
   </script>
 </body>
 </html>

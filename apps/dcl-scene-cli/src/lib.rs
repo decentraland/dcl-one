@@ -54,6 +54,7 @@ pub mod world_linker;
 
 /// A test's environment write.
 #[cfg(test)]
+#[allow(unsafe_code, reason = "tests write the process environment")]
 pub(crate) fn set_test_env(key: impl AsRef<std::ffi::OsStr>, value: impl AsRef<std::ffi::OsStr>) {
     // SAFETY: test-only. std orders the write against every `std::env` read;
     // a libc `getenv` on another test thread (DNS resolution, SQLite's temp
@@ -63,6 +64,7 @@ pub(crate) fn set_test_env(key: impl AsRef<std::ffi::OsStr>, value: impl AsRef<s
 
 /// A test's environment removal; see [`set_test_env`].
 #[cfg(test)]
+#[allow(unsafe_code, reason = "tests write the process environment")]
 pub(crate) fn remove_test_env(key: impl AsRef<std::ffi::OsStr>) {
     // SAFETY: as in `set_test_env`.
     unsafe { std::env::remove_var(key) }

@@ -97,7 +97,7 @@ fn fragment(
 
     var faded = 0.0;
     if material.reveal.z != 0.0 {
-        let dither = discard_dither(in.position.xy, in.world_position.xyz, view.user_value, false, DITHER_BASE_OPACITY, origin, true);
+        let dither = discard_dither(in.position.xy, in.world_position.xyz, view.user_value, DITHER_BASE_OPACITY, origin, true);
         faded = dither.transparency;
     }
 

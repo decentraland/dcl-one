@@ -6,7 +6,7 @@
 //! asks "did this ever happen", and the guard only bounds how long a broken
 //! build may keep the suite waiting. It stays on the wall clock under a paused
 //! tokio clock too, where the naps between checks cost no real time.
-#![allow(dead_code)]
+#![allow(dead_code, reason = "each test target uses part of it")]
 
 use std::future::Future;
 use std::time::{Duration, Instant};

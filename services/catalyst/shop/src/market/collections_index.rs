@@ -27,11 +27,11 @@
 //! when no event does and the read is at or below the block it folds to.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
 
 use alloy_primitives::{Address, B256, Bytes, U256, hex};
 use alloy_sol_types::{SolCall, SolEvent, SolValue, sol};
 use anyhow::{Context, ensure};
+use parking_lot::Mutex;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 
@@ -191,13 +191,13 @@ pub struct CollectionEvent {
     pub content_hash: Option<String>,
 }
 
-fn address(a: Address) -> String {
+pub(super) fn address(a: Address) -> String {
     format!("{a:#x}")
 }
 
 /// A string as Postgres `text` stores it: NUL removed (the contracts take
 /// any bytes; `decode_raw_log` already read them as lossy UTF-8).
-fn text(s: String) -> String {
+pub(super) fn text(s: String) -> String {
     if s.contains('\0') {
         s.replace('\0', "")
     } else {
@@ -431,9 +431,9 @@ pub type Known = (String, Option<String>);
 pub struct CollectionsIndex {
     addresses: Mutex<Option<Vec<Known>>>,
     filter: Mutex<HashSet<String>>,
-    /// Whether its fold projects the log into `shop.collections` and
-    /// `shop.items` (a process that runs no collections mirror); otherwise
-    /// it keeps the log alone.
+    /// Whether its publication projects the log into `shop.collections`
+    /// and `shop.items` (a process that runs no collections mirror);
+    /// otherwise it keeps the log alone.
     project: bool,
 }
 
@@ -453,7 +453,7 @@ impl CollectionsIndex {
 
     /// The hinted and walked collections, read once per pass.
     async fn load(&self, pool: &PgPool) -> anyhow::Result<Vec<Known>> {
-        if let Some(known) = self.addresses.lock().unwrap().clone() {
+        if let Some(known) = self.addresses.lock().clone() {
             return Ok(known);
         }
         let known: Vec<Known> = sqlx::query_as(
@@ -466,13 +466,13 @@ impl CollectionsIndex {
         .bind(ChainNet::Matic.db_name())
         .fetch_all(pool)
         .await?;
-        *self.addresses.lock().unwrap() = Some(known.clone());
+        *self.addresses.lock() = Some(known.clone());
         Ok(known)
     }
 
     fn reset(&self) {
-        *self.addresses.lock().unwrap() = None;
-        self.filter.lock().unwrap().clear();
+        *self.addresses.lock() = None;
+        self.filter.lock().clear();
     }
 }
 
@@ -561,7 +561,7 @@ impl ChainIndex for CollectionsIndex {
     ) -> anyhow::Result<Vec<LogGroup>> {
         let known = self.load(pool).await?;
         let (groups, filter) = groups_for(to, &known);
-        *self.filter.lock().unwrap() = filter;
+        *self.filter.lock() = filter;
         Ok(groups)
     }
 
@@ -583,7 +583,7 @@ impl ChainIndex for CollectionsIndex {
             }
         }
         {
-            let filter = self.filter.lock().unwrap();
+            let filter = self.filter.lock();
             if let Some(missed) = rows
                 .iter()
                 .find(|r| r.kind == KIND_PROXY_CREATED && !filter.contains(&r.contract_address))
@@ -643,19 +643,27 @@ impl ChainIndex for CollectionsIndex {
         Ok(())
     }
 
-    /// Projects the log into the catalogue when this process owns it
-    /// ([`super::collections_projection`]); either way the publication says
-    /// the log, and the projection when there is one, are complete to `upto`.
+    /// The log is the fold: the catalogue is projected from it when the
+    /// fold is published ([`ChainIndex::publish`]).
     async fn fold(
         &self,
-        pool: &PgPool,
+        _pool: &PgPool,
         _since: Option<i64>,
-        upto: i64,
-        owner: &Owner,
+        _upto: i64,
+        _owner: &Owner,
     ) -> anyhow::Result<bool> {
+        Ok(true)
+    }
+
+    /// Projects the log into the catalogue when this process owns it
+    /// ([`super::collections_projection::project_in`]), in the transaction
+    /// that publishes the fold at `upto`: a reader's snapshot sees the rows,
+    /// the block they stand at and the publication together, so the
+    /// projection and the publication never disagree.
+    async fn publish(&self, conn: &mut PgConnection, upto: i64) -> anyhow::Result<()> {
         if self.project {
             let out =
-                super::collections_projection::project(pool, owner, ChainNet::Matic, upto).await?;
+                super::collections_projection::project_in(conn, ChainNet::Matic, upto).await?;
             tracing::info!(
                 upto,
                 rebuilt = out.rebuilt,
@@ -665,7 +673,7 @@ impl ChainIndex for CollectionsIndex {
                 "collections matic: projected"
             );
         }
-        Ok(true)
+        Ok(())
     }
 }
 
@@ -2736,9 +2744,22 @@ mod tests {
             .await
             .unwrap()
         };
+        // The walk starts late, so it never publishes: the catalogue is
+        // projected here, as a publication would project it.
+        let project = || async {
+            super::super::collections_projection::project(
+                &pool,
+                &owner,
+                ChainNet::Matic,
+                97_895_000,
+            )
+            .await
+            .unwrap()
+        };
         assert_eq!(gate(&pool, &rpc).await.unwrap(), None);
         assert_eq!(seeds().await, vec![], "nothing walked to read yet");
         pass(97_895_000).await;
+        project().await;
         assert_eq!(
             projected_name(&pool, CREATED).await,
             None,
@@ -2756,9 +2777,183 @@ mod tests {
             "branch B's state at the walk's block, proven as written"
         );
         pass(97_895_000).await;
+        project().await;
         assert_eq!(
             projected_name(&pool, CREATED).await.as_deref(),
             Some("Kept")
+        );
+    }
+
+    /// Gives the collections walk its whole history: a walk started past the
+    /// index's start block (`start_block_matic`) never publishes, and the
+    /// catalogue is projected only by a publication.
+    async fn whole_history(pool: &PgPool) {
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET full_history = true WHERE indexer = 'collections'",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// `Chain`, holding a pass in its close: the pass's second head read,
+    /// the close's own after the fold, waits for `release` and signals
+    /// `arrived` first.
+    struct Held<'a> {
+        chain: &'a Chain,
+        heads: std::sync::atomic::AtomicUsize,
+        arrived: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
+
+    #[async_trait::async_trait]
+    impl LogSource for Held<'_> {
+        async fn chain_id(&self) -> Result<Read<u64>, RpcError> {
+            self.chain.chain_id().await
+        }
+        async fn head(&self) -> Result<Read<u64>, RpcError> {
+            if self.heads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+                self.arrived.notify_one();
+                self.release.notified().await;
+            }
+            self.chain.head().await
+        }
+        async fn finalized(&self) -> Result<Read<BlockHeader>, RpcError> {
+            self.chain.finalized().await
+        }
+        async fn header(&self, number: u64) -> Result<Read<BlockHeader>, RpcError> {
+            self.chain.header(number).await
+        }
+        async fn window(
+            &self,
+            from: u64,
+            to: u64,
+            groups: &[LogGroup],
+            chunk: &mut usize,
+        ) -> Result<Window, RpcError> {
+            self.chain.window(from, to, groups, chunk).await
+        }
+        async fn block_times(&self, logs: &[RpcLog]) -> Result<Read<HashMap<i64, i64>>, RpcError> {
+            self.chain.block_times(logs).await
+        }
+    }
+
+    /// A read of the owned network while a pass closes, after its fold and
+    /// before its publication (the close reads the heads in between), is
+    /// served the standing publication: the projection commits with the
+    /// publication, so the catalogue never stands at a fold that is not
+    /// published. The publication then moves the projection with it.
+    #[tokio::test]
+    async fn a_read_while_a_pass_closes_is_served_the_standing_publication() {
+        use crate::market::catalogue::{self, Access, Purpose};
+        use crate::market::graph::Network;
+        use crate::market::mirrors::Mirror;
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let below = header(97_000_000).hash;
+        hint_read(&pool, 0, OLDER, 97_000_000, &below).await;
+        let settings = walk_settings();
+        let ix = CollectionsIndex::projecting(true);
+        let owner = chain_walk::test_owner(&pool, &ix, &settings).await;
+        let first = Chain {
+            logs: fixture(),
+            finalized: 97_700_000,
+        };
+        // The walk starts late (`start_block_matic`): it is given its whole
+        // history, so its passes publish.
+        let earlier = Chain {
+            logs: fixture(),
+            finalized: 97_600_000,
+        };
+        let bounded = std::time::Duration::from_secs(30);
+        tokio::time::timeout(
+            bounded,
+            chain_walk::run_pass(&pool, &earlier, &ix, &settings, &owner, None, &|_| {}),
+        )
+        .await
+        .expect("the earlier pass ends")
+        .unwrap();
+        whole_history(&pool).await;
+        let out = tokio::time::timeout(
+            bounded,
+            chain_walk::run_pass(&pool, &first, &ix, &settings, &owner, None, &|_| {}),
+        )
+        .await
+        .expect("the first publishing pass ends")
+        .unwrap();
+        assert!(out.published, "{out:?}");
+        let state =
+            crate::market::tests::support::state_with_empty_readers(Some(pool.clone())).await;
+        let read = || async {
+            catalogue::begin(
+                &state,
+                Purpose::Describe,
+                &[Mirror::Items],
+                Some(Network::Matic),
+                Access::ReadOnly,
+            )
+            .await
+            .map(|r| r.key())
+            .map_err(|r| r.status())
+        };
+
+        let standing = read().await.expect("the first publication serves");
+        let marks = || async {
+            sqlx::query_as::<_, (Option<i64>, Option<i64>)>(
+                "SELECT p.projected_through, c.folded_block FROM shop.collection_projection p \
+                 JOIN shop.chain_cursor c ON c.indexer = 'collections' AND c.network = p.network \
+                 WHERE p.network = 'matic'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        assert_eq!(marks().await, (Some(97_700_000), Some(97_700_000)));
+
+        // Short of the next collection the fixture creates (at 97,707,994),
+        // which only the factory lists' gate can admit.
+        let second = Chain {
+            logs: fixture(),
+            finalized: 97_705_000,
+        };
+        let held = Held {
+            chain: &second,
+            heads: Default::default(),
+            arrived: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        };
+        let pass = tokio::time::timeout(
+            bounded,
+            chain_walk::run_pass(&pool, &held, &ix, &settings, &owner, None, &|_| {}),
+        );
+        let during = async {
+            tokio::time::timeout(bounded, held.arrived.notified())
+                .await
+                .expect("the pass reaches its close");
+            let folded_through: Option<i64> = sqlx::query_scalar(
+                "SELECT fold_through FROM shop.chain_cursor WHERE indexer = 'collections' AND network = 'matic'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            let seen = (folded_through, marks().await, read().await);
+            held.release.notify_one();
+            seen
+        };
+        let (passed, (folded_through, during_marks, during_read)) = tokio::join!(pass, during);
+        passed.expect("the held pass ends").unwrap();
+        assert_eq!(folded_through, Some(97_705_000), "held after the fold");
+        assert_eq!(
+            during_marks,
+            (Some(97_700_000), Some(97_700_000)),
+            "the projection waits for the publication"
+        );
+        assert_eq!(during_read, Ok(standing), "the standing publication serves");
+        assert_eq!(
+            marks().await,
+            (Some(97_705_000), Some(97_705_000)),
+            "published together"
         );
     }
 

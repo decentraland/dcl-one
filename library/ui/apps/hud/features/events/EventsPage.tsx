@@ -2,7 +2,6 @@
 // events beside it, and one day's events in a grid. Every visit opens on the calendar at today.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, MaskIcon } from '../../design'
 import type { EventData } from '@explorer-core/engine/protocol'
 import { track } from '@explorer-core/lib/analytics'
 import { MainMenuShell } from '../menu/MainMenuShell'
@@ -16,6 +15,7 @@ import { EventsCalendar, type EventCardContext } from './EventsCalendar'
 import { calendarColumns, dayEvents, highlightedEvents } from './eventsStore'
 import { useEventActions } from './useEventActions'
 import styles from './EventsPage.module.css'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 /** The days a calendar shows; the highlighted carousel takes the last one's place. */
 export const CALENDAR_DAYS = 5
@@ -111,10 +111,10 @@ export function EventsPage({
       <header className={styles.header}>
         <div className={styles.headerFrame}>
           <h1 className={styles.title}>Events</h1>
-          <Button size="bare" radius="pill" variant="glass" className={styles.today} aria-label="Go to today" onClick={() => showCalendar(startOfDay(new Date()))}>
+          <Button appearance="hud" size="bare" radius="pill" variant="glass" className={styles.today} aria-label="Go to today" onClick={() => showCalendar(startOfDay(new Date()))}>
             Today
           </Button>
-          <Button size="bare" radius="md" variant="scrim" className={styles.create} onClick={() => actions.createEvent(true)}>
+          <Button appearance="hud" size="bare" radius="md" variant="scrim" className={styles.create} onClick={() => actions.createEvent(true)}>
             <MaskIcon src={addIcon} size={12} />
             CREATE EVENT
           </Button>

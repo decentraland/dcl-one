@@ -38,14 +38,17 @@
 //! `/v1/items`, `/v1/contracts`, `/v1/collections` and `/v1/prices` on a
 //! complete pass per configured network. Readers (`readers.rs`: first ≤ 100,
 //! skip ≤ 5000, id-keyset counts capped at 5000, per-route TTL buckets):
-//! the LAND, estate and name pages of `/v1/nfts`, the legacy legs of
-//! `/v1/orders` and `/v1/bids`, `/v1/owners`, the sales signal of the trending
-//! and creators rails, and the `/v1/users` names over `graph.rs`. Sales,
-//! seller summaries, proceeds, accounts, rankings, volume, store statistics
-//! and the sales leg of activity read the published shop sales index. Wearable and
+//! the LAND, estate and name pages of `/v1/nfts`, the legacy leg of
+//! `/v1/bids` (Polygon's bids use the sales index on a node that walks it)
+//! and `/v1/orders` on a node that does not walk the nft index, `/v1/owners`,
+//! the sales signal of the trending and creators rails, and the `/v1/users`
+//! names over `graph.rs`. Sales, seller
+//! summaries, proceeds, accounts, rankings, volume, store statistics and the
+//! sales leg of activity read the published shop sales index. Wearable and
 //! emote ownership (`/v1/nfts`, `/v1/users`, the `/v1/orders` owner guard,
 //! the lambdas lists, profiles, outfits and the backpack) reads the nft
-//! index (`owned_items.rs`). Local: `POST /v1/trades` (`listings.rs`, the old EIP-712
+//! index (`owned_items.rs`), and so does the legacy order book of
+//! `/v1/orders` (`legacy_orders.rs`). Local: `POST /v1/trades` (`listings.rs`, the old EIP-712
 //! policy, `ownerOf` on `TRADE_RPC_URLS`), lists and picks (`lists.rs`), the
 //! operator moderation (`admin.rs`, `MARKET_ADMIN_TOKEN`), a wallet's
 //! `/v1/activity` over the readers, the local trades and the nft index's
@@ -64,7 +67,9 @@ pub mod admin;
 pub mod base_wearables;
 pub mod bid_notices;
 pub mod bids;
+mod cancelled_trades;
 pub mod catalog;
+pub mod catalogue;
 pub mod chain_group;
 pub mod chain_jobs;
 pub mod chain_walk;
@@ -72,13 +77,16 @@ pub mod collections;
 pub mod collections_fold;
 pub mod collections_index;
 pub mod collections_projection;
+pub mod collections_v1;
 pub mod committee_index;
 pub mod compare_sources;
 pub mod contracts;
 pub mod definitions;
+pub mod ethereum_bid_history;
 pub mod ethereum_sales;
 pub mod features;
 pub mod federation;
+mod historical;
 pub mod items;
 pub mod lambdas_catalog;
 pub mod lambdas_crypto;
@@ -87,6 +95,7 @@ pub mod lambdas_http;
 pub mod lambdas_land;
 pub mod lambdas_metrics;
 pub mod land_map;
+pub mod legacy_orders;
 pub mod listings;
 pub mod lists;
 pub mod mana_transfers;
@@ -103,6 +112,7 @@ pub mod owners;
 pub mod prices;
 pub mod profiles;
 pub mod rankings;
+mod rates;
 pub mod readers;
 pub mod rentals;
 pub mod royalty_notices;
@@ -123,9 +133,11 @@ pub mod third_party_registry;
 pub mod tips;
 pub mod trade_events;
 pub mod trades;
+pub mod transak;
 pub mod transfer_notices;
 pub mod user_items;
 pub mod users;
+pub mod wert;
 pub mod wire;
 
 #[cfg(test)]
@@ -140,7 +152,7 @@ pub(crate) mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::shared::routing::{any, delete, erase, get, post};
+use crate::shared::routing::{any, delete, erase, get, post, put};
 use anyhow::Context;
 use axum::Json;
 use axum::Router;
@@ -259,6 +271,11 @@ pub struct MarketSettings {
     pub mirror_pages_per_tick: usize,
     pub trade_rpc_urls: listings::RpcEndpoints,
     pub admin_token: Option<String>,
+    pub historical_admin_token: Option<String>,
+    /// The Wert card on-ramp's keys and API (`WERT_*`); `None` answers 503.
+    pub wert: Option<wert::WertSettings>,
+    /// The Transak card on-ramp's credentials (`TRANSAK_*`); `None` answers 503.
+    pub transak: Option<transak::TransakSettings>,
     pub catalog_cache_ttl: Duration,
     /// `MARKETPLACE_BASE_URL`: the site links the trade notification events point at.
     pub marketplace_base_url: String,
@@ -275,7 +292,7 @@ pub struct MarketSettings {
     pub portal: Option<chain_jobs::PortalSettings>,
 }
 
-/// No derived `Debug`: `admin_token` is a bearer. Prints whether one is set,
+/// No derived `Debug`: prints only whether the bearer tokens are set,
 /// the `DirectSigner`/`Rpc` pattern.
 impl std::fmt::Debug for MarketSettings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -292,6 +309,12 @@ impl std::fmt::Debug for MarketSettings {
                     .collect::<Vec<_>>(),
             )
             .field("admin_token", &self.admin_token.is_some())
+            .field(
+                "historical_admin_token",
+                &self.historical_admin_token.is_some(),
+            )
+            .field("wert", &self.wert.is_some())
+            .field("transak", &self.transak.is_some())
             .field("catalog_cache_ttl", &self.catalog_cache_ttl)
             .field("marketplace_base_url", &self.marketplace_base_url)
             .field("indexes", &self.indexes)
@@ -309,6 +332,9 @@ impl Default for MarketSettings {
             mirror_pages_per_tick: mirrors::DEFAULT_PAGES_PER_TICK,
             trade_rpc_urls: listings::RpcEndpoints::default(),
             admin_token: None,
+            historical_admin_token: None,
+            wert: None,
+            transak: None,
             catalog_cache_ttl: Duration::from_secs(30),
             marketplace_base_url: "https://decentraland.org/marketplace".to_string(),
             indexes: chain_walk::IndexSettings::default(),
@@ -355,6 +381,9 @@ impl MarketSettings {
             admin_token: admin_token
                 .map(|t| t.trim().to_string())
                 .filter(|t| !t.is_empty()),
+            historical_admin_token: None,
+            wert: None,
+            transak: None,
             catalog_cache_ttl: Duration::from_secs(catalog_cache_ttl_secs),
             marketplace_base_url: marketplace_base_url.trim_end_matches('/').to_string(),
             indexes: chain_walk::IndexSettings::default(),
@@ -362,6 +391,23 @@ impl MarketSettings {
             trusted_proxy_cidrs: Vec::new(),
             portal: None,
         })
+    }
+
+    pub fn with_historical_admin_token(mut self, token: Option<String>) -> Self {
+        self.historical_admin_token = token;
+        self
+    }
+
+    /// The Wert card on-ramp ([`wert::WertSettings::parse`]).
+    pub fn with_wert(mut self, wert: Option<wert::WertSettings>) -> Self {
+        self.wert = wert;
+        self
+    }
+
+    /// The Transak card on-ramp ([`transak::TransakSettings::parse`]).
+    pub fn with_transak(mut self, transak: Option<transak::TransakSettings>) -> Self {
+        self.transak = transak;
+        self
     }
 
     /// The chain indexes' knobs (`main.rs` fills them from `Config`).
@@ -653,17 +699,21 @@ pub struct MarketplaceState {
     pub readers: readers::Caches,
     /// Bounds concurrent expensive sales analytics independently of other Shop reads.
     pub(crate) sales_analytics_slots: tokio::sync::Semaphore,
+    /// Concurrent uncached creator owner rankings.
+    pub(crate) top_owners_slots: tokio::sync::Semaphore,
+    /// Concurrent creator royalty scans.
+    pub(crate) royalty_analytics_slots: tokio::sync::Semaphore,
     pub(crate) sales_accounts_slots: tokio::sync::Semaphore,
     sales_seller_slots: tokio::sync::Semaphore,
+    historical_slots: tokio::sync::Semaphore,
+    historical_body_slots: tokio::sync::Semaphore,
     pub(crate) sales_pages_slots: tokio::sync::Semaphore,
-    /// `mirror_state.last_complete_pass_at` per mirror, cached 10 s.
-    pub(crate) mirror_ready: TtlMap<mirrors::Mirror, Option<chrono::NaiveDateTime>>,
     /// `trades_mirror.completed_at` for the configured upstream, cached 10 s
     /// (`trades::require_ready`).
     pub(crate) trades_ready: TtlMap<(), Option<chrono::NaiveDateTime>>,
     /// The upstream trades list of the pass in progress, held between ticks
     /// so a pass that spans several ticks downloads it once (`trades::PassList`).
-    pub(crate) trades_list: std::sync::Mutex<Option<Arc<trades::PassList>>>,
+    pub(crate) trades_list: parking_lot::Mutex<Option<Arc<trades::PassList>>>,
     /// Catalog pages and totals (`MARKETPLACE_CATALOG_CACHE_TTL_SECS`).
     pub(crate) catalog_cache: catalog::Cache,
     /// The lambdas catalogue's memo (`lambdas_catalog`).
@@ -751,12 +801,15 @@ impl MarketplaceState {
             contracts: contracts::Caches::default(),
             readers: readers::Caches::default(),
             sales_analytics_slots: tokio::sync::Semaphore::new(2),
+            top_owners_slots: tokio::sync::Semaphore::new(1),
+            royalty_analytics_slots: tokio::sync::Semaphore::new(1),
             sales_accounts_slots: tokio::sync::Semaphore::new(1),
             sales_seller_slots: tokio::sync::Semaphore::new(4),
+            historical_slots: tokio::sync::Semaphore::new(2),
+            historical_body_slots: tokio::sync::Semaphore::new(2),
             sales_pages_slots: tokio::sync::Semaphore::new(4),
-            mirror_ready: TtlMap::bounded(mirrors::READY_TTL, 8),
             trades_ready: TtlMap::bounded(mirrors::READY_TTL, 1),
-            trades_list: std::sync::Mutex::new(None),
+            trades_list: parking_lot::Mutex::new(None),
             catalog_cache: catalog::Cache::new(settings.market.catalog_cache_ttl),
             lambdas: lambdas_catalog::Caches::default(),
             third_party: third_party::Caches::default(),
@@ -860,6 +913,7 @@ impl MarketplaceState {
         }
         mirrors::spawn_jobs(self, jobs);
         chain_jobs::spawn_jobs(self, jobs, rentals);
+        crate::mana::history::spawn(self, jobs);
         neighbours::spawn_job(self, jobs);
     }
 
@@ -1240,12 +1294,27 @@ pub fn router(state: SharedState) -> Router {
     app.with_state(state)
 }
 
+/// The POST and PUT routes that write no market data, so they answer while
+/// data writes are off: the historical holdings reads, the Wert signature
+/// (it only signs and asks Wert for a session), and the Transak widget and
+/// token refresh (they write only the shared access token).
+const OPEN_PATHS: &[&str] = &[
+    historical::READ_PATHS[0],
+    historical::READ_PATHS[1],
+    historical::READ_PATHS[2],
+    historical::READ_PATHS[3],
+    historical::READ_PATHS[4],
+    wert::PATH,
+    transak::WIDGET_PATH,
+    transak::TOKEN_PATH,
+];
+
 /// The marketplace-server surface (the old `catalyrst-market` crate's
 /// routes), for the `/shop-api` nest and its `/marketplace-api` alias: its
 /// `/v1/items`, `/v1/collections` and `/v1/contracts` collide with the
 /// builder's at the root, where `router` keeps the lambdas and the trades
 /// reads. Every mutating route sits behind `DATA_WRITES_ENABLED`
-/// ([`DataWrites::guard`]).
+/// ([`DataWrites::guard`]), except the [`OPEN_PATHS`].
 pub fn market_router(state: SharedState) -> Router {
     let request_timeout = state.settings.request_timeout;
     let writes_enabled = state.settings.data_writes_enabled;
@@ -1254,6 +1323,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route("/v1/collections", get(collections::get_collections))
         .route("/v1/accounts", get(accounts::get_accounts))
         .route("/v1/owners", get(owners::get_owners))
+        .route("/v1/owners/top", get(owners::get_top_owners))
         .route("/v1/catalog", get(catalog::get_catalog_v1))
         .route("/v2/catalog", get(catalog::get_catalog_v2))
         .route("/v3/catalog/shop", get(shop::get_shop_catalog))
@@ -1305,8 +1375,11 @@ pub fn market_router(state: SharedState) -> Router {
         )
         .route("/v1/bids", get(bids::get_bids))
         .route("/v1/sales/summary", get(sales::get_sales_summary))
+        .route("/v1/sales/royalties", get(sale_reads::get_royalties))
         .route("/v1/sales", get(sales::get_sales))
+        .route("/v1/cancelled-trades", get(cancelled_trades::get))
         .route("/v1/prices", get(prices::get_prices))
+        .route("/v1/rates/mana-usd", get(rates::get_mana_usd_rates))
         .route("/v1/trendings", get(items::get_trendings))
         .route(
             "/v1/rankings/{entity}/{timeframe}",
@@ -1399,6 +1472,19 @@ pub fn market_router(state: SharedState) -> Router {
         )
         .route("/v1/admin/audit", get(admin::list_audit))
         .route("/v1/activity", get(activity::get_activity))
+        .route(
+            wert::PATH,
+            post(wert::sign).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(
+            transak::WIDGET_PATH,
+            post(transak::widget_url).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(transak::ORDER_PATH, get(transak::order))
+        .route(transak::TOKEN_PATH, put(transak::refresh_token))
+        .merge(historical::routes(
+            state.settings.market.historical_admin_token.is_some(),
+        ))
         .merge(super::market_extensions())
         .layer(axum::middleware::from_fn(mirrors::stamp_copies))
         .layer(axum::middleware::from_fn(signed::mounted_path))
@@ -1412,5 +1498,5 @@ pub fn market_router(state: SharedState) -> Router {
     } else {
         app
     };
-    DataWrites::guard(app.with_state(state), writes_enabled)
+    DataWrites::guard_open(app.with_state(state), writes_enabled, OPEN_PATHS)
 }

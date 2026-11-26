@@ -66,7 +66,9 @@ FROM trade_asset a
 LEFT JOIN LATERAL (
     SELECT sum(amount) AS price, min(currency) AS currency
     FROM trade_payment t WHERE (t.network,t.block_number,t.log_index) = (a.network,a.block_number,a.log_index)
-    HAVING count(DISTINCT currency)=1 AND bool_and(t.sent <> a.sent)
+    -- Classify every leg before checking eligibility. A converted USD leg
+    -- can acquire a price only when the receipt proves the execution's split.
+    HAVING bool_and(t.typ='1' AND t.currency=$8 AND t.sent<>a.sent) AND sum(t.amount)>0
 ) p ON a.n = 1
 )
 INSERT INTO shop.sale_asset (public_id,beneficiary,network,block_number,log_index,ordinal,kind,contract_address,token_id,item_id,seller,buyer,price,currency)

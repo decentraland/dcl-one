@@ -1,3 +1,6 @@
+// Decodes untrusted input: malformed bytes must not panic.
+#![deny(clippy::indexing_slicing, clippy::expect_used)]
+
 use crate::archipelago::feed::FeedCache;
 use crate::archipelago::registry::{
     OutputBudget, OutputCredit, PeerLink, ReceivedSocketEvent, SocketEvent, SocketEvents,
@@ -34,6 +37,7 @@ async fn write<S: Sink<Message> + Unpin>(
     }
 }
 
+#[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,7 +304,10 @@ impl Pending {
         self.frames.pop_front()
     }
     // A full queue hands the frame back; boxing it would allocate on the send path.
-    #[allow(clippy::result_large_err)]
+    #[allow(
+        clippy::result_large_err,
+        reason = "a full queue hands the frame back unboxed"
+    )]
     fn push(&mut self, mut frame: Frame, budget: &Arc<OutputBudget>) -> Result<(), Frame> {
         if frame.credit.is_none() {
             frame.credit = budget.reserve();
@@ -323,7 +330,7 @@ pub(super) enum Outgoing {
         message: Message,
         stamp: crate::gatekeeper::admission::cluster::fence::PulseAdmissionStamp,
         token_fence: TokenFence,
-        permit: crate::archipelago::registry::ControlPositionPermit,
+        permit: Box<crate::archipelago::registry::ControlPositionPermit>,
     },
     Kick(Message),
 }
@@ -744,7 +751,7 @@ impl WebSocket {
                 } => {
                     let message = match input {
                         SocketInput::Assignment(Some(received)) => {
-                            if !self.assignments.as_mut().unwrap().accept(received, &self.queue, &self.state) { return None; }
+                            if let Some(assignments) = self.assignments.as_mut() && !assignments.accept(received, &self.queue, &self.state) { return None; }
                             tokio::task::yield_now().await;
                             continue;
                         }
@@ -840,7 +847,7 @@ pub(super) async fn send_outgoing(
             stamp,
             token_fence,
             permit,
-        } => (message, true, Some(stamp), Some(token_fence), Some(permit)),
+        } => (message, true, Some(stamp), Some(token_fence), Some(*permit)),
     };
     if let Message::Close(frame) = &message {
         socket.queue.terminal(Terminal::Close(
@@ -880,7 +887,7 @@ async fn enqueue(
 ) -> bool {
     let owner = frame.owner.clone();
     let owner = owner.as_ref();
-    let mut frame = Some(frame);
+    let mut frame = frame;
     loop {
         let changed = queue.budget.changed.notified();
         tokio::pin!(changed);
@@ -919,12 +926,12 @@ async fn enqueue(
             if let Some(owner) = owner {
                 pending.owner = Some(owner.clone());
             }
-            match pending.push(frame.take().unwrap(), &queue.budget) {
+            match pending.push(frame, &queue.budget) {
                 Ok(()) => {
                     queue.budget.changed.notify_waiters();
                     return true;
                 }
-                Err(held) => frame = Some(held),
+                Err(held) => frame = held,
             }
             let Some(deadline) = queue.budget.deadline() else {
                 continue;
@@ -983,13 +990,12 @@ async fn writer<S: Sink<Message> + Unpin>(
             // A clean writer has no started frame to drain. A cancelled
             // readiness or authority wait can also leave this phase clean;
             // flush the parser's automatic reply within the write deadline.
-            if clean {
-                if tokio::time::timeout(WRITE_DEADLINE, sink.flush())
+            if clean
+                && tokio::time::timeout(WRITE_DEADLINE, sink.flush())
                     .await
                     .is_err()
-                {
-                    state.feed.on_socket_write_timeout();
-                }
+            {
+                state.feed.on_socket_write_timeout();
             }
             break;
         }
@@ -1366,6 +1372,7 @@ fn kick_message() -> Message {
     Message::Binary(super::craft(super::kicked_packet()).into())
 }
 
+#[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
 mod bounds_tests {
     use super::*;
@@ -2165,7 +2172,7 @@ mod bounds_tests {
             "fenced-replaced",
         ] {
             let bus = Arc::new(InProcessBus::new());
-            let plan = Arc::new(std::sync::Mutex::new(PeerClusterSnapshot {
+            let plan = Arc::new(parking_lot::Mutex::new(PeerClusterSnapshot {
                 selected_origin: 1,
                 selected_identity: Some(1),
                 assignment_state: 1,
@@ -2180,9 +2187,7 @@ mod bounds_tests {
                 pending_takeovers: vec![],
             }));
             let replies = plan.clone();
-            bus.respond_to_requests(Arc::new(move |_, _| {
-                Ok(replies.lock().unwrap().encode_to_vec())
-            }));
+            bus.respond_to_requests(Arc::new(move |_, _| Ok(replies.lock().encode_to_vec())));
             let state = crate::archipelago::test_support::state_over(
                 crate::archipelago::Settings::for_tests(),
                 bus.clone(),
@@ -2212,8 +2217,7 @@ mod bounds_tests {
             let queue = Arc::new(Queue::default());
             let mut credential = frame(Some(owner.clone()), true);
             credential.message = Message::Binary(vec![9].into());
-            credential.pulse_admission =
-                PulseAdmissionStamp::from_snapshot(&plan.lock().unwrap(), 0);
+            credential.pulse_admission = PulseAdmissionStamp::from_snapshot(&plan.lock(), 0);
             if change.starts_with("fenced-") {
                 credential.fence_bound = true;
                 credential.permit = state
@@ -2229,11 +2233,11 @@ mod bounds_tests {
                 pending.done = true;
             }
             match change {
-                "version" => plan.lock().unwrap().assignment_version += 1,
-                "source" => plan.lock().unwrap().source_incarnation = "next".into(),
-                "realm" => plan.lock().unwrap().realm = "next".into(),
-                "floor" => plan.lock().unwrap().token_not_before = Some(1),
-                "pass" => plan.lock().unwrap().pass += 1,
+                "version" => plan.lock().assignment_version += 1,
+                "source" => plan.lock().source_incarnation = "next".into(),
+                "realm" => plan.lock().realm = "next".into(),
+                "floor" => plan.lock().token_not_before = Some(1),
+                "pass" => plan.lock().pass += 1,
                 "fenced-current" => {}
                 "fenced-replaced" => {
                     state.registry.on_v4_peer_connected_with_realm_epoch(
@@ -2249,7 +2253,7 @@ mod bounds_tests {
                     let response = plan.clone();
                     bus.respond_to_requests(Arc::new(move |_, _| {
                         close.close();
-                        Ok(response.lock().unwrap().encode_to_vec())
+                        Ok(response.lock().encode_to_vec())
                     }));
                 }
                 _ => unreachable!(),
@@ -3070,6 +3074,7 @@ mod bounds_tests {
 }
 
 #[cfg(feature = "test-support")]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod assignment_test_support {
     use super::*;
     use crate::archipelago::registry::{ReceivedSocketEvent, SocketEvent, SocketEvents};

@@ -2315,7 +2315,9 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[allow(unsafe_code, reason = "libc call for the effective uid")]
     fn running_as_root() -> bool {
+        // SAFETY: geteuid takes no arguments and cannot fail.
         unsafe { libc::geteuid() == 0 }
     }
 

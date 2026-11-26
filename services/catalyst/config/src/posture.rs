@@ -679,13 +679,21 @@ pub fn resolve(env: &Lookup) -> anyhow::Result<Option<(Posture, Expansion)>> {
 /// Expands `NODE_POSTURE` into this process's environment. Runs first in
 /// `main`, before any other thread exists and before clap reads the
 /// environment.
-pub fn apply_to_process_env() -> anyhow::Result<Option<Posture>> {
+///
+/// # Safety
+///
+/// No other thread may exist: it writes the process environment.
+#[allow(
+    unsafe_code,
+    reason = "the posture is applied by writing the process environment"
+)]
+pub unsafe fn apply_to_process_env() -> anyhow::Result<Option<Posture>> {
     let env = |key: &str| std::env::var_os(key).map(|v| v.to_string_lossy().into_owned());
     let Some((posture, vars)) = resolve(&env)? else {
         return Ok(None);
     };
     for (key, value) in vars {
-        // SAFETY: called from `main` before the runtime or any other thread starts.
+        // SAFETY: the caller guarantees this is the only thread.
         unsafe { std::env::set_var(key, value) };
     }
     Ok(Some(posture))
@@ -1046,6 +1054,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("MARKETPLACE_BASE_URL", LINK),
     ("NOTIFICATIONS_SERVICE_BASE_URL", LINK),
     ("SHOP_BASE_URL", LINK),
+    ("SHOP_EMAIL_ASSETS_URL", LINK),
     ("SHOP_ITEM_BASE_URL", LINK),
     ("EVENTS_BASE_URL", LINK),
     ("EVENTS_SITE_URL", LINK),

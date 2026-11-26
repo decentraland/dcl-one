@@ -463,6 +463,16 @@ describe('Explorer', () => {
     assert.deepEqual(fake.lines, ['/media_state', '/media_retry_delay 100', '/media_retry_delay'])
   })
 
+  test('mediaState exposes selected live video frames without an audio volume field', async () => {
+    const fake = new FakeConsole({
+      media_state: JSON.stringify({ backend: 'HTML media', players: [{ type: 'video', entity: '512', scene: 'cast', source: 'livekit-video stream', lastPlaybackState: 'VS_PLAYING', textureSize: [640, 360] }] })
+    })
+    const [row] = (await new Explorer(fake).mediaState()).players
+    assert.equal(row!.source, 'livekit-video stream')
+    assert.equal(row!.lastPlaybackState, 'VS_PLAYING')
+    assert.deepEqual(row!.textureSize, [640, 360])
+  })
+
   test("profileDeployWindow waits out the catalyst's window after the own profile changed, and only then", async () => {
     let version = 3
     const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true` })

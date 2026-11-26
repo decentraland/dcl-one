@@ -58,10 +58,12 @@ export function namesModeFor(build: NameBuild, chains: NameChains): ShopNamesMod
 
 /** This build's NameBuild: VITE_SHOP_NAME_SIMULATION set to `true`, and VITE_SHOP_CHAIN_ID as given (never a default). */
 export function nameBuild(): NameBuild {
-  const env = typeof import.meta !== 'undefined' ? import.meta.env : undefined
-  const raw = (env?.VITE_SHOP_CHAIN_ID as string | undefined)?.trim()
+  // Each key read on its own: a whole `import.meta.env` puts every build-time `VITE_*` value in the bundle.
+  const meta = typeof import.meta !== 'undefined'
+  const raw = (meta ? (import.meta.env?.VITE_SHOP_CHAIN_ID as string | undefined) : undefined)?.trim()
+  const simulation = meta ? (import.meta.env?.VITE_SHOP_NAME_SIMULATION as string | undefined) : undefined
   const chainId = raw && /^[1-9][0-9]*$/.test(raw) ? Number(raw) : null
-  return { simulation: (env?.VITE_SHOP_NAME_SIMULATION as string | undefined)?.trim() === 'true', chainId: Number.isSafeInteger(chainId) ? chainId : null }
+  return { simulation: simulation?.trim() === 'true', chainId: Number.isSafeInteger(chainId) ? chainId : null }
 }
 
 /** Whether a NAME can be registered: free, taken, or on the banned list. */

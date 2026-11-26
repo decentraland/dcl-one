@@ -21,7 +21,7 @@ use common::{
     inputs::SystemAction,
     rpc::RpcStreamSender,
     sets::SetupSets,
-    structs::{PrimaryPlayerRes, PrimaryUser, SystemAudio, ToolTips, TooltipSource},
+    structs::{PlayerAddress, PrimaryPlayerRes, PrimaryUser, SystemAudio, ToolTips, TooltipSource},
     util::{AsH160, ModifyComponentExt, RingBuffer, RingBufferReceiver, TryPushChildrenEx},
 };
 use comms::{
@@ -781,9 +781,7 @@ fn pipe_chats_to_scene(
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ChatMessage>>>,
     mut bubbles: EventWriter<ChatBubbleRequest>,
-    players: Query<(Entity, &ForeignPlayer)>,
-    primary_player: Res<PrimaryPlayerRes>,
-    wallet: Res<Wallet>,
+    players: Query<(Entity, &PlayerAddress, Has<ForeignPlayer>)>,
 ) {
     // a community's name for the bubble of one of its messages
     #[cfg(feature = "livekit")]
@@ -795,8 +793,8 @@ fn pipe_chats_to_scene(
     let player_of = |address: Address| {
         players
             .iter()
-            .find(|(_, player)| player.address == address)
-            .map(|(entity, _)| entity)
+            .find(|(_, player, is_foreign)| *is_foreign && player.0 == address)
+            .map(|(entity, ..)| entity)
     };
 
     senders.extend(requests.read().filter_map(|ev| {
@@ -823,14 +821,7 @@ fn pipe_chats_to_scene(
             let player_address = players
                 .get(chat_event.sender)
                 .ok()
-                .map(|(_, fp)| fp.address)
-                .or_else(|| {
-                    if chat_event.sender == primary_player.0 {
-                        wallet.address()
-                    } else {
-                        None
-                    }
-                });
+                .map(|(_, &PlayerAddress(address), _)| address);
 
             let Some(player_address) = player_address else {
                 warn!("no player for {chat_event:?}");
@@ -845,7 +836,9 @@ fn pipe_chats_to_scene(
 
             #[cfg(feature = "livekit")]
             if chat_event.channel == "Nearby"
-                && chat_event.sender != primary_player.0
+                && players
+                    .get(chat_event.sender)
+                    .is_ok_and(|(_, _, is_foreign)| is_foreign)
                 && ban_block.is_addr_banned_in_scene(player_address)
             {
                 continue;

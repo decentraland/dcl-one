@@ -541,6 +541,15 @@ impl GlyphAtlases {
     pub fn get_or_create(&mut self, key: AtlasKey, images: &mut Assets<Image>) -> &mut GlyphAtlas {
         self.0.entry(key).or_insert_with(|| GlyphAtlas::new(images))
     }
+
+    /// The atlas of `key`, if anything has drawn from it yet.
+    pub fn get(&self, key: &AtlasKey) -> Option<&GlyphAtlas> {
+        self.0.get(key)
+    }
+
+    pub fn get_mut(&mut self, key: &AtlasKey) -> Option<&mut GlyphAtlas> {
+        self.0.get_mut(key)
+    }
 }
 
 /// TMP auto-size point-size clamp used by the reference renderer:
@@ -974,9 +983,26 @@ impl GlyphAtlas {
         self.generation
     }
 
+    /// Have the atlas rebuilt at its next upkeep, as a glyph with no room left does: its
+    /// textures are replaced and the glyphs nothing draws are freed. With none to free, the
+    /// atlas is left as it is.
+    pub fn request_rebuild(&mut self) {
+        self.rebuild_requested = true;
+    }
+
     /// A page's texture and its size in pixels; `None` for a page not made yet.
     pub fn page_image(&self, page: Page) -> Option<(&Handle<Image>, u32)> {
         self.page(page).map(|page| (&page.image, page.size))
+    }
+
+    /// Whether a glyph of `text` found no room in the atlas: it draws nothing until a rebuild
+    /// makes room for it.
+    pub fn has_dropped(&self, text: &LaidOutText) -> bool {
+        !self.dropped.is_empty()
+            && text
+                .glyphs
+                .iter()
+                .any(|glyph| self.dropped.contains(&glyph.key))
     }
 
     /// The uv of the white block's centre, in pixels.

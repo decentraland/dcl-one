@@ -914,9 +914,8 @@ pub async fn snapshot(State(state): State<SharedState>) -> Response {
 }
 
 /// The last snapshot, the log's newest `seq` read before it was taken, and when.
-#[allow(clippy::type_complexity)]
-static SNAPSHOT: std::sync::Mutex<Option<(i64, std::time::Instant, MarketSnapshot)>> =
-    std::sync::Mutex::new(None);
+static SNAPSHOT: parking_lot::Mutex<Option<(i64, std::time::Instant, MarketSnapshot)>> =
+    parking_lot::Mutex::new(None);
 
 const SNAPSHOT_MAX_AGE: Duration = Duration::from_secs(30);
 static SNAPSHOT_COMPUTE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -932,7 +931,6 @@ pub async fn cached_snapshot(pool: &PgPool) -> Result<MarketSnapshot, sqlx::Erro
     let cached = || {
         SNAPSHOT
             .lock()
-            .unwrap()
             .as_ref()
             .filter(|(seq, at, _)| *seq >= newest && at.elapsed() < SNAPSHOT_MAX_AGE)
             .map(|(_, _, snap)| snap.clone())
@@ -946,7 +944,7 @@ pub async fn cached_snapshot(pool: &PgPool) -> Result<MarketSnapshot, sqlx::Erro
         return Ok(snap);
     }
     let snap = snapshot_view(pool).await?;
-    *SNAPSHOT.lock().unwrap() = Some((newest, std::time::Instant::now(), snap.clone()));
+    *SNAPSHOT.lock() = Some((newest, std::time::Instant::now(), snap.clone()));
     Ok(snap)
 }
 

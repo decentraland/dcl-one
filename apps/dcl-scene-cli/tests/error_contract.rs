@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};

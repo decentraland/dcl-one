@@ -1,6 +1,6 @@
 use super::{
-    cached_analytics, db_error, listings, nft_index, require_collections, require_metadata,
-    snapshot,
+    ChainNet, ReadDeadline, cached_analytics, db_error, listings, nft_index, require_collections,
+    require_metadata, snapshot,
 };
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET};
 use crate::market::{MarketplaceState, Source, unavailable};
@@ -95,38 +95,59 @@ pub(in crate::market) async fn creator_rankings(
 ) -> Result<crate::market::rankings::RankingResponse, Response> {
     use crate::market::rankings::{CreatorRank, RankingResponse, RankingsSortBy};
     let (mut snap, nets) = snapshot(state, None).await?;
-    let dependencies = if filters.from == 0 {
-        let items = require_metadata(&mut snap, nets, "items", Source::ItemsMirror).await?;
-        Some((items, require_collections(state, &mut snap).await?))
-    } else {
-        None
+    let mut deadline = ReadDeadline::from(snap.expires_at);
+    let history = require_collections(state, &mut snap).await?;
+    let items = require_metadata(&mut snap, nets, "items", Source::ItemsMirror)
+        .await?
+        .require_fresh(state, &mut deadline, crate::market::mirrors::Mirror::Items)?;
+    // Founder attribution can read the Polygon collections catalogue.
+    let collections = require_metadata(
+        &mut snap,
+        &[ChainNet::Matic],
+        "collections",
+        Source::CollectionsMirror,
+    )
+    .await?
+    .require_fresh(
+        state,
+        &mut deadline,
+        crate::market::mirrors::Mirror::Collections,
+    )?;
+    deadline.limit(snap.expires_at, Source::CollectionsIndex);
+    let from = filters.from / 1000;
+    let sort = match filters.sort_by {
+        Some(RankingsSortBy::MostSales) => "sales",
+        Some(RankingsSortBy::MostVolume) => "volume",
+        None => "earned",
     };
+    let first = ranking_limit(filters);
     let cache_key = format!(
-        "published-creator-rank/{filters:?}/{:?}/{dependencies:?}",
+        "published-creator-rank/{from}/{sort}/{first}/{:?}/{history}/{items:?}/{collections:?}",
         snap.generations
     );
     let rows = cached_analytics(
         state,
         &state.sales_analytics_slots,
         cache_key,
-        snap.expires_at,
+        deadline,
         async {
-            let key = match filters.sort_by {
-                Some(RankingsSortBy::MostSales) => "sales",
-                Some(RankingsSortBy::MostVolume) => "volume",
-                None => "earned",
-            };
+            // The weekly query can use the mint index while lifetime seller
+            // totals require every sale type.
+            sqlx::query("SET LOCAL plan_cache_mode = force_custom_plan")
+                .execute(&mut *snap.transaction)
+                .await
+                .map_err(db_error)?;
             let (Json(rows), unknown_money, unknown_creator): (Json<Vec<CreatorRank>>, bool, bool) =
                 sales_query!(
-                    nets,
+                    nets, scope "creator_rank_assets.sql";
                     "settled_sales.sql",
                     "account_values.sql",
                     "collection_counts.sql",
                     "creator_ranks.sql"
                 )
-                .bind(filters.from / 1000)
-                .bind(key)
-                .bind(ranking_limit(filters))
+                .bind(from)
+                .bind(sort)
+                .bind(first)
                 .fetch_one(&mut *snap.transaction)
                 .await
                 .map_err(db_error)?;
@@ -139,7 +160,7 @@ pub(in crate::market) async fn creator_rankings(
             if unknown_creator {
                 return Err(unavailable(
                     Source::CollectionsIndex,
-                    "the original collection creator is unavailable",
+                    "the collection creator at the required sale or creation is unavailable",
                 ));
             }
             Ok(rows)

@@ -127,7 +127,9 @@ Each pass of the loop runs four chained sets (`SceneLoopSets`):
 4. **`UpdateWorld`**: one generated system per registered SDK component converts each delta
    into a bevy component (`C: TryFrom<D>`) on the matching entity. Registration is
    `add_crdt_lww_component` or `add_crdt_go_component` in `update_world`; the registration adds
-   the system. Only transforms and text shapes have hand-written loop systems.
+   the system. Only transforms and text shapes have hand-written loop systems in place of the
+   generated one. The Animator has one beside it, run before it: `settle_stale_animator_writes`
+   keeps a clip ended when the scene wrote before reading the clip's end.
 
 The loop runs at least once per frame, then repeats while time remains and there are eligible
 scenes or replies outstanding. When no scene can be started (none is queued, or the next queued
@@ -188,6 +190,10 @@ A system that needs a position in `PostUpdate` goes `.in_set(PostUpdateSets::X)`
 producer or `.after(PostUpdateSets::X)` as a consumer. If an ordering point is genuinely
 missing, it is a new variant in the enum, placed in the chain, never a standalone `SystemSet`
 in a feature crate.
+
+Outside the chain, `report_finished_clips` (`update_world/animation.rs`) runs after bevy's
+animation systems (`.after(anim_last_system!())`), where a clip's end is known in the frame it
+happens. It tells the scene, and reads no transform.
 
 One known gap: bevy's `UiSystem::Layout` also runs in `PostUpdate` before `TransformPropagate`
 and is unordered against this chain. A system that writes UI `Node` fields from world-space data
