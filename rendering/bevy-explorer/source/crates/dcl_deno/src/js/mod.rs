@@ -931,8 +931,20 @@ mod tests {
         run_scene(
             false,
             r#"
-            const stack = new Error("x").stack;
-            if (!stack.includes("file://~scene.js")) { throw new Error(stack); }
+            const scene = new Error("x").stack;
+            if (!scene.includes("file://~scene.js/:")) { throw new Error(scene); }
+            // a setter the module's `exports.getRealm = ...` runs, from inside that module
+            let system = "the setter did not run";
+            Object.defineProperty(Object.prototype, "getRealm", {
+                set(value) {
+                    system = new Error("x").stack;
+                    Object.defineProperty(this, "getRealm", { value, writable: true });
+                },
+                configurable: true,
+            });
+            require("~system/Runtime");
+            delete Object.prototype.getRealm;
+            if (!system.includes("file://~system/Runtime:")) { throw new Error(system); }
             "#,
         )
         .unwrap();
