@@ -50,4 +50,38 @@ describe('chat button sounds', () => {
       expect(b.over()).toEqual([])
     }
   })
+
+  describe("a menu's toggle row", () => {
+    const row = (html: string): { click: (selector: string) => string[] } => {
+      document.body.innerHTML = html
+      const play = vi.fn()
+      const handlers = buttonSoundHandlers(play)
+      return {
+        click: (selector) => {
+          handlers.onClickCapture({ target: document.querySelector(selector)! } as unknown as React.MouseEvent)
+          const sounds = play.mock.calls.map((c) => c[0] as string)
+          play.mockClear()
+          return sounds
+        }
+      }
+    }
+
+    it('presses from the row and from its switch', () => {
+      const r = row('<div role="menuitemcheckbox"><span class="name">Auto-Translate</span><label><input type="checkbox" role="switch"></label></div>')
+      expect(r.click('.name')).toEqual(['buttonPress'])
+      expect(r.click('input')).toEqual(['buttonPress'])
+    })
+
+    it('is silent while its switch is disabled, or while it is announced as disabled', () => {
+      const off = row('<div role="menuitemcheckbox"><span class="name">Auto-Translate</span><label><input type="checkbox" role="switch" disabled></label></div>')
+      expect(off.click('.name')).toEqual([])
+      const announced = row('<div role="menuitemcheckbox" aria-disabled="true"><span class="name">Auto-Translate</span><label><input type="checkbox" role="switch"></label></div>')
+      expect(announced.click('.name')).toEqual([])
+    })
+
+    it('does not count a row with no switch as silent', () => {
+      const bare = row('<div role="menuitemcheckbox"><span class="name">Auto-Translate</span></div>')
+      expect(bare.click('.name')).toEqual(['buttonPress'])
+    })
+  })
 })

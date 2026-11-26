@@ -26,6 +26,25 @@
     outline-offset: 2px;
   }
 
+  /* Not in Figma: a tab of the Explorer HUD's strip. The TabsBar it sits in gives it its look. */
+  .hud {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--dcl-space-8);
+    margin: 0;
+    border: none;
+    background: transparent;
+    color: var(--dcl-neutrals-snow);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .hud:disabled {
+    cursor: default;
+  }
+
   .underline {
     composes: text6c6162656c2f6d642d63617073 from '../../foundations/typography/text-styles.module.css';
     --tab-bar: var(--dcl-primary-primary);

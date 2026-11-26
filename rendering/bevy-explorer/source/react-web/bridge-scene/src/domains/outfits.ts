@@ -7,6 +7,7 @@
 //                 a save only fills an empty slot
 //                 with no name owned, deleting an extra slot clears every extra slot
 //                 a refused one → outfitSaveFailed to the page
+//   busy → outfitBusy to the page around every save, delete and equip, whatever its outcome
 //   pictures → localStorage, per account and slot: a cache, never deployed, recaptured on equip
 //   equip → the Backpack's look (body shape + colors + wearables; ./avatarDraft deploys it on close)
 import { getPlayer } from '@dcl/sdk/players'
@@ -217,6 +218,16 @@ export function registerOutfits(ctx: Ctx): void {
     }
   }
 
+  // Tells the page the slot is busy until `work` settles: some outcomes send nothing else.
+  const busy = async <T>(slot: number, action: 'save' | 'delete' | 'equip', work: () => Promise<T>): Promise<T> => {
+    ctx.send({ kind: 'outfitBusy', slot, action, busy: true })
+    try {
+      return await work()
+    } finally {
+      ctx.send({ kind: 'outfitBusy', slot, action, busy: false })
+    }
+  }
+
   ctx.on('getOutfits', async () => {
     const me = getPlayer()
     if (me == null) {
@@ -235,81 +246,89 @@ export function registerOutfits(ctx: Ctx): void {
   // that holds another outfit by the time the save runs is refused, and the page sees what it holds.
   // One that already holds this look (a repeated click) is left as it is.
   ctx.on('saveOutfit', async (msg) => {
-    const me = getPlayer()
-    const look = currentLook()
-    if (me == null || look == null) return
-    const thumbnail = await captureAvatarThumbnail()
-    await serially(async () => {
-      const outfit = currentOutfit(look)
-      const next = await apply(me, { slot: msg.slot, action: 'save' }, (metadata) => {
-        const held = metadata.outfits.find((o) => o.slot === msg.slot)
-        if (held != null && sameOutfit(held.outfit, outfit)) return metadata
-        if (held != null) throw new Error(`slot ${msg.slot} holds an outfit`)
-        const outfits = [...metadata.outfits]
-        outfits.push({ slot: msg.slot, outfit })
-        outfits.sort((a, b) => a.slot - b.slot)
-        return { ...metadata, outfits }
+    await busy(msg.slot, 'save', async () => {
+      const me = getPlayer()
+      const look = currentLook()
+      if (me == null || look == null) return
+      const thumbnail = await captureAvatarThumbnail()
+      await serially(async () => {
+        const outfit = currentOutfit(look)
+        const next = await apply(me, { slot: msg.slot, action: 'save' }, (metadata) => {
+          const held = metadata.outfits.find((o) => o.slot === msg.slot)
+          if (held != null && sameOutfit(held.outfit, outfit)) return metadata
+          if (held != null) throw new Error(`slot ${msg.slot} holds an outfit`)
+          const outfits = [...metadata.outfits]
+          outfits.push({ slot: msg.slot, outfit })
+          outfits.sort((a, b) => a.slot - b.slot)
+          return { ...metadata, outfits }
+        })
+        if (next == null) return
+        writeThumbnail(me.userId, msg.slot, thumbnail)
+        await emit(me.userId, next)
       })
-      if (next == null) return
-      writeThumbnail(me.userId, msg.slot, thumbnail)
-      await emit(me.userId, next)
     })
   })
 
   ctx.on('deleteOutfit', async (msg) => {
-    const me = getPlayer()
-    if (me == null) return
-    await serially(async () => {
-      // With no name owned, the catalyst refuses any deploy that still holds a slot past the free
-      // ones, so deleting one of them one at a time is refused while another remains: clear them all.
-      const clearExtras =
-        msg.slot >= FREE_SLOTS && !me.isGuest && (await readOwnedNames(me.userId).catch(() => undefined))?.length === 0
-      const removed = (o: { slot: number }): boolean => (clearExtras ? o.slot >= FREE_SLOTS : o.slot === msg.slot)
-      let slots: number[] = []
-      const next = await apply(me, { slot: msg.slot, action: 'delete' }, (metadata) => {
-        slots = metadata.outfits.filter(removed).map((o) => o.slot)
-        return { ...metadata, outfits: metadata.outfits.filter((o) => !removed(o)) }
+    await busy(msg.slot, 'delete', async () => {
+      const me = getPlayer()
+      if (me == null) return
+      await serially(async () => {
+        // With no name owned, the catalyst refuses any deploy that still holds a slot past the free
+        // ones, so deleting one of them one at a time is refused while another remains: clear them all.
+        const clearExtras =
+          msg.slot >= FREE_SLOTS && !me.isGuest && (await readOwnedNames(me.userId).catch(() => undefined))?.length === 0
+        const removed = (o: { slot: number }): boolean => (clearExtras ? o.slot >= FREE_SLOTS : o.slot === msg.slot)
+        let slots: number[] = []
+        const next = await apply(me, { slot: msg.slot, action: 'delete' }, (metadata) => {
+          slots = metadata.outfits.filter(removed).map((o) => o.slot)
+          return { ...metadata, outfits: metadata.outfits.filter((o) => !removed(o)) }
+        })
+        if (next == null) return
+        for (const slot of slots.length > 0 ? slots : [msg.slot]) writeThumbnail(me.userId, slot, null)
+        await emit(me.userId, next)
       })
-      if (next == null) return
-      for (const slot of slots.length > 0 ? slots : [msg.slot]) writeThumbnail(me.userId, slot, null)
-      await emit(me.userId, next)
     })
   })
 
   // Put a saved outfit's body shape, colors and wearables on the Backpack's look (keeps emotes).
   ctx.on('equipOutfit', async (msg) => {
     const me = getPlayer()
-    if (me == null) return
-    const metadata = await loadMetadata(me.userId, me.isGuest).catch((e: unknown) => {
-      console.error('[outfits] read failed', e)
-      return null
+    // Busy until the look is on the Backpack's avatar; the missing picture below is taken after.
+    const equipped = await busy(msg.slot, 'equip', async (): Promise<Outfit | null> => {
+      if (me == null) return null
+      const metadata = await loadMetadata(me.userId, me.isGuest).catch((e: unknown) => {
+        console.error('[outfits] read failed', e)
+        return null
+      })
+      const found = metadata?.outfits.find((o) => o.slot === msg.slot)?.outfit
+      if (found == null) return null
+      editLook({
+        bodyShape: found.bodyShape,
+        eyes: rgb(found.eyes.color),
+        hair: rgb(found.hair.color),
+        skin: rgb(found.skin.color),
+        wearables: found.wearables,
+        forceRender: found.forceRender
+      })
+      // Re-emit the equipped set resolved from the outfit's wearables (by urn, independent of the
+      // loaded catalog page). Otherwise off-page outfit items never reach the HUD's category slots
+      // and the next single-item equip drops them.
+      await sendEquipped(ctx)
+      return found
     })
-    const found = metadata?.outfits.find((o) => o.slot === msg.slot)
-    if (found == null) return
-    const { outfit } = found
-    editLook({
-      bodyShape: outfit.bodyShape,
-      eyes: rgb(outfit.eyes.color),
-      hair: rgb(outfit.hair.color),
-      skin: rgb(outfit.skin.color),
-      wearables: outfit.wearables,
-      forceRender: outfit.forceRender
-    })
-    // Re-emit the equipped set resolved from the outfit's wearables (by urn, independent of the
-    // loaded catalog page). Otherwise off-page outfit items never reach the HUD's category slots
-    // and the next single-item equip drops them.
-    await sendEquipped(ctx)
+    if (me == null || equipped == null) return
     if (thumbnailOf(me.userId, msg.slot) == null) {
       await waitFrames(EQUIP_THUMBNAIL_DELAY_FRAMES)
       // Changed since: the preview no longer shows this outfit.
-      if (JSON.stringify(currentLook()?.wearables) !== JSON.stringify(outfit.wearables)) return
+      if (JSON.stringify(currentLook()?.wearables) !== JSON.stringify(equipped.wearables)) return
       const thumbnail = await captureAvatarThumbnail()
       if (thumbnail == null) return
       await serially(async () => {
         // A save or delete may have changed the slot meanwhile.
         const now = await loadMetadata(me.userId, me.isGuest).catch(() => null)
         const held = now?.outfits.find((o) => o.slot === msg.slot)
-        if (now == null || held == null || !sameOutfit(held.outfit, outfit)) return
+        if (now == null || held == null || !sameOutfit(held.outfit, equipped)) return
         if (thumbnailOf(me.userId, msg.slot) != null) return
         writeThumbnail(me.userId, msg.slot, thumbnail)
         await emit(me.userId, now)

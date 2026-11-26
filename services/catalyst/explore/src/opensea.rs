@@ -746,7 +746,7 @@ pub async fn answer(state: &Shared, req: &NftRequest, now: NaiveDateTime) -> Res
         return json_response(StatusCode::NOT_FOUND, body);
     }
     let lock = state.opensea.locks.claim(&key);
-    let response = async {
+    async {
         let _guard = lock.lock().await;
         if let Ok(Some(c)) = read_cache(&state.pool, req).await
             && c.resolved_at >= fresh_after
@@ -793,8 +793,7 @@ pub async fn answer(state: &Shared, req: &NftRequest, now: NaiveDateTime) -> Res
             },
         }
     }
-    .await;
-    response
+    .await
 }
 
 async fn get_nft(

@@ -4,7 +4,7 @@
 
 import { useEffect } from 'react'
 import type { EventData } from '@explorer-core/engine/protocol'
-import { Button, MaskIcon, openPopup } from '../../design'
+import { openPopup } from '../../design'
 import closeIcon from '../../assets/events/close-icn-thin.png'
 import calendarAddIcon from '../../assets/events/add-to-calendar-icn.png'
 import jumpInIcon from '../../assets/events/jump-in-outline.png'
@@ -15,6 +15,7 @@ import { EventActionButtons, EventImage } from './EventCard'
 import { eventPlaceText, eventTimeText, scheduleDates, scheduleText } from './eventFormat'
 import { useEventActions } from './useEventActions'
 import styles from './EventDetail.module.css'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 /** Travels to the event; false when it could not, and the detail stays open. */
 export type EventJumpIn = (event: EventData) => boolean
@@ -73,14 +74,14 @@ function EventDetail({ eventId, onJumpIn, onClose }: { eventId: string; onJumpIn
             <div className={styles.place}>
               <MaskIcon src={pinIcon} size={24} className={styles.icon} />
               <span className={styles.placeName}>{eventPlaceText(event, place)}</span>
-              <Button size="bare" radius="button" variant="primary" className={styles.placeJump} aria-label={`Jump in to ${eventPlaceText(event, place)}`} onClick={jumpIn}>
+              <Button appearance="hud" size="bare" radius="button" variant="primary" className={styles.placeJump} aria-label={`Jump in to ${eventPlaceText(event, place)}`} onClick={jumpIn}>
                 <span>JUMP IN</span>
                 <MaskIcon src={jumpInIcon} size={20} />
               </Button>
             </div>
           </div>
         </div>
-        <Button size="bare" radius="md" variant="shade" className={styles.close} aria-label="Close event detail" onClick={onClose}>
+        <Button appearance="hud" size="bare" radius="md" variant="shade" className={styles.close} aria-label="Close event detail" onClick={onClose}>
           <MaskIcon src={closeIcon} size={14} />
         </Button>
     </div>

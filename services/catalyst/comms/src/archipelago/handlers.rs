@@ -106,7 +106,7 @@ impl ConnectorHttp {
             } else {
                 Body::from(body)
             })
-            .unwrap()
+            .expect("status and headers are valid constants")
     }
 }
 

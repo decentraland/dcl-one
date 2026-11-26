@@ -116,9 +116,6 @@
   background: var(--fill-5);
   transform: scale(1.08);
 }
-.joined {
-  opacity: 0.85;
-}
 /* the header's Join / Request to Join / Leave: an outlined button */
 .headActions > button:not(.iconBtn):not(.kebab) {
   min-width: 130px;

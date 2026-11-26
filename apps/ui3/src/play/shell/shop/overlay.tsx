@@ -1,12 +1,12 @@
 // The purchase dialog over the app, in the shell's dialog (../dialogOverlay): ShopPurchaseDialog, with the buyer's
 // confirmation taken there, where the wallet is, not in the app. Escape cancels unless the purchase is processing.
 
-import { MaskIcon } from '@hud/design'
 import emotesIcon from '@hud/assets/backpack/icon-emotes.webp'
 import { CategoryIcon } from '@hud/features/backpack/categoryIcons'
 import { ShopPurchaseDialog, type ShopPurchaseItem, type ShopPurchaseStep } from '@dcl/one-ui/apps/shop/ui'
 import { createShellDialogHost, ShellDialog } from '../dialogOverlay'
 import type { ShellPurchaseItem, ShellPurchaseView, ShellShopUi } from './purchase'
+import { MaskIcon } from '@dcl/one-ui'
 
 function withIcon(item: ShellPurchaseItem): ShopPurchaseItem {
   const { category, ...rest } = item

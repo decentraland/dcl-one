@@ -1,7 +1,7 @@
 import * as path from 'path'
 import * as fs from 'fs-extra'
 import { FileDescriptorStandardOption, runCommand } from '../utils/shellCommand'
-import { Component } from './generateComponent'
+import type { Component } from './generateComponent'
 import { getFilePathsSync } from '../utils/getFilePathsSync'
 import { PROTO_COMPILER_PATH, TS_PROTO_PLUGIN_PATH } from './protoConst'
 

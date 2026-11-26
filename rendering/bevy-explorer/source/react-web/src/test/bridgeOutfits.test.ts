@@ -94,7 +94,9 @@ async function bridge() {
   const lastOutfits = (): OutfitsMetadata | undefined =>
     sent.flatMap((m) => (m.kind === 'outfits' ? [m.metadata] : [])).at(-1)
   const failures = (): SceneToPage[] => sent.filter((m) => m.kind === 'outfitSaveFailed')
-  return { request, lastOutfits, failures, sent }
+  /** What the page is told of the outfits, without the busy marks around each request. */
+  const settled = (): SceneToPage[] => sent.filter((m) => m.kind !== 'outfitBusy')
+  return { request, lastOutfits, failures, settled, sent }
 }
 
 describe('the bridge outfits domain', () => {
@@ -163,9 +165,9 @@ describe('the bridge outfits domain', () => {
       })
 
       it('should tell the page the save failed after showing the outfits as they were', async () => {
-        const { request, sent } = await bridge()
+        const { request, settled } = await bridge()
         await request({ kind: 'saveOutfit', slot: 1 })
-        expect(sent.slice(-2)).toEqual([
+        expect(settled().slice(-2)).toEqual([
           { kind: 'outfits', metadata: shown(stored) },
           { kind: 'outfitSaveFailed', slot: 1, action: 'save', message: 'Error: failed to deploy' }
         ])
@@ -289,10 +291,10 @@ describe('the bridge outfits domain', () => {
     })
 
     it('should deploy nothing, show the stored outfits and tell the page the save failed', async () => {
-      const { request, sent } = await bridge()
+      const { request, settled } = await bridge()
       await request({ kind: 'saveOutfit', slot: 0 })
       expect(deployOutfits).not.toHaveBeenCalled()
-      expect(sent.slice(-2)).toEqual([
+      expect(settled().slice(-2)).toEqual([
         { kind: 'outfits', metadata: shown(stored) },
         { kind: 'outfitSaveFailed', slot: 0, action: 'save', message: 'Error: slot 0 holds an outfit' }
       ])
@@ -692,6 +694,111 @@ describe('the bridge outfits domain', () => {
       const { request, lastOutfits } = await bridge()
       await request({ kind: 'getOutfits' })
       expect(lastOutfits()?.outfits[0]?.thumbnail).toBeUndefined()
+    })
+  })
+
+  describe('when the player saves an outfit', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+    })
+
+    it('should tell the page the slot is busy until the outfits are shown', async () => {
+      const { request, sent } = await bridge()
+      await request({ kind: 'saveOutfit', slot: 1 })
+      expect(sent.map((m) => m.kind)).toEqual(['outfitBusy', 'outfits', 'outfitBusy'])
+      expect([sent[0], sent.at(-1)]).toEqual([
+        { kind: 'outfitBusy', slot: 1, action: 'save', busy: true },
+        { kind: 'outfitBusy', slot: 1, action: 'save', busy: false }
+      ])
+    })
+
+    describe('and the catalyst refuses the deploy', () => {
+      beforeEach(() => {
+        deployOutfits.mockRejectedValue(new Error('failed to deploy'))
+      })
+
+      it('should end the busy state after telling the page the save failed', async () => {
+        const { request, sent } = await bridge()
+        await request({ kind: 'saveOutfit', slot: 1 })
+        expect(sent.slice(-2)).toEqual([
+          { kind: 'outfitSaveFailed', slot: 1, action: 'save', message: 'Error: failed to deploy' },
+          { kind: 'outfitBusy', slot: 1, action: 'save', busy: false }
+        ])
+      })
+    })
+
+    describe('and taking the picture fails', () => {
+      beforeEach(() => {
+        captureAvatarThumbnail.mockRejectedValue(new Error('no frame'))
+      })
+
+      it('should end the busy state', async () => {
+        const { request, sent } = await bridge()
+        await expect(request({ kind: 'saveOutfit', slot: 1 })).rejects.toThrow('no frame')
+        expect(sent).toEqual([
+          { kind: 'outfitBusy', slot: 1, action: 'save', busy: true },
+          { kind: 'outfitBusy', slot: 1, action: 'save', busy: false }
+        ])
+      })
+    })
+  })
+
+  describe('when an outfit is saved with no player', () => {
+    it('should end the busy state it started', async () => {
+      const { request, sent } = await bridge()
+      await request({ kind: 'saveOutfit', slot: 1 })
+      expect(sent).toEqual([
+        { kind: 'outfitBusy', slot: 1, action: 'save', busy: true },
+        { kind: 'outfitBusy', slot: 1, action: 'save', busy: false }
+      ])
+    })
+  })
+
+  describe('when the player deletes an outfit', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+    })
+
+    it('should tell the page the slot is busy until the outfits are shown', async () => {
+      const { request, sent } = await bridge()
+      await request({ kind: 'deleteOutfit', slot: 0 })
+      expect(sent).toEqual([
+        { kind: 'outfitBusy', slot: 0, action: 'delete', busy: true },
+        { kind: 'outfits', metadata: { outfits: [], namesForExtraSlots: [] } },
+        { kind: 'outfitBusy', slot: 0, action: 'delete', busy: false }
+      ])
+    })
+  })
+
+  describe('when the player equips an outfit', () => {
+    beforeEach(() => {
+      player = { userId: '0xA', isGuest: false }
+      look = { bodyShape: FEMALE, wearables: ['urn:old'], forceRender: [] } as unknown as AvatarLook
+    })
+
+    it('should end the busy state before waiting to picture the outfit', async () => {
+      const { request, sent } = await bridge()
+      let toldBeforeWaiting: SceneToPage[] = []
+      waitFrames.mockImplementationOnce(async () => {
+        toldBeforeWaiting = [...sent]
+      })
+      await request({ kind: 'equipOutfit', slot: 0 })
+      expect(toldBeforeWaiting).toEqual([
+        { kind: 'outfitBusy', slot: 0, action: 'equip', busy: true },
+        { kind: 'outfitBusy', slot: 0, action: 'equip', busy: false }
+      ])
+    })
+
+    describe('and the slot holds no outfit', () => {
+      it('should end the busy state it started', async () => {
+        const { request, sent } = await bridge()
+        await request({ kind: 'equipOutfit', slot: 3 })
+        expect(editLook).not.toHaveBeenCalled()
+        expect(sent).toEqual([
+          { kind: 'outfitBusy', slot: 3, action: 'equip', busy: true },
+          { kind: 'outfitBusy', slot: 3, action: 'equip', busy: false }
+        ])
+      })
     })
   })
 })

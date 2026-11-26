@@ -66,23 +66,23 @@ pub struct HoldingsContracts {
 impl HoldingsContracts {
     /// `ETH_NETWORK`'s contracts: mainnet with Polygon, sepolia with Amoy.
     pub fn for_network(network: &str) -> Option<Self> {
-        match network.trim() {
-            "mainnet" => Some(Self {
+        use crate::shared::network::ChainPair;
+        Some(match ChainPair::from_eth_network(network)? {
+            ChainPair::Mainnet => Self {
                 registrar: address!("2a187453064356c898cae034eaed119e1663acb8"),
                 land: address!("f87e31492faf9a91b02ee0deaad50d51d56d5d4d"),
                 estate: address!("959e104e1a4db6317fa58f8295f586e1a978c297"),
                 l1_mana: address!("0f5d2fb29fb7d3cfee444a200298f468908cc942"),
                 l2_mana: address!("a1c57f48f0deb89f569dfbe6e2b7f46d33606fd4"),
-            }),
-            "sepolia" => Some(Self {
+            },
+            ChainPair::Testnet => Self {
                 registrar: address!("7518456ae93eb98f3e64571b689c626616bb7f30"),
                 land: address!("42f4ba48791e2de32f5fbf553441c2672864bb33"),
                 estate: address!("369a7fbe718c870c79f99fb423882e8dd8b20486"),
                 l1_mana: address!("fa04d2e2ba9aec166c93dfeeba7427b2303befa9"),
                 l2_mana: address!("7ad72b9f944ea9793cf4055d88f81138cc2c63a0"),
-            }),
-            _ => None,
-        }
+            },
+        })
     }
 }
 
@@ -668,5 +668,6 @@ mod tests {
         assert!(!configured(http(), rpc, rpc, "goerli").is_limited());
         assert!(configured(http(), rpc, rpc, "sepolia").is_limited());
         assert!(configured(http(), rpc, rpc, "mainnet").is_limited());
+        assert!(configured(http(), rpc, rpc, "Ethereum").is_limited());
     }
 }

@@ -119,6 +119,7 @@ Status values:
 | Communities `social-api` (`/v1/communities`), thumbnails from `assets-cdn`. `COMMUNITIES_UPSTREAM_URL`, `COMMUNITIES_MIRROR_THUMBNAIL_URL`, and the `catalyst communities mirror` CLI defaults (`src/main.rs`). Off in dev. Status: mirror | `services/catalyst/social/src/communities/mirror.rs` | `@decentraland/apis` | No target yet |
 | Denylists `asset-bundle-registry` (`/denylist`, every 120 s) and `config` (`/denylist.json`). `DENYLIST_URLS`, `EXPLORER_DENYLIST_SOURCE_URL`, `DENY_LIST_URL` (comms; not set in dev). Status: mirror | `content/src/denylist.rs`, `explore/src/api/denylist.rs`, `comms/src/archipelago/mod.rs` | `@decentraland/apis` | No target yet |
 | Explorer lists and flags: `dcl-lists` (`/pois`, `/banned-names`), `feature-flags` (`/explorer.json`). `EXPLORER_LISTS_SOURCE_URL`, `EXPLORER_FEATURE_FLAGS_SOURCE_URL`. Status: mirror | `explore/src/api/lists.rs`, `explore/src/api/feature_flags.rs` | `@decentraland/apis` | No target yet |
+| Event Foundation names `feature-flags` (`/events.json`, every five minutes, Referer `https://decentraland.org`, optional `X-Address-Hash` from `EVENTS_FEATURE_FLAGS_USER_ID`). `EVENTS_FEATURE_FLAGS_URL`, independent of `EXPLORER_MIRRORS_ENABLED`. Status: mirror | `explore/src/api/feature_flags.rs` (`refresh_events`), `explore/src/events/foundation.rs` | `@decentraland/apis` | No target yet |
 | Asset-bundle registry `asset-bundle-registry` (`/entities/{active,versions,status}`, `/worlds/{name}/manifest`, `/queues/status`). `EXPLORER_REGISTRY_SOURCE_URL`. Status: mirror | `explore/src/api/registry.rs` | `@decentraland/apis` | The local abgen runtime with native Registry state ([registry ADR](adr/2026-11-09-registry-local-catalyst.md)) |
 | Asset-bundle CDN `ab-cdn` (`/{key}`). `ABGEN_UPSTREAM_AB_CDN`. Status: mirror | `explore/src/api/ab_cdn.rs` | `@decentraland/apis` | Empty: every object comes from this node's cache and abgen (`config/src/explore.rs`) |
 | Imposter CDN `bevy-imposters.dclregenesislabs.xyz` (`/imposters/realms/{realm}/{level}/{x},{y}.{crc}.zip`). `BVIMPOSTERS_UPSTREAM_URL`, `BVIMPOSTERS_UPSTREAM_REALM`. Status: mirror | `explore/src/imposters/mod.rs` | `@decentraland/apis` | Temporary. Removed once bake-on-miss (`BVIMPOSTERS_BAKE_ENABLED`) runs with the `impost` renderer shipped in the node (#1711) |
@@ -245,12 +246,18 @@ nix develop --command bash tooling/dev-smoke.sh
 nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL only
 ```
 
+Run both in a fresh checkout. `python3 tooling/ci-local.py run [REV]` checks a commit
+(default `HEAD`) locally, with the checks its changes since `origin/main` select (images
+need Linux or `CI_LOCAL_IMAGES=1`).
+
 CI runs the Rust suites in `nix develop .#ci`: the toolchain, the services the tests
 start and the build tools, without the web and media tools.
 
 The `tooling/tests` suite runs in its own job, Tooling tests, beside smoke. It needs
 only the dev shell: its PostgreSQL tests start their own clusters with the shell's
-binaries. It includes the workflow tests, so the CI gate requires it.
+binaries. It includes the workflow tests, so the CI gate requires it. The Changes job
+also runs some of them on every pull request, because they read files outside the path
+list of `development.yml`.
 
 The Rust job sets `FOUNDATION_DEV_DISPOSABLE_POSTGRES=1`. A cluster that
 `foundation-dev` initializes with it set runs without durability (`fsync`,
@@ -259,9 +266,6 @@ every scratch database a test drops forces a checkpoint. The flag has no effect
 on a cluster created without it, so it never weakens a stack that holds data.
 Locally, set it only for a checkout whose `.cache/dev/postgres` does not exist yet.
 
-Run both in a fresh checkout. `python3 tooling/ci-local.py install` adds hooks
-that run the matching workflows' checks (images need Linux or
-`CI_LOCAL_IMAGES=1`); `ci-local.py run [REV]` runs them without pushing.
 The Rust tests run in three jobs that each compile the tests and run a third of
 the test executables; on PRs they run on Linux (`CATALYST_TEST_SHARD=i/n` for
 `tooling/catalyst-test.sh`). The provisioned Archipelago tests take a fixed
@@ -370,7 +374,7 @@ policy (`library/ui/figma/test/workflows.test.ts`).
 | `RUNNER_LINUX_X86_UBUNTU_22_04_16CORE` | `ubuntu-22.04-16core` | 1 | bevy-explorer-ci |
 | `RUNNER_LINUX_X86_UBUNTU_24_04` | `ubuntu-24.04` | 5 | bevy-explorer-ci, bevy-explorer-scenes, creator-hub-e2e, uuav-native, uuav-verify |
 | `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` | `ubuntu-24.04-16core` | 3 | bevy-explorer-ci (3) |
-| `RUNNER_LINUX_X86` | `ubuntu-26.04` | 48 | apis-sites-compile (2), apis-sites-images (4), bevy-explorer-benchmark (2), bevy-explorer-ci (4), bevy-explorer-ci-status (3), bevy-explorer-e2e, bevy-explorer-headless, bevy-explorer-images (2), bevy-explorer-scenes, creator-hub-asset-packs (2), creator-hub-build, creator-hub-ci (2), creator-hub-inspector, creator-hub-lint, creator-hub-tests, creator-hub-typechecking, development (6), gateway-images, protocol, sdk (2), social-captures, social-voice-release, structure (2), ui-library (2), uuav-native (2), uuav-verify |
+| `RUNNER_LINUX_X86` | `ubuntu-26.04` | 49 | apis-sites-compile (2), apis-sites-images (4), bevy-explorer-benchmark (2), bevy-explorer-ci (4), bevy-explorer-ci-status (3), bevy-explorer-e2e, bevy-explorer-headless, bevy-explorer-images (2), bevy-explorer-scenes, creator-hub-asset-packs (2), creator-hub-build, creator-hub-ci (2), creator-hub-inspector, creator-hub-lint, creator-hub-tests, creator-hub-typechecking, development (6), gateway-images, protocol, sdk (2), sdk-release (1), social-captures, social-voice-release, structure (2), ui-library (2), uuav-native (2), uuav-verify |
 | `RUNNER_LINUX_ARM` | `ubuntu-26.04-arm` | 4 | apis-sites-compile, apis-sites-images, bevy-explorer-images, gateway-images |
 | `RUNNER_WINDOWS` | `windows-2025` | 3 | bevy-explorer-e2e, uuav-native, uuav-verify |
 | `RUNNER_WINDOWS_16CORE` | `windows-2025-16core` | 2 | bevy-explorer-ci, bevy-explorer-headless-build |

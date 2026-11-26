@@ -1,9 +1,9 @@
 // The map's controls, bottom-left: zoom, centre on the player, centre on home, and the Layers panel.
 
 import { MAX_ZOOM_LEVEL } from '@explorer-core/features/map/mapZoom'
-import { MaskIcon } from '../../design/MaskIcon'
 import { MAP_ICONS } from './mapArt'
 import styles from './MapChrome.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 export function MapToolbar({
   level,
