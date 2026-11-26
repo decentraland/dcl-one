@@ -90,8 +90,8 @@ pub fn wait_bounded(child: &mut Child, limit: Duration) -> Option<ExitStatus> {
 #[allow(unsafe_code, reason = "signals the child through libc")]
 pub fn terminate(child: &mut Child) -> ExitStatus {
     #[cfg(unix)]
+    // SAFETY: kill(2) takes plain integers and reads no memory of ours.
     unsafe {
-        // SAFETY: kill(2) takes plain integers and reads no memory of ours.
         libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
     }
     if let Some(status) = wait_bounded(child, Duration::from_secs(15)) {

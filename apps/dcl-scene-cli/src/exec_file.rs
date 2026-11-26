@@ -53,6 +53,7 @@ fn with_new_file<T: Send>(
 /// what it opens from then on is never copied into a child another thread
 /// forks, and it holds nothing else the process has open.
 #[cfg(target_os = "linux")]
+#[allow(unsafe_code, reason = "close_range and unshare have no std wrapper")]
 pub(crate) fn private_descriptor_table() {
     // close_range(3, ~0, CLOSE_RANGE_UNSHARE), Linux 5.9.
     // SAFETY: plain syscalls on the calling thread's own descriptor table.
@@ -112,6 +113,7 @@ pub(crate) struct Parked {
 }
 
 #[cfg(all(test, target_os = "linux"))]
+#[allow(unsafe_code, reason = "forks a child parked on a pipe")]
 impl Parked {
     pub(crate) fn fork() -> Self {
         let mut pipe = [0; 2];
@@ -125,6 +127,7 @@ impl Parked {
         if pid == 0 {
             // Its own copy of the write end goes, so the parent closing its
             // copy (or dying) is an end of file here.
+            // SAFETY: the forked child makes only async-signal-safe calls on its own descriptors.
             unsafe {
                 libc::close(pipe[1]);
                 let mut byte = 0u8;
@@ -143,6 +146,7 @@ impl Parked {
 }
 
 #[cfg(all(test, target_os = "linux"))]
+#[allow(unsafe_code, reason = "releases and reaps the parked child")]
 impl Drop for Parked {
     fn drop(&mut self) {
         // SAFETY: the parent's write end and the child it forked.
