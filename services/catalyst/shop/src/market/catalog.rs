@@ -567,7 +567,7 @@ fn nft_trade_backed_sql(now_p: &str, token_num: &str, eth: i64, matic: i64) -> S
     } else {
         LAND_MAINNET
     };
-    let nft_ready = super::chain_walk::published_sql_on("c", now_p, eth, matic);
+    let nft_ready = crate::chain_index::catalogue::published_sql_on("c", now_p, eth, matic);
     format!(
         "(sent.asset_type = 3 AND {token_num} IS NOT NULL
           AND NOT EXISTS (

@@ -107,7 +107,7 @@ pub(super) async fn require_sepolia_listings(
     let sql = format!("SELECT EXISTS(SELECT 1 FROM shop.chain_cursor c
         JOIN shop.worker_progress p ON p.worker='rental_listing_generation' AND p.scope=$2 AND p.position=c.owner_generation
         WHERE c.indexer=$3 AND c.network='ethereum' AND {})",
-        super::chain_walk::published_sql_on("c","$1",chain.id(),super::chain_walk::ChainNet::Matic.testnet_chain_id()));
+        crate::chain_index::catalogue::published_sql_on("c","$1",chain.id(),super::chain_walk::ChainNet::Matic.testnet_chain_id()));
     let ready: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(chrono::Utc::now().naive_utc())
         .bind(chain.id())

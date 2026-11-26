@@ -2,10 +2,10 @@
 // field is read-only and carries its name.
 
 import type { CategoryKey, NavmapSnapshot } from '@explorer-core/features/map/navmap'
-import { MaskIcon } from '../../../design/MaskIcon'
 import { isCancelKey } from '../../../lib/bindingLabels'
 import { CAT_ICONS, PANEL_ART } from '../mapArt'
 import styles from './MapPanel.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 const MAX_LENGTH = 40
 

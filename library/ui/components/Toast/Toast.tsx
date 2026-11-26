@@ -31,6 +31,13 @@ export type ToastProps = Omit<HTMLAttributes<HTMLDivElement>, 'role' | 'children
   action?: ReactNode
   /** `viewport` (default) fixes the toast at the bottom of the window; `inline` leaves it in the flow. */
   placement?: 'viewport' | 'inline'
+  /** A leading visual, such as a profile picture. It replaces the variant's mark. */
+  icon?: ReactNode
+  /**
+   * Not in Figma. `hud` is the Explorer HUD's notice: a borderless dark card with 14px text and no mark, where
+   * `error` adds a ruby outline and only a toast with an action or a close button takes the pointer.
+   */
+  appearance?: 'default' | 'hud'
 }
 
 /**
@@ -49,6 +56,8 @@ export function Toast({
   closeLabel = 'Close',
   action,
   placement = 'viewport',
+  icon,
+  appearance = 'default',
   className,
   ...rest
 }: ToastProps) {
@@ -84,16 +93,18 @@ export function Toast({
         <div
           className={styles.toast}
           data-variant={variant}
+          data-appearance={appearance === 'hud' ? 'hud' : undefined}
           data-rich={closeButton || action ? true : undefined}
           onPointerEnter={hold(true)}
           onPointerLeave={hold(false)}
           onFocus={hold(true)}
           onBlur={hold(false)}
         >
-          {variant === 'confirmation' && (
+          {icon}
+          {icon == null && appearance !== 'hud' && variant === 'confirmation' && (
             <GeneralCheck className={styles.icon} size={24} aria-hidden="true" focusable="false" />
           )}
-          {variant === 'error' && (
+          {icon == null && appearance !== 'hud' && variant === 'error' && (
             <GeneralWarning className={styles.icon} size={24} aria-hidden="true" focusable="false" />
           )}
           <span className={styles.message}>{children}</span>

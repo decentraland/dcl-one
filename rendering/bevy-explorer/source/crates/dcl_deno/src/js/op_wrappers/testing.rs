@@ -1,8 +1,10 @@
+use crate::js::errors::OpError;
+use crate::js::plain::JsPlain;
 use dcl_js::testing::{
     SceneTestPlan, SceneTestResult, TakeAndCompareSnapshotResponse,
     TestingScreenshotComparisonMethodRequest,
 };
-use deno_core::{error::AnyError, op2, OpDecl, OpState};
+use deno_core::{op2, OpDecl, OpState};
 
 #[derive(Default)]
 pub struct TestPlan {
@@ -25,17 +27,16 @@ fn op_testing_enabled(op_state: &mut OpState) -> bool {
 }
 
 #[op2]
-fn op_log_test_plan(state: &mut OpState, #[serde] body: SceneTestPlan) -> Result<(), AnyError> {
-    dcl_js::testing::op_log_test_plan(state, body)
+fn op_log_test_plan(state: &mut OpState, #[serde] body: SceneTestPlan) -> Result<(), OpError> {
+    Ok(dcl_js::testing::op_log_test_plan(state, body)?)
 }
 
 #[op2]
-fn op_log_test_result(state: &mut OpState, #[serde] body: SceneTestResult) -> Result<(), AnyError> {
-    dcl_js::testing::op_log_test_result(state, body)
+fn op_log_test_result(state: &mut OpState, #[serde] body: SceneTestResult) -> Result<(), OpError> {
+    Ok(dcl_js::testing::op_log_test_result(state, body)?)
 }
 
 #[op2]
-#[serde]
 fn op_take_and_compare_snapshot(
     state: &mut OpState,
     #[string] name: String,
@@ -43,13 +44,13 @@ fn op_take_and_compare_snapshot(
     #[serde] camera_target: (f32, f32, f32),
     #[serde] snapshot_size: (u32, u32),
     #[serde] method: TestingScreenshotComparisonMethodRequest,
-) -> Result<TakeAndCompareSnapshotResponse, AnyError> {
-    dcl_js::testing::op_take_and_compare_snapshot(
+) -> Result<JsPlain<TakeAndCompareSnapshotResponse>, OpError> {
+    Ok(JsPlain(dcl_js::testing::op_take_and_compare_snapshot(
         state,
         name,
         camera_position,
         camera_target,
         snapshot_size,
         method,
-    )
+    )?))
 }
