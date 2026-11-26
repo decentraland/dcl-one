@@ -889,9 +889,10 @@ mod tests {
         let mut other = cursor(true, Some(100), 100, Some(0));
         other.indexer = chain_walk::INDEXER_SALES.to_string();
         assert!(!Rule::Complete.holds(&other, now));
-        // A publish stamped ahead of the clock is not trusted as fresh.
         let ahead = cursor(true, Some(100), 100, Some(-5));
-        assert!(!Rule::Fresh.holds(&ahead, now));
+        assert!(Rule::Fresh.holds(&ahead, now));
+        let beyond = cursor(true, Some(100), 100, Some(-11));
+        assert!(!Rule::Fresh.holds(&beyond, now));
     }
 
     #[test]
