@@ -638,7 +638,7 @@ async fn cached_world_retries_a_lagging_places_match_without_waiting() {
         )
         .await
         .unwrap(),
-        [cid.clone()]
+        std::slice::from_ref(&cid)
     );
 
     let second = Arc::new(Gate::default());

@@ -1045,12 +1045,12 @@ async fn an_unchanged_mirror_retries_places_after_a_failed_lookup_and_restart() 
     let ctx = node.ctx().await;
     assert_eq!(node.pass(&ctx).await.scenes.synced, 1);
     assert!(fake.state.lock().places_offsets.is_empty());
-    assert_eq!(pending().await, [cid.clone()]);
+    assert_eq!(pending().await, std::slice::from_ref(&cid));
 
     fake.state.lock().places_status = Some(StatusCode::SERVICE_UNAVAILABLE);
     node.settings = node.settings.clone().with_places_source(&fake.base);
     assert_eq!(node.pass(&ctx).await.scenes.unchanged, 1);
-    assert_eq!(pending().await, [cid.clone()]);
+    assert_eq!(pending().await, std::slice::from_ref(&cid));
     let internal = identities(&scratch.pool, world).await;
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
 
