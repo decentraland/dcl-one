@@ -37,6 +37,7 @@
 - [Explorer patched sources published by CI](adr/2026-11-17-explorer-patched-sources-published-by-ci.md)
 - [Community chat message router](adr/2026-11-18-community-chat-message-router.md)
 - [World presence counts as online](adr/2026-11-21-world-presence-counts-as-online.md)
+- [Worlds mirror: last deploy wins](adr/2026-11-23-worlds-mirror-last-deploy-wins.md)
 - [Explorer avatar spring bones (proposed)](adr/2026-11-16-explorer-avatar-spring-bones.md)
 - [Dormant schema release definitions (proposed)](adr/2026-11-04-dormant-schema-release-definitions.md)
 - [Referral trusted proxy ingress (proposed)](adr/2026-11-04-referral-trusted-proxy-ingress.md)

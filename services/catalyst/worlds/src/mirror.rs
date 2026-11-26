@@ -27,12 +27,30 @@
 //! Resumable: the scenes walk persists its cursor (the last world name
 //! completed) after every batch in `worlds.mirror_passes`, so a restart
 //! continues there; a pass is complete when the cursor is cleared and
-//! `pass_completed_at` stamped with the pass counts. Local authority: a world
-//! holding a scene with `mirror_source IS NULL` (a local publish) is refused,
-//! never overwritten (the write re-checks under the world row's lock, so a
-//! publish landing mid-download wins too), and only scenes the mirror wrote
-//! are ever retired: those of a refused world at once, since the mirror never
-//! refreshes them again.
+//! `pass_completed_at` stamped with the pass counts. Last deploy wins: a world
+//! holding a scene with `mirror_source IS NULL` (a local publish) is mirrored
+//! only when the upstream's newest scene is newer than the newest local one,
+//! the whole world compared. A deployment counts at its entity timestamp, never
+//! later than its write (the local row's update, the upstream's listed deploy
+//! time) nor than now, and a tie goes to the byte-wise greater entity id; the
+//! same entity on both sides keeps the world local, as does an upstream scene
+//! listed without a deploy time, a blocked world and one with a publish queued
+//! for forwarding to this source. A scene with a matching accepted receipt leaves
+//! both sides of the timestamp comparison, so it cannot retire another local scene. When no other local scene stands, the pass converts
+//! a listed accepted scene to a mirror row in place and retires one whose absence
+//! the source confirms. This includes a world removed before its first catalogue
+//! entry. A handed-over scene keeps its identity and storage and loses local host
+//! authority, collaborator and log eligibility, and its local quota charge. A newer upstream otherwise
+//! takes the world as a newer publish takes a mirrored one: every local scene
+//! not listed is retired (`worlds.retired_world_scenes`, its place identity kept only by
+//! an upstream scene covering its whole footprint) and the world row is marked
+//! mirrored, in the transaction that
+//! writes the upstream's scenes. Otherwise the world is refused and only the
+//! scenes the mirror wrote there are retired, since it never refreshes them
+//! again. The listing's timestamps spare a refused world every download; the
+//! write decides again on the fetched entities under the world row's lock, so
+//! a publish landing mid-download is compared too. A read-through
+//! ([`mirror_one`]) never replaces a local publish.
 //!
 //! A read-through fill ([`mirror_one`]) takes the same path with [`Verify`]: it takes each
 //! scene's deployment auth chain from its row of that listing (the chain at most
@@ -131,6 +149,7 @@ pub struct CatalogueOutcome {
     pub listed: usize,
     pub unlisted: usize,
     pub complete: bool,
+    pub at_page_limit: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -140,6 +159,11 @@ pub struct ScenesOutcome {
     pub synced: usize,
     pub unchanged: usize,
     pub refused: usize,
+    /// Local scenes retired after replacement or confirmed upstream removal.
+    pub superseded_local: u64,
+    /// Local scenes handed over to the mirror: published here, accepted by the upstream and
+    /// listed by it.
+    pub handed_over: u64,
     pub skipped: usize,
     pub failed: usize,
     pub retired_scenes: u64,
@@ -183,7 +207,7 @@ pub async fn run_pass(
             },
         });
     }
-    let scenes = match scenes_pass(client, pool, storage, settings, owners, ctx).await {
+    let scenes = match scenes_pass(client, pool, storage, settings, owners, ctx, &catalogue).await {
         Ok(out) => out,
         Err(e) => {
             record_error(pool, "scenes", &settings.source, &format!("{e:#}")).await?;
@@ -210,18 +234,25 @@ async fn record_error(pool: &PgPool, mirror: &str, source: &str, error: &str) ->
 }
 
 /// A world this run did not mirror is not automatically a failure: refusing
-/// to overwrite a local publish is the mirror working, an unreachable
+/// to overwrite a newer local publish is the mirror working, an unreachable
 /// upstream is the mirror broken. A refusal counts the mirrored scenes it
 /// retired from beside the local publish.
 enum Outcome {
     Synced {
         scenes: usize,
         new_blobs: usize,
+        /// Local scenes retired after replacement or confirmed upstream removal.
+        superseded: u64,
+        /// Local scenes the upstream accepted from this node and lists, now mirrored rows.
+        handed_over: u64,
+        retired_mirrored: u64,
     },
     Unchanged,
-    /// A local publish, or on a read-through a local or blocked world.
+    /// A local publish the upstream did not outdate, or on a read-through any local publish
+    /// or a blocked world.
     RefusedLocalPublish {
-        retired: u64,
+        retired_mirrored: u64,
+        superseded: u64,
     },
     NothingUpstream(&'static str),
 }
@@ -233,6 +264,7 @@ async fn scenes_pass(
     settings: &MirrorSettings,
     owners: Option<Arc<Policy>>,
     ctx: &JobContext,
+    catalogue: &CatalogueOutcome,
 ) -> Result<ScenesOutcome> {
     let mut out = ScenesOutcome::default();
 
@@ -269,18 +301,23 @@ async fn scenes_pass(
             .bind(&settings.source)
             .execute(pool)
             .await?;
-            out.retired_scenes = retire_unlisted(pool).await?;
             String::new()
         }
     };
 
-    let total: i64 = due_total(pool, settings).await?;
+    // Bounded passes mirror only the first configured catalogue names.
+    let uncatalogued = if settings.limit.is_none() {
+        uncatalogued_worlds(pool, settings).await?
+    } else {
+        Vec::new()
+    };
+    let total = due_total(pool, settings).await? + uncatalogued.len() as i64;
     loop {
         if ctx.is_cancelled() {
             out.interrupted = true;
             break;
         }
-        let batch = due_batch(pool, settings, &cursor).await?;
+        let batch = due_batch(pool, settings, &cursor, &uncatalogued).await?;
         if batch.is_empty() {
             break;
         }
@@ -297,7 +334,14 @@ async fn scenes_pass(
                 settings.clone(),
                 owners.clone(),
             );
-            let (name, scene_ids) = (name.clone(), scene_ids.clone());
+            let name = name.clone();
+            // At the page ceiling, only a current per-world listing can confirm a
+            // held scene set. The retained catalogue may contain stale scene IDs.
+            let scene_ids = if catalogue.at_page_limit {
+                Vec::new()
+            } else {
+                scene_ids.clone()
+            };
             set.spawn(async move {
                 let result = mirror_world(
                     &client,
@@ -332,21 +376,40 @@ async fn scenes_pass(
         for (name, result) in results {
             out.processed += 1;
             match result {
-                Ok(Outcome::Synced { scenes, new_blobs }) => {
+                Ok(Outcome::Synced {
+                    scenes,
+                    new_blobs,
+                    superseded,
+                    handed_over,
+                    retired_mirrored,
+                }) => {
                     out.synced += 1;
                     out.scenes += scenes;
                     out.new_blobs += new_blobs;
+                    out.superseded_local += superseded;
+                    out.retired_scenes += retired_mirrored;
+                    out.handed_over += handed_over;
+                    if handed_over > 0 {
+                        tracing::info!(world = %name, handed_over, "the upstream holds this node's forwarded publish: the world follows the upstream");
+                    }
+                    if superseded > 0 {
+                        tracing::info!(world = %name, superseded, "retired local scenes after upstream reconciliation");
+                    }
                     mark_world(pool, &name, None).await?;
                 }
                 Ok(Outcome::Unchanged) => {
                     out.unchanged += 1;
                     mark_world(pool, &name, None).await?;
                 }
-                Ok(Outcome::RefusedLocalPublish { retired }) => {
+                Ok(Outcome::RefusedLocalPublish {
+                    retired_mirrored,
+                    superseded,
+                }) => {
                     out.refused += 1;
-                    out.retired_scenes += retired;
-                    tracing::warn!(world = %name, "refused: published to this node; the mirror never replaces a local publish");
-                    mark_world(pool, &name, Some("published locally; not mirrored")).await?;
+                    out.retired_scenes += retired_mirrored;
+                    out.superseded_local += superseded;
+                    tracing::info!(world = %name, "refused: a scene published to this node stands (newer than the upstream's, being forwarded, or the world is blocked)");
+                    mark_world(pool, &name, Some("a local publish stands; not mirrored")).await?;
                 }
                 Ok(Outcome::NothingUpstream(why)) => {
                     out.skipped += 1;
@@ -389,6 +452,9 @@ async fn scenes_pass(
         super::index::invalidate_index_memo();
     }
     if !out.interrupted {
+        if catalogue.complete {
+            prune_unlisted_catalogue(pool).await?;
+        }
         out.complete = true;
         sqlx::query(
             r#"UPDATE worlds.mirror_passes
@@ -402,8 +468,14 @@ async fn scenes_pass(
         .execute(pool)
         .await?;
         ctx.progress(format!(
-            "scenes pass complete: {} worlds, {} synced, {} unchanged, {} refused, {} failed",
-            out.processed, out.synced, out.unchanged, out.refused, out.failed
+            "scenes pass complete: {} worlds, {} synced, {} unchanged, {} refused, {} failed, {} local scenes superseded, {} handed over",
+            out.processed,
+            out.synced,
+            out.unchanged,
+            out.refused,
+            out.failed,
+            out.superseded_local,
+            out.handed_over
         ));
     } else {
         tracing::info!(
@@ -806,32 +878,59 @@ mod tests {
             return;
         };
         let prefix = format!("batch-{}", uuid::Uuid::new_v4().simple());
-        let names: Vec<String> = (0..6).map(|n| format!("{prefix}-{n}.eth")).collect();
+        let names: Vec<String> = [0, 2, 4, 6, 8, 9]
+            .into_iter()
+            .map(|n| format!("{prefix}-{n}.eth"))
+            .collect();
         sqlx::query("INSERT INTO worlds.remote_worlds (world_name,source,scene_ids) SELECT name,'https://up.example',ARRAY['scene'] FROM unnest($1::text[]) name")
             .bind(&names).execute(&pool).await.unwrap();
         let mut settings = MirrorSettings::for_tests("https://up.example");
         settings.names = names.clone();
         settings.concurrency = 2;
-        let rows = due_batch(&pool, &settings, &names[3]).await.unwrap();
+        let rows = due_batch(&pool, &settings, &names[3], &[]).await.unwrap();
         assert_eq!(
             rows.iter().map(|r| &r.0).collect::<Vec<_>>(),
             vec![&names[4], &names[5]]
         );
         settings.limit = Some(3);
         assert!(
-            due_batch(&pool, &settings, &names[3])
+            due_batch(&pool, &settings, &names[3], &[])
                 .await
                 .unwrap()
                 .is_empty()
         );
         assert_eq!(
-            due_batch(&pool, &settings, &names[1]).await.unwrap()[0].0,
+            due_batch(&pool, &settings, &names[1], &[]).await.unwrap()[0].0,
             names[2]
         );
+        let uncatalogued = [format!("{prefix}-3.eth")];
+        settings.names.push(uncatalogued[0].clone());
+        assert_eq!(
+            due_batch(&pool, &settings, &names[1], &uncatalogued)
+                .await
+                .unwrap(),
+            vec![(names[2].clone(), vec!["scene".into()])]
+        );
         settings.limit = None;
+        assert_eq!(
+            due_batch(&pool, &settings, &names[1], &uncatalogued)
+                .await
+                .unwrap(),
+            vec![
+                (uncatalogued[0].clone(), Vec::new()),
+                (names[2].clone(), vec!["scene".into()]),
+            ]
+        );
+        assert_eq!(
+            due_batch(&pool, &settings, &uncatalogued[0], &uncatalogued)
+                .await
+                .unwrap()[0]
+                .0,
+            names[2]
+        );
         settings.names = vec![names[1].clone(), names[4].clone()];
         assert_eq!(
-            due_batch(&pool, &settings, &names[1]).await.unwrap()[0].0,
+            due_batch(&pool, &settings, &names[1], &[]).await.unwrap()[0].0,
             names[4]
         );
         sqlx::query("UPDATE worlds.remote_worlds SET unlisted_at=now() WHERE world_name=$1")
@@ -840,7 +939,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            due_batch(&pool, &settings, &names[1])
+            due_batch(&pool, &settings, &names[1], &[])
                 .await
                 .unwrap()
                 .is_empty()
@@ -853,7 +952,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unlisting_locks_the_world_before_scenes_and_cannot_retire_a_concurrent_publish() {
+    async fn confirmed_retirement_locks_the_world_and_keeps_a_concurrent_publish() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
         };
@@ -871,7 +970,6 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        sqlx::query("INSERT INTO worlds.remote_worlds (world_name,source,scene_ids,unlisted_at) VALUES ($1,'https://up.example',ARRAY['old'],now())").bind(&world).execute(&mut *seed).await.unwrap();
         seed.commit().await.unwrap();
 
         let mut publish = pool.begin().await.unwrap();
@@ -886,7 +984,11 @@ mod tests {
             .unwrap();
         let retiring = tokio::spawn({
             let pool = pool.clone();
-            async move { retire_unlisted(&pool).await }
+            let world = world.clone();
+            async move {
+                retire_confirmed_empty(&pool, "https://up.example", &world, &[], &["old".into()])
+                    .await
+            }
         });
         // Wait for actual lock contention, not a scheduler sleep that could
         // let either implementation win the race accidentally.
@@ -897,7 +999,7 @@ mod tests {
                 if blocked { break; }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
-        }).await.expect("the unlisting transaction waits for the publisher's world lock");
+        }).await.expect("the verified retirement transaction waits for the publisher's world lock");
         sqlx::query("SET LOCAL lock_timeout='500ms'")
             .execute(&mut *publish)
             .await

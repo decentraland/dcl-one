@@ -1,6 +1,10 @@
 //! Worlds mirror catalogue.
 use super::*;
 
+/// The Worlds Content Server's default and maximum response size for `/index`.
+/// An answer at this ceiling cannot prove catalogue-wide absence.
+const INDEX_PAGE_LIMIT: usize = 10_000;
+
 pub(super) struct CatalogueEntry {
     pub(super) name: String,
     pub(super) scene_ids: Vec<String>,
@@ -68,6 +72,9 @@ pub(super) async fn catalogue_pass(
         .await
         .with_context(|| format!("reading {url}"))?;
     let index: Value = serde_json::from_slice(&body).with_context(|| format!("parsing {url}"))?;
+    // Count wire rows before dropping duplicates or entries without usable scenes.
+    let wire_rows = index["data"].as_array().map_or(0, Vec::len);
+    let at_page_limit = wire_rows >= INDEX_PAGE_LIMIT;
     let entries = parse_index(&index);
     if entries.is_empty() {
         bail!("{url} lists no world with scenes; refusing to treat an empty catalogue as complete");
@@ -111,7 +118,21 @@ pub(super) async fn catalogue_pass(
     .fetch_one(&mut *tx)
     .await?;
     let fuse = SWEEP_FUSE_MIN_CANDIDATES.max(previously_listed / 5);
-    let (unlisted, complete, error) = if candidates > fuse {
+    let (unlisted, complete, error) = if at_page_limit {
+        tracing::warn!(
+            wire_rows,
+            candidates,
+            page_limit = INDEX_PAGE_LIMIT,
+            "upstream catalogue reached its page limit; skipping retirement based on index absence"
+        );
+        (
+            0,
+            false,
+            Some(format!(
+                "upstream catalogue returned {wire_rows} rows (page limit {INDEX_PAGE_LIMIT}); index-based retirement skipped"
+            )),
+        )
+    } else if candidates > fuse {
         tracing::warn!(
             candidates,
             previously_listed,
@@ -140,6 +161,7 @@ pub(super) async fn catalogue_pass(
         listed: entries.len(),
         unlisted,
         complete,
+        at_page_limit,
     };
     sqlx::query(
         r#"INSERT INTO worlds.mirror_passes
@@ -172,6 +194,33 @@ pub(super) async fn catalogue_pass(
     Ok(outcome)
 }
 
+/// Revisit worlds missing from the index while this source holds a local receipt or a mirrored scene.
+pub(super) async fn uncatalogued_worlds(
+    pool: &PgPool,
+    settings: &MirrorSettings,
+) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar(
+        r#"SELECT candidate.world_name FROM (
+               SELECT o.world_name FROM worlds.forward_outbox o
+               JOIN worlds.world_scenes s USING (world_name, entity_id)
+               WHERE o.target = $1 AND o.status = 'accepted' AND s.mirror_source IS NULL
+               UNION
+               SELECT w.name FROM worlds.worlds w WHERE w.mirror_source = $1
+               AND EXISTS (SELECT 1 FROM worlds.world_scenes s
+                           WHERE s.world_name = w.name AND s.mirror_source = $1)
+           ) candidate
+           WHERE (cardinality($2::text[]) = 0 OR candidate.world_name = ANY($2))
+             AND NOT EXISTS (
+                 SELECT 1 FROM worlds.remote_worlds r
+                 WHERE r.world_name = candidate.world_name AND r.unlisted_at IS NULL)
+           ORDER BY candidate.world_name"#,
+    )
+    .bind(&settings.source)
+    .bind(&settings.names)
+    .fetch_all(pool)
+    .await?)
+}
+
 /// The scope of a pass: listed worlds, optionally only `names`, optionally
 /// only the first `limit` in name order (a bounded, restart-stable run).
 pub(super) async fn due_total(pool: &PgPool, settings: &MirrorSettings) -> Result<i64> {
@@ -194,44 +243,45 @@ pub(super) async fn due_batch(
     pool: &PgPool,
     settings: &MirrorSettings,
     cursor: &str,
+    uncatalogued: &[String],
 ) -> Result<Vec<(String, Vec<String>)>> {
-    // An unlimited pass seeks directly from its cursor. A finite pass keeps
-    // the first-N scope before applying the cursor, including on resume.
-    if settings.limit.is_none() {
-        return Ok(sqlx::query_as(
-            r#"SELECT world_name, scene_ids FROM worlds.remote_worlds
+    // An unlimited pass seeks directly from the cursor and merges its candidates
+    // in database name order. A finite pass keeps its first-N catalogue scope.
+    let rows = if let Some(limit) = settings.limit {
+        sqlx::query_as(
+            r#"SELECT world_name, scene_ids FROM (
+                 SELECT world_name, scene_ids FROM worlds.remote_worlds
+                 WHERE unlisted_at IS NULL
+                   AND (cardinality($1::text[]) = 0 OR world_name = ANY($1))
+                 ORDER BY world_name LIMIT $2) catalogue
+               WHERE world_name > $3 ORDER BY world_name LIMIT $4"#,
+        )
+        .bind(&settings.names)
+        .bind(limit as i64)
+        .bind(cursor)
+        .bind(settings.concurrency as i64)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as(
+            r#"(SELECT world_name, scene_ids FROM worlds.remote_worlds
                WHERE unlisted_at IS NULL
                  AND (cardinality($1::text[]) = 0 OR world_name = ANY($1))
                  AND world_name > $2
+               ORDER BY world_name LIMIT $3)
+               UNION ALL
+               SELECT name AS world_name, ARRAY[]::text[] AS scene_ids
+               FROM unnest($4::text[]) AS u(name) WHERE name > $2
                ORDER BY world_name LIMIT $3"#,
         )
         .bind(&settings.names)
         .bind(cursor)
         .bind(settings.concurrency as i64)
+        .bind(uncatalogued)
         .fetch_all(pool)
-        .await?);
-    }
-    let rows = sqlx::query(
-        r#"SELECT world_name, scene_ids FROM (
-             SELECT world_name, scene_ids FROM worlds.remote_worlds
-             WHERE unlisted_at IS NULL
-               AND (cardinality($1::text[]) = 0 OR world_name = ANY($1))
-             ORDER BY world_name
-             LIMIT $2) s
-           WHERE world_name > $3
-           ORDER BY world_name
-           LIMIT $4"#,
-    )
-    .bind(&settings.names)
-    .bind(settings.limit.map(|l| l as i64).unwrap_or(i64::MAX))
-    .bind(cursor)
-    .bind(settings.concurrency as i64)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .iter()
-        .map(|r| (r.get("world_name"), r.get("scene_ids")))
-        .collect())
+        .await?
+    };
+    Ok(rows)
 }
 
 /// The error the last pass stored for a world, if any (`remote_worlds.last_error`).
@@ -258,63 +308,14 @@ pub(super) async fn mark_world(pool: &PgPool, name: &str, error: Option<&str>) -
     Ok(())
 }
 
-/// Retires what the mirror wrote for worlds a complete catalogue pass no
-/// longer lists: their mirrored scenes, their world row when nothing local
-/// remains, and the catalogue row. Local scenes are never touched; blobs
-/// stay in the store (content-addressed, possibly shared).
-pub(super) async fn retire_unlisted(pool: &PgPool) -> Result<u64> {
-    let mut tx = pool.begin().await?;
-    let candidates: Vec<String> = sqlx::query_scalar(
-        "SELECT world_name FROM worlds.remote_worlds WHERE unlisted_at IS NOT NULL",
-    )
-    .fetch_all(&mut *tx)
-    .await?;
-    // Match publish/mirror lock order before touching scenes or shared places.
-    // Freeze the candidate set so a later catalogue change cannot add an
-    // unlocked world to any of the deletes below.
-    let locked: Vec<String> = sqlx::query_scalar(
-        "SELECT name FROM worlds.worlds WHERE name = ANY($1) ORDER BY name FOR UPDATE",
-    )
-    .bind(&candidates)
-    .fetch_all(&mut *tx)
-    .await?;
-    let retired: Vec<String> = sqlx::query_scalar(
-        r#"DELETE FROM worlds.world_scenes s
-           USING worlds.remote_worlds r
-           WHERE r.world_name = ANY($1) AND r.unlisted_at IS NOT NULL AND lower(s.world_name) = r.world_name
-             AND s.mirror_source IS NOT NULL
-           RETURNING lower(s.world_name)"#,
-    )
-    .bind(&locked)
-    .fetch_all(&mut *tx)
-    .await?;
-    let scenes = retired.len() as u64;
-    scene_identity::retire_orphans(&mut tx, &retired).await?;
+/// Drop catalogue bookkeeping once an unlisted world has no mirrored scenes left.
+pub(super) async fn prune_unlisted_catalogue(pool: &PgPool) -> Result<()> {
     sqlx::query(
-        r#"DELETE FROM worlds.worlds w
-           USING worlds.remote_worlds r
-           WHERE r.world_name = ANY($1) AND r.unlisted_at IS NOT NULL AND lower(w.name) = r.world_name
-             AND w.mirror_source IS NOT NULL
-             AND NOT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name)"#,
+        "DELETE FROM worlds.remote_worlds r WHERE r.unlisted_at IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM worlds.world_scenes s
+                           WHERE s.world_name = r.world_name AND s.mirror_source IS NOT NULL)",
     )
-    .bind(&locked)
-    .execute(&mut *tx)
+    .execute(pool)
     .await?;
-    let worlds = sqlx::query(
-        "DELETE FROM worlds.remote_worlds r WHERE world_name = ANY($1) AND unlisted_at IS NOT NULL AND (world_name = ANY($2) OR NOT EXISTS (SELECT 1 FROM worlds.worlds w WHERE w.name = r.world_name))",
-    )
-    .bind(&candidates)
-    .bind(&locked)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    tx.commit().await?;
-    if worlds > 0 {
-        tracing::info!(
-            worlds,
-            scenes,
-            "retired worlds the catalogue no longer lists"
-        );
-    }
-    Ok(scenes)
+    Ok(())
 }

@@ -93,6 +93,7 @@ fn expected_pending_steps() -> Vec<&'static str> {
             "0079_credits_seasonal_visit_goals",
             "0094_shop_historical_holdings",
         ])
+        .chain(["0097_explore_place_removal_live_world"])
         .collect()
 }
 

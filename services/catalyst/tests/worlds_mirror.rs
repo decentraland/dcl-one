@@ -3,8 +3,9 @@
 //! `/world/{name}/permissions`, `/contents/{hash}`) on a scratch database and a
 //! temp blob store: a complete
 //! pass with its marker, the read routes over the mirrored rows, an unchanged
-//! pass making no /about calls, a local publish refused (never overwritten,
-//! also when it lands mid-download), a world unlisted upstream retired, an
+//! pass making no /about calls, a newer local publish refused (never
+//! overwritten, also when it lands mid-download) and an older one replaced by
+//! the upstream's newer deployment (last deploy wins), a world unlisted upstream retired, an
 //! interrupted pass resumed from its persisted cursor, the loop/hash guards,
 //! and the deploy times, signed chains, world settings, thumbnails and access
 //! setting a pass copies, also for a world whose scenes are all held.
@@ -72,6 +73,8 @@ struct Upstream {
     worlds: BTreeMap<String, Vec<Scene>>,
     blobs: HashMap<String, Vec<u8>>,
     about_calls: BTreeMap<String, usize>,
+    index_hidden: Option<String>,
+    index_fill_to: Option<usize>,
     /// Scene base URL override per world (the loop-guard check).
     base_override: HashMap<String, String>,
     /// While set, /about for this world cancels `hold_token` and then waits on `hold`.
@@ -197,10 +200,10 @@ fn set_scenes(state: &mut Upstream, world: &str, scenes: &[SceneSpec]) -> Vec<St
 
 async fn fake_index(State(s): State<(Shared, String)>) -> Json<Value> {
     let st = s.0.lock();
-    let data: Vec<Value> = st
+    let mut data: Vec<Value> = st
         .worlds
         .iter()
-        .filter(|(_, scenes)| !scenes.is_empty())
+        .filter(|(name, scenes)| !scenes.is_empty() && st.index_hidden.as_ref() != Some(*name))
         .map(|(name, scenes)| {
             json!({"name": name, "scenes": scenes.iter().map(|sc| json!({
                 "id": sc.id, "title": sc.entity["metadata"]["display"]["title"],
@@ -208,6 +211,15 @@ async fn fake_index(State(s): State<(Shared, String)>) -> Json<Value> {
             })).collect::<Vec<_>>()})
         })
         .collect();
+    if let Some(limit) = st.index_fill_to {
+        let scenes = data[0]["scenes"].clone();
+        data.extend((data.len()..limit).map(|i| {
+            json!({
+                "name": format!("page-{i}.dcl.eth"),
+                "scenes": scenes,
+            })
+        }));
+    }
     Json(json!({"data": data, "lastUpdated": "2026-09-24T00:00:00.000Z"}))
 }
 
@@ -685,9 +697,9 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
     );
     assert_eq!(node.pass_row("scenes").await.2, 2);
 
-    // 4. A local publish is refused, never overwritten, and stays served; the
-    //    mirrored scene written before it is retired, since the mirror never
-    //    refreshes the world again.
+    // 4. A local publish newer than the upstream's scenes is refused, never
+    //    overwritten, and stays served; the mirrored scene written before it is
+    //    retired, since the mirror does not refresh the world while it stands.
     sqlx::query(
         r#"INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size, mirror_source)
            VALUES ('a.dcl.eth', 'bafkreilocal', '[]', '{"pointers":["9,9"],"metadata":{"scene":{"base":"9,9"}}}', '0xabc', '{9,9}', 1, NULL)"#,
@@ -1197,6 +1209,197 @@ async fn a_catalogue_that_would_unlist_most_of_the_mirror_is_refused() {
         (58, 2, true)
     );
     assert_eq!(summary.scenes.retired_scenes, 2);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// A small catalogue omission cannot revoke a handed-over world's creator state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_index_omission_preserves_creator_state_through_confirmed_retirement() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "indexed-creator-state").await;
+    let world = "retained-creator.dcl.eth";
+    let grant = "0x0000000000000000000000000000000000000160";
+    let community = uuid::Uuid::new_v4();
+    let at = now_ms() - 3_600_000;
+    let scene = {
+        let mut st = fake.state.lock();
+        deploy_upstream(&mut st, "anchor.dcl.eth", "Anchor", &["0,0"], at);
+        deploy_upstream(&mut st, world, "Source title", &["0,0"], at).0
+    };
+    let identity = publish_here(&node.pool, world, &scene, &["0,0"], at).await;
+    forwarded(&node.pool, &fake.base, world, &scene, "accepted").await;
+    sqlx::query(
+        "UPDATE worlds.worlds SET title = 'Creator title', settings_set_here = true,
+           settings_set_by = owner, access_type = 'allow-list', access_set_here = true,
+           access_set_by = owner WHERE name = $1",
+    )
+    .bind(world)
+    .execute(&node.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO worlds.world_permissions (world_name, permission, address)
+           VALUES ($1, 'deployment', $2), ($1, 'streaming', $2)",
+    )
+    .bind(world)
+    .bind(grant)
+    .execute(&node.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO worlds.world_access_communities (world_name, community_id) VALUES ($1, $2)",
+    )
+    .bind(world)
+    .bind(community)
+    .execute(&node.pool)
+    .await
+    .unwrap();
+
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.handed_over, 1);
+    assert_eq!(
+        world_mirror_source(&node.pool, world).await.as_deref(),
+        Some(fake.base.as_str())
+    );
+    fake.state.lock().index_hidden = Some(world.into());
+    let pass = node.pass(&ctx).await;
+    assert!(pass.catalogue.complete);
+    assert_eq!(pass.catalogue.unlisted, 1);
+    assert_eq!(
+        active_identity(&node.pool, world, &scene).await,
+        Some(identity)
+    );
+    assert_eq!(node.scene_rows(world).await.len(), 1);
+
+    {
+        let mut st = fake.state.lock();
+        st.worlds.remove(world);
+        st.scenes_status = Some(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    assert!(node.pass(&ctx).await.scenes.failed > 0);
+    assert!(identity_active(&node.pool, identity).await);
+    fake.state.lock().scenes_status = None;
+
+    assert_eq!(node.pass(&ctx).await.scenes.retired_scenes, 1);
+    assert!(node.scene_rows(world).await.is_empty());
+    assert!(!identity_active(&node.pool, identity).await);
+    assert_eq!(
+        node.get(&format!("/world/{world}/about")).await.0,
+        StatusCode::NOT_FOUND
+    );
+    node.pass(&ctx).await; // A later cleanup must not cascade the creator's state.
+    let (title, access, settings_set_here, access_set_here): (String, String, bool, bool) =
+        sqlx::query_as("SELECT title, access_type, settings_set_here, access_set_here FROM worlds.worlds WHERE name = $1")
+        .bind(world)
+        .fetch_one(&node.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        (title.as_str(), access.as_str()),
+        ("Creator title", "allow-list")
+    );
+    assert!(settings_set_here && access_set_here);
+    let grants: Vec<String> = sqlx::query_scalar(
+        "SELECT permission FROM worlds.world_permissions WHERE world_name = $1 AND address = $2 ORDER BY permission",
+    )
+    .bind(world)
+    .bind(grant)
+    .fetch_all(&node.pool)
+    .await
+    .unwrap();
+    assert_eq!(grants, ["deployment", "streaming"]);
+    let retained_community: uuid::Uuid = sqlx::query_scalar(
+        "SELECT community_id FROM worlds.world_access_communities WHERE world_name = $1",
+    )
+    .bind(world)
+    .fetch_one(&node.pool)
+    .await
+    .unwrap();
+    assert_eq!(retained_community, community);
+    let retained_scene: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM worlds.retired_world_scenes WHERE world_name = $1 AND entity_id = $2)",
+    )
+    .bind(world)
+    .bind(&scene)
+    .fetch_one(&node.pool)
+    .await
+    .unwrap();
+    assert!(retained_scene);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// At the upstream page ceiling, a world omitted from the index can still be active.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_capped_index_preserves_live_omissions_and_still_reconciles_confirmed_removals() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let mut node = Node::new(scratch.pool.clone(), &fake.base, "capped-index").await;
+    let live = "previously-indexed.dcl.eth";
+    let gone = "confirmed-gone.dcl.eth";
+    let added = "newly-indexed.dcl.eth";
+    node.settings.names = ["anchor.dcl.eth", live, gone, added]
+        .map(String::from)
+        .to_vec();
+    let at = now_ms() - 3_600_000;
+    let (live_id, gone_id) = {
+        let mut st = fake.state.lock();
+        deploy_upstream(&mut st, "anchor.dcl.eth", "Anchor", &["0,0"], at);
+        (
+            deploy_upstream(&mut st, live, "Still live", &["0,0"], at).0,
+            deploy_upstream(&mut st, gone, "Will be removed", &["0,0"], at).0,
+        )
+    };
+    for (world, id) in [(live, &live_id), (gone, &gone_id)] {
+        publish_here(&node.pool, world, id, &["0,0"], at).await;
+        forwarded(&node.pool, &fake.base, world, id, "accepted").await;
+    }
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.handed_over, 2);
+    let live_identity = active_identity(&node.pool, live, &live_id).await.unwrap();
+    let gone_identity = active_identity(&node.pool, gone, &gone_id).await.unwrap();
+
+    {
+        let mut st = fake.state.lock();
+        st.index_hidden = Some(live.into());
+        st.index_fill_to = Some(10_000);
+        st.worlds.remove(gone);
+        deploy_upstream(&mut st, added, "New", &["2,2"], at);
+    }
+    let pass = node.pass(&ctx).await;
+    assert_eq!(
+        active_identity(&node.pool, live, &live_id).await,
+        Some(live_identity),
+    );
+    assert_eq!(node.scene_rows(live).await.len(), 1);
+    assert!(!identity_active(&node.pool, gone_identity).await);
+    assert!(node.scene_rows(gone).await.is_empty());
+    assert_eq!(node.scene_rows(added).await.len(), 1);
+    assert_eq!(pass.catalogue.unlisted, 0);
+    assert!(!pass.catalogue.complete);
+    assert_eq!(pass.catalogue.listed, 10_000);
+    let (_, _, catalogue_passes, stats) = node.pass_row("catalogue").await;
+    assert_eq!(catalogue_passes, 1);
+    assert_eq!(stats["at_page_limit"], true);
+    let last_error: String = sqlx::query_scalar(
+        "SELECT last_error FROM worlds.mirror_passes WHERE mirror = 'catalogue'",
+    )
+    .fetch_one(&node.pool)
+    .await
+    .unwrap();
+    assert!(last_error.contains("page limit 10000"));
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);
@@ -2358,6 +2561,1283 @@ async fn a_mirrored_world_holds_the_thumbnail_its_settings_name() {
     .await
     .unwrap();
     assert!(pinned.contains(&cid));
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+// ── last deploy wins against a local publish ───────────────────────────────
+
+const LOCAL_OWNER: &str = "0x00000000000000000000000000000000000000ab";
+
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+/// A local publish as `deploy_scene` leaves it: the world row local, the scene row with
+/// `timestamp` and `parcels`, and its place identity, which this returns.
+async fn publish_here(
+    pool: &PgPool,
+    world: &str,
+    id: &str,
+    parcels: &[&str],
+    timestamp: i64,
+) -> uuid::Uuid {
+    sqlx::query(
+        "INSERT INTO worlds.worlds (name, owner) VALUES ($1, $2) \
+         ON CONFLICT (name) DO UPDATE SET mirror_source = NULL",
+    )
+    .bind(world)
+    .bind(LOCAL_OWNER)
+    .execute(pool)
+    .await
+    .unwrap();
+    let entity = json!({"timestamp": timestamp, "pointers": parcels,
+        "metadata": {"scene": {"base": parcels[0], "parcels": parcels}}});
+    sqlx::query(
+        r#"INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size, mirror_source)
+           VALUES ($1, $2, '[]', $3, '0xabc', $4::text[], 1, NULL)"#,
+    )
+    .bind(world)
+    .bind(id)
+    .bind(&entity)
+    .bind(parcels)
+    .execute(pool)
+    .await
+    .unwrap();
+    let parcels: Vec<String> = parcels.iter().map(|p| p.to_string()).collect();
+    let mut conn = pool.acquire().await.unwrap();
+    catalyst::explore::places::scene_identity::assign(&mut conn, world, id, &parcels)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+/// Lists an upstream scene on `parcels` whose entity carries `timestamp`, listed as deployed
+/// at that time; returns its id and the bytes of its one file.
+fn deploy_upstream(
+    state: &mut Upstream,
+    world: &str,
+    title: &str,
+    parcels: &[&str],
+    timestamp: i64,
+) -> (String, Vec<u8>) {
+    let file = format!("{title}()").into_bytes();
+    let mut entity = scene_entity(state, world, title, parcels[0], &[("game.js", &file)]);
+    entity["timestamp"] = json!(timestamp);
+    entity["pointers"] = json!(parcels);
+    entity["metadata"]["scene"]["parcels"] = json!(parcels);
+    let id = push_scene(state, world, entity);
+    let listed = chrono::DateTime::from_timestamp_millis(timestamp.min(now_ms())).unwrap();
+    scene_mut(state, world, &id).created_at = Some(listed.to_rfc3339());
+    (id, file)
+}
+
+async fn world_mirror_source(pool: &PgPool, world: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT mirror_source FROM worlds.worlds WHERE name = $1")
+        .bind(world)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+async fn active_identity(pool: &PgPool, world: &str, id: &str) -> Option<uuid::Uuid> {
+    sqlx::query_scalar(
+        "SELECT identity FROM explore.world_scene_place WHERE world_name = $1 AND entity_id = $2 AND active",
+    )
+    .bind(world)
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
+async fn retired_ids(pool: &PgPool, world: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT entity_id FROM worlds.retired_world_scenes WHERE world_name = $1 ORDER BY entity_id",
+    )
+    .bind(world)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// The whole world is compared: an upstream scene newer than every local one replaces them all,
+/// the one whose footprint it covers (whose place identity it keeps) and the one it does not
+/// touch, as a newer publish replaces every mirrored scene. A second pass changes nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_newer_upstream_deployment_replaces_a_local_publish_once() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "supersede").await;
+    let world = "n.dcl.eth";
+    let now = now_ms();
+    let overlapped = publish_here(
+        &node.pool,
+        world,
+        "bafkreilocaloverlapped",
+        &["0,0", "1,0"],
+        now - 3_600_000,
+    )
+    .await;
+    publish_here(
+        &node.pool,
+        world,
+        "bafkreilocalaside",
+        &["5,5"],
+        now - 7_200_000,
+    )
+    .await;
+    let (upstream, file) = deploy_upstream(
+        &mut fake.state.lock(),
+        world,
+        "U",
+        &["0,0", "1,0", "2,0"],
+        now - 600_000,
+    );
+
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(
+        (
+            summary.scenes.synced,
+            summary.scenes.refused,
+            summary.scenes.superseded_local
+        ),
+        (1, 0, 2),
+        "{summary:?}"
+    );
+    assert_eq!(
+        node.scene_rows(world).await,
+        vec![(
+            upstream.clone(),
+            ZERO_ADDRESS.to_string(),
+            Some(fake.base.clone())
+        )]
+    );
+    assert_eq!(
+        world_mirror_source(&node.pool, world).await,
+        Some(fake.base.clone())
+    );
+    assert_eq!(
+        retired_ids(&node.pool, world).await,
+        vec!["bafkreilocalaside", "bafkreilocaloverlapped"],
+        "the local scenes are retired as a replacing publish retires them"
+    );
+    assert_eq!(
+        active_identity(&node.pool, world, &upstream).await,
+        Some(overlapped),
+        "the scene covering one local scene's whole footprint keeps its place identity"
+    );
+    assert!(node.storage.exist(&hash_bytes_v1(&file)).await.unwrap());
+    let stamps = |pool: PgPool| async move {
+        sqlx::query_as::<_, (String, chrono::NaiveDateTime)>(
+            "SELECT entity_id, updated_at FROM worlds.world_scenes WHERE world_name = $1",
+        )
+        .bind(world)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+    };
+    let before = stamps(node.pool.clone()).await;
+
+    let summary = node.pass(&ctx).await;
+    assert_eq!(
+        (
+            summary.scenes.unchanged,
+            summary.scenes.synced,
+            summary.scenes.superseded_local
+        ),
+        (1, 0, 0),
+        "{summary:?}"
+    );
+    assert_eq!(
+        stamps(node.pool.clone()).await,
+        before,
+        "a second pass writes no scene"
+    );
+    assert_eq!(retired_ids(&node.pool, world).await.len(), 2);
+    assert_eq!(
+        active_identity(&node.pool, world, &upstream).await,
+        Some(overlapped)
+    );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// An upstream scene older than a local one it partly overlaps leaves the world local, pass
+/// after pass, without downloading it; so does one dated in the future past its listed deploy
+/// time, which counts at that deploy time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_older_upstream_deployment_leaves_a_local_publish() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "older").await;
+    let now = now_ms();
+    publish_here(
+        &node.pool,
+        "o.dcl.eth",
+        "bafkreilocalo",
+        &["0,0", "1,0"],
+        now - 600_000,
+    )
+    .await;
+    publish_here(
+        &node.pool,
+        "f.dcl.eth",
+        "bafkreilocalf",
+        &["0,0"],
+        now - 600_000,
+    )
+    .await;
+    let (older, older_file, future_file) = {
+        let mut st = fake.state.lock();
+        let (older, older_file) =
+            deploy_upstream(&mut st, "o.dcl.eth", "O", &["1,0", "2,0"], now - 3_600_000);
+        let (future, future_file) =
+            deploy_upstream(&mut st, "f.dcl.eth", "F", &["0,0"], now + 86_400_000);
+        let listed = chrono::DateTime::from_timestamp_millis(now - 3_600_000).unwrap();
+        scene_mut(&mut st, "f.dcl.eth", &future).created_at = Some(listed.to_rfc3339());
+        (older, older_file, future_file)
+    };
+
+    let ctx = node.ctx().await;
+    for _ in 0..2 {
+        let summary = node.pass(&ctx).await;
+        assert_eq!(
+            (
+                summary.scenes.refused,
+                summary.scenes.synced,
+                summary.scenes.superseded_local
+            ),
+            (2, 0, 0),
+            "{summary:?}"
+        );
+        assert_eq!(
+            node.scene_rows("o.dcl.eth").await,
+            vec![("bafkreilocalo".to_string(), "0xabc".to_string(), None)]
+        );
+        assert_eq!(
+            node.scene_rows("f.dcl.eth").await,
+            vec![("bafkreilocalf".to_string(), "0xabc".to_string(), None)]
+        );
+        assert_eq!(world_mirror_source(&node.pool, "o.dcl.eth").await, None);
+        assert_eq!(world_mirror_source(&node.pool, "f.dcl.eth").await, None);
+    }
+    assert!(retired_ids(&node.pool, "o.dcl.eth").await.is_empty());
+    for (file, what) in [(older_file, "older"), (future_file, "future-dated")] {
+        assert!(
+            !node.storage.exist(&hash_bytes_v1(&file)).await.unwrap(),
+            "the {what} scene's files are never fetched"
+        );
+    }
+    assert!(!node.storage.exist(&older).await.unwrap());
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// Equal timestamps go to the byte-wise greater entity id, as a publish orders them; the same
+/// entity on both sides (an imported row, a publish the upstream has not accepted) keeps the
+/// world local.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn equal_timestamps_go_to_the_greater_entity_id() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "tie").await;
+    let at = now_ms() - 3_600_000;
+    // Every upstream id starts `bafkrei`: `bafkrea…` sorts before it, `bafkrez…` after.
+    publish_here(&node.pool, "lower.dcl.eth", "bafkrealocal", &["0,0"], at).await;
+    publish_here(&node.pool, "higher.dcl.eth", "bafkrezlocal", &["0,0"], at).await;
+    let (lower_up, same_up) = {
+        let mut st = fake.state.lock();
+        let (lower_up, _) = deploy_upstream(&mut st, "lower.dcl.eth", "L", &["0,0"], at);
+        deploy_upstream(&mut st, "higher.dcl.eth", "H", &["0,0"], at);
+        let (same_up, _) = deploy_upstream(&mut st, "same.dcl.eth", "S", &["0,0"], at);
+        (lower_up, same_up)
+    };
+    publish_here(&node.pool, "same.dcl.eth", &same_up, &["0,0"], at).await;
+
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(
+        (
+            summary.scenes.synced,
+            summary.scenes.refused,
+            summary.scenes.superseded_local
+        ),
+        (1, 2, 1),
+        "{summary:?}"
+    );
+    assert_eq!(
+        node.scene_rows("lower.dcl.eth").await,
+        vec![(lower_up, ZERO_ADDRESS.to_string(), Some(fake.base.clone()))],
+        "the upstream's greater id wins the tie"
+    );
+    assert_eq!(
+        node.scene_rows("higher.dcl.eth").await,
+        vec![("bafkrezlocal".to_string(), "0xabc".to_string(), None)],
+        "the local greater id keeps the world"
+    );
+    assert_eq!(
+        node.scene_rows("same.dcl.eth").await,
+        vec![(same_up, "0xabc".to_string(), None)],
+        "the same entity stays the local publish"
+    );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// An upstream scene listed without a deploy time never replaces a local publish, however far
+/// in the future its entity timestamp is.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_upstream_scene_without_a_listed_deploy_time_leaves_a_local_publish() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "unlisted").await;
+    let now = now_ms();
+    publish_here(
+        &node.pool,
+        "u.dcl.eth",
+        "bafkreilocalu",
+        &["0,0"],
+        now - 3_600_000,
+    )
+    .await;
+    {
+        let mut st = fake.state.lock();
+        let (future, _) = deploy_upstream(&mut st, "u.dcl.eth", "U", &["0,0"], now + 86_400_000);
+        let scene = scene_mut(&mut st, "u.dcl.eth", &future);
+        scene.created_at = None;
+        scene.updated_at = None;
+    }
+
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(
+        (summary.scenes.refused, summary.scenes.superseded_local),
+        (1, 0),
+        "{summary:?}"
+    );
+    assert_eq!(
+        node.scene_rows("u.dcl.eth").await,
+        vec![("bafkreilocalu".to_string(), "0xabc".to_string(), None)]
+    );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// A newer upstream deployment waits while a local publish of the world is queued for
+/// forwarding, or while the world is blocked here.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_forwarding_or_blocked_local_world_is_not_superseded() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "guards").await;
+    let now = now_ms();
+    publish_here(
+        &node.pool,
+        "q.dcl.eth",
+        "bafkreilocalq",
+        &["0,0"],
+        now - 3_600_000,
+    )
+    .await;
+    publish_here(
+        &node.pool,
+        "b.dcl.eth",
+        "bafkreilocalb",
+        &["0,0"],
+        now - 3_600_000,
+    )
+    .await;
+    forwarded(
+        &node.pool,
+        &fake.base,
+        "q.dcl.eth",
+        "bafkreilocalq",
+        "sending",
+    )
+    .await;
+    sqlx::query(
+        "UPDATE worlds.worlds SET blocked_since = timezone('UTC', now()) WHERE name = 'b.dcl.eth'",
+    )
+    .execute(&node.pool)
+    .await
+    .unwrap();
+    {
+        let mut st = fake.state.lock();
+        deploy_upstream(&mut st, "q.dcl.eth", "Q", &["0,0"], now - 600_000);
+        deploy_upstream(&mut st, "b.dcl.eth", "B", &["0,0"], now - 600_000);
+    }
+
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(
+        (summary.scenes.refused, summary.scenes.superseded_local),
+        (2, 0),
+        "{summary:?}"
+    );
+    for (world, id) in [
+        ("q.dcl.eth", "bafkreilocalq"),
+        ("b.dcl.eth", "bafkreilocalb"),
+    ] {
+        assert_eq!(
+            node.scene_rows(world).await,
+            vec![(id.to_string(), "0xabc".to_string(), None)],
+            "{world}"
+        );
+    }
+
+    // Once the forward is sent, the newer upstream deployment takes the world.
+    sqlx::query(
+        "UPDATE worlds.forward_outbox SET status = 'accepted' WHERE world_name = 'q.dcl.eth'",
+    )
+    .execute(&node.pool)
+    .await
+    .unwrap();
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(summary.scenes.superseded_local, 1, "{summary:?}");
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// A forwarding record of `id` in `world` with `status`, as the worker leaves it.
+async fn forwarded(pool: &PgPool, target: &str, world: &str, id: &str, status: &str) {
+    sqlx::query(
+        "INSERT INTO worlds.forward_outbox (entity_id, world_name, target, status) \
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(id)
+    .bind(world)
+    .bind(target)
+    .bind(status)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// A local publish the upstream accepted and lists is handed over: the pass takes the world, the
+/// local row becomes the mirrored row of the same entity (same place identity), the upstream's
+/// other scene is written, and a second pass writes nothing. The world then follows the upstream:
+/// a scene it drops is retired here.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_accepted_and_listed_publish_is_handed_over_to_the_mirror() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "handover").await;
+    let world = "ho.dcl.eth";
+    let at = now_ms() - 3_600_000;
+    let (kept, other, other_file) = {
+        let mut st = fake.state.lock();
+        let (kept, _) = deploy_upstream(&mut st, world, "S", &["0,0"], at);
+        let (other, file) = deploy_upstream(&mut st, world, "O", &["5,5"], at - 1_800_000);
+        (kept, other, file)
+    };
+    let identity = publish_here(&node.pool, world, &kept, &["0,0"], at).await;
+    forwarded(&node.pool, &fake.base, world, &kept, "accepted").await;
+
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(
+        (
+            summary.scenes.synced,
+            summary.scenes.refused,
+            summary.scenes.superseded_local,
+            summary.scenes.handed_over
+        ),
+        (1, 0, 0, 1),
+        "{summary:?}"
+    );
+    assert_eq!(
+        world_mirror_source(&node.pool, world).await,
+        Some(fake.base.clone())
+    );
+    let rows = node.scene_rows(world).await;
+    let mut ids: Vec<&str> = rows.iter().map(|(id, _, _)| id.as_str()).collect();
+    ids.sort();
+    let mut expected = vec![kept.as_str(), other.as_str()];
+    expected.sort();
+    assert_eq!(ids, expected, "the upstream's whole world is here");
+    assert!(
+        rows.iter()
+            .all(|(_, _, source)| source.as_ref() == Some(&fake.base)),
+        "the handed-over row is a mirrored row: {rows:?}"
+    );
+    assert_eq!(
+        active_identity(&node.pool, world, &kept).await,
+        Some(identity),
+        "the handed-over scene keeps its place identity"
+    );
+    let other_identity = active_identity(&node.pool, world, &other).await;
+    assert!(other_identity.is_some() && other_identity != Some(identity));
+    assert!(
+        retired_ids(&node.pool, world).await.is_empty(),
+        "nothing is retired: the local scene is the same entity"
+    );
+    assert!(
+        node.storage
+            .exist(&hash_bytes_v1(&other_file))
+            .await
+            .unwrap()
+    );
+
+    let stamps = |pool: PgPool| async move {
+        sqlx::query_as::<_, (String, chrono::NaiveDateTime)>(
+            "SELECT entity_id, updated_at FROM worlds.world_scenes WHERE world_name = $1 ORDER BY entity_id",
+        )
+        .bind(world)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+    };
+    let before = stamps(node.pool.clone()).await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(
+        (
+            summary.scenes.unchanged,
+            summary.scenes.synced,
+            summary.scenes.handed_over
+        ),
+        (1, 0, 0),
+        "{summary:?}"
+    );
+    assert_eq!(
+        stamps(node.pool.clone()).await,
+        before,
+        "a second pass writes no scene"
+    );
+
+    // The world now follows the upstream: a scene it drops is retired here.
+    fake.state
+        .lock()
+        .worlds
+        .get_mut(world)
+        .unwrap()
+        .retain(|scene| scene.id != other);
+    node.pass(&ctx).await;
+    let rows = node.scene_rows(world).await;
+    assert_eq!(
+        rows.iter()
+            .map(|(id, _, _)| id.as_str())
+            .collect::<Vec<_>>(),
+        vec![kept.as_str()],
+        "{rows:?}"
+    );
+    assert_eq!(active_identity(&node.pool, world, &other).await, None);
+    assert_eq!(
+        active_identity(&node.pool, world, &kept).await,
+        Some(identity)
+    );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// The upstream's older, disjoint scene survives a forward that it accepted and removed
+/// before the first mirror pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_accepted_publish_removed_before_handover_is_retired() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "removed-before-handover").await;
+    let world = "removed-before-handover.dcl.eth";
+    let at = now_ms() - 3_600_000;
+    let (removed, other) = {
+        let mut st = fake.state.lock();
+        let (removed, _) = deploy_upstream(&mut st, world, "Stage", &["0,0"], at);
+        let (other, _) = deploy_upstream(&mut st, world, "Museum", &["5,5"], at - 1_800_000);
+        (removed, other)
+    };
+    publish_here(&node.pool, world, &removed, &["0,0"], at).await;
+    forwarded(&node.pool, &fake.base, world, &removed, "accepted").await;
+    let ctx = node.ctx().await;
+    // A moving paginated listing cannot retire a scene that still resolves by entity id.
+    fake.state.lock().scenes_hide = Some(removed.clone());
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.failed, 1, "{summary:?}");
+    assert_eq!(node.scene_rows(world).await[0].0, removed);
+
+    {
+        let mut st = fake.state.lock();
+        st.scenes_hide = None;
+        st.worlds
+            .get_mut(world)
+            .unwrap()
+            .retain(|scene| scene.id != removed);
+        st.permissions
+            .insert(world.into(), json!({"permissions": {}}));
+    }
+    // An unreadable access setting cannot let a takeover publish the museum as open.
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.failed, 1, "{summary:?}");
+    assert_eq!(node.scene_rows(world).await[0].0, removed);
+    fake.state.lock().permissions.insert(
+        world.into(),
+        json!({"permissions": {"access": {"type": "shared-secret"}}}),
+    );
+
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 1, "{summary:?}");
+    assert_eq!(summary.scenes.handed_over, 0, "{summary:?}");
+    let rows = node.scene_rows(world).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, other);
+    assert_eq!(rows[0].2.as_ref(), Some(&fake.base));
+    assert_eq!(active_identity(&node.pool, world, &removed).await, None);
+    assert_eq!(retired_ids(&node.pool, world).await, vec![removed]);
+    assert_eq!(access_type(&node, world).await, json!("shared-secret"));
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_forward_sweep_keeps_only_accepted_receipts_still_needed_for_handoff() {
+    use catalyst::content::forward::{Forwarder, Retry};
+    use catalyst::worlds::core::forwarding::LANE;
+
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "receipt-retention").await;
+    let world = "receipt-retention.dcl.eth";
+    let at = now_ms() - 3_600_000;
+    let accepted = deploy_upstream(&mut fake.state.lock(), world, "Accepted", &["0,0"], at).0;
+    publish_here(&node.pool, world, &accepted, &["0,0"], at).await;
+    forwarded(&node.pool, &fake.base, world, &accepted, "accepted").await;
+    forwarded(&node.pool, &fake.base, world, "rejected", "rejected").await;
+    sqlx::query("UPDATE worlds.forward_outbox SET updated_at = now() - interval '31 days' WHERE world_name = $1")
+        .bind(world)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    let forwarder = Forwarder::new(
+        node.pool.clone(),
+        node.storage.clone(),
+        node.client.clone(),
+        LANE,
+        &fake.base,
+        Retry::new(3, 1),
+    );
+    let cutoff = (chrono::Utc::now() - chrono::Duration::days(30)).naive_utc();
+    let cancel = CancellationToken::new();
+    assert_eq!(forwarder.sweep(cutoff, &cancel).await.unwrap(), 1);
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.handed_over, 1);
+    assert_eq!(forwarder.sweep(cutoff, &cancel).await.unwrap(), 1);
+    assert_eq!(forwarder.sweep(cutoff, &cancel).await.unwrap(), 0);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(forwarder);
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_uncatalogued_handoff_keeps_following_upstream_without_a_receipt() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "uncatalogued-handoff").await;
+    let world = "handover.dcl.eth";
+    let at = now_ms() - 3_600_000;
+    let (first, other) = {
+        let mut st = fake.state.lock();
+        deploy_upstream(&mut st, "anchor.dcl.eth", "Anchor", &["0,0"], at);
+        st.index_hidden = Some(world.into());
+        let first = deploy_upstream(&mut st, world, "First", &["0,0"], at).0;
+        let other = deploy_upstream(&mut st, world, "Other", &["5,5"], at).0;
+        (first, other)
+    };
+    publish_here(&node.pool, world, &first, &["0,0"], at).await;
+    forwarded(&node.pool, &fake.base, world, &first, "accepted").await;
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.handed_over, 1);
+    assert_eq!(node.scene_rows(world).await.len(), 2);
+    let other_identity = active_identity(&node.pool, world, &other).await.unwrap();
+    sqlx::query("DELETE FROM worlds.forward_outbox WHERE world_name = $1")
+        .bind(world)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    assert_eq!(node.pass(&ctx).await.scenes.unchanged, 2);
+    assert_eq!(fake.state.lock().about_calls.get(world), Some(&1));
+
+    {
+        let mut st = fake.state.lock();
+        st.worlds
+            .get_mut(world)
+            .unwrap()
+            .retain(|scene| scene.id != first);
+        st.scenes_status = Some(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    assert!(node.pass(&ctx).await.scenes.failed > 0);
+    assert_eq!(node.scene_rows(world).await.len(), 2);
+
+    fake.state.lock().scenes_status = None;
+    node.pass(&ctx).await;
+    let rows = node.scene_rows(world).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, other);
+    assert_eq!(
+        active_identity(&node.pool, world, &other).await,
+        Some(other_identity)
+    );
+
+    fake.state.lock().worlds.remove(world);
+    assert_eq!(node.pass(&ctx).await.scenes.retired_scenes, 1);
+    assert!(node.scene_rows(world).await.is_empty());
+    assert!(!identity_active(&node.pool, other_identity).await);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_confirmed_removed_forward_does_not_retire_an_unaccepted_local_scene() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "removed-beside-local").await;
+    let world = "mixed.dcl.eth";
+    let at = now_ms() - 3_600_000;
+    let (removed, survivor) = {
+        let mut st = fake.state.lock();
+        let removed = deploy_upstream(&mut st, world, "Removed", &["0,0"], at).0;
+        let survivor = deploy_upstream(&mut st, world, "Still upstream", &["8,8"], at - 10_000).0;
+        (removed, survivor)
+    };
+    let removed_identity = publish_here(&node.pool, world, &removed, &["0,0"], at).await;
+    forwarded(&node.pool, &fake.base, world, &removed, "accepted").await;
+    let legacy = "local-only";
+    let legacy_identity = publish_here(&node.pool, world, legacy, &["5,5"], at).await;
+    forwarded(&node.pool, &fake.base, world, legacy, "rejected").await;
+    {
+        let mut st = fake.state.lock();
+        st.worlds
+            .get_mut(world)
+            .unwrap()
+            .retain(|scene| scene.id == survivor);
+        st.scenes_status = Some(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let ctx = node.ctx().await;
+    node.pass(&ctx).await;
+    assert!(identity_active(&node.pool, removed_identity).await);
+    fake.state.lock().scenes_status = None;
+    let pass = node.pass(&ctx).await;
+    assert_eq!((pass.scenes.refused, pass.scenes.superseded_local), (1, 1));
+    assert!(!identity_active(&node.pool, removed_identity).await);
+    assert_eq!(retired_ids(&node.pool, world).await, vec![removed]);
+    assert_eq!(
+        active_identity(&node.pool, world, legacy).await,
+        Some(legacy_identity)
+    );
+    let rows = node.scene_rows(world).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, legacy);
+    assert!(rows[0].2.is_none());
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_world_removed_before_its_first_catalogue_entry_retires_only_accepted_forwards() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let mut node = Node::new(scratch.pool.clone(), &fake.base, "unlisted-before-handover").await;
+    let at = now_ms() - 3_600_000;
+    let one = "one.dcl.eth";
+    let foreign = "foreign.dcl.eth";
+    let (accepted, other_target) = {
+        let mut st = fake.state.lock();
+        deploy_upstream(&mut st, "anchor.dcl.eth", "Anchor", &["0,0"], at);
+        let (accepted, _) = deploy_upstream(&mut st, one, "One", &["0,0"], at);
+        let (foreign_id, _) = deploy_upstream(&mut st, foreign, "Foreign", &["0,0"], at);
+        st.worlds.remove(one);
+        st.worlds.remove(foreign);
+        (accepted, foreign_id)
+    };
+    let identity = publish_here(&node.pool, one, &accepted, &["0,0"], at).await;
+    forwarded(&node.pool, &fake.base, one, &accepted, "accepted").await;
+    publish_here(&node.pool, foreign, &other_target, &["0,0"], at).await;
+    forwarded(
+        &node.pool,
+        "https://other.example",
+        foreign,
+        &other_target,
+        "accepted",
+    )
+    .await;
+
+    let ctx = node.ctx().await;
+    node.settings.limit = Some(1);
+    let limited = node.pass(&ctx).await;
+    assert_eq!(limited.scenes.processed, 1, "{limited:?}");
+    assert_eq!(node.scene_rows(one).await[0].0, accepted);
+    assert!(retired_ids(&node.pool, one).await.is_empty());
+
+    node.settings.limit = None;
+    node.pass(&ctx).await;
+    assert!(node.scene_rows(one).await.is_empty());
+    assert_eq!(retired_ids(&node.pool, one).await, vec![accepted]);
+    assert!(!identity_active(&node.pool, identity).await);
+    assert_eq!(node.scene_rows(foreign).await[0].0, other_target);
+    assert_eq!(world_mirror_source(&node.pool, one).await, None);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// Only an accepted forward hands a world over: the same entity listed upstream beside a
+/// `rejected` record, or none, keeps the world local, and so does an accepted scene beside a
+/// newer local scene the upstream did not accept.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn only_an_accepted_listed_publish_is_handed_over() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "handover-no").await;
+    let at = now_ms() - 3_600_000;
+    let (rejected, bare, beside) = {
+        let mut st = fake.state.lock();
+        let (rejected, _) = deploy_upstream(&mut st, "rej.dcl.eth", "R", &["0,0"], at);
+        let (bare, _) = deploy_upstream(&mut st, "bare.dcl.eth", "B", &["0,0"], at);
+        let (beside, _) = deploy_upstream(&mut st, "beside.dcl.eth", "S", &["0,0"], at);
+        deploy_upstream(&mut st, "beside.dcl.eth", "T", &["5,5"], at - 1_800_000);
+        (rejected, bare, beside)
+    };
+    publish_here(&node.pool, "rej.dcl.eth", &rejected, &["0,0"], at).await;
+    forwarded(&node.pool, &fake.base, "rej.dcl.eth", &rejected, "rejected").await;
+    publish_here(&node.pool, "bare.dcl.eth", &bare, &["0,0"], at).await;
+    publish_here(&node.pool, "beside.dcl.eth", &beside, &["0,0"], at).await;
+    forwarded(
+        &node.pool,
+        &fake.base,
+        "beside.dcl.eth",
+        &beside,
+        "accepted",
+    )
+    .await;
+    // Newer than the upstream's newest scene, never forwarded.
+    publish_here(
+        &node.pool,
+        "beside.dcl.eth",
+        "bafkreilocalnewer",
+        &["9,9"],
+        at + 1_800_000,
+    )
+    .await;
+
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(
+        (
+            summary.scenes.synced,
+            summary.scenes.refused,
+            summary.scenes.handed_over
+        ),
+        (0, 3, 0),
+        "{summary:?}"
+    );
+    for (world, id) in [("rej.dcl.eth", &rejected), ("bare.dcl.eth", &bare)] {
+        assert_eq!(
+            node.scene_rows(world).await,
+            vec![(id.clone(), "0xabc".to_string(), None)],
+            "{world}"
+        );
+        assert_eq!(world_mirror_source(&node.pool, world).await, None);
+    }
+    let rows = node.scene_rows("beside.dcl.eth").await;
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(
+        rows.iter().all(|(_, _, source)| source.is_none()),
+        "the world stays local: {rows:?}"
+    );
+    assert_eq!(
+        world_mirror_source(&node.pool, "beside.dcl.eth").await,
+        None
+    );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// A forward accepted upstream can account for its own scene. It supplies no newer
+/// independent deployment that can take over a disjoint scene held only here.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_accepted_forward_cannot_retire_an_older_local_only_scene() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(
+        scratch.pool.clone(),
+        &fake.base,
+        "local-only-beside-forward",
+    )
+    .await;
+    let older = now_ms() - 3_600_000;
+    let worlds = [
+        ("legacy-local.dcl.eth", None),
+        ("rejected-local.dcl.eth", Some("rejected")),
+    ];
+    let mut expected = Vec::new();
+    for (world, status) in worlds {
+        let accepted = {
+            let mut st = fake.state.lock();
+            deploy_upstream(
+                &mut st,
+                world,
+                "Accepted Stage",
+                &["0,0"],
+                older + 1_800_000,
+            )
+            .0
+        };
+        let local = format!("local-only-{world}");
+        let identity = publish_here(&node.pool, world, &local, &["5,5"], older).await;
+        publish_here(&node.pool, world, &accepted, &["0,0"], older + 1_800_000).await;
+        forwarded(&node.pool, &fake.base, world, &accepted, "accepted").await;
+        if let Some(status) = status {
+            forwarded(&node.pool, &fake.base, world, &local, status).await;
+        }
+        expected.push((world, local, accepted, identity));
+    }
+
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(
+        (summary.scenes.refused, summary.scenes.handed_over),
+        (2, 0),
+        "{summary:?}"
+    );
+    for (world, local, accepted, identity) in &expected {
+        let rows = node.scene_rows(world).await;
+        assert_eq!(rows.len(), 2, "{world}: {rows:?}");
+        assert!(
+            rows.iter().any(|(id, _, _)| id == accepted),
+            "{world}: {rows:?}"
+        );
+        assert!(
+            rows.iter().all(|(_, _, source)| source.is_none()),
+            "{world}: {rows:?}"
+        );
+        assert_eq!(
+            active_identity(&node.pool, world, local).await,
+            Some(*identity)
+        );
+        assert!(retired_ids(&node.pool, world).await.is_empty(), "{world}");
+    }
+
+    {
+        let mut st = fake.state.lock();
+        for (world, _, _, _) in &expected {
+            deploy_upstream(
+                &mut st,
+                world,
+                "Replacement Museum",
+                &["5,5"],
+                older + 900_000,
+            );
+        }
+    }
+    let summary = node.pass(&ctx).await;
+    assert_eq!(
+        (
+            summary.scenes.synced,
+            summary.scenes.handed_over,
+            summary.scenes.superseded_local
+        ),
+        (2, 2, 2),
+        "{summary:?}"
+    );
+    for (world, local, _, _) in expected {
+        assert_eq!(retired_ids(&node.pool, world).await, vec![local]);
+    }
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+async fn removals(pool: &PgPool, world: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM explore.place_removal_pending WHERE lower(world_name) = $1 OR place_id = $1",
+    )
+    .bind(world)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// A takeover is not a place removal: once the catalogue prunes the world's local row, no
+/// removal is queued, so the gatekeeper keeps its bans and scene admins. A blocked local world
+/// is still removed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_takeover_queues_no_place_removal() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "removal").await;
+    let now = now_ms();
+    // "k" keeps its identity (the upstream scene covers it), "d" does not (disjoint parcels).
+    let kept = publish_here(
+        &node.pool,
+        "k.dcl.eth",
+        "bafkreilocalk",
+        &["0,0", "1,0"],
+        now - 3_600_000,
+    )
+    .await;
+    let dropped = publish_here(
+        &node.pool,
+        "d.dcl.eth",
+        "bafkreilocald",
+        &["0,0"],
+        now - 3_600_000,
+    )
+    .await;
+    publish_here(
+        &node.pool,
+        "x.dcl.eth",
+        "bafkreilocalx",
+        &["0,0"],
+        now - 3_600_000,
+    )
+    .await;
+    let derive = || {
+        catalyst::explore::places::derive::run_once(
+            &node.pool,
+            catalyst::explore::places::derive::DeriveScope::Local,
+            "https://node.example/content",
+        )
+    };
+    derive().await.unwrap();
+    for (world, identity) in [("k.dcl.eth", kept), ("d.dcl.eth", dropped)] {
+        sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by) VALUES ($1, '0x00000000000000000000000000000000000000b1', $2)")
+            .bind(format!("{world}:0,0"))
+            .bind(LOCAL_OWNER)
+            .execute(&node.pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO social.scene_admins (place_id, admin_address, added_by) VALUES ($1, '0x00000000000000000000000000000000000000a1', $2)")
+            .bind(identity.to_string())
+            .bind(LOCAL_OWNER)
+            .execute(&node.pool)
+            .await
+            .unwrap();
+    }
+    {
+        let mut st = fake.state.lock();
+        deploy_upstream(
+            &mut st,
+            "k.dcl.eth",
+            "K",
+            &["0,0", "1,0", "2,0"],
+            now - 600_000,
+        );
+        deploy_upstream(&mut st, "d.dcl.eth", "D", &["7,7"], now - 600_000);
+    }
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(summary.scenes.superseded_local, 2, "{summary:?}");
+    sqlx::query(
+        "UPDATE worlds.worlds SET blocked_since = timezone('UTC', now()) WHERE name = 'x.dcl.eth'",
+    )
+    .execute(&node.pool)
+    .await
+    .unwrap();
+
+    derive().await.unwrap();
+    let local: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM explore.place_world_local ORDER BY id")
+            .fetch_all(&node.pool)
+            .await
+            .unwrap();
+    assert!(local.is_empty(), "every local row is pruned: {local:?}");
+    assert_eq!(removals(&node.pool, "k.dcl.eth").await, 0, "kept identity");
+    assert_eq!(
+        removals(&node.pool, "d.dcl.eth").await,
+        0,
+        "world still served"
+    );
+    assert_eq!(
+        removals(&node.pool, "x.dcl.eth").await,
+        1,
+        "a blocked world is removed"
+    );
+    let bans: i64 = sqlx::query_scalar("SELECT count(*) FROM social.scene_bans")
+        .fetch_one(&node.pool)
+        .await
+        .unwrap();
+    let admins: i64 = sqlx::query_scalar("SELECT count(*) FROM social.scene_admins WHERE active")
+        .fetch_one(&node.pool)
+        .await
+        .unwrap();
+    assert_eq!((bans, admins), (2, 2));
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+async fn identity_active(pool: &PgPool, identity: uuid::Uuid) -> bool {
+    sqlx::query_scalar("SELECT active FROM explore.world_scene_place WHERE identity = $1")
+        .bind(identity)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// An upstream scene taking over a local one keeps its place identity only when it covers the
+/// local scene's whole footprint (as replacing a scene upstream takes permission over all of
+/// it). One standing on part of the footprint gets a new identity, and the local one retires.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_takeover_on_part_of_a_local_footprint_gets_a_new_identity() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "subset").await;
+    let world = "p.dcl.eth";
+    let now = now_ms();
+    let local = publish_here(
+        &node.pool,
+        world,
+        "bafkreilocalwide",
+        &["0,0", "1,0", "0,1", "1,1"],
+        now - 3_600_000,
+    )
+    .await;
+    let (upstream, _) =
+        deploy_upstream(&mut fake.state.lock(), world, "U", &["0,0"], now - 600_000);
+
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(summary.scenes.superseded_local, 1, "{summary:?}");
+    let fresh = active_identity(&node.pool, world, &upstream)
+        .await
+        .expect("the upstream scene has an identity");
+    assert_ne!(
+        fresh, local,
+        "a subset of the footprint gets a new identity"
+    );
+    assert!(
+        !identity_active(&node.pool, local).await,
+        "the local identity retires"
+    );
+    assert_eq!(
+        retired_ids(&node.pool, world).await,
+        vec!["bafkreilocalwide"]
+    );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// An upstream scene covering one local scene and standing on part of another overlaps both, so
+/// it gets a new identity and both local identities retire.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_takeover_covering_one_local_scene_and_part_of_another_gets_a_new_identity() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "mixed").await;
+    let world = "m.dcl.eth";
+    let now = now_ms();
+    let covered = publish_here(
+        &node.pool,
+        world,
+        "bafkreilocalcovered",
+        &["0,0"],
+        now - 3_600_000,
+    )
+    .await;
+    let partial = publish_here(
+        &node.pool,
+        world,
+        "bafkreilocalpartial",
+        &["1,0", "2,0"],
+        now - 3_600_000,
+    )
+    .await;
+    let (upstream, _) = deploy_upstream(
+        &mut fake.state.lock(),
+        world,
+        "U",
+        &["0,0", "1,0"],
+        now - 600_000,
+    );
+
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(summary.scenes.superseded_local, 2, "{summary:?}");
+    let fresh = active_identity(&node.pool, world, &upstream)
+        .await
+        .expect("the upstream scene has an identity");
+    assert!(![covered, partial].contains(&fresh), "{fresh}");
+    for identity in [covered, partial] {
+        assert!(!identity_active(&node.pool, identity).await, "{identity}");
+    }
+    assert_eq!(
+        identities(&node.pool, world)
+            .await
+            .into_iter()
+            .filter(|(_, _, active)| *active)
+            .count(),
+        1,
+        "only the upstream scene's identity is active"
+    );
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

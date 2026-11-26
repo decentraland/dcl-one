@@ -117,7 +117,23 @@ realm/scene/namespace and player scope. Keep the storage namespace distinct
 from a deployment's content hash. Each world scene has a stable identity
 (`explore.world_scene_place`) following Places' overlap rule: overlapping
 exactly one active scene retains it, including a moved base; overlapping none
-or several creates a new identity. Retired identities keep their storage rows.
+or several creates a new identity. When the worlds mirror takes over a local
+world, a retired local scene's identity passes only to a scene covering its
+whole footprint (below). Retired identities keep their storage rows.
+
+The worlds mirror compares the local scene set with the source's current
+listing (`core::store::local_scene_stands`). A block, an active scene queued or
+sending to this source, or a local scene newer than the source's newest (or
+the same entity) holds the local world. Before reading the source, the pass
+captures matching accepted receipt ids. Under the world lock it rechecks
+those ids to fence a re-publish of the same entity. Each probe uses
+`forward_outbox_entity_id_key`, one key lookup per local scene. A captured
+scene still listed becomes a mirror row. Confirmed absence allows retirement.
+An accepted local forward is excluded from both sides of the timestamp
+comparison. Once per unlimited scenes pass, the mirror joins retained
+accepted receipts to local scenes and the catalogue to find worlds that
+were removed before the first catalogue entry. The outbox retains 30 days
+of terminal rows.
 
 Partial batches for one entity hold a session advisory lock from their first
 pending-upload/replay read through the staging or committed-publication decision.
@@ -303,7 +319,14 @@ owner, player and scene-server grants retain their own authorization rules.
 Genesis scenes need a valid scope too. Use one permission core with explicit
 owner/player/host operations. Guests get scoped storage capabilities, never SQL
 access or other scenes' environment values. Mirroring cannot overwrite local
-saves or grant host authority. Keep live CRDT/tick state in the scene runtime;
+saves or grant host authority. One exception: a newer upstream scene that replaces
+a local publish keeps that scene's place identity, and so reaches its storage, only
+when the overlap rule above (a scene's stable identity, at the start of this
+section) keeps it and the upstream scene covers the local scene's whole footprint
+([last deploy wins](docs/adr/2026-11-23-worlds-mirror-last-deploy-wins.md)), as
+replacing a scene upstream takes permission over its whole footprint. Otherwise
+the upstream scene gets a new identity and the local one retires with its rows
+kept. Keep live CRDT/tick state in the scene runtime;
 persist only what the restart contract requires. Test cross-scene/player
 isolation, redeploy, revocation and restart.
 
@@ -4406,6 +4429,15 @@ catalogue writes; importing an identity alone cannot clear it. Queue rows
 survive re-adds. The existing world-row lock serializes publication; imports
 lock affected worlds and identities in order and retire only saved bindings
 whose backing scenes are gone. No grant history is inferred from parcel overlap.
+
+A local world's catalogue row pruned because the worlds mirror took the world
+over (`worlds.worlds.mirror_source` set, not blocked) is not a removal while an
+`explore.world_scene_place` of the world is active: the place ids live on, so
+no row is queued and its bans and admin grants stay. This holds whether the
+upstream scenes kept a local identity or not; a local identity a takeover
+retires is left as a replacing publish leaves one, with nothing resolving to it.
+A blocked local world, or one with no active scene place, still queues its
+removal.
 
 ## Scene admin grants
 

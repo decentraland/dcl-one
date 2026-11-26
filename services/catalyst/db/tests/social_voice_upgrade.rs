@@ -259,6 +259,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
             "0079_credits_seasonal_visit_goals",
             "0094_shop_historical_holdings",
         ])
+        .chain(["0097_explore_place_removal_live_world"])
         .collect();
     let done = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)
         .await

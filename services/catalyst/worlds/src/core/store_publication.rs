@@ -4,7 +4,7 @@ use super::*;
 /// `$delete` (a `DELETE FROM worlds.world_scenes ...`) moving the rows it
 /// removes into `worlds.retired_world_scenes` (a re-retired id restarts its TTL).
 macro_rules! retiring {
-    ($delete:literal) => {
+    ($delete:literal $(, $returning:literal)?) => {
         concat!(
             "WITH gone AS (",
             $delete,
@@ -14,6 +14,7 @@ macro_rules! retiring {
              ON CONFLICT (world_name, entity_id) DO UPDATE SET entity = EXCLUDED.entity, \
                parcels = EXCLUDED.parcels, mirror_source = EXCLUDED.mirror_source, \
                retired_at = timezone('UTC', now())"
+            $(, $returning)?
         )
     };
 }
@@ -58,8 +59,8 @@ pub async fn ensure_world(
 /// rule (`scene_identity`). A world this node only mirrored
 /// becomes local here: every mirrored scene goes, overlapping or not, and
 /// the world row's `mirror_source` is cleared in the same transaction, so
-/// the row says what its scenes are (the mirror refuses to write a world
-/// with a local scene from then on, `worlds::mirror`).
+/// the row says what its scenes are (the mirror leaves the world local until
+/// the upstream deploys a newer scene, `worlds::mirror`).
 /// The refusal for the first key the scene names that the store no longer holds.
 async fn missing_stored_file(
     storage: &Storage,
@@ -455,6 +456,117 @@ pub async fn newer_scene_deployed(
     .bind(timestamp)
     .fetch_one(conn)
     .await
+}
+
+/// Whether a locally published scene of `world` (its key) stands against the upstream's newest
+/// deployment `(timestamp, entity_id)` (`None`: none with a usable time), so the worlds mirror
+/// leaves the world local. A local scene counts at the lower of its entity timestamp and its
+/// row's write, its write alone without a numeric timestamp (as [`newer_scene_deployed`]
+/// stores it); it stands when that is later, on a tie when its entity id is byte-wise greater
+/// or equal, and always when it is the same entity. A local world also stands while it is
+/// blocked or a publish of it waits in `worlds.forward_outbox`. An accepted forward to this
+/// source holds the world until its receipt is in the mirror's snapshot. An outbox id fences a
+/// re-publish of the same entity during the upstream reads.
+pub(crate) async fn local_scene_stands(
+    conn: &mut sqlx::PgConnection,
+    world: &str,
+    upstream: Option<(f64, &str)>,
+    source: &str,
+    accepted: &[i64],
+) -> Result<bool, sqlx::Error> {
+    let (timestamp, entity_id) = upstream.unzip();
+    sqlx::query_scalar(
+        r#"WITH local AS (
+             SELECT s.entity_id, o.status, CASE WHEN o.status = 'accepted' THEN o.id END AS receipt,
+                    LEAST(CASE WHEN jsonb_typeof(s.entity->'timestamp') = 'number'
+                               THEN (s.entity->>'timestamp')::float8 END,
+                          (extract(epoch FROM s.updated_at) * 1000)::float8) AS ts
+             FROM worlds.world_scenes s
+             LEFT JOIN worlds.forward_outbox o
+               ON o.entity_id = s.entity_id AND o.world_name = s.world_name
+              AND o.target = $4
+             WHERE s.world_name = $1 AND s.mirror_source IS NULL)
+           SELECT EXISTS (SELECT 1 FROM local) AND (
+             EXISTS (SELECT 1 FROM worlds.worlds WHERE name = $1 AND blocked_since IS NOT NULL)
+             OR EXISTS (SELECT 1 FROM local WHERE status IN ('queued', 'sending'))
+             OR EXISTS (SELECT 1 FROM local
+                        WHERE CASE WHEN receipt IS NOT NULL THEN receipt <> ALL($5::bigint[])
+                                   ELSE $2::float8 IS NULL OR entity_id = $3 OR ts > $2::float8
+                                        OR (ts = $2::float8 AND entity_id COLLATE "C" > $3)
+                              END))"#,
+    )
+    .bind(world)
+    .bind(timestamp)
+    .bind(entity_id)
+    .bind(source)
+    .bind(accepted)
+    .fetch_one(conn)
+    .await
+}
+
+/// Retires (into `worlds.retired_world_scenes`, as a replacing publish does) every locally
+/// published scene of `world` (its key) but `keep`, the ids the caller writes in their place,
+/// and returns the entity ids it retired.
+pub(crate) async fn retire_local_scenes(
+    conn: &mut sqlx::PgConnection,
+    world: &str,
+    keep: &[&str],
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(retiring!(
+        "DELETE FROM worlds.world_scenes
+             WHERE world_name = $1 AND mirror_source IS NULL AND entity_id <> ALL($2::text[])",
+        " RETURNING entity_id"
+    ))
+    .bind(world)
+    .bind(keep)
+    .fetch_all(conn)
+    .await
+}
+
+/// Retires only local publications whose captured accepted receipt still matches.
+pub(crate) async fn retire_absent_forwards(
+    conn: &mut sqlx::PgConnection,
+    world: &str,
+    source: &str,
+    receipts: &[i64],
+) -> Result<u64, sqlx::Error> {
+    if receipts.is_empty() {
+        return Ok(0);
+    }
+    Ok(sqlx::query(retiring!(
+        "DELETE FROM worlds.world_scenes s
+         WHERE s.world_name = $1 AND s.mirror_source IS NULL
+           AND EXISTS (SELECT 1 FROM worlds.forward_outbox o
+                       WHERE o.world_name = s.world_name AND o.entity_id = s.entity_id
+                         AND o.target = $2 AND o.status = 'accepted' AND o.id = ANY($3::bigint[]))
+           AND NOT EXISTS (SELECT 1 FROM worlds.worlds w
+                           WHERE w.name = s.world_name AND w.blocked_since IS NOT NULL)"
+    ))
+    .bind(world)
+    .bind(source)
+    .bind(receipts)
+    .execute(conn)
+    .await?
+    .rows_affected())
+}
+
+/// Retires only the mirror rows from the source and entity snapshot checked upstream.
+pub(crate) async fn retire_absent_mirrored(
+    conn: &mut sqlx::PgConnection,
+    world: &str,
+    source: &str,
+    entities: &[String],
+) -> Result<u64, sqlx::Error> {
+    Ok(sqlx::query(retiring!(
+        "DELETE FROM worlds.world_scenes
+         WHERE world_name = $1 AND mirror_source = $2 AND entity_id = ANY($3::text[])"
+    ))
+    .bind(world)
+    .bind(source)
+    .bind(entities)
+    .execute(conn)
+    .await?
+    .rows_affected())
 }
 
 /// Refused publish to a world the operator disabled (`/admin/worlds/{w}/disable`).
