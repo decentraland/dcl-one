@@ -1316,10 +1316,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **`shouldReset` restarts a playing clip on every Animator write.** The protocol's comment says
   the state is restored when it goes from stopped to playing. Scenes restart a clip that is
   already playing by writing it again with `playing` and `shouldReset`
-  (`Animator.playSingleAnimation`), so a write restarts it. A stopped state keeps its clock
-  whatever its `shouldReset` says: `Animator.stopAllAnimations` leaves the flag set, and a
-  later `playSingleAnimation(..., false)` must resume. A state with `playing` unset does not
-  play. Unity's player for legacy clips reads these three cases the same way.
+  (`Animator.playSingleAnimation`), so a write restarts it. On a stopped state the flag rewinds
+  the clip, which shows only in where its next play starts: `Animator.stopAllAnimations` stops
+  its clips "at 0 or at the current cursor position" by setting the flag or not, and
+  `playSingleAnimation` sets it on every other state. A state with `playing` unset does not
+  play.
 - **A clip played once tells its scene when it ends.** The engine writes the scene's Animator
   back with that state's `playing` false, once, so a scene need not time the clip. The clip
   then stops contributing and the model holds the pose it ended on. The Unity client writes

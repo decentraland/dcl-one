@@ -528,7 +528,7 @@ fn only_a_clip_that_ends_by_itself_is_reported() {
 }
 
 #[test]
-fn should_reset_restarts_a_playing_clip_and_leaves_a_stopped_one() {
+fn should_reset_rewinds_a_stopped_clip_and_restarts_a_playing_one() {
     let (mut app, root, id, container) = scene_fixture();
     let bone = load_model(&mut app, container);
     app.update();
@@ -538,22 +538,38 @@ fn should_reset_restarts_a_playing_clip_and_leaves_a_stopped_one() {
     app.update();
     let paused_at = scale(&app, bone);
 
-    // stopped with shouldReset, as `Animator.stopAllAnimations` writes it
+    // stopped without shouldReset, as `Animator.stopAllAnimations(entity, false)` writes it:
+    // the clip keeps its position and the next play goes on from there
     let mut stopped = swim_animator();
     stopped.states[0].playing = Some(false);
-    stopped.states[0].should_reset = Some(true);
     send_animator(&mut app, root, id, Some(&stopped));
     app.update();
     assert_eq!(scale(&app, bone), paused_at);
-
     send_animator(&mut app, root, id, Some(&swim_animator()));
     app.update();
     let resumed = scale(&app, bone);
     assert!(
         resumed > paused_at,
-        "a stopped state must keep its clock: {resumed} after {paused_at}"
+        "a clip stopped without shouldReset must resume: {resumed} after {paused_at}"
     );
 
+    // stopped with shouldReset, as `Animator.stopAllAnimations(entity)` writes it and as
+    // `Animator.playSingleAnimation` writes every other state: the next play starts from the
+    // first frame
+    stopped.states[0].should_reset = Some(true);
+    send_animator(&mut app, root, id, Some(&stopped));
+    app.update();
+    send_animator(&mut app, root, id, Some(&swim_animator()));
+    app.update();
+    let rewound = scale(&app, bone);
+    assert!(
+        rewound < paused_at,
+        "a clip stopped with shouldReset must start over: {rewound}, paused at {paused_at}"
+    );
+
+    // a playing state with shouldReset restarts on the write
+    app.update();
+    app.update();
     let mut restart = swim_animator();
     restart.states[0].should_reset = Some(true);
     send_animator(&mut app, root, id, Some(&restart));

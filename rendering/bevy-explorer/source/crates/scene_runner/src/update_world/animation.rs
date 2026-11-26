@@ -94,18 +94,14 @@ impl ReportedClips {
     }
 }
 
-/// A state plays only when the scene sets `playing`.
-fn is_playing(state: &PbAnimationState) -> bool {
-    state.playing.unwrap_or(false)
-}
-
+/// The SDK's default for `loop`, which is not the generated getter's.
 fn is_looping(state: &PbAnimationState) -> bool {
     state.r#loop.unwrap_or(true)
 }
 
 fn plays_once(animator: &PbAnimator, clips: &Clips) -> bool {
     animator.states.iter().any(|state| {
-        is_playing(state) && !is_looping(state) && clips.named.contains_key(state.clip.as_str())
+        state.playing() && !is_looping(state) && clips.named.contains_key(state.clip.as_str())
     })
 }
 
@@ -153,7 +149,7 @@ fn settle_stale_animator_writes(
                 continue;
             };
             for state in animator.states.iter_mut() {
-                if is_playing(state) && reported.0.iter().any(|(clip, _)| *clip == state.clip) {
+                if state.playing() && reported.0.iter().any(|(clip, _)| *clip == state.clip) {
                     state.playing = Some(false);
                 }
             }
@@ -298,7 +294,7 @@ fn update_animations(
             .collect();
 
         for (ix, (duration, state)) in targets.into_iter() {
-            let playing = is_playing(&state);
+            let playing = state.playing();
             // clamp: bevy normalizes by the summed weight, so negative weights extrapolate
             let new_weight = if !playing {
                 0.0
@@ -316,10 +312,9 @@ fn update_animations(
                 state.speed.unwrap_or(1.0)
             };
 
-            // shouldReset acts on a playing state only: a stopped one keeps its clock
-            let reset = playing && state.should_reset();
-            let active_animation = match (prev_anims.remove(&ix), reset) {
-                // a playing state with shouldReset (re)starts on every write
+            let active_animation = match (prev_anims.remove(&ix), state.should_reset()) {
+                // shouldReset (re)starts the clip on every write. On a stopped state that
+                // rewinds it, so its next play starts from the first frame.
                 (_, true) |
                 // a clip that is new to the player, or has finished, starts
                 (false, _) => {
@@ -385,7 +380,7 @@ fn report_finished_clips(
             .states
             .iter()
             .enumerate()
-            .filter(|(_, state)| is_playing(state) && !is_looping(state))
+            .filter(|(_, state)| state.playing() && !is_looping(state))
             .filter_map(|(state_ix, state)| {
                 let (node, _) = clips.named.get(state.clip.as_str())?;
                 player

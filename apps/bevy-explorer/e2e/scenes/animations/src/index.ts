@@ -69,10 +69,10 @@ import { setupVisualTest } from './visual-test-setup'
  *             one-shot system fires at scene-time
  *             ≈0.1 s and calls playSingleAnimation(
  *             "Open", resetCursor=FALSE): "Close"
- *             stops where it is and "Open" plays once
- *             from its own cursor (0, since "Open"
- *             was never played before). Had the
- *             second call not run, the rig would end
+ *             stops and "Open" plays once from its
+ *             own cursor (0, since "Open" was never
+ *             played before). Had the second call
+ *             not run, the rig would end
  *             closed/deactivated.
  */
 
