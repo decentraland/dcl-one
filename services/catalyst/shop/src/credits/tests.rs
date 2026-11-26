@@ -11184,7 +11184,10 @@ async fn a_granted_pack_is_reported_once() {
 /// released credit. A later use of the same credit reports nothing.
 #[tokio::test]
 async fn a_settled_purchase_is_reported_once() {
-    let Some(pool) = pool().await else { return };
+    let Some(db) = OwnDatabase::create("settled_once").await else {
+        return;
+    };
+    let pool = db.pool.clone();
     let mut captured = super::events::capture::analytics().await;
     let credits = Credits::new(pool.clone()).with_analytics(Some(captured.analytics.clone()));
     let buyer = scratch_wallet();
@@ -11247,15 +11250,211 @@ async fn a_settled_purchase_is_reported_once() {
         None,
         "a remainder is not a new purchase"
     );
-    sqlx::query("DELETE FROM credits.usage_settlements WHERE address = $1")
-        .bind(&buyer.address)
+    db.drop().await;
+}
+
+/// A real grouped reservation (its first line's trade copied onto the
+/// credit) settles as one event per line, as credits-server reported one per
+/// intent: each line's cents, its own trade and its share of the MANA.
+#[tokio::test]
+async fn a_grouped_purchase_is_reported_per_line() {
+    let Some(db) = OwnDatabase::create("grouped_settled").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut captured = super::events::capture::analytics().await;
+    let credits = Credits::new(pool.clone()).with_analytics(Some(captured.analytics.clone()));
+    let buyer = scratch_wallet().address;
+    seed_paid_credits(&pool, &buyer, "100").await;
+    let manager = scratch_wallet().address;
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    let line = |cents: i64, trade: &str, item: &str| super::authorize::GroupLine {
+        quoted_cents: cents,
+        charged_cents: cents,
+        sale_kind: "primary_mint",
+        asset_kind: "wearable",
+        asset_chain_id: 137,
+        asset_contract: "0x00000000000000000000000000000000000c0de1".into(),
+        asset_item_id: Some(item.into()),
+        asset_token_id: None,
+        trade_id: Some(trade.into()),
+        contract_address: None,
+        item_id: None,
+        registered_name: None,
+    };
+    let lines = [line(300, "trade-a", "1"), line(200, "trade-b", "2")];
+    let reserved = credits
+        .reserve_credit_group(
+            &super::authorize::NewGroup {
+                id: &salt,
+                address: &buyer,
+                chain_id: 137,
+                contract: &manager,
+                credit_hash: &salt,
+                quoted_cents: 500,
+                charged_cents: 500,
+                amount_wei: "1",
+                oracle_rate: "1",
+                oracle_decimals: 8,
+                source: None,
+                expires_at: future(),
+                lines: &lines,
+            },
+            &unique("authz-group"),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(reserved.is_ok(), "{reserved:?}");
+    let parent: Option<String> =
+        sqlx::query_scalar("SELECT trade_id FROM credits.authorizations WHERE id = $1")
+            .bind(&salt)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        parent.as_deref(),
+        Some("trade-a"),
+        "the reservation copies the first line's trade"
+    );
+    sqlx::query(
+        "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+             credit_value, credit_expires_at, value_wei) VALUES (137, 1, 0, $1, $2, $3, $4, $4, 1, 0, 1001)",
+    )
+    .bind(&manager)
+    .bind(format!("0x{}", "ee".repeat(32)))
+    .bind(&buyer)
+    .bind(&salt)
+    .execute(&pool)
+    .await
+    .unwrap();
+    super::settlement::settle(&credits, 137, &manager, -1, 10)
+        .await
+        .unwrap();
+
+    let mut reported = Vec::new();
+    while reported.len() < 2 {
+        let posted = captured
+            .next(std::time::Duration::from_secs(5))
+            .await
+            .expect("one event per line");
+        reported.push((
+            posted["body"]["usdCents"].as_i64().unwrap(),
+            posted["body"]["tradeId"].as_str().unwrap().to_string(),
+            posted["body"]["manaSettledWei"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+            posted["body"]["salt"].as_str().unwrap().to_string(),
+        ));
+    }
+    reported.sort();
+    assert_eq!(
+        reported,
+        [
+            (200, "trade-b".to_string(), "400".to_string(), salt.clone()),
+            (300, "trade-a".to_string(), "601".to_string(), salt.clone()),
+        ]
+    );
+    assert_eq!(
+        captured.next(std::time::Duration::from_millis(400)).await,
+        None
+    );
+    db.drop().await;
+}
+
+/// Two passes settling different logs of one credit at once (the operator's
+/// full fold and the index's): the second waits for the credit's lock and
+/// then counts the first's settlement, so one log settles the purchase (one
+/// debit, one event) and the other a remainder.
+#[tokio::test]
+async fn overlapping_folds_settle_one_purchase_per_credit() {
+    let Some(db) = OwnDatabase::create("settle_overlap").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let mut captured = super::events::capture::analytics().await;
+    let credits = Credits::new(pool.clone()).with_analytics(Some(captured.analytics.clone()));
+    let buyer = scratch_wallet().address;
+    seed_paid_credits(&pool, &buyer, "100").await;
+    let manager = scratch_wallet().address;
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    authorization_fixture(&pool, &salt, &buyer, 700, "authorized", 0, 0).await;
+    for block in [1_i64, 2] {
+        sqlx::query(
+            "INSERT INTO credits.usages (chain_id, block_number, log_index, contract, tx_hash, sender, credit_id, salt, \
+                 credit_value, credit_expires_at, value_wei) VALUES (137, $1, 0, $2, $3, $4, $5, $5, 1, 0, 5)",
+        )
+        .bind(block)
+        .bind(&manager)
+        .bind(format!("0x{}", format!("{block:02x}").repeat(32)))
+        .bind(&buyer)
+        .bind(&salt)
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM credits.usages WHERE contract = $1")
-        .bind(&contract)
-        .execute(&pool)
+    }
+    // Hold the credit's lock so both passes start, and wait, before either settles.
+    let mut holder = pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM credits.authorizations WHERE id = $1 FOR UPDATE")
+        .bind(&salt)
+        .execute(&mut *holder)
         .await
         .unwrap();
-    cleanup(&pool, &buyer.address).await;
+    let first = tokio::spawn({
+        let credits = credits.clone();
+        let manager = manager.clone();
+        async move { super::settlement::settle(&credits, 137, &manager, -1, 1).await }
+    });
+    let second = tokio::spawn({
+        let credits = credits.clone();
+        let manager = manager.clone();
+        async move { super::settlement::settle(&credits, 137, &manager, 1, 2).await }
+    });
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if waiting >= 2 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "both passes wait for the lock"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    holder.commit().await.unwrap();
+    first.await.unwrap().unwrap();
+    second.await.unwrap().unwrap();
+
+    let mut kinds: Vec<String> = sqlx::query_scalar(
+        "SELECT kind FROM credits.usage_settlements WHERE authorization_id = $1",
+    )
+    .bind(&salt)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    kinds.sort();
+    assert_eq!(kinds, ["purchase", "remainder"]);
+    assert_eq!(
+        available(&pool, &buyer).await,
+        "30",
+        "one purchase debit of 70 credits"
+    );
+    let posted = captured
+        .next(std::time::Duration::from_secs(5))
+        .await
+        .expect("the purchase");
+    assert_eq!(posted["body"]["salt"], salt.as_str());
+    assert_eq!(
+        captured.next(std::time::Duration::from_millis(400)).await,
+        None,
+        "reported once"
+    );
+    db.drop().await;
 }

@@ -51,15 +51,19 @@ pub fn pack_granted(granted: &PackGranted<'_>) -> Value {
     })
 }
 
-/// The first settlement of a credit: the purchase it paid for became revenue.
+/// One line of a credit's first settlement: the purchase it paid for became
+/// revenue. A credit that bought several items reports one per line, as
+/// credits-server reported one per intent, all under the credit's salt and
+/// transaction.
 pub struct PurchaseSettled<'a> {
     pub salt: &'a str,
     pub user_address: &'a str,
-    /// What the buyer was charged, in USD cents.
+    /// What the buyer was charged for the line, in USD cents.
     pub usd_cents: i64,
-    /// The MANA that moved on chain, in wei.
+    /// The line's share of the MANA the log moved, in wei: pro rata by
+    /// cents, the rounding remainder to the largest line.
     pub mana_settled_wei: &'a str,
-    /// The trade it bought, when it bought exactly one.
+    /// The line's trade (a single-line credit's own).
     pub trade_id: Option<&'a str>,
     pub tx_hash: &'a str,
     /// The credit had been released or had expired (its hold no longer
