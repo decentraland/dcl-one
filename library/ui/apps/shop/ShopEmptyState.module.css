@@ -16,6 +16,7 @@
 .root[data-variant='screen'] {
   min-height: 100%;
   height: 100vh;
+  overflow: hidden;
   padding: 40px 20px;
 }
 
@@ -40,7 +41,7 @@
   font-size: 15px;
 }
 .root[data-variant='screen'] .title {
-  font-size: 24px;
+  font-size: var(--dcl-font-size-heading-2);
   opacity: 0.8;
 }
 

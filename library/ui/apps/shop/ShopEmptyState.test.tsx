@@ -13,6 +13,24 @@ describe('ShopEmptyState', () => {
     })
   })
 
+  describe('when a Shop route supplies a screen layout and root attributes', () => {
+    it('should apply them to the same element that contains the heading', () => {
+      render(
+        <ShopEmptyState
+          title="Sign in"
+          role="region"
+          aria-label="Sell"
+          data-testid="shop-gate"
+          variant="screen"
+        />
+      )
+      const region = screen.getByRole('region', { name: 'Sell' })
+      expect(region).toHaveAttribute('data-testid', 'shop-gate')
+      expect(region).toHaveAttribute('data-variant', 'screen')
+      expect(region).toContainElement(screen.getByRole('heading', { name: 'Sign in' }))
+    })
+  })
+
   describe('when the action navigates to another page', () => {
     it('should expose its destination as a link', () => {
       render(
