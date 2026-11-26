@@ -80,7 +80,7 @@ describe('waiting for the server to store the new owner', () => {
     expect(sync).toHaveBeenCalledTimes(3)
   })
 
-  it("gives up after twenty minutes, the node's lag bound on the chain copy", async () => {
+  it("should give up after twenty minutes, the node's lag bound on the chain copy", async () => {
     vi.useFakeTimers()
     const sync = vi.fn().mockResolvedValue(collection)
     const run = waitForOwnerSync(collection.id, OTHER, { syncCollectionOwner: sync })

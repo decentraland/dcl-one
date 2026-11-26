@@ -152,19 +152,19 @@ describe('cancelCreditsOrder', () => {
   })
 })
 
-describe('creditsUrl', () => {
+describe('when choosing the credits server', () => {
   afterEach(() => {
     delete (window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__
   })
 
-  describe('when the page names no node', () => {
+  describe('and the page names no node', () => {
     it("should be the credits of the node behind the page's origin", () => {
       expect(creditsUrl()).toBe(`${window.location.origin}/credits`)
     })
   })
 
   describe.each(['https://node.example/', 'https://decentraland.zone', 'https://decentraland.org', 'https://dcl.dev'])(
-    'when the page names the node %s',
+    'and the page names the node %s',
     node => {
       it("should be that node's credits, never a hosted credits service", () => {
         ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = node

@@ -52,7 +52,7 @@ describe('formatUsd', () => {
   })
 })
 
-describe('fetchCreditPacks', () => {
+describe('when fetching the credit packs', () => {
   const fetchMock = vi.fn()
 
   afterEach(() => {
@@ -60,7 +60,7 @@ describe('fetchCreditPacks', () => {
     vi.unstubAllGlobals()
   })
 
-  describe('when the node answers its catalogue', () => {
+  describe('and the node answers its catalogue', () => {
     it("should read the node's packs in order", async () => {
       vi.stubGlobal('fetch', fetchMock)
       fetchMock.mockResolvedValue(
