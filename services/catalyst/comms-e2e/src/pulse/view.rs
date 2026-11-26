@@ -208,6 +208,9 @@ impl Session {
                 self.view.full_states += 1;
                 let grid = self.grid;
                 match self.view.subjects.get_mut(&full.subject_id) {
+                    // full states travel reliably and deltas do not, so a full state can arrive
+                    // after newer deltas: one behind what is held is late, not a correction
+                    Some(subject) if full.sequence < subject.sequence => {}
                     Some(subject) => {
                         subject.sequence = full.sequence;
                         subject.state = full.state.unwrap_or_default();
@@ -425,6 +428,41 @@ mod tests {
         // a late duplicate is neither applied nor a gap
         session.on_frame(&delta(7, 3, 4));
         assert_eq!(session.view.sequence_gaps, 1);
+    }
+
+    fn full(subject_id: u32, sequence: u32, at: [f32; 3]) -> Vec<u8> {
+        frame(Message::PlayerStateFull(PlayerStateFull {
+            subject_id,
+            sequence,
+            server_tick: 0,
+            state: Some(messages::state_at(&Grid::default(), at).unwrap()),
+        }))
+    }
+
+    #[test]
+    fn a_full_state_behind_the_held_sequence_does_not_move_the_subject_back() {
+        let mut session = Session::new(Grid::default(), true);
+        session.on_frame(&joined(7, "0xabc", 5));
+        session.on_frame(&delta(7, 5, 6));
+        let ahead = session.view.of("0xabc").unwrap().world;
+        session.on_frame(&full(7, 5, [8.0, 0.0, 8.0]));
+        let subject = session.view.of("0xabc").unwrap();
+        assert_eq!(subject.sequence, 6);
+        assert_eq!(subject.world, ahead);
+        assert_eq!(session.view.full_states, 1);
+    }
+
+    #[test]
+    fn a_full_state_at_or_ahead_of_the_held_sequence_replaces_the_picture() {
+        let mut session = Session::new(Grid::default(), true);
+        session.on_frame(&joined(7, "0xabc", 5));
+        let before = session.view.of("0xabc").unwrap().world;
+        session.on_frame(&full(7, 5, [8.0, 0.0, 8.0]));
+        assert_eq!(session.view.of("0xabc").unwrap().world, before);
+        session.on_frame(&full(7, 9, [12.0, 0.0, 9.0]));
+        let subject = session.view.of("0xabc").unwrap();
+        assert_eq!(subject.sequence, 9);
+        assert_ne!(subject.world, before);
     }
 
     #[test]

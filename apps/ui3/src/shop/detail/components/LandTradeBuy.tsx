@@ -5,7 +5,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import Modal from "../../../components/Modal";
 import { chainLabel, type ChainId } from "@shop/model/chain";
 import { formatMana, type ManaWei } from "@shop/model/money";
@@ -117,7 +117,7 @@ export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, o
         {phase.kind === "success" ? (
           <>
             <p role="status">Purchase complete. {name} is on its way to your wallet.</p>
-            <Button onClick={onClose}>Done</Button>
+            <Button size="md" onClick={onClose}>Done</Button>
           </>
         ) : phase.kind === "pending" || phase.kind === "approval-pending" ? (
           <ConfirmingNotice outcome={phase} chainId={chainId} onClose={onClose} />
@@ -169,10 +169,10 @@ export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, o
               </p>
             ) : null}
             <div className="shop-orderbuy__actions">
-              <Button onClick={() => void buy()} disabled={!ready || busy} data-testid="order-buy">
+              <Button size="md" onClick={() => void buy()} disabled={!ready || busy} data-testid="order-buy">
                 {busy ? "Working…" : `Buy for ${formatMana(shown, { group: true })} MANA`}
               </Button>
-              <Button variant="ghost" onClick={onClose} disabled={busy}>
+              <Button size="md" variant="outline" onClick={onClose} disabled={busy}>
                 Cancel
               </Button>
             </div>

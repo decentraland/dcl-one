@@ -53,7 +53,7 @@ jobs:
             changed=true
           else
             changed=false
-            files=$(git log --format= --name-only --diff-merges=cc "$range" -- library/ui library/explorer-core infra/packages/ui-gallery.nix flake.lock .claude/skills/implement-figma-design .claude/skills/maintain-figma-library .agents .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
+            files=$(git log --format= --name-only --diff-merges=cc "$range" -- library/ui library/explorer-core infra/packages/ui-gallery.nix flake.lock tooling/ui-gallery-publish.py tooling/ui-gallery-receipt.py .claude/skills/implement-figma-design .claude/skills/maintain-figma-library .agents .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
             [ -z "$files" ] || changed=true
           fi
           echo "ui_changed=$changed" >> "$GITHUB_OUTPUT"
@@ -179,6 +179,17 @@ jobs:
           pnpm exec vite build --config gallery/vite.config.ts --mode hosted
           node gallery/scripts/hosted-digest.mjs gallery/dist
           cp -R gallery/dist figma/review/review-dist/ui-gallery
+      # The same bytes as a pull request preview serves them (ui-gallery-publish.yml): every file of a type and within
+      # the limits the publisher accepts, so a refusal shows here and not on main, then opened as index.html under a
+      # prefix as deep as ui-gallery/pr/<n>/<sha>/ and the Content-Security-Policy the preview host sends, where any
+      # violation fails. Both only read the build.
+      - name: Check the hosted gallery as a preview serves it
+        env:
+          SITE_DIR: gallery/dist
+        run: |
+          python3 -I ../../tooling/ui-gallery-publish.py check
+          csp=$(python3 -I ../../tooling/ui-gallery-publish.py csp)
+          node gallery/scripts/check-build.mjs gallery/dist --hosted --prefix /ui-gallery/pr/1/0000000000000000000000000000000000000000/ --csp "$csp"
       # Url check only; ui-library-key-scan.yml checks this artifact for the key, from the default branch.
       - name: Scan the Review build for Figma urls before upload
         run: node figma/key-guard.mjs --no-worktree --no-range --path library/ui/figma/review/review-dist

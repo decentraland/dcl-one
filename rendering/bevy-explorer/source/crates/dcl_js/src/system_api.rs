@@ -21,7 +21,7 @@ use system_bridge::{
     FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
     ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
     PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
+    ProximityEvent, ReactionData, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
     SetItemPurchaseState, SetPermanentPermission, SetSinglePermission, SystemApi,
     TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
     WorldAccessEvent, WorldAccessVerdict,
@@ -400,6 +400,20 @@ pub async fn op_get_service_urls(
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
 
+pub async fn op_get_official_wallets(
+    state: Rc<RefCell<impl State>>,
+) -> Result<Vec<String>, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetOfficialWallets(sx))
+        .unwrap();
+
+    rx.await.map_err(|e| anyhow::anyhow!(e))
+}
+
 pub async fn op_get_welcome(state: Rc<RefCell<impl State>>) -> Result<WelcomeState, anyhow::Error> {
     let (sx, rx) = RpcResultSender::channel();
 
@@ -707,6 +721,34 @@ pub fn op_send_chat_reaction(
             emoji,
             remove,
         })
+        .unwrap();
+}
+
+pub async fn op_get_reaction_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetReactionStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_reaction_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<ReactionData>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_send_reaction(state: Rc<RefCell<impl State>>, emoji: String) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SendReaction(emoji))
         .unwrap();
 }
 

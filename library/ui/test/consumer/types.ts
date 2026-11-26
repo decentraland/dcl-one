@@ -131,7 +131,16 @@ const link: import('@dcl/one-ui').ButtonProps = {
 const invalidLink: import('@dcl/one-ui').ButtonProps = { href: '/jump', type: 'submit' }
 // @ts-expect-error Only supported button variants are public.
 const invalidVariant: import('@dcl/one-ui').ButtonProps = { variant: 'unknown' }
-void [button, link, invalidLink, invalidVariant]
+const destructiveText = { variant: 'text', tone: 'danger', label: 'Delete' } as const
+// @ts-expect-error The destructive tone is available on labelled primary and outline buttons.
+const invalidDanger: import('@dcl/one-ui').ButtonProps = destructiveText
+// @ts-expect-error Icon-only controls do not have a destructive appearance.
+const invalidDangerIcon: import('@dcl/one-ui').ButtonProps = {
+  tone: 'danger',
+  iconOnly: true,
+  'aria-label': 'Delete'
+}
+void [button, link, invalidLink, invalidVariant, invalidDanger, invalidDangerIcon]
 
 const nativeButtonRef: import('@dcl/one-ui').ButtonProps = {
   children: 'Save',
@@ -179,3 +188,36 @@ const spreadButtonHtml: ButtonProps = { ...htmlSpread }
 // @ts-expect-error Link-mode spreads cannot override owned content either.
 const spreadLinkHtml: ButtonProps = { href: '/save', ...htmlSpread }
 void [buttonHtml, linkHtml, spreadButtonHtml, spreadLinkHtml]
+
+// The Explorer HUD's control looks are separate members of the Button union.
+const hudControl: ButtonProps = {
+  appearance: 'hud',
+  control: 'circle',
+  active: true,
+  'aria-label': 'Menu'
+}
+const hudHeader: ButtonProps = { appearance: 'hud', control: 'header', 'aria-label': 'Close' }
+const hudControlRadius: ButtonProps = {
+  appearance: 'hud',
+  control: 'square',
+  // @ts-expect-error A control takes no radius override.
+  radius: 'pill',
+  'aria-label': 'Close'
+}
+// @ts-expect-error Only a control has an active look.
+const hudActive: ButtonProps = { appearance: 'hud', active: true, children: 'Save' }
+const hudHeaderSize: ButtonProps = {
+  appearance: 'hud',
+  control: 'header',
+  // @ts-expect-error A header button has no size.
+  size: 'sm',
+  'aria-label': 'Close'
+}
+// @ts-expect-error A control's fills are its own four.
+const hudControlFill: ButtonProps = {
+  appearance: 'hud',
+  control: 'square',
+  variant: 'primary',
+  'aria-label': 'Close'
+}
+void [hudControl, hudHeader, hudControlRadius, hudActive, hudHeaderSize, hudControlFill]

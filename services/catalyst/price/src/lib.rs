@@ -49,6 +49,13 @@
 //! and `/admin/api/price/*` collide with nothing) and `.nest("/price",
 //! price::router(state))` for a per-vhost proxy.
 
+// Money and block numbers: a silently truncated or sign-flipped cast is a bug.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 #[cfg(test)]
 pub(crate) use catalyst_db as db;
@@ -62,6 +69,7 @@ pub mod poller;
 pub mod store;
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support;
 #[cfg(test)]
 pub(crate) mod tests;

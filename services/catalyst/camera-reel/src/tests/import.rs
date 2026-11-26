@@ -87,7 +87,10 @@ impl Source {
         .unwrap();
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per inserted photo column"
+    )]
     async fn insert(
         &self,
         id: Uuid,

@@ -85,6 +85,11 @@ pub fn events() -> bool {
 
 /// A line for the person at the terminal: stdout, or stderr when stdout
 /// carries [`events`].
+#[allow(
+    clippy::print_stderr,
+    clippy::print_stdout,
+    reason = "the CLI writes to the terminal"
+)]
 pub fn say(line: impl fmt::Display) {
     match events() {
         true => eprintln!("{line}"),
@@ -94,6 +99,7 @@ pub fn say(line: impl fmt::Display) {
 
 /// One event of a `start --json` run, a JSON object on a line of its own;
 /// nothing without [`events`].
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 pub fn event(line: &impl serde::Serialize) {
     if events()
         && let Ok(line) = serde_json::to_string(line)
@@ -379,6 +385,7 @@ pub fn render(err: &anyhow::Error, verbose: bool, color: bool) -> String {
     out
 }
 
+#[allow(clippy::print_stderr, reason = "the CLI writes to the terminal")]
 pub fn report(err: &anyhow::Error, verbose: bool) {
     eprint!("{}", render(err, verbose, stderr_color()));
 }
@@ -398,6 +405,7 @@ pub fn report_types(err: &anyhow::Error) {
     report_topic(Topic::Types, err);
 }
 
+#[allow(clippy::print_stderr, reason = "the CLI writes to the terminal")]
 fn report_topic(topic: Topic, err: &anyhow::Error) {
     eprint!("{}", user_block(err, "warning:", "1;33", stderr_color()));
     let fallen;
@@ -639,6 +647,7 @@ pub struct Slow {
 const SLOW_AFTER: std::time::Duration = std::time::Duration::from_secs(1);
 
 impl Slow {
+    #[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
     pub fn start(label: impl Into<String>) -> Self {
         let label = label.into();
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -887,6 +896,7 @@ fn scene_headline(kind: SceneNote, where_: &str, color: bool) -> String {
     }
 }
 
+#[allow(clippy::print_stderr, reason = "the CLI writes to the terminal")]
 pub fn scene_note(
     kind: SceneNote,
     message: &str,
@@ -981,6 +991,7 @@ fn sanitize(s: &str) -> String {
     out
 }
 
+#[allow(clippy::print_stderr, reason = "the CLI writes to the terminal")]
 pub fn note_stderr(message: impl AsRef<str>) {
     eprintln!("{}", tint(stderr_color(), "2", message.as_ref()));
 }

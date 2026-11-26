@@ -1,4 +1,4 @@
-import { Entity, uint32 } from '../../engine/entity'
+import type { Entity, uint32 } from '../../engine/entity'
 
 /**
  * @public

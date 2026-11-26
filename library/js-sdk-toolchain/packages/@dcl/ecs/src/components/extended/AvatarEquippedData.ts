@@ -1,8 +1,8 @@
-import { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
-import { DeepReadonly } from '../../engine/readonly'
-import { ByteBuffer } from '../../serialization/ByteBuffer'
+import type { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
+import type { DeepReadonly } from '../../engine/readonly'
+import type { ByteBuffer } from '../../serialization/ByteBuffer'
 import { AvatarEquippedDataSchema } from '../generated/AvatarEquippedData.gen'
-import { PBAvatarEquippedData } from '../generated/pb/decentraland/sdk/components/avatar_equipped_data.gen'
+import type { PBAvatarEquippedData } from '../generated/pb/decentraland/sdk/components/avatar_equipped_data.gen'
 
 /**
  * @public
@@ -26,7 +26,8 @@ export function defineAvatarEquippedDataComponent(
   const origSerialize = patchedSchema.serialize
   // `??` also covers a `null` written through getMutable
   patchedSchema.serialize = (value: DeepReadonly<AvatarEquippedDataType>, builder: ByteBuffer) => {
-    origSerialize({ ...value, forceRender: value.forceRender ?? [] }, builder)
+    // a composite written before `wearables` existed carries none
+    origSerialize({ ...value, wearables: value.wearables ?? [], forceRender: value.forceRender ?? [] }, builder)
   }
 
   const theComponent = engine.defineComponentFromSchema('core::AvatarEquippedData', patchedSchema)

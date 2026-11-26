@@ -67,21 +67,23 @@ describe('editor host signing', () => {
     expect(fetched).not.toHaveBeenCalled()
 
     await signIn()
-    await host().signedFetch('http://localhost:8787/projects/p1/manifest?x=1', {
+    await host().signedFetch('http://localhost:8787/projects/p1/manifest?X=1', {
       method: 'put',
       body: '{}',
       headers: { 'content-type': 'application/json', 'X-Identity-Metadata': '{"signer":"decentraland-kernel-scene"}', 'x-forwarded-for': '1.2.3.4' }
     })
     const [url, init] = fetched.mock.lastCall!
     const headers = init!.headers as Record<string, string>
-    expect(url).toBe('http://localhost:8787/projects/p1/manifest?x=1')
+    expect(url).toBe('http://localhost:8787/projects/p1/manifest?X=1')
     expect(headers['content-type']).toBe('application/json')
     expect(headers['X-Identity-Metadata']).toBeUndefined()
     expect(headers['x-forwarded-for'], 'only the headers the host allows').toBeUndefined()
     expect(JSON.parse(headers['x-identity-metadata'])).toEqual({ intent: 'dcl:editor:projects', signer: 'dcl:editor', origin: location.origin })
     // what a signed-fetch verifier rebuilds and checks (ADR-44)
     const chain = [0, 1, 2].map((i) => JSON.parse(headers[`x-identity-auth-chain-${i}`]))
-    const payload = `put:/projects/p1/manifest?x=1:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`.toLowerCase()
+    const payload = `put:/projects/p1/manifest?x=1:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`
+    // the project service verifies only the folded payload; its fixed metadata folds to itself
+    expect(payload).toBe(payload.toLowerCase())
     expect(await Authenticator.validateSignature(payload, chain, null)).toEqual({ ok: true, message: undefined })
     fetched.mockRestore()
   })
@@ -134,7 +136,7 @@ describe('editor host signing', () => {
       ['https://multiplayer-server.decentraland.org/rooms'],
       ['https://storage.decentraland.org/players', { metadata: { signer: 'dcl:editor' } }],
       ['https://storage.decentraland.org/players', { metadata: { intent: 'dcl:editor:projects' } }],
-      // the payload is signed lowercased, so a case change still signs as the editor
+      // a legacy verifier folds the metadata, so a case change would still sign as the editor
       ['https://storage.decentraland.org/players', { metadata: { signer: 'DCL:Editor' } }],
       ['https://storage.decentraland.org/players', { metadata: { Intent: 'dcl:editor:projects' } }]
     ]
@@ -152,10 +154,10 @@ describe('editor host signing', () => {
       expect(fetched.mock.lastCall![0], url).toBe(url)
     }
 
-    const metadata = { signer: 'decentraland-kernel-scene', sceneId: 'bafkreiscene', realm: { hostname: 'boedo.dcl.eth' } }
+    const metadata = { signer: 'decentraland-kernel-scene', sceneId: 'BafkreiScene', realm: { hostname: 'Boedo.dcl.eth' } }
     const body = new FormData()
     const abort = new AbortController()
-    await host().signedFetch('https://storage.decentraland.org/players/0x1/values?key=a', {
+    await host().signedFetch('https://storage.decentraland.org/players/0xAB/values?key=a', {
       method: 'delete',
       body,
       metadata,
@@ -171,8 +173,10 @@ describe('editor host signing', () => {
     expect(headers['x-identity-metadata']).toBe(JSON.stringify(metadata))
     // the path without the query, as a scene's signed fetch signs it
     const chain = [0, 1, 2].map((i) => JSON.parse(headers[`x-identity-auth-chain-${i}`]))
-    const payload = `delete:/players/0x1/values:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`.toLowerCase()
+    // crypto-middleware 6.x: method and path folded, the mixed-case metadata verbatim
+    const payload = `delete:/players/0xab/values:${headers['x-identity-timestamp']}:${headers['x-identity-metadata']}`
     expect(await Authenticator.validateSignature(payload, chain, null)).toEqual({ ok: true, message: undefined })
+    expect((await Authenticator.validateSignature(payload.toLowerCase(), chain, null)).ok).toBe(false)
 
     // the project service keeps its own metadata
     await host().signedFetch('http://localhost:8787/projects', { metadata })

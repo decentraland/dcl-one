@@ -3,16 +3,17 @@ import type { Stats } from 'fs'
 import path from 'path'
 import { WebSocket } from 'ws'
 import chokidar from 'chokidar'
-import ignore, { Ignore } from 'ignore'
+import type { Ignore } from 'ignore'
+import ignore from 'ignore'
 import { getDCLIgnorePatterns } from '../../../logic/dcl-ignore'
-import { PreviewComponents } from '../types'
+import type { PreviewComponents } from '../types'
 import { sceneUpdateClients } from './routes'
-import { ProjectUnion } from '../../../logic/project-validations'
+import type { ProjectUnion } from '../../../logic/project-validations'
 import { b64HashingFunction } from '../../../logic/project-files'
 import {
   WsSceneMessage,
   UpdateModelType
-} from '@dcl/protocol/out-js/decentraland/sdk/development/local_development.gen'
+} from '../../../generated/decentraland/sdk/development/local_development.gen'
 import { debounce } from '../../../logic/debounce'
 
 /**

@@ -124,37 +124,6 @@
   gap: 10px;
   height: 46px;
 }
-.barButton {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  height: 42px;
-  padding: 0;
-  border: 2px solid var(--lobby-white-5);
-  border-radius: 21px;
-  background: var(--lobby-black-55);
-  color: var(--lobby-snow);
-  font-family: inherit;
-  cursor: pointer;
-  transition: background-color var(--lobby-dur-press);
-}
-.barButton:hover,
-.barButtonOpen,
-.barButtonOpen:active {
-  background: var(--lobby-button-hover);
-}
-.barButton:active {
-  background: var(--lobby-black-55);
-}
-.barButton:focus-visible {
-  outline: 2px solid var(--lobby-snow);
-  outline-offset: 2px;
-}
-.roundButton {
-  width: 42px;
-}
 .editButton {
   margin-left: 16px;
 }
@@ -174,29 +143,10 @@
   font-size: var(--type-16);
   color: var(--lobby-silver);
 }
-.pill {
-  padding: 0 18px 0 14px;
-}
 .pillLabel {
   margin-left: 8px;
   font-size: var(--type-16);
   font-weight: var(--fw-semibold);
-}
-.badge {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  box-sizing: border-box;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: var(--lobby-accent);
-  font-size: var(--type-11);
-  font-weight: var(--fw-bold, 700);
-  line-height: 18px;
-  text-align: center;
-  color: var(--lobby-snow);
 }
 .profile {
   padding: 0 24px 0 4px;
@@ -218,12 +168,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.closeButton {
-  width: 46px;
-  height: 46px;
-  border-radius: 23px;
-}
-
 .widget {
   position: absolute;
   box-sizing: border-box;
@@ -255,10 +199,6 @@
 .share {
   position: absolute;
   min-width: 180px;
-}
-.photo {
-  position: absolute;
-  inset: 0;
 }
 .avatarTooltip,
 .friendTooltip {

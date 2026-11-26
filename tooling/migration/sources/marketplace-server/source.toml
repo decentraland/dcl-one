@@ -9,8 +9,9 @@ Moves the off-chain signed state only: trades with their assets, coupons,
 and a coupon_state snapshot. Migrated trades become local authority
 (mirrored_from NULL): a row the trades mirror already copied is promoted and
 its assets are replaced by upstream's (same content, upstream ids); that is
-the only delete. Not migrated: trade_digest and mv_trades (the node's
-trade-events fold derives both), item_neighbors*, item_search_*,
+the only delete. trade_digest is copied (the node's trade-events fold
+verifies it against the signature, or rebuilds it). Not migrated: mv_trades
+(the node's trade-events fold derives the statuses), item_neighbors*, item_search_*,
 collection_search_*, creator_profiles, creator_search_* (rebuilt caches),
 mana_usd_daily (oracle cache), favorite_discount_notifications and the
 coupons.favorites_* columns (notification dedupe with no target),
@@ -37,6 +38,7 @@ columns = [
   { name = "effective_since", type = "timestamptz" },
   { name = "contract", type = "text" },
   { name = "created_at", type = "timestamptz" },
+  { name = "trade_digest", type = "text" },
   { name = "assets", type = "jsonb" },
 ]
 

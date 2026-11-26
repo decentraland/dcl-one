@@ -38,9 +38,10 @@ pub struct NodeConfig {
     pub http_server_port: u16,
 
     /// Direct backend proxies allowed to supply a single, overwritten X-Real-IP
-    /// for referral quotas and the `/contents` rate limit. Empty trusts only the
-    /// socket peer. These are the backend proxy networks, not the proxy's own
-    /// upstream CDN networks.
+    /// for referral quotas, the `/contents` rate limit and the per-source budget
+    /// of contract-wallet signature checks. Empty trusts only the socket peer.
+    /// These are the backend proxy networks, not the proxy's own upstream CDN
+    /// networks.
     #[arg(long, env = "HTTP_TRUSTED_PROXY_CIDRS", value_delimiter = ',')]
     pub http_trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 
@@ -51,6 +52,10 @@ pub struct NodeConfig {
     /// Operator-local Prometheus scrape listener, separate from the application API.
     #[arg(long, env = "SERVE_METRICS_BIND", default_value = "127.0.0.1:5006")]
     pub serve_metrics_bind: String,
+
+    /// Operator-local scrape listener used by the standalone index process.
+    #[arg(long, env = "INDEX_METRICS_BIND", default_value = "127.0.0.1:5008")]
+    pub index_metrics_bind: String,
 
     #[arg(
         long,

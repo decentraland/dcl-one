@@ -6,14 +6,18 @@
 // disabled (aria-disabled), so the button doesn't flash a disabled state for half a second.
 
 import { useEffect, useState } from 'react'
-import { Button } from './Button'
+import { Button } from '@dcl/one-ui'
 
 /** How long a confirm waits before it answers. */
 export const ARM_MS = 500
 
-/** Every prop of Button's `<button>` form (variant, size, radius and the element's own), with a plain onClick. */
-type ArmedButtonProps = Omit<Extract<React.ComponentProps<typeof Button>, { href?: undefined }>, 'onClick'> & {
+/** Every prop of the HUD Button's `<button>` form (variant, size, radius and the element's own), with a plain onClick. */
+type ArmedButtonProps = Omit<
+  Extract<React.ComponentProps<typeof Button>, { appearance: 'hud'; control?: undefined; href?: undefined }>,
+  'appearance' | 'onClick' | 'children' | 'label'
+> & {
   onClick?: () => void
+  children: Exclude<React.ReactNode, null | undefined | boolean>
 }
 
 export function ArmedButton({ onClick, ...props }: ArmedButtonProps): React.JSX.Element {
@@ -22,5 +26,5 @@ export function ArmedButton({ onClick, ...props }: ArmedButtonProps): React.JSX.
     const timer = setTimeout(() => setArmed(true), ARM_MS)
     return () => clearTimeout(timer)
   }, [])
-  return <Button {...props} onClick={armed ? onClick : undefined} aria-disabled={armed ? props['aria-disabled'] : true} />
+  return <Button appearance="hud" {...props} onClick={armed ? onClick : undefined} aria-disabled={armed ? props['aria-disabled'] : true} />
 }

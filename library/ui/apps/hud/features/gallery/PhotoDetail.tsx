@@ -1,186 +1,289 @@
-// Full-screen photo viewer (lightbox) for one camera-reel photo: large image with
-// prev/next navigation, an info sidebar (date · place · owner · people in the shot),
-// and the reel actions (jump in · download · copy link · share to X · delete).
-//
-// The Gallery renders it in MainMenuShell's scaled reference-canvas body, the lobby in a popup
-// and a passport in its panel, so it is DPI-correct without --ui-scale work. While mounted it
-// registers as a cancel layer, so the engine's Cancel action closes the lightbox first (key
-// or gamepad), leaving the next press to close its host.
+// Full-screen viewer of one camera-reel photo: the photo with its actions and an info panel (date,
+// owner, place, people in the shot) that the info button slides away. Opened through usePhotoViewer,
+// as a popup of its own.
 
-import { useEffect, useRef } from 'react'
-import { Avatar, Button } from '../../design'
+import { MaskIcon, ScrollThumb, Skeleton, Spinner, Switch } from '@dcl/one-ui'
+import { useEffect, useRef, useState } from 'react'
+import { ControlButton } from '../../design'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
-import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
+import { track } from '@explorer-core/lib/analytics'
 import { photoTime } from '../session/useEngineSession'
 import { useOptionalSession } from '../session/SessionContext'
-import type { GalleryPhoto, GalleryPhotoMeta } from '@explorer-core/engine/protocol'
+import type { GalleryPhoto, GalleryPhotoMeta, Wearable } from '@explorer-core/engine/protocol'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
-import { copyReelLink, downloadReel, shareReelToX } from './reelActions'
-import styles from './GalleryPage.module.css'
-
-function formatDate(dateTime: string): string {
-  const ms = photoTime(dateTime)
-  if (!ms) return ''
-  return new Date(ms).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-}
-
-// --- small action glyphs (feature-specific) ----------------------------------
-const Glyph = ({ d }: { d: string }): React.JSX.Element => (
-  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-    <path d={d} />
-  </svg>
-)
-const ICON = {
-  jump: 'M10 17l5-5-5-5v10z',
-  download: 'M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z',
-  link: 'M3.9 12a3.1 3.1 0 013.1-3.1h4V7H7a5 5 0 100 10h4v-1.9H7A3.1 3.1 0 013.9 12zM17 7h-4v1.9h4a3.1 3.1 0 010 6.2h-4V17h4a5 5 0 100-10zM8 11h8v2H8z',
-  share: 'M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 100-6 3 3 0 00-3 3c0 .24.04.47.09.7L8.04 9.81A3 3 0 003 12a3 3 0 003 3 3 3 0 001.96-.73l7.12 4.16c-.05.21-.08.43-.08.65a2.92 2.92 0 105.84 0 3 3 0 00-2.84-2.65z',
-  trash: 'M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z'
-} as const
+import { copyReelLink, downloadReel, photoDate, shareReelToX, type PhotoPlace } from './reelActions'
+import { PhotoPersonRow } from './PhotoPersonRow'
+import shareIcon from '../../assets/camera-reel/share-x.png'
+import linkIcon from '../../assets/camera-reel/copy-link.png'
+import downloadIcon from '../../assets/camera-reel/download.png'
+import deleteIcon from '../../assets/camera-reel/delete.png'
+import hideShowIcon from '../../assets/camera-reel/hide-show.png'
+import arrowLeft from '../../assets/map/panel/arrow-left.png'
+import arrowRight from '../../assets/map/panel/arrow-right.png'
+import closeIcon from '../../assets/map/panel/close-thin.png'
+import pinIcon from '../../assets/map/panel/pin-outline.png'
+import jumpInIcon from '../../assets/friends/jump-in.png'
+import styles from './PhotoDetail.module.css'
 
 export function PhotoDetail({
   photos,
   index,
   meta,
-  isSelf,
+  canEdit,
   onIndex,
   onLoadMeta,
+  loadWearables,
   onClose,
-  onTeleport,
+  onJumpIn,
+  onSetPublic,
   onDelete,
-  onViewPerson
+  onViewPerson,
+  covered = false
 }: {
   photos: GalleryPhoto[]
   index: number
   meta: GalleryPhotoMeta | null | undefined
-  /** The photos are the local player's own, so delete is allowed. */
-  isSelf: boolean
+  /** The photos are the viewer's own: the public toggle and Delete show. */
+  canEdit: boolean
   onIndex: (i: number) => void
   onLoadMeta: (id: string) => void
+  /** The wearables a person had on (urns from the photo's metadata); null when the read fails. */
+  loadWearables: (urns: string[]) => Promise<Wearable[] | null>
   onClose: () => void
-  onTeleport: (x: number, y: number) => void
+  /** Travel to where the photo was taken; the caller closes the viewer when it goes. */
+  onJumpIn: (place: PhotoPlace) => void
+  /** Make the photo public or private; resolves whether the service took it. */
+  onSetPublic?: (photo: GalleryPhoto, isPublic: boolean) => Promise<boolean>
   /** Delete the photo (the caller asks to confirm). */
   onDelete?: (photo: GalleryPhoto) => void
+  /** Open a person's passport: the one who took it, or one in it. */
   onViewPerson?: (user: ChatUser) => void
+  /** Another popup is over the viewer: the arrow keys are that popup's. */
+  covered?: boolean
 }): React.JSX.Element {
   const photo = photos[index]
   const openExternalUrl = useOptionalSession()?.openExternalUrl
   const hasPrev = index > 0
   const hasNext = index < photos.length - 1
+  const [panelOpen, setPanelOpen] = useState(true)
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null)
+  // Optimistic: reverts if the service refuses the write.
+  const [publicChoice, setPublicChoice] = useState<{ id: string; isPublic: boolean; turn: number } | null>(null)
+  const choiceTurn = useRef(0)
+  const isPublic = publicChoice?.id === photo.id ? publicChoice.isPublic : photo.isPublic === true
 
-  // Lazily fetch this photo's metadata the first time it's viewed.
+  useEffect(() => {
+    track('open_photo')
+  }, [])
+
   useEffect(() => {
     if (meta === undefined) onLoadMeta(photo.id)
   }, [photo.id, meta, onLoadMeta])
 
-  // The engine's Cancel action closes the lightbox before the session closes the gallery —
-  // registered as a cancel layer for the lightbox's lifetime (ref: onClose is an inline
-  // prop, and re-registering per render would churn the layer stack).
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
-  useEffect(() => registerCancelLayer(() => onCloseRef.current()), [])
+  useWindowKeyDown(
+    (e) => {
+      if (e.key === 'ArrowLeft' && hasPrev) {
+        onIndex(index - 1)
+      } else if (e.key === 'ArrowRight' && hasNext) {
+        onIndex(index + 1)
+      }
+    },
+    { enabled: !covered }
+  )
 
-  // Keyboard: arrows navigate.
-  useWindowKeyDown((e) => {
-    if (e.key === 'ArrowLeft' && hasPrev) {
-      onIndex(index - 1)
-    } else if (e.key === 'ArrowRight' && hasNext) {
-      onIndex(index + 1)
-    }
-  })
+  const setPublic = (next: boolean): void => {
+    if (onSetPublic == null) return
+    const id = photo.id
+    const turn = ++choiceTurn.current
+    setPublicChoice({ id, isPublic: next, turn })
+    void onSetPublic(photo, next).then(() => setPublicChoice((cur) => (cur?.turn === turn ? null : cur)))
+  }
 
-  const date = formatDate(photo.dateTime)
-  const place = meta?.sceneName
-  const hasCoords = meta?.x != null && meta?.y != null
-  const people = meta?.people ?? []
+  const loaded = loadedUrl === photo.url
+  const showToggle = canEdit && onSetPublic != null
+  const showDelete = canEdit && onDelete != null
 
   return (
     <div className={styles.viewer} role="dialog" aria-modal="true" aria-label="Photo">
-      <button type="button" className={styles.viewerClose} aria-label="Close" onClick={onClose}>
-        ×
-      </button>
+      <div className={`${styles.imagePanel} ${panelOpen ? '' : styles.imagePanelFull}`.trim()}>
+        <img
+          key={photo.url}
+          className={`${styles.image} ${loaded ? styles.imageShown : ''}`.trim()}
+          src={photo.url}
+          alt=""
+          onLoad={() => setLoadedUrl(photo.url)}
+        />
+        {!loaded && (
+          <span className={styles.imageSpinner}>
+            <Spinner size={60} variant="chase" />
+          </span>
+        )}
+        <span className={styles.gradient} aria-hidden="true" />
 
-      <div className={styles.stage}>
-        <button
-          type="button"
-          className={`${styles.nav} ${styles.navPrev}`}
-          aria-label="Previous photo"
-          disabled={!hasPrev}
-          onClick={() => hasPrev && onIndex(index - 1)}
-        >
-          ‹
-        </button>
-        <img className={styles.stageImg} src={photo.url} alt="" />
-        <button
-          type="button"
-          className={`${styles.nav} ${styles.navNext}`}
-          aria-label="Next photo"
-          disabled={!hasNext}
-          onClick={() => hasNext && onIndex(index + 1)}
-        >
-          ›
-        </button>
-      </div>
+        <ControlButton className={`${styles.square} ${styles.close}`} aria-label="Close" onClick={onClose}>
+          <MaskIcon src={closeIcon} size={16} />
+        </ControlButton>
+        {hasPrev && (
+          <ControlButton className={`${styles.square} ${styles.nav} ${styles.navPrev}`} aria-label="Previous photo" onClick={() => onIndex(index - 1)}>
+            <MaskIcon src={arrowLeft} width={14} height={22} />
+          </ControlButton>
+        )}
+        {hasNext && (
+          <ControlButton className={`${styles.square} ${styles.nav} ${styles.navNext}`} aria-label="Next photo" onClick={() => onIndex(index + 1)}>
+            <MaskIcon src={arrowRight} width={14} height={22} />
+          </ControlButton>
+        )}
 
-      <aside className={styles.info}>
         <div className={styles.actions}>
-          {hasCoords && (
-            <Button size="sm" variant="ghost" onClick={() => onTeleport(meta!.x!, meta!.y!)}>
-              <Glyph d={ICON.jump} /> Jump In
-            </Button>
+          {showToggle && (
+            <>
+              <Switch appearance="hud" className={styles.publicToggle} label="Set as Public" checked={isPublic} onCheckedChange={setPublic} />
+              <span className={styles.separator} aria-hidden="true" />
+            </>
           )}
-          <Button size="sm" variant="ghost" onClick={() => void downloadReel(photo.url)}>
-            <Glyph d={ICON.download} /> Download
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => copyReelLink(photo.id)}>
-            <Glyph d={ICON.link} /> Copy link
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => shareReelToX(photo.id, openExternalUrl)}>
-            <Glyph d={ICON.share} /> Share
-          </Button>
-          {isSelf && onDelete && (
-            <Button size="sm" variant="ghost" className={styles.deleteBtn} onClick={() => onDelete(photo)}>
-              <Glyph d={ICON.trash} /> Delete
-            </Button>
+          <ControlButton
+            className={`${styles.square} ${styles.action}`}
+            aria-label="Share on X"
+            onClick={() => {
+              shareReelToX(photo.id, openExternalUrl)
+              track('share_photo')
+            }}
+          >
+            <MaskIcon src={shareIcon} size={25} />
+          </ControlButton>
+          <ControlButton className={`${styles.square} ${styles.action}`} aria-label="Copy Link" onClick={() => copyReelLink(photo.id)}>
+            <MaskIcon src={linkIcon} size={25} />
+          </ControlButton>
+          <ControlButton
+            className={`${styles.square} ${styles.action}`}
+            aria-label="Download"
+            onClick={() =>
+              void downloadReel(photo.url).then((saved) => {
+                if (saved) track('download_photo')
+              })
+            }
+          >
+            <MaskIcon src={downloadIcon} size={25} />
+          </ControlButton>
+          {showDelete && (
+            <ControlButton className={`${styles.square} ${styles.action}`} aria-label="Delete" onClick={() => onDelete(photo)}>
+              <MaskIcon src={deleteIcon} size={25} />
+            </ControlButton>
           )}
+          <span className={styles.separator} aria-hidden="true" />
+          <ControlButton
+            className={`${styles.square} ${styles.infoToggle}`}
+            aria-label={panelOpen ? 'Hide photo info' : 'Show photo info'}
+            aria-expanded={panelOpen}
+            onClick={() => setPanelOpen((v) => !v)}
+          >
+            <MaskIcon src={hideShowIcon} width={22} height={16} className={panelOpen ? styles.infoIcon : styles.infoIconFlipped} />
+          </ControlButton>
         </div>
 
-        {date && (
-          <div className={styles.infoBlock}>
-            <span className={styles.infoLabel}>Date</span>
-            <span className={styles.infoValue}>{date}</span>
-          </div>
-        )}
+        <PhotoInfo
+          key={photo.id}
+          photo={photo}
+          meta={meta}
+          loadWearables={loadWearables}
+          onJumpIn={(place) => {
+            track('photo_jump_to')
+            onJumpIn(place)
+          }}
+          onViewPerson={onViewPerson}
+          openExternalUrl={openExternalUrl}
+          hidden={!panelOpen}
+        />
+      </div>
+    </div>
+  )
+}
 
-        {place && (
-          <div className={styles.infoBlock}>
-            <span className={styles.infoLabel}>Scene</span>
-            <span className={styles.infoValue}>
-              {place}
-              {hasCoords && <span className={styles.coords}> · {meta!.x}, {meta!.y}</span>}
-            </span>
-          </div>
+function PhotoInfo({
+  photo,
+  meta,
+  loadWearables,
+  onJumpIn,
+  onViewPerson,
+  openExternalUrl,
+  hidden
+}: {
+  photo: GalleryPhoto
+  meta: GalleryPhotoMeta | null | undefined
+  loadWearables: (urns: string[]) => Promise<Wearable[] | null>
+  onJumpIn: (place: PhotoPlace) => void
+  onViewPerson?: (user: ChatUser) => void
+  openExternalUrl?: (url: string) => Promise<boolean>
+  hidden: boolean
+}): React.JSX.Element {
+  const scroller = useRef<HTMLDivElement>(null)
+  const date = photoDate(photoTime(meta?.dateTime ?? photo.dateTime))
+  const owner = meta?.userName
+  const ownerAddress = meta?.userAddress
+  const x = meta?.x
+  const y = meta?.y
+  const people = meta?.people ?? []
+  return (
+    <aside className={styles.info} aria-label="Photo info" inert={hidden}>
+      <div className={styles.dateRow}>
+        <span>{date}</span>
+        {owner != null && owner !== '' && (
+          <>
+            <span className={styles.takenBy}>&nbsp;- Taken by&nbsp;</span>
+            <button
+              type="button"
+              className={styles.owner}
+              disabled={onViewPerson == null || ownerAddress == null}
+              onClick={() => ownerAddress != null && onViewPerson?.({ address: ownerAddress, name: owner })}
+            >
+              {owner}
+            </button>
+          </>
         )}
+      </div>
+      <span className={`${styles.label} ${styles.placeLabel}`}>PLACE</span>
+      {x != null && y != null && (
+        <button type="button" className={styles.jumpIn} aria-label={`Jump In to ${meta?.sceneName ?? ''} ${x}, ${y}`.replace(/\s+/g, ' ')} onClick={() => onJumpIn({ realm: meta?.realm, x, y })}>
+          <MaskIcon src={pinIcon} size={24} />
+          <span className={styles.sceneText}>{`${meta?.sceneName ?? ''}, ${x}, ${y}`}</span>
+          <img className={styles.jumpIcon} src={jumpInIcon} alt="" width={24} height={24} />
+        </button>
+      )}
+      <span className={styles.divider} aria-hidden="true" />
+      <div className={styles.peoplePanel}>
+        <span className={`${styles.label} ${styles.peopleLabel}`}>PEOPLE</span>
+        <div className={styles.peopleList}>
+          <div ref={scroller} className={styles.peopleScroll}>
+            {people.map((person) => (
+              <PhotoPersonRow key={person.address} person={person} loadWearables={loadWearables} onViewPerson={onViewPerson} openExternalUrl={openExternalUrl} />
+            ))}
+          </div>
+          <ScrollThumb target={scroller} tone="solid" className={styles.peopleThumb} />
+        </div>
+      </div>
+      <InfoLoading done={meta !== undefined} />
+    </aside>
+  )
+}
 
-        {people.length > 0 && (
-          <div className={styles.infoBlock}>
-            <span className={styles.infoLabel}>People in this photo</span>
-            <div className={styles.people}>
-              {people.map((person) => (
-                <button
-                  key={person.address}
-                  type="button"
-                  className={styles.person}
-                  onClick={() => onViewPerson?.({ address: person.address, name: person.name })}
-                >
-                  <Avatar name={person.name || person.address} size={28} />
-                  <span className={styles.personName}>{person.name || `${person.address.slice(0, 6)}…`}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </aside>
+/** Kept mounted after the metadata lands so it can fade out. */
+function InfoLoading({ done }: { done: boolean }): React.JSX.Element | null {
+  const [gone, setGone] = useState(done)
+  if (gone) return null
+  return (
+    <div className={`${styles.loading} ${done ? styles.loadingDone : ''}`.trim()} aria-hidden="true" onTransitionEnd={() => done && setGone(true)}>
+      <Skeleton tone="band" className={styles.skel} style={{ left: 23, top: 33, width: 294 }} />
+      <Skeleton tone="band" className={styles.skel} style={{ left: 23, top: 72, width: 206 }} />
+      <Skeleton tone="band" className={styles.skel} style={{ left: 23, top: 102, width: 100 }} />
+      <span className={styles.skelLine} style={{ top: 142, left: 0, width: 480 }} />
+      <Skeleton tone="band" className={styles.skel} style={{ left: 23.5, top: 163, width: 100 }} />
+      {[200, 280, 359].map((top, i) => (
+        <span key={top}>
+          <Skeleton tone="band" className={styles.skelCircle} style={{ left: 27.5, top }} />
+          <Skeleton tone="band" className={styles.skel} style={{ left: 75.5, top: top + 11, width: 140 }} />
+          {i < 2 && <span className={styles.skelLine} style={{ top: top + 60, left: 15, width: 450 }} />}
+        </span>
+      ))}
     </div>
   )
 }

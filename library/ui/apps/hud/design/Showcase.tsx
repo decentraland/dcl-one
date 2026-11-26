@@ -6,7 +6,8 @@
 // features import them: that test watches the entry. Sections use local data only: no network,
 // wallet or engine call.
 
-import { useId, useRef, useState, useSyncExternalStore } from 'react'
+import { BrowseControl, BrowseLoading, BrowsePanel, BrowseToolbar, Button, CharCounter, CodeInput, CountBadge, DateField, DclLogo, EmptyState, EquippedItemCard, FieldLabel, KeyCap, MaskIcon, MenuDivider, MenuList, MenuPanel, MenuRow, Panel, Slider, Spinner, SubmitField, Switch } from '@dcl/one-ui'
+import { useId, useState, useSyncExternalStore } from 'react'
 import { getHudScale, subscribeHudScale } from '@explorer-core/lib/hudScale'
 import {
   AnchoredMenu,
@@ -14,73 +15,39 @@ import {
   ArmedButton,
   Avatar,
   Bag,
-  BrowseControl,
-  BrowseLoading,
-  BrowsePanel,
-  BrowseToolbar,
-  Button,
-  CharCounter,
-  Checkbox,
   Chip,
   Close,
-  CodeInput,
   ColorPicker,
   ContextMenu,
   ControlButton,
-  CountBadge,
-  DateField,
-  DclLogo,
-  DiscoverCard,
-  DiscoverGrid,
   Dropdown,
-  EmptyState,
-  EquippedItemCard,
-  FieldLabel,
   HeaderButton,
   HintsButton,
   Icon,
   IconButton,
   KebabMenu,
-  KeyCap,
   LogoPattern,
-  MaskIcon,
-  MenuDivider,
-  MenuList,
-  MenuPanel,
-  MenuRow,
   Modal,
   ModalActions,
   ModalShell,
   ModalTitle,
   OptionMenu,
-  PageHeader,
   Pager,
-  Panel,
   People,
   Pin,
   PopupHost,
   Rail,
-  ScrollThumb,
-  Search,
   SearchField,
   Select,
   showConfirm,
   showDialog,
   showToast,
-  Skeleton,
-  Slider,
-  Spinner,
   Submenu,
-  SubmitField,
-  SwapLabel,
   Tabs,
   TextArea,
   TextInput,
   ToastHost,
-  Toggle,
-  Tooltip,
   VerifiedBadge,
-  VoiceBars,
   WearableCard,
   type IconName,
   type Rarity
@@ -195,7 +162,6 @@ const h: React.CSSProperties = {
   color: 'var(--ink-45)',
   margin: '0 0 14px'
 }
-const chipLabel: React.CSSProperties = { padding: '8px 14px', borderRadius: 10, background: 'var(--fill-4)' }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }): React.JSX.Element {
   return (
@@ -261,32 +227,7 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
     </div>
   ),
 
-  Button: () => (
-    <>
-      <div style={row}>
-        <Button>Primary</Button>
-        <Button variant="secondary">Secondary</Button>
-        <Button variant="ghost">Ghost</Button>
-        <Button disabled>Disabled</Button>
-      </div>
-      <div style={{ ...row, marginTop: 12 }}>
-        <Button size="sm">Small</Button>
-        <Button size="row">Row</Button>
-        <Button size="row" variant="secondary">Row</Button>
-        <Button size="md">Medium</Button>
-        <Button size="lg">Large</Button>
-      </div>
-    </>
-  ),
-
   ArmedButton: () => <ArmedShowcase />,
-
-  StartButton: () => (
-    <div style={{ ...row, background: 'var(--loading-vignette)', padding: 16 }}>
-      <Button size="start" style={{ width: 300 }}>Play as guest</Button>
-      <Button size="start" variant="darkOutline" style={{ width: 300 }}>Login or signup</Button>
-    </div>
-  ),
 
   SignIn: () => <SignInShowcase />,
 
@@ -296,28 +237,11 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
     </div>
   ),
 
-  BareButton: () => (
-    <div style={row}>
-      {(['scrim', 'faint', 'veil', 'glass', 'shade', 'primary', 'clear', 'navigate', 'navigateExit'] as const).map((variant) => (
-        <Button key={variant} size="bare" variant={variant} style={{ height: 46, padding: '0 20px' }}>
-          {variant}
-        </Button>
-      ))}
-    </div>
-  ),
-
-  Skeleton: () => (
-    <div style={row}>
-      <Skeleton style={{ width: 126, height: 126 }} />
-      <Skeleton tone="band" style={{ width: 200, height: 22 }} />
-    </div>
-  ),
-
   Dialogs: () => (
     <div style={row}>
       {/* Showcase renders instead of Hud, so this section hosts the popup layer its dialogs open into. */}
       <PopupHost />
-      <Button
+      <Button appearance="hud"
         variant="secondary"
         onClick={() => {
           void showConfirm({
@@ -329,7 +253,7 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
       >
         Confirm
       </Button>
-      <Button
+      <Button appearance="hud"
         variant="secondary"
         onClick={() => {
           void showDialog({
@@ -341,7 +265,7 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
       >
         Alert
       </Button>
-      <Button
+      <Button appearance="hud"
         variant="secondary"
         onClick={() => {
           void showDialog({
@@ -372,8 +296,8 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
         actionsEqual
         actions={
           <>
-            <Button variant="secondary">Cancel</Button>
-            <Button>Leave</Button>
+            <Button appearance="hud" variant="secondary">Cancel</Button>
+            <Button appearance="hud">Leave</Button>
           </>
         }
       >
@@ -383,26 +307,9 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
         <ModalTitle title="Report submitted" onClose={() => undefined} />
         <p>Thanks — our moderators will review this report.</p>
         <ModalActions align="end">
-          <Button>OK</Button>
+          <Button appearance="hud">OK</Button>
         </ModalActions>
       </Modal>
-    </div>
-  ),
-
-  Tooltip: () => (
-    <div style={{ ...row, gap: 16 }}>
-      <Tooltip label="Friends" shortcut="L">
-        <span style={chipLabel}>right</span>
-      </Tooltip>
-      <Tooltip label="Settings" shortcut="P" side="top">
-        <span style={chipLabel}>top</span>
-      </Tooltip>
-      <Tooltip label={'A longer hint that wraps.\n\nParagraph breaks are kept, and it hangs from the left edge.'} side="bottom" multiline>
-        <span style={chipLabel}>multiline</span>
-      </Tooltip>
-      <Tooltip label="End stream for everyone" side="bottom" align="end">
-        <span style={chipLabel}>bottom, end</span>
-      </Tooltip>
     </div>
   ),
 
@@ -474,8 +381,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
     </Panel>
   ),
 
-  VoiceBars: () => <VoiceBars />,
-
   Chip: () => (
     <>
       <div style={{ ...row, gap: 20 }}>
@@ -527,29 +432,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
 
   AnchoredMenu: () => <AnchoredMenuDemo />,
 
-  MaskIcon: () => (
-    <div style={{ ...row, gap: 16 }}>
-      {[reelShareIcon, reelLinkIcon, reelDownloadIcon, reelDeleteIcon].map((src) => (
-        <MaskIcon key={src} src={src} size={24} />
-      ))}
-      <span style={{ ...row, color: 'var(--brand)' }}>
-        <MaskIcon src={reelDeleteIcon} size={24} /> in the text colour
-      </span>
-    </div>
-  ),
-
-  SwapLabel: () => (
-    <Button size="sm" variant="ghost" aria-label="Cancel join request">
-      <SwapLabel idle="Request Sent" hover="Cancel Request" />
-    </Button>
-  ),
-
-  CountBadge: () => (
-    <>
-      <CountBadge count={5} /> <CountBadge count={140} max={99} />
-    </>
-  ),
-
   KebabMenu: () => (
     <div style={{ display: 'flex', gap: 16, paddingBottom: 120 }}>
       <KebabMenu label="Conversation options" items={(close) => [{ label: 'View Community', onClick: close }, { label: 'Delete chat history', danger: true, onClick: close }]} />
@@ -589,19 +471,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
     </>
   ),
 
-  CardButton: () => (
-    <>
-      <Button size="card">Jump in</Button>
-      <Button size="cta">Claim name</Button>
-      <Button size="cta" disabled>
-        Claim name
-      </Button>
-      <div style={{ width: 264 }}>
-        <Button size="cardSm">Jump in</Button>
-      </div>
-    </>
-  ),
-
   VerifiedBadge: () => <VerifiedBadge />,
 
   Pager: () => (
@@ -613,41 +482,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
 
   BrowsePage: () => <BrowsePageShowcase />,
 
-  DiscoverCard: () => (
-    // No cover image: each card falls back to the gradient its id seeds.
-    <DiscoverGrid columns={3}>
-      <DiscoverCard id="genesis-plaza" title="Genesis Plaza" live count={128} featured creator={{ name: 'Decentraland Foundation', initial: 'D', hueSeed: 'foundation' }} location={{ text: '0,0', world: false }} onClick={() => undefined} />
-      <DiscoverCard id="music-festival" title="Music Festival" count={42} byline="Today, 21:00" location={{ text: 'festival.dcl.eth', world: true }} onClick={() => undefined} />
-      <DiscoverCard id="art-week" title="Art Week Gallery" creator={{ name: 'Ada', initial: 'A', hueSeed: 'ada' }} location={{ text: '-12,40', world: false }} onClick={() => undefined} />
-    </DiscoverGrid>
-  ),
-
-  EmptyState: () => (
-    <div style={{ ...column, maxWidth: 560 }}>
-      <EmptyState variant="inline" icon={<Search size={32} />} title="Nothing matched your search" subtitle="Try another name or clear the filters." />
-      <EmptyState variant="inline" tone="error" title="Couldn't load the shop" subtitle="The request timed out." actions={[{ label: 'Retry', onClick: () => undefined }]} />
-      <EmptyState
-        variant="card"
-        iconWash
-        icon={<People size={32} />}
-        title="No friends yet"
-        subtitle="Add the people you meet in-world."
-        actions={[
-          { label: 'Find people', onClick: () => undefined },
-          { label: 'Later', variant: 'ghost', onClick: () => undefined }
-        ]}
-      />
-    </div>
-  ),
-
-  PageHeader: () => (
-    <div style={{ ...column, gap: 20, maxWidth: 720 }}>
-      <PageHeader as="h3" title="Places" subtitle="Where people are right now" actions={<Button size="sm" variant="secondary">Filters</Button>} />
-      <PageHeader as="h3" size="hero" title="Explore Decentraland" subtitle="Events, games and places built by the community." />
-      <PageHeader as="h3" size="section" title="Live now" leading={<Pin size={16} />} />
-    </div>
-  ),
-
   ColorPicker: () => (
     <div style={{ maxWidth: 320 }}>
       <ColorPicker label="Hair color" value="#5b310f" presets={['#1c1c1c', '#3c210b', '#5b310f', '#7b4818', '#985f37', '#8c2014', '#e98234', '#ffbe28', '#fad281', '#d4d4d4']} onChange={() => undefined} />
@@ -656,13 +490,6 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
 
   NameColorPicker: () => (
     <ColorPicker label="Name color" value="#40eaff" presets={['#a140ff', '#ff40ad', '#ff9840', '#ffe340', '#40ff45', '#40eaff']} hueOnly swatch onChange={() => undefined} />
-  ),
-
-  Panel: () => (
-    <Panel style={{ padding: 18, maxWidth: 360 }}>
-      <div style={{ fontWeight: 700, marginBottom: 6 }}>Genesis Plaza</div>
-      <div style={{ color: 'var(--ink-7)', fontSize: 'var(--fs-sm)' }}>A surface for HUD widgets and menus.</div>
-    </Panel>
   ),
 
   Brand: () => (
@@ -730,23 +557,16 @@ const RENDER: Record<ShowcaseName, () => React.JSX.Element> = {
     </>
   ),
 
-  ScrollThumb: () => (
-    <>
-      <ShowcaseScroller />
-      <ShowcaseRowScroller />
-    </>
-  ),
-
   Toast: () => (
     <>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Button variant="secondary" size="sm" onClick={() => showToast('User Mojito has been successfully blocked.')}>
+        <Button appearance="hud" variant="secondary" size="sm" onClick={() => showToast('User Mojito has been successfully blocked.')}>
           Plain
         </Button>
-        <Button variant="secondary" size="sm" onClick={() => showToast('Something went wrong.', { tone: 'error' })}>
+        <Button appearance="hud" variant="secondary" size="sm" onClick={() => showToast('Something went wrong.', { tone: 'error' })}>
           Error
         </Button>
-        <Button
+        <Button appearance="hud"
           variant="secondary"
           size="sm"
           onClick={() => {
@@ -805,7 +625,7 @@ function AnchoredMenuDemo(): React.JSX.Element {
   const [pub, setPub] = useState(true)
   return (
     <>
-      <Button
+      <Button appearance="hud"
         variant="secondary"
         onClick={(e) => {
           const box = e.currentTarget.getBoundingClientRect()
@@ -886,11 +706,11 @@ function FormControlsShowcase(): React.JSX.Element {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 320 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ fontSize: 14 }}>Fullscreen</span>
-        <Toggle checked={on} onChange={setOn} aria-label="Fullscreen" />
+        <Switch appearance="hud" checked={on} onCheckedChange={setOn} label="Fullscreen" labelHidden />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 8, borderRadius: 8, background: 'var(--text)', color: 'var(--panel)' }}>
         <span style={{ fontSize: 14 }}>On a light panel</span>
-        <Toggle size="sm" surface="light" checked={on} onChange={setOn} aria-label="On a light panel" />
+        <Switch appearance="hud" size="sm" surface="light" checked={on} onCheckedChange={setOn} label="On a light panel" labelHidden />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <span style={{ fontSize: 14, width: 60 }}>Volume</span>
@@ -1071,43 +891,13 @@ function subscribeLiveScale(onChange: () => void): () => void {
 const liveScale = (): string =>
   `Live viewport: ${window.innerWidth}×${window.innerHeight}px → ×${getHudScale().toFixed(3)}`
 
-// A short scroller with a fixed-length thumb beside it.
-function ShowcaseScroller(): React.JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
-  return (
-    <div style={{ position: 'relative', width: 440, height: 320 }}>
-      <div ref={ref} style={{ height: '100%', overflowY: 'auto', scrollbarWidth: 'none', display: 'grid', gridTemplateColumns: 'repeat(2, 197px)', gap: 20 }}>
-        {Array.from({ length: 6 }, (_, i) => (
-          <div key={i} style={{ height: 200, borderRadius: 16, background: 'var(--white-10)' }} />
-        ))}
-      </div>
-      <ScrollThumb target={ref} length={80} className={undefined} />
-    </div>
-  )
-}
-
-// A short row that scrolls sideways, its thumb along the bottom.
-function ShowcaseRowScroller(): React.JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
-  return (
-    <div style={{ position: 'relative', width: 440, height: 140 }}>
-      <div ref={ref} style={{ display: 'flex', gap: 16, overflowX: 'auto', scrollbarWidth: 'none' }}>
-        {Array.from({ length: 6 }, (_, i) => (
-          <div key={i} style={{ flex: 'none', width: 110, height: 110, borderRadius: 16, background: 'var(--white-10)' }} />
-        ))}
-      </div>
-      <ScrollThumb target={ref} length={80} axis="x" className={undefined} />
-    </div>
-  )
-}
-
 /** ArmedButton mounted again by SHOW AGAIN, so its wait can be tried: a press before ARM_MS counts nothing. */
 function ArmedShowcase(): React.JSX.Element {
   const [shown, setShown] = useState(0)
   const [sent, setSent] = useState(0)
   return (
     <div style={row}>
-      <Button variant="secondary" onClick={() => setShown((n) => n + 1)}>
+      <Button appearance="hud" variant="secondary" onClick={() => setShown((n) => n + 1)}>
         SHOW AGAIN
       </Button>
       <ArmedButton key={shown} onClick={() => setSent((n) => n + 1)}>
@@ -1127,16 +917,12 @@ function SignInShowcase(): React.JSX.Element {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, width: 458, padding: 16, background: 'var(--loading-vignette)' }}>
       <SubmitField aria-label="Email" placeholder="your@email.com" value={email} onChange={setEmail} onSubmit={() => {}} submitLabel="Next" canSubmit={email.includes('@')} />
       <SubmitField aria-label="Email (invalid)" value="not-an-email" onChange={() => {}} onSubmit={() => {}} submitLabel="Next" canSubmit={false} error="Invalid email" />
-      <Button size="modal" variant="method">Google</Button>
-      <Button size="bare" variant="whisper" style={{ width: 36, height: 36 }} aria-label="whisper">‹</Button>
+      <Button appearance="hud" size="modal" variant="method">Google</Button>
+      <Button appearance="hud" size="bare" variant="whisper" style={{ width: 36, height: 36 }} aria-label="whisper">‹</Button>
       <CodeInput value={code} onChange={setCode} />
       <CodeInput value="123456" onChange={() => {}} state="success" disabled />
       <CodeInput value="123456" onChange={() => {}} state="error" disabled />
       <Spinner size={40} variant="chase" />
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-        <Checkbox variant="light" defaultChecked aria-label="light checkbox" />
-        <span>light checkbox (the sign-in screens')</span>
-      </div>
     </div>
   )
 }

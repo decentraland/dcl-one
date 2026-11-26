@@ -16,6 +16,9 @@ pub(super) struct OpsSources<'a> {
     pub(super) economy: &'a Arc<shop::evm::State>,
     pub(super) eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     pub(super) public_url: &'a str,
+    /// The analytics client `serve` builds once; the credits revenue events
+    /// go to it under credits-server's context.
+    pub(super) analytics: Option<&'a social::analytics::Analytics>,
 }
 
 /// The operator-plane states, one per old unit, with their jobs attached.
@@ -45,6 +48,12 @@ pub(super) async fn ops_states(
         },
         sources.eip1654.clone(),
     ));
+    // Before the jobs, so the first settlement is reported too.
+    if let Some(analytics) = sources.analytics {
+        credits.attach_revenue_events(Arc::new(super::adapters::CreditsRevenueEvents::new(
+            analytics,
+        )));
+    }
     credits.spawn_jobs(jobs);
     shop::credits::goals::spawn_job(&credits, jobs);
 
@@ -128,7 +137,10 @@ pub(super) fn worlds_comms_online(livekit: &shared::livekit::LiveKit) -> bool {
 
 /// The upstream forwarder of one lane when `var` names an upstream (a public
 /// http(s) base URL that is not this node), its job spawned; `None` when unset.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the forwarder wires the shared node handles"
+)]
 pub(super) fn forwarder(
     var: &str,
     url: Option<&str>,
@@ -185,7 +197,10 @@ pub(super) fn reprocess_converter(
 /// permission core and job lifecycle; `worlds::app_router` owns their
 /// routes. `catalyst pulse` is the realtime process beside this one; they
 /// meet on `NATS_URL` and the room authority comms mounts.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the worlds state wires the shared node handles"
+)]
 pub(super) async fn worlds_states(
     config: &Config,
     pool: &sqlx::PgPool,
@@ -445,7 +460,10 @@ pub(super) struct CommsStage {
     pub(super) gatekeeper: crate::comms::gatekeeper::SharedState,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the comms state wires the shared node handles"
+)]
 pub(super) async fn comms_states(
     config: &Config,
     pool: &sqlx::PgPool,
@@ -494,6 +512,7 @@ pub(super) async fn comms_states(
     )
     .with_ban_status(ban_status.clone())
     .with_name_owner_reader(Arc::new(super::adapters::ShopNameOwners(market.clone())))
+    .with_name_authority(market.name_authority.clone())
     .with_deny_list_url(config.worlds.deny_list())
     .with_content_denylist(content_denylist)
     .with_cluster(comms::gatekeeper::admission::cluster::ClusterConfig {
@@ -599,7 +618,10 @@ pub(super) fn social_analytics(
 /// `comms_states`) is also the social socket's voice runtime
 /// (`comms::gatekeeper::voice::rooms`), the local call that replaced the old
 /// `COMMS_GATEKEEPER_URL` hop.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the social state wires the shared node handles"
+)]
 pub(super) fn social_states(
     config: &Config,
     pool: &sqlx::PgPool,
@@ -611,7 +633,7 @@ pub(super) fn social_states(
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     explore: &explore::SharedState,
     onboarding: Arc<explore::api::onboarding::OnboardingState>,
-    metrics_handle: comms::metrics::PrometheusHandle,
+    analytics: Option<social::analytics::Analytics>,
 ) -> anyhow::Result<social::States> {
     config
         .social
@@ -718,7 +740,6 @@ pub(super) fn social_states(
         explore.clone(),
     ));
 
-    let analytics = social_analytics(config, http_client)?;
     if let Some(analytics) = &analytics {
         communities.set_analytics(analytics.clone());
     }
@@ -931,11 +952,6 @@ pub(super) fn social_states(
             writes_enabled: config.writes.social_writes_enabled,
             commit_hash: config.node.commit_hash.clone(),
             current_version: config.social.social_rpc_current_version.clone(),
-            metrics_path: config.social.wkc_metrics_public_path.clone(),
-            metrics_bearer_token: config.social.wkc_metrics_bearer_token.clone(),
-            metrics_reset_at_night: config.social.wkc_metrics_reset_at_night.as_deref()
-                == Some("true"),
-            metrics_handle: Some(metrics_handle),
             profile_source: Some(communities.profiles.registry()),
         },
         eip1654,
@@ -1018,21 +1034,9 @@ mod event_notice_configuration_tests {
             settings.jump_in_site_url = config.explore.jump_in_site_url.clone();
             let explore = Arc::new(explore::ExploreState::new(pool.clone(), settings, None));
             let onboarding = Arc::new(explore::api::onboarding::OnboardingState::new(pool.clone()));
-            let recorder = comms::metrics::prometheus_builder()
-                .unwrap()
-                .build_recorder();
             let social = social_states(
-                &config,
-                &pool,
-                &storage,
-                &http,
-                &content,
-                &market,
-                comms,
-                None,
-                &explore,
-                onboarding,
-                recorder.handle(),
+                &config, &pool, &storage, &http, &content, &market, comms, None, &explore,
+                onboarding, None,
             )
             .unwrap();
             let settings = &social.notifications.settings;

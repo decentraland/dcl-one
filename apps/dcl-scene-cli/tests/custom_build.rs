@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, reason = "test support")]
 #![cfg(unix)]
 
 mod common {

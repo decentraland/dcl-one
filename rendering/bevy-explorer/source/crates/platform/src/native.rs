@@ -1,4 +1,4 @@
-use crate::{default_color_grading, scatter_bloom};
+use crate::{default_color_grading, scatter_bloom, BLOOM_SCATTER};
 use async_tungstenite::{async_std::ConnectStream, WebSocketStream};
 use bevy::{
     core_pipeline::tonemapping::{DebandDither, Tonemapping},
@@ -82,7 +82,23 @@ pub fn compat<F>(f: F) -> async_compat::Compat<F> {
 }
 
 pub fn project_directories() -> Option<directories::ProjectDirs> {
-    directories::ProjectDirs::from("org", "decentraland", "BevyExplorer")
+    project_directories_for(std::env::var_os("DCL_PROFILE_DIR"))
+}
+
+fn project_directories_for(
+    profile: Option<std::ffi::OsString>,
+) -> Option<directories::ProjectDirs> {
+    match profile {
+        Some(profile) => {
+            let profile = std::path::PathBuf::from(profile);
+            assert!(
+                profile.is_absolute(),
+                "DCL_PROFILE_DIR must be an absolute path"
+            );
+            directories::ProjectDirs::from_path(profile)
+        }
+        None => directories::ProjectDirs::from("org", "decentraland", "BevyExplorer"),
+    }
 }
 
 /// Writes the config file, whole or not at all: a failure is logged, and the file keeps what it
@@ -219,7 +235,7 @@ pub fn default_camera_components() -> impl Bundle {
         Tonemapping::AcesFitted,
         DebandDither::Enabled,
         default_color_grading(),
-        scatter_bloom(),
+        scatter_bloom(BLOOM_SCATTER),
         ShadowFilteringMethod::Gaussian,
     )
 }
@@ -285,6 +301,33 @@ pub async fn write_scene_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_isolated_profile_contains_every_persistent_directory() {
+        let profile = std::env::temp_dir().join("isolated_explorer_profile");
+        let dirs = project_directories_for(Some(profile.clone().into_os_string())).unwrap();
+        // Windows keeps each kind in its own subdirectory (`<profile>\config`, `<profile>\data`);
+        // every platform keeps them all inside the profile.
+        for dir in [
+            dirs.config_dir(),
+            dirs.cache_dir(),
+            dirs.data_dir(),
+            dirs.data_local_dir(),
+        ] {
+            assert!(
+                dir.starts_with(&profile),
+                "{} is outside {}",
+                dir.display(),
+                profile.display()
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "DCL_PROFILE_DIR must be an absolute path")]
+    fn a_relative_profile_never_falls_back_to_personal_data() {
+        project_directories_for(Some("relative-profile".into()));
+    }
 
     fn directory(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("platform_{name}_{}", std::process::id()));

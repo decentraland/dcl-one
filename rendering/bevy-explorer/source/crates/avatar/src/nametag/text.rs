@@ -1,5 +1,8 @@
 //! A nametag's text: laid out with the engine's text pipeline and drawn from a glyph atlas of
 //! the nametags' own, as distance fields, so it stays sharp at any size on screen.
+//!
+//! [`GlyphShaper`] is the part any feature with a glyph atlas of its own shapes with: the
+//! nametags through [`TextShaper`], the reactions for their emoji.
 
 use bevy::{
     ecs::system::SystemParam,
@@ -9,15 +12,26 @@ use bevy::{
 };
 use scene_runner::update_world::text_shape::{
     glyph_quads, layout_text, AtlasGlyphUse, AtlasKey, GlyphAtlas, GlyphAtlases, LaidOutText, Page,
-    Pending, TextSpanData,
+    Pending, TextQuad, TextSpanData,
 };
 
 use super::{layout::LINE_HEIGHT, material::Quad, NametagAssets};
 
-pub const ATLAS: AtlasKey = AtlasKey::Engine("nametag");
-/// The size every label is laid out and rastered at, whatever size it is drawn: the atlas
-/// holds each glyph once.
-const RASTER_FONT_SIZE: f32 = 32.0;
+/// A glyph atlas of one feature's own, and how text is laid out for it.
+pub struct TextAtlas {
+    pub key: AtlasKey,
+    /// The size every text is laid out and rastered at, whatever size it is drawn: the atlas
+    /// holds each glyph once.
+    pub raster_font_size: f32,
+    /// A line's height, in font sizes.
+    pub line_height: f32,
+}
+
+pub const ATLAS: TextAtlas = TextAtlas {
+    key: AtlasKey::Engine("nametag"),
+    raster_font_size: 32.0,
+    line_height: LINE_HEIGHT,
+};
 /// Glyphs a frame may send to be rastered.
 const MAX_RASTERS_PER_FRAME: usize = 64;
 
@@ -53,31 +67,33 @@ impl Shaped {
     }
 }
 
+/// Lays text out for a [`TextAtlas`] and reads its glyphs' quads from it.
 #[derive(SystemParam)]
-pub struct TextShaper<'w> {
+pub struct GlyphShaper<'w> {
     pipeline: ResMut<'w, TextPipeline>,
     fonts: Res<'w, Assets<Font>>,
     font_system: ResMut<'w, CosmicFontSystem>,
     atlases: ResMut<'w, GlyphAtlases>,
     images: ResMut<'w, Assets<Image>>,
-    assets: Res<'w, NametagAssets>,
 }
 
-impl TextShaper<'_> {
-    /// Lay `spans` out on one line at `font_size`, or wrapped to stay within `wrap` wide.
-    /// `None` when the text can't be laid out (yet).
+impl GlyphShaper<'_> {
+    /// Lay `spans` out in `font` on one line at `font_size`, or wrapped to stay within `wrap`
+    /// wide. `None` when the text can't be laid out (yet).
     pub fn shape(
         &mut self,
+        atlas: &TextAtlas,
+        font: &Handle<Font>,
         entity: Entity,
         spans: &[Span],
         font_size: f32,
         wrap: Option<f32>,
     ) -> Option<Shaped> {
-        let scale = font_size / RASTER_FONT_SIZE;
+        let scale = font_size / atlas.raster_font_size;
         let font = TextFont {
-            font: self.assets.font.clone(),
-            font_size: RASTER_FONT_SIZE,
-            line_height: LineHeight::RelativeToFont(LINE_HEIGHT),
+            font: font.clone(),
+            font_size: atlas.raster_font_size,
+            line_height: LineHeight::RelativeToFont(atlas.line_height),
             ..Default::default()
         };
         let spans = spans
@@ -103,7 +119,7 @@ impl TextShaper<'_> {
                 JustifyText::Left,
                 linebreak,
                 width,
-                // a nametag has no line limit
+                // no line limit
                 None,
                 font_size,
                 false,
@@ -122,6 +138,54 @@ impl TextShaper<'_> {
             text,
             scale,
         })
+    }
+
+    pub fn atlas(&mut self, atlas: &TextAtlas) -> &GlyphAtlas {
+        let images = &mut *self.images;
+        self.atlases.get_or_create(atlas.key.clone(), images)
+    }
+
+    /// The text's quads with their atlas rects, in raster pixels running down from its top
+    /// left: those of the distance-field page, then those of the colour page. `Err` while
+    /// glyphs are still being rastered: ask again next frame.
+    pub fn glyphs(
+        &mut self,
+        atlas: &TextAtlas,
+        shaped: &Shaped,
+        budget: &mut GlyphBudget,
+    ) -> Result<(Vec<TextQuad>, Vec<TextQuad>), Pending> {
+        let images = &mut *self.images;
+        let atlas = self.atlases.get_or_create(atlas.key.clone(), images);
+        glyph_quads(
+            &shaped.text,
+            atlas,
+            images,
+            &mut self.font_system,
+            &mut budget.0,
+            false,
+        )
+    }
+}
+
+/// The nametags' text, in their font and their atlas.
+#[derive(SystemParam)]
+pub struct TextShaper<'w> {
+    glyphs: GlyphShaper<'w>,
+    assets: Res<'w, NametagAssets>,
+}
+
+impl TextShaper<'_> {
+    /// Lay `spans` out on one line at `font_size`, or wrapped to stay within `wrap` wide.
+    /// `None` when the text can't be laid out (yet).
+    pub fn shape(
+        &mut self,
+        entity: Entity,
+        spans: &[Span],
+        font_size: f32,
+        wrap: Option<f32>,
+    ) -> Option<Shaped> {
+        self.glyphs
+            .shape(&ATLAS, &self.assets.font, entity, spans, font_size, wrap)
     }
 
     /// A single line that fits `width`, cut short with an ellipsis when the whole of `text`
@@ -160,8 +224,7 @@ impl TextShaper<'_> {
     }
 
     pub fn atlas(&mut self) -> &GlyphAtlas {
-        let images = &mut *self.images;
-        self.atlases.get_or_create(ATLAS, images)
+        self.glyphs.atlas(&ATLAS)
     }
 
     /// The label's quads, its top left at `origin`, kept to `clip`. `Err` while glyphs are
@@ -174,16 +237,7 @@ impl TextShaper<'_> {
         budget: &mut GlyphBudget,
         quads: &mut Vec<Quad>,
     ) -> Result<(), Pending> {
-        let images = &mut *self.images;
-        let atlas = self.atlases.get_or_create(ATLAS, images);
-        let (sdf, bitmap) = glyph_quads(
-            &shaped.text,
-            atlas,
-            images,
-            &mut self.font_system,
-            &mut budget.0,
-            false,
-        )?;
+        let (sdf, bitmap) = self.glyphs.glyphs(&ATLAS, shaped, budget)?;
         let scale = shaped.scale;
         for (glyphs, page) in [(sdf, Page::Sdf), (bitmap, Page::Color)] {
             quads.extend(glyphs.into_iter().filter_map(|glyph| {
@@ -218,9 +272,32 @@ impl GlyphBudget {
     pub fn frame() -> Self {
         Self(MAX_RASTERS_PER_FRAME)
     }
+
+    pub fn of(rasters: usize) -> Self {
+        Self(rasters)
+    }
 }
 
-/// What keeps a tag's glyphs in the atlas when it is rebuilt.
-pub fn glyph_use<'a>(texts: impl IntoIterator<Item = &'a Shaped>) -> AtlasGlyphUse {
-    AtlasGlyphUse::new(ATLAS, texts.into_iter().map(Shaped::laid_out))
+/// What keeps the glyphs of `texts` in the atlas when it is rebuilt.
+pub fn glyph_use<'a>(
+    atlas: &TextAtlas,
+    texts: impl IntoIterator<Item = &'a Shaped>,
+) -> AtlasGlyphUse {
+    AtlasGlyphUse::new(atlas.key.clone(), texts.into_iter().map(Shaped::laid_out))
+}
+
+/// The atlas pages a material binds, distance fields then colour, and their sizes.
+pub type BoundPages = [Option<(AssetId<Image>, u32)>; 2];
+
+/// The atlas' textures are replaced when it is rebuilt, and resized as it grows. When they
+/// are not the ones `bound`, `bound` takes them and they are returned for the material to
+/// bind.
+pub fn rebind(atlas: &GlyphAtlas, bound: &mut BoundPages) -> Option<[Option<Handle<Image>>; 2]> {
+    let pages = [Page::Sdf, Page::Color].map(|page| atlas.page_image(page));
+    let current = pages.map(|page| page.map(|(image, size)| (image.id(), size)));
+    if *bound == current {
+        return None;
+    }
+    *bound = current;
+    Some(pages.map(|page| page.map(|(image, _)| image.clone())))
 }

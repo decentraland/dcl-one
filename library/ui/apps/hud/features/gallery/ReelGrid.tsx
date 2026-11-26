@@ -1,7 +1,7 @@
 // Rows have fixed heights, so only the ones near the viewport are mounted.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { AnchoredMenu, Button, MaskIcon, type ContextMenuItem } from '../../design'
+import { AnchoredMenu, type ContextMenuItem } from '../../design'
 import { photoTime } from '../session/useEngineSession'
 import { useOptionalSession } from '../session/SessionContext'
 import type { GalleryPhoto } from '@explorer-core/engine/protocol'
@@ -12,6 +12,7 @@ import linkIcon from '../../assets/camera-reel/copy-link.png'
 import downloadIcon from '../../assets/camera-reel/download.png'
 import deleteIcon from '../../assets/camera-reel/delete.png'
 import styles from './ReelGrid.module.css'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 export interface ReelGridLayout {
   columns: number
@@ -191,7 +192,7 @@ export function ReelGrid({
       {onRetry != null && (
         <div className={styles.retry} role="status" style={{ paddingLeft: layout.paddingLeft }}>
           <span>Couldn't load more photos.</span>
-          <Button variant="secondary" size="sm" onClick={onRetry}>
+          <Button appearance="hud" variant="secondary" size="sm" onClick={onRetry}>
             RETRY
           </Button>
         </div>
@@ -272,19 +273,19 @@ function ReelMenu({
   menu: ReelGridMenu
   onClose: () => void
 }): React.JSX.Element {
-  const [isPublic, setIsPublic] = useState(photo.isPublic === true)
+  const [choice, setChoice] = useState<{ isPublic: boolean; turn: number } | null>(null)
+  const choiceTurn = useRef(0)
   const openExternalUrl = useOptionalSession()?.openExternalUrl
   const icon = (src: string): React.JSX.Element => <MaskIcon src={src} size={18} />
   const items: ContextMenuItem[] = [
     {
       kind: 'toggle',
       label: 'Set as Public',
-      checked: isPublic,
+      checked: choice?.isPublic ?? photo.isPublic === true,
       onChange: (next) => {
-        setIsPublic(next)
-        void menu.onSetPublic(photo, next).then((ok) => {
-          if (!ok) setIsPublic(!next)
-        })
+        const turn = ++choiceTurn.current
+        setChoice({ isPublic: next, turn })
+        void menu.onSetPublic(photo, next).then(() => setChoice((cur) => (cur?.turn === turn ? null : cur)))
       }
     },
     { kind: 'separator' },

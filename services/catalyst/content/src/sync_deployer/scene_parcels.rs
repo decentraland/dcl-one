@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
 use crate::OrderedJson;
-use metrics::counter;
+use dcl_metrics::counter;
 
-const SYNCED_SCENE_PARCELS_DIFFER: &str = "content_sync_scene_parcels_differ_total";
+use crate::metrics::SYNCED_SCENE_PARCELS_DIFFER;
 
 pub(super) fn parcels_differ(pointers: &[String], metadata: Option<&OrderedJson>) -> bool {
     let Some(parcels) = metadata

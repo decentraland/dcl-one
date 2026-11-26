@@ -1129,6 +1129,7 @@ mod tests {
     /// The CPU time the calling thread has used. Unlike a wall clock, it
     /// leaves out the time the thread waits for a core.
     #[cfg(unix)]
+    #[allow(unsafe_code, reason = "libc call for the thread CPU clock")]
     fn thread_cpu_time() -> std::time::Duration {
         // SAFETY: timespec holds only integers, so all zeroes is a value of it.
         let mut spec: libc::timespec = unsafe { std::mem::zeroed() };

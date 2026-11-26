@@ -4,14 +4,16 @@ import type { MetricsResponse } from '/shared/types/metrics';
 import { metrics } from '#preload';
 import { config } from '/@/config';
 
+import { devAiSharingUrl } from './aiSharingDevUrl';
 import { AuthServerProvider } from './auth';
 import { buildSignedHeaders } from './metricsApi';
 
 /**
  * The service that stores conversations creators chose to share. Empty until it is deployed:
- * `isConfigured()` is then false and nothing is ever sent.
+ * `isConfigured()` is then false and nothing is ever sent. A dev build may point it at a local
+ * service with `VITE_AI_SHARING_API_URL` (`aiSharingDevUrl.ts`).
  */
-const apiUrl = (): string => config.get('AI_SHARING_API_URL') ?? '';
+const apiUrl = (): string => devAiSharingUrl() || (config.get('AI_SHARING_API_URL') ?? '');
 
 export const isConfigured = () => apiUrl() !== '';
 
@@ -44,7 +46,8 @@ export type AiSharingRating = 'up' | 'down' | null;
 /** What Assistant Insights made of one of the wallet's conversations. */
 export type AiSharingDigest = {
   conversationId: string;
-  goal: string;
+  /** Null when the service dropped the digest's notes (a copy or a secret). */
+  goal: string | null;
   outcome: 'achieved' | 'partial' | 'not_achieved' | 'abandoned' | 'unclear';
   frictions: { kind: string }[];
   createdAt: string;
