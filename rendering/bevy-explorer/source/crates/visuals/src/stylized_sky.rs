@@ -703,12 +703,11 @@ pub fn stack_cloud_strips(
         return;
     };
     let height = layers[0][0].height() as usize;
-    // row `y` of a half
-    let row = |half: &Image, y: usize| {
+    // the rows of a half, top down
+    fn rows(half: &Image, height: usize) -> std::slice::ChunksExact<'_, u8> {
         let data = half.data.as_deref().unwrap_or_default();
-        let stride = data.len() / height;
-        &data[y * stride..(y + 1) * stride]
-    };
+        data.chunks_exact(data.len() / height)
+    }
     let mut stacked = Image::new(
         Extent3d {
             width: layers[0][0].width() * 2,
@@ -718,7 +717,11 @@ pub fn stack_cloud_strips(
         TextureDimension::D2,
         layers
             .iter()
-            .flat_map(|[left, right]| (0..height).flat_map(move |y| [row(left, y), row(right, y)]))
+            .flat_map(|[left, right]| {
+                rows(left, height)
+                    .zip(rows(right, height))
+                    .flat_map(|(left, right)| [left, right])
+            })
             .flatten()
             .copied()
             .collect(),
