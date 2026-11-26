@@ -4892,7 +4892,11 @@ checks:
   the fold's transaction, names the published block. The walk publishes a
   fold only after it commits and reads the head, so between the two the rows
   hold an unpublished fold and the read answers the `sales-index` envelope;
-  a walk that advanced without folding leaves the book readable;
+  a walk that advanced without folding leaves the book readable. Any change
+  to the book invalidates the marker for its network in the write transaction.
+  A current sales fold restores the marker after writing the rows. When an
+  older sales writer changes bids, the reader answers the `sales-index`
+  envelope until a current writer folds and publishes again;
 - the nft index is fresh on Polygon, on that same chain (otherwise the
   `nft-index` envelope);
 - every bid in the request's scope (its filters but the seller's) has a

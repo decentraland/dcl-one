@@ -6677,6 +6677,7 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
     // rewound log, as the next fold will; an acceptance's seller stands.
     bid(8, WALLET_B, Some(WALLET_A), "open", 800, 60, later).await;
     bid(9, WALLET_B, Some(WALLET_A), "accepted", 900, 61, later).await;
+    set_cursor("sales", 200).await;
     sqlx::query(
         "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address) \
          VALUES ('matic', 55, 0, 55, 'transfer', $1, $1, 8, '0x0000000000000000000000000000000000000000', $2)",
@@ -6706,6 +6707,7 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
         .execute(&pool)
         .await
         .unwrap();
+    set_cursor("sales", 200).await;
     // Ethereum's legacy bids still read the collections subgraph.
     let (status, body) = get(app(), "/v1/bids?network=ETHEREUM").await;
     assert_eq!(
@@ -6817,6 +6819,7 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
     .execute(&pool)
     .await
     .unwrap();
+    set_cursor("sales", 210).await;
     let of_late =
         |seller: &str| format!("/v1/bids?network=MATIC&contractAddress={late}&seller={seller}");
     let (status, body) = get(app(), &of_late(WALLET_A)).await;
@@ -6844,6 +6847,79 @@ async fn polygon_bids_come_from_the_bid_book_and_never_without_their_seller() {
         vec![("1".into(), "open".into(), CREATOR.into())],
         "{body}"
     );
+    // An old sales writer running after an upgraded writer commits the
+    // same bid fold but has no statement to stamp the book. Its raw walk
+    // leaves the existing publication readable until it changes the book.
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block = 220 WHERE indexer = 'sales' AND network = 'matic'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app(), sold).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    sqlx::query(
+        "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address, \
+             token_id, bid_id, buyer, price, expires_at, tx_hash) \
+         VALUES ('matic', 50, 0, 50, 'bid_created', $1, $2, 6, $3, $4, 600, $5, '0x' || repeat('3', 64)), \
+                ('matic', 220, 0, 220, 'bid_cancelled', $1, $2, 6, $3, $4, NULL, NULL, '0x' || repeat('4', 64))",
+    )
+    .bind(super::sales_index::BID_V2_MATIC)
+    .bind(&c)
+    .bind(format!("0x{:064x}", 650))
+    .bind(CARL)
+    .bind(later)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let legacy_owner =
+        super::chain_walk::test_owner(&pool, &ix, &state.settings.market.indexes).await;
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query(super::sales_index::FOLD_BIDS_SQL)
+        .bind("matic")
+        .bind(210i64)
+        .bind(137i64)
+        .bind(super::chain_walk::INDEXER_NFT)
+        .bind(None::<i64>)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    legacy_owner.check(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let cancelled =
+        format!("/v1/bids?network=MATIC&contractAddress={c}&tokenId=6&status=cancelled");
+    let (status, body) = get(app(), &cancelled).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "sales-index", "{body}");
+
+    super::chain_walk::record_fold(&pool, &legacy_owner, 220)
+        .await
+        .unwrap();
+    assert!(
+        super::chain_walk::mark_folded(&pool, &legacy_owner, 220, chrono::Utc::now())
+            .await
+            .unwrap()
+    );
+    let (status, body) = get(app(), &cancelled).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "sales-index", "{body}");
+
+    let owner = super::chain_walk::test_owner(&pool, &ix, &state.settings.market.indexes).await;
+    super::sales_index::fold(&pool, Some(220), &owner)
+        .await
+        .unwrap();
+    assert!(
+        super::chain_walk::mark_folded(&pool, &owner, 220, chrono::Utc::now())
+            .await
+            .unwrap()
+    );
+    let (status, body) = get(app(), &cancelled).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        ids(&body),
+        vec![("6".into(), "cancelled".into(), CREATOR.into())]
+    );
+    assert_eq!(body["data"]["total"], 1, "{body}");
     own.drop().await;
 }
 
@@ -6892,10 +6968,6 @@ async fn amoy_bids_come_from_the_bid_book_of_the_served_catalogue() {
         .await
         .unwrap();
     }
-    sqlx::query("INSERT INTO shop.nft_bid_cursor (network, folded_through) VALUES ('matic', 200)")
-        .execute(&pool)
-        .await
-        .unwrap();
     let t = tag();
     let (verified, unverified) = (contract_of(&t, 1), contract_of(&t, 2));
     for (contract, checked, bid) in [(&verified, true, 10i64), (&unverified, false, 11)] {
@@ -6923,6 +6995,10 @@ async fn amoy_bids_come_from_the_bid_book_of_the_served_catalogue() {
         .await
         .unwrap();
     }
+    sqlx::query("INSERT INTO shop.nft_bid_cursor (network, folded_through) VALUES ('matic', 200)")
+        .execute(&pool)
+        .await
+        .unwrap();
     let (status, body) = get(app(), uri).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let results = body["data"]["results"].as_array().unwrap();

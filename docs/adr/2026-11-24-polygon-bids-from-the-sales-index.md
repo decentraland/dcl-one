@@ -33,7 +33,10 @@ and the subgraph's Ethereum bids are filtered at. It checks:
 - the bid book holds that published fold, by a marker the fold writes with
   its rows: the walk publishes a fold only after it commits and reads the
   head, and a read in between answers the envelope rather than rows past the
-  published block;
+  published block. A change to the book invalidates the changed network's
+  marker in the write transaction. A current fold writes the marker after
+  its rows. An older writer leaves the changed network's book unavailable
+  until a current writer folds and publishes again;
 - the nft index is fresh on Polygon, on that same chain;
 - every bid in the request's scope (its filters but the seller's) has a
   seller.

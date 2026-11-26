@@ -17368,6 +17368,37 @@ CREATE TABLE shop.nft_bid_cursor (
     CONSTRAINT nft_bid_cursor_network_known CHECK (network IN ('ethereum', 'matic'))
 );
 
+-- An older sales writer can change the bid rows without refreshing the
+-- marker. Invalidate only the changed networks in the same transaction.
+-- A current fold writes its marker after it finishes changing the rows.
+CREATE FUNCTION shop.invalidate_nft_bid_fold() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'TRUNCATE' THEN
+        DELETE FROM shop.nft_bid_cursor;
+    ELSIF TG_OP = 'UPDATE' THEN
+        DELETE FROM shop.nft_bid_cursor
+        WHERE network IN (SELECT network FROM old_bids UNION SELECT network FROM changed_bids);
+    ELSE
+        DELETE FROM shop.nft_bid_cursor
+        WHERE network IN (SELECT network FROM changed_bids);
+    END IF;
+    RETURN NULL;
+END
+$$;
+CREATE TRIGGER nft_bid_invalidate_fold_after_insert
+AFTER INSERT ON shop.nft_bid REFERENCING NEW TABLE AS changed_bids
+FOR EACH STATEMENT EXECUTE FUNCTION shop.invalidate_nft_bid_fold();
+CREATE TRIGGER nft_bid_invalidate_fold_after_update
+AFTER UPDATE ON shop.nft_bid REFERENCING OLD TABLE AS old_bids NEW TABLE AS changed_bids
+FOR EACH STATEMENT EXECUTE FUNCTION shop.invalidate_nft_bid_fold();
+CREATE TRIGGER nft_bid_invalidate_fold_after_delete
+AFTER DELETE ON shop.nft_bid REFERENCING OLD TABLE AS changed_bids
+FOR EACH STATEMENT EXECUTE FUNCTION shop.invalidate_nft_bid_fold();
+CREATE TRIGGER nft_bid_invalidate_fold_after_truncate
+AFTER TRUNCATE ON shop.nft_bid
+FOR EACH STATEMENT EXECUTE FUNCTION shop.invalidate_nft_bid_fold();
+
 -- The nft walk's rewinds, for the bids fold: a seller inferred from the nft
 -- walk's transfers may name an owner the rewind took away, so the next fold
 -- infers again the seller of every bid created past `from_block` (a seller

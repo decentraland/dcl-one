@@ -509,8 +509,8 @@ pub(super) struct SellerBounds {
     recheck_from: Option<i64>,
 }
 
-/// The read-only snapshot the bids of a node that walks the indexes are read
-/// on, and the request's instant: taken once the snapshot is established,
+/// The bids' read-only snapshot and request instant, taken after the
+/// snapshot is established,
 /// so a fold the snapshot sees was published before it, and shared by the
 /// checks, the reads and the subgraph's Ethereum filter. The trades mirror
 /// and its verdicts must be ready on it; with `polygon`, the Polygon bid
