@@ -25,7 +25,7 @@ import * as components from './components'
 export { components }
 
 import { engine } from './runtime/initialization'
-import {
+import type {
   MaterialComponentDefinitionExtended,
   MeshColliderComponentDefinitionExtended,
   MeshRendererComponentDefinitionExtended,
@@ -47,8 +47,8 @@ import {
   ParticleSystemComponentDefinitionExtended,
   TouchScreenControlsComponentDefinitionExtended
 } from './components/types'
-import { NameComponent } from './components/manual/Name'
-import { TagsComponentDefinitionExtended } from './components/manual/Tags'
+import type { NameComponent } from './components/manual/Name'
+import type { TagsComponentDefinitionExtended } from './components/manual/Tags'
 
 // export components for global engine
 export const Transform: TransformComponentExtended = /* @__PURE__*/ components.Transform(engine)

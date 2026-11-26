@@ -1,6 +1,6 @@
-import { JsonSchemaExtended } from '../ISchema'
-import { IOneOf } from '../OneOf'
-import { UnknownSchema } from './types'
+import type { JsonSchemaExtended } from '../ISchema'
+import type { IOneOf } from '../OneOf'
+import type { UnknownSchema } from './types'
 
 export const isSchemaType = (value: JsonSchemaExtended, types: JsonSchemaExtended['serializationType'][]) =>
   types.includes(value.serializationType)

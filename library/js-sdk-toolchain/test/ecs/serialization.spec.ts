@@ -1,7 +1,8 @@
-import { Engine, Entity } from '../../packages/@dcl/ecs/src/engine'
+import type { Entity } from '../../packages/@dcl/ecs/src/engine'
+import { Engine } from '../../packages/@dcl/ecs/src/engine'
 import { Schemas } from '../../packages/@dcl/ecs/src/schemas'
 import { jsonSchemaToSchema, mutateValues } from '../../packages/@dcl/ecs/src/schemas/buildSchema'
-import { ISchema } from '../../packages/@dcl/ecs/src/schemas/ISchema'
+import type { ISchema } from '../../packages/@dcl/ecs/src/schemas/ISchema'
 import { ReadWriteByteBuffer } from '../../packages/@dcl/ecs/src/serialization/ByteBuffer'
 
 const Vector3 = Schemas.Map({

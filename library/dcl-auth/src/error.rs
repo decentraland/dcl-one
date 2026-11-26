@@ -33,6 +33,11 @@ pub enum AuthError {
     #[error("EIP-1654 validation failed: {0}")]
     Eip1654ValidationFailed(String),
 
+    /// The client source spent its budget of contract-wallet checks: refused before the RPC
+    /// call, so undecided (never a rejection) and worth retrying later.
+    #[error("Too many contract-wallet signature checks from this client; retry later")]
+    Eip1654RateLimited,
+
     #[error("EIP-1654 contract at {contract} rejected the signature")]
     Eip1654Rejected { contract: String },
 }

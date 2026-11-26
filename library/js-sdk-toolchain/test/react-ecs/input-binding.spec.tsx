@@ -1,4 +1,5 @@
-import { Entity, InputAction, PBUiInputBinding } from '../../packages/@dcl/ecs/src'
+import type { Entity, PBUiInputBinding } from '../../packages/@dcl/ecs/src'
+import { InputAction } from '../../packages/@dcl/ecs/src'
 import { components } from '../../packages/@dcl/ecs/src'
 import { ReactEcs, UiEntity } from '../../packages/@dcl/react-ecs/src'
 import { setupEngine } from './utils'
