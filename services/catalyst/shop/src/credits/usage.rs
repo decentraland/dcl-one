@@ -541,6 +541,10 @@ pub struct PassOutcome {
     pub paused: bool,
     pub consumed: usize,
     pub failed: usize,
+    /// Logs left for later behind an earlier, unsettled use of their credit
+    /// (`settlement::DEFERRED`): settled by a pass that covers both, the
+    /// operator's reconcile when this one's window has moved past them.
+    pub deferred: usize,
     pub published: bool,
 }
 
@@ -817,7 +821,19 @@ impl UsageIndex {
         .await
         .map_err(|e| anyhow::anyhow!("folding the usages: {e}"))?;
         outcome.consumed = diffs.iter().filter(|d| d.consumed && !d.replayed).count();
-        outcome.failed = diffs.iter().filter(|d| !d.consumed).count();
+        outcome.failed = diffs
+            .iter()
+            .filter(|d| !d.consumed && d.kind != super::settlement::DEFERRED)
+            .count();
+        let deferred: Vec<&str> = diffs
+            .iter()
+            .filter(|d| d.kind == super::settlement::DEFERRED)
+            .map(|d| d.credit_id.as_str())
+            .collect();
+        outcome.deferred = deferred.len();
+        if !deferred.is_empty() {
+            tracing::warn!(count = deferred.len(), credit_ids = ?deferred, "credits-usage: logs left behind an earlier, unsettled use of their credit; a pass covering both (the reconcile) settles them");
+        }
         if settings.stop_block.is_some_and(|s| s < final_block.number) {
             if let Some(ctx) = ctx {
                 ctx.progress(format!("indexed to {target}: CREDITS_USAGE_STOP_BLOCK holds the index short, not published"));
@@ -851,8 +867,8 @@ impl UsageIndex {
         }
         if let Some(ctx) = ctx {
             ctx.progress(format!(
-                "folded at block {target}: {} usages written, {} pledges consumed, {} debits refused; published={}",
-                outcome.usages_written, outcome.consumed, outcome.failed, outcome.published
+                "folded at block {target}: {} usages written, {} pledges consumed, {} debits refused, {} deferred; published={}",
+                outcome.usages_written, outcome.consumed, outcome.failed, outcome.deferred, outcome.published
             ));
         }
         Ok(outcome)
