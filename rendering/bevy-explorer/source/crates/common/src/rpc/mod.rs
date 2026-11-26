@@ -390,6 +390,75 @@ pub enum RpcCall {
     ActiveVideoStreams {
         response: RpcResultSender<VideoTracksActiveStreamsResponse>,
     },
+    // last, so the variants before it keep their wire indices
+    GrantReward(GrantRewardRequest),
+}
+
+/// A scene asks its authoritative server to pay `recipient` a reward from Credits program
+/// `program_id` for `outcome_id` (`~system/SceneRewards.grantReward`). Only an orchestrated headless
+/// server holding the scene's Credits delegation can; anywhere else the answer is `NotAvailable`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrantRewardRequest {
+    pub program_id: String,
+    pub recipient: String,
+    pub outcome_id: String,
+    pub response: RpcResultSender<GrantRewardAnswer>,
+}
+
+/// `grantReward`'s answer, shaped like the protocol's `GrantRewardResponse` (scene_rewards.proto).
+/// A paid answer carries the whole receipt: `replayed`, `receipt_id` and `credits` (whole Credits
+/// as a decimal string), and no `error`. A refusal carries only `error`, a `GrantRewardError`
+/// number.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrantRewardAnswer {
+    pub ok: bool,
+    pub error: Option<i32>,
+    pub replayed: Option<bool>,
+    pub receipt_id: Option<String>,
+    pub credits: Option<String>,
+}
+
+/// The protocol's `GrantRewardError`, numbered as in scene_rewards.proto.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum GrantRewardError {
+    Unspecified = 0,
+    NotAvailable = 1,
+    InvalidRequest = 2,
+    RateLimited = 3,
+    Unavailable = 4,
+    NotAuthorized = 5,
+    RecipientNotConnected = 6,
+    ProgramPaused = 7,
+    OutsideSchedule = 8,
+    BudgetExhausted = 9,
+    ProgramCapReached = 10,
+    PlayerCapReached = 11,
+    RequirementNotMet = 12,
+    RecipientNotEligible = 13,
+}
+
+impl GrantRewardAnswer {
+    pub fn paid(replayed: bool, receipt_id: String, credits: u64) -> Self {
+        Self {
+            ok: true,
+            error: None,
+            replayed: Some(replayed),
+            receipt_id: Some(receipt_id),
+            credits: Some(credits.to_string()),
+        }
+    }
+
+    pub fn refused(error: GrantRewardError) -> Self {
+        Self {
+            ok: false,
+            error: Some(error as i32),
+            replayed: None,
+            receipt_id: None,
+            credits: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

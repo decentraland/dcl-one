@@ -40,8 +40,9 @@ impl Gateway {
             Service::Catalyst if !self.virtual_host => Some(""),
             Service::PreviewGatekeeper if !self.virtual_host => Some("comms-gatekeeper"),
             Service::AssetsCdn if !self.virtual_host => Some("social-api"),
-            // Site links and storage delegations use their own public destinations.
-            Service::AuthPage | Service::Reels | Service::Storage => None,
+            // Site links and the storage and Credits delegations use their own public
+            // destinations: a delegated request is signed over the service's own path.
+            Service::AuthPage | Service::Reels | Service::Storage | Service::Credits => None,
             // Not through the gateway yet: its `/ab-cdn` route serves the asset-bundle CDN and
             // refuses `bevy/` paths, so abgen's CDN is reached directly until it has its own
             // route.
@@ -300,6 +301,7 @@ mod gateway_tests {
         let direct = Gateway::parse("http://localhost:5222").unwrap();
         for external in [
             Service::Storage,
+            Service::Credits,
             Service::Reels,
             Service::AuthPage,
             Service::EthereumRpc,

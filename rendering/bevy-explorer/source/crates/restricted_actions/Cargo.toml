@@ -42,6 +42,7 @@ copypwasmta = { workspace = true }
 http = { workspace = true }
 web-time = { workspace = true }
 rand = { workspace = true }
+sha2 = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { workspace = true }

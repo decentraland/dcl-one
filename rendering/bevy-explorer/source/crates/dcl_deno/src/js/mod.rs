@@ -83,7 +83,7 @@ pub fn create_runtime(
 
     let mut ops = vec![op_require(), op_log(), op_error()];
 
-    let op_sets: [Vec<deno_core::OpDecl>; 14] = [
+    let op_sets: [Vec<deno_core::OpDecl>; 15] = [
         op_wrappers::engine::ops(),
         op_wrappers::restricted_actions::ops(),
         op_wrappers::runtime::ops(),
@@ -91,6 +91,7 @@ pub fn create_runtime(
         op_wrappers::portables::ops(),
         op_wrappers::user_identity::ops(),
         op_wrappers::player::ops(),
+        op_wrappers::scene_rewards::ops(),
         op_wrappers::events::ops(),
         op_wrappers::comms::ops(),
         op_wrappers::comms_api::ops(),
@@ -636,6 +637,9 @@ fn op_require(
         "~system/Scene" => Ok(include_str!("../../../dcl_js/src/modules/Scene.js").to_owned()),
         "~system/SignedFetch" => {
             Ok(include_str!("../../../dcl_js/src/modules/SignedFetch.js").to_owned())
+        }
+        "~system/SceneRewards" => {
+            Ok(include_str!("../../../dcl_js/src/modules/SceneRewards.js").to_owned())
         }
         "~system/Testing" => Ok(include_str!("../../../dcl_js/src/modules/Testing.js").to_owned()),
         "~system/UserActionModule" => {

@@ -37,7 +37,7 @@ use scene_runner::{
 use system_api_types::launch_options::{help_heading::HEADLESS, LaunchOptions};
 use user_input::avatar_movement::AvatarMovementPlugin;
 use wallet::{
-    delegation::{StorageDelegation, StorageDelegations},
+    delegation::{CreditsDelegations, CreditsRefusal, StorageDelegation, StorageDelegations},
     sign_request, Wallet,
 };
 
@@ -230,6 +230,14 @@ enum ControlCommand {
         /// base64 world-storage delegation minted by the orchestrator for this scene
         #[serde(rename = "storageDelegation")]
         storage_delegation: Option<String>,
+        /// The orchestrator's id for this scene's Credits assignment, present when the scene may
+        /// ask for rewards. Every renewal names it, so one for an earlier add-scene is refused.
+        #[serde(rename = "creditsAssignment")]
+        credits_assignment: Option<String>,
+        /// base64 Credits delegation for that assignment: the only credential `grantReward`
+        /// signs with. Absent when the first mint failed; the engine then asks for one.
+        #[serde(rename = "creditsDelegation")]
+        credits_delegation: Option<String>,
         /// The realm this scene belongs to — the same name a client reads from that realm's
         /// `about`. Like `adapter`, it states how the scene is being served, which only the
         /// orchestrator knows. Pulse partitions peer visibility by realm and every world numbers
@@ -249,6 +257,15 @@ enum ControlCommand {
     StorageDelegationResponse {
         #[serde(rename = "sceneId")]
         scene_id: Option<String>,
+        delegation: Option<String>,
+    },
+    /// Credits-delegation renewal: the answer to `credits-delegation-request`. The orchestrator
+    /// renews only scenes whose room it still holds.
+    #[serde(rename = "credits-delegation-response")]
+    CreditsDelegationResponse {
+        #[serde(rename = "sceneId")]
+        scene_id: Option<String>,
+        assignment: Option<String>,
         delegation: Option<String>,
     },
 }
@@ -464,6 +481,8 @@ fn main() -> AppExit {
     if args.orchestrated {
         app.insert_resource(ControlChannel(std::sync::Mutex::new(spawn_stdin_reader())))
             .init_resource::<OrchestratedScenes>()
+            // only an orchestrated server holds Credits delegations, so only it can pay rewards
+            .init_resource::<CreditsDelegations>()
             // structural gate: the engine must never sign gatekeeper handshakes in
             // orchestrated mode — adapters are always minted by the trusted parent
             .insert_resource(comms::DisableSceneRoomGatekeeper(true))
@@ -474,6 +493,7 @@ fn main() -> AppExit {
                     reap_scene_contexts,
                     demux_scene_logs,
                     request_delegation_renewals,
+                    request_credits_renewals,
                     reap_terminal_scene_rooms,
                     report_disconnected_scene_rooms,
                     project_server_scene_rooms,
@@ -876,6 +896,37 @@ fn request_delegation_renewals(
     }
 }
 
+/// Ask the orchestrator for a Credits delegation for every assignment that has none yet (its first
+/// mint failed) or whose delegation expires within 5 minutes, at most once per 30 s per scene.
+/// Each request names its assignment, and only that assignment's answer is stored.
+fn request_credits_renewals(
+    credits: Res<CreditsDelegations>,
+    time: Res<Time>,
+    mut last_request: Local<std::collections::HashMap<String, f64>>,
+) {
+    const REFRESH_BUFFER_MS: i64 = 5 * 60 * 1000;
+    const REQUEST_THROTTLE_SECS: f64 = 30.0;
+
+    let now_ms = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let elapsed = time.elapsed_secs_f64();
+    last_request.retain(|scene, _| credits.is_assigned(scene));
+
+    for (scene, assignment) in credits.needing_renewal(now_ms, REFRESH_BUFFER_MS) {
+        let due = last_request
+            .get(scene)
+            .is_none_or(|last| elapsed - last > REQUEST_THROTTLE_SECS);
+        if due {
+            last_request.insert(scene.to_owned(), elapsed);
+            ctl_emit(&serde_json::json!({
+                "type": "credits-delegation-request", "scene": scene, "assignment": assignment
+            }));
+        }
+    }
+}
+
 // ---------------- orchestrated-mode systems ----------------
 
 /// Gather: apply the orchestrator's commands to `OrchestratedScenes` and the per-scene
@@ -888,8 +939,20 @@ fn drain_control_commands(
     preview: Res<PreviewMode>,
     scenes: Query<&RendererSceneContext>,
     mut delegations: ResMut<StorageDelegations>,
+    mut credits: ResMut<CreditsDelegations>,
     config: Res<AppConfig>,
 ) {
+    let report_credits =
+        |scene_id: &str, result: Result<(), CreditsRefusal>, stored: bool| match result {
+            Ok(()) if stored => {
+                ctl_emit(&serde_json::json!({"type": "credits-delegation-set", "scene": scene_id}))
+            }
+            Ok(()) => {}
+            Err(refusal) => ctl_emit(&serde_json::json!({
+                "type": "error", "scene": scene_id,
+                "error": format!("credits delegation not stored: {refusal:?}")
+            })),
+        };
     let store_delegation = |scene_id: &str, encoded: &str, delegations: &mut StorageDelegations| {
         match StorageDelegation::parse(encoded, &map_realm_name(&config.home_realm())) {
             Ok(delegation) => {
@@ -927,6 +990,8 @@ fn drain_control_commands(
                 urn,
                 adapter,
                 storage_delegation,
+                credits_assignment,
+                credits_delegation,
                 realm,
             } => {
                 if let Some(encoded) = &storage_delegation {
@@ -964,6 +1029,16 @@ fn drain_control_commands(
                     // guest identity (mirrors hammurabi's LocalPreview flow)
                     None => RoomCredential::Unminted,
                 };
+                // only an accepted add-scene opens a Credits assignment, replacing any earlier
+                // one; without an assignment the scene cannot ask for rewards
+                match credits_assignment {
+                    Some(assignment) => {
+                        let result =
+                            credits.assign(&scene_id, assignment, credits_delegation.as_deref());
+                        report_credits(&scene_id, result, credits_delegation.is_some());
+                    }
+                    None => credits.remove(&scene_id),
+                }
                 orch.wanted
                     .insert(scene_id, WantedScene { urn, credential });
             }
@@ -973,6 +1048,7 @@ fn drain_control_commands(
                 orch.wanted.remove(&scene_id);
                 orch.removed.insert(scene_id.clone());
                 delegations.by_scene.remove(&scene_id);
+                credits.remove(&scene_id);
                 scene_realms.0.remove(&scene_id);
                 // the crdt context is NOT despawned here: the scene tears down over the
                 // following frames and must still resolve it; reap_scene_contexts
@@ -993,6 +1069,17 @@ fn drain_control_commands(
             } => {
                 if let (Some(scene_id), Some(encoded)) = (&scene_id, &delegation) {
                     store_delegation(scene_id, encoded, &mut delegations);
+                }
+            }
+            ControlCommand::CreditsDelegationResponse {
+                scene_id,
+                assignment,
+                delegation,
+            } => {
+                if let (Some(scene_id), Some(assignment), Some(encoded)) =
+                    (&scene_id, &assignment, &delegation)
+                {
+                    report_credits(scene_id, credits.renew(scene_id, assignment, encoded), true);
                 }
             }
         }

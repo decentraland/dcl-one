@@ -6,6 +6,8 @@ mod home;
 mod item_purchase;
 mod map_pins;
 pub mod portables;
+#[cfg(not(target_arch = "wasm32"))]
+mod scene_rewards;
 pub mod smart_wearables;
 pub mod teleport;
 pub mod world_access;
@@ -120,6 +122,7 @@ impl Plugin for RestrictedActionsPlugin {
                     handle_spawned_command,
                     handle_copy_to_clipboard,
                     handle_sign_request,
+                    handle_grant_reward,
                     handle_entity_definition,
                     handle_read_file,
                     open_explorer_ui,
@@ -1417,6 +1420,23 @@ fn get_user_data(
             }
         }
     });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+use scene_rewards::handle_grant_reward;
+
+/// The web build never hosts an authoritative server, so it never pays a scene reward.
+#[cfg(target_arch = "wasm32")]
+fn handle_grant_reward(mut events: EventReader<RpcCallEvent>) {
+    for ev in events.read() {
+        if let RpcCall::GrantReward(request) = &ev.call {
+            request
+                .response
+                .send(common::rpc::GrantRewardAnswer::refused(
+                    common::rpc::GrantRewardError::NotAvailable,
+                ));
+        }
+    }
 }
 
 /// Resolves the crdt context (player-presence view) a scene reads. On the client every
