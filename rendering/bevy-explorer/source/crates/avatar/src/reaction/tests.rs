@@ -68,6 +68,11 @@ fn harness() -> Harness {
     )))
     .add_plugins(ReactionPlugin);
     scene_runner::update_world::text_shape::add_glyph_atlas_maintenance(&mut app);
+    // the colour emoji font, as the Explorer makes it at startup
+    let font = app.world_mut().resource_mut::<Assets<Font>>().add(Font {
+        data: EMOJI_BYTES.clone(),
+    });
+    app.insert_resource(EmojiFont(font));
     app.add_systems(
         Update,
         |mut reacted: EventReader<PlayerReacted>, mut reported: ResMut<Reported>| {
@@ -425,8 +430,8 @@ static EMOJI_BYTES: LazyLock<Arc<Vec<u8>>> = LazyLock::new(|| {
 });
 
 impl Harness {
-    /// The emoji laid out in the colour emoji font, as the Explorer does, and the camera at
-    /// the origin. The local player gets an avatar where they stand.
+    /// The emoji font there for every text to fall back to, as the Explorer has it, and the
+    /// camera at the origin. The local player gets an avatar where they stand.
     fn with_avatars() -> Self {
         let mut harness = harness();
         let app = &mut harness.app;
@@ -434,10 +439,6 @@ impl Harness {
             .resource_mut::<CosmicFontSystem>()
             .db_mut()
             .load_font_source(Source::Binary(EMOJI_BYTES.clone()));
-        let font = app.world_mut().resource_mut::<Assets<Font>>().add(Font {
-            data: EMOJI_BYTES.clone(),
-        });
-        app.world_mut().resource_mut::<ReactionGlyphs>().font = Some(font);
 
         app.world_mut()
             .spawn((GlobalTransform::default(), PrimaryCamera::default()));
@@ -458,7 +459,7 @@ impl Harness {
             .world_mut()
             .resource_mut::<Assets<Font>>()
             .add(Font::try_from_bytes(font).expect("the nametag font is a font"));
-        self.app.world_mut().resource_mut::<ReactionGlyphs>().font = Some(font);
+        self.app.insert_resource(EmojiFont(font));
     }
 
     fn give_avatar(&mut self, player: Entity, at: Vec3) {
@@ -510,7 +511,7 @@ impl Harness {
     /// Have every particle's mesh count as built, as its emoji's glyphs landing in the atlas
     /// does.
     fn glyphs_land(&mut self) {
-        let generation = self.app.world().resource::<ReactionAssets>().generation;
+        let (generation, _) = self.atlas();
         let mut particles = self.app.world_mut().query::<&mut ReactionParticle>();
         for mut particle in particles.iter_mut(self.app.world_mut()) {
             particle.built = Some(generation);
@@ -669,7 +670,7 @@ fn an_emoji_is_rastered_into_the_atlas_and_its_particle_drawn_from_it() {
     harness.wait_until_drawn(particle);
 
     let assets = harness.app.world().resource::<ReactionAssets>();
-    let (page, size) = assets.page().expect("the atlas has a colour page");
+    let (page, size) = assets.bound[1].expect("the atlas has a colour page");
     assert!(size > 0);
     let material = harness
         .app
@@ -756,8 +757,7 @@ fn a_particle_alive_through_an_atlas_rebuild_is_drawn_from_the_new_page() {
     assert!(harness.drawn(kept));
     // and the material draws from the new texture
     let assets = harness.app.world().resource::<ReactionAssets>();
-    assert_eq!(assets.generation, rebuilt);
-    assert_eq!(assets.page().map(|(page, _)| page), new_page);
+    assert_eq!(assets.bound[1].map(|(page, _)| page), new_page);
     let material = harness
         .app
         .world()
@@ -790,12 +790,8 @@ fn an_emoji_a_text_font_has_the_base_character_of_is_drawn_in_colour() {
     }
     assert_eq!(harness.particles().len(), 6);
     assert_eq!(harness.stats().dropped.no_glyphs, 0);
-    assert!(harness
-        .app
-        .world()
-        .resource::<ReactionAssets>()
-        .page()
-        .is_some());
+    let assets = harness.app.world().resource::<ReactionAssets>();
+    assert!(assets.bound[1].is_some());
 }
 
 #[test]
@@ -911,12 +907,7 @@ fn the_console_reads_the_atlas_without_making_it_and_has_it_rebuilt() {
     let gone = harness.particle_of("👍").unwrap();
     harness.wait_until_drawn(gone);
     harness.app.world_mut().despawn(gone);
-    let (_, size) = harness
-        .app
-        .world()
-        .resource::<ReactionAssets>()
-        .page()
-        .unwrap();
+    let (_, size) = harness.app.world().resource::<ReactionAssets>().bound[1].unwrap();
     assert_eq!(harness.reported_atlas(), u64::from(size));
 
     let generation = harness.atlas_made().unwrap();
@@ -971,13 +962,13 @@ fn only_so_many_particles_live_in_all() {
 #[test]
 fn an_emoji_that_cannot_be_laid_out_yet_is_counted_and_tried_again() {
     let mut harness = Harness::with_avatars();
-    // before the built-in fonts are made there is none to lay an emoji out in
+    // a font whose asset is not there has nothing to lay an emoji out in
     let font = harness
         .app
-        .world_mut()
-        .resource_mut::<ReactionGlyphs>()
-        .font
-        .take();
+        .world()
+        .resource::<Assets<Font>>()
+        .reserve_handle();
+    harness.app.insert_resource(EmojiFont(font.clone()));
     harness.pick("👍");
     harness.app.update();
     assert!(harness.particles().is_empty());
@@ -987,8 +978,13 @@ fn an_emoji_that_cannot_be_laid_out_yet_is_counted_and_tried_again() {
     harness
         .app
         .world_mut()
-        .resource_mut::<ReactionGlyphs>()
-        .font = font;
+        .resource_mut::<Assets<Font>>()
+        .insert(
+            &font,
+            Font {
+                data: EMOJI_BYTES.clone(),
+            },
+        );
     harness.pick("👍");
     harness.app.update();
     assert_eq!(harness.particles().len(), 1);

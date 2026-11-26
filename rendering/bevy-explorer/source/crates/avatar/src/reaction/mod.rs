@@ -45,9 +45,11 @@ use comms::{
 };
 use console::{AddDebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::kernel::comms::rfc4;
-use scene_runner::update_world::text_shape::{AtlasGlyphUse, AtlasKey, GlyphAtlasMaintenance};
+use scene_runner::update_world::text_shape::{
+    AtlasGlyphUse, AtlasKey, GlyphAtlas, GlyphAtlasMaintenance, GlyphAtlases,
+};
 use system_bridge::{ReactionData, SystemApi};
-use ui_core::EMOJI_FONT;
+use ui_core::EmojiFont;
 use wallet::Wallet;
 
 use self::{
@@ -187,7 +189,7 @@ struct Dropped {
     /// Reactions that played with no particle: nothing shows over their player.
     not_shown: u32,
     /// Reactions that played with no particle, or lost it: their emoji could not be laid out,
-    /// or there was no font yet to lay it out in, or it has no glyph in colour.
+    /// or it has no glyph in colour.
     no_glyphs: u32,
 }
 
@@ -204,18 +206,8 @@ struct ReactionParticle {
 #[derive(Resource)]
 struct ReactionAssets {
     material: Handle<ReactionMaterial>,
-    /// The atlas pages as of the last build; the material binds the colour page.
+    /// The atlas pages as of the last build; the material binds the colour page, the second.
     bound: BoundPages,
-    /// The atlas' generation as of the last build.
-    generation: u32,
-}
-
-impl ReactionAssets {
-    /// The atlas page the material binds, and its size.
-    #[cfg(test)]
-    fn page(&self) -> Option<(AssetId<Image>, u32)> {
-        self.bound[1]
-    }
 }
 
 impl FromWorld for ReactionAssets {
@@ -225,7 +217,6 @@ impl FromWorld for ReactionAssets {
                 .resource_mut::<Assets<ReactionMaterial>>()
                 .add(ReactionMaterial { bitmap: None }),
             bound: [None; 2],
-            generation: 0,
         }
     }
 }
@@ -233,10 +224,6 @@ impl FromWorld for ReactionAssets {
 /// What drawing each emoji played so far takes.
 #[derive(Resource, Default)]
 struct ReactionGlyphs {
-    /// The font the emoji are laid out in, the colour emoji font: in a text font, an emoji
-    /// whose base character that font has (©, ™, ‼) is drawn from it, in one colour. It is
-    /// made at startup, after this is.
-    font: Option<Handle<Font>>,
     emoji: HashMap<&'static str, EmojiGlyphs>,
 }
 
@@ -262,26 +249,29 @@ enum NoMesh {
 #[derive(SystemParam)]
 struct EmojiShaper<'w> {
     shaper: GlyphShaper<'w>,
+    /// The font the emoji are laid out in: in a text font, an emoji whose base character that
+    /// font has (©, ™, ‼) is drawn from it, in one colour.
+    font: Res<'w, EmojiFont>,
     meshes: ResMut<'w, Assets<Mesh>>,
     glyphs: ResMut<'w, ReactionGlyphs>,
 }
 
 impl EmojiShaper<'_> {
     /// What keeps the emoji's glyphs in the atlas while a particle shows it. `None` for an
-    /// emoji that can't be laid out, or before there is a font to lay it out in.
+    /// emoji that can't be laid out.
     fn glyph_use(&mut self, emoji: &'static str) -> Option<AtlasGlyphUse> {
-        let Self { shaper, glyphs, .. } = self;
-        let ReactionGlyphs { font, emoji: laid } = &mut **glyphs;
-        if font.is_none() {
-            *font = EMOJI_FONT.get().cloned();
-        }
-        // nothing is laid out before the emoji font is made
-        let font = font.as_ref()?;
+        let Self {
+            shaper,
+            font,
+            glyphs,
+            ..
+        } = self;
+        let laid = &mut glyphs.emoji;
         if !laid.contains_key(emoji) {
             // one that can't be laid out now is tried again the next time it plays
             let text = shaper.shape(
                 &ATLAS,
-                font,
+                &font.0,
                 Entity::PLACEHOLDER,
                 &[Span::new(emoji, Color::WHITE)],
                 ATLAS.raster_font_size,
@@ -664,8 +654,6 @@ fn build_reaction_glyphs(
     mut stats: ResMut<ReactionStats>,
 ) {
     let generation = shaper.shaper.atlas(&ATLAS).generation();
-    assets.generation = generation;
-
     let mut budget = GlyphBudget::of(RASTERS_PER_FRAME);
     for (entity, mut particle, mut mesh) in &mut particles {
         if particle.built == Some(generation) {
@@ -700,7 +688,7 @@ fn simulate_reaction_particles(
     mut commands: Commands,
     time: Res<Time>,
     config: Res<AppConfig>,
-    assets: Res<ReactionAssets>,
+    atlases: Res<GlyphAtlases>,
     places: ReactionPlaces,
     mut particles: Query<(
         Entity,
@@ -713,6 +701,8 @@ fn simulate_reaction_particles(
     )>,
 ) {
     let view = places.view();
+    // a mesh built before the atlas was last rebuilt samples where its glyphs were
+    let generation = atlases.get(&ATLAS.key).map(GlyphAtlas::generation);
     // switched off, those alive are hidden for what is left of their second
     let switched_on = config.chat_bubble_visibility != ChatBubbleVisibility::None;
     for (entity, owner, mut particle, mut transform, mut tag, mut mesh, mut visibility) in
@@ -731,7 +721,8 @@ fn simulate_reaction_particles(
         let pose = particle.motion.pose().filter(|_| {
             switched_on
                 && place.is_some_and(|(_, shown)| shown)
-                && particle.built == Some(assets.generation)
+                && particle.built.is_some()
+                && particle.built == generation
         });
         let Some(pose) = pose else {
             if *visibility != Visibility::Hidden {
