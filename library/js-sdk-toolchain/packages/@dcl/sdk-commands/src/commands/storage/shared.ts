@@ -1,5 +1,5 @@
-import type { IFuture } from 'fp-future'
-import future from 'fp-future'
+import type { IFuture } from '../../logic/future'
+import future from '../../logic/future'
 import { Authenticator } from '@dcl/crypto'
 import { ethSign } from '@dcl/crypto/dist/crypto'
 import { hexToBytes } from 'eth-connect'

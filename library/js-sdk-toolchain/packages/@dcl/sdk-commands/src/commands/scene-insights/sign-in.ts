@@ -1,4 +1,4 @@
-import future from 'fp-future'
+import future from '../../logic/future'
 import type { AuthChainProvider } from '@dcl/crypto-middleware'
 import { createInsightsProvider } from './signature-validation'
 import type { Router } from '@well-known-components/http-server'
