@@ -1785,7 +1785,10 @@ an adjustment. Each writes one `ops.admin_audit` row in its own transaction
 `studio.operator.remove`, `studio.budget`). A studio's own operators grant
 Credits to players out of its budget, signed fetch with no admin gate
 (`POST /credits/operator/studios/{id}/grants` and its `/shop-api` twin, paced
-at 60 per operator wallet a minute). A grant writes, in one transaction, the
+at 60 per operator wallet a minute). Its signature counts over the mount's
+path or the credits host's own route, never a foreign prefix ending with it;
+a contract wallet's is checked with the uncached EIP-1654 validator; and a
+signed `bodySha256` must be the body's. A grant writes, in one transaction, the
 player's paid credit as an admin grant does (`credits.wallets`,
 `credits.ledger` with its `ops.admin_audit` row, the operator as actor, and
 the "A gift from {studio}" notice) and the `grant` entry naming that ledger
@@ -1800,9 +1803,16 @@ and one of them with its grants (`GET /credits/operator/studios/{id}`, from one
 REPEATABLE READ, READ ONLY snapshot), and a player's gifts (the `gifts` block of
 `GET /credits/users/{address}/credit-orders`: the wallet's ledger `grant` rows
 with an admin `grant` audit row or named by a budget entry, by
-`ledger_address_id_idx`; a migrated Decentraland grant has neither and is not
-listed until #2473). Rows are few: an operator's studios, their wallets, and a
-budget entry per deposit, adjustment or grant.
+`ledger_address_id_idx`, the total and the page from one REPEATABLE READ, READ
+ONLY snapshot; a gift that is not a whole number of cents within
+`Number.MAX_SAFE_INTEGER` cannot take that shape and is left out of both,
+counted in a warning; a migrated Decentraland grant has neither link and is not
+listed until #2473). The credits report calls a grant `studio_grant` only on
+proof a studio paid for it: a budget entry that names it, or credits-server's
+own record of a studio grant (an imported audit with `upstreamCreditId` and
+`studioName`); a `studioName` alone, as the admin route once wrote it, stays
+`grant`. Rows are few: an operator's studios,
+their wallets, and a budget entry per deposit, adjustment or grant.
 
 Locks: a change that adds budget first takes the service-wide advisory lock
 (`pg_advisory_xact_lock`, the first 15 hex digits of the SHA-256 of

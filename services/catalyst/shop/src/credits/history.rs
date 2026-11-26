@@ -208,25 +208,38 @@ impl Credits {
         })
     }
 
-    /// A page of the wallet's gifts ([`GIFTS_FROM`]), newest first, with
-    /// their total. A studio grant has one budget entry (`ledger_id` is
+    /// A page of the wallet's gifts ([`GIFTS_GIVEN`], [`GIFT_CENTS_EXACT`]),
+    /// newest first, with their total. A studio grant has one budget entry (`ledger_id` is
     /// unique), so the joins never multiply a row.
     pub async fn gifts(&self, address: &str, limit: i64, offset: i64) -> Result<Gifts, ApiError> {
-        let total: i64 =
-            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) {GIFTS_FROM}")))
-                .bind(address)
-                .fetch_one(&self.pool)
-                .await?;
+        // The total and the page from one snapshot, so a grant committing
+        // between them cannot make them disagree.
+        let mut tx = self.read_snapshot().await?;
+        let (total, inexact): (i64, i64) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FILTER (WHERE {GIFT_CENTS_EXACT}), count(*) FILTER (WHERE NOT ({GIFT_CENTS_EXACT})) \
+             {GIFTS_GIVEN}"
+        )))
+        .bind(address)
+        .fetch_one(&mut *tx)
+        .await?;
         let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT l.id::text AS id, (l.amount * 10)::bigint AS usd_cents, \
                     (EXTRACT(EPOCH FROM l.created_at) * 1000)::bigint AS created_at, s.name AS studio_name \
-             {GIFTS_FROM} ORDER BY l.created_at DESC, l.id LIMIT $2 OFFSET $3"
+             {GIFTS_GIVEN} AND {GIFT_CENTS_EXACT} ORDER BY l.created_at DESC, l.id LIMIT $2 OFFSET $3"
         )))
         .bind(address)
         .bind(limit)
         .bind(offset)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
+        tx.commit().await?;
+        if inexact > 0 {
+            tracing::warn!(
+                address,
+                inexact,
+                "gifts not a whole number of cents within a safe integer are left out of the gifts block"
+            );
+        }
         let items = rows
             .iter()
             .map(|r| {
@@ -408,11 +421,19 @@ pub struct GiftOut {
 /// credits-server. A migrated Decentraland grant has neither and is not
 /// listed until #2473: the import keeps no source that tells it from a
 /// migrated purchase-like credit.
-const GIFTS_FROM: &str = "FROM credits.ledger l \
+const GIFTS_GIVEN: &str = "FROM credits.ledger l \
      LEFT JOIN credits.studio_budget_entries e ON e.ledger_id = l.id \
      LEFT JOIN credits.studios s ON s.id = e.studio_id \
      LEFT JOIN ops.admin_audit a ON a.id = l.admin_audit_id \
      WHERE l.address = $1 AND l.kind = 'grant' AND (e.id IS NOT NULL OR a.action = 'grant')";
+
+/// A gift's amount in credits-server's shape: a whole number of cents that a
+/// JSON number carries exactly (`Number.MAX_SAFE_INTEGER`). An admin grant
+/// may give a fraction of a cent or an absurd amount; such a row cannot be
+/// answered in that shape, so it is left out of the page and the total
+/// alike, counted in a warning, and never fails the gifts it sits among.
+const GIFT_CENTS_EXACT: &str =
+    "l.amount * 10 = trunc(l.amount * 10) AND l.amount * 10 <= 9007199254740991";
 
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "credits/"))]

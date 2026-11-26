@@ -18,11 +18,11 @@
 //! - the signer must act for the studio (else the studio is not found);
 //! - a repeat of the idempotency key with the same request answers what it
 //!   wrote, even once the studio is paused, the player flagged or the ceiling
-//!   lowered;
+//!   lowered (read with the operator check, from one snapshot);
 //! - the per-grant ceiling (`CREDITS_STUDIO_GRANT_MAX_CENTS`, fail-closed);
-//! - under the lock: the signer still acts for the studio, the studio is
-//!   active, the player is not one of its operators, and its balance covers
-//!   the grant;
+//! - under the lock: the signer still acts for the studio, before its key is
+//!   answered; then the key; then the studio is active, the player is not one
+//!   of its operators, and its balance covers the grant;
 //! - last, the player's multi-accounting flag, so that a paused or empty
 //!   studio cannot use the refusal to learn which wallets carry one.
 //!
@@ -122,11 +122,20 @@ pub fn grant_request_hash(
     hex::encode(Sha256::digest(request.to_string().as_bytes()))
 }
 
-/// Whole Credits to grant: a positive whole number whose cents stay exact.
+/// The largest integer a JSON number carries exactly (`Number.MAX_SAFE_INTEGER`).
+pub const MAX_SAFE_INTEGER: i64 = (1 << 53) - 1;
+
+/// Whole Credits to grant: a positive whole number whose cents stay exact,
+/// as credits-server requires (`Number.isSafeInteger(credits * 10)`), whatever
+/// the configured ceiling.
 pub fn parse_grant_credits(value: Option<&JsonValue>) -> Result<i64, StudioError> {
     value
         .and_then(JsonValue::as_i64)
-        .filter(|c| *c > 0 && c.checked_mul(USD_CENTS_PER_CREDIT).is_some())
+        .filter(|c| {
+            *c > 0
+                && c.checked_mul(USD_CENTS_PER_CREDIT)
+                    .is_some_and(|cents| cents <= MAX_SAFE_INTEGER)
+        })
         .ok_or_else(|| StudioError::Invalid("\"credits\" must be a positive whole number".into()))
 }
 
@@ -190,21 +199,6 @@ impl Credits {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows.iter().map(map_summary).collect())
-    }
-
-    /// Whether `operator` acts for the studio.
-    pub async fn is_studio_operator(
-        &self,
-        studio_id: &str,
-        operator: &str,
-    ) -> Result<bool, StudioError> {
-        Ok(sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM credits.studio_operators WHERE studio_id = $1::uuid AND address = $2)",
-        )
-        .bind(studio_id)
-        .bind(operator)
-        .fetch_one(&self.pool)
-        .await?)
     }
 
     /// One of `operator`'s studios with a page of its grants, newest first,
@@ -274,17 +268,30 @@ impl Credits {
         Ok(Some((studio, grants, total)))
     }
 
-    /// The grant `req`'s key already made, read without the studio's lock, so
-    /// that a repeat is answered before anything that only decides a new
-    /// grant. The write checks the key again under the lock; this read only
-    /// ever answers early. `IdempotencyKeyReused` when the key was used for
-    /// another request (a budget change included).
+    /// Whether `req`'s granter acts for the studio and, if so, the grant its
+    /// key already made, read without the studio's lock so that a repeat is
+    /// answered before anything that only decides a new grant. The operator,
+    /// the entry and the balance are read from one snapshot, so nothing is
+    /// told from after the granter stopped acting for the studio. `NotFound`
+    /// when it does not act for it; `IdempotencyKeyReused` when the key was
+    /// used for another request (a budget change included). The write checks
+    /// both again under the lock: this read only ever answers early.
     pub async fn studio_grant_replay(
         &self,
         req: StudioGrantRequest<'_>,
     ) -> Result<Option<StudioGrant>, StudioError> {
         let hash = grant_request_hash(req.recipient, req.usd_cents, req.reason, req.annotation);
-        let mut conn = self.pool.acquire().await?;
+        let mut tx = self.read_snapshot().await?;
+        let acts: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM credits.studio_operators WHERE studio_id = $1::uuid AND address = $2)",
+        )
+        .bind(req.studio_id)
+        .bind(req.granter)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !acts {
+            return Err(StudioError::NotFound);
+        }
         let Some(entry) = sqlx::query(
             "SELECT e.request_hash, e.ledger_id::text AS credit_id, s.name \
              FROM credits.studio_budget_entries e JOIN credits.studios s ON s.id = e.studio_id \
@@ -292,9 +299,10 @@ impl Credits {
         )
         .bind(req.studio_id)
         .bind(req.idempotency_key)
-        .fetch_optional(&mut *conn)
+        .fetch_optional(&mut *tx)
         .await?
         else {
+            tx.commit().await?;
             return Ok(None);
         };
         let credit_id: Option<String> = entry.get("credit_id");
@@ -304,10 +312,12 @@ impl Credits {
                 req.idempotency_key.into(),
             ));
         };
+        let balance_cents = balance_cents(&mut tx, req.studio_id).await?;
+        tx.commit().await?;
         Ok(Some(StudioGrant {
             credit_id,
             studio_name: entry.get("name"),
-            balance_cents: balance_cents(&mut conn, req.studio_id).await?,
+            balance_cents,
             replayed: true,
         }))
     }
@@ -335,6 +345,22 @@ impl Credits {
                 .ok_or(StudioError::NotFound)?;
         let studio_name: String = studio.get("name");
         let status: String = studio.get("status");
+
+        // Who acts for the studio, under its lock: an operator removed since
+        // the route's read is told the studio is not found, before anything
+        // about the studio or its key, a past grant included.
+        let acting: Vec<String> = sqlx::query_scalar(
+            "SELECT address FROM credits.studio_operators \
+             WHERE studio_id = $1::uuid AND address IN ($2, $3)",
+        )
+        .bind(req.studio_id)
+        .bind(req.granter)
+        .bind(req.recipient)
+        .fetch_all(&mut *tx)
+        .await?;
+        if !acting.iter().any(|a| a == req.granter) {
+            return Err(StudioError::NotFound);
+        }
 
         // A repeat is answered before the studio's current state is judged.
         let existing = sqlx::query(
@@ -364,20 +390,6 @@ impl Credits {
             });
         }
 
-        // Who acts for the studio, under its lock: an operator removed since
-        // the route's check is told the studio is not found.
-        let acting: Vec<String> = sqlx::query_scalar(
-            "SELECT address FROM credits.studio_operators \
-             WHERE studio_id = $1::uuid AND address IN ($2, $3)",
-        )
-        .bind(req.studio_id)
-        .bind(req.granter)
-        .bind(req.recipient)
-        .fetch_all(&mut *tx)
-        .await?;
-        if !acting.iter().any(|a| a == req.granter) {
-            return Err(StudioError::NotFound);
-        }
         if status != "active" {
             return Err(StudioError::Paused(studio_name));
         }
@@ -484,7 +496,23 @@ mod tests {
     #[test]
     fn a_grant_body_is_checked_as_credits_server_checks_it() {
         assert_eq!(parse_grant_credits(Some(&json!(5))).unwrap(), 5);
-        for bad in [json!(0), json!(-1), json!(1.5), json!("5"), json!(i64::MAX)] {
+        // The last whole Credit whose cents are a safe integer, and the next.
+        assert_eq!(
+            parse_grant_credits(Some(&json!(900_719_925_474_099_i64))).unwrap(),
+            900_719_925_474_099
+        );
+        assert_eq!(
+            900_719_925_474_099 * USD_CENTS_PER_CREDIT,
+            MAX_SAFE_INTEGER - 1
+        );
+        for bad in [
+            json!(0),
+            json!(-1),
+            json!(1.5),
+            json!("5"),
+            json!(900_719_925_474_100_i64),
+            json!(i64::MAX),
+        ] {
             assert!(parse_grant_credits(Some(&bad)).is_err(), "{bad}");
         }
         assert!(parse_grant_credits(None).is_err());

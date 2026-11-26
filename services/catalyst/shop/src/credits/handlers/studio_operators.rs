@@ -8,6 +8,15 @@
 //! wallet that does not act for a studio is answered as if the studio did not
 //! exist, so it cannot learn which studios exist. Operators see what their
 //! studio was given and gave, never who changed its budget.
+//!
+//! A signature counts over the path the request arrived on, or the credits
+//! host's own spelling of the route (a proxy `x-original-path` that IS the
+//! route), never a foreign prefix ending with it. A grant moves money, so a
+//! contract wallet's signature on it is checked with the uncached EIP-1654
+//! validator (a revoked delegation stops at once, not after the cache's TTL),
+//! and a grant whose signed metadata commits to a `bodySha256` must match
+//! the exact bytes sent. One that signs no hash is accepted, as credits-server
+//! accepted it.
 
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -20,9 +29,9 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value as JsonValue, json};
 
-use super::signer_from;
 use super::studios::{PageQuery, json_object};
 use crate::credits::SharedState;
+use crate::credits::admin::{exact_original_path, signed_body_matches};
 use crate::credits::studio_grants::{
     OperatorStudio, StudioGrantRequest, parse_annotation, parse_grant_credits, parse_reason,
 };
@@ -31,6 +40,7 @@ use crate::credits::studios::{
 };
 use crate::shared::limits::{RateLimitDecision, RateLimiter};
 use crate::shared::routing::{get, post};
+use crate::shared::signed_fetch::{PayloadPolicy, SignedPath, require_signer_at};
 
 /// Grants one operator wallet may ask for in a window (credits-server's
 /// `STUDIO_GRANT_RATE_LIMIT` and `STUDIO_GRANT_RATE_WINDOW_SECONDS` defaults).
@@ -53,18 +63,58 @@ pub fn router() -> Router<SharedState> {
         )
 }
 
-/// The signing wallet, lowercase, of a request to `route`.
+/// The signing wallet, lowercase, of a read of `route`: the cached EIP-1654
+/// validator answers a contract wallet.
 async fn operator_of(
     state: &SharedState,
+    headers: &HeaderMap,
+    route: &str,
+    original: &OriginalUri,
+) -> Result<String, StudioError> {
+    signer_at(
+        &exact_original_path(headers, route),
+        "get",
+        route,
+        original,
+        state.eip1654.as_deref(),
+    )
+    .await
+}
+
+/// The signing wallet, lowercase, of a grant to `route` carrying `body`: the
+/// uncached validator answers a contract wallet (one with no uncached path
+/// is refused), and a signed `bodySha256` must be `body`'s.
+async fn granter_of(
+    state: &SharedState,
+    headers: &HeaderMap,
+    route: &str,
+    original: &OriginalUri,
+    body: &[u8],
+) -> Result<String, StudioError> {
+    let headers = exact_original_path(headers, route);
+    let fresh = state.eip1654.as_deref().and_then(|v| v.fresh_validator());
+    let granter = signer_at(&headers, "post", route, original, fresh).await?;
+    signed_body_matches(&headers, body).map_err(StudioError::Refused)?;
+    Ok(granter)
+}
+
+async fn signer_at(
     headers: &HeaderMap,
     method: &str,
     route: &str,
     original: &OriginalUri,
+    validator: Option<&dyn crate::auth::eip1654::Eip1654Validator>,
 ) -> Result<String, StudioError> {
-    signer_from(state, headers, method, route, original)
-        .await
-        .map(|signer| signer.as_str().to_string())
-        .map_err(StudioError::Refused)
+    require_signer_at(
+        headers,
+        method,
+        &SignedPath::at(&original.0, route),
+        PayloadPolicy::V6ThenLegacy,
+        validator,
+    )
+    .await
+    .map(|signer| signer.as_str().to_string())
+    .map_err(|e| StudioError::Refused(e.into()))
 }
 
 /// The per-grant ceiling the routes report; `null` while none is configured.
@@ -79,7 +129,7 @@ async fn list_operator_studios(
     original: OriginalUri,
     headers: HeaderMap,
 ) -> Result<Json<JsonValue>, StudioError> {
-    let operator = operator_of(&state, &headers, "get", "/operator/studios", &original).await?;
+    let operator = operator_of(&state, &headers, "/operator/studios", &original).await?;
     let studios: Vec<OperatorStudio> = state
         .credits
         .operator_studios(&operator)
@@ -103,7 +153,7 @@ async fn get_operator_studio(
     headers: HeaderMap,
 ) -> Result<Json<JsonValue>, StudioError> {
     let route = format!("/operator/studios/{studio_id}");
-    let operator = operator_of(&state, &headers, "get", &route, &original).await?;
+    let operator = operator_of(&state, &headers, &route, &original).await?;
     let studio_id = parse_studio_id(&studio_id)?;
     let (limit, offset) = page.page();
     let (studio, grants, total) = state
@@ -147,7 +197,7 @@ async fn grant_studio_credits(
     body: Bytes,
 ) -> Result<Response, StudioError> {
     let route = format!("/operator/studios/{studio_id}/grants");
-    let operator = operator_of(&state, &headers, "post", &route, &original).await?;
+    let operator = granter_of(&state, &headers, &route, &original, &body).await?;
     if GRANTS.check(&operator) == RateLimitDecision::Deny {
         return Ok(too_many_grants());
     }
@@ -175,15 +225,8 @@ async fn grant_studio_credits(
     };
 
     // Who may act comes first: nothing about a studio, not even a past grant,
-    // is told to a wallet that does not act for it.
-    if !state
-        .credits
-        .is_studio_operator(&studio_id, &operator)
-        .await?
-    {
-        return Err(StudioError::NotFound);
-    }
-    // A grant already made is answered next: nothing below can undo it.
+    // is told to a wallet that does not act for it. A grant already made is
+    // answered next, from the same snapshot: nothing below can undo it.
     let grant = match state.credits.studio_grant_replay(req).await? {
         Some(replayed) => replayed,
         None => {

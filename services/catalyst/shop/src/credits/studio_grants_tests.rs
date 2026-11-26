@@ -6,9 +6,14 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
+use std::sync::Arc;
+
+use sha2::{Digest, Sha256};
+
 use super::tests::{
-    OwnDatabase, Wallet, admin_bearer, app, call, create_test_studio, grant_state, scratch_wallet,
-    send, signed_headers,
+    OwnDatabase, RevokedContract, Wallet, admin_bearer, app, call, contract_wallet_headers,
+    create_test_studio, grant_state, grant_state_with, scratch_wallet, send, signed_headers,
+    signed_headers_with,
 };
 
 /// Adds `address` as an operator of `studio` over the admin route.
@@ -843,5 +848,268 @@ async fn two_identical_grants_racing_make_one_grant() {
         assert_eq!(credits, 1, "round {round}");
     }
     assert_eq!(balance_cents(&db.pool, &studio).await, 500 - 6 * 50);
+    db.drop().await;
+}
+
+/// The body of a grant to `recipient`, as [`grant`] sends it.
+fn grant_body(recipient: &str, credits: i64, key: &str) -> Value {
+    json!({ "address": recipient, "credits": credits, "reason": "Event winner", "idempotencyKey": key })
+}
+
+/// A grant moves money: a contract wallet's signature on it is asked of the
+/// contract, so a delegation the cache still accepts but the contract has
+/// revoked grants nothing. A read keeps the cached answer.
+#[tokio::test]
+async fn a_contract_wallet_grant_asks_the_contract() {
+    let Some(db) = OwnDatabase::create("studio_grant_contract").await else {
+        return;
+    };
+    let app = app(grant_state_with(
+        db.pool.clone(),
+        Some(500),
+        Some(Arc::new(RevokedContract)),
+    ));
+    let contract = format!("0x{:0>40}", "c0de5");
+    let player = scratch_wallet();
+    let studio = create_test_studio(&app, "Contract").await;
+    let (status, v) = budget(&app, &studio, 10, "contract-fund").await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    add_operator(&app, &studio, &contract).await;
+    let before = written(&db.pool).await;
+
+    let list = "/credits/operator/studios";
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        list,
+        contract_wallet_headers(&contract, "get", list).await,
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a read keeps the cached answer: {v}"
+    );
+    assert_eq!(v["studios"][0]["id"], studio.as_str());
+
+    let path = format!("/credits/operator/studios/{studio}/grants");
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &path,
+        contract_wallet_headers(&contract, "post", &path).await,
+        Some(grant_body(&player.address, 1, "contract-key-1")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["error"].clone()),
+        (StatusCode::BAD_REQUEST, json!("Invalid Auth Chain")),
+        "a grant asks the contract: {v}"
+    );
+    assert_eq!(
+        written(&db.pool).await,
+        before,
+        "the refused grant wrote nothing"
+    );
+    db.drop().await;
+}
+
+/// A grant's signature counts over the path it arrived on (either mount) or
+/// the credits host's own spelling of the route, never a foreign prefix that
+/// ends with it; and a signed `bodySha256` must be the body's. Refusals write
+/// nothing.
+#[tokio::test]
+async fn a_grant_signature_is_bound_to_its_route_and_body() {
+    let Some(db) = OwnDatabase::create("studio_grant_bound").await else {
+        return;
+    };
+    let state = grant_state(db.pool.clone(), Some(500));
+    let app = app(state.clone());
+    let canonical = Router::new().nest("/shop-api", super::shop_router(state));
+    let operator = scratch_wallet();
+    let player = scratch_wallet();
+    let studio = funded_studio(&app, "Bound", 50, &operator).await;
+    let local = format!("/operator/studios/{studio}/grants");
+    let credits_mount = format!("/credits{local}");
+    let shop_mount = format!("/shop-api{local}");
+    let sha = |body: &Value| hex::encode(Sha256::digest(body.to_string().as_bytes()));
+    let bound = |hash: String| -> &'static str {
+        Box::leak(json!({ "bodySha256": hash }).to_string().into_boxed_str())
+    };
+
+    // Each mount, signed over the path it serves.
+    let (status, v) = grant(&app, &operator, &studio, &player.address, 1, "bound-key-01").await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let body = grant_body(&player.address, 1, "bound-key-02");
+    let headers = signed_headers(&operator, "post", &shop_mount).await;
+    let (status, _, v) = send(&canonical, "POST", &shop_mount, headers, Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED, "the /shop-api mount: {v}");
+    // The credits host's own path, as its proxy forwards it.
+    let body = grant_body(&player.address, 1, "bound-key-03");
+    let mut proxied = signed_headers(&operator, "post", &local).await;
+    proxied.insert("x-original-path", local.parse().unwrap());
+    let (status, _, v) = send(&app, "POST", &credits_mount, proxied, Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED, "the credits host's path: {v}");
+    // A body the signature commits to.
+    let body = grant_body(&player.address, 1, "bound-key-04");
+    let headers = signed_headers_with(&operator, "post", &credits_mount, bound(sha(&body))).await;
+    let (status, _, v) = send(&app, "POST", &credits_mount, headers, Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED, "a matching bodySha256: {v}");
+
+    let before = written(&db.pool).await;
+    let foreign = format!("/elsewhere{local}");
+    for (router, path) in [(&app, &credits_mount), (&canonical, &shop_mount)] {
+        let mut headers = signed_headers(&operator, "post", &foreign).await;
+        headers.insert("x-original-path", foreign.parse().unwrap());
+        let body = grant_body(&player.address, 1, "bound-key-05");
+        let (status, _, v) = send(router, "POST", path, headers, Some(body)).await;
+        assert_eq!(
+            (status, v["error"].clone()),
+            (StatusCode::BAD_REQUEST, json!("Invalid Auth Chain")),
+            "a foreign prefix on {path}: {v}"
+        );
+    }
+    let signed_for = grant_body(&player.address, 1, "bound-key-06");
+    let sent = grant_body(&player.address, 40, "bound-key-06");
+    let headers =
+        signed_headers_with(&operator, "post", &credits_mount, bound(sha(&signed_for))).await;
+    let (status, _, v) = send(&app, "POST", &credits_mount, headers, Some(sent)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "another body's hash: {v}");
+    assert_eq!(
+        written(&db.pool).await,
+        before,
+        "the refusals wrote nothing"
+    );
+    db.drop().await;
+}
+
+/// An operator removed while its retry waits is told the studio is not
+/// found, not the grant it made nor the balance: the early read takes the
+/// operator and the key from one snapshot, and the write judges the operator
+/// under the lock before the key.
+#[tokio::test]
+async fn a_removed_operator_learns_nothing_from_a_replay() {
+    let Some(db) = OwnDatabase::create("studio_grant_removed").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let app = app(grant_state(pool.clone(), Some(500)));
+    let operator = scratch_wallet();
+    let player = scratch_wallet();
+    let studio = funded_studio(&app, "Removed", 10, &operator).await;
+    let (status, v) = grant(
+        &app,
+        &operator,
+        &studio,
+        &player.address,
+        1,
+        "removed-key-1",
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+
+    let removed = format!(
+        "DELETE FROM credits.studio_operators WHERE studio_id = '{studio}'::uuid AND address = '{}'",
+        operator.address
+    );
+    // Removed before the retry: the early read refuses the key's grant and a
+    // key conflict alike.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(removed.clone()))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, v) = grant(
+        &app,
+        &operator,
+        &studio,
+        &player.address,
+        1,
+        "removed-key-1",
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].clone()),
+        (StatusCode::NOT_FOUND, json!("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+    assert!(v.get("balanceCents").is_none(), "{v}");
+    let (status, v) = grant(
+        &app,
+        &operator,
+        &studio,
+        &player.address,
+        2,
+        "removed-key-1",
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].clone()),
+        (StatusCode::NOT_FOUND, json!("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+    // Removed while the grant waits for the lock, with its key taken in the
+    // same commit: the write judges the operator before the key, so it does
+    // not tell the key's conflict either.
+    add_operator(&app, &studio, &operator.address).await;
+    let taken_and_removed = format!(
+        "INSERT INTO credits.studio_budget_entries (studio_id, usd_cents, kind, note, idempotency_key, request_hash, created_by) \
+         VALUES ('{studio}'::uuid, -1, 'adjustment', 'taken', 'removed-key-2', 'another request', 'test'); {removed}"
+    );
+    let (status, v) = grant_behind(
+        &pool,
+        &app,
+        &operator,
+        &studio,
+        &player.address,
+        "removed-key-2",
+        &taken_and_removed,
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].clone()),
+        (StatusCode::NOT_FOUND, json!("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+    db.drop().await;
+}
+
+/// A gift that is not a whole number of cents within a safe integer (an
+/// admin grant may give 0.05 Credits, or an absurd amount) is left out of the
+/// total and the page alike, and never empties the gifts it sits among.
+#[tokio::test]
+async fn an_inexact_gift_is_left_out_of_the_block() {
+    let Some(db) = OwnDatabase::create("studio_grant_inexact").await else {
+        return;
+    };
+    let app = app(grant_state(db.pool.clone(), Some(500)));
+    let operator = scratch_wallet();
+    let player = scratch_wallet();
+    let studio = funded_studio(&app, "Exact", 10, &operator).await;
+    let (status, v) = grant(&app, &operator, &studio, &player.address, 2, "exact-key-1").await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    for amount in ["0.05", "1000000000000000000", "2.5"] {
+        let (status, _, v) = send(
+            &app,
+            "POST",
+            "/credits/admin/credits/grant",
+            admin_bearer(),
+            Some(json!({ "address": player.address, "amount": amount, "reason": "support" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{amount}: {v}");
+    }
+    let orders = format!("/credits/users/{}/credit-orders", player.address);
+    let (status, v) = call(&app, &player, "get", &orders, &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let cents: Vec<i64> = v["gifts"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["usdCents"].as_i64().unwrap())
+        .collect();
+    assert_eq!(v["gifts"]["total"], 2, "{v}");
+    assert_eq!(cents, vec![25, 20], "{v}");
+    assert_eq!(v["gifts"]["items"][0]["credits"], json!(2.5));
     db.drop().await;
 }

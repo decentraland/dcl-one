@@ -129,23 +129,48 @@ pub(crate) async fn require_write_admin(
         state, headers, method, route_path, original, &admins, REFUSED,
     )
     .await?;
-    match signed_body_hash(headers) {
-        Some(Some(signed)) if signed.eq_ignore_ascii_case(&hex::encode(Sha256::digest(body))) => {}
-        Some(_) => {
-            return Err(ApiError::unauthorized(
-                "Unauthorized: the signed bodySha256 does not match the request body",
-            ));
-        }
-        None if state.settings.admin_writes_require_bound_body => {
+    if !signed_body_matches(headers, body)? {
+        if state.settings.admin_writes_require_bound_body {
             return Err(ApiError::unauthorized(
                 "Unauthorized: a wallet-signed write must sign its body (bodySha256 in the signed metadata)",
             ));
         }
-        None => {
-            tracing::warn!(%signer, route = route_path, method, "a wallet-signed admin write signed no bodySha256; accepted while CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY is off");
-        }
+        tracing::warn!(%signer, route = route_path, method, "a wallet-signed admin write signed no bodySha256; accepted while CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY is off");
     }
     Ok(signer)
+}
+
+/// Whether a wallet's signed write commits to `body`: `true` when its signed
+/// metadata carries [`BODY_SHA256_KEY`] and that is the SHA-256 of the exact
+/// bytes sent, `false` when it signs no hash (the caller's policy decides),
+/// and a 401 when the signed hash is another body's or cannot be read.
+pub(crate) fn signed_body_matches(headers: &HeaderMap, body: &[u8]) -> Result<bool, ApiError> {
+    match signed_body_hash(headers) {
+        Some(Some(signed)) if signed.eq_ignore_ascii_case(&hex::encode(Sha256::digest(body))) => {
+            Ok(true)
+        }
+        Some(_) => Err(ApiError::unauthorized(
+            "Unauthorized: the signed bodySha256 does not match the request body",
+        )),
+        None => Ok(false),
+    }
+}
+
+/// `headers` with a proxy `x-original-path` kept only when it IS `route_path`
+/// (query stripped): the credits host's own spelling of the route. The shared
+/// path rule admits one that merely ends with the route, so a signature over
+/// a foreign prefix would otherwise open it.
+pub(crate) fn exact_original_path(headers: &HeaderMap, route_path: &str) -> HeaderMap {
+    let mut headers = headers.clone();
+    let foreign = headers.get(ORIGINAL_PATH_HEADER).is_some_and(|v| {
+        v.to_str().map_or(true, |raw| {
+            raw.split('?').next().unwrap_or(raw) != route_path
+        })
+    });
+    if foreign {
+        headers.remove(ORIGINAL_PATH_HEADER);
+    }
+    headers
 }
 
 /// The body hash a request's signed metadata commits to: `None` when it signs
@@ -189,15 +214,7 @@ async fn signed_admin(
     // own balance route (`/credits/users/{address}/credits`), which an admin
     // signs routinely. A replayed signature over that path must not open an
     // admin route, so here the header counts only when it IS the route.
-    let mut headers = headers.clone();
-    let foreign = headers.get(ORIGINAL_PATH_HEADER).is_some_and(|v| {
-        v.to_str().map_or(true, |raw| {
-            raw.split('?').next().unwrap_or(raw) != route_path
-        })
-    });
-    if foreign {
-        headers.remove(ORIGINAL_PATH_HEADER);
-    }
+    let headers = exact_original_path(headers, route_path);
     let validator = state.eip1654.as_deref();
     let validator = if !method.eq_ignore_ascii_case("get") {
         validator.and_then(|v| v.fresh_validator())
