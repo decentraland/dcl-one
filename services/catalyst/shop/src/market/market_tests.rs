@@ -9200,11 +9200,47 @@ async fn a_mirrored_token_bid_waits_for_its_sellers_nft_publication() {
     let (status, body) = get(app.clone(), &url(WALLET_A)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["data"]["total"], 0, "{body}");
-    let (status, body) = get(app, &url(WALLET_B)).await;
+    let (status, body) = get(app.clone(), &url(WALLET_B)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["data"]["total"], 1, "{body}");
     assert_eq!(body["data"]["results"][0]["tradeId"], trade, "{body}");
     assert_eq!(body["data"]["results"][0]["seller"], WALLET_B, "{body}");
+    // Token 1 derives item 0. The itemId filter skips the legacy book,
+    // but it still matches this ERC721 bid and needs its seller's NFT fold.
+    let item = format!("{}&itemId=0", url(WALLET_B));
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) - interval '2 hours' \
+         WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let (status, body) = get(app.clone(), &item).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "nft-index", "{body}");
+
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET chain_id = 80002 WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    publish().await.unwrap();
+    let (status, body) = get(app.clone(), &item).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "nft-index", "{body}");
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET chain_id = 137 WHERE indexer = 'nft' AND network = 'matic'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    publish().await.unwrap();
+    let (status, body) = get(app, &item).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["total"], 1, "{body}");
+    assert_eq!(body["data"]["results"][0]["seller"], WALLET_B, "{body}");
+
     own.drop().await;
 }
 

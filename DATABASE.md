@@ -5344,8 +5344,8 @@ from an item row of the trade's chain, verified there on a testnet. On a
 node that does not walk the indexes, the trades readiness and the mirror's
 bids are one short read-only snapshot, released before the subgraph is
 awaited, whose instant the subgraph's filter takes. On an NFT walker, a
-mirrored ERC721 bid in the request's scope requires published NFT ownership
-on its network. The check runs before any seller filter or pagination, so
+mirrored ERC721 bid in the request's scope requires a fresh NFT ownership
+publication for the served chain. The check runs before any seller filter or pagination, so
 a pending owner change cannot move bids between seller pages or totals.
 
 Measured on 60,000 synthetic bids over 2,000 catalogued contracts, plus

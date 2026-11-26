@@ -319,8 +319,16 @@ pub(super) async fn trades_rows(
                 ChainNet::Ethereum => Network::Ethereum,
                 ChainNet::Matic => Network::Matic,
             };
-            if f.network.is_some_and(|asked| asked != network)
-                || chain_walk::rows_published_on(&mut *conn, INDEXER_NFT, net, &["nft"])
+            if f.network.is_some_and(|asked| asked != network) {
+                continue;
+            }
+            let chain = state.settings.catalogue().chain_id(net);
+            let fresh = chain_walk::published_block(&mut *conn, INDEXER_NFT, net, chain, now)
+                .await
+                .map_err(read_error)?
+                .is_some();
+            if fresh
+                && chain_walk::rows_published_on(&mut *conn, INDEXER_NFT, net, &["nft"])
                     .await
                     .map_err(read_error)?
             {
@@ -339,7 +347,7 @@ pub(super) async fn trades_rows(
                 .get("affected");
             if affected {
                 return Err(owned_items::not_ready(&format!(
-                    "the {} nft index has not published the ownership used by the bids in this read",
+                    "the {} bids in this read need an up-to-date nft ownership publication on chain {chain}",
                     net.db_name()
                 )));
             }
