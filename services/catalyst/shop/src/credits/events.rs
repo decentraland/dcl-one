@@ -9,9 +9,11 @@
 //! Each is sent once, after the transaction that made it true commits, and
 //! fired rather than awaited: the analytics API can neither delay nor fail a
 //! payment or a settlement. `orderId` is the key the client's pack event
-//! shares; a settled credit that bought several items reports one event per
-//! line, as credits-server reported one per intent, so its lines share the
-//! `salt` and `salt` with `tradeId` tells them apart.
+//! shares. A settled credit that bought several items reports one event per
+//! line, as credits-server reported one per intent: `salt` groups a
+//! credit's events, `tradeId` is the line's trade when it has one (a grouped
+//! mint's lines may have none), and every line event counts, so consumers
+//! keep each one rather than dedupe on those fields.
 //!
 //! The Shop builds without Social, so it fires through [`RevenueEvents`],
 //! which the node attaches (`serve_adapters`): the analytics API, under
