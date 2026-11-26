@@ -10,9 +10,11 @@
 //! Line 1, `key=value` pairs in this order:
 //! `cpu_p99_ms cpu_frames_over_hiccup_threshold_count cpu_hiccup_threshold_ms gpu_p99_ms
 //! gpu_frames_over_hiccup_threshold_count used_peak_mib js_heap_used_mib entity_count
-//! sample_count snapshot_duration_seconds`; a GPU value is `n/a` without timestamp queries, the
+//! sample_count snapshot_duration_seconds`, then `<kind>_load_count <kind>_variant_load_count`
+//! for `scene`, `wearable` and `emote`: the session's texture and `.glb` reads of that content
+//! type and those a Bevy variant answered. A GPU value is `n/a` without timestamp queries, the
 //! peak `n/a` without a memory reading during the phase, the heap `n/a` without a reporting
-//! scene, the entity count `n/a` without its diagnostic.
+//! scene, the entity count and the load counts `n/a` without their diagnostics.
 //! Line 2: `top_scopes=<name>:<self ms>,...`, up to 30, highest self time first, empty without
 //! the `performance-profiler` feature; a name has its commas, colons and equals signs replaced by
 //! spaces.
@@ -22,6 +24,7 @@ use common::{
     autopilot::AutopilotPhase,
     perf::{hiccup_threshold_ms, FrameTimeSampleSummary, ProfiledScopeSummary},
 };
+use ipfs::bevy_variants::{VariantEntityKind, VariantLoadCounts};
 
 use super::frame_inputs::FrameInputs;
 #[cfg(feature = "performance-profiler")]
@@ -113,6 +116,7 @@ pub fn accumulate_benchmark_measured_phase_system(
                 inputs.js_heap.map(|heap| heap.used_bytes_sum),
                 inputs.entity_count.map(u64::from),
                 run.sampled_seconds,
+                inputs.bevy_variant_load_counts.as_ref(),
                 &top_scopes,
             );
             info!(target: PERF_SUMMARY_LOG_TARGET, "{values_line}");
@@ -131,6 +135,7 @@ pub fn perf_summary_log_lines(
     js_heap_used_bytes: Option<u64>,
     entity_count: Option<u64>,
     sampled_seconds: f64,
+    bevy_variant_load_counts: Option<&[VariantLoadCounts; 3]>,
     top_scopes: &[ProfiledScopeSummary],
 ) -> (String, String) {
     let ms = |value: Option<f32>| value.map_or("n/a".to_owned(), |ms| format!("{ms:.2}"));
@@ -140,7 +145,7 @@ pub fn perf_summary_log_lines(
             (bytes / BYTES_PER_MIB).to_string()
         })
     };
-    let values_line = format!(
+    let mut values_line = format!(
         "cpu_p99_ms={} cpu_frames_over_hiccup_threshold_count={} cpu_hiccup_threshold_ms={} gpu_p99_ms={} gpu_frames_over_hiccup_threshold_count={} used_peak_mib={} js_heap_used_mib={} entity_count={} sample_count={} snapshot_duration_seconds={:.1}",
         ms(cpu.map(|cpu| cpu.p99_ms)),
         count(cpu.map(|cpu| cpu.frames_over_hiccup_threshold_count)),
@@ -153,6 +158,16 @@ pub fn perf_summary_log_lines(
         count(cpu.map(|cpu| cpu.sample_count)),
         sampled_seconds,
     );
+    let value = |count: Option<u64>| count.map_or("n/a".to_owned(), |count| count.to_string());
+    for (m, kind) in VariantEntityKind::ALL.into_iter().enumerate() {
+        let counts = bevy_variant_load_counts.map(|counts| counts[m]);
+        values_line += &format!(
+            " {kind}_load_count={} {kind}_variant_load_count={}",
+            value(counts.map(|counts| counts.load_count)),
+            value(counts.map(|counts| counts.variant_load_count)),
+            kind = kind.name()
+        );
+    }
     let top_scopes_line = format!(
         "top_scopes={}",
         top_scopes
@@ -199,11 +214,22 @@ mod tests {
             Some(64 * BYTES_PER_MIB),
             Some(1234),
             90.04,
+            Some(&[
+                VariantLoadCounts {
+                    load_count: 300,
+                    variant_load_count: 120,
+                },
+                VariantLoadCounts::default(),
+                VariantLoadCounts {
+                    load_count: 5,
+                    variant_load_count: 5,
+                },
+            ]),
             &scopes,
         );
         assert_eq!(
             values_line,
-            "cpu_p99_ms=80.00 cpu_frames_over_hiccup_threshold_count=1 cpu_hiccup_threshold_ms=50.00 gpu_p99_ms=n/a gpu_frames_over_hiccup_threshold_count=n/a used_peak_mib=300 js_heap_used_mib=64 entity_count=1234 sample_count=4 snapshot_duration_seconds=90.0"
+            "cpu_p99_ms=80.00 cpu_frames_over_hiccup_threshold_count=1 cpu_hiccup_threshold_ms=50.00 gpu_p99_ms=n/a gpu_frames_over_hiccup_threshold_count=n/a used_peak_mib=300 js_heap_used_mib=64 entity_count=1234 sample_count=4 snapshot_duration_seconds=90.0 scene_load_count=300 scene_variant_load_count=120 wearable_load_count=0 wearable_variant_load_count=0 emote_load_count=5 emote_variant_load_count=5"
         );
         assert_eq!(
             top_scopes_line,
@@ -213,10 +239,10 @@ mod tests {
 
     #[test]
     fn an_unmeasured_value_is_n_a_never_zero() {
-        let (values_line, _) = perf_summary_log_lines(None, None, None, None, None, 0.0, &[]);
+        let (values_line, _) = perf_summary_log_lines(None, None, None, None, None, 0.0, None, &[]);
         assert_eq!(
             values_line,
-            "cpu_p99_ms=n/a cpu_frames_over_hiccup_threshold_count=n/a cpu_hiccup_threshold_ms=n/a gpu_p99_ms=n/a gpu_frames_over_hiccup_threshold_count=n/a used_peak_mib=n/a js_heap_used_mib=n/a entity_count=n/a sample_count=n/a snapshot_duration_seconds=0.0"
+            "cpu_p99_ms=n/a cpu_frames_over_hiccup_threshold_count=n/a cpu_hiccup_threshold_ms=n/a gpu_p99_ms=n/a gpu_frames_over_hiccup_threshold_count=n/a used_peak_mib=n/a js_heap_used_mib=n/a entity_count=n/a sample_count=n/a snapshot_duration_seconds=0.0 scene_load_count=n/a scene_variant_load_count=n/a wearable_load_count=n/a wearable_variant_load_count=n/a emote_load_count=n/a emote_variant_load_count=n/a"
         );
     }
 }

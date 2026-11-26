@@ -261,7 +261,7 @@ fn io_with_cache(label: &str) -> (Arc<IpfsIo>, PathBuf) {
 #[tokio::test]
 async fn variants_are_off_by_default() {
     let (io, dir) = io_with_cache("off");
-    io.request_bevy_variants(SCENE);
+    io.request_bevy_variants(SCENE, VariantEntityKind::Scene);
     assert!(io.bevy_variants.manifests.lock_ignore_poison().is_empty());
     let path = content_path("tex.png");
     let ipfs_path = IpfsPath::new_from_path(&path).unwrap().unwrap();
@@ -274,7 +274,7 @@ async fn preview_and_local_scenes_ask_for_no_manifest() {
     let (mut io, dir) = io_with_cache("preview");
     Arc::get_mut(&mut io).unwrap().is_preview = true;
     io.set_bevy_variants_base("https://abgen.example");
-    io.request_bevy_variants(SCENE);
+    io.request_bevy_variants(SCENE, VariantEntityKind::Scene);
     let mut state = io.bevy_variants.manifest(SCENE).unwrap();
     let state = state
         .wait_for(|state| !matches!(state, ManifestState::Pending))
@@ -576,6 +576,79 @@ async fn a_texture_variant_is_served_as_its_ktx2_and_cached_under_its_url() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// A read of a file a variant could stand in for counts under its entity's kind, with variants
+/// off too; other files and entities of no known kind do not count.
+#[tokio::test]
+async fn reads_count_under_their_entity_kind_with_variants_on_or_off() {
+    let (io, dir) = io_with_cache("load-counts-off");
+    io.request_bevy_variants(SCENE, VariantEntityKind::Scene);
+    for file in ["tex.png", "main.js"] {
+        let path = content_path(file);
+        let ipfs_path = IpfsPath::new_from_path(&path).unwrap().unwrap();
+        assert!(io.read_bevy_variant(&ipfs_path, &path).await.is_none());
+    }
+    let counts = VariantLoadCounts {
+        load_count: 1,
+        variant_load_count: 0,
+    };
+    assert_eq!(
+        io.bevy_variants.load_counts(),
+        [
+            (VariantEntityKind::Scene, counts),
+            (VariantEntityKind::Wearable, VariantLoadCounts::default()),
+            (VariantEntityKind::Emote, VariantLoadCounts::default()),
+        ]
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+
+    let (io, dir) = io_with_cache("load-counts-on");
+    let (ktx2, cid) = bc7_variant();
+    let (base, _log) = serve(vec![
+        (format!("/{}", served_path(&cid)), ktx2),
+        (
+            format!("/contents/{ORIGINAL_CID}"),
+            b"original png".to_vec(),
+        ),
+    ])
+    .await;
+    scene_with_variant(&io, &base, &cid).await;
+    let path = content_path("tex.png");
+    read_all(&io, &path).await;
+    // the manifest's entity has no kind yet: its reads count nowhere
+    assert_eq!(
+        io.bevy_variants.load_counts()[0].1,
+        VariantLoadCounts::default()
+    );
+    // the first kind asked for stays
+    io.request_bevy_variants(SCENE, VariantEntityKind::Wearable);
+    io.request_bevy_variants(SCENE, VariantEntityKind::Scene);
+    read_all(&io, &path).await;
+    let wearable = |load_count, variant_load_count| {
+        (
+            VariantEntityKind::Wearable,
+            VariantLoadCounts {
+                load_count,
+                variant_load_count,
+            },
+        )
+    };
+    assert_eq!(io.bevy_variants.load_counts()[1], wearable(1, 1));
+    assert_eq!(
+        io.bevy_variants.load_counts()[2],
+        (VariantEntityKind::Emote, VariantLoadCounts::default())
+    );
+
+    // a variant that fails to load takes its read back, and the reload reads the original
+    assert!(io
+        .bevy_variants
+        .decode_failed(&path, "x", &["ktx2-bc"])
+        .is_some());
+    assert_eq!(io.bevy_variants.load_counts()[1], wearable(0, 0));
+    assert_eq!(read_all(&io, &path).await, b"original png");
+    assert_eq!(io.bevy_variants.load_counts()[1], wearable(1, 0));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// Wearables and emotes register their entity with the catalyst's content url as its own base
 /// (`collectibles::request_collectibles`) and request its manifest as a scene does: the
 /// manifest is fetched from the variants base and the entity's files read as their variants.
@@ -636,7 +709,7 @@ async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
     io.set_bevy_variants_base(&base);
     let _ = io.bevy_variants.bc.set(true);
 
-    io.request_bevy_variants(WEARABLE);
+    io.request_bevy_variants(WEARABLE, VariantEntityKind::Wearable);
     // A read waits for the manifest only until its deadline, then reads the original. The
     // deadline has its own test; this one reads after the manifest is there.
     let mut manifest = io.bevy_variants.manifest(WEARABLE).unwrap();
@@ -823,6 +896,7 @@ fn a_glb_model_that_fails_to_load_is_reloaded_from_the_original() {
             variant: served_path_of("glb", VARIANT_CID),
             format: "glb".to_owned(),
             url: "https://abgen.example/bevy/g4/variant".to_owned(),
+            counted_as: None,
         },
         false,
     );
@@ -865,6 +939,7 @@ fn a_failed_glb_model_is_pending_until_its_original_reloads() {
             variant: served_path_of("glb", VARIANT_CID),
             format: "glb".to_owned(),
             url: "https://abgen.example/bevy/g4/variant".to_owned(),
+            counted_as: None,
         },
         false,
     );
@@ -885,6 +960,7 @@ fn a_failed_glb_model_is_pending_until_its_original_reloads() {
             variant: served_path_of("glb-br", VARIANT_CID),
             format: "glb-br".to_owned(),
             url: "https://abgen.example/bevy/m2/variant.br".to_owned(),
+            counted_as: None,
         },
         false,
     );
@@ -904,6 +980,7 @@ fn a_variant_that_fails_to_decode_is_marked_bad_once() {
             variant: served_path(VARIANT_CID),
             format: "ktx2-bc".to_owned(),
             url: "https://abgen.example/bevy/t3/variant".to_owned(),
+            counted_as: None,
         },
         false,
     );
@@ -926,6 +1003,36 @@ fn a_variant_that_fails_to_decode_is_marked_bad_once() {
         .is_none());
 }
 
+/// A path read from its original after its variant keeps no counted variant read, so a later
+/// load failure of that original takes nothing back.
+#[test]
+fn a_later_original_read_leaves_no_variant_read_to_take_back() {
+    let variants = BevyVariants::default();
+    let path = content_path("tex.png");
+    variants.record_kind(SCENE, VariantEntityKind::Scene);
+    variants.served(
+        &path,
+        ServedVariant {
+            scene: SCENE.to_owned(),
+            file: "tex.png".to_owned(),
+            variant: served_path(VARIANT_CID),
+            format: "ktx2-bc".to_owned(),
+            url: "https://abgen.example/bevy/t3/variant".to_owned(),
+            counted_as: None,
+        },
+        false,
+    );
+    variants.count_load(SCENE, "tex.png", &path, true);
+    variants.count_load(SCENE, "tex.png", &path, false);
+    let counts = VariantLoadCounts {
+        load_count: 2,
+        variant_load_count: 1,
+    };
+    assert_eq!(variants.load_counts()[0].1, counts);
+    let _ = variants.decode_failed(&path, "x", &["ktx2-bc"]);
+    assert_eq!(variants.load_counts()[0].1, counts);
+}
+
 #[test]
 fn a_glb_br_model_that_fails_to_load_is_not_reloaded() {
     let variants = BevyVariants::default();
@@ -938,6 +1045,7 @@ fn a_glb_br_model_that_fails_to_load_is_not_reloaded() {
             variant: served_path_of("glb-br", VARIANT_CID),
             format: "glb-br".to_owned(),
             url: "https://abgen.example/bevy/m2/variant.br".to_owned(),
+            counted_as: None,
         },
         false,
     );

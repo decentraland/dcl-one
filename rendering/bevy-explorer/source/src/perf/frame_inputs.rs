@@ -20,6 +20,7 @@ use common::{
         WorldHold, UNCAPPED_FPS,
     },
 };
+use ipfs::bevy_variants::{VariantLoadCounts, VARIANT_LOAD_COUNT_DIAGNOSTICS};
 use scene_runner::{renderer_context::RendererSceneContext, SceneLoopTiming};
 use wallet::Wallet;
 
@@ -39,6 +40,9 @@ pub struct FrameInputs {
     pub js_heap: Option<JsHeapDataPoint>,
     /// The latest entity count; `None` before the first.
     pub entity_count: Option<u32>,
+    /// The session's Bevy variant load counts, in `VariantEntityKind::ALL` order; `None` before
+    /// every count has a measurement.
+    pub bevy_variant_load_counts: Option<[VariantLoadCounts; 3]>,
     /// The effective frame-rate target: the session override, else the configured target;
     /// `None` with vsync on or uncapped.
     pub target_fps: Option<f32>,
@@ -62,6 +66,7 @@ impl FrameInputs {
             memory_reading: None,
             js_heap: None,
             entity_count: None,
+            bevy_variant_load_counts: None,
             target_fps: None,
             session: SessionSignals {
                 signed_in: false,
@@ -135,6 +140,7 @@ pub(crate) fn collect_frame_inputs_system(
     inputs.memory_reading = memory.reading();
     inputs.js_heap = sum_scene_js_heaps(scenes.iter());
     inputs.entity_count = latest_entity_count(&diagnostics);
+    inputs.bevy_variant_load_counts = latest_bevy_variant_load_counts(&diagnostics);
     inputs.target_fps = effective_target_fps(
         &config,
         session_graphics.as_deref(),
@@ -176,6 +182,28 @@ pub fn latest_entity_count(diagnostics: &DiagnosticsStore) -> Option<u32> {
         .get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT)
         .and_then(Diagnostic::value)
         .map(|count| count as u32)
+}
+
+/// The latest [`VARIANT_LOAD_COUNT_DIAGNOSTICS`]; `None` while one has no measurement.
+pub fn latest_bevy_variant_load_counts(
+    diagnostics: &DiagnosticsStore,
+) -> Option<[VariantLoadCounts; 3]> {
+    let latest = |path| {
+        diagnostics
+            .get(path)
+            .and_then(Diagnostic::value)
+            .map(|count| count as u64)
+    };
+    let mut counts = [VariantLoadCounts::default(); 3];
+    for (counts, [load_count_path, variant_load_count_path]) in
+        counts.iter_mut().zip(&VARIANT_LOAD_COUNT_DIAGNOSTICS)
+    {
+        *counts = VariantLoadCounts {
+            load_count: latest(load_count_path)?,
+            variant_load_count: latest(variant_load_count_path)?,
+        };
+    }
+    Some(counts)
 }
 
 /// The effective frame-rate target: the rate the scene loop paces to ([`SessionGraphics::paced_fps`]),

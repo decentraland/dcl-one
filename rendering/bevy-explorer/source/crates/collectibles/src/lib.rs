@@ -20,6 +20,7 @@ use bevy::{
 use common::util::TaskExt;
 pub use emotes::*;
 use ipfs::{
+    bevy_variants::VariantEntityKind,
     ipfs_path::{IpfsPath, IpfsType},
     ActiveEntityTask, ContentMap, IpfsAssetServer, IpfsModifier,
 };
@@ -61,6 +62,8 @@ pub trait CollectibleType: std::fmt::Debug + TypePath + Send + Sync + 'static {
     /// by the unknown-source urn then work, and `CollectibleManager::source_urn` gives the real one.
     fn source_collections() -> &'static [&'static str];
     fn extension() -> &'static str;
+    /// The Bevy variant content type of this collectible's entities.
+    fn variant_entity_kind() -> VariantEntityKind;
     fn data_extension() -> &'static str;
     /// Extra content-path aliases a collectible's collection carries, beside `collectible.{ext}`.
     fn with_content_aliases(content: ContentMap) -> ContentMap {
@@ -357,7 +360,9 @@ pub fn request_collectibles<T: CollectibleType>(
                     );
                     // abgen's variants of the wearable's or emote's files, as for a scene: its
                     // models and textures read as their variants once the manifest is in
-                    ipfas.ipfs().request_bevy_variants(&entity.id);
+                    ipfas
+                        .ipfs()
+                        .request_bevy_variants(&entity.id, T::variant_entity_kind());
 
                     let Some(metadata) = entity.metadata else {
                         warn!("no metadata on wearable");

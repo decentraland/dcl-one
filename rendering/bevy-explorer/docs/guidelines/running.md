@@ -344,7 +344,9 @@ State, in every build:
   when off), `state` (on, off and why, or waiting for the GPU's texture formats), `formats` (the
   variant formats this build takes and those it does not), `manifestCounts` (manifests loaded,
   none, failed, not eligible and pending), `manifests` (each entity's manifest state: scene,
-  wearable or emote), `served` (variants downloaded and read from the cache), `servedByFormat`
+  wearable or emote), `served` (variants downloaded and read from the cache), `loadsByKind`
+  (per scene, wearable and emote: the reads of textures and `.glb` models that a variant
+  answered, of all such reads, with variants off too), `servedByFormat`
   (the same per format: `ktx2-bc`, `glb`, and `glb-br` on web), `fallbacks` (files that loaded
   their original instead), `fallbacksByFormat` (those whose chosen variant failed, per format)
   and `recentFallbacks` (the last 20, with the file, its entity and the reason).

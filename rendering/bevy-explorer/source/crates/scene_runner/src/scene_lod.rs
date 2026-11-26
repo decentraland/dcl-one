@@ -45,7 +45,10 @@ use dcl_component::{
     SceneEntityId,
 };
 use dcl_types::SceneId;
-use ipfs::{bevy_variants::FarLodSource, EntityDefinition, IpfsAssetServer, IpfsResource};
+use ipfs::{
+    bevy_variants::{FarLodSource, VariantEntityKind},
+    EntityDefinition, IpfsAssetServer, IpfsResource,
+};
 use scene_material::{BoundRegion, SceneBounds, SceneMaterial};
 use serde::Deserialize;
 use serde_json::json;
@@ -1059,7 +1062,9 @@ fn start_scene_lods(
                 };
                 // the scene's Bevy variants manifest, alongside its entity file: the stand-in
                 // loads the same converted files the live scene will
-                ipfas.ipfs().request_bevy_variants(&lod.hash);
+                ipfas
+                    .ipfs()
+                    .request_bevy_variants(&lod.hash, VariantEntityKind::Scene);
                 commands
                     .entity(root)
                     .insert(SceneEntityDefinitionHandle(definition.clone()));

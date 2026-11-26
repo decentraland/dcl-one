@@ -19,7 +19,10 @@ use bevy::{
 use serde::Deserialize;
 
 use common::util::{TaskCompat, TaskExt};
-use ipfs::{ipfs_path::ContentPathExt, EntityDefinitionLoader, IpfsAssetServer};
+use ipfs::{
+    bevy_variants::VariantEntityKind, ipfs_path::ContentPathExt, EntityDefinitionLoader,
+    IpfsAssetServer,
+};
 
 pub struct WearablePlugin;
 
@@ -337,6 +340,10 @@ impl CollectibleType for Wearable {
 
     fn extension() -> &'static str {
         "wearable"
+    }
+
+    fn variant_entity_kind() -> VariantEntityKind {
+        VariantEntityKind::Wearable
     }
 
     fn data_extension() -> &'static str {

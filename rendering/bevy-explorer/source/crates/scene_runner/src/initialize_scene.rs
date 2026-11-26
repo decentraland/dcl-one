@@ -39,8 +39,8 @@ use dcl_types::{
     SceneElapsedTime, SceneId, SceneResponse, SceneResponseSender, SceneWake,
 };
 use ipfs::{
-    ipfs_path::IpfsPath, ActiveEntityTask, EntityDefinition, IpfsAssetServer, RealmInitialLocation,
-    SceneIpfsLocation,
+    bevy_variants::VariantEntityKind, ipfs_path::IpfsPath, ActiveEntityTask, EntityDefinition,
+    IpfsAssetServer, RealmInitialLocation, SceneIpfsLocation,
 };
 use scene_material::{BoundRegion, SceneBounds, FIXED_SCENE_HEIGHT};
 use system_bridge::{LiveSceneInfo, SystemApi, SystemBridge};
@@ -220,7 +220,9 @@ pub(crate) fn load_scene_entity(
         // the scene's Bevy variants manifest, alongside its entity file rather than after it:
         // the entity id is all it needs (`load_urn` has registered a urn's own content server)
         if let Some(id) = id {
-            ipfas.ipfs().request_bevy_variants(&id);
+            ipfas
+                .ipfs()
+                .request_bevy_variants(&id, VariantEntityKind::Scene);
         }
 
         commands.try_insert((

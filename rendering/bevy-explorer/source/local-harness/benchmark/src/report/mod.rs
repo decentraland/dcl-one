@@ -104,6 +104,16 @@ struct BuildBenchmarkRunsStatistics {
     scope_self_ms_per_run: Vec<(String, f32)>,
     /// Per metric of [`stats::LOAD_TIME_METRICS`], across the runs whose log holds it.
     load_time_ms: [MeasuredRuns; 2],
+    /// Per kind of [`perf_summary::VARIANT_ENTITY_KINDS`], summed over the summaries that hold
+    /// both of its counts; `None` when none does.
+    variant_loads: [Option<VariantLoadSums>; 3],
+}
+
+/// A content type's Bevy variant load counts, summed over runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VariantLoadSums {
+    load_count_sum: u64,
+    variant_load_count_sum: u64,
 }
 
 /// A value across the runs that measured it.
@@ -727,6 +737,20 @@ fn build_benchmark_runs_statistics(runs: &[BuildBenchmarkRun]) -> BuildBenchmark
         load_time_ms: std::array::from_fn(|m| {
             MeasuredRuns::of(runs.iter().filter_map(|run| run.load_time_ms[m]).collect())
         }),
+        variant_loads: std::array::from_fn(|k| {
+            summaries
+                .iter()
+                .filter_map(|summary| {
+                    Some(VariantLoadSums {
+                        load_count_sum: summary.load_count_by_kind[k]?,
+                        variant_load_count_sum: summary.variant_load_count_by_kind[k]?,
+                    })
+                })
+                .reduce(|sum, run| VariantLoadSums {
+                    load_count_sum: sum.load_count_sum + run.load_count_sum,
+                    variant_load_count_sum: sum.variant_load_count_sum + run.variant_load_count_sum,
+                })
+        }),
     }
 }
 
@@ -1003,6 +1027,36 @@ mod tests {
                 "{label}"
             );
         }
+    }
+
+    #[test]
+    fn the_variant_loads_sum_over_the_summaries_that_hold_both_counts() {
+        let run = |load_count_by_kind, variant_load_count_by_kind| BuildBenchmarkRun {
+            sample_count: 1000,
+            frame_time_ms: [10.0; 6],
+            load_time_ms: [None, None],
+            exception_count: 0,
+            exception_kinds: ExceptionKindCounts::default(),
+            perf_summary: Some(ExplorerPerfSummary {
+                load_count_by_kind,
+                variant_load_count_by_kind,
+                ..ExplorerPerfSummary::default()
+            }),
+        };
+        let statistics = build_benchmark_runs_statistics(&[
+            run([Some(100), Some(10), None], [Some(40), Some(0), None]),
+            run([Some(100), Some(10), Some(2)], [Some(60), None, Some(2)]),
+        ]);
+        let sums = |load_count_sum, variant_load_count_sum| {
+            Some(VariantLoadSums {
+                load_count_sum,
+                variant_load_count_sum,
+            })
+        };
+        assert_eq!(
+            statistics.variant_loads,
+            [sums(200, 100), sums(10, 0), sums(2, 2)]
+        );
     }
 
     #[test]

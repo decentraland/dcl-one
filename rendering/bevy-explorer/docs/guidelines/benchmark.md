@@ -164,7 +164,8 @@ run whose top 30 leave the scope out counts as 0. Where a run's log holds the lo
 ([Files](#files)), *Time to world* (app start to arriving in world; on the web the page load and
 the wasm download and compile come first and are not counted) and *First ring ready* (the spawn
 scene's spawn to it and every scene within one parcel of the player being ready) follow, in
-seconds.
+seconds, then, where the `perf_summary` lines hold them, *Scene*, *Wearable* and *Emote loads from
+variants*.
 
 - A value is the **median** of the build's runs, followed by the **(min–max)** range when the runs
   differ. A wide range means a noisy metric, where small differences mean little.
@@ -192,6 +193,10 @@ seconds.
     *GPU timing unreliable on Metal* (GPU rows only): a fleet leg in Chrome on macOS
     ([GPU time](#gpu-time)).
     *implausibly small values*: a median under 1 ms.
+- ***Kind* loads from variants** is each content type's (scene, wearable, emote) share of the
+  texture and `.glb` reads a Bevy variant answered, of that build's own reads summed over its
+  `perf_summary` lines, shown when a build's summaries hold the counts, always
+  *— informational* with no **Δ**. [Bevy variant coverage](#bevy-variant-coverage) reads them.
 - **Exceptions per run** is the average number of exceptions in a run's log, counted up to the exit
   marker, so teardown errors do not count ([The run](#the-run)). It is 🔴 *more errors* or 🟢 *fewer
   errors* only when the builds differ by at least 2 per run and by 1.5× the other build (taken as
@@ -347,11 +352,14 @@ and `AutopilotPhase`.
     first is `key=value` pairs in a fixed order: `cpu_p99_ms`,
     `cpu_frames_over_hiccup_threshold_count`, `cpu_hiccup_threshold_ms`, `gpu_p99_ms`,
     `gpu_frames_over_hiccup_threshold_count`, `used_peak_mib`, `js_heap_used_mib`,
-    `entity_count`, `sample_count`, `snapshot_duration_seconds`; a value the run could not
-    measure is `n/a`. The second is `top_scopes=<name>:<self ms>,...`, up to 30 scopes by self
+    `entity_count`, `sample_count`, `snapshot_duration_seconds`, then `<kind>_load_count` and
+    `<kind>_variant_load_count` for `scene`, `wearable` and `emote` (the session's texture and
+    `.glb` reads of that content type and those a Bevy variant answered, counted with variants off
+    too, from the `BEVY_VARIANTS_*_LOAD_COUNT` diagnostics of `crates/ipfs/src/bevy_variants`); a
+    value the run could not measure is `n/a`. The second is `top_scopes=<name>:<self ms>,...`, up to 30 scopes by self
     time, with commas, colons and equals signs in a name replaced by spaces. The report reads the
     last pair before the exit line whose entry category is `perf_summary`
-    (`report/perf_summary.rs`); a log without them gets no hiccup, memory or scope rows.
+    (`report/perf_summary.rs`); a log without them gets no hiccup, memory, scope or variant rows.
   - The load times come from two entries before the exit line (`report/load_times.rs`): the
     autopilot's `phase Measuring at <s> s` (category `autopilot`, the real time since the app
     started, `src/autopilot.rs`) and the first `player's scene and first ring ready <ms> ms after the
@@ -509,8 +517,8 @@ ready for review.
 | `run` | One run of a web app (a folder holding `index.html`, a `.zip` or the URL of one): serves it from `http://localhost:18742`, opens Chrome, stores `<build>.csv` and `<build>.log` in `--out`, closes Chrome on `end` or at the timeout (480 s): it asks Chrome to exit and kills it after 20 s, or after 3 s when the run is interrupted, so a cancelled job leaves none. |
 | `warmup` | `run` for a warm-up: no `perfCsv`, a 300 s backstop, exit 0 whatever the run's outcome (130 when interrupted, 64 and 70 as for `run`). |
 | `fetch` | Downloads or unpacks a web app (a folder, a `.zip` or the URL of one) into `--dir`. Under Actions only a folder or a `.zip` on the machine: an address or a network path (`\\host\share`, `//host/share`) is refused. |
-| `measure` | Change, base, release, change, base, release ... (`--runs` 3, `--settle` 15 s); the base (`--base-dir`) and the release (`--release-dir`) are each optional, and `--release-not-measured` writes `release_not_measured.txt` for a release the leg could not run. Each run's files become `change_build_<i>.csv/.log`, `base_build_<i>.csv/.log` and `release_build_<i>.csv/.log`, then `runs_on.txt` holds `--label`. Before its first run, `measure` removes `runs_on.txt`, `release_not_measured.txt` and every `change_build_<n>`, `base_build_<n>` and `release_build_<n>` `.csv`, `.csv.partial` and `.log` an earlier session left in `--out` (the warm-ups' `<build>.log` and the app folders stay), and before each run its own three files, so a run that crashes is never reported with an earlier session's files. |
-| `leg` | `fetch` the builds (`--change`, and optionally `--base` and `--release`), warm each up, `measure`: the whole leg by hand. Its label is `local-chrome` unless `--label` gives one. |
+| `measure` | Change, base, release, change, base, release ... (`--runs` 3, `--settle` 15 s); the base (`--base-dir`) and the release (`--release-dir`) are each optional, and `--release-not-measured` writes `release_not_measured.txt` for a release the leg could not run. Each run's files become `change_build_<i>.csv/.log`, `base_build_<i>.csv/.log` and `release_build_<i>.csv/.log`, then `runs_on.txt` holds `--label`. Before its first run, `measure` removes `runs_on.txt`, `release_not_measured.txt` and every `change_build_<n>`, `base_build_<n>` and `release_build_<n>` `.csv`, `.csv.partial` and `.log` an earlier session left in `--out` (the warm-ups' `<build>.log` and the app folders stay), and before each run its own three files, so a run that crashes is never reported with an earlier session's files. `--base-query` (`BASE_EXTRA_QUERY`) adds page parameters to the base runs only, after `--query`. |
+| `leg` | `fetch` the builds (`--change`, and optionally `--base` and `--release`), warm each up, `measure`: the whole leg by hand. Its label is `local-chrome` unless `--label` gives one; `--base-query` as for `measure`, the base's warm-up included. |
 | `report [DIR]` | The report ([The report](#the-report)) of every folder under `DIR` (the working directory by default) that holds a `runs_on.txt`, written to `--out` (`summary.md` by default). The header takes `--title` (`Benchmark` by default), `--pr`, `--change`, `--base` and `--release` (how it names the builds) and `--run-url`; `--expected-runs` (3 by default: fewer CSVs mean crashed runs) and `--expected-labels` (comma-separated: one without results gets a line) shape the notes. |
 
 Every option but five has an environment variable (`benchmark <command> --help` lists them), so a
@@ -616,6 +624,50 @@ page (the modes are listed at the top of its script), and `build-info.json` besi
 the fake CPU time and error count, so two copies of the folder with different values make a fake
 A/B for `leg`. The workflow's resolver has its own tests, with the GitHub API faked
 ([`tooling/tests/test_benchmark_inputs.py`](../../../../tooling/tests/test_benchmark_inputs.py)).
+
+## Bevy variant coverage
+
+How much of the content abgen's Bevy variants (`crates/ipfs/src/bevy_variants`) cover, and what
+they save, measured by hand on a fleet laptop: one web app is both builds of a leg, *Change* with
+its variants and *Baseline* with `?bevyVariants=off`, interleaved, every run from a cold content
+cache. Each stop of the route is a leg of its own, standing at the spawn point for the 90 s:
+
+| Stop | Scene | Parcel |
+| --- | --- | --- |
+| `genesis-plaza` | Genesis Plaza | 0,0 |
+| `antrom-rpg` | Antrom RPG (Dice Masters) | 144,-7 |
+| `golfcraft` | GolfCraft minigolf | 47,-45 |
+| `meta-gamimall` | Meta GamiMall | 1,95 |
+
+The three scenes after Genesis Plaza were among the busiest SDK7 scenes of the public hot-scenes
+list on 2026-11-24, with 100, 10 and 30 parcels and 772, 1742 and 300 content files. Each stop is
+in the `main` realm; an SDK6 scene never leaves the loading backdrop ([Launch
+options](#launch-options)), so a replacement stop must be an SDK7 scene.
+
+```bash
+# macOS, from rendering/bevy-explorer/source; the same loop runs in Git Bash on Windows
+APP=~/builds/web     # the web app measured, a folder, a .zip or its URL
+LABEL=apple-m1-chrome
+for stop in genesis-plaza:0,0 antrom-rpg:144,-7 golfcraft:47,-45 meta-gamimall:1,95; do
+  ./target/release/benchmark leg --change "$APP" --base "$APP" --base-query bevyVariants=off \
+    --realm https://realm-provider-ea.decentraland.org/main --query "position=${stop#*:}" \
+    --label "$LABEL-${stop%%:*}" --out ~/perf/variants/"${stop%%:*}"
+done
+./target/release/benchmark report ~/perf/variants --title "Bevy variants on (Change) vs off (Baseline)" \
+  --out ~/perf/variants/summary.md
+```
+
+A section per stop then holds the frame-time rows with their verdicts, the *Time to world* and
+*First ring ready* rows, and each content type's share of loads from variants. Each build's share is of
+its own reads: with variants off it is 0 and its load count is what the content reads without
+variants; with variants on a `glb` model variant embeds its images, so the original model's
+texture reads do not happen and the load count is lower. A variant that fails to load and falls
+back counts as a read of its original only. A content type well below full coverage names
+where the variants fall short in `/bevy_variants` (`manifests`: each scene, wearable and emote
+whose manifest abgen has none of or that failed; `recentFallbacks`: files whose variant was
+refused or failed) and in the debug panel's
+*Optimized variants* section ([running](running.md)). A stop takes about 50 minutes: two warm-ups
+and six runs of up to 480 s each, with their settles.
 
 ## The workflow
 

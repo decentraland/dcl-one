@@ -5,7 +5,7 @@ use bevy::{
     platform::collections::{HashMap, HashSet},
     prelude::*,
 };
-use ipfs::{ipfs_path::ContentPathExt, EntityDefinitionLoader};
+use ipfs::{bevy_variants::VariantEntityKind, ipfs_path::ContentPathExt, EntityDefinitionLoader};
 use serde::{Deserialize, Serialize};
 
 use once_cell::sync::Lazy;
@@ -481,6 +481,10 @@ impl CollectibleType for Emote {
 
     fn extension() -> &'static str {
         "emote"
+    }
+
+    fn variant_entity_kind() -> VariantEntityKind {
+        VariantEntityKind::Emote
     }
 
     fn data_extension() -> &'static str {

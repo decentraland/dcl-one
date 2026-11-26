@@ -14,6 +14,14 @@ use super::Lines;
 /// The entry category of the summary lines: the explorer's log target.
 const PERF_SUMMARY_CATEGORY: &str = "perf_summary";
 
+/// The content types whose Bevy variant load counts line 1 holds, in its order: their key prefix
+/// (`<kind>_load_count`, `<kind>_variant_load_count`) and their display name.
+pub const VARIANT_ENTITY_KINDS: [(&str, &str); 3] = [
+    ("scene", "Scene"),
+    ("wearable", "Wearable"),
+    ("emote", "Emote"),
+];
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ExplorerPerfSummary {
     pub cpu_p99_ms: Option<f32>,
@@ -24,6 +32,10 @@ pub struct ExplorerPerfSummary {
     pub used_peak_mib: Option<u64>,
     pub js_heap_used_mib: Option<u64>,
     pub entity_count: Option<u64>,
+    /// Per kind of [`VARIANT_ENTITY_KINDS`]: the session's texture and `.glb` reads.
+    pub load_count_by_kind: [Option<u64>; 3],
+    /// Per kind of [`VARIANT_ENTITY_KINDS`]: those reads a Bevy variant answered.
+    pub variant_load_count_by_kind: [Option<u64>; 3],
     /// Self time in ms over the measured phase, highest first.
     pub top_scope_self_ms: Vec<(String, f32)>,
 }
@@ -84,7 +96,15 @@ fn parse_values(text: &str) -> ExplorerPerfSummary {
             "used_peak_mib" => summary.used_peak_mib = int(),
             "js_heap_used_mib" => summary.js_heap_used_mib = int(),
             "entity_count" => summary.entity_count = int(),
-            _ => {}
+            _ => {
+                for (k, (kind, _)) in VARIANT_ENTITY_KINDS.iter().enumerate() {
+                    match key.strip_prefix(kind).and_then(|key| key.strip_prefix('_')) {
+                        Some("load_count") => summary.load_count_by_kind[k] = int(),
+                        Some("variant_load_count") => summary.variant_load_count_by_kind[k] = int(),
+                        _ => {}
+                    }
+                }
+            }
         }
     }
     summary
@@ -106,7 +126,7 @@ mod tests {
     #[test]
     fn the_values_and_scopes_are_read_and_n_a_is_none() {
         let summary = parse_values(
-            "cpu_p99_ms=80.00 cpu_frames_over_hiccup_threshold_count=1 cpu_hiccup_threshold_ms=50.00 gpu_p99_ms=n/a gpu_frames_over_hiccup_threshold_count=n/a used_peak_mib=300 js_heap_used_mib=64 entity_count=1234 sample_count=4 snapshot_duration_seconds=90.0",
+            "cpu_p99_ms=80.00 cpu_frames_over_hiccup_threshold_count=1 cpu_hiccup_threshold_ms=50.00 gpu_p99_ms=n/a gpu_frames_over_hiccup_threshold_count=n/a used_peak_mib=300 js_heap_used_mib=64 entity_count=1234 sample_count=4 snapshot_duration_seconds=90.0 scene_load_count=300 scene_variant_load_count=120 wearable_load_count=0 wearable_variant_load_count=0 emote_load_count=n/a emote_variant_load_count=n/a",
         );
         assert_eq!(summary.cpu_p99_ms, Some(80.0));
         assert_eq!(summary.cpu_frames_over_hiccup_threshold_count, Some(1));
@@ -116,6 +136,11 @@ mod tests {
         assert_eq!(summary.used_peak_mib, Some(300));
         assert_eq!(summary.js_heap_used_mib, Some(64));
         assert_eq!(summary.entity_count, Some(1234));
+        assert_eq!(summary.load_count_by_kind, [Some(300), Some(0), None]);
+        assert_eq!(
+            summary.variant_load_count_by_kind,
+            [Some(120), Some(0), None]
+        );
         assert_eq!(
             parse_scopes("a  b:9.00,system x:1.50"),
             [("a  b".to_owned(), 9.0), ("system x".to_owned(), 1.5)]
