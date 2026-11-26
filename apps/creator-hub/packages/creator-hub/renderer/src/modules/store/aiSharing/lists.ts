@@ -45,7 +45,7 @@ export const loadSharedTurns = createAsyncThunk(
 
 /**
  * Erases one shared turn; sharing stays on. The service drops the summary of its conversation
- * with it, so summaries already on screen are loaded again.
+ * with it, so summaries on screen are loaded again, as many pages as were showing.
  */
 export const eraseSharedTurn = createAsyncThunk(
   'aiSharing/eraseSharedTurn',
@@ -54,22 +54,36 @@ export const eraseSharedTurn = createAsyncThunk(
     if (wallet === null) return rejectWithValue('Signed out');
     const response = await api.eraseTurn(wallet, recordId);
     if (!response.ok) return rejectWithValue(response.error);
-    if (getState().aiSharing.digests.status !== 'idle') void dispatch(loadDigests({ reset: true }));
+    const { status, pages } = getState().aiSharing.digests;
+    if (status !== 'idle') void dispatch(loadDigests({ reset: true, pages }));
     return recordId;
   },
 );
 
-/** The next page of the summaries made of the signed-in wallet's conversations. */
+/**
+ * The next page of the summaries made of the signed-in wallet's conversations, or with `reset`
+ * the first `pages` of them (one by default).
+ */
 export const loadDigests = createAsyncThunk(
   'aiSharing/loadDigests',
-  async ({ reset }: { reset: boolean }, { getState, rejectWithValue }) => {
-    const wallet = currentWallet();
-    if (wallet === null) return rejectWithValue('Signed out');
+  async (
+    { reset, pages = 1 }: { reset: boolean; pages?: number },
+    { getState, rejectWithValue },
+  ) => {
     const generation = getState().aiSharing.digests.generation;
-    const cursor = reset ? null : getState().aiSharing.digests.next;
-    const response = await api.listDigests(wallet, cursor);
-    if (!response.ok) return rejectWithValue(response.error);
-    return { ...response.data, reset, generation };
+    const wallet = currentWallet();
+    if (wallet === null) return rejectWithValue({ error: 'Signed out', generation });
+    const digests: api.AiSharingDigest[] = [];
+    let cursor = reset ? null : getState().aiSharing.digests.next;
+    let fetched = 0;
+    do {
+      const response = await api.listDigests(wallet, cursor);
+      if (!response.ok) return rejectWithValue({ error: response.error, generation });
+      digests.push(...response.data.digests);
+      cursor = response.data.next;
+      fetched += 1;
+    } while (reset && fetched < pages && cursor !== null);
+    return { digests, next: cursor, reset, generation, pages: fetched };
   },
 );
 
