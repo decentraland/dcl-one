@@ -216,44 +216,51 @@ pub(super) async fn due_batch(
     pool: &PgPool,
     settings: &MirrorSettings,
     cursor: &str,
+    uncatalogued: &[String],
 ) -> Result<Vec<(String, Vec<String>)>> {
-    // An unlimited pass seeks directly from its cursor. A finite pass keeps
-    // the first-N scope before applying the cursor, including on resume.
-    if settings.limit.is_none() {
-        return Ok(sqlx::query_as(
-            r#"SELECT world_name, scene_ids FROM worlds.remote_worlds
+    // Keep the cursor and both candidate sets in the database's name order.
+    // An unlimited catalogue pass seeks directly from the cursor. A finite
+    // pass keeps the first-N catalogue scope before applying the cursor.
+    let rows = if let Some(limit) = settings.limit {
+        sqlx::query_as(
+            r#"(SELECT world_name, scene_ids FROM (
+                 SELECT world_name, scene_ids FROM worlds.remote_worlds
+                 WHERE unlisted_at IS NULL
+                   AND (cardinality($1::text[]) = 0 OR world_name = ANY($1))
+                 ORDER BY world_name LIMIT $2) catalogue
+               WHERE world_name > $3 ORDER BY world_name LIMIT $4)
+               UNION ALL
+               SELECT name AS world_name, ARRAY[]::text[] AS scene_ids
+               FROM unnest($5::text[]) AS u(name) WHERE name > $3
+               ORDER BY world_name LIMIT $4"#,
+        )
+        .bind(&settings.names)
+        .bind(limit as i64)
+        .bind(cursor)
+        .bind(settings.concurrency as i64)
+        .bind(uncatalogued)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as(
+            r#"(SELECT world_name, scene_ids FROM worlds.remote_worlds
                WHERE unlisted_at IS NULL
                  AND (cardinality($1::text[]) = 0 OR world_name = ANY($1))
                  AND world_name > $2
+               ORDER BY world_name LIMIT $3)
+               UNION ALL
+               SELECT name AS world_name, ARRAY[]::text[] AS scene_ids
+               FROM unnest($4::text[]) AS u(name) WHERE name > $2
                ORDER BY world_name LIMIT $3"#,
         )
         .bind(&settings.names)
         .bind(cursor)
         .bind(settings.concurrency as i64)
+        .bind(uncatalogued)
         .fetch_all(pool)
-        .await?);
-    }
-    let rows = sqlx::query(
-        r#"SELECT world_name, scene_ids FROM (
-             SELECT world_name, scene_ids FROM worlds.remote_worlds
-             WHERE unlisted_at IS NULL
-               AND (cardinality($1::text[]) = 0 OR world_name = ANY($1))
-             ORDER BY world_name
-             LIMIT $2) s
-           WHERE world_name > $3
-           ORDER BY world_name
-           LIMIT $4"#,
-    )
-    .bind(&settings.names)
-    .bind(settings.limit.map(|l| l as i64).unwrap_or(i64::MAX))
-    .bind(cursor)
-    .bind(settings.concurrency as i64)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .iter()
-        .map(|r| (r.get("world_name"), r.get("scene_ids")))
-        .collect())
+        .await?
+    };
+    Ok(rows)
 }
 
 /// The error the last pass stored for a world, if any (`remote_worlds.last_error`).

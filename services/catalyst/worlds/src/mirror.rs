@@ -309,16 +309,7 @@ async fn scenes_pass(
             out.interrupted = true;
             break;
         }
-        let mut batch = due_batch(pool, settings, &cursor).await?;
-        let next = uncatalogued.partition_point(|name| name <= &cursor);
-        batch.extend(
-            uncatalogued[next..]
-                .iter()
-                .take(settings.concurrency)
-                .map(|name| (name.clone(), Vec::new())),
-        );
-        batch.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        batch.truncate(settings.concurrency);
+        let batch = due_batch(pool, settings, &cursor, &uncatalogued).await?;
         if batch.is_empty() {
             break;
         }
