@@ -128,6 +128,7 @@ pub mod third_party_registry;
 pub mod tips;
 pub mod trade_events;
 pub mod trades;
+pub mod transak;
 pub mod transfer_notices;
 pub mod user_items;
 pub mod users;
@@ -146,7 +147,7 @@ pub(crate) mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::shared::routing::{any, delete, erase, get, post};
+use crate::shared::routing::{any, delete, erase, get, post, put};
 use anyhow::Context;
 use axum::Json;
 use axum::Router;
@@ -268,6 +269,8 @@ pub struct MarketSettings {
     pub historical_admin_token: Option<String>,
     /// The Wert card on-ramp's keys and API (`WERT_*`); `None` answers 503.
     pub wert: Option<wert::WertSettings>,
+    /// The Transak card on-ramp's credentials (`TRANSAK_*`); `None` answers 503.
+    pub transak: Option<transak::TransakSettings>,
     pub catalog_cache_ttl: Duration,
     /// `MARKETPLACE_BASE_URL`: the site links the trade notification events point at.
     pub marketplace_base_url: String,
@@ -306,6 +309,7 @@ impl std::fmt::Debug for MarketSettings {
                 &self.historical_admin_token.is_some(),
             )
             .field("wert", &self.wert.is_some())
+            .field("transak", &self.transak.is_some())
             .field("catalog_cache_ttl", &self.catalog_cache_ttl)
             .field("marketplace_base_url", &self.marketplace_base_url)
             .field("indexes", &self.indexes)
@@ -325,6 +329,7 @@ impl Default for MarketSettings {
             admin_token: None,
             historical_admin_token: None,
             wert: None,
+            transak: None,
             catalog_cache_ttl: Duration::from_secs(30),
             marketplace_base_url: "https://decentraland.org/marketplace".to_string(),
             indexes: chain_walk::IndexSettings::default(),
@@ -373,6 +378,7 @@ impl MarketSettings {
                 .filter(|t| !t.is_empty()),
             historical_admin_token: None,
             wert: None,
+            transak: None,
             catalog_cache_ttl: Duration::from_secs(catalog_cache_ttl_secs),
             marketplace_base_url: marketplace_base_url.trim_end_matches('/').to_string(),
             indexes: chain_walk::IndexSettings::default(),
@@ -390,6 +396,12 @@ impl MarketSettings {
     /// The Wert card on-ramp ([`wert::WertSettings::parse`]).
     pub fn with_wert(mut self, wert: Option<wert::WertSettings>) -> Self {
         self.wert = wert;
+        self
+    }
+
+    /// The Transak card on-ramp ([`transak::TransakSettings::parse`]).
+    pub fn with_transak(mut self, transak: Option<transak::TransakSettings>) -> Self {
+        self.transak = transak;
         self
     }
 
@@ -1277,9 +1289,10 @@ pub fn router(state: SharedState) -> Router {
     app.with_state(state)
 }
 
-/// The POST routes that change nothing on this node, so they answer while
-/// data writes are off: the historical holdings reads and the Wert signature,
-/// which only signs and asks Wert for a session.
+/// The POST and PUT routes that write no market data, so they answer while
+/// data writes are off: the historical holdings reads, the Wert signature
+/// (it only signs and asks Wert for a session), and the Transak widget and
+/// token refresh (they write only the shared access token).
 const OPEN_PATHS: &[&str] = &[
     historical::READ_PATHS[0],
     historical::READ_PATHS[1],
@@ -1287,6 +1300,8 @@ const OPEN_PATHS: &[&str] = &[
     historical::READ_PATHS[3],
     historical::READ_PATHS[4],
     wert::PATH,
+    transak::WIDGET_PATH,
+    transak::TOKEN_PATH,
 ];
 
 /// The marketplace-server surface (the old `catalyrst-market` crate's
@@ -1456,6 +1471,12 @@ pub fn market_router(state: SharedState) -> Router {
             wert::PATH,
             post(wert::sign).layer(DefaultBodyLimit::max(64 * 1024)),
         )
+        .route(
+            transak::WIDGET_PATH,
+            post(transak::widget_url).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
+        .route(transak::ORDER_PATH, get(transak::order))
+        .route(transak::TOKEN_PATH, put(transak::refresh_token))
         .merge(historical::routes(
             state.settings.market.historical_admin_token.is_some(),
         ))

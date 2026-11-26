@@ -82,8 +82,9 @@
     stroke: var(--dcl-transparencies-black-40);
   }
 
+  /* `--spinner-arc`, set on the spinner or an ancestor, recolours the arc (a spinner inside a filled button). */
   .arc {
-    stroke: var(--dcl-primary-primary);
+    stroke: var(--spinner-arc, var(--dcl-primary-primary));
   }
 
   /* The head runs round in the first third of each second, the tail after it in the next half. */
