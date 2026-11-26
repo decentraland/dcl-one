@@ -11,7 +11,8 @@ pub struct CreateConfig {
     pub create_writes_enabled: bool,
 
     /// Polygon JSON-RPC (https to a public host) the builder asks whether a
-    /// collection's address holds its contract.
+    /// collection's address holds its contract; unset, a save that moves a
+    /// collection off its stored address answers 503.
     #[arg(long, env = "BUILDER_POLYGON_RPC_URL", hide_env_values = true)]
     pub builder_polygon_rpc_url: Option<String>,
 
