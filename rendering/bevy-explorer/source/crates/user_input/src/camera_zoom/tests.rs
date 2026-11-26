@@ -452,3 +452,24 @@ fn backing_out_of_a_second_step_takes_the_time_spent_and_keeps_the_aim() {
     run(&mut zoom, 2.0 * FRAME);
     assert!(!zoom.blending());
 }
+
+#[test]
+fn steps_with_no_frame_between_them_keep_the_camera_finite() {
+    let mut zoom = settled(ThirdPerson);
+    let (yaw, pitch) = zoom.set_level(Some(Drone), 0.3, -0.4).unwrap();
+    // backing out before the blend moved: third person is shown as it was left, with no blend
+    assert_eq!(
+        zoom.set_level(Some(ThirdPerson), yaw, pitch),
+        Some((0.3, -0.4))
+    );
+    assert!(!zoom.blending());
+    let (yaw, pitch) = zoom.set_level(Some(Drone), 0.3, -0.4).unwrap();
+    let pose = zoom.pose(FOCUS, yaw, pitch, 0.0).unwrap();
+    assert!(pose.position.is_finite() && pose.rotation.is_finite() && pose.fov.is_finite());
+    run(&mut zoom, BLEND_SECS - 2.0 * FRAME);
+    assert!(zoom.blending());
+    run(&mut zoom, 3.0 * FRAME);
+    assert!(!zoom.blending());
+    let pose = zoom.pose(FOCUS, yaw, pitch, 0.0).unwrap();
+    assert!(pose.position.is_finite() && pose.rotation.is_finite() && pose.fov.is_finite());
+}

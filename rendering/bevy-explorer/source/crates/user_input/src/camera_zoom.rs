@@ -546,11 +546,16 @@ struct Blend {
 }
 
 impl Blend {
-    fn weight(&self) -> f32 {
+    /// How much of its time the blend has run, from 0 to 1.
+    fn fraction(&self) -> f32 {
         if self.elapsed >= self.seconds {
             return 1.0;
         }
-        let t = (self.elapsed / self.seconds).clamp(0.0, 1.0);
+        (self.elapsed / self.seconds).max(0.0)
+    }
+
+    fn weight(&self) -> f32 {
+        let t = self.fraction();
         t * t * (3.0 - 2.0 * t)
     }
 }
@@ -614,8 +619,7 @@ impl CameraZoom {
         let source = match self.blend.take() {
             Some(running) => {
                 if running.from.left() == to {
-                    let progress =
-                        running.start + (1.0 - running.start) * (running.elapsed / running.seconds);
+                    let progress = running.start + (1.0 - running.start) * running.fraction();
                     seconds *= progress;
                     start = 1.0 - progress;
                 }
@@ -649,12 +653,15 @@ impl CameraZoom {
                 pitch,
             },
         };
-        self.blend = Some(Blend {
-            from: source,
-            seconds,
-            elapsed: 0.0,
-            start,
-        });
+        // backing out of a blend that had not moved shows the level as it was left
+        if seconds > 0.0 {
+            self.blend = Some(Blend {
+                from: source,
+                seconds,
+                elapsed: 0.0,
+                start,
+            });
+        }
         Some(kept_aim.unwrap_or_else(|| carry_view(from, to, yaw, pitch)))
     }
 
