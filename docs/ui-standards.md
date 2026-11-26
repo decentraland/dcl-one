@@ -213,9 +213,7 @@ migration. Do not rewrite unrelated components or tokens in the same change.
 - `make check` and CI also run `tooling/ui_standards.py --shared-imports`. It
   fails when a script under `apps/`, `library/` (outside `library/ui`) or
   `tooling/` names a `@dcl/one-ui/<path>` module other than a stylesheet. It
-  still accepts the in-world Shop and HUD UI (`@dcl/one-ui/apps/shop/`,
-  `@dcl/one-ui/apps/hud/`), which resolve their host's aliases and are not in
-  the entry yet.
+  accepts subpaths for the in-world Shop and HUD modules that resolve host-specific aliases. Web Shop views use the public `@dcl/one-ui` entry.
 - `make check` and CI also run `tooling/ui_standards.py --kit-ceiling`. For each app-owned component kit whose consumers can already import `library/ui/components` (the `KIT_PATHS` of the script: `apps/ui3/src/components` and `library/ui/apps/sites/shared`) it fails when the number of tracked component files differs from the count in `tooling/ui-kit-ceiling.json`, and when that file records a higher ceiling than the base revision's. A kit may only shrink ([ADR](adr/2026-11-24-library-ui-single-source.md)); after removing a component from one, run `python3 tooling/ui_standards.py --write-kit-ceiling` and commit the file with the change. The writer refuses a count above the recorded or the base ceiling.
 - Report checks that could not run or failed. Documentation-only changes need
   link, structure and content checks, not an application build.

@@ -850,6 +850,19 @@ impl<S: LogSource> LogSource for AdmittedPortal<'_, S> {
         })
     }
 
+    async fn archive_window(
+        &self,
+        from: u64,
+        to: u64,
+        groups: &[LogGroup],
+        chunk: &mut usize,
+        budget: usize,
+    ) -> Result<Window, RpcError> {
+        self.inner
+            .archive_window(from, to, groups, chunk, budget)
+            .await
+    }
+
     async fn block_times(&self, logs: &[RpcLog]) -> Result<Read<HashMap<i64, i64>>, RpcError> {
         // Logs read from the portal carry their block's time: only the
         // others need headers.

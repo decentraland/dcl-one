@@ -464,6 +464,10 @@
   --map-band: rgba(0, 0, 0, 0.21); /* black 40%: the band behind the search bar */
   --map-banner: rgba(0, 0, 0, 0.65); /* black 90%: the destination banner */
   --map-credits: rgba(0, 0, 0, 0.52);
+  /* Transparencies/Overlay 80, kept as the raw design alpha on purpose (not converted like the
+     values above): the parcels map's age label matches the web Shop's LAND map label, which a
+     browser draws with this value. */
+  --map-age: rgba(38, 38, 38, 0.8);
   --map-button-hover: #e7e7e7;
   --map-button-press: #c8c8c8;
   --map-chip-hover: #e0e0e0;

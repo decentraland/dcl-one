@@ -40,6 +40,7 @@ fn map_auth_error(e: SignedFetchError) -> AppError {
     let (status, message) = e.http_status_and_message();
     match status {
         400 => AppError::InvalidRequest(message),
+        429 => AppError::TooManyRequests(message),
         503 => AppError::ServiceUnavailable(message),
         _ => AppError::Unauthorized(message),
     }

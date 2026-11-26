@@ -9,7 +9,7 @@
 import { useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
 
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import EmptyState from "../../components/EmptyState";
 import type { ShopClient } from "@shop/api/shop";
 import { reasonText } from "@shop/payment/copy";

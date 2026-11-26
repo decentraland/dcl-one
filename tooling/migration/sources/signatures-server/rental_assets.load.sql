@@ -13,5 +13,6 @@ ON CONFLICT (contract_address, token_id) DO UPDATE
        category = EXCLUDED.category, search_text = EXCLUDED.search_text,
        distance_to_plaza = EXCLUDED.distance_to_plaza, adjacent_to_road = EXCLUDED.adjacent_to_road,
        estate_size = EXCLUDED.estate_size, nft_created_at = EXCLUDED.nft_created_at,
-       nft_updated_at = EXCLUDED.nft_updated_at, fetched_at = EXCLUDED.fetched_at
+       nft_updated_at = EXCLUDED.nft_updated_at, fetched_at = EXCLUDED.fetched_at,
+       metadata_block = DEFAULT, membership_block = DEFAULT
  WHERE signatures.rental_assets.fetched_at <= EXCLUDED.fetched_at;
