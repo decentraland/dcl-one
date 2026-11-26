@@ -21,7 +21,4 @@ message PBVideoPlayer {
   optional float spatial_min_distance = 8;
   // The distance where sound either becomes inaudible or stops attenuation (default: 60)
   optional float spatial_max_distance = 9;
-  // Incremented for each explicit position request, including repeated seeks to the same time.
-  // Retaining this value while changing playback settings does not request another seek.
-  optional uint32 position_revision = 10;
 }

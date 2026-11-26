@@ -78,8 +78,6 @@ pub fn process_streams(
     state_sender: tokio::sync::watch::Sender<VideoState>,
 ) -> Result<(), anyhow::Error> {
     let mut start_instant: Option<Instant> = None;
-    // Reading EOF can precede playback EOF while decoded frames remain buffered.
-    let mut play_requested = false;
     let mut repeat = false;
     // only repeat if the last pass produced data, else a dead or empty input spins on reset
     let mut read_since_reset = false;
@@ -152,11 +150,7 @@ pub fn process_streams(
         match cmd {
             Ok(AVCommand::Play) => {
                 trace!("Play command.");
-                play_requested = true;
-                if start_instant.is_none()
-                    && (!input_context.is_eof()
-                        || streams.iter().any(|ctx| ctx.buffered_time() > 0.0))
-                {
+                if start_instant.is_none() && !input_context.is_eof() {
                     start_instant = Some(Instant::now());
                     for stream in streams.iter_mut() {
                         stream.set_start_frame();
@@ -165,7 +159,6 @@ pub fn process_streams(
             }
             Ok(AVCommand::Pause) => {
                 trace!("Pause command.");
-                play_requested = false;
                 start_instant = None;
             }
             Ok(AVCommand::Repeat(r)) => {
@@ -178,12 +171,6 @@ pub fn process_streams(
                     stream.clear();
                 }
                 input_context.seek_to(time);
-                if play_requested {
-                    start_instant = Some(Instant::now());
-                    for stream in streams.iter_mut() {
-                        stream.set_start_frame();
-                    }
-                }
                 watch_send_if_modified(&state_sender, VideoState::VsSeeking);
                 continue;
             }
@@ -267,122 +254,5 @@ pub fn process_streams(
                 context.send_frame();
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct Input {
-        eof: bool,
-    }
-
-    impl PacketIter for Input {
-        fn is_eof(&self) -> bool {
-            self.eof
-        }
-        fn try_next(&mut self) -> Option<(usize, Packet)> {
-            self.blocking_next()
-        }
-        fn blocking_next(&mut self) -> Option<(usize, Packet)> {
-            self.eof = true;
-            Some((0, Packet::empty()))
-        }
-        fn reset(&mut self) {
-            self.eof = false;
-        }
-        fn seek_to(&mut self, _: f64) {
-            self.eof = false;
-        }
-    }
-
-    struct Stream {
-        buffered: bool,
-        frames: std::sync::mpsc::Sender<()>,
-        commands: tokio::sync::mpsc::UnboundedSender<AVCommand>,
-    }
-
-    impl FfmpegContext for Stream {
-        fn is_live(&self) -> bool {
-            true
-        }
-        fn stream_index(&self) -> Option<usize> {
-            Some(0)
-        }
-        fn buffered_time(&self) -> f64 {
-            if self.buffered { BUFFER_TIME } else { 0.0 }
-        }
-        fn receive_packet(&mut self, _: Packet) -> Result<(), anyhow::Error> {
-            self.buffered = true;
-            Ok(())
-        }
-        fn send_frame(&mut self) {
-            self.frames.send(()).unwrap();
-            self.commands.send(AVCommand::Dispose).unwrap();
-        }
-        fn set_start_frame(&mut self) {}
-        fn reset_start_frame(&mut self) {}
-        fn seconds_till_next_frame(&self) -> f64 {
-            0.0
-        }
-        fn clear(&mut self) {
-            self.buffered = false;
-        }
-    }
-
-    fn renders_after(commands: Vec<AVCommand>, buffered: bool) -> bool {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        for command in commands {
-            tx.send(command).unwrap();
-        }
-        let (frames, received) = std::sync::mpsc::channel();
-        let dispose = tx.clone();
-        let worker = std::thread::spawn(move || {
-            let mut stream = Stream {
-                buffered,
-                frames,
-                commands: tx,
-            };
-            let (_audio_tx, audio_rx) = tokio::sync::oneshot::channel();
-            let (state, _state_rx) = tokio::sync::watch::channel(VideoState::VsNone);
-            process_streams(
-                Input { eof: true },
-                &mut [&mut stream],
-                rx,
-                AudioOutput::new(audio_rx),
-                state,
-            )
-            .unwrap();
-        });
-        let rendered = received.recv_timeout(Duration::from_secs(1)).is_ok();
-        let _ = dispose.send(AVCommand::Dispose);
-        worker.join().unwrap();
-        rendered
-    }
-
-    #[test]
-    fn a_play_before_seek_at_eof_still_renders_a_frame() {
-        assert!(renders_after(
-            vec![AVCommand::Play, AVCommand::Seek(0.0)],
-            false
-        ));
-    }
-
-    #[test]
-    fn a_paused_seek_at_eof_does_not_resume_playback() {
-        assert!(!renders_after(
-            vec![AVCommand::Pause, AVCommand::Seek(0.0)],
-            false
-        ));
-        assert!(!renders_after(
-            vec![AVCommand::Play, AVCommand::Pause, AVCommand::Seek(0.0)],
-            false
-        ));
-    }
-
-    #[test]
-    fn playback_resumes_buffered_frames_after_reading_eof() {
-        assert!(renders_after(vec![AVCommand::Pause, AVCommand::Play], true));
     }
 }

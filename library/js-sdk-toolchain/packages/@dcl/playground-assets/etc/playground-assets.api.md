@@ -4658,7 +4658,6 @@ export interface PBVideoPlayer {
     playbackRate?: number | undefined;
     playing?: boolean | undefined;
     position?: number | undefined;
-    positionRevision?: number | undefined;
     spatial?: boolean | undefined;
     spatialMaxDistance?: number | undefined;
     spatialMinDistance?: number | undefined;
@@ -6314,8 +6313,6 @@ export const videoEventsSystem: VideoEventsSystem;
 // @public (undocumented)
 export type VideoEventsSystemCallback = (event: DeepReadonlyObject<PBVideoEvent>) => void;
 
-// Warning: (ae-missing-release-tag) "VideoPlayer" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
 // @public (undocumented)
 export const VideoPlayer: LastWriteWinElementSetComponentDefinition<PBVideoPlayer>;
 

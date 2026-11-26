@@ -46,7 +46,7 @@ use crate::audio_sink::AudioSink;
 #[cfg(any(feature = "ffmpeg", feature = "html"))]
 use crate::video_stream::VideoSink;
 
-pub trait AVPlayer: Component + Clone + PartialEq {
+pub trait AVPlayer: Component {
     type Source: Component + Deref<Target = str> + PartialEq;
     type Config: Component + AVPlayerConfig + PartialEq;
     type Position: Component + Deref<Target = f32> + PartialEq;
@@ -58,12 +58,6 @@ pub trait AVPlayer: Component + Clone + PartialEq {
     fn source(&self) -> Self::Source;
     fn config(&self) -> Self::Config;
     fn position(&self) -> Self::Position;
-    fn requested_position(&self) -> Option<f32> {
-        None
-    }
-    fn requested_position_revision(&self) -> Option<u32> {
-        None
-    }
 }
 
 /// A scene's volume as a player volume: unset is full, non-finite is silent, the rest 0..=1.
@@ -135,7 +129,7 @@ impl<T: AVPlayer> AVPlayerSinks for AVSinks<T> {
     }
 }
 
-#[derive(Component, Deref, Clone, PartialEq)]
+#[derive(Component, Deref)]
 #[component(immutable)]
 pub struct AudioStream(PbAudioStream);
 
@@ -173,7 +167,7 @@ impl AVPlayer for AudioStream {
     }
 }
 
-#[derive(Component, Deref, Clone, PartialEq)]
+#[derive(Component, Deref)]
 #[component(immutable)]
 pub struct VideoPlayer(PbVideoPlayer);
 
@@ -206,14 +200,6 @@ impl AVPlayer for VideoPlayer {
             playback_rate: self.playback_rate.unwrap_or(1.),
             r#loop: self.r#loop.unwrap_or(false),
         }
-    }
-
-    fn requested_position(&self) -> Option<f32> {
-        self.position
-    }
-
-    fn requested_position_revision(&self) -> Option<u32> {
-        self.position_revision
     }
 
     fn position(&self) -> Self::Position {

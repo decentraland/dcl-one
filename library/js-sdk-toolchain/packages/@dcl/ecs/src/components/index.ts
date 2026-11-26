@@ -7,8 +7,6 @@ import type { AnimatorComponentDefinitionExtended } from './extended/Animator'
 import { defineAnimatorComponent } from './extended/Animator'
 import type { AudioSourceComponentDefinitionExtended } from './extended/AudioSource'
 import { defineAudioSourceComponent } from './extended/AudioSource'
-import { defineVideoPlayerComponent } from './extended/VideoPlayer'
-import type { PBVideoPlayer } from './generated/pb/decentraland/sdk/components/video_player.gen'
 import { defineAudioAnalysisComponent } from './extended/AudioAnalysis'
 import type { AudioAnalysisView, AudioAnalysisComponentDefinitionExtended } from './extended/AudioAnalysis'
 import type { MaterialComponentDefinitionExtended } from './extended/Material'
@@ -75,10 +73,6 @@ export const Animator: LwwComponentGetter<AnimatorComponentDefinitionExtended> =
 /* @__PURE__ */
 export const AudioSource: LwwComponentGetter<AudioSourceComponentDefinitionExtended> = (engine) =>
   defineAudioSourceComponent(engine)
-
-/* @__PURE__ */
-export const VideoPlayer: LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBVideoPlayer>> = (engine) =>
-  defineVideoPlayerComponent(engine)
 
 /* @__PURE__ */
 export const AudioAnalysis: LwwComponentGetter<AudioAnalysisComponentDefinitionExtended> = (engine) =>

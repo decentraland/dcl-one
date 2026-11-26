@@ -25,8 +25,6 @@ import * as components from './components'
 export { components }
 
 import { engine } from './runtime/initialization'
-import type { LastWriteWinElementSetComponentDefinition } from './engine/component'
-import type { PBVideoPlayer } from './components/generated/pb/decentraland/sdk/components/video_player.gen'
 import type {
   MaterialComponentDefinitionExtended,
   MeshColliderComponentDefinitionExtended,
@@ -58,8 +56,6 @@ export const Animator: AnimatorComponentDefinitionExtended = /* @__PURE__*/ comp
 export const AudioSource: AudioSourceComponentDefinitionExtended = /* @__PURE__*/ components.AudioSource(engine)
 export const AudioAnalysis: AudioAnalysisComponentDefinitionExtended = /* @__PURE__*/ components.AudioAnalysis(engine)
 export const AudioStream: AudioStreamComponentDefinitionExtended = /* @__PURE__*/ components.AudioStream(engine)
-export const VideoPlayer: LastWriteWinElementSetComponentDefinition<PBVideoPlayer> =
-  /* @__PURE__*/ components.VideoPlayer(engine)
 export const Material: MaterialComponentDefinitionExtended = /* @__PURE__*/ components.Material(engine)
 export const MeshRenderer: MeshRendererComponentDefinitionExtended = /* @__PURE__*/ components.MeshRenderer(engine)
 export const MeshCollider: MeshColliderComponentDefinitionExtended = /* @__PURE__*/ components.MeshCollider(engine)
