@@ -1,35 +1,23 @@
-//! `/v1/orders` and `/v1/orders/open-by-items`: the off-chain v3 leg from the
-//! trades mirror (an open `public_nft_order` is one that is effective, not
-//! expired and not in `trade_cancellations`) merged with the legacy
-//! on-chain orders of the Marketplace contracts.
+//! `/v1/orders` and `/v1/orders/open-by-items` merge off-chain v3 NFT
+//! listings backed by the published trade and ownership indexes with legacy
+//! Marketplace orders.
 //!
 //! A node that walks the nft index reads both legs on one read-only
-//! snapshot ([`book_snapshot`]) on which the index is published and recent
-//! on every network the request reads, and the land-authz index ready when
-//! an open LAND or estate order could be answered; otherwise the route
-//! answers the unavailable envelope naming the index that is not. The
-//! legacy orders come from `shop.legacy_order` (`legacy_orders`): an open
-//! order reads `open` only while the token's owner source (`shop.nft`, or
-//! `land_authz.token_right` for LAND and estates) proves the seller holds
-//! it, and `transferred` otherwise (another owner, none, or no row), as the
-//! subgraphs reported a moved token; only the orders of the collections,
-//! names, LAND and estates are served. The v3 listings pass
-//! the "signer still owns the nft" guard on the same index, so a listing
-//! whose signer no longer holds that exact token drops out, while a token
-//! the index does not hold (LAND, an estate) passes.
+//! [`book_snapshot`]. The legacy order book must hold the published nft
+//! fold on every requested network. Open LAND and estate orders also need
+//! the land-authz index. An open legacy order whose seller no longer holds
+//! the token reads as `transferred`. The v3 leg uses the shared trade query
+//! to prove that a listing is open and backed by the NFT or LAND fold.
 //!
-//! A node that does not walk the index (switch off, or chain settings off
-//! its catalogue, `Settings::walks_catalogue`) serves
-//! the legacy `orders` of the collections subgraph reader (first ≤ 100,
-//! 30 s; past the graph's 5,000 skip by keyset up to `readers::DEEP_WINDOW`)
-//! and the v3 listings without the guard; the `x-listings-owner-check`
-//! header names which.
+//! A node that does not walk the index keeps the collections subgraph
+//! reader for legacy orders. Its v3 leg uses the same published proof on
+//! a short local snapshot. Both routes emit `x-listings-owner-check: checked`.
 //!
-//! The two legs are sorted together in memory over the `first + skip`
-//! window (a deeper window than `readers::DEEP_WINDOW` is a 400). The
-//! legacy leg's total is a count capped at 5,000, or at the deep window for
-//! a deeper page. `nftName` is parsed and not applied, as the old query
-//! builder did (it selected the name and never filtered on it).
+//! The two legs are sorted together over the `first + skip` window. The
+//! graph reader goes past its 5,000 skip by keyset, up to
+//! `readers::DEEP_WINDOW` (a deeper window is a 400). The legacy total is
+//! capped at 5,000 or at the deep window for a deeper page. The routes
+//! parse `nftName` for compatibility with the legacy query builder.
 
 use std::collections::HashSet;
 
@@ -217,8 +205,7 @@ pub(crate) fn parse_open_by_items(
 }
 
 /// Open `public_nft_order` trades with the filters that apply to the leg;
-/// `$1` binds `now`. [`OWNER_GUARD`] follows it wherever the nft index is
-/// read.
+/// `$1` binds the snapshot clock used by the shared trade query.
 const TRADES_LEG_SQL: &str = "SELECT u.id::text AS id, u.trade_contract AS marketplace_address, u.contract_address_sent AS nft_address, u.token_id, \
         u.amount_received::text AS price, u.signer AS owner, u.beneficiary AS payee, \
         (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint AS created_at, (EXTRACT(EPOCH FROM u.expires_at) * 1000)::bigint AS expires_at, \
@@ -226,64 +213,23 @@ const TRADES_LEG_SQL: &str = "SELECT u.id::text AS id, u.trade_contract AS marke
  FROM unified_trades u \
  WHERE u.type = 'public_nft_order' AND u.token_id IS NOT NULL";
 
-/// The signer still holds the token: drops a listing only when the `nft`
-/// index holds the token and another address (or nobody: burned) owns it.
-const OWNER_GUARD: &str = " AND NOT EXISTS (SELECT 1 FROM shop.nft n WHERE n.network = lower(u.network) AND n.contract_address = u.contract_address_sent \
-                   AND n.token_id = u.token_id::numeric AND n.owner IS DISTINCT FROM u.signer)";
-
 /// The response header naming how the v3 listings were checked.
 pub const OWNER_CHECK_HEADER: &str = "x-listings-owner-check";
 
-/// How the v3 listings leg checked that each signer still holds its token.
-/// Ordered by how much it leaves unchecked, so the worst of several reads is
-/// their `max`. A node that walks the index never serves a listing it could
-/// not check: while the index is not published and recent the route
-/// answers the unavailable envelope instead.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum OwnerCheck {
-    /// Every listing served passed [`OWNER_GUARD`] on a published and recent
-    /// index, or the request reads no listing.
-    Checked,
-    /// The node does not walk the index: every open listing is served
-    /// without the guard, one whose signer no longer holds the token
-    /// included (buying it fails on chain).
-    Unchecked,
+fn stamp_owner_check(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        HeaderName::from_static(OWNER_CHECK_HEADER),
+        HeaderValue::from_static("checked"),
+    );
+    response
 }
 
-impl OwnerCheck {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Checked => "checked",
-            Self::Unchecked => "unchecked",
-        }
-    }
-
-    /// `response` with [`OWNER_CHECK_HEADER`] naming this check.
-    fn stamp(self, mut response: Response) -> Response {
-        response.headers_mut().insert(
-            HeaderName::from_static(OWNER_CHECK_HEADER),
-            HeaderValue::from_static(self.as_str()),
-        );
-        response
-    }
-
-    /// The ownership predicate of the statement.
-    fn predicate(self) -> &'static str {
-        match self {
-            Self::Checked => OWNER_GUARD,
-            Self::Unchecked => "",
-        }
-    }
-}
-
-/// `$1` is now, `$2` the trades floor; `extra` binds from `$3`. `check`
-/// picks the ownership predicate ([`OwnerCheck::predicate`]).
-fn trades_leg_sql(extra: &str, check: OwnerCheck) -> String {
+/// `$1` is now, `$2` the trades floor; `extra` binds from `$3`.
+fn trades_leg_sql(extra: &str) -> String {
     format!(
-        "WITH {} {}{} {extra} ORDER BY u.created_at DESC, u.id::text ASC LIMIT 1000",
+        "WITH {} {} {extra} ORDER BY u.created_at DESC, u.id::text ASC LIMIT 1000",
         unified_trades_cte("$1", "$2"),
         TRADES_LEG_SQL.replace("SHIFT", ITEM_ID_SHIFT),
-        check.predicate()
     )
 }
 
@@ -323,21 +269,28 @@ pub(super) fn trade_row_order(r: &sqlx::postgres::PgRow) -> Order {
 pub async fn open_trade_orders(
     state: &MarketplaceState,
     wanted: &[(String, String, String, String)],
-) -> Result<std::collections::HashMap<(String, String, String), Order>, ApiError> {
-    Ok(open_trade_orders_on(state, &state.pool, wanted).await?)
+) -> Result<std::collections::HashMap<(String, String, String), Order>, Response> {
+    if wanted.is_empty() {
+        return Ok(Default::default());
+    }
+    let (mut tx, now) = trade_snapshot(state).await?;
+    open_trade_orders_on(state, &mut *tx, wanted, now.naive_utc())
+        .await
+        .map_err(super::nft_reads::read_error)
 }
 
 pub(super) async fn open_trade_orders_on<'e>(
     state: &MarketplaceState,
     conn: impl sqlx::PgExecutor<'e>,
     wanted: &[(String, String, String, String)],
+    now: chrono::NaiveDateTime,
 ) -> Result<std::collections::HashMap<(String, String, String), Order>, sqlx::Error> {
     let mut out = std::collections::HashMap::new();
     if wanted.is_empty() {
         return Ok(out);
     }
     let sql = format!(
-        "WITH {} SELECT DISTINCT ON (x.network, x.nft_address, x.token_id) x.* FROM ({}{OWNER_GUARD} \
+        "WITH {} SELECT DISTINCT ON (x.network, x.nft_address, x.token_id) x.* FROM ({} \
            AND (lower(u.network), u.contract_address_sent, u.token_id, u.signer) IN \
                (SELECT * FROM unnest($3::text[], $4::text[], $5::text[], $6::text[]))) x \
          ORDER BY x.network, x.nft_address, x.token_id, x.created_at DESC, x.id ASC",
@@ -355,7 +308,6 @@ pub(super) async fn open_trade_orders_on<'e>(
             })
             .collect::<Vec<String>>()
     };
-    let now = Utc::now().naive_utc();
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(now)
         .bind(super::trades::mirrored_since(&state.settings, now))
@@ -386,6 +338,28 @@ fn keyed(order: Order, sort_token_id: String) -> Keyed {
         sort_price,
         sort_token_id,
     }
+}
+
+/// A short read keeps the mirror check, trade verdict and ownership proof
+/// together. Release it before requesting legacy orders from the graph.
+async fn trade_snapshot(
+    state: &MarketplaceState,
+) -> Result<(Transaction<'static, Postgres>, DateTime<Utc>), Response> {
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|e| ApiError::from(e).into_response())?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ApiError::from(e).into_response())?;
+    super::nft_reads::set_read_timeout(&mut tx)
+        .await
+        .map_err(super::nft_reads::read_error)?;
+    let now = Utc::now();
+    super::trades::ready_on(state, &mut tx, now).await?;
+    Ok((tx, now))
 }
 
 /// The networks a read of `network` names (both without a filter).
@@ -490,7 +464,7 @@ pub(crate) async fn book_snapshot(
         owned_items::ReadError::Db(e) => read_error(e),
         e => e.into_response(|m| ApiError::internal(m.to_string()).into_response()),
     })?;
-    // The owners the book's statuses and the listings' guard read (and the
+    // The ownership the book and the v3 listings read (and the
     // book itself) as the published fold left them: a fold committed past it
     // but not published yet, whichever binary wrote it, is not read.
     let projections: &[&str] = &["nft", "legacy_order"];
@@ -582,20 +556,18 @@ fn trades_filters(f: &OrderFilters) -> Option<(String, Vec<String>)> {
     Some((extra, binds))
 }
 
-/// The open v3 listings matching `f` on `conn`, behind `check`'s ownership
-/// predicate (which reads the nft index of `conn`'s snapshot).
+/// The backed open v3 listings matching `f` on the caller's snapshot.
 pub(super) async fn read_trades(
     conn: &mut PgConnection,
     state: &MarketplaceState,
     f: &OrderFilters,
-    check: OwnerCheck,
     now: DateTime<Utc>,
 ) -> Result<Vec<Keyed>, sqlx::Error> {
     let Some((extra, binds)) = trades_filters(f) else {
         return Ok(Vec::new());
     };
     let now = now.naive_utc();
-    let sql = trades_leg_sql(&extra, check);
+    let sql = trades_leg_sql(&extra);
     let mut q = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(now)
         .bind(super::trades::mirrored_since(&state.settings, now));
@@ -611,54 +583,6 @@ pub(super) async fn read_trades(
             keyed(order, token_id)
         })
         .collect())
-}
-
-/// The v3 listings of each of `fs` on a node that does not walk the nft
-/// index (unguarded), and the instant they were read at: the trades
-/// mirror's readiness and the rows on one short read-only snapshot, taken
-/// once it is established and released before the subgraph is awaited, so
-/// a trade-events rewind between the check and the rows cannot empty a
-/// leg the check passed. The subgraph's filter takes the same instant.
-async fn unguarded_trades(
-    state: &MarketplaceState,
-    fs: &[&OrderFilters],
-) -> Result<(Vec<Vec<Keyed>>, DateTime<Utc>), Response> {
-    let (mut tx, now) = trades_snapshot(state).await?;
-    let mut out = Vec::with_capacity(fs.len());
-    for f in fs {
-        out.push(
-            read_trades(&mut tx, state, f, OwnerCheck::Unchecked, now)
-                .await
-                .map_err(read_error)?,
-        );
-    }
-    tx.rollback().await.ok();
-    Ok((out, now))
-}
-
-/// [`unguarded_trades`]' snapshot: read-only, the trades mirror and its
-/// verdicts ready on it, and its instant.
-pub(super) async fn trades_snapshot(
-    state: &MarketplaceState,
-) -> Result<(Transaction<'static, Postgres>, DateTime<Utc>), Response> {
-    let db = |e: sqlx::Error| ApiError::internal(e.to_string()).into_response();
-    let mut tx = state.pool.begin().await.map_err(db)?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
-        .bind(format!(
-            "{}ms",
-            super::nft_reads::READ_STATEMENT_TIMEOUT.as_millis()
-        ))
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-    // The statement above established the snapshot.
-    let now = Utc::now();
-    super::trades::ready_on(state, &mut tx, now).await?;
-    Ok((tx, now))
 }
 
 /// What the book serves, on the chains the node serves (its catalogue,
@@ -1164,21 +1088,11 @@ pub async fn list_orders(
     state: &MarketplaceState,
     f: &OrderFilters,
 ) -> Result<(Vec<Order>, i64), Response> {
-    list_orders_checked(state, f)
-        .await
-        .map(|(page, total, _)| (page, total))
-}
-
-/// [`list_orders`] and how its v3 listings were checked.
-pub async fn list_orders_checked(
-    state: &MarketplaceState,
-    f: &OrderFilters,
-) -> Result<(Vec<Order>, i64, OwnerCheck), Response> {
     let limit = clamp_first(f.first, 1000).min(readers::READER_MAX_FIRST);
     let offset = clamp_skip(f.skip);
     readers::check_window(limit, offset)?;
     let window = offset + limit;
-    let (mut merged, legacy_total, trades, check) = if owned_items::walks_here(state) {
+    let (mut merged, legacy_total, trades) = if owned_items::walks_here(state) {
         let land = reads_land(state, f);
         let (mut tx, now) = book_snapshot(state, nets_of(f.network), land).await?;
         let now_ms = now.timestamp_millis();
@@ -1186,18 +1100,22 @@ pub async fn list_orders_checked(
             let rows = book_rows(&mut tx, state, f, window, land, now_ms).await?;
             let cap = readers::count_cap(0, window);
             let total = book_total(&mut tx, state, f, cap, land, now_ms).await?;
-            let trades = read_trades(&mut tx, state, f, OwnerCheck::Checked, now).await?;
+            let trades = read_trades(&mut tx, state, f, now).await?;
             Ok::<_, sqlx::Error>((rows, total, trades))
         }
         .await
         .map_err(read_error)?;
         tx.rollback().await.ok();
-        (rows, total, trades, OwnerCheck::Checked)
+        (rows, total, trades)
     } else {
         readers::require_networks(state, f.network.map(|n| n.graph()))?;
-        let (mut trades, now) = unguarded_trades(state, &[f]).await?;
+        let (mut tx, now) = trade_snapshot(state).await?;
+        let trades = read_trades(&mut tx, state, f, now)
+            .await
+            .map_err(read_error)?;
+        drop(tx);
         let (rows, total) = legacy_leg(state, f, window, now.timestamp_millis()).await?;
-        (rows, total, trades.remove(0), OwnerCheck::Unchecked)
+        (rows, total, trades)
     };
     let total = legacy_total + trades.len() as i64;
     merged.extend(trades);
@@ -1208,7 +1126,7 @@ pub async fn list_orders_checked(
         .take(limit as usize)
         .map(|k| k.order)
         .collect();
-    Ok((page, total, check))
+    Ok((page, total))
 }
 
 pub async fn get_orders(
@@ -1219,8 +1137,8 @@ pub async fn get_orders(
         Ok(f) => f,
         Err(e) => return ApiError::from(e).into_response(),
     };
-    match list_orders_checked(&state, &filters).await {
-        Ok((data, total, check)) => check.stamp(
+    match list_orders(&state, &filters).await {
+        Ok((data, total)) => stamp_owner_check(
             Json(DataTotalString {
                 data,
                 total: total.to_string(),
@@ -1245,22 +1163,6 @@ pub async fn open_orders_by_items(
     items: &[(String, String)],
     per_contract: i64,
 ) -> Result<Vec<Order>, Response> {
-    open_orders_by_items_checked(state, items, per_contract)
-        .await
-        .map(|(orders, _)| orders)
-}
-
-/// [`open_orders_by_items`] and how its v3 legs were checked. A node that
-/// walks the nft index reads every contract's legs on one
-/// [`book_snapshot`] of both networks (and the land-authz index when a
-/// contract is a LAND or Estate registry); a node that does not reads the
-/// subgraph reader's cheapest page (≤ 1000) per contract and the listings
-/// unguarded.
-pub async fn open_orders_by_items_checked(
-    state: &MarketplaceState,
-    items: &[(String, String)],
-    per_contract: i64,
-) -> Result<(Vec<Order>, OwnerCheck), Response> {
     let contracts: Vec<String> = items
         .iter()
         .map(|(c, _)| c.clone())
@@ -1275,7 +1177,7 @@ pub async fn open_orders_by_items_checked(
         ..Default::default()
     };
     let mut per: Vec<(String, Vec<Keyed>)> = Vec::with_capacity(contracts.len());
-    let check = if owned_items::walks_here(state) {
+    if owned_items::walks_here(state) {
         let land = contracts.iter().any(|c| is_land_registry(state, c));
         let (mut tx, now) = book_snapshot(state, &ChainNet::ALL, land).await?;
         for contract in &contracts {
@@ -1290,7 +1192,7 @@ pub async fn open_orders_by_items_checked(
                     now.timestamp_millis(),
                 )
                 .await?;
-                rows.extend(read_trades(&mut tx, state, &f, OwnerCheck::Checked, now).await?);
+                rows.extend(read_trades(&mut tx, state, &f, now).await?);
                 Ok::<_, sqlx::Error>(rows)
             }
             .await
@@ -1298,11 +1200,19 @@ pub async fn open_orders_by_items_checked(
             per.push((contract.clone(), rows));
         }
         tx.rollback().await.ok();
-        OwnerCheck::Checked
     } else {
         readers::require_both_collections(state)?;
         let fs: Vec<OrderFilters> = contracts.iter().map(filters).collect();
-        let (trades, now) = unguarded_trades(state, &fs.iter().collect::<Vec<_>>()).await?;
+        let (mut tx, now) = trade_snapshot(state).await?;
+        let mut trades = Vec::with_capacity(fs.len());
+        for f in &fs {
+            trades.push(
+                read_trades(&mut tx, state, f, now)
+                    .await
+                    .map_err(read_error)?,
+            );
+        }
+        drop(tx);
         for ((contract, f), trades) in contracts.iter().zip(&fs).zip(trades) {
             let (mut rows, _) = legacy_leg(
                 state,
@@ -1314,8 +1224,7 @@ pub async fn open_orders_by_items_checked(
             rows.extend(trades);
             per.push((contract.clone(), rows));
         }
-        OwnerCheck::Unchecked
-    };
+    }
     let mut all: Vec<Keyed> = Vec::new();
     for (contract, mut rows) in per {
         sort_merged(&mut rows, Some(OrderSortBy::Cheapest));
@@ -1335,7 +1244,7 @@ pub async fn open_orders_by_items_checked(
             .then(a.sort_price.cmp(&b.sort_price))
             .then(a.order.id.cmp(&b.order.id))
     });
-    Ok((all.into_iter().map(|k| k.order).collect(), check))
+    Ok(all.into_iter().map(|k| k.order).collect())
 }
 
 pub async fn get_open_orders_by_items(
@@ -1346,8 +1255,8 @@ pub async fn get_open_orders_by_items(
         Ok(v) => v,
         Err(e) => return ApiError::from(e).into_response(),
     };
-    match open_orders_by_items_checked(&state, &items, per_contract).await {
-        Ok((data, check)) => check.stamp(
+    match open_orders_by_items(&state, &items, per_contract).await {
+        Ok(data) => stamp_owner_check(
             Json(DataTotalString {
                 total: data.len().to_string(),
                 data,
@@ -1361,21 +1270,6 @@ pub async fn get_open_orders_by_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_owner_check_header_names_the_least_checked_leg() {
-        let worst = [OwnerCheck::Checked, OwnerCheck::Unchecked]
-            .into_iter()
-            .max();
-        assert_eq!(worst, Some(OwnerCheck::Unchecked));
-        for (check, value) in [
-            (OwnerCheck::Checked, "checked"),
-            (OwnerCheck::Unchecked, "unchecked"),
-        ] {
-            let response = check.stamp(axum::http::StatusCode::OK.into_response());
-            assert_eq!(response.headers()[OWNER_CHECK_HEADER], value);
-        }
-    }
 
     fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
         list.iter()
@@ -1496,10 +1390,10 @@ mod tests {
         assert_eq!(w["item"], "0xabc-12");
         assert_eq!(w["expiresAt_gt"], "1000");
         assert_eq!(legacy_order_by(f.sort_by), ("price", "asc"));
-        let sql = trades_leg_sql(" AND u.signer = $3", OwnerCheck::Checked);
+        let sql = trades_leg_sql(" AND u.signer = $3");
         assert!(
-            !trades_leg_sql("", OwnerCheck::Unchecked).contains("shop.nft")
-                && sql.contains("FROM shop.nft n")
+            sql.contains("JOIN shop.nft n")
+                && sql.contains("JOIN land_authz.token_right n")
                 && sql.contains("u.type = 'public_nft_order'")
                 && sql.contains("trade_cancellations")
                 && sql.contains("LIMIT 1000"),

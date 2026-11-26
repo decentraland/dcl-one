@@ -49,8 +49,8 @@ trades mirror and its verdicts ready on it; and, when an open LAND or
 estate order could be answered, the land-authz index ready, whose snapshot
 the read then runs on. Otherwise the route answers the unavailable envelope
 naming the index that is not ready. The v3 listings leg reads the same
-snapshot behind its owner guard, so the order book no longer has a partial
-mode. One request reads both legs at one instant, taken once its snapshot
+snapshot and requires an open trade verdict and ownership proof from the
+published NFT or land-authz fold. One request reads both legs at one instant, taken once its snapshot
 is established (so a fold published while the request waited is not read as
 published in the future), and its total counts each network up to the
 reader's cap and sums them, as the subgraph reader did.
@@ -59,7 +59,7 @@ A node that walks the index on its catalogue, mainnet or the Sepolia/Amoy
 pair (`Settings::walks_catalogue`), reads the book. One that does not (the
 switch off, or chain settings that do not match the catalogue `ETH_NETWORK`
 names) keeps the collections subgraph reader for its legacy orders and
-serves the v3 listings unguarded, as before.
+checks the v3 listings using the same published trade and ownership proof.
 
 The book keeps its own marker per network (`shop.legacy_order_cursor`): the
 nft walk's last block when the order fold last ran, and that block's hash.

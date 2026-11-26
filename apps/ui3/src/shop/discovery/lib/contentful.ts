@@ -47,12 +47,15 @@ const IMAGE_HOST = "cms-images.decentraland.org";
 
 function cmsConfig(): CmsConfig | null {
   const w = typeof window !== "undefined" ? (window as CmsWindow).__SHOP_CMS__ : undefined;
-  const env = typeof import.meta !== "undefined" ? import.meta.env : undefined;
+  // Each key read on its own: a whole `import.meta.env` puts every build-time `VITE_*` value in the bundle.
+  const meta = typeof import.meta !== "undefined";
   const cfg = {
-    url: w?.url ?? (env?.VITE_SHOP_CMS_URL as string | undefined) ?? "",
-    spaceId: w?.spaceId ?? (env?.VITE_SHOP_CMS_SPACE_ID as string | undefined) ?? "",
-    environment: w?.environment ?? (env?.VITE_SHOP_CMS_ENVIRONMENT as string | undefined) ?? "",
-    adminEntryId: w?.adminEntryId ?? (env?.VITE_SHOP_CMS_ADMIN_ENTRY as string | undefined) ?? "",
+    url: w?.url ?? (meta ? (import.meta.env?.VITE_SHOP_CMS_URL as string | undefined) : undefined) ?? "",
+    spaceId: w?.spaceId ?? (meta ? (import.meta.env?.VITE_SHOP_CMS_SPACE_ID as string | undefined) : undefined) ?? "",
+    environment:
+      w?.environment ?? (meta ? (import.meta.env?.VITE_SHOP_CMS_ENVIRONMENT as string | undefined) : undefined) ?? "",
+    adminEntryId:
+      w?.adminEntryId ?? (meta ? (import.meta.env?.VITE_SHOP_CMS_ADMIN_ENTRY as string | undefined) : undefined) ?? "",
   };
   return cfg.url && cfg.spaceId && cfg.environment && cfg.adminEntryId ? cfg : null;
 }

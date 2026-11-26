@@ -86,3 +86,6 @@ alloy = { version = "2", default-features = false, features = ["std", "signer-lo
 tokio-tungstenite.workspace = true
 proptest = "1.11.0"
 rcgen = "0.14.10"
+
+[lints.clippy]
+unwrap_used = "deny"

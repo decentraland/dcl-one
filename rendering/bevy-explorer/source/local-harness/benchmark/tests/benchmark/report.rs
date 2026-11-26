@@ -564,27 +564,100 @@ fn the_command_refuses_a_pr_that_is_not_a_number() {
     assert!(!out.exists());
 }
 
+/// An explorer source file, by its path under `rendering/bevy-explorer/source`.
+fn explorer_source(file: &str) -> String {
+    let source = PathBuf::from(env!("DCL_ONE_ROOT")).join("rendering/bevy-explorer/source");
+    std::fs::read_to_string(source.join(file)).unwrap_or_else(|error| panic!("{file}: {error}"))
+}
+
+/// The value of `pub const <name>: &str = "...";` in an explorer source file.
+fn explorer_constant(file: &str, name: &str) -> String {
+    let source = explorer_source(file);
+    let line = source
+        .lines()
+        .find(|l| l.starts_with(&format!("pub const {name}: &str = \"")))
+        .unwrap_or_else(|| panic!("{name} in {file}"));
+    line.split('"').nth(1).unwrap().to_string()
+}
+
 /// The two markers the log parser counts by are the ones the explorer writes
 /// (`perf_output::format`, which takes the exit marker from `common::autopilot`). `benchmark`
 /// cannot depend on `perf_output` without building the engine, so the sources are compared.
 #[test]
 fn the_log_markers_are_the_explorers() {
-    let crates = PathBuf::from(env!("DCL_ONE_ROOT")).join("rendering/bevy-explorer/source/crates");
-    let constant = |file: &str, name: &str| {
-        let source = std::fs::read_to_string(crates.join(file)).unwrap();
-        let line = source
-            .lines()
-            .find(|l| l.starts_with(&format!("pub const {name}: &str = \"")))
-            .unwrap_or_else(|| panic!("{name} in {file}"));
-        line.split('"').nth(1).unwrap().to_string()
-    };
     assert_eq!(
         report::EXIT_MARKER,
-        constant("common/src/autopilot.rs", "EXIT_MARKER")
+        explorer_constant("crates/common/src/autopilot.rs", "EXIT_MARKER")
     );
     assert_eq!(
         report::EXCEPTION_MARKER,
-        constant("perf_output/src/format.rs", "EXCEPTION_MARKER")
+        explorer_constant("crates/perf_output/src/format.rs", "EXCEPTION_MARKER")
+    );
+}
+
+#[test]
+fn load_time_lines_add_rows_with_verdicts() {
+    let report = report_of("load-times");
+    let intel = section(&report, "Intel Core i5 (Chrome)");
+    for row in [
+        "| Time to world | 12.1 s (12.0–12.3) | 10.2 s (10.0–10.4) | -1.9 s | 🟢 16% faster |",
+        "| First ring ready | 4.2 s (4.0–4.3) | 4.1 s (4.0–4.2) | -0.1 s | ⚪ within noise |",
+    ] {
+        assert!(intel.contains(&row), "{row}\n{intel:#?}");
+    }
+    has_line(
+        &report,
+        "**Overall: 🟢 Time to world improved on Intel Core i5 (Chrome)**",
+    );
+
+    // a section whose logs hold no load times keeps its table as it was
+    let ok = report_of("ok");
+    assert!(
+        !ok.markdown.contains("| Time to world |"),
+        "{}",
+        ok.markdown
+    );
+}
+
+/// The load-time entries the log parser reads are the ones the explorer writes: the autopilot's
+/// phase line (the derived `Debug` of the unit variant `AutopilotPhase::Measuring` prints
+/// `Measuring`) and the scene load timing's arrival line, under their log targets.
+#[test]
+fn the_load_time_lines_are_the_explorers() {
+    let read = explorer_source;
+    let constant = explorer_constant;
+    let load_timing = "crates/scene_runner/src/load_timing.rs";
+    assert_eq!(
+        report::AUTOPILOT_CATEGORY,
+        constant("crates/common/src/autopilot.rs", "LOG_TARGET")
+    );
+    assert_eq!(
+        report::SCENE_TIMING_CATEGORY,
+        constant(load_timing, "LOG_TARGET")
+    );
+    assert_eq!(
+        report::FIRST_RING_READY_PREFIX,
+        format!("{} ", constant(load_timing, "FIRST_RING_READY"))
+    );
+    assert!(read(load_timing).contains(r#""{FIRST_RING_READY} {} ms after the scene spawned""#));
+
+    assert_eq!(report::ARRIVED_IN_WORLD_PREFIX, "phase Measuring at ");
+    assert!(
+        read("src/autopilot.rs").contains(r#"info!(target: LOG_TARGET, "phase {:?} at {:.1} s""#)
+    );
+    let phase = read("crates/common/src/autopilot.rs");
+    let variants = phase
+        .split_once("pub enum AutopilotPhase {")
+        .and_then(|(derives, variants)| {
+            let derive = derives.lines().rev().find(|l| l.starts_with("#[derive("))?;
+            derive
+                .contains("Debug")
+                .then_some(variants.split_once("\n}")?.0)
+        })
+        .expect("AutopilotPhase derives Debug in common/src/autopilot.rs");
+    assert!(
+        variants.lines().any(|l| l.trim() == "Measuring,"),
+        "{variants}"
     );
 }
 

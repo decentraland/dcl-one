@@ -2913,9 +2913,7 @@ async fn each_ownership_route_follows_the_nft_index_state() {
                 network,
                 ..Default::default()
             };
-            let answered = super::orders::list_orders_checked(&orders_state, &f)
-                .await
-                .is_ok();
+            let answered = super::orders::list_orders(&orders_state, &f).await.is_ok();
             assert_eq!(
                 answered,
                 published == ok,
