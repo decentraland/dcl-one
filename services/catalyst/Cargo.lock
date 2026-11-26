@@ -1796,6 +1796,7 @@ dependencies = [
  "async-trait",
  "axum",
  "catalyst-shared",
+ "chrono",
  "dcl-http",
  "dcl-metrics",
  "reqwest 0.13.5",

@@ -47,15 +47,14 @@ pub const INDEXER_MANA: &str = "mana_transfers";
 
 pub const INDEXER_COMMITTEE: &str = "committee";
 
-pub const INDEXER_COLLECTIONS: &str = "collections";
+pub use crate::chain_index::catalogue::INDEXER_COLLECTIONS;
 
 pub const INDEXER_NFT: &str = "nft";
 pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
 pub const INDEXER_THIRD_PARTY_REGISTRY: &str = "third_party_registry";
 
-/// How old a publish may be before readers stop trusting it (a stopped job).
-pub const READY_WINDOW: ChronoDuration = ChronoDuration::minutes(30);
+pub use crate::chain_index::catalogue::READY_WINDOW;
 
 /// The two chains the marketplace indexes walk; the `network` column's spelling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1071,9 +1070,7 @@ pub fn published_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_cha
     )
 }
 
-/// How far ahead of the caller's clock the database's `updated_at` may be and
-/// still count as advanced.
-pub(crate) const MAX_CLOCK_SKEW: ChronoDuration = ChronoDuration::minutes(10);
+pub(crate) use crate::chain_index::catalogue::MAX_CLOCK_SKEW;
 
 /// A liveness heuristic for whether cursor `c` serves its index at `now`:
 /// ready, or bound to its network's mainnet chain, out of quarantine, not
