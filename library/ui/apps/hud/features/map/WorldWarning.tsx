@@ -1,8 +1,8 @@
 // Shown over the map while the player is in a world: the map is still Genesis City's.
 
-import { MaskIcon } from '../../design/MaskIcon'
 import { PANEL_ART } from './mapArt'
 import styles from './MapNotices.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 export const WORLDS_WARNING = 'This is the Genesis City map. If you jump into any of this places you will leave the world you are currently visiting.'
 

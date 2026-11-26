@@ -321,6 +321,7 @@ struct StateCfg {
     require_purchase_intent: bool,
     admin_token: Option<&'static str>,
     writes_enabled: bool,
+    daily_studio_deposit_limit_cents: Option<i64>,
     revenue_events: Option<Arc<dyn super::events::RevenueEvents>>,
 }
 
@@ -335,6 +336,7 @@ impl Default for StateCfg {
             require_purchase_intent: false,
             admin_token: None,
             writes_enabled: true,
+            daily_studio_deposit_limit_cents: None,
             revenue_events: None,
         }
     }
@@ -356,6 +358,7 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
         credits_onchain_authorize_enabled: cfg.onchain_authorize_enabled,
         require_purchase_intent: cfg.require_purchase_intent,
         admin_token: cfg.admin_token.map(str::to_string),
+        daily_studio_deposit_limit_cents: cfg.daily_studio_deposit_limit_cents,
         marketplace_markup_bps: 0,
         mana_price_max_staleness_secs: 3600,
         ..RawSettings::default()
@@ -4383,6 +4386,102 @@ async fn delete_events(pool: &PgPool, prefix: &str) {
         .execute(pool)
         .await
         .unwrap();
+}
+
+/// The Stripe webhook queues the purchase feed in its transaction: a pack
+/// credited once (a redelivery adds nothing), a refund clawing part of it
+/// back, and a chargeback that matches no paid purchase.
+#[tokio::test]
+async fn the_webhook_queues_the_purchase_feed_in_its_transaction() {
+    use super::alerts;
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let addr = scratch_wallet().address;
+    let pack = PackRow {
+        sku: "feed-pack".into(),
+        title: "Feed".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let pi = unique("pi_feed");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &pi)
+        .await
+        .unwrap();
+    let app = app(state.clone());
+    let feed = async |kind: &str, key: &str| -> Vec<Value> {
+        sqlx::query_scalar::<_, sqlx::types::Json<Value>>(
+            "SELECT payload FROM credits.alerts WHERE kind = $1 AND dedupe_key = $2",
+        )
+        .bind(kind)
+        .bind(key)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|payload| payload.0)
+        .collect()
+    };
+
+    let paid = json!({ "id": unique("evt_feed_paid"), "type": "payment_intent.succeeded", "data": { "object": { "id": pi, "amount": 500, "currency": "usd" } } }).to_string();
+    for _ in 0..2 {
+        let (status, out) = deliver(&app, &paid).await;
+        assert_eq!(status, StatusCode::OK, "{out}");
+    }
+    let credited = feed(alerts::PACK_CREDITED, &format!("pack:{pi}")).await;
+    assert_eq!(credited.len(), 1, "{credited:?}");
+    assert_eq!(credited[0]["address"], addr.as_str());
+    assert_eq!(credited[0]["packId"], "feed-pack");
+    assert_eq!(credited[0]["chargedCents"], 500);
+    assert_eq!(credited[0]["quantity"], 1);
+
+    let refund_evt = unique("evt_feed_refund");
+    let refund = json!({ "id": refund_evt, "type": "charge.refunded", "data": { "object": { "payment_intent": pi, "amount_refunded": 250 } } }).to_string();
+    assert_eq!(deliver(&app, &refund).await.0, StatusCode::OK);
+    let reversed = feed(alerts::PACK_REVERSED, &format!("stripe:{refund_evt}:{pi}")).await;
+    assert_eq!(reversed.len(), 1, "{reversed:?}");
+    assert!(
+        reversed[0]["chargedBack"]
+            .as_str()
+            .unwrap()
+            .starts_with("25"),
+        "{reversed:?}"
+    );
+    assert_eq!(reversed[0]["packId"], "feed-pack");
+    assert_eq!(reversed[0]["reason"], "refund");
+    assert_eq!(reversed[0]["hasShortfall"], false);
+
+    let (ghost, dispute_evt) = (unique("pi_ghost"), unique("evt_feed_dispute"));
+    let dispute = json!({ "id": dispute_evt, "type": "charge.dispute.created", "data": { "object": { "payment_intent": ghost, "status": "needs_response" } } }).to_string();
+    assert_eq!(deliver(&app, &dispute).await.0, StatusCode::OK);
+    let unmatched = feed(
+        alerts::REVERSAL_UNMATCHED,
+        &format!("stripe:{dispute_evt}:{ghost}"),
+    )
+    .await;
+    assert_eq!(unmatched.len(), 1, "{unmatched:?}");
+    assert_eq!(unmatched[0]["reason"], "chargeback");
+
+    for key in [
+        format!("pack:{pi}"),
+        format!("stripe:{refund_evt}:{pi}"),
+        format!("stripe:{dispute_evt}:{ghost}"),
+    ] {
+        sqlx::query("DELETE FROM credits.alerts WHERE dedupe_key = $1")
+            .bind(key)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("DELETE FROM credits.purchases WHERE stripe_payment_intent = $1")
+        .bind(&pi)
+        .execute(&pool)
+        .await
+        .unwrap();
+    cleanup(&pool, &addr).await;
 }
 
 fn webhook_state(pool: &PgPool) -> SharedState {
@@ -11637,6 +11736,1440 @@ async fn a_balance_stream_retries_a_failed_read() {
         50
     );
     db.drop().await;
+}
+
+/// The operator bearer the studio tests send.
+fn admin_bearer() -> HeaderMap {
+    let mut bearer = HeaderMap::new();
+    bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
+    bearer
+}
+
+fn studio_state(pool: PgPool, daily_limit_cents: Option<i64>) -> SharedState {
+    test_state(
+        pool,
+        StateCfg {
+            admin_token: Some("s3cret"),
+            daily_studio_deposit_limit_cents: daily_limit_cents,
+            ..StateCfg::default()
+        },
+    )
+}
+
+/// Creates a studio over the admin route and answers its id.
+async fn create_test_studio(app: &Router, name: &str) -> String {
+    let (status, _, v) = send(
+        app,
+        "POST",
+        "/credits/admin/studios",
+        admin_bearer(),
+        Some(json!({ "name": name })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    v["studio"]["id"].as_str().unwrap().to_string()
+}
+
+/// A studio's life over the operator routes, with credits-server's codes.
+#[tokio::test]
+async fn a_studio_is_created_listed_renamed_and_paused() {
+    let Some(pool) = pool().await else { return };
+    let app = app(studio_state(pool.clone(), None));
+    let name = unique("Studio");
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/studios",
+        HeaderMap::new(),
+        Some(json!({ "name": name })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "no bearer and no admin wallet, no studio: {v}"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/studios",
+        admin_bearer(),
+        Some(json!({ "name": format!("  {name}  ") })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let studio = &v["studio"];
+    let id = studio["id"].as_str().unwrap().to_string();
+    assert_eq!(studio["name"], name.as_str(), "trimmed");
+    assert_eq!(studio["status"], "active");
+    assert_eq!(studio["createdBy"], "token:CATALYRST_CREDITS_ADMIN_TOKEN");
+    assert_eq!(
+        (
+            studio["balanceCents"].as_i64(),
+            studio["operatorCount"].as_i64()
+        ),
+        (Some(0), Some(0))
+    );
+    assert!(
+        studio["createdAt"].as_i64().unwrap() > 1_700_000_000_000,
+        "epoch milliseconds"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/studios",
+        admin_bearer(),
+        Some(json!({ "name": name.to_uppercase() })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::CONFLICT, Some("STUDIO_NAME_TAKEN")),
+        "a name differing only in case: {v}"
+    );
+    for (body, why) in [
+        (json!({ "name": "two\nlines" }), "a line break"),
+        (json!({ "name": "zero\u{200B}width" }), "a format character"),
+        (json!({}), "no name"),
+        (json!([name]), "not an object"),
+    ] {
+        let (status, _, v) = send(
+            &app,
+            "POST",
+            "/credits/admin/studios",
+            admin_bearer(),
+            Some(body),
+        )
+        .await;
+        assert_eq!(
+            (status, v["code"].as_str()),
+            (StatusCode::BAD_REQUEST, Some("INVALID_REQUEST")),
+            "{why}: {v}"
+        );
+    }
+
+    let (status, _, v) = send(&app, "GET", "/credits/admin/studios", admin_bearer(), None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert!(
+        v["studios"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == id.as_str()),
+        "{v}"
+    );
+
+    let path = format!("/credits/admin/studios/{id}");
+    let (status, _, v) = send(
+        &app,
+        "PATCH",
+        &path,
+        admin_bearer(),
+        Some(json!({ "status": "paused", "name": format!("{name} Two") })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        (v["studio"]["status"].as_str(), v["studio"]["name"].as_str()),
+        (Some("paused"), Some(format!("{name} Two").as_str()))
+    );
+    for (body, message) in [
+        (json!({}), "Nothing to update"),
+        (
+            json!({ "status": "closed" }),
+            "\"status\" must be \"active\" or \"paused\"",
+        ),
+        (json!({ "name": null }), "\"name\" is required"),
+    ] {
+        let (status, _, v) = send(&app, "PATCH", &path, admin_bearer(), Some(body)).await;
+        assert_eq!(
+            (status, v["error"].as_str(), v["code"].as_str()),
+            (
+                StatusCode::BAD_REQUEST,
+                Some(message),
+                Some("INVALID_REQUEST")
+            ),
+            "{v}"
+        );
+    }
+
+    let (status, _, v) = send(&app, "GET", &path, admin_bearer(), None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["studio"]["status"], "paused");
+    assert_eq!(v["page"], json!({ "limit": 50, "offset": 0, "total": 0 }));
+    assert_eq!(v["grantLimits"], json!({ "maxGrantCents": null }));
+
+    let unknown = format!("/credits/admin/studios/{}", uuid::Uuid::new_v4());
+    let (status, _, v) = send(&app, "GET", &unknown, admin_bearer(), None).await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "PATCH",
+        &unknown,
+        admin_bearer(),
+        Some(json!({ "status": "active" })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        "/credits/admin/studios/not-a-uuid",
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, v["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("Invalid studio id")),
+        "{v}"
+    );
+
+    let actions: Vec<String> = sqlx::query_scalar(
+        "SELECT action FROM ops.admin_audit WHERE domain = 'credits' AND target = $1 ORDER BY id",
+    )
+    .bind(&id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(actions, ["studio.create", "studio.update"]);
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// An operator is added once (in any case) and removed once; an unknown
+/// studio and an unknown operator are told apart.
+#[tokio::test]
+async fn a_studio_operator_is_added_once_and_removed_once() {
+    let Some(pool) = pool().await else { return };
+    let app = app(studio_state(pool.clone(), None));
+    let id = create_test_studio(&app, &unique("Operators")).await;
+    let wallet = scratch_wallet();
+    let operators = format!("/credits/admin/studios/{id}/operators");
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &operators,
+        admin_bearer(),
+        Some(json!({ "address": wallet.address.to_uppercase().replace("0X", "0x") })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    assert_eq!(
+        v,
+        json!({ "studioId": id, "address": wallet.address, "added": true })
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &operators,
+        admin_bearer(),
+        Some(json!({ "address": wallet.address })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["added"].as_bool()),
+        (StatusCode::OK, Some(false)),
+        "already an operator: {v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &operators,
+        admin_bearer(),
+        Some(json!({ "address": "0x12" })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["error"].as_str()),
+        (
+            StatusCode::BAD_REQUEST,
+            Some("\"address\" must be a wallet address")
+        ),
+        "{v}"
+    );
+    let unknown = uuid::Uuid::new_v4();
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &format!("/credits/admin/studios/{unknown}/operators"),
+        admin_bearer(),
+        Some(json!({ "address": wallet.address })),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        &format!("/credits/admin/studios/{id}"),
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["studio"]["operatorCount"], 1);
+    assert_eq!(v["operators"][0]["address"], wallet.address.as_str());
+    assert_eq!(
+        v["operators"][0]["addedBy"],
+        "token:CATALYRST_CREDITS_ADMIN_TOKEN"
+    );
+
+    let one = format!("{operators}/{}", wallet.address);
+    let (status, _, v) = send(&app, "DELETE", &one, admin_bearer(), None).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v,
+        json!({ "studioId": id, "address": wallet.address, "removed": true })
+    );
+    let (status, _, v) = send(&app, "DELETE", &one, admin_bearer(), None).await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("OPERATOR_NOT_FOUND")),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "DELETE",
+        &format!(
+            "/credits/admin/studios/{unknown}/operators/{}",
+            wallet.address
+        ),
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::NOT_FOUND, Some("STUDIO_NOT_FOUND")),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "DELETE",
+        &format!("{operators}/nope"),
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, v["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("Invalid wallet address")),
+        "{v}"
+    );
+
+    let actions: Vec<String> = sqlx::query_scalar(
+        "SELECT action FROM ops.admin_audit WHERE domain = 'credits' AND target = $1 ORDER BY id",
+    )
+    .bind(&id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        actions,
+        [
+            "studio.create",
+            "studio.operator.add",
+            "studio.operator.remove"
+        ],
+        "a no-op is not audited"
+    );
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// A studio's budget: a deposit, its replay, the day's ceiling over every
+/// studio, an adjustment either way never below zero, and new budget refused
+/// while no ceiling is set. Its own database: the ceiling sums every studio.
+#[tokio::test]
+async fn a_studio_budget_stays_within_its_balance_and_the_days_ceiling() {
+    let Some(db) = OwnDatabase::create("studio_budget").await else {
+        return;
+    };
+    clear_of_utc_midnight(&db.pool).await;
+    // $12.00 of new budget a day.
+    let unset = app(studio_state(db.pool.clone(), None));
+    let app = app(studio_state(db.pool.clone(), Some(1200)));
+    let id = create_test_studio(&app, "Acme").await;
+    let other = create_test_studio(&app, "Other").await;
+    let budget = format!("/credits/admin/studios/{id}/budget");
+    let change = |kind: &str, credits: i64, note: Option<&str>, key: &str| json!({ "kind": kind, "credits": credits, "note": note, "idempotencyKey": key });
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 100, None, "deposit-0001")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let first = v["entryId"].as_str().unwrap().to_string();
+    assert_eq!(
+        v,
+        json!({ "entryId": first, "studioId": id, "kind": "deposit", "usdCents": 1000, "balanceCents": 1000, "replayed": false })
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 100, None, "deposit-0001")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["entryId"].as_str(), v["replayed"].as_bool()),
+        (StatusCode::OK, Some(first.as_str()), Some(true)),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 101, None, "deposit-0001")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::CONFLICT, Some("IDEMPOTENCY_KEY_REUSED")),
+        "{v}"
+    );
+
+    // The ceiling counts every studio's new budget.
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &format!("/credits/admin/studios/{other}/budget"),
+        admin_bearer(),
+        Some(change("deposit", 30, None, "deposit-0002")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{v}");
+    assert_eq!(v["code"], "DAILY_DEPOSIT_LIMIT_EXCEEDED");
+    assert_eq!(
+        v["error"],
+        "Daily studio deposit limit exceeded: $10.00 already added today, $3.00 requested, limit $12.00"
+    );
+
+    for (body, message) in [
+        (
+            change("deposit", -5, None, "deposit-0003"),
+            "A deposit must be positive; use an adjustment to take budget away",
+        ),
+        (
+            change("adjustment", -50, None, "adjust-0001"),
+            "An adjustment needs a \"note\" saying why",
+        ),
+        (
+            change("adjustment", -50, Some("  "), "adjust-0001"),
+            "An adjustment needs a \"note\" saying why",
+        ),
+        (
+            change("refund", 5, None, "refund-0001"),
+            "\"kind\" must be \"deposit\" or \"adjustment\"",
+        ),
+    ] {
+        let (status, _, v) = send(&app, "POST", &budget, admin_bearer(), Some(body)).await;
+        assert_eq!(
+            (status, v["error"].as_str()),
+            (StatusCode::BAD_REQUEST, Some(message)),
+            "{v}"
+        );
+    }
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 5, None, "short")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("INVALID_REQUEST")),
+        "a short key: {v}"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("adjustment", -50, Some("overpaid"), "adjust-0001")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["balanceCents"].as_i64()),
+        (StatusCode::CREATED, Some(500)),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("adjustment", -60, Some("too far"), "adjust-0002")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (StatusCode::CONFLICT, Some("STUDIO_BUDGET_EXCEEDED")),
+        "{v}"
+    );
+    // An upward adjustment is new budget: exactly up to the ceiling.
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("adjustment", 20, Some("bonus"), "adjust-0003")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["balanceCents"].as_i64()),
+        (StatusCode::CREATED, Some(700)),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 1, None, "deposit-0004")),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "the day is spent: {v}"
+    );
+
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        &format!("/credits/admin/studios/{id}?limit=2"),
+        admin_bearer(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["page"], json!({ "limit": 2, "offset": 0, "total": 3 }));
+    let entries = v["entries"].as_array().unwrap();
+    assert_eq!(
+        entries
+            .iter()
+            .map(|e| (e["kind"].as_str().unwrap(), e["usdCents"].as_i64().unwrap()))
+            .collect::<Vec<_>>(),
+        [("adjustment", 200), ("adjustment", -500)],
+        "newest first"
+    );
+    assert_eq!(entries[1]["note"], "overpaid");
+    assert_eq!(
+        (
+            entries[0]["creditId"].clone(),
+            entries[0]["recipient"].clone()
+        ),
+        (Value::Null, Value::Null)
+    );
+    let studio = &v["studio"];
+    assert_eq!(
+        (
+            studio["balanceCents"].as_i64(),
+            studio["depositedCents"].as_i64(),
+            studio["grantedCents"].as_i64(),
+            studio["grantCount"].as_i64()
+        ),
+        (Some(700), Some(1000), Some(0), Some(0))
+    );
+
+    // Without a ceiling new budget is refused; a replay and a reduction are not.
+    let (status, _, v) = send(
+        &unset,
+        "POST",
+        &format!("/credits/admin/studios/{other}/budget"),
+        admin_bearer(),
+        Some(change("deposit", 1, None, "deposit-0005")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["code"].as_str()),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("DEPOSITS_NOT_CONFIGURED")
+        ),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &unset,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("deposit", 100, None, "deposit-0001")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["replayed"].as_bool(), v["balanceCents"].as_i64()),
+        (StatusCode::OK, Some(true), Some(700)),
+        "{v}"
+    );
+    let (status, _, v) = send(
+        &unset,
+        "POST",
+        &budget,
+        admin_bearer(),
+        Some(change("adjustment", -10, Some("fee"), "adjust-0004")),
+    )
+    .await;
+    assert_eq!(
+        (status, v["balanceCents"].as_i64()),
+        (StatusCode::CREATED, Some(600)),
+        "{v}"
+    );
+
+    let audited: i64 = sqlx::query_scalar("SELECT count(*) FROM ops.admin_audit WHERE domain = 'credits' AND action = 'studio.budget' AND target = $1")
+        .bind(&id)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        audited, 4,
+        "one row per written entry, none for a replay or a refusal"
+    );
+    db.drop().await;
+}
+
+/// Waits out the database clock's last two minutes of a UTC day, so a test
+/// of the day's deposit ceiling runs within one day.
+async fn clear_of_utc_midnight(pool: &PgPool) {
+    let left: f64 = sqlx::query_scalar(
+        "SELECT EXTRACT(EPOCH FROM date_trunc('day', timezone('UTC', clock_timestamp())) \
+             + interval '1 day' - timezone('UTC', clock_timestamp()))::float8",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    if left < 120.0 {
+        tokio::time::sleep(std::time::Duration::from_secs_f64(left + 1.0)).await;
+    }
+}
+
+/// Two deposits that each fit the day's ceiling but not together: the
+/// deposits lock lets exactly one through, across studios, round after round,
+/// even with every connection defaulting to REPEATABLE READ (the budget
+/// transaction pins its own level; inherited, a waiter's snapshot would
+/// predate the deposit it waited for).
+#[tokio::test]
+async fn concurrent_studio_deposits_never_pass_the_days_ceiling_together() {
+    let Some(db) = OwnDatabase::create("studio_ceiling").await else {
+        return;
+    };
+    clear_of_utc_midnight(&db.pool).await;
+    sqlx::raw_sql(
+        "DO $$ BEGIN EXECUTE format('ALTER DATABASE %I SET default_transaction_isolation = %L', \
+         current_database(), 'repeatable read'); END $$",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .connect_with((*db.pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let level: String = sqlx::query_scalar("SHOW transaction_isolation")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(level, "repeatable read");
+    let setup = app(studio_state(pool.clone(), Some(1_000_000)));
+    let a = create_test_studio(&setup, "A").await;
+    let b = create_test_studio(&setup, "B").await;
+    for round in 0..5_i64 {
+        // Room for one more 600-cent deposit this round, not two.
+        let app = app(studio_state(pool.clone(), Some(600 * round + 1000)));
+        let deposit = |studio: &str, key: String| {
+            let app = app.clone();
+            let path = format!("/credits/admin/studios/{studio}/budget");
+            let body = json!({ "kind": "deposit", "credits": 60, "idempotencyKey": key });
+            async move { send(&app, "POST", &path, admin_bearer(), Some(body)).await }
+        };
+        let ((sa, _, va), (sb, _, vb)) = tokio::join!(
+            deposit(&a, format!("race-a-{round:04}")),
+            deposit(&b, format!("race-b-{round:04}"))
+        );
+        let mut statuses = [sa, sb];
+        statuses.sort();
+        assert_eq!(
+            statuses,
+            [StatusCode::CREATED, StatusCode::TOO_MANY_REQUESTS],
+            "round {round}: {va} {vb}"
+        );
+    }
+    let inflow: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(usd_cents), 0)::bigint FROM credits.studio_budget_entries",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(inflow, 5 * 600);
+    pool.close().await;
+    db.drop().await;
+}
+
+/// A studio's page reads one snapshot: while deposits commit, its balance,
+/// its entries and their total always agree.
+#[tokio::test]
+async fn a_studio_page_agrees_with_itself_while_deposits_commit() {
+    let Some(db) = OwnDatabase::create("studio_page").await else {
+        return;
+    };
+    let state = studio_state(db.pool.clone(), Some(1_000_000));
+    let id = create_test_studio(&app(state.clone()), "Page").await;
+    let writer = {
+        let state = state.clone();
+        let id = id.clone();
+        tokio::spawn(async move {
+            for n in 0..40 {
+                state
+                    .credits
+                    .record_studio_budget_change(super::studios::BudgetChangeRequest {
+                        studio_id: &id,
+                        kind: "deposit",
+                        usd_cents: 10,
+                        note: None,
+                        idempotency_key: &format!("page-{n:04}"),
+                        daily_deposit_limit_cents: Some(1_000_000),
+                        actor: "token:test",
+                    })
+                    .await
+                    .unwrap();
+            }
+        })
+    };
+    let mut reads = 0;
+    while reads == 0 || !writer.is_finished() {
+        let page = state
+            .credits
+            .studio_detail(&id, 200, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        let sum: i64 = page.entries.iter().map(|e| e.usd_cents).sum();
+        assert_eq!(
+            (
+                page.studio.balance_cents,
+                page.studio.deposited_cents,
+                page.total
+            ),
+            (sum, sum, page.entries.len() as i64),
+            "read {reads}"
+        );
+        reads += 1;
+    }
+    writer.await.unwrap();
+    let page = state
+        .credits
+        .studio_detail(&id, 200, 0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((page.studio.balance_cents, page.total), (400, 40));
+    db.drop().await;
+}
+
+/// The ops dashboard's wallets, as credits-server's read and read-write
+/// admins: a write admin's signed change names its address as the actor, and
+/// it reads too; a read admin reads but changes nothing; a signature binds
+/// its method; anyone else gets the gate's 401. The bearer keeps working.
+#[tokio::test]
+async fn studio_admins_sign_with_their_wallets() {
+    let Some(pool) = pool().await else { return };
+    let writer = scratch_wallet();
+    let reader = scratch_wallet();
+    let stranger = scratch_wallet();
+    let settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        admin_token: Some("s3cret".into()),
+        read_admin_addresses: reader.address.clone(),
+        write_admin_addresses: format!(" {} ,", writer.address.to_uppercase().replace("0X", "0x")),
+        ..RawSettings::default()
+    })
+    .unwrap();
+    let state: SharedState = Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        None,
+    ));
+    let app = app(state.clone());
+    let canonical = Router::new().nest("/shop-api", super::shop_router(state));
+
+    let (status, v) = call(
+        &app,
+        &writer,
+        "post",
+        "/credits/admin/studios",
+        &[],
+        Some(json!({ "name": unique("Signed") })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let id = v["studio"]["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        v["studio"]["createdBy"],
+        writer.address.as_str(),
+        "the signer is the actor"
+    );
+    let path = format!("/credits/admin/studios/{id}");
+
+    let (status, v) = call(&app, &reader, "get", &path, &[], None).await;
+    assert_eq!(status, StatusCode::OK, "a read admin reads: {v}");
+    let (status, v) = call(
+        &canonical,
+        &writer,
+        "get",
+        &format!("/shop-api/admin/studios/{id}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a write admin reads, on the canonical path too: {v}"
+    );
+    let (status, v) = call(
+        &app,
+        &reader,
+        "patch",
+        &path,
+        &[],
+        Some(json!({ "status": "paused" })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a read admin changes nothing: {v}"
+    );
+    let (status, v) = call(&app, &stranger, "get", "/credits/admin/studios", &[], None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{v}");
+    let (status, _, v) = send(
+        &app,
+        "PATCH",
+        &path,
+        signed_headers(&writer, "get", &path).await,
+        Some(json!({ "status": "paused" })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a signature binds its method: {v}"
+    );
+
+    let operator = scratch_wallet();
+    let (status, v) = call(
+        &app,
+        &writer,
+        "post",
+        &format!("{path}/operators"),
+        &[],
+        Some(json!({ "address": operator.address })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let mut bearer = HeaderMap::new();
+    bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
+    let (status, _, v) = send(
+        &app,
+        "PATCH",
+        &path,
+        bearer,
+        Some(json!({ "status": "paused" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "the bearer still works: {v}");
+
+    let actors: Vec<(String, String)> = sqlx::query_as(
+        "SELECT action, actor FROM ops.admin_audit WHERE domain = 'credits' AND target = $1 ORDER BY id",
+    )
+    .bind(&id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        actors,
+        [
+            ("studio.create".to_string(), writer.address.clone()),
+            ("studio.operator.add".to_string(), writer.address.clone()),
+            (
+                "studio.update".to_string(),
+                "token:CATALYRST_CREDITS_ADMIN_TOKEN".to_string()
+            ),
+        ]
+    );
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[test]
+fn a_bad_write_admin_address_fails_startup() {
+    let err = Settings::parse(RawSettings {
+        write_admin_addresses: "0x12".to_string(),
+        ..RawSettings::default()
+    })
+    .err()
+    .expect("refused");
+    assert!(
+        err.to_string().contains("CREDITS_WRITE_ADMIN_ADDRESSES"),
+        "{err}"
+    );
+}
+
+/// A shared cache within its acceptance TTL after a contract wallet's owner
+/// was removed: the cached answer still accepts; the contract itself (the
+/// fresh path) refuses.
+struct RevokedContract;
+
+/// The contract asked directly: it refuses.
+struct ContractRefuses;
+
+#[async_trait::async_trait]
+impl crate::auth::eip1654::Eip1654Validator for RevokedContract {
+    fn fresh_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+        Some(&ContractRefuses)
+    }
+
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        Ok(true)
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::auth::eip1654::Eip1654Validator for ContractRefuses {
+    fn fresh_validator(&self) -> Option<&dyn crate::auth::eip1654::Eip1654Validator> {
+        Some(self)
+    }
+
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        Ok(false)
+    }
+}
+
+/// A contract wallet's chain for `method path`: SIGNER (the contract), its
+/// EIP-1654 ephemeral delegation, and the request payload the ephemeral key
+/// signs.
+async fn contract_wallet_headers(contract: &str, method: &str, path: &str) -> HeaderMap {
+    let ephemeral = PrivateKeySigner::random();
+    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+    let expiration =
+        (chrono::Utc::now() + chrono::Duration::hours(1)).format("%Y-%m-%dT%H:%M:%S%.3fZ");
+    let payload = build_payload_v6(method, path, &timestamp, "{}");
+    let signature = ephemeral
+        .sign_message(payload.as_bytes())
+        .await
+        .unwrap()
+        .to_string();
+    let links = [
+        json!({ "type": "SIGNER", "payload": contract, "signature": "" }),
+        json!({ "type": "ECDSA_EIP_1654_EPHEMERAL",
+            "payload": format!("Decentraland Login\nEphemeral address: {:#x}\nExpiration: {expiration}", ephemeral.address()),
+            "signature": format!("0x{}", "11".repeat(65)) }),
+        json!({ "type": "ECDSA_SIGNED_ENTITY", "payload": payload, "signature": signature }),
+    ];
+    let mut headers = HeaderMap::new();
+    for (index, link) in links.iter().enumerate() {
+        headers.insert(
+            axum::http::HeaderName::try_from(format!("x-identity-auth-chain-{index}")).unwrap(),
+            link.to_string().parse().unwrap(),
+        );
+    }
+    headers.insert("x-identity-timestamp", timestamp.parse().unwrap());
+    headers.insert("x-identity-metadata", "{}".parse().unwrap());
+    headers
+}
+
+/// A studio change asks the contract itself, so a contract wallet whose owner
+/// was removed stops changing studios at once while a read keeps the cached
+/// answer. The proxy's `x-original-path` counts only when it is the route
+/// (the credits host signs credits-server's own path); a signature over
+/// another path that merely ends with it opens nothing, on either mount.
+#[tokio::test]
+async fn studio_admin_writes_ask_the_contract_and_bind_their_route() {
+    let Some(pool) = pool().await else { return };
+    let contract = format!("0x{:0>40}", "c0de5");
+    let wallet = scratch_wallet();
+    let settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        write_admin_addresses: format!("{contract},{}", wallet.address),
+        ..RawSettings::default()
+    })
+    .unwrap();
+    let state: SharedState = Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        Some(Arc::new(RevokedContract)),
+    ));
+    let app = app(state.clone());
+    let canonical = Router::new().nest("/shop-api", super::shop_router(state));
+    let list = "/credits/admin/studios";
+
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        list,
+        contract_wallet_headers(&contract, "get", list).await,
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a read keeps the cached answer: {v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        list,
+        contract_wallet_headers(&contract, "post", list).await,
+        Some(json!({ "name": unique("Revoked") })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a write asks the contract: {v}"
+    );
+
+    let mut proxied = signed_headers(&wallet, "post", "/admin/studios").await;
+    proxied.insert("x-original-path", "/admin/studios".parse().unwrap());
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        list,
+        proxied,
+        Some(json!({ "name": unique("Proxied") })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "the credits host's own path: {v}"
+    );
+    let id = v["studio"]["id"].as_str().unwrap().to_string();
+
+    for (router, path) in [(&app, list), (&canonical, "/shop-api/admin/studios")] {
+        let mut foreign = signed_headers(&wallet, "post", "/elsewhere/admin/studios").await;
+        foreign.insert(
+            "x-original-path",
+            "/elsewhere/admin/studios".parse().unwrap(),
+        );
+        let (status, _, v) = send(
+            router,
+            "POST",
+            path,
+            foreign,
+            Some(json!({ "name": unique("Foreign") })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}: {v}");
+    }
+
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// A wallet's studio write may commit to its body: the signed `bodySha256`
+/// must be the SHA-256 of the exact bytes sent, or the write is refused before
+/// anything is written. With `CREDITS_ADMIN_WRITES_REQUIRE_BOUND_BODY` a write
+/// that signs no hash is refused too; off, it is accepted as credits-server
+/// accepted it. The bearer signs nothing and is unaffected.
+#[tokio::test]
+async fn a_wallet_studio_write_is_bound_to_its_body() {
+    let Some(pool) = pool().await else { return };
+    let writer = scratch_wallet();
+    let state_requiring = |required: bool| -> SharedState {
+        let settings = Settings::parse(RawSettings {
+            writes_enabled: true,
+            usage_chain_id: super::usage::CHAIN_POLYGON,
+            checkout_fulfillment_mode: "secondary".into(),
+            marketplace_markup_bps: 0,
+            mana_price_max_staleness_secs: 3600,
+            admin_token: Some("s3cret".into()),
+            write_admin_addresses: writer.address.clone(),
+            admin_writes_require_bound_body: required,
+            ..RawSettings::default()
+        })
+        .unwrap();
+        Arc::new(State::with_sources(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+            Arc::new(FakeMarket::default()),
+            Arc::new(MockBroker::configured()),
+            None,
+        ))
+    };
+    let path = "/credits/admin/studios";
+    let sha = |body: &Value| {
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
+            body.to_string().as_bytes(),
+        ))
+    };
+    let bound = |hash: String| -> &'static str {
+        Box::leak(json!({ "bodySha256": hash }).to_string().into_boxed_str())
+    };
+    let created = |v: &Value| v["studio"]["id"].as_str().map(str::to_string);
+    let mut ids = Vec::new();
+
+    for required in [true, false] {
+        let app = app(state_requiring(required));
+        let body = json!({ "name": unique("Bound") });
+        let headers = signed_headers_with(&writer, "post", path, bound(sha(&body))).await;
+        let (status, _, v) = send(&app, "POST", path, headers, Some(body)).await;
+        assert_eq!(
+            status,
+            StatusCode::CREATED,
+            "a body matching its signed hash (required: {required}): {v}"
+        );
+        ids.extend(created(&v));
+
+        let signed_for = json!({ "name": unique("Signed") });
+        let swapped_name = unique("Swapped");
+        let headers = signed_headers_with(&writer, "post", path, bound(sha(&signed_for))).await;
+        let (status, _, v) = send(
+            &app,
+            "POST",
+            path,
+            headers,
+            Some(json!({ "name": swapped_name })),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "another body than the one signed (required: {required}): {v}"
+        );
+        let written: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM credits.studios WHERE name = $1")
+                .bind(&swapped_name)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(written, 0, "refused before anything is written");
+
+        let unbound = json!({ "name": unique("Unbound") });
+        let headers = signed_headers(&writer, "post", path).await;
+        let (status, _, v) = send(&app, "POST", path, headers, Some(unbound)).await;
+        let expected = if required {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::CREATED
+        };
+        assert_eq!(
+            status, expected,
+            "a write that signs no hash (required: {required}): {v}"
+        );
+        ids.extend(created(&v));
+
+        let (status, _, v) = send(
+            &app,
+            "POST",
+            path,
+            admin_bearer(),
+            Some(json!({ "name": unique("Bearer") })),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::CREATED,
+            "the bearer signs nothing (required: {required}): {v}"
+        );
+        ids.extend(created(&v));
+    }
+    for id in ids {
+        sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}
+
+/// [`signed_headers_with`] over the legacy payload (everything folded to
+/// lowercase), signing `signed` and sending `sent` as the metadata: two
+/// spellings the legacy signature treats as the same.
+async fn legacy_signed_headers(
+    w: &Wallet,
+    method: &str,
+    path: &str,
+    signed: &str,
+    sent: &'static str,
+) -> HeaderMap {
+    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+    let payload =
+        crate::shared::signed_fetch::build_legacy_payload(method, path, &timestamp, signed);
+    let signature = w
+        .signer
+        .sign_message(payload.as_bytes())
+        .await
+        .unwrap()
+        .to_string();
+    let chain = [
+        AuthLink {
+            link_type: AuthLinkType::SIGNER,
+            payload: w.address.clone(),
+            signature: None,
+        },
+        AuthLink {
+            link_type: AuthLinkType::EcdsaSignedEntity,
+            payload,
+            signature: Some(signature),
+        },
+    ];
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTH_TIMESTAMP_HEADER,
+        HeaderValue::from_str(&timestamp).unwrap(),
+    );
+    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static(sent));
+    for (i, link) in chain.iter().enumerate() {
+        headers.insert(
+            axum::http::HeaderName::from_bytes(format!("{AUTH_CHAIN_HEADER_PREFIX}{i}").as_bytes())
+                .unwrap(),
+            HeaderValue::from_str(&serde_json::to_string(link).unwrap()).unwrap(),
+        );
+    }
+    headers
+}
+
+/// A signed body hash holds in either signature format and in any casing of
+/// its key, while the unbound compatibility branch is on: a legacy signature
+/// over `bodySha256` sent as `BODYSHA256` with another body is refused, as is
+/// a metadata that spells the key twice, with nothing written; a DELETE's
+/// signed hash commits to the bytes it sends, so the operator stays.
+#[tokio::test]
+async fn a_studio_write_keeps_its_body_binding_in_every_spelling() {
+    let Some(pool) = pool().await else { return };
+    let writer = scratch_wallet();
+    let settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        admin_token: Some("s3cret".into()),
+        write_admin_addresses: writer.address.clone(),
+        admin_writes_require_bound_body: false,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    let app = app(Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        None,
+    )));
+    let path = "/credits/admin/studios";
+    let sha = |bytes: &[u8]| hex::encode(<sha2::Sha256 as sha2::Digest>::digest(bytes));
+    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    let written = async |name: &str| -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM credits.studios WHERE name = $1")
+            .bind(name)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let signed_for = json!({ "name": unique("Signed") });
+    let hash = sha(signed_for.to_string().as_bytes());
+
+    // Legacy, the key recased in the header: another body is refused.
+    let swapped = unique("Swapped");
+    let signed = json!({ "bodySha256": hash }).to_string();
+    let sent = leak(json!({ "BODYSHA256": hash }).to_string());
+    let headers = legacy_signed_headers(&writer, "post", path, &signed, sent).await;
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        path,
+        headers,
+        Some(json!({ "name": swapped })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a recased key still binds: {v}"
+    );
+    assert_eq!(written(&swapped).await, 0);
+    // Legacy, the key as signed: another body is refused, the signed one written.
+    let sent = leak(signed.clone());
+    let headers = legacy_signed_headers(&writer, "post", path, &signed, sent).await;
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        path,
+        headers,
+        Some(json!({ "name": swapped })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{v}");
+    let headers = legacy_signed_headers(&writer, "post", path, &signed, sent).await;
+    let (status, _, v) = send(&app, "POST", path, headers, Some(signed_for.clone())).await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "the signed body, legacy format: {v}"
+    );
+    let id = v["studio"]["id"].as_str().unwrap().to_string();
+    // Two spellings of the key: refused, whatever they hold.
+    let both = leak(json!({ "bodySha256": hash, "BodySha256": hash }).to_string());
+    let headers = signed_headers_with(&writer, "post", path, both).await;
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        path,
+        headers,
+        Some(json!({ "name": swapped })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "an ambiguous key: {v}");
+    assert_eq!(written(&swapped).await, 0);
+
+    // A DELETE signed for an empty body but sending one keeps its operator.
+    let operator = scratch_wallet().address;
+    let operators = format!("/credits/admin/studios/{id}/operators");
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &operators,
+        admin_bearer(),
+        Some(json!({ "address": operator })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let one = format!("{operators}/{operator}");
+    let empty = leak(json!({ "bodySha256": sha(b"") }).to_string());
+    let headers = signed_headers_with(&writer, "delete", &one, empty).await;
+    let (status, _, v) = send(
+        &app,
+        "DELETE",
+        &one,
+        headers,
+        Some(json!({ "anything": 1 })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the bytes sent are what the hash binds: {v}"
+    );
+    let still: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credits.studio_operators WHERE studio_id = $1::uuid",
+    )
+    .bind(&id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(still, 1, "the operator stays");
+    let headers = signed_headers_with(&writer, "delete", &one, empty).await;
+    let (status, _, v) = send(&app, "DELETE", &one, headers, None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "an empty DELETE matching its hash: {v}"
+    );
+
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
 }
 
 /// A paid pack is reported once, after the webhook's commit, with what the

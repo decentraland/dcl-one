@@ -695,6 +695,7 @@ class SelectionTest(unittest.TestCase):
         for name in ('build.rs', 'crates/assets/build.rs', 'crates/dcl_component/build_quant.rs',
                      'local-harness/benchmark/src/main.rs', 'local-harness/web-driver/driver.mjs',
                      'crates/platform/src/native/deeplink/windows.rs', 'crates/platform/src/native/deeplink/macos.rs',
+                     'crates/platform/src/native.rs', 'crates/platform/src/native/dm_history.rs',
                      'deploy/macos/Info.plist'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
@@ -704,6 +705,8 @@ class SelectionTest(unittest.TestCase):
     def test_platform_neutral_source_and_protos_skip_only_the_native_matrix(self):
         for name in ('rendering/bevy-explorer/source/src/lib.rs', 'rendering/bevy-explorer/source/assets/image.png',
                      'rendering/bevy-explorer/source/crates/example/Cargo.toml',
+                     'rendering/bevy-explorer/source/crates/platform/src/wasm.rs',
+                     'rendering/bevy-explorer/source/crates/platform/src/native_util.rs',
                      'library/protocol/proto/decentraland/common/vectors.proto'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
@@ -778,10 +781,9 @@ class SelectionTest(unittest.TestCase):
                 selected = ci.select(before, self.commit())
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if selected[lane]}, lanes)
 
-    def test_library_ui_outside_the_hud_entries_selects_nothing(self):
-        for name in ('library/ui/figma/src/cli.ts', 'library/ui/index.ts', 'library/ui/index.tsx',
-                     'library/ui/components/NavBar/NavBar.tsx',
-                     'library/ui/components/NavBar/NavBar.module.css', 'library/ui/upstream.lock.json'):
+    def test_library_ui_files_outside_the_checked_graph_select_nothing(self):
+        for name in ('library/ui/figma/src/cli.ts', 'library/ui/figma/review/src/review.tsx',
+                     'library/ui/templates/component/Component.tsx', 'library/ui/upstream.lock.json'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')

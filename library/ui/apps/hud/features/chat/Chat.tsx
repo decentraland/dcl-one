@@ -7,7 +7,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChatLine, ChatState, Conversation } from '../session/useEngineSession'
 import type { DmUserState, MessageReaction, NearbyMember } from '@explorer-core/engine/protocol'
-import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
+import { Avatar, ControlButton, Translate, VerifiedBadge } from '../../design'
 import { EmojiPicker, useCloseEmojiPanelOnOutsidePress } from './EmojiPicker'
 import { EmojiButton } from './EmojiButton'
 import { EmojiSuggestList, emojiSuggestionAt, moveSelection, tokenAtCaret } from './EmojiSuggestList'
@@ -42,6 +42,7 @@ import { useOptionalSession } from '../session/SessionContext'
 import { CommunityStreamBanner } from './CommunityStreamBanner'
 import styles from './Chat.module.css'
 import { dmRefusal } from './dmStateCopy'
+import { DclLogo, MaskIcon, Tooltip, VoiceBars } from '@dcl/one-ui'
 
 const MAX_LEN = 500
 
@@ -615,7 +616,7 @@ function DmHeader({ conversation, onClose, onDelete, onOpenProfile }: {
       </button>
       <div className={styles.navRight}>
         {session != null && gate != null && (
-          <Tooltip label={gate.allowed ? 'Call' : gate.reason} side="bottom" multiline={!gate.allowed}>
+          <Tooltip appearance="hud" label={gate.allowed ? 'Call' : gate.reason} side="bottom" multiline={!gate.allowed}>
             <ControlButton
               variant="faint"
               aria-label="Call"

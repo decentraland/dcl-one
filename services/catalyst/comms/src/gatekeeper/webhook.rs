@@ -10,10 +10,10 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
+use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
-use std::sync::Mutex;
 
 use crate::protocol::bus::room_events::MAX_PARTICIPANT_SID_BYTES;
 
@@ -392,12 +392,7 @@ pub async fn livekit_webhook(
     if now > deadline {
         return Err(unauthorized("expired livekit webhook signature"));
     }
-    let prepared = state
-        .webhooks
-        .state
-        .lock()
-        .unwrap()
-        .prepare(&event, deadline, now);
+    let prepared = state.webhooks.state.lock().prepare(&event, deadline, now);
     if prepared != Prepared::Apply {
         // Equal-second sessions are ordered by id, not by which one LiveKit
         // kept: a superseded join still passes the Cast join guard.
@@ -422,7 +417,7 @@ pub async fn livekit_webhook(
         {
             store_room_event(&state, room_event).await?;
             // A failed store's redelivery can be superseded by then; the sink still gets it once.
-            let owed = state.webhooks.state.lock().unwrap().unobserved.remove(id);
+            let owed = state.webhooks.state.lock().unobserved.remove(id);
             if owed && let Some(sink) = state.room_events.as_ref() {
                 sink.observe_room_event(room_event);
             }
@@ -442,7 +437,7 @@ pub async fn livekit_webhook(
         && let Some(room) = &event.room
     {
         let sid = event.room_sid.as_deref().filter(|sid| sid.len() <= 128);
-        let due = state.webhooks.state.lock().unwrap().metadata_due(room, sid);
+        let due = state.webhooks.state.lock().metadata_due(room, sid);
         if due {
             // Already serialized by this room's webhook stripe. Record only a
             // confirmed same-incarnation write; failures remain retryable.
@@ -453,7 +448,6 @@ pub async fn livekit_webhook(
                     .webhooks
                     .state
                     .lock()
-                    .unwrap()
                     .metadata
                     .insert(room.clone(), (updated, tokio::time::Instant::now()));
             }
@@ -467,7 +461,6 @@ pub async fn livekit_webhook(
                 .webhooks
                 .state
                 .lock()
-                .unwrap()
                 .unobserved
                 .insert(id.to_owned(), ());
             return Err(error);
@@ -476,12 +469,7 @@ pub async fn livekit_webhook(
             sink.observe_room_event(room_event);
         }
     }
-    state
-        .webhooks
-        .state
-        .lock()
-        .unwrap()
-        .applied(&event, deadline);
+    state.webhooks.state.lock().applied(&event, deadline);
     // Applied and unlocked first: a slow publish cannot get the event redelivered.
     drop((_first, _second));
     if let Some((room_event, true)) = &room_event {

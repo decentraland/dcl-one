@@ -59,8 +59,9 @@ pub static FONTS: OnceCell<HashMap<(FontName, WeightName), Handle<Font>>> = Once
 
 /// The colour emoji font every text falls back to, for text that is emoji alone: laid out in
 /// another font, an emoji whose base character that font has (©, ™, ‼) is drawn from it, in
-/// one colour.
-pub static EMOJI_FONT: OnceCell<Handle<Font>> = OnceCell::new();
+/// one colour. It is made at startup.
+#[derive(Resource)]
+pub struct EmojiFont(pub Handle<Font>);
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy)]
 pub enum FontName {
@@ -176,6 +177,7 @@ impl Plugin for UiCorePlugin {
 }
 
 fn setup(
+    mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut tracker: ResMut<StateTracker<State>>,
     mut dui: ResMut<DuiRegistry>,
@@ -187,7 +189,7 @@ fn setup(
     font_system
         .db_mut()
         .load_font_source(Source::Binary(emoji.clone()));
-    let _ = EMOJI_FONT.set(fonts.add(Font { data: emoji }));
+    commands.insert_resource(EmojiFont(fonts.add(Font { data: emoji })));
 
     // tracker.load_asset(asset_server.load_folder("ui"));
     tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/avatar.dui"));

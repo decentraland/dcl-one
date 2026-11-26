@@ -68,4 +68,9 @@ impl Deployments {
     pub fn fixed_contracts(self) -> Vec<(&'static str, u64)> {
         self.markets.iter().copied().chain(self.registrar).collect()
     }
+
+    /// The names registrar the chain's walk takes in, if any.
+    pub fn registrar(self) -> Option<&'static str> {
+        self.registrar.map(|(address, _)| address)
+    }
 }

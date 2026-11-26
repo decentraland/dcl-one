@@ -1,5 +1,6 @@
+import { EmptyState, Spinner } from '@dcl/one-ui'
 import { useState } from 'react'
-import { EmptyState, Icon, Spinner } from '../../design'
+import { Icon } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { MenuBackdrop } from '../menu/MenuBackdrop'
 import { usePhotoViewer, type PhotoViewerProps } from './usePhotoViewer'
@@ -117,7 +118,7 @@ export function GalleryPage({
 
       {!list.loaded ? (
         <div className={styles.center}>
-          <Spinner />
+          <Spinner variant="thin" />
         </div>
       ) : list.error && list.photos.length === 0 ? (
         <EmptyState

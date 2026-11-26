@@ -15,9 +15,10 @@
 //! and is indistinguishable from the component not existing.
 
 use crate::gatekeeper::admission::cluster::safety::DispatchState;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -269,7 +270,7 @@ fn fenced_token_is_fresh(expires_at_unix: Option<u64>) -> bool {
 impl ClusterSubscriber {
     pub(crate) fn admission_now_ms(&self) -> u64 {
         #[cfg(test)]
-        if let Some((base, elapsed)) = *self.test_clock.lock().unwrap() {
+        if let Some((base, elapsed)) = *self.test_clock.lock() {
             return base.saturating_add(elapsed.elapsed().as_millis().min(u64::MAX as u128) as u64);
         }
         now_unix_ms().max(0) as u64
@@ -321,7 +322,7 @@ impl ClusterSubscriber {
     /// Hands every assignment minted from now on to `sockets`, the `/ws` connector's, in place
     /// of any attached before.
     pub fn attach_sockets(&self, sockets: Arc<dyn IslandSockets>) {
-        *self.sockets.lock().unwrap() = Some(sockets);
+        *self.sockets.lock() = Some(sockets);
     }
 
     pub fn peers(&self) -> &Arc<ClusterPeerState> {
@@ -345,7 +346,7 @@ impl ClusterSubscriber {
             return;
         }
 
-        let mut lifecycle = self.lifecycle.lock().unwrap();
+        let mut lifecycle = self.lifecycle.lock();
         if lifecycle.owner.is_some() {
             return;
         }
@@ -380,7 +381,7 @@ impl ClusterSubscriber {
     /// orchestrator kills the process.
     pub async fn stop(&self) {
         let owner = {
-            let mut lifecycle = self.lifecycle.lock().unwrap();
+            let mut lifecycle = self.lifecycle.lock();
             let owner = lifecycle.owner.take();
             lifecycle.subscription = None;
             self.recovery.clear();
@@ -453,7 +454,7 @@ impl ClusterSubscriber {
             let Some(me) = Weak::upgrade(&weak) else {
                 return;
             };
-            let lifecycle = me.lifecycle.lock().unwrap();
+            let lifecycle = me.lifecycle.lock();
             if !lifecycle
                 .owner
                 .as_ref()
@@ -493,7 +494,7 @@ impl ClusterSubscriber {
     where
         F: FnOnce(Arc<Self>) -> futures::future::BoxFuture<'static, ()> + Send + 'static,
     {
-        let lifecycle = self.lifecycle.lock().unwrap();
+        let lifecycle = self.lifecycle.lock();
         self.spawn_scoped(lifecycle.owner.as_ref().unwrap().clone(), wallet, work);
     }
 
@@ -601,7 +602,7 @@ impl ClusterSubscriber {
     }
 
     fn announce_class(self: &Arc<Self>, wallet: &str, session: &str, maintenance: bool) {
-        let lifecycle = self.lifecycle.lock().unwrap();
+        let lifecycle = self.lifecycle.lock();
         let Some(owner) = lifecycle.owner.clone() else {
             return;
         };
@@ -837,7 +838,7 @@ impl ClusterSubscriber {
         conn_str: String,
         stamp: &PulseAdmissionStamp,
     ) {
-        let sockets = self.sockets.lock().unwrap().clone();
+        let sockets = self.sockets.lock().clone();
         let Some(sockets) = sockets else {
             crate::gatekeeper::admission::cluster::metrics::cluster_island_undelivered();
             if !self.unattached_reported.swap(true, Ordering::Relaxed) {
@@ -1316,7 +1317,6 @@ impl ClusterSubscriber {
             || self
                 .sockets
                 .lock()
-                .unwrap()
                 .as_ref()
                 .is_some_and(|sockets| sockets.selected_transport_is_current(snapshot))
     }
@@ -1825,7 +1825,7 @@ impl ClusterSubscriber {
 
     pub(crate) async fn replay_due(self: &Arc<Self>) {
         let due = {
-            let mut next = self.selected_reconcile_at.lock().unwrap();
+            let mut next = self.selected_reconcile_at.lock();
             let due = tokio::time::Instant::now() >= *next;
             if due {
                 *next = tokio::time::Instant::now() + Duration::from_secs(1);

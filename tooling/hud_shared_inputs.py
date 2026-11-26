@@ -15,7 +15,7 @@ MANIFEST = WEB + 'shared-inputs.json'
 # (shared-inputs.mjs BINDINGS).
 BINDINGS = 'library/explorer-core/engine/generated'
 REGENERATE_COMMAND = 'pnpm --dir ' + WEB.rstrip('/') + ' run gen:shared-inputs'
-DOMAINS = ('library/ui/', 'library/shop/', 'library/catalyst-api/', 'library/explorer-core/')
+DOMAINS = ('library/ui/', 'library/shop/', 'library/catalyst-api/', 'library/explorer-core/', 'library/web-core/')
 RESOLVER_FILES = ('package.json', 'tsconfig.json', 'jsconfig.json')
 CONTROLS = tuple(WEB + name for name in ('package.json', 'pnpm-lock.yaml', 'tsconfig.json',
                                        'vite.config.ts', 'vitest.config.ts', 'vite.shared.ts',

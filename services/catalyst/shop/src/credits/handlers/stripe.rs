@@ -38,6 +38,7 @@ use serde_json::{Value as JsonValue, json};
 
 use crate::credits::SharedState;
 use crate::credits::admin_store::GrantRequest;
+use crate::credits::alerts;
 use crate::credits::errors::ApiError;
 use crate::credits::events;
 use crate::credits::metrics::{Facts, PurchaseOutcome, ReversalKind};
@@ -169,6 +170,9 @@ pub async fn webhook(
         _ => {}
     }
 
+    if let Some(purchase) = &granted {
+        alerts::record_pack_credited(&mut tx, purchase, &event_id).await?;
+    }
     tx.commit().await?;
     // After the commit, so a rolled-back grant is never reported; past the
     // event's claim, so a redelivery never reports it twice.
@@ -484,6 +488,7 @@ async fn apply_partial_refund(
         .record_charge_refund_in_tx(tx, pi_id, cumulative_refunded_cents, event_id)
         .await?;
     log_reversal(&outcome, event_id, pi_id, "charge.refunded", facts);
+    alerts::record_reversal(tx, &outcome, event_id, pi_id, "refund").await?;
     Ok(())
 }
 
@@ -505,6 +510,7 @@ async fn apply_full_reversal(
         .record_full_reversal_in_tx(tx, pi_id, status, event_id)
         .await?;
     log_reversal(&outcome, event_id, pi_id, status, facts);
+    alerts::record_reversal(tx, &outcome, event_id, pi_id, "chargeback").await?;
     Ok(())
 }
 
@@ -575,6 +581,14 @@ async fn apply_recorded_reversals(
             "recorded reversal",
             facts,
         );
+        alerts::record_reversal(
+            tx,
+            &outcome,
+            event_id,
+            payment_intent,
+            "refund or chargeback received before the payment settled",
+        )
+        .await?;
     }
     Ok(())
 }

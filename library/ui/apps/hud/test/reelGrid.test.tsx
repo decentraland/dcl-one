@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { anchoredMenuPosition } from '../design'
 import { ReelGrid, buildReelRows, type ReelGridLayout } from '../features/gallery/ReelGrid'
@@ -81,6 +81,20 @@ describe('ReelGrid virtualization', () => {
 
 describe('the photo menu', () => {
   afterEach(() => vi.restoreAllMocks())
+
+  it('opens the photo menu with focus on the Set as Public switch, and the arrows leave it and come back', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1900)
+    render(<ReelGrid photos={reel(3)} layout={LAYOUT} menu={{ showDelete: true, onSetPublic: vi.fn(async () => true) }} onOpen={vi.fn()} onVisibleIndex={vi.fn()} />)
+    for (const b of screen.getAllByRole('button', { name: 'Open photo' })) fireEvent.load(b.querySelector('img') as HTMLImageElement)
+    await userEvent.click(screen.getAllByRole('button', { name: 'Photo options' })[0])
+    const control = screen.getByRole('menuitemcheckbox', { name: 'Set as Public' }).querySelector('input[role="switch"]') as HTMLInputElement
+    await waitFor(() => expect(control).toHaveFocus())
+    await userEvent.keyboard('{ArrowDown}')
+    expect(control).not.toHaveFocus()
+    await userEvent.keyboard('{ArrowUp}')
+    expect(control).toHaveFocus()
+  })
 
   it("shows the photo's value again after the writes it asked for are refused", async () => {
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)

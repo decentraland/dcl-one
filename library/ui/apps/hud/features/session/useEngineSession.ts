@@ -276,8 +276,12 @@ export interface BackpackState {
   /** Number of outfit slots available (5 free + 1 per owned DCL name, capped at 10). */
   outfitSlots: number
   warnAboutClearingExtraOutfits: boolean
-  /** The saved outfits have arrived: until then every slot reads empty, saved or not. */
+  /** The saved outfits have arrived: until then no slot says whether it holds one. */
   outfitsLoaded: boolean
+  /** The save or delete asked of the scene and not yet ended; null when none. */
+  outfitOperation: OutfitOperation | null
+  /** The slot whose outfit is being put on, from the request to its end; null when none. */
+  outfitEquipping: number | null
   /** Save the current look into a slot. */
   saveOutfit: (slot: number) => void
   /** Delete a saved outfit slot. */
@@ -295,6 +299,11 @@ export interface BackpackState {
   undoOutfit: () => void
   /** Go forward to the look the last undo left. */
   redoOutfit: () => void
+}
+
+export interface OutfitOperation {
+  slot: number
+  action: 'save' | 'delete'
 }
 
 export interface OutfitHistory {
@@ -1669,6 +1678,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const [outfits, setOutfits] = useState<OutfitsMetadata>({ outfits: [], namesForExtraSlots: [] })
   const [outfitsLoaded, setOutfitsLoaded] = useState(false)
   const [outfitFailure, setOutfitFailure] = useState<{ action: 'save' | 'delete'; slot: number } | null>(null)
+  const [outfitOperation, setOutfitOperation] = useState<OutfitOperation | null>(null)
+  const [outfitEquipping, setOutfitEquipping] = useState<number | null>(null)
   const [outfitHistory, setOutfitHistory] = useState<OutfitHistory>(NO_OUTFIT_HISTORY)
   const [backpackOpen, setBackpackOpen] = useState(false)
   const [communities, setCommunities] = useState<Community[]>([])
@@ -2210,6 +2221,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           setBridgeAnswered(true)
           // a bridge that starts again reports what is in force from scratch
           setPermissionsInForce([])
+          // and never ends what the one before it was running
+          setOutfitOperation(null)
+          setOutfitEquipping(null)
           break
         case 'bridgeUnavailable':
           // no answer is coming: Verifying's clock runs, so a sign-in waiting on it gives up
@@ -2368,6 +2382,13 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           setOutfitFailure({ action: msg.action, slot: msg.slot })
           console.error(`[outfits] ${msg.action} of slot ${msg.slot} failed:`, msg.message)
           break
+        case 'outfitBusy': {
+          // An end clears only the work it names.
+          const { slot, action, busy } = msg
+          if (action === 'equip') setOutfitEquipping((prev) => (busy ? slot : prev === slot ? null : prev))
+          else setOutfitOperation((prev) => (busy ? { slot, action } : prev?.slot === slot && prev.action === action ? null : prev))
+          break
+        }
         case 'outfitHistory':
           setOutfitHistory({ canUndo: msg.canUndo, canRedo: msg.canRedo, rolling: msg.rolling })
           break
@@ -4238,11 +4259,19 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       },
     [bridgeCall]
   )
+  // An outfit request shows as running from the click; the scene's `outfitBusy` end, sent whatever
+  // the outcome, clears it.
   const saveOutfit = useCallback((slot: number) => {
-    driverRef.current?.send({ kind: 'saveOutfit', slot })
+    const driver = driverRef.current
+    if (driver == null) return
+    setOutfitOperation({ slot, action: 'save' })
+    driver.send({ kind: 'saveOutfit', slot })
   }, [])
   const deleteOutfit = useCallback((slot: number) => {
-    driverRef.current?.send({ kind: 'deleteOutfit', slot })
+    const driver = driverRef.current
+    if (driver == null) return
+    setOutfitOperation({ slot, action: 'delete' })
+    driver.send({ kind: 'deleteOutfit', slot })
   }, [])
   const dismissOutfitError = useCallback(() => setOutfitFailure(null), [])
   // The live names lookup decides; until it answers, the outfits read does. An occupied extra slot
@@ -4267,7 +4296,10 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     // The bridge resolves the outfit's wearables by urn and re-emits the full `wearables` set (incl.
     // items off the loaded catalog page), which becomes the authoritative equipped set — so no
     // client-side rebuild here (that dropped off-page items and later un-equipped them).
-    driverRef.current?.send({ kind: 'equipOutfit', slot })
+    const driver = driverRef.current
+    if (driver == null) return
+    setOutfitEquipping(slot)
+    driver.send({ kind: 'equipOutfit', slot })
   }, [])
   // The bridge re-emits the full `wearables` set after each step, like equipOutfit.
   const randomizeOutfit = useCallback(() => {
@@ -5570,7 +5602,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
-      outfits: outfits.outfits, outfitSlots: extraOutfitSlots ? 10 : 5, outfitsLoaded, warnAboutClearingExtraOutfits,
+      outfits: outfits.outfits, outfitSlots: extraOutfitSlots ? 10 : 5, outfitsLoaded, outfitOperation, outfitEquipping, warnAboutClearingExtraOutfits,
       saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },

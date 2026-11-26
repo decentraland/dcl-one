@@ -217,6 +217,9 @@
 .communityTitle[aria-expanded='true'] {
   background: var(--tint-clear-hover);
 }
+.communityTitle[aria-expanded='true']:active:not(:disabled) {
+  background: var(--tint-clear-press);
+}
 .dmNames {
   display: flex;
   flex-direction: column;

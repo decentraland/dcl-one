@@ -12,14 +12,14 @@ use comms::{
 };
 use console::DebugSection;
 use dcl_component::proto_components::kernel::comms::rfc4;
-use scene_runner::update_world::text_shape::{GlyphAtlases, Page};
+use scene_runner::update_world::text_shape::{GlyphAtlas, GlyphAtlases, Page};
 use serde_json::json;
 use system_bridge::SystemApi;
 use wallet::Wallet;
 
 use super::{
     traffic::{ReactionGuard, ReactionOutbox, ReactionQueue},
-    ReactionAssets, ReactionParticle, ReactionStats, ATLAS,
+    ReactionParticle, ReactionStats, ATLAS,
 };
 
 pub const SECTION: DebugSection = DebugSection {
@@ -78,21 +78,20 @@ pub const SECTION: DebugSection = DebugSection {
 /// show over avatars), `picked` (the local user's picks that played, which no peer's reaction
 /// moves), `outbox` (the local user's picks not yet sent), `refusedPicks` (their picks that
 /// were no emoji the wire carries, or had no wallet to send them), `sent` (messages put on a
-/// room's transport, one per emoji per send: none with no room to carry it), `received` (peers'
-/// messages), `queued` (the reactions waiting to play, and the senders with any waiting or
-/// inside the gap after their last), `played`, `particles` (those alive, those of them drawn as
-/// of the last frame, and those waiting for their emoji's glyphs: to be rastered, or for room
-/// in a full atlas), `atlas` (the size in pixels of the glyph atlas page the emoji are drawn
-/// from, 0 before the first), `streamed` (the
-/// reactions passed to the HUD) to `subscribers` streams, and `dropped`, by cause: `blocked`
-/// (messages and waiting reactions of a sender blocked or banned), `duplicate` (a message's
-/// copy by another room), `unknownEmoji`, `rateLimited` (messages), `queueFull` (reactions that
-/// gave way to newer ones), `particleCap` (reactions that played with no particle, as many as
-/// may be alive) and `notShown` (reactions that played with no particle, their player having
-/// no avatar or a hidden one, being far from the camera, or being the local user in first
-/// person) and `noGlyphs` (reactions that played with no particle, their emoji not laid out,
-/// the emoji font not made yet, or the emoji having no glyph in colour). The counts are of
-/// this session.
+/// room's transport, one per emoji per send: none with no room to carry it),
+/// `received` (peers' messages), `queued` (the reactions waiting to play, and the senders with
+/// any waiting or inside the gap after their last), `played`, `particles` (those alive, those
+/// of them drawn as of the last frame, and those waiting for their emoji's glyphs: to be
+/// rastered, or for room in a full atlas), `atlas` (the size in pixels of the glyph atlas page
+/// the emoji are drawn from, 0 before the first), `streamed` (the reactions passed to the HUD)
+/// to `subscribers` streams, and `dropped`, by cause: `blocked` (messages and waiting
+/// reactions of a sender blocked or banned), `duplicate` (a message's copy by another room),
+/// `unknownEmoji`, `rateLimited` (messages), `queueFull` (reactions that gave way to newer
+/// ones), `particleCap` (reactions that played with no particle, as many as may be alive),
+/// `notShown` (reactions that played with no particle, their player having no avatar or a
+/// hidden one, being far from the camera, or being the local user in first person) and
+/// `noGlyphs` (reactions that played with no particle, their emoji not laid out or having no
+/// glyph in colour). The counts are of this session.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/reaction_state")]
 pub struct ReactionStateCommand;
@@ -103,17 +102,19 @@ pub fn reaction_state(
     config: Res<AppConfig>,
     outboxes: Query<&ReactionOutbox>,
     queues: Query<&ReactionQueue>,
-    assets: Res<ReactionAssets>,
     particles: Query<(&ReactionParticle, &Visibility)>,
     atlases: Res<GlyphAtlases>,
 ) {
     let Some(Ok(_)) = cmd.take() else {
         return;
     };
-    let count = |test: fn(&ReactionParticle, &Visibility, u32) -> bool| {
+    // made when the first emoji is drawn from it
+    let atlas = atlases.get(&ATLAS.key);
+    let generation = atlas.map(GlyphAtlas::generation);
+    let count = |test: fn(&ReactionParticle, &Visibility, Option<u32>) -> bool| {
         particles
             .iter()
-            .filter(|(particle, visibility)| test(particle, visibility, assets.generation))
+            .filter(|(particle, visibility)| test(particle, visibility, generation))
             .count()
     };
     cmd.reply_ok(
@@ -132,12 +133,12 @@ pub fn reaction_state(
             "particles": [
                 count(|_, _, _| true),
                 count(|_, visibility, _| *visibility != Visibility::Hidden),
-                count(|particle, _, generation| particle.built != Some(generation)),
+                count(|particle, _, generation| {
+                    particle.built.is_none() || particle.built != generation
+                }),
             ],
-            // read from the atlas, which is made when the first emoji is drawn from it: the
-            // assets follow it only while a particle is alive
-            "atlas": atlases
-                .get(&ATLAS.key)
+            // read from the atlas: the assets follow it only while a particle is alive
+            "atlas": atlas
                 .and_then(|atlas| atlas.page_image(Page::Color))
                 .map_or(0, |(_, size)| size),
             "streamed": stats.streamed,

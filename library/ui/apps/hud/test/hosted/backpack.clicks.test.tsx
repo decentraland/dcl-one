@@ -52,18 +52,17 @@ describe('backpack page clicks', () => {
     expect(vi.mocked(backpack.equip)).not.toHaveBeenCalled()
   })
 
-  it('in the modal the detail has a close button, which puts the selection away', async () => {
-    renderBackpack({}, true)
+  it('in the modal (the lobby) a click shows no detail panel, and a double-click still equips', async () => {
+    const backpack = renderBackpack({}, true)
+    expect(screen.queryByText('No item selected')).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'Cool Hat' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Close item details' }))
-    expect(screen.getByText('No item selected')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Close item details' })).toBeNull()
-  })
-
-  it('on the page the detail has no close button', async () => {
-    renderBackpack()
-    await userEvent.click(screen.getByRole('button', { name: 'Cool Hat' }))
-    expect(screen.queryByRole('button', { name: 'Close item details' })).toBeNull()
+    expect(screen.queryByRole('complementary')).toBeNull()
+    expect(screen.queryByText('No item selected')).toBeNull()
+    expect(screen.queryByText('Cool Hat')).toBeNull()
+    expect(vi.mocked(backpack.preview)).not.toHaveBeenCalled()
+    expect(vi.mocked(backpack.equip)).not.toHaveBeenCalled()
+    await userEvent.dblClick(screen.getByRole('button', { name: 'Cool Hat' }))
+    expect(vi.mocked(backpack.equip)).toHaveBeenCalledWith(['urn:hat'])
   })
 
   it('double-clicking a wearable card equips it', async () => {
