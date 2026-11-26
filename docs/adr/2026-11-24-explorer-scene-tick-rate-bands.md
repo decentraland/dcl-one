@@ -36,7 +36,8 @@ and main-thread time each frame there is spare time, whether or not the player c
   does not bound the loss. `GlobalCrdtState::sent` counts the updates delivered to each host:
   every update sent, plus, when a scene spawns, the updates since its snapshot that the native
   forwarder replays to every scene of the context (`count_replayed`, at most the receiver's
-  capacity). Each dispatch records the count on the scene (`global_updates_read`), and a capped
+  capacity). Each dispatch records the count of the scene's own context
+  (`CrdtContexts::try_for_scene_hash`) on the scene (`global_updates_read`), and a capped
   scene with `GLOBAL_UPDATE_BACKLOG_DUE` (250) or more delivered since is due whatever its band.
   Only that scene is released. A replay starts at the spawning scene's snapshot, taken before its
   script downloads, so it can hold up to 1,024 entries, some of which the capped scene already
@@ -45,15 +46,20 @@ and main-thread time each frame there is spare time, whether or not the player c
   1,024 minus the unread count (at least 774) arrive before the scene ticks. The scene is due
   once 250 are unread, but it is then ordered by the queue's key like any other, so under
   scene-thread pressure it can wait frames while more arrive; the margin holds while it is sent
-  within those 774. Updates sent between a spawn and the forwarder's swap are
-  replayed uncounted. Each backend states whether it replays (`REPLAYS_GLOBAL_UPDATES`): the
-  native forwarder does, the web relay does not. The slow tick keeps a scene's other channels,
-  such as scene comms, moving.
+  within those 774. The count is taken when an update enters the broadcast, not when the host
+  receives it: the native forwarder interleaves ticks and queued updates in either order, so a
+  tick can reach the host before updates already counted as read, which stay unseen by the
+  check until the next dispatch. The margin absorbs that unless the forwarder is far behind,
+  most likely right after a replay. Updates sent between a spawn and the forwarder's swap are
+  replayed uncounted. Each backend reports what a spawn replays (`replayed_global_updates`): the
+  native forwarder what the new receiver holds, the web relay nothing. The slow tick keeps a
+  scene's other channels, such as scene comms, moving.
 - **A rate is a minimum interval.** `update_scene_priority` leaves a capped scene out of the
   frame's queue until `1 / rate` seconds have passed since it was last sent. A scene that is due
   is ordered by the existing key, so the cap only removes ticks. Age grows a frame at a time, so
   the interval counts as passed within a quarter of a frame of it: jitter cannot miss an
-  interval of whole frames, and one of a frame and a half always waits for the second frame.
+  interval of whole frames, and one of a frame and a half always waits for the second frame. At
+  60 fps the 40 and 30 bands therefore both tick every other frame; they differ only above 60 Hz.
 - **Full rate.** The player's scenes, the scenes at the player's position while out of world,
   portable and global scenes, the named priority scenes, the system scene, a scene under the
   inspector, the scene being baked into an imposter, and every scene before
@@ -66,7 +72,8 @@ and main-thread time each frame there is spare time, whether or not the player c
   bands measured from the player would cap the scenes they frame.
 - **Inspectable.** Each scene's context holds its current cap (`tick_rate_cap`), and
   `SceneUpdates::skipped_rate_capped` counts the scene-frames the cap skipped and
-  `released_by_global_updates` those due early on unread global updates; the runtime debug
+  `released_by_global_updates` the ticks sent before their band allowed on unread global
+  updates; the runtime debug
   panel's "Scene Tick Rates" section (`/scene_tick_rate_state`) shows them, whether the behind
   cap applies at the camera's pitch, and why nothing is capped when that is so
   (`tick_rate_caps_lifted`). `/scene_tick_rate_caps false` lifts every cap, so one build
@@ -94,6 +101,13 @@ and main-thread time each frame there is spare time, whether or not the player c
 - A scene's imposter or LOD stand-in goes once it passes tick 5, before the cap starts at
   `SCENE_LOADED_TICK`. A far scene that builds its content over many ticks shows it built at one
   tick every two seconds; the measurement checks one such scene.
+- A pointer result reaches a capped scene at its next tick: a click on a scene 80 m or more away,
+  or on one behind the camera inside a wide field of view, answers up to two seconds later.
+- A scene sends at most `MAX_SEND_MESSAGES_PER_TICK` (512) messages a tick, so a capped scene
+  that sends from timers between ticks is limited to 512 a second behind the camera and 256 past
+  80 m; the excess fails in the op.
+- The behind test compares parcels with the camera plane only, so a scene 16 m or more behind a
+  level camera can cast shadows into view that move once a second.
 - Bands and rates are code constants, not settings; the switch only turns them all off.
 
 ## Rejected

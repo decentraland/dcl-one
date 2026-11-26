@@ -62,10 +62,10 @@ use crate::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use dcl_deno_ipc::{spawn_scene, REPLAYS_GLOBAL_UPDATES};
+use dcl_deno_ipc::{replayed_global_updates, spawn_scene};
 
 #[cfg(target_arch = "wasm32")]
-use dcl_wasm::{spawn_scene, REPLAYS_GLOBAL_UPDATES};
+use dcl_wasm::{replayed_global_updates, spawn_scene};
 
 #[derive(Default)]
 pub struct CrdtLoader;
@@ -762,7 +762,6 @@ pub(crate) fn initialize_scene(
             } => (global_updates.take().unwrap(), scene_origin, crdt_context),
             _ => panic!("bad state"),
         };
-        context.crdt_context = Some(crdt_context);
 
         let crdt_component_interfaces = CrdtComponentInterfaces(HashMap::from_iter(
             crdt_component_interfaces
@@ -788,17 +787,8 @@ pub(crate) fn initialize_scene(
             scene_context.platform = Some("mobile".to_owned());
         }
 
-        // a replay delivers what this receiver holds, at most its capacity after tokio's rounding
-        // (a lagged receiver's `len` counts the updates it lost too). An update sent between
-        // here and the forwarder's swap is replayed uncounted
-        if REPLAYS_GLOBAL_UPDATES {
-            if let Ok(mut crdt) = crdt_contexts.get_mut(crdt_context) {
-                let held = global_updates
-                    .len()
-                    .min(common::structs::SCENE_GLOBAL_UPDATE_CAPACITY.next_power_of_two());
-                crdt.count_replayed(held as u64);
-            }
-        }
+        // an update sent between here and the forwarder's swap is replayed uncounted
+        let replayed = replayed_global_updates(&global_updates);
 
         let wake = SceneWake::default();
         let (main_sx, kill_guard) = spawn_scene(
@@ -816,6 +806,11 @@ pub(crate) fn initialize_scene(
             wake.clone(),
         );
 
+        if replayed > 0 {
+            if let Ok(mut crdt) = crdt_contexts.get_mut(crdt_context) {
+                crdt.count_replayed(replayed);
+            }
+        }
         context.inspected = inspected;
         // set last_sent so the scene doesn't get extreme starvation priority
         // when it first becomes eligible after initialization completes

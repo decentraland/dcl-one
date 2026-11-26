@@ -32,7 +32,10 @@ use common::{
     },
     util::{dcl_assert, TryPushChildrenEx},
 };
-use comms::{global_crdt::GlobalCrdtState, SceneRoomConnection, SetCurrentScene};
+use comms::{
+    global_crdt::{CrdtContexts, GlobalCrdtState},
+    SceneRoomConnection, SetCurrentScene,
+};
 use dcl_component::{
     proto_components::{
         common::BorderRect,
@@ -617,6 +620,7 @@ fn update_scene_priority(
     >,
     player: Query<Entity, With<PrimaryUser>>,
     rendering_camera: Query<(&GlobalTransform, &PrimaryCamera, Has<PhotoMode>), With<Camera>>,
+    crdt_context_ids: Res<CrdtContexts>,
     crdt_contexts: Query<&GlobalCrdtState>,
     imposter_scene: Res<CurrentImposterScene>,
     mut updates: ResMut<SceneUpdates>,
@@ -693,16 +697,13 @@ fn update_scene_priority(
     let mut skipped_in_flight = 0u64;
     let mut skipped_already_sent = 0u64;
     let mut skipped_rate_capped = 0u64;
-    let mut released_by_global_updates = 0u64;
 
     // sort eligible scenes
     updates.scene_queue = scenes
         .iter_mut()
         .filter(|(ent, _, context, maybe_super)| {
             missing_in_flight.remove(ent);
-            let allow = !context.in_flight()
-                && !context.broken()
-                && (context.blocked.is_empty() || maybe_super.is_some());
+            let allow = !context.in_flight() && context.schedulable(maybe_super.is_some());
             if context.in_flight() {
                 skipped_in_flight += 1;
             }
@@ -734,17 +735,18 @@ fn update_scene_priority(
                 return None;
             }
             let age = time.elapsed_secs_f64() - context.last_sent;
+            context.due_on_global_updates = false;
             if let Some(rate) = context.tick_rate_cap {
                 if !tick_rate_allows(rate, age, time.delta_secs_f64()) {
                     // its scene host drops the oldest global updates past its capacity, so a
                     // scene that has many unread is due whatever its band
-                    let unread = global_updates_sent(&crdt_contexts, &context)
+                    let unread = global_updates_sent(&crdt_context_ids, &crdt_contexts, &context)
                         .saturating_sub(context.global_updates_read);
                     if unread < GLOBAL_UPDATE_BACKLOG_DUE {
                         skipped_rate_capped += 1;
                         return None;
                     }
-                    released_by_global_updates += 1;
+                    context.due_on_global_updates = true;
                 }
             }
             updates.eligible_jobs += 1;
@@ -754,7 +756,6 @@ fn update_scene_priority(
     updates.skipped_in_flight += skipped_in_flight;
     updates.skipped_already_sent += skipped_already_sent;
     updates.skipped_rate_capped += skipped_rate_capped;
-    updates.released_by_global_updates += released_by_global_updates;
     updates
         .scene_queue
         .make_contiguous()
@@ -795,14 +796,15 @@ fn player_scenes(
 }
 
 /// The global updates delivered to the scene's host, replays included: the count of its crdt
-/// context, 0 before it spawns or once the context is gone. The scene reads what its host holds
-/// at its next tick.
+/// context (`CrdtContexts::try_for_scene_hash`), 0 while it has none. The scene reads what its
+/// host holds at its next tick.
 fn global_updates_sent(
+    crdt_context_ids: &CrdtContexts,
     crdt_contexts: &Query<&GlobalCrdtState>,
     context: &RendererSceneContext,
 ) -> u64 {
-    context
-        .crdt_context
+    crdt_context_ids
+        .try_for_scene_hash(&context.hash)
         .and_then(|crdt_context| crdt_contexts.get(crdt_context).ok())
         .map_or(0, GlobalCrdtState::sent)
 }
@@ -1265,24 +1267,14 @@ mod player_scenes_tests {
     }
 
     fn scene_loop_resources(world: &mut World) {
-        let (sender, receiver) = scene_response_channel();
-        world.insert_resource(SceneUpdates {
-            sender,
-            receiver: SyncCell::new(receiver),
-            jobs_in_flight: Default::default(),
-            update_deadline: web_time::SystemTime::now(),
-            eligible_jobs: 0,
-            scene_queue: Default::default(),
-            loop_end_time: Instant::now(),
-            frame_target: None,
-            priority_scenes: Default::default(),
-            frames: 0,
-            skipped_in_flight: 0,
-            skipped_already_sent: 0,
-            skipped_rate_capped: 0,
-            released_by_global_updates: 0,
-            tick_rate_caps_off: false,
-        });
+        world.insert_resource(crate::scene_spawn_slice::tests::scene_updates(None));
+        // the shared context every scene resolves to, unless the test registers its own
+        if !world.contains_resource::<CrdtContexts>() {
+            let shared = world.spawn_empty().id();
+            let mut contexts = CrdtContexts::default();
+            contexts.0.insert(String::new(), shared);
+            world.insert_resource(contexts);
+        }
         world.init_resource::<Time>();
         world.init_resource::<CurrentImposterScene>();
     }
@@ -1526,10 +1518,9 @@ mod player_scenes_tests {
             other.update_time(TimeOfDay::default());
         }
         world.spawn(other);
-        world
-            .get_mut::<RendererSceneContext>(east)
-            .unwrap()
-            .crdt_context = Some(crdt);
+        let mut contexts = CrdtContexts::default();
+        contexts.0.insert(String::new(), crdt);
+        world.insert_resource(contexts);
         scene_loop_resources(&mut world);
         world
             .resource_mut::<Time>()
@@ -1545,9 +1536,12 @@ mod player_scenes_tests {
             .count_replayed(1);
         world.run_system_once(update_scene_priority).unwrap();
         assert!(queued(&world).contains(&east));
-        assert_eq!(
-            world.resource::<SceneUpdates>().released_by_global_updates,
-            1
+        // its dispatch counts the release
+        assert!(
+            world
+                .get::<RendererSceneContext>(east)
+                .unwrap()
+                .due_on_global_updates
         );
     }
 
@@ -1918,9 +1912,10 @@ fn send_scene_updates(
     scene_realms: Res<comms::global_crdt::SceneRealms>,
     screen_areas: ScreenAreas,
     preview_mode: Res<PreviewMode>,
-    (mut buf, mut realm_info_cache, crdt_contexts): (
+    (mut buf, mut realm_info_cache, crdt_context_ids, crdt_contexts): (
         Local<Vec<u8>>,
         Local<RealmInfoCache>,
+        Res<CrdtContexts>,
         Query<&GlobalCrdtState>,
     ),
 ) {
@@ -2177,7 +2172,11 @@ fn send_scene_updates(
     } else {
         context.set_in_flight(true);
         context.last_sent = now;
-        context.global_updates_read = global_updates_sent(&crdt_contexts, &context);
+        context.global_updates_read =
+            global_updates_sent(&crdt_context_ids, &crdt_contexts, &context);
+        if std::mem::take(&mut context.due_on_global_updates) {
+            updates.released_by_global_updates += 1;
+        }
         dcl_assert!(!updates.jobs_in_flight.contains(&ent));
         updates.jobs_in_flight.insert(ent);
     }

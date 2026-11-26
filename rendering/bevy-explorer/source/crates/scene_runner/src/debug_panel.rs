@@ -13,10 +13,7 @@ use crate::{
         CurrentSceneLoading, PointerResult, SceneLoading, SuperUserScene, PARCEL_SIZE,
     },
     renderer_context::RendererSceneContext,
-    scene_partition::{
-        behind_cap_applies, tick_rate_caps_lifted, BEHIND_SCENE_TICK_RATE, FAR_SCENE_TICK_RATE,
-        SCENE_TICK_RATE_BANDS,
-    },
+    scene_partition::{behind_cap_applies, tick_rate_caps_lifted, SCENE_TICK_RATE_CAPS},
     scene_traffic::{Batch, SceneTraffic, Tick},
     update_world::{
         gltf_container::{GltfLoadingCount, SceneResourceLookup},
@@ -189,7 +186,7 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Behind-camera cap", "behindCap"),
                     ("Scene-frames skipped by the cap", "skipped"),
                     (
-                        "Scene-frames due early on unread global updates",
+                        "Ticks sent before their band allowed, on unread global updates",
                         "released",
                     ),
                 ],
@@ -636,19 +633,8 @@ fn permissions_in_force_state(
 #[command(name = "/scene_tick_rate_state")]
 struct TickRateState;
 
-/// The `capped` field's label: its components are `CAPPED_RATES`, in order.
+/// The `capped` field's label: its components are `SCENE_TICK_RATE_CAPS`, in order.
 const CAPPED_LABEL: &str = "Scenes capped at ticks a second (40 / 30 / 15 / 10 / 5 / 1 / 0.5)";
-
-/// Every rate `scene_tick_rate` gives, in the order of `CAPPED_LABEL`.
-const CAPPED_RATES: [f32; 7] = [
-    SCENE_TICK_RATE_BANDS[0].1,
-    SCENE_TICK_RATE_BANDS[1].1,
-    SCENE_TICK_RATE_BANDS[2].1,
-    SCENE_TICK_RATE_BANDS[3].1,
-    SCENE_TICK_RATE_BANDS[4].1,
-    BEHIND_SCENE_TICK_RATE,
-    FAR_SCENE_TICK_RATE,
-];
 
 /// The scenes the scene loop schedules at the full rate and at each distance band's tick rate cap
 /// (`scene_tick_rate`), whether the behind-camera cap applies at the camera's pitch, and the
@@ -675,14 +661,15 @@ fn tick_rate_state(
         return;
     }
     let mut full = 0usize;
-    let mut capped = [0usize; CAPPED_RATES.len()];
+    let mut capped = [0usize; SCENE_TICK_RATE_CAPS.len()];
     // the scenes `update_scene_priority` queues when due
-    for (context, _) in scenes.iter().filter(|(context, is_super)| {
-        !context.broken() && (context.blocked.is_empty() || *is_super)
-    }) {
+    for (context, _) in scenes
+        .iter()
+        .filter(|(context, is_super)| context.schedulable(*is_super))
+    {
         match context
             .tick_rate_cap
-            .and_then(|rate| CAPPED_RATES.iter().position(|r| *r == rate))
+            .and_then(|rate| SCENE_TICK_RATE_CAPS.iter().position(|r| *r == rate))
         {
             None => full += 1,
             Some(band) => capped[band] += 1,
@@ -829,7 +816,9 @@ mod tests {
 
     #[test]
     fn the_capped_label_names_every_capped_rate_in_order() {
-        let rates = CAPPED_RATES.map(|rate| rate.to_string()).join(" / ");
+        let rates = SCENE_TICK_RATE_CAPS
+            .map(|rate| rate.to_string())
+            .join(" / ");
         assert!(CAPPED_LABEL.ends_with(&format!("({rates})")));
     }
 

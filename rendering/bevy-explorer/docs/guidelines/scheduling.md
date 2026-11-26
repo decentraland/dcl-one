@@ -189,7 +189,7 @@ full channel drops messages. For global updates a rate is not enough: a scene's 
 most `SCENE_GLOBAL_UPDATE_CAPACITY` of them between its ticks, so a capped scene with
 `GLOBAL_UPDATE_BACKLOG_DUE` (a quarter of the capacity) delivered since its last dispatch
 (`GlobalCrdtState::sent`, which includes the updates a spawning scene's receiver replays to the
-whole context where the backend replays them, `REPLAYS_GLOBAL_UPDATES`, against the count it
+whole context where the backend replays them, `replayed_global_updates`, against the count it
 recorded then) is due whatever its band. The behind cap applies from 16 m on, since nearer the
 player can back into a scene's colliders and hears its audio, and only while the camera is near
 level (`behind_cap_applies`), because the behind test ignores pitch. A
@@ -202,9 +202,9 @@ view, nothing is capped. A due scene is ordered by the queue's key like any othe
 scene-thread pressure a scene released on unread global updates can wait frames. The runtime
 debug panel's "Scene Tick Rates" section (`/scene_tick_rate_state`) counts the scenes the loop
 schedules at each cap, whether the behind cap applies at the camera's pitch, the scene-frames
-the cap has skipped and those due early on unread global updates, and names the reason while
-nothing is capped; `/scene_tick_rate_caps false` (its "Turn the caps off" action) lifts every
-cap, to compare with and without them on one build. See the
+the cap has skipped and the ticks sent before their band allowed on unread global updates, and
+names the reason while nothing is capped; `/scene_tick_rate_caps false` (its "Turn the caps
+off" action) lifts every cap, to compare with and without them on one build. See the
 [ADR](../../../../docs/adr/2026-11-24-explorer-scene-tick-rate-bands.md).
 
 ## PostUpdate

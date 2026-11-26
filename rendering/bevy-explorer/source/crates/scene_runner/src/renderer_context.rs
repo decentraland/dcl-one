@@ -71,8 +71,9 @@ pub struct RendererSceneContext {
     /// The most ticks a second the scene loop sends this scene (`scene_tick_rate`), refreshed
     /// each frame; `None` at the full rate.
     pub(crate) tick_rate_cap: Option<f32>,
-    /// The crdt context whose global updates this scene's host holds, set when the scene spawns.
-    pub(crate) crdt_context: Option<Entity>,
+    /// Whether this frame's queue holds the scene before its band allows, on unread global
+    /// updates (`GLOBAL_UPDATE_BACKLOG_DUE`); its dispatch counts it.
+    pub(crate) due_on_global_updates: bool,
     /// `GlobalCrdtState::sent` of the scene's crdt context at its last dispatch: the scene has
     /// read every global update its host held then, replays included.
     pub(crate) global_updates_read: u64,
@@ -191,6 +192,12 @@ impl RendererSceneContext {
         matches!(self.state, SceneState::Broken)
     }
 
+    /// Whether the scene loop queues the scene when it is due: not broken, and not blocked unless
+    /// it is the system scene.
+    pub(crate) fn schedulable(&self, is_super: bool) -> bool {
+        !self.broken() && (self.blocked.is_empty() || is_super)
+    }
+
     /// The scene's content is on screen: it has run past its first ticks with nothing blocking
     /// it (its glTFs loaded), or it is broken or frozen and never will. Its stand-ins (an
     /// imposter tile, a near LOD) go when this holds.
@@ -283,7 +290,7 @@ impl RendererSceneContext {
             state: SceneState::Init,
             priority,
             tick_rate_cap: None,
-            crdt_context: None,
+            due_on_global_updates: false,
             global_updates_read: 0,
             crdt_store: Default::default(),
             initial_crdt: None,
