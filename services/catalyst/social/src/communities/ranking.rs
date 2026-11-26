@@ -130,14 +130,22 @@ pub async fn record_photo(
     place: &str,
     occurred_at: NaiveDateTime,
 ) -> sqlx::Result<()> {
-    sqlx::query("WITH receipts AS (
+    let binding = crate::explore::places::scene_identity::BOUND_WORLD_SCENE_FROM;
+    sqlx::query(sqlx::AssertSqlSafe(format!("WITH place_keys AS (
+        SELECT lower($2) AS id
+        UNION SELECT keys.id {binding}
+        CROSS JOIN LATERAL (VALUES (p.identity::text), (canonical.public_id::text)) keys(id)
+        WHERE canonical.public_id IS NOT NULL
+          AND p.identity IN (SELECT $4::uuid UNION SELECT identity FROM explore.world_scene_public_id WHERE public_id=$4)
+          AND $4 IN (p.identity, canonical.public_id)
+    ), receipts AS (
         INSERT INTO social.community_ranking_events(kind,event_key,community_id,occurred_at)
         SELECT 'photo',$1,p.community_id,$3 FROM social.community_places p
-        JOIN social.communities c ON c.id=p.community_id AND c.origin='local' WHERE p.place_id=lower($2)
+        JOIN social.communities c ON c.id=p.community_id AND c.origin='local' WHERE p.place_id IN (SELECT id FROM place_keys)
         ON CONFLICT DO NOTHING RETURNING community_id)
         UPDATE social.communities c SET ranking_photos_count=LEAST(c.ranking_photos_count::bigint+1,2147483647)::int4
-        FROM receipts r WHERE c.id=r.community_id")
-        .bind(key).bind(place).bind(occurred_at).execute(conn).await?;
+        FROM receipts r WHERE c.id=r.community_id")))
+        .bind(key).bind(place).bind(occurred_at).bind(Uuid::parse_str(place).ok()).execute(conn).await?;
     Ok(())
 }
 

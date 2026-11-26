@@ -14,9 +14,9 @@ DO $like_keys$ BEGIN
     ORDER BY entity_id FOR UPDATE;
 END $like_keys$;
 
--- A like changed on the node after the upstream one (a later updated_at) wins.
-INSERT INTO explore.user_likes AS l ("user", entity_id, "like", user_activity, created_at, updated_at)
-SELECT DISTINCT ON ("user", entity_id) "user", entity_id, "like", user_activity,
+-- Match the claim's conflict order so imports converge before or after a claim.
+INSERT INTO explore.user_likes AS l ("user", entity_id, "like", user_activity, source, created_at, updated_at)
+SELECT DISTINCT ON ("user", entity_id) "user", entity_id, "like", user_activity, 'upstream',
        created_at AT TIME ZONE 'UTC', updated_at AT TIME ZONE 'UTC'
 FROM stage
 ORDER BY "user", entity_id, stage.updated_at DESC, stage.created_at DESC, "like", user_activity DESC
@@ -25,9 +25,9 @@ ON CONFLICT ("user", entity_id) DO UPDATE SET
     user_activity = EXCLUDED.user_activity,
     created_at = EXCLUDED.created_at,
     updated_at = EXCLUDED.updated_at
-WHERE l.updated_at <= EXCLUDED.updated_at
-  AND (l."like", l.user_activity, l.created_at, l.updated_at)
-      IS DISTINCT FROM (EXCLUDED."like", EXCLUDED.user_activity, EXCLUDED.created_at, EXCLUDED.updated_at);
+WHERE l.source = 'upstream'
+  AND (l.updated_at, l.created_at, NOT l."like", l.user_activity)
+      < (EXCLUDED.updated_at, EXCLUDED.created_at, NOT EXCLUDED."like", EXCLUDED.user_activity);
 
 -- place_interaction_counts is derived from the two fact tables (the rule of
 -- places::interactions REBUILD_COUNTS); recount every entity of the batch.

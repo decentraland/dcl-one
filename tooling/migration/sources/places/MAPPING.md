@@ -57,14 +57,24 @@ which then count twice with the imported facts. Rows upstream does not list
   is skipped, whether the claim is current or historical. The scene import
   and mirror claim serialize the ownership check. The import keeps the
   existing local identity and leaves storage under its original keys.
+  If another internal identity already holds the exact mirrored
+  world and deployment CID, the loader leaves the upstream UUID available
+  for mirror verification. Earlier retired identities remain reserved.
 - Favorites and likes: wallets lowercased, non-wallet users skipped; kept only
   for an imported place, an eligible world scene, or any upstream world name.
-  A like changed later on the node wins. Each batch recounts its entities from
-  the fact tables (`REBUILD_COUNTS` rule).
+  Likes from this import carry upstream provenance. Local votes take
+  precedence, then the latest upstream vote wins, with ties settled
+  consistently during import and claim. Earlier imports that already
+  recorded a vote as local remain protected. Each batch recounts its
+  entities from the fact tables (`REBUILD_COUNTS` rule).
+  To backfill scene facts older than the saved incremental watermarks, run
+  `python3 tooling/migration/migrate.py run places --step user_favorite --step user_like --restart`.
 - A verified reservation redirects imports of scene curation and per-wallet
   facts to the durable internal UUID. The claim transaction consolidates rows
   already written before the claim. Imports and claims serialize so replay uses
   the same key after a proof is invalidated.
+  When several rows in the catalogue batch fold onto the same key, the
+  currently verified UUID supplies moderation and ranking.
 - `contact_email` and the other public scene metadata travel in `raw`, as the
   upstream API serves them.
 

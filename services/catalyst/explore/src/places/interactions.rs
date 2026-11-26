@@ -397,8 +397,10 @@ pub(super) async fn merge_public_id(
                ON CONFLICT ("user", entity_id) DO UPDATE SET
                    "like" = EXCLUDED."like", user_activity = EXCLUDED.user_activity,
                    source = EXCLUDED.source, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at
-               WHERE l.source = 'upstream' AND EXCLUDED.source = 'upstream'
-                 AND l.updated_at < EXCLUDED.updated_at"#,
+               WHERE l.source = 'upstream'
+                 AND (EXCLUDED.source = 'local'
+                      OR (l.updated_at, l.created_at, NOT l."like", l.user_activity)
+                         < (EXCLUDED.updated_at, EXCLUDED.created_at, NOT EXCLUDED."like", EXCLUDED.user_activity))"#,
         )
         .bind(&public)
         .bind(&local)

@@ -808,6 +808,27 @@ async fn a_saved_community_place_keeps_its_key_and_details_after_a_public_uuid_m
     assert_eq!(saved["world_name"], *world);
     assert!(saved.get("local_scene_id").is_none());
 
+    let mut tx = rig.pool.begin().await.unwrap();
+    let photo = Uuid::new_v4().to_string();
+    for tag in [public, local] {
+        crate::communities::ranking::record_photo(
+            &mut tx,
+            &photo,
+            &tag.to_string(),
+            chrono::Utc::now().naive_utc(),
+        )
+        .await
+        .unwrap();
+        let counted: i32 =
+            sqlx::query_scalar("SELECT ranking_photos_count FROM social.communities WHERE id = $1")
+                .bind(places.community)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+        assert_eq!(counted, 1);
+    }
+    tx.commit().await.unwrap();
+
     rig.finish();
     database.drop().await;
 }

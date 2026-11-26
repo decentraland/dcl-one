@@ -231,8 +231,8 @@ impl PlacesComponent {
         Ok((catalogue, scenes.into_iter().collect()))
     }
 
-    /// Resolve status IDs in one snapshot, including tombstones for local IDs.
-    /// An expired public claim still owns its UUID but cannot name a new scene.
+    /// Resolve status IDs in one snapshot. A previously claimed public UUID
+    /// remains a disabled status key after its exact deployment proof expires.
     pub(super) async fn scene_status_identities(
         &self,
         ids: &[String],
@@ -256,6 +256,10 @@ impl PlacesComponent {
              UNION SELECT p.identity::text, p.identity::text
              FROM explore.world_scene_place p WHERE p.identity = ANY($1)
              AND NOT EXISTS (SELECT 1 FROM bound WHERE bound.identity = p.identity)
+             UNION SELECT claim.public_id::text, claim.public_id::text
+             FROM explore.world_scene_public_id claim
+             WHERE claim.public_id = ANY($1) AND claim.public_id <> claim.identity
+             AND NOT EXISTS (SELECT 1 FROM bound WHERE bound.public_id = claim.public_id)
              ORDER BY 1"
         )))
         .bind(ids)
@@ -593,15 +597,15 @@ mod tests {
             (
                 "CREATE TEMP TABLE stage (\"user\" text, entity_id text, user_activity float8, created_at timestamptz) ON COMMIT DROP",
                 include_str!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../../../tooling/migration/sources/places/user_favorite.load.sql"
+                    env!("DCL_ONE_ROOT"),
+                    "/tooling/migration/sources/places/user_favorite.load.sql"
                 )),
             ),
             (
                 "CREATE TEMP TABLE stage (\"user\" text, entity_id text, user_activity float8, created_at timestamptz, \"like\" boolean DEFAULT true, updated_at timestamptz DEFAULT now()) ON COMMIT DROP",
                 include_str!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../../../tooling/migration/sources/places/user_like.load.sql"
+                    env!("DCL_ONE_ROOT"),
+                    "/tooling/migration/sources/places/user_like.load.sql"
                 )),
             ),
         ] {
@@ -639,11 +643,16 @@ mod tests {
         .execute(&mut *curation)
         .await
         .unwrap();
+        let previous = uuid::Uuid::nil().to_string();
+        sqlx::query("INSERT INTO explore.world_scene_public_id (public_id, identity, source, world_name) VALUES ($1::uuid, $2::uuid, $3, $4)")
+            .bind(&previous).bind(&local).bind(source).bind(world).execute(&mut *curation).await.unwrap();
+        sqlx::query("INSERT INTO stage (id, world_name, raw, mod_disabled, highlighted, mod_rating, ranking_overlay) VALUES ($1, $2, '{}', true, false, 'T', '{\"ranking\": 12}')")
+            .bind(&previous).bind(world).execute(&mut *curation).await.unwrap();
         sqlx::query("INSERT INTO stage (id, world_name, raw, mod_disabled, highlighted, mod_rating, ranking_overlay) VALUES ($1, $2, '{}', false, true, 'E', '{\"ranking\": 56}')")
             .bind(&alias).bind(world).execute(&mut *curation).await.unwrap();
         sqlx::raw_sql(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../tooling/migration/sources/places/place.load.sql"
+            env!("DCL_ONE_ROOT"),
+            "/tooling/migration/sources/places/place.load.sql"
         )))
         .execute(&mut *curation)
         .await
@@ -838,6 +847,28 @@ mod tests {
         let (_, ordinary_list) = get(&app, "/api/places?only_highlighted=true").await;
         assert_eq!(ordinary_list["data"], json!([]));
 
+        sqlx::query("UPDATE explore.place SET raw = raw || $2::jsonb WHERE id = $1")
+            .bind(&public)
+            .bind(json!({"deployment_id": "mirrored"}))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let names = format!("/api/places?names={world}");
+        let highlighted = "/api/places?only_highlighted=true";
+        for route in [&names, highlighted] {
+            let (status, listed) = get(&app, route).await;
+            assert_eq!(status, StatusCode::OK, "{listed}");
+            assert_eq!(listed["total"], 1, "{listed}");
+            assert_eq!(listed["data"][0]["id"], public);
+            assert_eq!(listed["data"][0]["highlighted"], true);
+        }
+        let filters = super::super::PlaceListFilters {
+            names: vec![world.to_string()],
+            places_table: true,
+            ..Default::default()
+        };
+        assert_eq!(state.places.count_list(&filters).await.unwrap(), 1);
+
         for disabled in [true, false] {
             let response = app
                 .clone()
@@ -862,10 +893,32 @@ mod tests {
             assert_eq!(status_batch["total"], 1);
             assert_eq!(status_batch["data"][0]["id"], public);
             assert_eq!(status_batch["data"][0]["disabled"], disabled);
+            assert_eq!(
+                state.places.count_list(&filters).await.unwrap(),
+                i64::from(!disabled)
+            );
         }
+
+        sqlx::query(
+            "UPDATE explore.place SET disabled = true, raw = raw || $2::jsonb WHERE id = $1",
+        )
+        .bind(&public)
+        .bind(json!({"disabled_reason": "opt_out"}))
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(state.places.count_list(&filters).await.unwrap(), 0);
+        assert_eq!(get(&app, &names).await.1["total"], 0);
+        sqlx::query("UPDATE explore.place SET disabled = false, raw = raw - 'disabled_reason' WHERE id = $1")
+            .bind(&public)
+            .execute(&pool)
+            .await
+            .unwrap();
 
         let replacement = deploy(&pool, world, "replacement", &["0,0"]).await;
         assert_eq!(replacement, local);
+        assert_eq!(state.places.count_list(&filters).await.unwrap(), 0);
+        assert_eq!(get(&app, &names).await.1["total"], 0);
         assert_eq!(
             get(&app, &format!("/api/places/{public}")).await.0,
             StatusCode::NOT_FOUND
@@ -877,6 +930,22 @@ mod tests {
                 .await
                 .unwrap()
                 .is_empty()
+        );
+        let absent = uuid::Uuid::new_v4().to_string();
+        let status_ids = [public.clone(), local.clone(), absent, "not-an-id".into()];
+        assert_eq!(state.places.count_by_ids(&status_ids).await.unwrap(), 2);
+        let (status, retired) =
+            signed(&app, "POST", "/api/places/status", Some(json!(status_ids))).await;
+        assert_eq!(status, StatusCode::CREATED, "{retired}");
+        assert_eq!(retired["total"], 2);
+        let rows = retired["data"].as_array().unwrap();
+        assert!(
+            rows.iter()
+                .any(|row| row["id"] == public && row["disabled"] == true)
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row["id"] == local && row["disabled"] == false)
         );
         assert!(!state.places.owns_places(&[public], owner).await.unwrap());
         let (_, detail) = get(&app, &format!("/api/places/{local}")).await;

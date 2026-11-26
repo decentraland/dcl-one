@@ -13,3 +13,8 @@ The catalogue mirror follows the public discovery feed. An opted-out scene may s
 A local place identity owns storage, grants and interactions. Discovery can publish the upstream UUID while the local UUID continues to resolve the same active scene. The binding records the source, world and deployment. If a later deployment keeps the internal identity but receives a different UUID upstream, a fresh match can activate the new public UUID. Former public UUIDs remain reserved to prevent reassignment to another scene.
 
 Both services can index the same deployment at different times. Until a match is available, the node can serve the scene using its existing local identity. A lookup failure requires no transfer or deletion of stored data.
+
+When a public UUID differs from the local identity and its exact deployment
+proof expires, place detail returns 404 for that public UUID. Place status
+reports a disabled entry and includes it in the count. The local identity
+continues to describe its current deployment.

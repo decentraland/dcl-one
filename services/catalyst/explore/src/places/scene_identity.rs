@@ -123,18 +123,21 @@ pub async fn bind_public_id(
         "SELECT EXISTS (SELECT 1 FROM explore.world_scene_place WHERE identity = $1 AND identity <> $2) \
           OR EXISTS (SELECT 1 FROM explore.world_scene_public_id \
                        WHERE identity = $2 AND entity_id IS NOT NULL AND public_id <> $1) \
-          OR EXISTS (SELECT 1 FROM explore.place_indexed catalogue \
+          OR (NOT EXISTS (SELECT 1 FROM explore.world_scene_public_id \
+                            WHERE public_id = $1 AND identity = $2 AND world_name = $3 AND source = $5) \
+              AND EXISTS (SELECT 1 FROM explore.place_indexed catalogue \
                        WHERE lower(translate(catalogue.id, '-{{}}', '')) = ANY(ARRAY[ \
                            replace($1::uuid::text, '-', ''), 'urn:uuid:' || replace($1::uuid::text, '-', '')]) \
                        AND {catalogue_id} = $1 \
                        AND (catalogue.world AND lower(catalogue.world_name) = $3 \
-                            AND catalogue.raw->>'deployment_id' = $4) IS DISTINCT FROM true)"
+                            AND catalogue.raw->>'deployment_id' = $4) IS DISTINCT FROM true))"
     );
     let collides: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(conflict_sql))
         .bind(public_id)
         .bind(identity)
         .bind(world)
         .bind(entity_id)
+        .bind(source)
         .fetch_one(&mut *conn)
         .await?;
     if collides {
@@ -367,11 +370,12 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        sqlx::query("DELETE FROM explore.place WHERE id=$1")
-            .bind(&catalogue_id)
-            .execute(pool)
-            .await
-            .unwrap();
+        assert_eq!(deploy(pool, WORLD, "refresh", "0,0").await, identity);
+        assert_eq!(
+            bind(pool, SOURCE, WORLD, "refresh", public_id).await,
+            PublicIdBinding::Bound,
+            "the existing reservation permits fresh proof before catalogue refresh"
+        );
 
         assert_eq!(deploy(pool, WORLD, "second", "0,0").await, identity);
         assert_eq!(
@@ -455,6 +459,139 @@ mod tests {
             outcomes => panic!("expected only one proof for the same CID, got {outcomes:?}"),
         };
         assert_eq!(visible_id(pool, unclaimed).await, winner);
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn places_import_first_defers_the_exact_mirrored_binding() {
+        let Some(db) = OwnedDatabase::new("scene_import_first", Schema::Full, 4).await else {
+            return;
+        };
+        let pool = &db.pool;
+        create_world(pool, WORLD).await;
+        let identity = deploy(pool, WORLD, "first", "0,0").await;
+        let public_id = Uuid::new_v4();
+        let retired_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO explore.world_scene_place (world_name, identity, parcels, active)
+             VALUES ($1, $2, ARRAY['1,0'], false)",
+        )
+        .bind(WORLD)
+        .bind(retired_id)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let mut import = pool.begin().await.unwrap();
+        sqlx::query(
+            "CREATE TEMP TABLE stage (world_name text, identity uuid, entity_id text, parcels text[],
+              active boolean, created_at timestamptz, updated_at timestamptz) ON COMMIT DROP",
+        )
+        .execute(&mut *import)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO stage VALUES ($1, $2, 'first', ARRAY['0,0'], true, now(), now())")
+            .bind(WORLD)
+            .bind(public_id)
+            .execute(&mut *import)
+            .await
+            .unwrap();
+        sqlx::raw_sql(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/tooling/migration/sources/places/world_scene_place.load.sql"
+        )))
+        .execute(&mut *import)
+        .await
+        .unwrap();
+        import.commit().await.unwrap();
+        assert_eq!(visible_id(pool, WORLD).await, identity);
+        assert_eq!(
+            bind(pool, SOURCE, WORLD, "first", retired_id).await,
+            PublicIdBinding::Conflict
+        );
+        assert_eq!(
+            bind(pool, SOURCE, WORLD, "first", public_id).await,
+            PublicIdBinding::Bound
+        );
+        assert_eq!(visible_id(pool, WORLD).await, public_id);
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn places_like_replay_agrees_with_claim_on_conflicting_votes() {
+        let Some(db) = OwnedDatabase::new("scene_vote_import", Schema::Full, 4).await else {
+            return;
+        };
+        let pool = &db.pool;
+        create_world(pool, WORLD).await;
+        let local = deploy(pool, WORLD, "first", "0,0").await.to_string();
+        let public_id = Uuid::new_v4();
+        let public = public_id.to_string();
+        sqlx::query(
+            r#"INSERT INTO explore.user_likes ("user", entity_id, "like", created_at, updated_at)
+               VALUES ('local-internal', $1, false, '2025-01-01', '2025-01-01'),
+                      ('local-public', $2, false, '2025-01-01', '2025-01-01')"#,
+        )
+        .bind(&local)
+        .bind(&public)
+        .execute(pool)
+        .await
+        .unwrap();
+        for replay in [false, true] {
+            let mut import = pool.begin().await.unwrap();
+            sqlx::query(
+                r#"CREATE TEMP TABLE stage ("user" text, entity_id text, "like" boolean, user_activity float8,
+                     created_at timestamptz, updated_at timestamptz) ON COMMIT DROP"#,
+            )
+            .execute(&mut *import)
+            .await
+            .unwrap();
+            sqlx::query(
+                r#"INSERT INTO stage VALUES
+                      ('newer', $1, false, 100, '2026-01-01', '2026-01-01'),
+                      ('newer', $2, true, 100, '2026-01-01', '2026-02-01'),
+                      ('tied', $1, true, 100, '2026-01-01', '2026-01-01'),
+                      ('tied', $2, false, 100, '2026-01-01', '2026-01-01'),
+                      ('local-internal', $2, true, 100, '2026-01-01', '2026-01-01'),
+                      ('local-public', $1, true, 100, '2026-01-01', '2026-01-01')"#,
+            )
+            .bind(&local)
+            .bind(&public)
+            .execute(&mut *import)
+            .await
+            .unwrap();
+            sqlx::raw_sql(include_str!(concat!(
+                env!("DCL_ONE_ROOT"),
+                "/tooling/migration/sources/places/user_like.load.sql"
+            )))
+            .execute(&mut *import)
+            .await
+            .unwrap();
+            import.commit().await.unwrap();
+            if !replay {
+                assert_eq!(
+                    bind(pool, SOURCE, WORLD, "first", public_id).await,
+                    PublicIdBinding::Bound
+                );
+            }
+            let votes: Vec<(String, bool, String)> = sqlx::query_as(
+                r#"SELECT "user", "like", source FROM explore.user_likes
+                   WHERE entity_id = $1 ORDER BY "user""#,
+            )
+            .bind(&local)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                votes,
+                [
+                    ("local-internal".into(), false, "local".into()),
+                    ("local-public".into(), false, "local".into()),
+                    ("newer".into(), true, "upstream".into()),
+                    ("tied".into(), false, "upstream".into()),
+                ]
+            );
+        }
         db.drop().await;
     }
 

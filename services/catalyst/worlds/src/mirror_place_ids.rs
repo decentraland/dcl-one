@@ -13,7 +13,8 @@ use super::*;
 const PAGE_SIZE: usize = 100;
 const MAX_ROWS: usize = 4_000;
 const MAX_PAGE_BYTES: usize = 4 * 1024 * 1024;
-const LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
+const PAGE_TIMEOUT: Duration = Duration::from_secs(10);
+const SCAN_TIMEOUT: Duration = Duration::from_secs(90);
 static SCHEDULED_RETRIES: LazyLock<Fills> =
     LazyLock::new(|| Fills::new(MAX_CONCURRENT_FILLS, Duration::ZERO));
 
@@ -29,9 +30,12 @@ async fn fetch_ids<'a>(
     world: &WorldName,
     candidates: &'a [String],
 ) -> Result<Vec<(&'a str, Uuid)>> {
-    let (matches, digest) = scan(client, places, world, candidates).await?;
+    let scan_once = || tokio::time::timeout(SCAN_TIMEOUT, scan(client, places, world, candidates));
+    let (matches, digest) = scan_once().await.context("Places scan timed out")??;
     if let Some(digest) = digest.filter(|_| !matches.is_empty()) {
-        let (_, confirmation) = scan(client, places, world, candidates).await?;
+        let (_, confirmation) = scan_once()
+            .await
+            .context("Places confirmation timed out")??;
         if confirmation != Some(digest) {
             bail!("Places pagination changed between reads for {world}");
         }
@@ -95,6 +99,7 @@ async fn scan<'a>(
             .append_pair("offset", &offset.to_string());
         let response = client
             .get(page_url.as_str())
+            .timeout(PAGE_TIMEOUT)
             .send()
             .await
             .with_context(|| format!("GET {page_url}"))?;
@@ -226,8 +231,7 @@ pub(super) async fn refresh(
         if candidates.is_empty() {
             return Ok(false);
         }
-        let matches = tokio::time::timeout(LOOKUP_TIMEOUT, fetch_ids(client, places, world, &candidates))
-            .await.context("Places lookup timed out")??;
+        let matches = fetch_ids(client, places, world, &candidates).await?;
         let mut retry = matches.len() < candidates.len();
         for (cid, id) in matches {
             let result = async {
@@ -238,6 +242,7 @@ pub(super) async fn refresh(
             }.await;
             match result {
                 Ok(scene_identity::PublicIdBinding::Conflict) => {
+                    retry = true;
                     tracing::warn!(%world, %cid, %id, "Places scene UUID conflicts with an existing identity");
                 }
                 Ok(_) => {}

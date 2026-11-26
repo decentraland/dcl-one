@@ -25,17 +25,34 @@ DO $images$ DECLARE n bigint; BEGIN
 -- is never overwritten, and a migration overlay whose upstream decision is gone
 -- is removed.
 SELECT pg_advisory_xact_lock_shared(hashtextextended('explore.scene_interaction_import', 0));
-ALTER TABLE stage ADD COLUMN interaction_id text;
+ALTER TABLE stage ADD COLUMN interaction_id text, ADD COLUMN curation_winner boolean DEFAULT false;
 UPDATE stage SET interaction_id = explore.scene_interaction_entity_id(id);
+
+-- Select once for both overlays and their deletions. Historical aliases can
+-- resolve to the same key, but the currently verified UUID wins if present.
+WITH preferred AS (
+    SELECT DISTINCT ON (s.interaction_id) s.id
+    FROM stage s
+    LEFT JOIN explore.world_scene_public_id b
+      ON b.public_id = CASE WHEN pg_input_is_valid(s.id, 'uuid') THEN s.id::uuid END
+     AND b.identity::text = s.interaction_id AND b.entity_id IS NOT NULL
+    LEFT JOIN explore.world_scene_place p
+      ON p.identity = b.identity AND p.active AND p.world_name = b.world_name AND p.entity_id = b.entity_id
+    LEFT JOIN worlds.world_scenes d
+      ON d.world_name = p.world_name AND d.entity_id = p.entity_id AND d.mirror_source = b.source
+    LEFT JOIN worlds.worlds w ON w.name = d.world_name AND w.mirror_source = b.source
+    ORDER BY s.interaction_id, (w.name IS NOT NULL) DESC, s.id
+)
+UPDATE stage s SET curation_winner = true FROM preferred WHERE s.id = preferred.id;
 
 DELETE FROM explore.place_moderation m
 USING stage s
-WHERE m.place_id = s.interaction_id AND m.set_by = 'migration:places'
+WHERE s.curation_winner AND m.place_id = s.interaction_id AND m.set_by = 'migration:places'
   AND NOT (s.mod_disabled OR s.highlighted OR s.mod_rating IS NOT NULL);
 
 INSERT INTO explore.place_moderation AS m
     (place_id, disabled, highlighted, content_rating, reason, set_by, updated_at)
-SELECT DISTINCT ON (interaction_id) interaction_id,
+SELECT interaction_id,
        CASE WHEN mod_disabled THEN true END,
        CASE WHEN highlighted THEN true END,
        mod_rating,
@@ -43,8 +60,7 @@ SELECT DISTINCT ON (interaction_id) interaction_id,
        'migration:places',
        timezone('UTC', now())
 FROM stage
-WHERE mod_disabled OR highlighted OR mod_rating IS NOT NULL
-ORDER BY interaction_id, id
+WHERE curation_winner AND (mod_disabled OR highlighted OR mod_rating IS NOT NULL)
 ON CONFLICT (place_id) DO UPDATE SET
     disabled = EXCLUDED.disabled,
     highlighted = EXCLUDED.highlighted,
@@ -57,13 +73,12 @@ WHERE m.set_by = 'migration:places'
 
 DELETE FROM explore.place_ranking r
 USING stage s
-WHERE r.place_id = s.interaction_id AND r.set_by = 'migration:places' AND s.ranking_overlay IS NULL;
+WHERE s.curation_winner AND r.place_id = s.interaction_id AND r.set_by = 'migration:places' AND s.ranking_overlay IS NULL;
 
 INSERT INTO explore.place_ranking AS r (place_id, overlay, set_by, updated_at)
-SELECT DISTINCT ON (interaction_id) interaction_id, ranking_overlay, 'migration:places', timezone('UTC', now())
+SELECT interaction_id, ranking_overlay, 'migration:places', timezone('UTC', now())
 FROM stage
-WHERE ranking_overlay IS NOT NULL
-ORDER BY interaction_id, id
+WHERE curation_winner AND ranking_overlay IS NOT NULL
 ON CONFLICT (place_id) DO UPDATE SET
     overlay = EXCLUDED.overlay,
     updated_at = EXCLUDED.updated_at

@@ -268,12 +268,29 @@ pub(super) fn build_where_from(
     let mut clauses: Vec<String> = vec!["disabled IS FALSE".to_string()];
     clauses.extend(own_rows_sql().map(String::from));
     if !scene_projection && !f.only_worlds {
-        // A verified Places id belongs to its exact scene even after the
-        // claim expires. The mirrored Places catalogue must not surface it
-        // as a second scene or bring a retired entry back into discovery.
-        clauses.push(
-            "NOT EXISTS (SELECT 1 FROM explore.world_scene_public_id claim WHERE claim.public_id::text = lower(id))".to_string(),
-        );
+        // Keep the catalogue's existing filters and fields for a live exact
+        // copy. An expired claim still reserves its UUID, so a stale or
+        // unrelated row cannot revive it. Probe the claim's UUID primary key.
+        clauses.push(r#"NOT EXISTS (
+            SELECT 1 FROM explore.world_scene_public_id claim
+            WHERE claim.public_id = CASE
+                WHEN pg_input_is_valid(regexp_replace(id, '^urn:uuid:', '', 'i'), 'uuid')
+                THEN regexp_replace(id, '^urn:uuid:', '', 'i')::uuid END
+              AND NOT EXISTS (
+                SELECT 1 FROM explore.world_scene_place scene
+                JOIN worlds.world_scenes s ON s.world_name = scene.world_name AND s.entity_id = scene.entity_id
+                JOIN worlds.worlds w ON w.name = scene.world_name
+                LEFT JOIN explore.place_moderation m ON m.place_id = scene.identity::text
+                LEFT JOIN explore.place_moderation wm ON wm.place_id = w.name
+                WHERE scene.identity = claim.identity AND scene.active
+                  AND scene.world_name = claim.world_name AND scene.entity_id = claim.entity_id
+                  AND s.mirror_source = claim.source AND w.mirror_source = claim.source
+                  AND world IS TRUE AND lower(btrim(raw->>'world_name')) = claim.world_name
+                  AND raw->>'deployment_id' = claim.entity_id
+                  AND w.blocked_since IS NULL AND w.show_in_places
+                  AND NOT COALESCE(m.disabled, false) AND NOT COALESCE(wm.disabled, false)
+              )
+        )"#.to_string());
     }
     let mut binds: Vec<Bind> = Vec::new();
     let mut idx = start;

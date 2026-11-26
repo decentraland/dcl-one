@@ -134,8 +134,10 @@ The read path probes the claim's unique internal UUID. The mirror looks up
 only the current pass's active CIDs and takes the world row lock before
 committing each proof. Claim writes serialize on the requested UUID, reject
 any other active or retired internal identity using that UUID, and check
-existing catalogue keys. Catalogue copies qualify only when both their
-normalized world name and deployment CID match. The binding collision check
+existing catalogue keys. For a new claim, catalogue copies qualify only
+when both their normalized world name and deployment CID match. A verified
+reservation can refresh for the same identity and source while the catalogue
+still describes the previous deployment. The binding collision check
 probes one expression index per catalogue leg for the normalized UUID and
 its URN spelling, then applies PostgreSQL's UUID parser to the candidates.
 The two indexes store one entry per catalogue row across both legs.
