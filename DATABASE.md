@@ -1437,17 +1437,10 @@ collection 133 ms; the status counts of the owner of 1,542 collections
 probes each row once; no index serves the ordering.
 
 The committee listing's `status` and `assignee` filters read each
-collection's newest curation (`collection_curations_collection_created_key`),
-its pending item curations and, for `auto_reviewing` while the review flow is
-on, its open validation request (`validation_requests_open_key`) and the
-timeline events since that request started
-(`collection_events_collection_created_idx`). A collection is in an automated
-review while its newest curation is pending and it has an open request no
-curator decided after; the flow's switch is read only for a listing that
-filters by status or sorts by relevance. Measured on a scratch copy of the fresh schema with 8,298
-collections, 4,149 on chain, two curations each and 794 open requests (count;
-a page of 12 by creation, JIT off): `to_review` 18 ms, `pending` 15 ms,
-`under_review` 6 ms, `auto_reviewing` 6 ms. The cost grows with the
+collection's newest curation (`collection_curations_collection_created_key`)
+and its pending item curations. Measured on a scratch copy of the fresh schema with 8,298
+collections, 4,149 on chain and two curations each (count; a page of 12 by
+creation, JIT off): `to_review` 18 ms, `pending` 15 ms, `under_review` 6 ms. The cost grows with the
 collections the other filters leave. At the reference scale (51,745
 collections, 38,211 item curations and 4,755 collection curations imported, 5,575
 collections in the copy, JIT off) a committee page reads every collection in a
