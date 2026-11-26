@@ -1083,7 +1083,7 @@ async fn sales_accounting_keeps_unallocated_evidence_out_of_public_totals() {
     assert_eq!(
         executions,
         [8, 13, 14, 15, 16],
-        "only catalogue-only executions are normalized"
+        "catalogue trades retain their execution even when no price qualifies"
     );
     let counts: (i64,i64,i64,i64,i64,i64) = sqlx::query_as("SELECT
          (SELECT count(*) FROM shop.trade_event), (SELECT count(*) FROM shop.sale_asset WHERE price>0),
@@ -1281,10 +1281,6 @@ async fn pegged_trade_prices_follow_receipt_proof_and_repair_latest_sales() {
             make_receipt(&trade.0, tip, index, token, amount, fee),
         );
     }
-    chain.receipts.lock().insert(
-        earlier.1.tx_hash.clone(),
-        make_receipt(&earlier.0, tip - 1, 10, mana, 95, 5),
-    );
     let mut conn = db.pool.acquire().await.unwrap();
     trade_events::insert_events(
         &mut conn,
@@ -1367,6 +1363,16 @@ async fn pegged_trade_prices_follow_receipt_proof_and_repair_latest_sales() {
         .execute(&db.pool)
         .await
         .unwrap();
+    // An incomplete trade record cannot prove direct MANA. The settled
+    // control retains its price when the payment side is absent.
+    sqlx::query(
+        "UPDATE shop.trade_event SET assets=assets-(CASE WHEN log_index=20 THEN 'sent' ELSE 'received' END)
+         WHERE block_number=$1 AND log_index IN (10,20,30)",
+    )
+    .bind(tip as i64)
+    .execute(&db.pool)
+    .await
+    .unwrap();
     let before = generation().await.unwrap();
     sale_fold::rollups(&mut db.pool.acquire().await.unwrap(), net, &[86400])
         .await
@@ -1426,7 +1432,7 @@ async fn pegged_trade_prices_follow_receipt_proof_and_repair_latest_sales() {
             .fetch_one(&db.pool)
             .await
             .unwrap();
-    assert_eq!(totals, (3, "1100".into(), "55".into()));
+    assert_eq!(totals, (3, "1100".into(), "50".into()));
     db.drop().await;
 }
 

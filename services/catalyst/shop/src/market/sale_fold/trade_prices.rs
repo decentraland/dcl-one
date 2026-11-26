@@ -19,8 +19,9 @@ pub(super) async fn publish_proved(
         "WITH proved AS (
             SELECT p.block_number,p.log_index,sum(p.gross) AS price
             FROM shop.sale_payment p
-            JOIN unnest($2::bigint[],$3::int[]) k(block_number,log_index) USING(block_number,log_index)
-            WHERE p.network=$1 GROUP BY p.block_number,p.log_index
+            WHERE p.network=$1 AND (p.block_number,p.log_index) IN
+                (SELECT * FROM unnest($2::bigint[],$3::int[]))
+            GROUP BY p.block_number,p.log_index
             HAVING bool_and(p.consideration AND p.currency=$4 AND p.settled) AND sum(p.gross)>0
          )
          UPDATE shop.sale_asset a SET price=p.price,currency=$4
@@ -40,8 +41,9 @@ pub(super) async fn publish_proved(
 }
 
 /// Clears v1–v3 prices in the retained prefix. Prior successful settlement
-/// already proves every matching MANA leg, including a converted USD leg.
-/// Returns the days and positions to repair, and whether each was MANA.
+/// proves each matching MANA leg. Keeping a price without that proof
+/// requires a complete direct-MANA trade event.
+/// Returns the affected days and positions and whether each was MANA.
 pub(super) async fn clear_unproved(
     c: &mut PgConnection,
     net: ChainNet,
@@ -55,10 +57,17 @@ pub(super) async fn clear_unproved(
             FROM shop.sale_execution e JOIN shop.sale_asset a USING(network,block_number,log_index)
             WHERE e.network=$1 AND e.kind='trade' AND e.block_number<=$2 AND a.price IS NOT NULL
               AND (a.price<=0 OR a.currency<>$3 OR (
-                EXISTS (SELECT FROM shop.trade_event t
-                   CROSS JOIN LATERAL jsonb_array_elements((t.assets->'sent') || (t.assets->'received')) leg
+                NOT EXISTS (SELECT FROM shop.trade_event t
+                   CROSS JOIN LATERAL (
+                       SELECT bool_and((leg->>'assetType'='1' AND leg->>'contractAddress'=$3) IS TRUE)
+                           FILTER (WHERE leg->>'assetType' IN ('1','2')) AS direct_mana
+                       FROM jsonb_array_elements(
+                           CASE WHEN jsonb_typeof(t.assets->'sent')='array' AND jsonb_typeof(t.assets->'received')='array'
+                               THEN (t.assets->'sent') || (t.assets->'received') ELSE '[]'::jsonb END
+                       ) leg
+                   ) evidence
                    WHERE (t.network,t.block_number,t.log_index)=(e.network,e.block_number,e.log_index)
-                     AND leg->>'assetType'='2')
+                     AND evidence.direct_mana)
                 AND NOT EXISTS (SELECT FROM shop.sale_payment p
                     WHERE (p.network,p.block_number,p.log_index)=(e.network,e.block_number,e.log_index)
                     GROUP BY p.block_number,p.log_index
