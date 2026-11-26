@@ -5198,6 +5198,10 @@
           "kind": "regular"
         },
         {
+          "name": "rarityTokens.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "reelActions.test.ts",
           "kind": "regular"
         },
@@ -13131,7 +13135,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/emotes/EmoteSlot.tsx",
-      "sha256": "0c40c917ed10f4848e7c1860827627f683aac859f35d22bf17b1d90ab739f582"
+      "sha256": "44752518f2ca170542e0f622787fcc3a919b29b4ae3c33b77084730a832a1496"
     },
     {
       "path": "library/ui/apps/hud/features/emotes/EmotesWheel.module.css",
@@ -14167,7 +14171,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "970d4e11255740065da439fa46646ecaac313fb66486f02b4bb21d3bbec4ce92"
+      "sha256": "ea6ef0b5888038fa6e23fc7db7985d0bc2621af25946adf4956d9710001dfbec"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -14780,6 +14784,10 @@
     {
       "path": "library/ui/apps/hud/test/rail.test.tsx",
       "sha256": "c11b80d25b1efcb2ab186025c3f7ab71c1a668ff31180ce8a5545c47752e25ea"
+    },
+    {
+      "path": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "sha256": "52bbf6b118a3971255dbfee2d023221d6536880255e1e735ec5f0e7fc03714c7"
     },
     {
       "path": "library/ui/apps/hud/test/reelActions.test.ts",
@@ -51445,6 +51453,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/design/WearableCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/design/WearableCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/design/WearableCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/features/emotes/EmoteSlot.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/features/emotes/EmoteSlot.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/rarityTokens.test.tsx",
+      "to": "library/ui/apps/hud/features/emotes/EmoteSlot.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/reelActions.test.ts",
       "to": "library/explorer-core/test/console.ts",
       "kind": "native:runtime"
@@ -68847,6 +68885,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/rail.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/rarityTokens.test.tsx",
       "kind": "type"
     },
     {
