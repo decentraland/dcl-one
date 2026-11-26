@@ -142,6 +142,13 @@ Before changing web UI in `apps/` (including the Play HUD in
 `rendering/bevy-explorer/source/react-web/`, read and follow
 [`docs/ui-standards.md`](docs/ui-standards.md). It defines component styling,
 shared foundations and components, accessibility, migration and verification.
+In the library-first paths its
+[Composition](docs/ui-standards.md#composition) section lists, use the
+components `@dcl/one-ui` exports before building or importing another; the
+Explorer HUD and Creator Hub keep their own kits for now. The same section says
+what to do when a component is missing, and the standard's
+[review checklist](docs/ui-standards.md#review-checklist) is what a review of
+UI changes checks.
 To implement a Figma design, follow the `implement-figma-design` skill in
 `.claude/skills/`; it resolves each component to the library instead of
 recreating it. To port a capture into `library/ui`, follow
