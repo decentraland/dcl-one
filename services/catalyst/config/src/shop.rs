@@ -132,6 +132,40 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "WERT_API_KEY", hide_env_values = true)]
     pub wert_api_key: Option<String>,
 
+    // The Transak card on-ramp (`/v1/transak/*`): all six, or none (the routes
+    // then answer 503 naming them).
+    /// Transak's partner API (`/v2/refresh-token`, `/v2/order/{id}`).
+    #[arg(long, env = "TRANSAK_API_URL")]
+    pub transak_api_url: Option<String>,
+
+    /// Transak's API gateway, which creates the widget session (`/v2/auth/session`).
+    #[arg(long, env = "TRANSAK_API_GATEWAY_URL")]
+    pub transak_api_gateway_url: Option<String>,
+
+    /// Transak's partner API key, sent as `x-api-key`. Never the key
+    /// marketplace-server is serving with: each refresh invalidates the
+    /// other's token, and marketplace-server does not recover. Use separate
+    /// partner credentials, or set the six TRANSAK_* only once
+    /// marketplace-server has stopped serving Transak.
+    #[arg(long, env = "TRANSAK_API_KEY", hide_env_values = true)]
+    pub transak_api_key: Option<String>,
+
+    /// Transak's partner API secret, sent only to refresh the access token.
+    #[arg(long, env = "TRANSAK_API_SECRET", hide_env_values = true)]
+    pub transak_api_secret: Option<String>,
+
+    /// Bearer of `PUT /v1/transak/access-token`, which forces a token refresh.
+    #[arg(
+        long,
+        env = "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
+        hide_env_values = true
+    )]
+    pub transak_refresh_access_token_auth: Option<String>,
+
+    /// The host Transak has registered for the partner (`referrerDomain` of every widget).
+    #[arg(long, env = "TRANSAK_REFERRER_DOMAIN")]
+    pub transak_referrer_domain: Option<String>,
+
     /// 0 disables the catalog page cache.
     #[arg(long, env = "MARKETPLACE_CATALOG_CACHE_TTL_SECS", default_value_t = 30)]
     pub marketplace_catalog_cache_ttl_secs: u64,

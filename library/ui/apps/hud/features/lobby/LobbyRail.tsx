@@ -1,9 +1,9 @@
 import { Children, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import arrowLeft from '../../assets/map/panel/arrow-left.png'
 import arrowRight from '../../assets/map/panel/arrow-right.png'
-import { MaskIcon } from '../../design'
 import { DRAG_THRESHOLD, FLING_STALE_MS, RAIL_START, RailModel, WHEEL_COOLDOWN, type RailGeometry, type RailState } from './railModel'
 import styles from './LobbyRail.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 function measure(viewport: HTMLElement, strip: HTMLElement): RailGeometry {
   const cards = Array.from(strip.children) as HTMLElement[]

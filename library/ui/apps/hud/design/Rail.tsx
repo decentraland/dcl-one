@@ -5,8 +5,8 @@
 import { Children, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import arrowLeft from '../assets/rail/arrow-left.png'
 import arrowRight from '../assets/rail/arrow-right.png'
-import { MaskIcon } from './MaskIcon'
 import styles from './Rail.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 function pageStride(el: HTMLDivElement, perPage: number, gap: number): number {
   const card = el.firstElementChild?.firstElementChild as HTMLElement | null

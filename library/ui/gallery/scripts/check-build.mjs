@@ -541,10 +541,10 @@ async function checkGallery({ dist, prefix = '/', hosted = false, csp, browser }
       )
     await shownScale(widest)
 
-    const alias = await hudPage('MenuRow', 1280)
-    if (alias.hud !== 'MenuPanel' || alias.examples.length !== 1)
+    const alias = await hudPage('TextArea', 1280)
+    if (alias.hud !== 'FormControls' || alias.examples.length !== 1)
       throw new Error(
-        `?hud=MenuRow opens ${alias.hud} with ${alias.examples.length} pages, not MenuPanel`
+        `?hud=TextArea opens ${alias.hud} with ${alias.examples.length} pages, not FormControls`
       )
 
     const generated = hosted ? 'Button' : listed.generated[0]

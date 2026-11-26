@@ -2,9 +2,9 @@
 // text rows). Closes on an outside click or Cancel.
 import { useEffect, useRef, useState } from 'react'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
-import { MaskIcon } from './MaskIcon'
 import keyboardIcon from '../assets/backpack/icon-keyboard.webp'
 import styles from './HintsButton.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 export interface Hint {
   icon: React.ReactNode
