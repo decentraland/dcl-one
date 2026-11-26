@@ -1172,6 +1172,33 @@ async fn the_free_slots_are_the_registry_allowance_less_the_submitted_items() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn free_slots_the_database_cannot_count_answer_500_instead_of_none() {
+    let Some(w) = world().await else { return };
+    let f = fixture(&w, Approved).await;
+    let path = format!("/v1/thirdParties/{}/slots", f.provider);
+    assert_eq!(
+        call(&w.app, Manager, "GET", &path, None).await.0,
+        StatusCode::OK
+    );
+    sqlx::query("ALTER TABLE builder.item_curations RENAME TO item_curations_unreadable")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let answer = call(&w.app, Manager, "GET", &path, None).await;
+    sqlx::query("ALTER TABLE builder.item_curations_unreadable RENAME TO item_curations")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        answer,
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "ok": false, "data": {}, "error": "Internal Server Error" })
+        )
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_manager_reads_a_file_only_where_its_writer_holds_the_bytes() {
     let Some(w) = world().await else { return };
     let f = fixture(&w, Approved).await;

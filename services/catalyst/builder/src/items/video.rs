@@ -301,8 +301,8 @@ impl Videos {
                 .and_then(|m| m.modified().ok())
                 .and_then(|m| now.duration_since(m).ok())
                 .is_some_and(|age| age >= SPOOL_ORPHAN_AGE);
-            if orphan {
-                let _ = tokio::fs::remove_file(entry.path()).await;
+            if orphan && let Err(error) = tokio::fs::remove_file(entry.path()).await {
+                tracing::warn!(path = %entry.path().display(), %error, "an orphan video spool file stays");
             }
         }
     }
@@ -615,7 +615,7 @@ impl ItemsComponent {
              ON CONFLICT (hash, uploaded_by) DO UPDATE SET video = true",
         )
         .bind(&video.hash)
-        .bind(video.size as i64)
+        .bind(i64::try_from(video.size).map_err(|_| ApiError::internal("a video size past i64"))?)
         .bind(change.signer())
         .execute(&mut *tx)
         .await?;
