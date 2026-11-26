@@ -83,7 +83,7 @@
 
   /* status */
   --online: #57df41;
-  --away: var(--dcl-brand-melon);
+  --away: #ffa25a;
   --offline: var(--dcl-neutrals-silver);
   --error: #ff2424;
   --error-text: #ffd0d8; /* soft error text on dark (readable, vs the solid --error) */
@@ -223,7 +223,7 @@
   --scrim-40: rgba(0, 0, 0, 0.22);
   --scrim-photo: rgba(0, 0, 0, 0.58); /* photo mode: 85% black outside the photo frame */
   --splash: var(--dcl-neutrals-white); /* photo mode: the shutter flash */
-  --scrim-20: var(--dcl-transparencies-black-10);
+  --scrim-20: rgba(0, 0, 0, 0.1);
   --divider-pink: rgba(247, 85, 255, 0.25);
   --tab-hover: rgba(255, 255, 255, 0.26);
   --cover-dark: rgba(22, 21, 24, 0.6); /* incompatible-item cover */
@@ -245,7 +245,7 @@
   --shown: #36d41d; /* a hidden item shown anyway */
   --smart-badge: linear-gradient(90deg, #e82af7 0%, #b229df 100%);
   --cta-flare: linear-gradient(90deg, #ff3156 0%, #ff5757 50%, #ff7d58 100%);
-  --scrim-60: var(--dcl-transparencies-black-40);
+  --scrim-60: rgba(0, 0, 0, 0.4);
   --scrim-card: var(--dcl-transparencies-black-60); /* the lobby dimmed around a card it presents */
   --scrim-control: rgba(0, 0, 0, 0.35); /* a control's plate over a page's header band */
   --scrim-close: rgba(0, 0, 0, 0.82); /* a modal's close plate on its header band */
@@ -262,7 +262,7 @@
   --shadow-rail-button: 2px 2px 2.5px rgba(0, 0, 0, 0.25);
   --shadow-rail-button-selected: 2px 2px 5px rgba(0, 0, 0, 0.25); /* a selected bar button */
   --rail-tag: #727272; /* the #tag after the player's name in the Me panel */
-  --rail-rule: #7e7e7e; /* the hairline between the Me panel's groups */
+  --rail-rule: #7e7e7e; /* the hairline between the Me panel's groups; the shared MenuDivider copies this value */
   --rail-panel-left: 66px; /* where a panel beside the navigation column starts */
   --shadow-rail-panel: 0 6px 4px rgba(0, 0, 0, 0.25); /* the Nearby Voice and Volume popovers */
   --shadow-rail-panel-wide: 0 6px 8px rgba(0, 0, 0, 0.25); /* the Notifications panel */
@@ -478,7 +478,7 @@
   --map-nav-hover: #ffd7d7;
   --map-nav-press: #fab6b6;
   --map-jump-press: #dd2749;
-  --map-field-btn: var(--dcl-transparencies-black-10); /* black 20% */
+  --map-field-btn: rgba(0, 0, 0, 0.1);
   --map-field-btn-hover: rgba(0, 0, 0, 0.15); /* black 30% */
   --map-field-btn-press: rgba(0, 0, 0, 0.21); /* black 40% */
   --map-sort-idle: rgba(0, 0, 0, 0.05); /* black 10% */

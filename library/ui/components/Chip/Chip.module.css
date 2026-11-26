@@ -24,6 +24,7 @@
     color: var(--dcl-neutrals-snow);
   }
 
+  /* a11y exception chip-selected-contrast (docs/ui-standards.md): snow on this orange is 2.62:1. */
   .selected {
     background: var(--dcl-brand-orange);
     color: var(--dcl-neutrals-snow);
@@ -63,6 +64,11 @@
   .clear:focus-visible {
     outline: 2px solid currentColor;
     outline-offset: 2px;
+  }
+
+  /* The clear button's snow would not show on the light, unselected chip. */
+  .root:not(.dark):not(.selected) .clear:focus-visible {
+    outline-color: var(--dcl-neutrals-shadow);
   }
 
   .clear {

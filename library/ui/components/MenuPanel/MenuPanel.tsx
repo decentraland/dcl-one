@@ -31,8 +31,8 @@ export function MenuPanel({ label, title, width = 274, className, children, ...r
 }
 
 /** The rows of a MenuPanel, stacked with no gap. */
-export function MenuList({ children }: { children: ReactNode }) {
-  return <div className={styles.list}>{children}</div>
+export function MenuList({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={[styles.list, className].filter(Boolean).join(' ')}>{children}</div>
 }
 
 export type MenuRowProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> & {

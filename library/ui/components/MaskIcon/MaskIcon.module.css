@@ -1,5 +1,6 @@
 /* Not in Figma: an image drawn as a mask. This rule sits outside the cascade layer with the specificity it had:
-   callers size, colour and place the icon with their own class, and keep the precedence they had. */
+   `size` is written inline; callers colour and place the icon with their own class, and keep the precedence they
+   had. */
 .root {
   display: inline-block;
   flex: none;

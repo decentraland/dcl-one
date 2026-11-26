@@ -48,3 +48,26 @@ describe('BrowseLoading', () => {
     expect(container.firstElementChild!.children).toHaveLength(1)
   })
 })
+
+describe("when a caller passes its own class", () => {
+  it('keeps it beside the own class of the toolbar, a control and the panel', () => {
+    render(
+      <>
+        <BrowseToolbar tabs={<nav aria-label="Sections" />} className="bar">
+          <BrowseControl size="search" className="slot">
+            search
+          </BrowseControl>
+        </BrowseToolbar>
+        <BrowsePanel className="results">results</BrowsePanel>
+        <BrowsePanel>plain</BrowsePanel>
+      </>
+    )
+    const toolbar = screen.getByRole('navigation').parentElement!
+    expect(toolbar).toHaveClass('bar')
+    expect(toolbar.classList).toHaveLength(2)
+    expect(screen.getByText('search')).toHaveClass('slot')
+    expect(screen.getByText('search').classList).toHaveLength(2)
+    expect(screen.getByText('results')).toHaveClass('results')
+    expect(screen.getByText('plain').classList).toHaveLength(1)
+  })
+})

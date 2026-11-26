@@ -653,7 +653,7 @@
   },
   "library/ui/components/Chip/Chip.module.css": {
     "primitives": 0,
-    "tokens": 11
+    "tokens": 12
   },
   "library/ui/components/CloseButton/CloseButton.module.css": {
     "primitives": 0,

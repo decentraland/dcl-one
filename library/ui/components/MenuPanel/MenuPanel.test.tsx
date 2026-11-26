@@ -70,3 +70,17 @@ describe('MenuDivider', () => {
     expect(screen.getByRole('separator')).toBeInTheDocument()
   })
 })
+
+describe('MenuList', () => {
+  it("keeps the caller's class beside its own, and has only its own without one", () => {
+    render(
+      <>
+        <MenuList className="mine">first</MenuList>
+        <MenuList>second</MenuList>
+      </>
+    )
+    expect(screen.getByText('first')).toHaveClass('mine')
+    expect(screen.getByText('first').classList).toHaveLength(2)
+    expect(screen.getByText('second').classList).toHaveLength(1)
+  })
+})
