@@ -485,8 +485,7 @@ pub async fn op_crdt_recv_from_renderer(op_state: Rc<RefCell<impl State>>) -> Ve
                     results.push(data);
                 }
                 GlobalCrdtStateUpdate::Time(time) => {
-                    let time_of_day = op_state.borrow_mut::<TimeOfDay>();
-                    time_of_day.time = time;
+                    *op_state.borrow_mut::<TimeOfDay>() = time;
                 }
                 GlobalCrdtStateUpdate::CameraFov(fov_y) => {
                     let camera_fov = op_state.borrow_mut::<CameraFov>();

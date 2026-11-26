@@ -246,6 +246,10 @@ nix develop --command bash tooling/dev-smoke.sh
 nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL only
 ```
 
+Run both in a fresh checkout. `python3 tooling/ci-local.py run [REV]` checks a commit
+(default `HEAD`) locally, with the checks its changes since `origin/main` select (images
+need Linux or `CI_LOCAL_IMAGES=1`).
+
 CI runs the Rust suites in `nix develop .#ci`: the toolchain, the services the tests
 start and the build tools, without the web and media tools.
 
@@ -262,9 +266,6 @@ every scratch database a test drops forces a checkpoint. The flag has no effect
 on a cluster created without it, so it never weakens a stack that holds data.
 Locally, set it only for a checkout whose `.cache/dev/postgres` does not exist yet.
 
-Run both in a fresh checkout. `python3 tooling/ci-local.py install` adds hooks
-that run the matching workflows' checks (images need Linux or
-`CI_LOCAL_IMAGES=1`); `ci-local.py run [REV]` runs them without pushing.
 The Rust tests run in three jobs that each compile the tests and run a third of
 the test executables; on PRs they run on Linux (`CATALYST_TEST_SHARD=i/n` for
 `tooling/catalyst-test.sh`). The provisioned Archipelago tests take a fixed

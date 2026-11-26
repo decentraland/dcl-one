@@ -7796,7 +7796,6 @@ fn notices_of(
     f.social
         .user_notifications
         .lock()
-        .unwrap()
         .iter()
         .filter(|n| n.kind == kind && &n.recipient == to)
         .cloned()
@@ -8393,7 +8392,6 @@ async fn permission_edits_notify_each_address_actually_changed() {
         .social
         .user_notifications
         .lock()
-        .unwrap()
         .iter()
         .rfind(|n| n.recipient == d.address)
         .map(|n| n.kind)
@@ -8775,7 +8773,7 @@ async fn one_edit_notifies_every_added_and_removed_address() {
             "{address}"
         );
     }
-    f.social.user_notifications.lock().unwrap().clear();
+    f.social.user_notifications.lock().clear();
 
     let added: Vec<Address> = (0..125).map(|_| Wallet::random().address).collect();
     let wallets: Vec<&str> = std::iter::once(original[0].as_str())

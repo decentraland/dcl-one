@@ -14,18 +14,16 @@ use serde_json::json;
 
 use crate::{nametag::NametagContent, AvatarProcessed, AvatarSelection, AvatarShape};
 
-/// Enough to find where frame time breaks down, well past the Max Avatars setting's range.
+/// Enough to find where frame time breaks down, well past the Max Avatars setting's range (1 to 100).
 const MAX_DEMOS: usize = 1024;
 /// The highest number `/avatar_demo cap` takes: every demo avatar and the player.
 const MAX_CAP: usize = MAX_DEMOS + 1;
-/// `/avatar_demo cap all`: no cap, so real players and scene avatars count against nothing.
-const UNCAPPED: usize = usize::MAX;
 const DEMO_LAYOUTS: &[(&str, &str)] = &[("Grid", "grid"), ("Around", "around")];
 
 /// `/avatar_demo cap`'s argument: a number, or `all` for no cap.
 fn parse_cap(value: &str) -> Result<usize, String> {
     match value {
-        "all" => Ok(UNCAPPED),
+        "all" => Ok(SessionGraphics::NO_AVATAR_CAP),
         _ => value
             .parse::<usize>()
             .ok()
@@ -36,7 +34,7 @@ fn parse_cap(value: &str) -> Result<usize, String> {
 
 /// A cap as the reply gives it: `all` for no cap.
 fn cap_json(cap: usize) -> serde_json::Value {
-    if cap == UNCAPPED {
+    if cap == SessionGraphics::NO_AVATAR_CAP {
         json!("all")
     } else {
         json!(cap)
@@ -654,12 +652,12 @@ mod tests {
 
     #[test]
     fn a_cap_is_a_number_in_range_or_all() {
-        assert_eq!(parse_cap("all"), Ok(UNCAPPED));
+        assert_eq!(parse_cap("all"), Ok(SessionGraphics::NO_AVATAR_CAP));
         assert_eq!(parse_cap("20"), Ok(20));
         assert_eq!(parse_cap(&MAX_CAP.to_string()), Ok(MAX_CAP));
         assert!(parse_cap("0").is_err());
         assert!(parse_cap(&(MAX_CAP + 1).to_string()).is_err());
-        assert_eq!(cap_json(UNCAPPED), json!("all"));
+        assert_eq!(cap_json(SessionGraphics::NO_AVATAR_CAP), json!("all"));
         assert_eq!(cap_json(20), json!(20));
     }
 

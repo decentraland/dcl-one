@@ -32,7 +32,7 @@ impl AppSetting for MaxAvatarsSetting {
     }
 
     fn description(&self) -> String {
-        "Max Avatars\n\nHow many avatars to render. Limiting this can help reduce frame rate drops in busy environments. If there are more avatars nearby, only the closest will be shown. This applies to other users and to scene-created avatars.".to_string()
+        "Max Avatars\n\nHow many avatars to render. Limiting this can help reduce frame rate drops in busy environments. If there are more avatars nearby, only the closest will be shown. It has no effect while Unlimited Avatars is on. This applies to other users and to scene-created avatars.".to_string()
     }
 
     fn save(&self, config: &mut AppConfig) {
@@ -41,6 +41,11 @@ impl AppSetting for MaxAvatarsSetting {
 
     fn load(config: &AppConfig) -> Self {
         Self(config.max_avatars as i32)
+    }
+
+    /// The slider rests while Unlimited Avatars is on; its value is kept.
+    fn is_disabled(config: &AppConfig) -> bool {
+        config.max_avatars_unlimited
     }
 
     fn category() -> super::SettingCategory {
