@@ -40,8 +40,11 @@ class CiLocalTest(unittest.TestCase):
         self.assertFalse(ci.triggered('development.yml', {'docs/README.md'}, event='push'))
         self.assertTrue(ci.triggered('apis-sites-images.yml', {'tooling/image-smoke.py'}))
         self.assertTrue(ci.triggered('structure.yml', {'docs/README.md'}))
-        names = [s.name for s in ci.pre_push_steps({'docs/README.md'})]
-        self.assertEqual(names, ['ownership catalogue', 'module layers'])
+        for hook in (ci.pre_commit_steps, ci.pre_push_steps):
+            for changed in ({'docs/README.md'}, {'.github/workflows/ui-library.yml'}):
+                with self.subTest(hook=hook.__name__, changed=changed):
+                    self.assertEqual([s.name for s in hook(changed)],
+                                     ['ownership catalogue', 'module layers', 'workflow tests'])
 
     def test_clippy_runs_from_the_catalyst_folder_and_lints_scene_cli_only_changes(self):
         steps = {s.name: s.command for s in ci.pre_push_steps({'services/catalyst/src/lib.rs'})}

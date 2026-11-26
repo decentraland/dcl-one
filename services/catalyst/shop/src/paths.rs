@@ -18,7 +18,9 @@
 //! A legacy alias is the same handler with the same wire shape: a signed
 //! request is verified over the method and path it was signed for, never
 //! redirected or rewritten. `library/shop/api/endpoints.ts` is the client's
-//! table of the same paths.
+//! table of the same paths, the operator routes excepted: the ops dashboard
+//! calls those, never the Shop UI, so neither that table nor the UI's pinned
+//! routes list them.
 
 /// The canonical backend prefix.
 pub const PREFIX: &str = "/shop-api";
@@ -38,6 +40,7 @@ pub const ALIASES: &[&str] = &[
     "GET /shop-api/v1/users/{address}/status /credits/users/{address}/status",
     "GET /shop-api/v1/users/{address}/progress /credits/users/{address}/progress",
     "GET /shop-api/v1/users/{address}/credits /credits/users/{address}/credits",
+    "GET /shop-api/v1/users/{address}/credits/stream /credits/users/{address}/credits/stream",
     "GET /shop-api/v1/users/{address}/purchases /credits/users/{address}/purchases",
     "GET /shop-api/v1/users/{address}/credit-orders /credits/users/{address}/credit-orders",
     "GET /shop-api/v1/packs /credits/credits/packs",
@@ -92,6 +95,14 @@ pub const ALIASES: &[&str] = &[
     "POST /shop-api/admin/grants/{escrow_ref}/reclaim /credits/admin/grants/{escrow_ref}/reclaim",
     "POST /shop-api/admin/grants/{escrow_ref}/release /credits/admin/grants/{escrow_ref}/release",
     "GET /shop-api/admin/credits/reconcile /credits/admin/reconcile",
+    "GET /shop-api/admin/studios /credits/admin/studios",
+    "POST /shop-api/admin/studios /credits/admin/studios",
+    "GET /shop-api/admin/studios/{studio_id} /credits/admin/studios/{studio_id}",
+    "PATCH /shop-api/admin/studios/{studio_id} /credits/admin/studios/{studio_id}",
+    "POST /shop-api/admin/studios/{studio_id}/operators /credits/admin/studios/{studio_id}/operators",
+    "DELETE /shop-api/admin/studios/{studio_id}/operators/{address} /credits/admin/studios/{studio_id}/operators/{address}",
+    "POST /shop-api/admin/studios/{studio_id}/budget /credits/admin/studios/{studio_id}/budget",
+    "POST /shop-api/admin/credits/test-purchase-email /credits/admin/test-purchase-email",
     "POST /shop-api/admin/broker/approve-mana /v1/admin/collections/approve-mana /transactions-api/v1/admin/collections/approve-mana",
     "POST /shop-api/admin/names/approve-mana /v1/admin/names/approve-mana /transactions-api/v1/admin/names/approve-mana",
     "GET /shop-api/admin/moderation/flags /marketplace-api/v1/admin/moderation/flags",

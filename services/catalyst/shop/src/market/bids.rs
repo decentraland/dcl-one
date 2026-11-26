@@ -504,6 +504,15 @@ fn sales_published(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
     c.indexer == INDEXER_SALES && chain_walk::fresh_fold_on(c, chain_id, now).is_some()
 }
 
+/// Bid-book reads refused while the sales fold's writes await publication.
+const UNPUBLISHED_FOLD_READS: dcl_metrics::CounterFamily<1> = dcl_metrics::CounterFamily::new(
+    "catalyst_shop_bid_book_unpublished_fold_reads_total",
+    "Bid-book reads refused because the sales index has not published the fold, by network.",
+    Some(dcl_metrics::Unit::Count),
+    &["network"],
+);
+pub const FAMILIES: &[dcl_metrics::Descriptor] = &[UNPUBLISHED_FOLD_READS.descriptor];
+
 /// What a bid's seller is read against on a [`bids_snapshot`].
 pub(super) struct SellerBounds {
     /// The last block of the nft walk's log: a seller can be read from the
@@ -559,21 +568,22 @@ pub(super) async fn bids_snapshot(
     let sales = chain_walk::cursor(&mut *tx, INDEXER_SALES, ChainNet::Matic)
         .await
         .map_err(db)?;
-    let Some(sales) = sales.filter(|c| sales_published(c, chain, now)) else {
+    if !sales
+        .as_ref()
+        .is_some_and(|c| sales_published(c, chain, now))
+    {
         return Err(unavailable(
             Source::SalesIndex,
             "the matic sales index is not published (catching up, rewound after a reorg, stopped, or MARKETPLACE_SALES_INDEX_ENABLED off)",
         ));
-    };
-    // The book's rows are the fold its marker names, written with them; the
-    // walk publishes that fold only after its head reads, which can stall.
-    let book: Option<i64> = sqlx::query_scalar(
-        "SELECT folded_through FROM shop.nft_bid_cursor WHERE network = 'matic'",
-    )
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(db)?;
-    if !chain_walk::holds_published_fold(book, &sales) {
+    }
+    if !chain_walk::rows_published_on(&mut tx, INDEXER_SALES, ChainNet::Matic, &["nft_bid"])
+        .await
+        .map_err(read_error)?
+    {
+        UNPUBLISHED_FOLD_READS
+            .handle([ChainNet::Matic.db_name()])
+            .increment(1);
         return Err(unavailable(
             Source::SalesIndex,
             "the matic bid book holds a fold the sales index has not published yet",

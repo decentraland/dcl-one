@@ -1,16 +1,18 @@
 // explorer-automation `BackpackOutfitsTests` (4): the Saved Outfits tab, save, equip, delete. The
 // HUD offers five slots (ten with a claimed NAME) numbered from 1, as Unity's OutfitSlot_1 to 5.
 // A slot is `Save outfit in slot <n>` when empty and `Outfit <n>` when saved, with `Delete Outfit <n>`
-// beside it and an EQUIP button over it while the pointer is on it.
+// beside it and an EQUIP button over it while the pointer is on it. The delete button asks first, in a
+// dialog with CANCEL and YES. While an outfit is saved or deleted its slot is a
+// spinner (`Saving outfit <n>`, `Deleting outfit <n>`) and reads neither empty nor saved.
 //
 // | Unity test                    | Here                                                          | Class   |
 // | TestOpenSavedOutfitsTab       | the three tabs show; Saved Outfits shows slot 1               | Port    |
 // | TestSaveOutfit                | save the current look into the first empty slot               | Port    |
 // | TestEquipFirstSavedOutfit     | change the hair, equip outfit 1, the engine drops the change  | Partial |
-// | TestDeleteOutfit              | save a throwaway outfit and delete it, keeping slot 1         | Partial |
+// | TestDeleteOutfit              | save a throwaway outfit and delete it, keeping slot 1         | Port    |
 //
-// Port, TestSaveOutfit: when all five slots are full the scenario deletes slot 5 first, as Unity
-// does, but the HUD deletes at once (no confirmation dialog).
+// Port, TestSaveOutfit: when all five slots are full the scenario deletes slot 5 first, through the
+// confirmation dialog, as Unity does.
 //
 // Partial, TestEquipFirstSavedOutfit: Unity reads the hair tile's `IsEquipped` flag before and after
 // the outfit. The Bevy grid has no flag, and equips (a hair, an outfit) only edit the Backpack's
@@ -19,9 +21,8 @@
 // is selected after the first close, and after the second the avatar selects none of the wearables
 // the hair change added.
 //
-// Partial, TestDeleteOutfit: Unity deletes through a confirmation dialog (Yes button, dialog shown
-// and hidden). The Bevy delete button acts at once, so the dialog steps are dropped; the slot
-// reading empty again is the assertion, and slot 1 is checked to have stayed.
+// Port, TestDeleteOutfit: the delete goes through the confirmation dialog (shown, YES pressed,
+// hidden); the slot reading empty again is the assertion, and slot 1 is checked to have stayed.
 import assert from 'node:assert/strict'
 import { spec, until, type Explorer, type Selector } from '../driver/index.ts'
 import {
@@ -47,6 +48,7 @@ const SLOTS = [1, 2, 3, 4, 5]
 const savedOutfit = (slot: number): Selector => ({ name: `Outfit ${slot}`, role: 'button' })
 const emptySlot = (slot: number): Selector => ({ name: `Save outfit in slot ${slot}`, role: 'button' })
 const deleteButton = (slot: number): Selector => ({ name: `Delete Outfit ${slot}`, role: 'button' })
+const CONFIRM_DELETE: Selector = { name: 'YES', role: 'button' }
 
 async function saved(explorer: Explorer): Promise<number[]> {
   return (await outfitSlots(explorer)).filter(([slot, full]) => full && SLOTS.includes(slot)).map(([slot]) => slot)
@@ -63,9 +65,12 @@ async function saveIn(explorer: Explorer, slot: number, timeoutMs = 30_000): Pro
   await explorer.hud.wait(savedOutfit(slot), { timeoutMs })
 }
 
-/** Delete a saved outfit (no confirmation dialog) and wait for the slot to read empty. */
+/** Delete a saved outfit through its confirmation dialog and wait for the slot to read empty. */
 async function deleteIn(explorer: Explorer, slot: number): Promise<void> {
   await explorer.hud.click(deleteButton(slot))
+  await explorer.hud.wait(CONFIRM_DELETE, { timeoutMs: 10_000 })
+  await explorer.hud.click(CONFIRM_DELETE)
+  await until(() => explorer.hud.isVisible(CONFIRM_DELETE), (shown) => !shown, { timeoutMs: 10_000, what: 'the delete confirmation to close' })
   await explorer.hud.wait(emptySlot(slot), { timeoutMs: 30_000 })
 }
 

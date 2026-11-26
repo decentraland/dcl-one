@@ -419,7 +419,7 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     )
     .await
     .unwrap();
-    let (activity, _) = crate::market::activity::user_activity(&state, ALICE, None, None).await;
+    let (activity, _, _) = crate::market::activity::user_activity(&state, ALICE, None, None).await;
     assert_eq!(
         activity
             .iter()
@@ -1444,7 +1444,7 @@ async fn sales_page_reads_one_published_network_and_refuses_a_withdrawn_warm_pag
     );
     let (status, body) = get_json(&app, path).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    let (activity, _) = crate::market::activity::user_activity(&state, ALICE, None, None).await;
+    let (activity, _, _) = crate::market::activity::user_activity(&state, ALICE, None, None).await;
     assert!(
         activity
             .iter()
