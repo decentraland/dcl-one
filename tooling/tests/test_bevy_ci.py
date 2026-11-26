@@ -705,6 +705,8 @@ class SelectionTest(unittest.TestCase):
     def test_platform_neutral_source_and_protos_skip_only_the_native_matrix(self):
         for name in ('rendering/bevy-explorer/source/src/lib.rs', 'rendering/bevy-explorer/source/assets/image.png',
                      'rendering/bevy-explorer/source/crates/example/Cargo.toml',
+                     'rendering/bevy-explorer/source/crates/platform/src/wasm.rs',
+                     'rendering/bevy-explorer/source/crates/platform/src/native_util.rs',
                      'library/protocol/proto/decentraland/common/vectors.proto'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
