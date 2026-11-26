@@ -66,41 +66,10 @@
 
 /* The MUI outlined large button of the reference: no @dcl/one-ui Button variant has its 1px border. */
 .signIn {
-  all: unset;
   position: absolute;
   top: 72px;
   right: 72px;
   z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  padding: var(--dcl-space-8) 22px;
-  border: 1px solid var(--dcl-neutrals-snow);
-  border-radius: var(--dcl-radius-xs);
-  color: var(--dcl-neutrals-snow);
-  font-size: var(--dcl-font-size-button-lg);
-  font-weight: 600;
-  line-height: 24px;
-  letter-spacing: 0.46px;
-  text-transform: uppercase;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
-}
-
-.signIn:hover {
-  border-color: rgba(255, 255, 255, 0.7);
-  background-color: rgba(255, 255, 255, 0.08);
-}
-
-.signIn:active {
-  background-color: rgba(255, 255, 255, 0.12);
-}
-
-.signIn:focus-visible {
-  outline: 2px solid var(--dcl-primary-primary);
-  outline-offset: 2px;
 }
 
 .desktop {

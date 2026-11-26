@@ -409,11 +409,11 @@
   },
   "apps/sites/src/features/download/CreatorHubElsewhere.module.css": {
     "primitives": 0,
-    "tokens": 12
+    "tokens": 3
   },
   "apps/sites/src/features/download/DownloadPage.module.css": {
     "primitives": 0,
-    "tokens": 31
+    "tokens": 25
   },
   "apps/sites/src/features/download/OtherBuilds.module.css": {
     "primitives": 0,

@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 
+import { Button } from "@dcl/one-ui";
+
 import { REDIRECT_DASHBOARD, toDashboardRows, totalRedirects, pct, fmtCount } from "@/data/lib/catalyst/creator-hub/builder-redirect";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
@@ -129,20 +131,16 @@ export default function BuilderRedirectsMetricsRoute({
       </section>
 
       <nav style={S.actions} aria-label="Try a redirect">
-        <button
-          type="button"
-          style={S.btn}
+        <Button
+          variant="secondary"
+          size="md"
           onClick={() => void navigate("/builder/item-editor?collection=demo&step=model")}
         >
           Open legacy /builder/item-editor &rarr;
-        </button>
-        <button
-          type="button"
-          style={S.btn}
-          onClick={() => void navigate("/builder/item/demo-item-1")}
-        >
+        </Button>
+        <Button variant="secondary" size="md" onClick={() => void navigate("/builder/item/demo-item-1")}>
           Open legacy /builder/item/:id &rarr;
-        </button>
+        </Button>
       </nav>
     </main>
   );
@@ -193,13 +191,4 @@ const S: Record<string, React.CSSProperties> = {
   bar: { display: "block", height: "100%", background: "#5b3df5", borderRadius: 3 },
   sim: { color: "rgba(255,255,255,0.62)", fontSize: 13, marginTop: 14, lineHeight: 1.5 },
   actions: { display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" },
-  btn: {
-    background: "rgba(255,255,255,0.08)",
-    color: "#fff",
-    border: "none",
-    borderRadius: 8,
-    padding: "10px 14px",
-    fontSize: 14,
-    cursor: "pointer",
-  },
 };
