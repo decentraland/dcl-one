@@ -68,6 +68,8 @@ jobs:
           # The package the APIs image carries, its test executables and the flake's livekit-server.
           nix build .#cast-bot -o .cache/cast-bot -L
           nix build .#cast-bot.tests -o .cache/cast-bot-tests -L
+          # cast-bot is a workspace of its own, so the Development workflow's clippy never sees it.
+          nix build .#cast-bot.clippy --no-link -L
           nix build --inputs-from . nixpkgs#livekit -o .cache/livekit
           echo "CAST_BOT_BIN=$PWD/.cache/cast-bot/bin/cast-bot" >> "$GITHUB_ENV"
           echo "LIVEKIT_SERVER_BIN=$PWD/.cache/livekit/bin/livekit-server" >> "$GITHUB_ENV"
@@ -91,11 +93,6 @@ jobs:
           shared-key: cast-presenter-${{ hashFiles('flake.lock') }}
           save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           cache-on-failure: true
-      - name: Clippy over cast-bot
-        # cast-bot is a workspace of its own, so the Development workflow's clippy never sees it.
-        run: |
-          nix develop .#ci --no-update-lock-file --command \
-            cargo clippy --manifest-path services/catalyst/cast-bot/Cargo.toml --locked --all-targets -- -D warnings
       - name: Run the presenter's tests with the real cast-bot and livekit-server
         # --include-ignored runs the LiveKit test the Development workflow's shards leave out.
         run: |

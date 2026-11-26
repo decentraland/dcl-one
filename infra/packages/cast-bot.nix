@@ -107,6 +107,18 @@ let
       removeReferencesToVendoredSources "$out" "${webrtc}"
     '';
   });
+  # Clippy over every target with the package's toolchain and libwebrtc; the CI shell can't
+  # build webrtc-sys (.github/workflows/cast-presenter.yml).
+  clippy = crane.cargoClippy (common // {
+    inherit cargoArtifacts cargoVendorDir;
+    pname = "${manifest.package.name}-clippy";
+    src = lib.fileset.toSource {
+      root = dir;
+      fileset = lib.fileset.unions [ (dir + /Cargo.toml) (dir + /Cargo.lock) (dir + /build.rs) (dir + /clippy.toml) (dir + /src) (dir + /tests) ];
+    };
+    cargoExtraArgs = "--locked";
+    cargoClippyExtraArgs = "--all-targets -- -D warnings";
+  });
 in crane.buildPackage (common // {
   inherit cargoArtifacts cargoVendorDir;
   # The bridge keeps libwebrtc's header paths (__FILE__ in its checks); the 1 GB archive stays out
@@ -114,7 +126,7 @@ in crane.buildPackage (common // {
   # binary distribution reproduces, go beside the binary.
   postInstall = installWebrtcNotices "cast-bot";
   passthru = {
-    inherit cargoArtifacts cargoVendorDir webrtc sdk sdkSource tests;
+    inherit cargoArtifacts cargoVendorDir webrtc sdk sdkSource tests clippy;
     libwebrtc = { inherit crane; preBuild = checkWebrtcTag; postInstall = installWebrtcNotices; };
   };
   meta.mainProgram = "cast-bot";
