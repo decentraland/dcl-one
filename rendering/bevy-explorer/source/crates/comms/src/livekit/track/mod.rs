@@ -144,6 +144,14 @@ struct HtmlMediaEntity {
     image: Handle<Image>,
 }
 
+#[cfg(target_arch = "wasm32")]
+#[derive(Component, Deref, DerefMut)]
+struct SelectedHtmlMediaEntity(HtmlMediaEntity);
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Event)]
+struct StartVideoOutputs;
+
 #[derive(Component)]
 pub struct Audio;
 

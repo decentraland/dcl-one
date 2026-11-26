@@ -583,6 +583,10 @@
     "primitives": 0,
     "tokens": 40
   },
+  "library/ui/apps/sites/social/CommunityCreate.module.css": {
+    "primitives": 0,
+    "tokens": 32
+  },
   "library/ui/apps/sites/social/CommunityDetail.module.css": {
     "primitives": 0,
     "tokens": 79
@@ -617,7 +621,7 @@
   },
   "library/ui/components/Button/Button.module.css": {
     "primitives": 0,
-    "tokens": 56
+    "tokens": 62
   },
   "library/ui/components/CardActionButton/CardActionButton.module.css": {
     "primitives": 0,
@@ -685,7 +689,7 @@
   },
   "library/ui/components/NavCreditsBalance/NavCreditsBalance.module.css": {
     "primitives": 0,
-    "tokens": 4
+    "tokens": 8
   },
   "library/ui/components/NavMenuItem/NavMenuItem.module.css": {
     "primitives": 0,
@@ -733,7 +737,7 @@
   },
   "library/ui/components/Spinner/Spinner.module.css": {
     "primitives": 0,
-    "tokens": 8
+    "tokens": 10
   },
   "library/ui/components/Switch/Switch.module.css": {
     "primitives": 0,
@@ -745,7 +749,7 @@
   },
   "library/ui/components/TabsBar/TabsBar.module.css": {
     "primitives": 0,
-    "tokens": 33
+    "tokens": 34
   },
   "library/ui/components/Tag/Tag.module.css": {
     "primitives": 0,

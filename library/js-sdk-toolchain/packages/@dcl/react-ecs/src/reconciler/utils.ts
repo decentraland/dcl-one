@@ -1,6 +1,6 @@
 import { isListener } from '../components'
-import { EntityComponents } from '../react-ecs'
-import {
+import type { EntityComponents } from '../react-ecs'
+import type {
   Changes,
   Container,
   HostContext,
@@ -73,6 +73,9 @@ const entityComponent: EntityComponents = {
   onMouseUp: undefined as any,
   onMouseEnter: undefined as any,
   onMouseLeave: undefined as any,
+  onMouseDrag: undefined as any,
+  onMouseDragLocked: undefined as any,
+  onMouseDragEnd: undefined as any,
   uiInput: undefined as any,
   uiDropdown: undefined as any,
   uiInputBinding: undefined as any

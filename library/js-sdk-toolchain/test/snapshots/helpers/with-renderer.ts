@@ -1,7 +1,8 @@
-import { Transport } from '@dcl/ecs'
+import type { Transport } from '@dcl/ecs'
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-import { IEngine, Engine } from '@dcl/ecs/dist/engine'
+import type { IEngine } from '@dcl/ecs/dist/engine'
+import { Engine } from '@dcl/ecs/dist/engine'
 
 let called = false
 

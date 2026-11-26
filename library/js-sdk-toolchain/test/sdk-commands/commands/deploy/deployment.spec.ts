@@ -1,12 +1,17 @@
-import {
+import type {
   CancelOutcome,
-  createDeployment,
   DeployContext,
-  IDeploymentComponent,
+  IDeploymentComponent
+} from '../../../../packages/@dcl/sdk-commands/src/commands/deploy/deployment'
+import {
+  createDeployment,
   settleCancelledUpload
 } from '../../../../packages/@dcl/sdk-commands/src/commands/deploy/deployment'
-import { DeploymentResult, DeploymentState } from '../../../../packages/@dcl/sdk-commands/src/commands/deploy/state'
-import { LinkerResponse } from '../../../../packages/@dcl/sdk-commands/src/linker-dapp/routes'
+import type {
+  DeploymentResult,
+  DeploymentState
+} from '../../../../packages/@dcl/sdk-commands/src/commands/deploy/state'
+import type { LinkerResponse } from '../../../../packages/@dcl/sdk-commands/src/linker-dapp/routes'
 import { CliError } from '../../../../packages/@dcl/sdk-commands/src/logic/error'
 
 const linkerResponse = { address: '0x1', authChain: [], chainId: 1 } as unknown as LinkerResponse

@@ -489,6 +489,11 @@ impl SyncStatus {
         }
     }
 
+    /// Whether the sync state can serve content according to the realm's /about.
+    pub fn is_ready(&self) -> bool {
+        about::content_is_healthy(self.state_name())
+    }
+
     /// Set when the process serves unsynced while `SYNC_SOURCE` names a peer
     /// ([`sync::worker::serve_unsynced`]): the forged state is not this node's.
     pub fn set_unsynced_copy(&self, copy: bool) {
