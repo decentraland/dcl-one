@@ -150,17 +150,27 @@ fn page_networks(f: &NftFilters, sources: Sources) -> Vec<ChainNet> {
     nets
 }
 
-/// A page that reads only names, on a walker: the index's page when the
-/// Ethereum latest sales are admitted on the snapshot that supplies its rows
-/// (`Some`), `None` when the names index or those latest sales are confirmed
-/// not ready there (the caller keeps the graph), and the read's error when
-/// a check cannot run. The snapshot carries the reads' statement timeout.
+/// A page that reads only names, on a walker, at the request clock `now`:
+/// the index's page when the Ethereum latest sales are admitted on the
+/// snapshot that supplies its rows (`Some`); `None` when the names index or
+/// those latest sales are confirmed not ready there (the caller keeps the
+/// graph); the read's error when a check cannot run. An admitted page is
+/// held to the index path's rules: the `first + skip` window, and the trades
+/// mirror's readiness on the same snapshot when it filters or sorts on
+/// orders. The snapshot carries the reads' statement timeout.
 pub async fn names_page_if_admitted(
     state: &MarketplaceState,
     f: &NftFilters,
     first: i64,
     skip: i64,
+    now: chrono::DateTime<Utc>,
 ) -> Result<Option<(Vec<NftResult>, i64)>, Response> {
+    if first.saturating_add(skip) > MAX_WINDOW {
+        return Err(
+            ApiError::bad_request(format!("first + skip may not exceed {MAX_WINDOW}"))
+                .into_response(),
+        );
+    }
     let sources = Sources {
         names: true,
         ..Default::default()
@@ -170,22 +180,25 @@ pub async fn names_page_if_admitted(
         Err(ReadConnError::NftUnavailable(..) | ReadConnError::LandUnavailable) => return Ok(None),
         Err(ReadConnError::Pool(e)) => return Err(read_error(e)),
     };
-    let admitted = super::sale_fold::last_sale_networks(
-        &mut conn,
-        &[ChainNet::Ethereum],
-        Utc::now(),
-    )
-    .await
-    .map_err(|e| {
-        tracing::warn!(error = %e, "cannot read the sales publication for the names' latest sales");
-        ApiError::internal("cannot read the sales publication").into_response()
-    })?;
+    let admitted = admitted_last_sales(&mut conn, &[ChainNet::Ethereum], now).await?;
     if !admitted.contains(&ChainNet::Ethereum) {
         return Ok(None);
     }
-    list_page_on(state, f, first, skip, sources, &mut conn)
-        .await
-        .map(Some)
+    if needs_orders(f) {
+        super::trades::ready_on(state, &mut conn, now).await?;
+    }
+    list_page_at(
+        state,
+        f,
+        first,
+        skip,
+        sources,
+        &mut conn,
+        now,
+        LastSale::of(&admitted),
+    )
+    .await
+    .map(Some)
 }
 
 /// The networks the collection source reads for `f`.
@@ -1575,22 +1588,57 @@ pub(super) async fn list_page_on(
     sources: Sources,
     conn: &mut PgConnection,
 ) -> Result<(Vec<NftResult>, i64), Response> {
-    let land = state.land_network();
-    let now_ms = Utc::now().timestamp_millis();
+    let now = Utc::now();
     // The latest sales of a network whose sales publication is valid on
     // this read's snapshot; elsewhere `sold_at` keeps the legacy orders.
     // Only the networks the page can return are checked.
-    let last_sale = super::sale_fold::last_sale_networks(
+    let nets = admitted_last_sales(conn, &page_networks(f, sources), now).await?;
+    list_page_at(
+        state,
+        f,
+        first,
+        skip,
+        sources,
         conn,
-        &page_networks(f, sources),
-        Utc::now(),
+        now,
+        LastSale::of(&nets),
     )
     .await
-    .map_err(|e| {
-        tracing::warn!(error = %e, "cannot read the sales publication for the nfts' latest sales");
-        ApiError::internal("cannot read the sales publication").into_response()
-    })?;
-    let last_sale = LastSale::of(&last_sale);
+}
+
+/// The networks of `nets` whose latest sales a read on `conn` takes at
+/// `now`; a check that cannot run is the read's error.
+async fn admitted_last_sales(
+    conn: &mut PgConnection,
+    nets: &[ChainNet],
+    now: chrono::DateTime<Utc>,
+) -> Result<Vec<ChainNet>, Response> {
+    super::sale_fold::last_sale_networks(conn, nets, now)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "cannot read the sales publication for the nfts' latest sales");
+            ApiError::internal("cannot read the sales publication").into_response()
+        })
+}
+
+/// [`list_page_on`] at the request clock `now`, with the latest sales
+/// already admitted on `conn`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the page's inputs, its clock and its admitted latest sales"
+)]
+async fn list_page_at(
+    state: &MarketplaceState,
+    f: &NftFilters,
+    first: i64,
+    skip: i64,
+    sources: Sources,
+    conn: &mut PgConnection,
+    now: chrono::DateTime<Utc>,
+    last_sale: LastSale,
+) -> Result<(Vec<NftResult>, i64), Response> {
+    let land = state.land_network();
+    let now_ms = now.timestamp_millis();
     let large_owner = match &f.owner {
         Some(owner) if sorts_on_orders(f) && !on_sale_only(f) => {
             holds_many(conn, owner).await.map_err(read_error)?

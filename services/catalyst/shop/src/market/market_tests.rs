@@ -5193,6 +5193,8 @@ async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
     let settings = &mut Arc::get_mut(&mut state).unwrap().settings;
     settings.market.indexes.sales_enabled = true;
     settings.marketplace_subgraph_url = Some(url.clone());
+    // A configured trades mirror that has not completed a pass.
+    settings.trades_sync_upstream_url = Some("https://marketplace-api.example/v1/trades".into());
     let pool = &own.pool;
     let registrar = super::nft_index::DCL_REGISTRAR;
     let owner = "0x00000000000000000000000000000000000000aa";
@@ -5285,6 +5287,60 @@ async fn a_names_page_by_latest_sale_reads_the_admitted_index() {
     }
     assert_eq!(sold_at(&browsed, "1002"), Some(3_000_000));
     assert_eq!(graph_reads(), 0);
+
+    // An admitted page keeps the index path's rules: an order filter waits
+    // for the trades mirror's pass, and the `first + skip` window is capped.
+    let (status, body) = get(app.clone(), "/v1/nfts?category=ens&isOnSale=true&first=2").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "trades-mirror", "{body}");
+    let (status, body) = get(app.clone(), "/v1/nfts?category=ens&first=1&skip=99999").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = get(app.clone(), "/v1/nfts?category=ens&first=1&skip=100000").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(graph_reads(), 0);
+
+    // One clock: a page admitted at its request's clock keeps the latest
+    // sales for its values and order, though a later clock finds the
+    // publication past its freshness deadline (the sales inputs folded 31
+    // minutes ago, the names index 29).
+    let real = chrono::Utc::now();
+    for (indexers, ago) in [(vec!["sales", "trade_events"], 31), (vec!["nft"], 29)] {
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_at = $1 WHERE network = 'ethereum' AND indexer = ANY($2)",
+        )
+        .bind((real - chrono::Duration::minutes(ago)).naive_utc())
+        .bind(indexers)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("UPDATE shop.sale_publication SET published_at = $1")
+        .bind((real - chrono::Duration::minutes(31)).naive_utc())
+        .execute(pool)
+        .await
+        .unwrap();
+    let filters =
+        super::nfts::parse_filters(&[("category".to_string(), "ens".to_string())]).unwrap();
+    let (rows, _) = super::nft_reads::names_page_if_admitted(
+        &state,
+        &filters,
+        2,
+        0,
+        real - chrono::Duration::minutes(2),
+    )
+    .await
+    .unwrap()
+    .expect("admitted at the request's clock");
+    let beta = rows.iter().find(|r| r.nft.token_id == "1002").unwrap();
+    assert_eq!(beta.nft.sold_at, 3_000_000);
+    sqlx::query("UPDATE shop.chain_cursor SET folded_at = timezone('UTC', now()) WHERE network = 'ethereum'")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shop.sale_publication SET published_at = timezone('UTC', now())")
+        .execute(pool)
+        .await
+        .unwrap();
 
     // An admission check that cannot run is the page's error, never the graph.
     sqlx::query("ALTER TABLE shop.sale_publication RENAME TO sale_publication_hidden")

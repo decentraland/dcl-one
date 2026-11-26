@@ -955,7 +955,10 @@ async fn list_page(
     // the rows; a check that cannot run is the page's error.
     if super::owned_items::walks_here(state) && names_only(state, f) {
         let (first, skip) = index_page(f);
-        if let Some(page) = super::nft_reads::names_page_if_admitted(state, f, first, skip).await? {
+        if let Some(page) =
+            super::nft_reads::names_page_if_admitted(state, f, first, skip, chrono::Utc::now())
+                .await?
+        {
             return Ok(page);
         }
     }
