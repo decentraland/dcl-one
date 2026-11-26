@@ -135,6 +135,7 @@ pub fn extract_from_object(obj: &Map<String, Value>) -> Result<AuthChain, Handsh
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support {
     use std::sync::LazyLock;
 

@@ -7,9 +7,9 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::imposters::key::TileKey;
@@ -56,8 +56,8 @@ impl Quarantine {
     }
 
     /// The state as the file holds it, reread when its mtime moved.
-    fn current(&self) -> std::sync::MutexGuard<'_, Loaded> {
-        let mut loaded = self.state.lock().unwrap();
+    fn current(&self) -> parking_lot::MutexGuard<'_, Loaded> {
+        let mut loaded = self.state.lock();
         let modified = std::fs::metadata(&self.path)
             .and_then(|m| m.modified())
             .ok();

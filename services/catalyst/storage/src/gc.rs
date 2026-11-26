@@ -313,6 +313,7 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     ),
     ("shop.chain_checkpoint.block_hash", "a block hash"),
     ("land_authz.index_cursor.last_block_hash", "a block hash"),
+    ("land_authz.index_cursor.folded_block_hash", "a block hash"),
     ("land_authz.index_cursor.checkpoint_hash", "a block hash"),
     ("shop.trade_event.hashed_signature", "an order digest"),
     ("shop.trade_event.tx_hash", "a transaction hash"),
@@ -382,6 +383,11 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "a CreditsManager credit digest",
     ),
     ("credits.revocations.tx_hash", "a transaction hash"),
+    ("land_authz.authz_event.tx_hash", "a transaction hash"),
+    (
+        "credits.studio_budget_entries.request_hash",
+        "the digest of a budget request's body, which an idempotent retry must repeat",
+    ),
     (
         "social.community_signed_actions.signature_hash",
         "an envelope digest",
@@ -1160,7 +1166,7 @@ mod tests {
         .unwrap();
         let keys = ["imported", "current", "expired", "world-thumbnail"].map(String::from);
         assert_eq!(
-            referenced_rows_among_on(&mut *pool.acquire().await.unwrap(), &keys)
+            referenced_rows_among_on(&mut pool.acquire().await.unwrap(), &keys)
                 .await
                 .unwrap(),
             ["imported", "current", "world-thumbnail"]
