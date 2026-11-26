@@ -17,7 +17,7 @@ use super::{
 };
 use crate::jobs::{Jobs, PeriodicCfg};
 use alloy_primitives::{Address, B256, U256, keccak256};
-use chrono::{Datelike, NaiveDateTime, TimeDelta, Timelike};
+use chrono::{Datelike, NaiveDateTime, NaiveTime, TimeDelta, Timelike};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, Row};
 use std::{str::FromStr, sync::Arc, time::Duration};
@@ -41,15 +41,16 @@ struct Season {
     grace_days: i32,
 }
 impl Season {
-    fn grant_expires_at(&self) -> NaiveDateTime {
-        (self.end_date + TimeDelta::days(i64::from(self.grace_days)))
-            .with_nanosecond(0)
-            .unwrap()
+    fn grant_expires_at(&self) -> Result<NaiveDateTime, ApiError> {
+        TimeDelta::try_days(i64::from(self.grace_days))
+            .and_then(|grace| self.end_date.checked_add_signed(grace))
+            .and_then(|end| end.with_nanosecond(0))
+            .ok_or_else(|| ApiError::Internal("invalid goal expiry".into()))
     }
 
     fn week(&self, now: NaiveDateTime) -> (i32, NaiveDateTime, NaiveDateTime) {
         fn monday(t: NaiveDateTime) -> NaiveDateTime {
-            t.date().and_hms_opt(0, 0, 0).unwrap()
+            t.date().and_time(NaiveTime::MIN)
                 - TimeDelta::days(i64::from(t.weekday().num_days_from_monday()))
         }
         let start = monday(now);
@@ -414,8 +415,12 @@ async fn process_event(state: &SharedState, id: i64, now: NaiveDateTime) -> Resu
     let season_id = season.as_ref().map(|s| s.id);
     let week = season.as_ref().map(|s| s.week(occurred_at).0);
     if outcome.is_none() {
-        let season = season.as_ref().unwrap();
-        let week = week.unwrap();
+        // Roll back rather than write a "counted" receipt without progress.
+        let (Some(season), Some(week)) = (season.as_ref(), week) else {
+            return Err(ApiError::Internal(
+                "a photo goal passed the policy without a season".into(),
+            ));
+        };
         initialize(&mut tx, &address, season.id, week).await?;
         let assignment = Assignment {
             address: &address,
@@ -517,7 +522,7 @@ async fn grant(
         .ok_or_else(|| ApiError::service_unavailable("invalid Credits chain"))?;
     // Progress snapshots the assignment so edits to its week range or reward
     // cannot strand an in-flight goal or change its promised payout.
-    let expires = season.grant_expires_at();
+    let expires = season.grant_expires_at()?;
     let expires_seconds = u64::try_from(expires.and_utc().timestamp())
         .map_err(|_| ApiError::Internal("invalid goal expiry".into()))?;
     if expires <= now {

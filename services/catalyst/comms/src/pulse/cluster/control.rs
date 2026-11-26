@@ -134,7 +134,11 @@ impl ControlPositions {
                 },
             );
         }
-        let head = &mut self.entries.get_mut(&wallet).unwrap().heads[version];
+        let head = &mut self
+            .entries
+            .get_mut(&wallet)
+            .expect("entry inserted above")
+            .heads[version];
         if let Some(current) = head {
             expire_head(current, now, self.live_ttl);
             if (update.epoch, update.sequence) <= (current.epoch, current.sequence)

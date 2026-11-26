@@ -2335,7 +2335,7 @@ catalog reaches it through the TS database import.
 
 ### Historical marketplace sale inputs
 
-The Ethereum sales cursor watches accepted bids at the ERC721Bid contract, purchases at both names controllers, and changes to venue fees and recipients in `shop.sale_fee_change`. An accepted bid occupies one row in `shop.sale_event`. Each `NameBought` occupies one row in `shop.name_purchase` with its caller, beneficiary, name and fee in MANA base units. The original controller burns the price. The second pays its configured fee collector. Multiple purchases in one transaction have distinct log positions. The walk inserts its rows with its cursor advance. A rewind deletes all three tables' Ethereum rows above the retained block in the same transaction.
+The Ethereum sales cursor watches the ERC721Bid contract's created, accepted and cancelled bids, purchases at both names controllers, and changes to venue fees and recipients in `shop.sale_fee_change`. Each bid event occupies one row in `shop.sale_event`; a creation keeps its `_fingerprint` as 0x-prefixed hex (`0x` when empty; step `0068` adds the column, and creations walked before it keep NULL). The walk's fold keeps Ethereum's legacy bids in `shop.nft_bid` with the Polygon fold's rules. Each `NameBought` occupies one row in `shop.name_purchase` with its caller, beneficiary, name and fee in MANA base units. The original controller burns the price. The second pays its configured fee collector. Multiple purchases in one transaction have distinct log positions. The walk inserts its rows with its cursor advance. A rewind deletes all three tables' Ethereum rows above the retained block in the same transaction.
 
 On Ethereum and Polygon, `shop.sale_event.bid_fee` records the integer emitted by `BidAccepted`. Older rows can have a null fee. Replaying the original event fills it, including an emitted zero. The off-chain marketplace walk keeps each executed asset's `extra` bytes in `shop.trade_event.assets`. On Polygon the MANA leg can carry the royalty recipients chosen during execution. A replay of the same transaction and signature fills these bytes on older rows.
 
@@ -2350,7 +2350,7 @@ ON shop.sale_event (network, block_number) WHERE kind = 'bid_accepted';
 
 A Polygon store purchase ends at its `Bought` log. Each explicitly priced line matches one preceding `Issue` with the same transaction, collection, item and beneficiary, after the previous purchase in that transaction. Repeated copies keep their line order. After a complete replay of the purchase and its issuers, an unmatched line retains the explicit payment and has no indexed NFT sale. The sales cursor records historical changes to venue rates and recipients in `shop.sale_fee_change`. Rates take effect at their log position.
 
-On an existing sale-event table, step `0064` creates the bid-fee check with `NOT VALID` to avoid a historical table scan under the migration lock. It enforces the check on every new or updated row. After the migration commits, validate historical rows in a separate transaction with `ALTER TABLE shop.sale_event VALIDATE CONSTRAINT sale_event_bid_fee_check`.
+On an existing sale-event table, step `0064` creates the bid-fee check with `NOT VALID` to avoid a historical table scan under the migration lock. It enforces the check on every new or updated row. After the migration commits, validate historical rows in a separate transaction with `ALTER TABLE shop.sale_event VALIDATE CONSTRAINT sale_event_bid_fee_check`. Step `0068` creates the fingerprint check the same way; validate it with `ALTER TABLE shop.sale_event VALIDATE CONSTRAINT sale_event_fingerprint_check`.
 
 The accounting job reads three mainnet cursors per network. Step `0064_shop_sale_accounting` leaves their new decoder version and verified height empty on upgraded databases. After the live walk catches up, each cursor owner uses spare request budget for historical windows of up to 10,000 blocks. It checks the stored tip hash around each window. When the log provider narrows a range until the request budget runs out, the cursor saves the smaller upper bound for the next attempt. Incomplete economic evidence withholds sales coverage at that window while the primary index continues to advance. A Polygon repair reads Issues only from named factory collections in the Polygon catalogue. Raw Bought lines remain available for replay when a late collection is discovered. The sale fold uses the same membership check before deriving executions, payments or seller attribution. A rewind clips the verified height. A repair changes the history revision even if the tip stays at the same height.
 
@@ -2366,7 +2366,9 @@ The sales publication identifies each asset by network, transaction hash, zero-b
 
 On a version 1 marker the fold ranks the persisted venue logs in the surviving prefix, stages the changed IDs, and replaces them in the same fenced transaction that publishes the new marker. The existing unique constraint remains valid throughout both updates. No historical receipts are needed for the ID repair.
 
-Sales publication version 3 sums gross volume from positively priced NFT assets. A store payment belongs to its explicitly priced line ordinal. Multiple consideration payments for one trade NFT must reconcile to its price in the same currency. NAME registration fees are accounted for separately. When a network has a version 1 or 2 publication, the next fold identifies affected UTC days from local assets and payments, replaces their aggregates and account totals, and publishes version 3 in the same transaction. The routes require version 3 on each requested network. The upgrade reuses the existing executions and receipts.
+Sales publication version 4 sums gross volume from positively priced NFT assets. A store payment belongs to its explicitly priced line ordinal. A trade can price one NFT when its consideration consists entirely of the network's registered MANA on the opposite side. USD-pegged legs enter the price after the canonical receipt proves the execution's converted MANA payments. Other token legs stay in the ledger for reconciliation and account roster evidence. NAME registration fees are accounted for separately.
+
+The fold upgrades prior publications in the same fenced transaction as the new marker. It clears unsupported or unproved trade prices, replaces the affected UTC-day aggregates, recomputes wallet totals and first purchases, and refreshes the latest-sale rows for tokens whose MANA price was withdrawn. It preserves valid prices, execution and receipt evidence, and sale IDs from versions that already use stable IDs. Versions 1 and 2 also require their allocation rollup repairs.
 
 A wallet-filtered sale with an unresolved seller withholds a response only when indexed evidence ties that wallet to the sale. Candidates come from the asset, the consideration beneficiary for its line, the item or collection creator, collection seeds and published creatorship transfers. An unresolved sale without a candidate stays out of address lookups. An unfiltered sales page that contains it returns HTTP 503. The fold logs a warning with the count of sales without a candidate on the days it recomputed.
 
@@ -2894,6 +2896,28 @@ WHERE worker = 'nft_estate_creations' AND scope = 1;
 The final registry replacement commits in the same transaction that reaches
 equality. A missing marker means the next published pass must initialize or
 reopen the repair.
+The Ethereum sales walk read only `BidAccepted` from the ERC721Bid contract
+before it also read `BidCreated` and `BidCancelled`, so an upgraded
+published cursor can be past creations and cancellations it never stored.
+The `ethereum_bid_history` row in `shop.worker_progress` repairs them as the
+estate creations repair does: the same arrays and keys over the `sales`
+cursor, one archive window of the two topics per published pass with spare
+log budget, from deployment block 7,270,906 (marketplace-squid-core
+85c6832e96e5459b37f0f315b8e384693684e12d, `start-blocks.ts`) up to the first
+window the upgraded walk read. The forward walk and its folds go on
+meanwhile; sales accounting never reads the repair. A repaired creation sits
+below every forward fold's `since`, so the window that reaches the ceiling
+refolds every Ethereum bid from its whole history in its own transaction.
+Until then the Ethereum bid book is incomplete, and a reader takes it only
+while the marker reads complete and explains the cursor (block, hash and
+rewind count; `ethereum_bid_history::complete_on`). A marker that does not
+explain the cursor (an earlier binary advanced it) reopens the whole range.
+A rewind keeps a prefix the marker explains and clears the fold marker, so
+the next fold rebuilds every bid. The range is about 15 million blocks in
+windows of at most 10,000. Completion:
+SELECT position, ceiling FROM shop.worker_progress
+WHERE worker = 'ethereum_bid_history' AND scope = 1;
+
 With `INDEX_METRICS_BIND` set, each index process reads these bounded cursor
 tables once per minute. It samples the height, stored history mode, fold
 publication and quarantine from `shop.chain_cursor` and the height, replay
@@ -3035,7 +3059,7 @@ recovery points past the point, then the owner check. The next fold is a
 rebuild, as after any rewind.
 
 A sales fold may have inferred a bid's seller from an nft transfer before
-the nft walk saw the fork. So the nft walk's rewind on Polygon (also a
+the nft walk saw the fork. So the nft walk's rewind on every network (also a
 rebuild) records its point in `shop.bid_seller_recheck`, in the rewind's
 transaction, with the deletion of the transfers past it: a fold that reads
 the row also reads the rewound transfers. The next bids fold reads those

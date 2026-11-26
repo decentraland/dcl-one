@@ -74,3 +74,6 @@ tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 tracing-subscriber.workspace = true
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
+
+[lints.clippy]
+unwrap_used = "deny"

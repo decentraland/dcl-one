@@ -282,7 +282,7 @@ fn u256_topic_to_decimal(topic: &str) -> Option<String> {
             carry /= 10;
         }
     }
-    while digits.len() > 1 && *digits.last().unwrap() == 0 {
+    while digits.len() > 1 && digits.last() == Some(&0) {
         digits.pop();
     }
     Some(digits.iter().rev().map(|d| (b'0' + d) as char).collect())

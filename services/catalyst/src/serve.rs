@@ -929,6 +929,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     // same pool, client, blob store, validator and job lifecycle. The credits
     // ledger is local authority behind OPS_WRITES_ENABLED (the social
     // switch's twin).
+    // One analytics client: Social posts under `ANALYTICS_CONTEXT`, the
+    // credits revenue events under credits-server's context.
+    let analytics = social_analytics(&config, &http_client)?;
     let stage5_ops = ops_states(
         &config,
         &pool,
@@ -940,6 +943,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             economy: &economy_state,
             eip1654: eip1654.clone(),
             public_url: &public_url,
+            analytics: analytics.as_ref(),
         },
     )
     .await?;
@@ -1184,6 +1188,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         eip1654,
         &explore,
         explorer_api.onboarding.clone(),
+        analytics,
     )?;
     social
         .rpc

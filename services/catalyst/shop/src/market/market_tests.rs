@@ -4046,6 +4046,8 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     const CURATOR_ONLY: &str = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
     const RELAY_ONLY: &str = "0x3434343434343434343434343434343434343434";
     const PAYER: &str = "0x5656565656565656565656565656565656565656";
+    const MIXED_PAYER: &str = "0x5757575757575757575757575757575757575757";
+    const MIXED_PAYEE: &str = "0x9191919191919191919191919191919191919191";
     const SELLER: &str = "0x7878787878787878787878787878787878787878";
     const OTHER_TOKEN: &str = "0x9090909090909090909090909090909090909090";
     const FORMER_MEMBER: &str = "0xdddddddddddddddddddddddddddddddddddddddd";
@@ -4178,17 +4180,36 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
         "INSERT INTO shop.committee_event(network,block_number,log_index,block_time,contract_address,member,is_member)
          VALUES('matic',$1-1,2,99,$2,$3,true),('matic',$1,2,100,$2,$3,false)",
     ).bind(height).bind(super::committee_index::CONTRACTS[0]).bind(FORMER_MEMBER).execute(pool).await.unwrap();
-    // A sale in another currency proves the seller and the payer who bought
-    // the NFT for WALLET_A. Their public MANA counters remain zero.
+    // A trade with an unsupported token proves both parties. The payer
+    // has no other evidence and paid for a different NFT recipient.
     let assets = json!({
         "sent":[{"assetType":"3","contractAddress":CREATOR,"value":"5","beneficiary":WALLET_A}],
         "received":[{"assetType":"1","contractAddress":OTHER_TOKEN,"value":"25","beneficiary":SELLER}]
     });
-    sqlx::query(
-        "INSERT INTO shop.trade_event(network,block_number,log_index,block_time,marketplace_address,
-               kind,caller,signer,assets,tx_hash,hashed_signature)
-         VALUES('matic',$1,9,100,$2,'traded',$3,$4,$5,$6,$6)",
-    ).bind(height).bind(venue).bind(PAYER).bind(SELLER).bind(assets).bind(&hash).execute(pool).await.unwrap();
+    let mixed = json!({
+        "sent":[{"assetType":"3","contractAddress":CREATOR,"value":"6","beneficiary":WALLET_A}],
+        "received":[
+            {"assetType":"1","contractAddress":listings::mana_token(137).unwrap(),"value":"10","beneficiary":SELLER},
+            {"assetType":"1","contractAddress":OTHER_TOKEN,"value":"15","beneficiary":MIXED_PAYEE}
+        ]
+    });
+    for (log, payer, assets) in [(9, PAYER, assets), (11, MIXED_PAYER, mixed)] {
+        sqlx::query(
+            "INSERT INTO shop.trade_event(network,block_number,log_index,block_time,marketplace_address,
+                   kind,caller,signer,assets,tx_hash,hashed_signature)
+             VALUES('matic',$1,$2,100,$3,'traded',$4,$5,$6,$7,$7)",
+        )
+        .bind(height)
+        .bind(log)
+        .bind(venue)
+        .bind(payer)
+        .bind(SELLER)
+        .bind(assets)
+        .bind(&hash)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
     sqlx::query("INSERT INTO shop.nft_contract(network,contract_address,walked_from_block) VALUES('matic',$1,$2)")
         .bind(CREATOR).bind(height).execute(pool).await.unwrap();
     super::sale_fold::write_rows(
@@ -4200,13 +4221,23 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     .await
     .unwrap();
 
+    let (price, currency, payer): (Option<String>, Option<String>, String) = sqlx::query_as(
+        "SELECT a.price::text,a.currency,m.payer FROM shop.sale_asset a
+         JOIN shop.sale_payment m USING(network,block_number,log_index,ordinal)
+         WHERE a.network='matic' AND a.block_number=$1 AND a.log_index=9",
+    )
+    .bind(height)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!((price, currency, payer.as_str()), (None, None, PAYER));
     let (status, list) = get(
         app.clone(),
         "/v1/accounts?network=MATIC&sortBy=most_collections",
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{list}");
-    assert_eq!(list["total"], 707);
+    assert_eq!(list["total"], 709);
     assert_eq!(
         list["data"][0],
         json!({"id":CREATOR,"address":CREATOR,"sales":0,"purchases":0,
@@ -4218,6 +4249,8 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
         MINT_RECIPIENT,
         FORMER_MEMBER,
         PAYER,
+        MIXED_PAYER,
+        MIXED_PAYEE,
         SELLER,
     ] {
         let (status, page) = get(
@@ -4275,9 +4308,9 @@ async fn account_inventory_pages_indexed_participants_and_excludes_sender_only_w
     .await;
     assert_eq!(status, StatusCode::OK, "{future}");
     assert_eq!(future, json!({"data":[],"total":0}));
-    let (status, empty) = get(app.clone(), "/v1/accounts?first=2&skip=1407").await;
+    let (status, empty) = get(app.clone(), "/v1/accounts?first=2&skip=1409").await;
     assert_eq!(status, StatusCode::OK, "{empty}");
-    assert_eq!(empty, json!({"data":[],"total":1407}));
+    assert_eq!(empty, json!({"data":[],"total":1409}));
     assert!(graph.requests.lock().unwrap().is_empty());
 
     sqlx::query(
