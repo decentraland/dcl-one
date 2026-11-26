@@ -35,7 +35,7 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
         .indexes
         .check_catalogue_db(
             &pool,
-            settings.market.indexes.nft_enabled || settings.market.mirrors_enabled,
+            settings.writes_catalogue(),
             [
                 settings.eth_collections_subgraph_url.as_deref(),
                 settings.matic_collections_subgraph_url.as_deref(),
@@ -79,6 +79,7 @@ fn registry() -> anyhow::Result<dcl_metrics::Registry> {
         crate::chain_index::portal::FAMILIES,
         crate::chain_index::graph::FAMILIES,
         crate::shop::market::SALES_REPAIR_METRICS,
+        crate::shop::market::mirrors::FAMILIES,
         metrics::FAMILIES,
     ])
 }
@@ -115,5 +116,21 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn the_index_registry_renders_the_subgraph_series() {
         assert_registry_renders_subgraph_series(super::registry().unwrap()).await;
+    }
+
+    #[test]
+    fn the_index_registry_declares_catalogue_proof_outcomes() {
+        let recorder = super::registry()
+            .unwrap()
+            .build_recorder(dcl_metrics::PrometheusBuilder::new())
+            .unwrap();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+        dcl_metrics::counter!("catalyst_catalogue_mirror_proof_outcomes_total",
+            "mirror" => "items", "network" => "matic", "outcome" => "rpc_auth_failed")
+        .increment(1);
+        let rendered = recorder.handle().render();
+        assert!(rendered.contains(
+            "# HELP catalyst_catalogue_mirror_proof_outcomes_total Mainnet catalogue mirror proof failures and skips."
+        ), "{rendered}");
     }
 }

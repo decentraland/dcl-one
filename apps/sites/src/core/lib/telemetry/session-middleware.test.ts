@@ -1,6 +1,7 @@
-import { createRequestHandler, data, redirect, RouterContextProvider, type ServerBuild } from "react-router";
+import { data, redirect, RouterContextProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { testRequestHandler } from "../server-build.test-helper";
 import { markPublicResponse, pageSid, requestSession, sessionMiddleware, sidLoader } from "./session";
 
 type Seen = { root?: string | null; page?: string; wallet?: string | null };
@@ -12,122 +13,71 @@ type Args = { request: Request; context: Readonly<RouterContextProvider> };
  * answer, fail, redirect or throw and record theirs.
  */
 function app(seen: Seen) {
-  const route = (id: string, parentId: string | undefined, path: string | undefined, module: Record<string, unknown>) => ({
-    id,
-    parentId,
-    path,
-    index: undefined,
-    caseSensitive: undefined,
-    module: { default: () => null, ...module },
-  });
-  const manifest = (id: string, parentId?: string) => ({
-    id,
-    parentId,
-    path: undefined,
-    module: `/${id}.js`,
-    imports: [],
-    css: [],
-    hasAction: false,
-    hasLoader: true,
-    hasClientAction: false,
-    hasClientLoader: false,
-    hasClientMiddleware: false,
-    hasErrorBoundary: id === "root",
-  });
-  const build = {
-    entry: {
-      module: {
-        default: (_request: Request, status: number, headers: Headers, context: { loaderData: unknown }) =>
-          new Response(JSON.stringify(context.loaderData), { status, headers }),
+  const page = (module: Record<string, unknown>) => ({ default: () => null, ...module });
+  const entry = {
+    default: (_request: Request, status: number, headers: Headers, context: { loaderData: unknown }) =>
+      new Response(JSON.stringify(context.loaderData), { status, headers }),
+  };
+  return testRequestHandler(entry, [
+    { id: "root", path: "", module: page({
+      middleware: [sessionMiddleware],
+      loader: ({ request, context }: Args) => {
+        seen.root = pageSid(request, context);
+        return { sid: seen.root };
       },
-    },
-    routes: {
-      root: route("root", undefined, "", {
-        middleware: [sessionMiddleware],
-        loader: ({ request, context }: Args) => {
-          seen.root = pageSid(request, context);
-          return { sid: seen.root };
-        },
-        ErrorBoundary: () => null,
-      }),
-      "routes/page": route("routes/page", "root", "page", {
-        loader: ({ request, context }: Args) => {
-          const session = sidLoader(request, context);
-          seen.page = session.sid;
-          seen.wallet = session.wallet;
-          return session.wrap({ sid: session.sid });
-        },
-      }),
-      "routes/fail": route("routes/fail", "root", "fail", {
-        loader: ({ request, context }: Args) => {
-          seen.page = sidLoader(request, context).sid;
-          throw data(null, { status: 503 });
-        },
-      }),
-      "routes/move": route("routes/move", "root", "move", {
-        loader: ({ request, context }: Args) => {
-          seen.page = requestSession(request, context).sid;
-          throw redirect("/page");
-        },
-      }),
-      "routes/crash": route("routes/crash", "root", "crash", {
-        loader: () => {
-          throw new Error("boom");
-        },
-      }),
-      // A resource route with a publicly cacheable reply, like internal/feature-flags.
-      "routes/asset": route("routes/asset", "root", "asset", {
-        default: undefined,
-        loader: () => Response.json({ ok: true }, { headers: { "Cache-Control": "public, max-age=60" } }),
-      }),
-      // A reply only a shared cache may store, by s-maxage alone.
-      "routes/shared": route("routes/shared", "root", "shared", {
-        default: undefined,
-        loader: () => Response.json({ ok: true }, { headers: { "Cache-Control": "s-maxage=60" } }),
-      }),
-      // A public document route, like the docs: its middleware marks it before the loaders run.
-      "routes/docs": route("routes/docs", "root", "docs", {
-        middleware: [({ context }: Args, next: () => Promise<Response>) => (markPublicResponse(context), next())],
-        loader: () => ({ page: "docs" }),
-        headers: () => ({ "Cache-Control": "public, max-age=300" }),
-      }),
-      // A child middleware that answers before any loader, like the docs files.
-      "routes/early": route("routes/early", "root", "early", {
-        middleware: [() => new Response("early", { status: 200 })],
-        loader: () => null,
-      }),
-      // A loader that returns a response whose headers cannot change (Response.redirect).
-      "routes/frozen": route("routes/frozen", "root", "frozen", {
-        loader: () => Response.redirect("https://sites.test/page", 302),
-      }),
-    },
-    assets: {
-      entry: { module: "/entry.js", imports: [] },
-      url: "/manifest.js",
-      version: "test",
-      routes: {
-        root: manifest("root"),
-        "routes/page": manifest("routes/page", "root"),
-        "routes/fail": manifest("routes/fail", "root"),
-        "routes/move": manifest("routes/move", "root"),
-        "routes/crash": manifest("routes/crash", "root"),
-        "routes/asset": { ...manifest("routes/asset", "root"), hasErrorBoundary: false },
-        "routes/shared": { ...manifest("routes/shared", "root"), hasErrorBoundary: false },
-        "routes/docs": manifest("routes/docs", "root"),
-        "routes/early": manifest("routes/early", "root"),
-        "routes/frozen": manifest("routes/frozen", "root"),
+      ErrorBoundary: () => null,
+    }) },
+    { id: "routes/page", parentId: "root", path: "page", module: page({
+      loader: ({ request, context }: Args) => {
+        const session = sidLoader(request, context);
+        seen.page = session.sid;
+        seen.wallet = session.wallet;
+        return session.wrap({ sid: session.sid });
       },
-    },
-    publicPath: "/",
-    assetsBuildDirectory: "build/client",
-    basename: "/",
-    future: {},
-    ssr: true,
-    isSpaMode: false,
-    prerender: [],
-    routeDiscovery: { mode: "initial" },
-  } as unknown as ServerBuild;
-  return createRequestHandler(build, "production");
+    }) },
+    { id: "routes/fail", parentId: "root", path: "fail", module: page({
+      loader: ({ request, context }: Args) => {
+        seen.page = sidLoader(request, context).sid;
+        throw data(null, { status: 503 });
+      },
+    }) },
+    { id: "routes/move", parentId: "root", path: "move", module: page({
+      loader: ({ request, context }: Args) => {
+        seen.page = requestSession(request, context).sid;
+        throw redirect("/page");
+      },
+    }) },
+    { id: "routes/crash", parentId: "root", path: "crash", module: page({
+      loader: () => {
+        throw new Error("boom");
+      },
+    }) },
+    // A resource route with a publicly cacheable reply, like internal/feature-flags.
+    { id: "routes/asset", parentId: "root", path: "asset", module: page({
+      default: undefined,
+      loader: () => Response.json({ ok: true }, { headers: { "Cache-Control": "public, max-age=60" } }),
+    }) },
+    // A reply only a shared cache may store, by s-maxage alone.
+    { id: "routes/shared", parentId: "root", path: "shared", module: page({
+      default: undefined,
+      loader: () => Response.json({ ok: true }, { headers: { "Cache-Control": "s-maxage=60" } }),
+    }) },
+    // A public document route, like the docs: its middleware marks it before the loaders run.
+    { id: "routes/docs", parentId: "root", path: "docs", module: page({
+      middleware: [({ context }: Args, next: () => Promise<Response>) => (markPublicResponse(context), next())],
+      loader: () => ({ page: "docs" }),
+      headers: () => ({ "Cache-Control": "public, max-age=300" }),
+    }) },
+    // A child middleware that answers before any loader, like the docs files.
+    { id: "routes/early", parentId: "root", path: "early", module: page({
+      middleware: [() => new Response("early", { status: 200 })],
+      loader: () => null,
+    }) },
+    // A loader that returns a response whose headers cannot change (Response.redirect).
+    { id: "routes/frozen", parentId: "root", path: "frozen", module: page({
+      loader: () => Response.redirect("https://sites.test/page", 302),
+    }) },
+  ]);
 }
 
 const get = (path: string, cookie?: string) =>
