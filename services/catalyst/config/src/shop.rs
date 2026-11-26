@@ -733,6 +733,15 @@ pub struct ShopConfig {
     )]
     pub credits_daily_studio_deposit_limit_cents: Option<i64>,
 
+    /// The most one studio grant may give, in USD cents (credits-server's
+    /// `STUDIO_GRANT_MAX_CENTS`). Unset or negative refuses studio grants.
+    #[arg(
+        long,
+        env = "CREDITS_STUDIO_GRANT_MAX_CENTS",
+        allow_negative_numbers = true
+    )]
+    pub credits_studio_grant_max_cents: Option<i64>,
+
     /// Attach the CreditUsed index (credits.usages, over RPC_ENDPOINT_POLYGON
     /// and CREDITS_MANAGER_CONTRACT); POST /credits/authorize mints only while it is ready.
     #[arg(long, env = "CREDITS_USAGE_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
