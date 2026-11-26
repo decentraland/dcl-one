@@ -8,6 +8,10 @@ A local Polygon refold fixture replayed 288 legacy sales in 288 distinct blocks 
 
 The index process increments `catalyst_index_sales_repair_failures_total` by indexer and network when a historical sales repair fails. The error log includes the starting block and requests spent. The cursor keeps its last verified boundary.
 
+## Ethereum collections-v1 first walk
+
+On 2026-11-26 the Ethereum `collections` walk (`shop::market::collections_v1`) ran its first history over `rpc.decentraland.org/mainnet`, which takes at most 10,000 blocks per `eth_getLogs`, with the default settings (10,000-block windows, a budget of 100 `eth_getLogs` per pass) and an empty scratch database. It walked from block 8,828,687 to the head, 17,671,095 blocks, in 18 passes run back to back, with 7,108 RPC requests in all. A two-pass rerun over the same start counted them by kind. Each pass spent its 100-request budget on `eth_getLogs`, about one per 10,000-block window: 989,704 and 1,000,000 blocks. Each pass also sent about 300 other requests, for the chain, the head, each window's bracket and the blocks holding logs: 299 and 302. So the full walk's `eth_getLogs` came to about 1,770, one per window, and the rest were headers. It took 2,198 s, plus the pause between passes a job adds (`MARKETPLACE_INDEX_INTERVAL_SECS`, 5 s, or 30 s under the mirror posture). It kept 438 `add_item`, 73,506 `issue` and 52 `ownership_transferred` rows. The 438 items and the 73,506 mints equal the collections subgraph's v1 items and their total supply at block 26,499,473. After the catch-up, each pass reads the same 42-address filter over the new blocks only. The command is in the `measure_the_first_walk` test, which prints each pass's `eth_getLogs` and other requests (`COLLECTIONS_V1_MEASURE_PASSES` stops it early).
+
 ## Marketplace catalogue mirror proof
 
 `catalyst_catalogue_mirror_proof_outcomes_total` counts mainnet proof
@@ -35,6 +39,10 @@ A PostgreSQL 17 fixture held one million synthetic sales across Ethereum and Pol
 | Buyer page, 34 matching sales | 2.8 ms |
 
 A larger fixture included 5.3 million collection mint events, 6,200 factory creations and creator transfers, and 5.3 million NFT transfer events alongside one million sales. The accounts page took 8.00 s with 16 MiB of work memory, the lifetime creator ranking took 6.25 s, and an indexed token lookup took 0.282 ms. Creator lookups used the collection replay index in both directions. The separate partial creator wallet indexes occupied 64 KiB each on the fixture.
+
+To measure the creator-position lookups separately, a PostgreSQL 17.6 fixture held 620,000 events across 6,200 collections, including 1,550 creatorship transfers. Two local `EXPLAIN (ANALYZE, BUFFERS)` runs of the preceding and following transfer lookups for 20,000 mint positions took 666 and 895 ms with the replay index. Both lookups used `collection_event_creatorship_position_idx` after it was added and took 52 and 47 ms. The partial index occupied 160 KiB. These runs measure the attribution probes; the rankings also read sales and aggregate results.
+
+The complete default week creator ranking ran on PostgreSQL 17.6 with 5.3 million collection Issue events, 6,200 factory creations, 3,100 creatorship transfers, and one million published sales across both mainnets. The ledger contained 9,900 priced mints, 187 in the week. With 16 MiB of work memory and a 10-second statement timeout, `EXPLAIN (ANALYZE, BUFFERS)` took 7,077 ms when the query enriched all one million sales. Restricting the period read to mints used `sale_asset_read_kind` on both networks and took 690 and 215 ms in two runs. The first run hit 117,261 shared buffers and read 36,712, down from 8,377,416 hits and 153,491 reads. The query returned 100 creators with both completeness flags clear. Older mints supplied cumulative relationships without payment lookups.
 
 The timestamp and price indexes occupied 54 MiB and 114 MiB on the sales fixture. Daily sale counts supply the total for unfiltered pages. Filtered sales count up to the page window cap. Indexed wallet and item lookups narrow rows before enriching them with payment evidence. Accounts, rankings and volume have a 30-second cache keyed by checked publications.
 
@@ -76,6 +84,31 @@ A synthetic PostgreSQL 17.6 fixture on a laptop held 1.05M `land_authz.authz_eve
 On the heavy wallet each side read its 2,500 rows through its index (a bitmap scan and a sort at that size) and made one `sale_asset_pkey` probe per row. The readiness probe (`EXISTS` over the due set) took 0.05 ms.
 
 The repair, with every transfer due: the next due row took 4.1 ms; one 50,000-block window's `UPDATE` of 1,111 rows took 20 ms; the check for an unfilled row took 0.4 ms. The fixture's history is about 322 windows. Each costs two header reads and at least one `eth_getLogs`. At the defaults (`LAND_AUTHZ_INDEX_REQUESTS_PER_PASS` 50, which counts the repair's header reads, a pass every 120 s), an idle pass leaves room for about 15 windows. The repair then takes about 22 passes, some 45 minutes, unless the endpoint narrows the ranges. That estimate is not a measurement against a real endpoint. Other agents' builds were running during these measurements.
+
+## Sepolia LAND authorization replay
+
+On 2026-11-26, a single leased `catalyst index` worker at
+`bb10e59289e1311ed88476c8692534334963de5c` replayed Sepolia LAND and Estate
+into an empty PostgreSQL 17.6 database using Decentraland's public Sepolia
+RPC. The first publication took 2.70 s from worker launch, excluding
+compilation and initial schema application. The completed job pass took
+1.99 s. It ran immediately on startup with 12 confirmations and a
+200-request per-pass budget.
+
+| Measurement | Result |
+| --- | ---: |
+| First block | 3,831,219 |
+| Published block | 12,217,105 |
+| Blocks covered, inclusive | 8,385,887 |
+| Authorization events | 6,658 |
+| Estate metadata events | 52 |
+| Token rights | 4,116 |
+| Account rights | 51 |
+| Estate memberships | 851 |
+
+The published cursor hash matched the Sepolia header at 12,217,105
+(`0x3b4a18568ecdfb3989f148294617774906ae5db307118e560094b173b9f45e53`).
+Separate measurements depend on RPC range limits and latency.
 
 ## Latest sale per token
 

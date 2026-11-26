@@ -5,7 +5,7 @@ use axum::Json;
 use axum::extract::{OriginalUri, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::Address;
 
@@ -25,16 +25,10 @@ pub struct Mute {
 
 /// The body's wire shape for the TS export; the handlers read the bytes
 /// with [`muted_address`].
-#[derive(Deserialize)]
-#[cfg_attr(
-    not(feature = "ts"),
-    allow(dead_code, reason = "only the TS export names it")
-)]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(export, export_to = "communities/")
-)]
+#[cfg(feature = "ts")]
+#[derive(ts_rs::TS)]
+#[ts(export, export_to = "communities/")]
+#[expect(dead_code, reason = "a TS export shape; nothing builds or reads it")]
 pub struct MuteBody {
     pub muted_address: String,
 }

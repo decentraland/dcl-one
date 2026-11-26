@@ -89,6 +89,10 @@ pub struct Projected {
     pub replayed: usize,
     /// Walked collections still waiting for their creation read.
     pub waiting: usize,
+    /// Items it left out because the catalogue cannot describe them: an
+    /// Ethereum v1 `AddWearable` whose wearable id no static representation
+    /// has ([`super::collections_v1`]).
+    pub unrepresented: usize,
 }
 
 fn event_of(row: &sqlx::postgres::PgRow) -> CollectionEvent {
@@ -181,8 +185,12 @@ pub async fn project_in(
     .bind(net.db_name())
     .fetch_one(&mut *conn)
     .await?;
-    let out = match through {
-        Some(through) if through <= upto => advance(&mut *conn, net, through, upto).await?,
+    let out = match (net, through) {
+        // Ethereum's closed v1 catalogue has a fold of its own.
+        (ChainNet::Ethereum, through) => {
+            super::collections_v1::project_in(&mut *conn, through, upto).await?
+        }
+        (_, Some(through)) if through <= upto => advance(&mut *conn, net, through, upto).await?,
         _ => rebuild(&mut *conn, net, upto).await?,
     };
     sqlx::query(
@@ -260,6 +268,7 @@ async fn rebuild(conn: &mut PgConnection, net: ChainNet, upto: i64) -> anyhow::R
         collections: folded.rows.len(),
         replayed: folded.rows.len(),
         waiting: folded.waiting,
+        unrepresented: 0,
     })
 }
 
@@ -635,7 +644,7 @@ fn item_record(contract: &str, i: &ItemRow) -> Value {
 
 /// Writes `rows`: each collection upserted, its items inserted (the caller
 /// deleted the ones they replace).
-async fn write(
+pub(super) async fn write(
     conn: &mut PgConnection,
     net: ChainNet,
     rows: &[(CollectionRow, Vec<ItemRow>)],
@@ -844,7 +853,8 @@ mod tests {
                 rebuilt: true,
                 collections: 1,
                 replayed: 1,
-                waiting: 0
+                waiting: 0,
+                unrepresented: 0,
             }
         );
         assert_eq!(marker(&pool).await, (true, Some(97_895_000)));
@@ -931,7 +941,8 @@ mod tests {
                 rebuilt: false,
                 collections: 1,
                 replayed: 0,
-                waiting: 0
+                waiting: 0,
+                unrepresented: 0,
             },
             "the mints and minters past 97,751,000 folded onto the rows"
         );

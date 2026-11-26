@@ -14,7 +14,8 @@
 //! the chain's position, appended with its cursor advance
 //! (`chain_walk::run_pass`), and folded into `shop.nft` (owner = the
 //! latest transfer's `to`, the mint the first), `nft_order` (the latest
-//! legacy order event per token) and `land_data` (the latest parcel Update or latest
+//! legacy order event per token), `legacy_order` (every legacy order,
+//! `legacy_orders`) and `land_data` (the latest parcel Update or latest
 //! valid estate document). The LAND fold reads the window.
 //! The other folds read each touched key's whole history. `since = None` rebuilds.
 //!
@@ -574,6 +575,8 @@ fn backfills_owed_sql() -> sqlx::AssertSqlSafe<String> {
 pub struct FoldCounts {
     pub nfts: u64,
     pub orders: u64,
+    /// The rows of `shop.legacy_order` written (`legacy_orders`).
+    pub legacy_orders: u64,
     pub land_data: u64,
     /// The contracts whose backfill the lane still owes, counted in the
     /// fold's transaction.
@@ -603,6 +606,7 @@ pub async fn fold(
         .execute(&mut *tx)
         .await?;
     super::chain_walk::analyze_if_stale(&mut tx, "shop", "nft_event", since < 0).await?;
+    owner.check(&mut tx).await?;
     let contracts: Vec<String> = sqlx::query_scalar("SELECT contract_address FROM shop.nft_contract WHERE network = $1 AND refold_owed FOR UPDATE")
         .bind(net.db_name())
         .fetch_all(&mut *tx)
@@ -639,6 +643,7 @@ pub async fn fold(
         .execute(&mut *tx)
         .await?
         .rows_affected();
+    let legacy_orders = super::legacy_orders::fold(&mut tx, net, since).await?;
     let land_data = if net == ChainNet::Ethereum {
         fold_land_data(&mut tx, since).await?
     } else {
@@ -656,19 +661,17 @@ pub async fn fold(
         .fetch_one(&mut *tx)
         .await?;
     if backfills_owed > 0 {
-        // At the end, beside the fence that locks the same row, so the
-        // cursor's row lock lasts only until the commit.
         sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = $1 AND network = $2")
             .bind(INDEXER_NFT)
             .bind(net.db_name())
             .execute(&mut *tx)
             .await?;
     }
-    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(FoldCounts {
         nfts,
         orders,
+        legacy_orders,
         land_data,
         backfills_owed,
     })
@@ -1070,6 +1073,7 @@ impl ChainIndex for NftIndex {
         .bind(&tokens)
         .execute(&mut *conn)
         .await?;
+        super::legacy_orders::rewind(&mut *conn, self.net, to, &contracts, &tokens).await?;
         // LAND data is keyed by (token_address, token_id) and folded only for
         // keys with a remaining document: a key whose documents were all reorged
         // out would otherwise keep a row past the cursor. The rebuild below
@@ -1118,6 +1122,7 @@ impl ChainIndex for NftIndex {
             network = self.net.db_name(),
             nfts = counts.nfts,
             orders = counts.orders,
+            legacy_orders = counts.legacy_orders,
             land_data = counts.land_data,
             "nft index: folded"
         );
@@ -1228,13 +1233,14 @@ impl ChainIndex for NftIndex {
                     }
                 }
                 let mut tx = pool.begin().await?;
-                insert_events(&mut tx, self.net, &rows).await?;
                 // Late rows near the head below the producers' cursors are read again.
                 let blocks = rows.iter().map(|r| r.block_number);
                 if let (Some(first), Some(last)) = (blocks.clone().min(), blocks.max()) {
                     super::notice_cursor::replay(&mut tx, INDEXER_NFT, self.net, first - 1, last)
                         .await?;
                 }
+                owner.check(&mut tx).await?;
+                insert_events(&mut tx, self.net, &rows).await?;
                 sqlx::query(
                     "UPDATE shop.nft_contract SET backfilled_to_block = $3, refold_owed = ($3 >= walked_from_block - 1) \
                      WHERE network = $1 AND contract_address = $2",
@@ -1244,7 +1250,6 @@ impl ChainIndex for NftIndex {
                 .bind(w.reached as i64)
                 .execute(&mut *tx)
                 .await?;
-                owner.check(&mut tx).await?;
                 tx.commit().await?;
                 next = w.reached as i64 + 1;
             }

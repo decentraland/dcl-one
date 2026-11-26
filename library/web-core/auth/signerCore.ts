@@ -4,13 +4,14 @@ export const AUTH_CHAIN_HEADER_PREFIX = "x-identity-auth-chain-";
 export const AUTH_TIMESTAMP_HEADER = "x-identity-timestamp";
 export const AUTH_METADATA_HEADER = "x-identity-metadata";
 
+/** The crypto-middleware 6.x payload: method and path folded, metadata signed verbatim. */
 export function buildRequestPayload(
   method: string,
   path: string,
   timestamp: string,
   metadataStr: string,
 ): string {
-  return `${method}:${path}:${timestamp}:${metadataStr}`.toLowerCase();
+  return `${method.toLowerCase()}:${path.toLowerCase()}:${timestamp}:${metadataStr}`;
 }
 
 type SignedAuthChain = {

@@ -19,6 +19,7 @@ use crate::evm::errors::ApiError;
 use crate::evm::handlers::admin::require_admin;
 use crate::evm::handlers::{idempotency_key, require_broadcast_enabled};
 use crate::evm::signer::{DirectSigner, ReceiptOutcome};
+use crate::types::chain_id_column;
 
 fn name_mint_price() -> U256 {
     U256::from(100_000_000_000_000_000_000u128)
@@ -202,7 +203,7 @@ pub async fn buy(
             buyer_address: &buyer_hex,
             escrow_address: &custody_hex,
             price_wei: &price_wei.to_string(),
-            chain_id: chain_id as i64,
+            chain_id: chain_id_column(chain_id)?,
             mode: mode.as_str(),
             trade_hashed_signature: None,
             usd_amount_wei: None,
@@ -397,7 +398,7 @@ pub async fn transfer(
             token_id: &token_id.to_string(),
             from_address: &format!("{relayer:#x}"),
             to_address: &format!("{to:#x}"),
-            chain_id: chain_id as i64,
+            chain_id: chain_id_column(chain_id)?,
         },
         crate::evm::now(),
     )

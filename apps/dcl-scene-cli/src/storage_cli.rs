@@ -257,6 +257,7 @@ enum Outcome {
     Page(Value),
 }
 
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 fn print(outcome: Outcome, as_json: bool) -> Result<()> {
     match outcome {
         Outcome::Value(v) if as_json => println!("{}", serde_json::to_string(&v)?),
@@ -626,6 +627,7 @@ async fn clear_all_players(mode: &Mode) -> Result<Outcome> {
     }
 }
 
+#[allow(clippy::print_stdout, reason = "the CLI writes to the terminal")]
 pub async fn run(command: StorageCommand) -> Result<()> {
     match command {
         StorageCommand::Scene { action, opts } => {

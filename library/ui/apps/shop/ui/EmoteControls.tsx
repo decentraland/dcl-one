@@ -1,9 +1,9 @@
 // The design's EMOTE controls, over the avatar while an emote plays: STOP EMOTE and the emote's sound.
 
-import { MaskIcon } from '@hud/design'
 import stopIcon from '../assets/stop.svg'
 import soundIcon from '../assets/sound-on.svg'
 import styles from './EmoteControls.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 export function EmoteControls({
   onStop,

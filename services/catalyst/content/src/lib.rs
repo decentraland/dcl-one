@@ -30,6 +30,7 @@ pub(crate) use dcl_auth as auth;
 pub(crate) use dcl_http as http;
 
 pub use crate::shared::cache;
+pub mod collections_v1;
 mod connection;
 pub use crate::shared::{cors, nul_guard, query_params};
 pub mod entity;

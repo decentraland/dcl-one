@@ -1,4 +1,6 @@
 //! Exercise HTTP routing, the upgrade and a service declaration through one real scrape.
+#![allow(clippy::unwrap_used, reason = "test support")]
+
 use axum::{Router, extract::WebSocketUpgrade, http::StatusCode, response::Response, routing::get};
 use dcl_metrics::{CounterFamily, PrometheusBuilder, Registry, http, ws::Socket};
 use futures::{SinkExt, StreamExt};

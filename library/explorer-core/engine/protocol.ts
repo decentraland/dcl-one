@@ -107,6 +107,13 @@ export interface SendChatReactionRequest {
   remove: boolean
 }
 
+/** React with an emoji, shown over the local user's avatar (page → engine via the scene's
+ *  BevyApi.sendReaction). An emoji the wire does not carry does nothing. */
+export interface SendReactionRequest {
+  kind: 'sendReaction'
+  emoji: string
+}
+
 /** Redraw a chat bubble (nearby, community or direct message) with other words (its translation,
  *  or the original back), if that message is still the sender's bubble. Its time up is kept. */
 export interface ChatBubbleTextRequest {
@@ -186,6 +193,7 @@ export type PageToScene =
   | RpcRequest
   | SendChatRequest
   | SendChatReactionRequest
+  | SendReactionRequest
   | ChatBubbleTextRequest
   | ReloadSceneRequest
   | ConsoleCommandRequest
@@ -664,7 +672,7 @@ export interface DmDeleteRequest {
 
 /** Mirrors the engine's ExplorerSetting (BevyApi.getSettings). A setting is a
  *  Select when it has namedVariants, otherwise a numeric Slider; a 2-variant or
- *  0..1 setting renders as a Toggle. */
+ *  0..1 setting renders as a switch. */
 import type { SettingInfo as Setting, NamedVariant as SettingVariant } from './generated/index'
 export type { Setting, SettingVariant }
 
@@ -2307,11 +2315,17 @@ export interface PreviewFocusRequest {
 /** The Shop's stage around the preview avatar: where the page draws its stage image on screen, in CSS
  *  pixels like engineViewport's rect. The scene draws the same image (its images/shop-stage.jpg, the in-world Shop's
  *  library/ui/apps/shop/assets/stage.jpg) there behind the avatar, so the avatar's window shows no seam, and drops the
- *  Backpack's podium: the stage's floor is in the image. `null` gives the preview its own backdrop back. */
+ *  Backpack's podium: the stage's floor is in the image. `null` gives the preview its own backdrop back.
+ *  `framing` is how the Shop's page draws the avatar in its window: the catalogue's, unless given. */
 export interface PreviewStageRequest {
   kind: 'previewStage'
   rect: { x: number; y: number; width: number; height: number } | null
+  framing?: PreviewStageFraming
 }
+
+/** How the Shop's page draws its avatar: the catalogue's whole body, or Names' (smaller and lower, with room
+ *  over the head for the nametag). */
+export type PreviewStageFraming = 'catalog' | 'names'
 
 /** Play an emote on the preview avatar once (the Shop trying one on); asked again, it plays again.
  *  `null` stops it. */

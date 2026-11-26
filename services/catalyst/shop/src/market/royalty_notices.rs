@@ -137,7 +137,7 @@ impl Venue {
                AND e.kind = '{kind}' AND e.emitter = $5 \
              ORDER BY e.block_number, e.log_index LIMIT $8) page ON true \
              ORDER BY page.block_number, page.log_index",
-            ready = chain_walk::published_sql_on(
+            ready = crate::chain_index::catalogue::published_sql_on(
                 "c",
                 "$9",
                 ChainNet::Ethereum.chain_id(),
@@ -246,7 +246,6 @@ async fn drain(
     loop {
         let mut txn = pool.begin().await?;
         let (_, since_block, since_log) = notice_cursor::lock(&mut txn, producer).await?;
-        notice_cursor::report_lag(producer, published, since_block);
         let now = chrono::Utc::now();
         let page = sqlx::query(sqlx::AssertSqlSafe(page_sql.as_str()))
             .bind(NET.db_name())
@@ -330,6 +329,8 @@ async fn drain(
             notice_cursor::advance(&mut txn, producer, None, to_block, to_log).await?;
         }
         txn.commit().await?;
+        // The cursor stands at `published` once a page read everything.
+        notice_cursor::report_lag(producer, published, to_block);
         if !full {
             break;
         }
@@ -648,11 +649,30 @@ mod tests {
     /// `ITEM_HOLD_MAX_SECS` gives up no sale: a day-old sale the publication
     /// does not cover holds the cursor, a row read meanwhile never picks the
     /// collector, and once the publication covers its block the collector
-    /// hears of it.
-    #[tokio::test]
+    /// hears of it. `shop_notification_cursor_lag` shows the held cursor's
+    /// gap, then 0 once a page reads everything up to the publication.
+    #[tokio::test(flavor = "current_thread")]
     async fn on_an_owned_network_a_sale_past_the_hold_waits_for_the_publication() {
         let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
+        };
+        let recorder = dcl_metrics::Registry::new(&[super::super::notice_cursor::FAMILIES])
+            .unwrap()
+            .builder(dcl_metrics::PrometheusBuilder::new())
+            .unwrap()
+            .build_recorder();
+        let metrics = recorder.handle();
+        let _recording = dcl_metrics::set_default_local_recorder(&recorder);
+        let lag = || {
+            metrics
+                .render()
+                .lines()
+                .find(|l| {
+                    l.starts_with(
+                        "shop_notification_cursor_lag{producer=\"royalties:bid_accepted:matic\"}",
+                    )
+                })
+                .map(str::to_string)
         };
         use super::super::catalogue::owning;
         let token = |item: u32| (alloy_primitives::U256::from(item) << 216usize).to_string();
@@ -706,6 +726,11 @@ mod tests {
                 stored().await.is_empty(),
                 "no notice from an unverified row"
             );
+            assert_eq!(
+                lag().as_deref(),
+                Some("shop_notification_cursor_lag{producer=\"royalties:bid_accepted:matic\"} 6"),
+                "held at 100 below the publication at 106"
+            );
         }
 
         owning::own(&pool, "matic", 137, 106, 60).await;
@@ -715,6 +740,11 @@ mod tests {
         );
         assert_eq!(cursor().await, (106, i32::MAX));
         assert_eq!(stored().await, [BENEFICIARY], "described once covered");
+        assert_eq!(
+            lag().as_deref(),
+            Some("shop_notification_cursor_lag{producer=\"royalties:bid_accepted:matic\"} 0"),
+            "drained"
+        );
     }
 
     /// On a network the collections index owns, a rewind leaves the item

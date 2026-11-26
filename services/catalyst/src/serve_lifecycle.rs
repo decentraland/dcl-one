@@ -69,6 +69,8 @@ fn registry() -> anyhow::Result<dcl_metrics::Registry> {
         crate::shop::market::lambdas_metrics::FAMILIES,
         crate::shop::market::notice_cursor::FAMILIES,
         crate::shop::credits::metrics::FAMILIES,
+        crate::shop::market::bids::FAMILIES,
+        crate::shop::market::orders::FAMILIES,
         crate::chain_index::graph::FAMILIES,
     ])
 }
