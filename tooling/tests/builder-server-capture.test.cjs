@@ -88,16 +88,18 @@ test('a directory inside a checkout is refused', t => {
   assert.match(result.stderr, /must be the Git working tree root/)
 })
 
-test('a run that fails a check leaves the published fixtures untouched', t => {
+test('a run that fails a check leaves the published fixtures untouched, and a run that passes replaces them', t => {
   const { finish } = require(script)
   const output = path.join(scratch(t), 'source')
   fs.mkdirSync(output)
   fs.writeFileSync(path.join(output, '01-case.json'), 'committed\n')
+  fs.writeFileSync(path.join(output, '03-removed-case.json'), 'committed\n')
   const fixtures = [['01-case.json', 'recaptured\n'], ['02-case.json', 'new\n']]
   assert.throws(() => finish(output, fixtures, ['example.org']), /does not fake: example.org/)
-  assert.deepEqual(fs.readdirSync(output), ['01-case.json'])
+  assert.deepEqual(fs.readdirSync(output), ['01-case.json', '03-removed-case.json'])
   assert.equal(fs.readFileSync(path.join(output, '01-case.json'), 'utf8'), 'committed\n')
   finish(output, fixtures, [])
+  assert.deepEqual(fs.readdirSync(output), ['01-case.json', '02-case.json'])
   assert.equal(fs.readFileSync(path.join(output, '01-case.json'), 'utf8'), 'recaptured\n')
   assert.equal(fs.readFileSync(path.join(output, '02-case.json'), 'utf8'), 'new\n')
   assert.deepEqual(fs.readdirSync(path.dirname(output)), ['source'])
@@ -195,6 +197,63 @@ require('node:net').connect({ host: '192.0.2.10', port: 80 }).on('error', error 
   assert.throws(() => migrate(upstream, {}), error => /offline capture refused: 192\.0\.2\.10:80/.test(String(error.stderr)))
 })
 
+test('upstream runs with only the capture environment: no .env and no unlisted variable of the shell reach it', t => {
+  const { useUpstreamEnvironment } = require(script)
+  const cwd = scratch(t)
+  fs.writeFileSync(path.join(cwd, '.env'), 'CORS_ORIGIN=https://local.example.org\nLOCAL_ONLY=1\n')
+  const saved = { ...process.env }
+  const savedCwd = process.cwd()
+  t.after(() => {
+    process.chdir(savedCwd)
+    for (const name of Object.keys(process.env)) delete process.env[name]
+    Object.assign(process.env, saved)
+  })
+  process.chdir(cwd)
+  process.env.UNLISTED_CAPTURE_PROBE = 'shell'
+  process.env.CORS_METHOD = 'DELETE'
+  const upstreamEnv = {
+    loaded: false,
+    load({ path: file = './.env', values = {} } = {}) {
+      if (Object.keys(values).length === 0 && fs.existsSync(file)) {
+        values = Object.fromEntries(fs.readFileSync(file, 'utf8').trim().split('\n').map(line => line.split('=')))
+      }
+      Object.assign(process.env, values)
+      this.loaded = true
+    },
+    get(name) {
+      if (!this.loaded) this.load()
+      return process.env[name]
+    }
+  }
+  useUpstreamEnvironment(name => (name === 'decentraland-commons' ? { env: upstreamEnv } : assert.fail(name)), { CORS_ORIGIN: 'https://capture.example.org' })
+  assert.equal(upstreamEnv.get('CORS_ORIGIN'), 'https://capture.example.org')
+  assert.equal(upstreamEnv.get('LOCAL_ONLY'), undefined)
+  assert.equal(process.env.UNLISTED_CAPTURE_PROBE, undefined)
+  assert.equal(process.env.CORS_METHOD, undefined)
+  assert.equal(process.env.PATH, saved.PATH)
+})
+
+test('the migration process gets only the capture environment and runs where no .env is', t => {
+  const { migrate } = require(script)
+  const upstream = scratch(t)
+  const probe = path.join(scratch(t), 'probe.json')
+  fs.mkdirSync(path.join(upstream, 'migrations'))
+  fs.writeFileSync(path.join(upstream, '.env'), 'CONNECTION_STRING=postgres://local\n')
+  fs.writeFileSync(path.join(upstream, 'migrations/node-pg-migrate'), `
+require('node:fs').writeFileSync(process.env.PROBE, JSON.stringify({ names: Object.keys(process.env).sort(), dotEnv: require('node:fs').existsSync('.env'), cwd: process.cwd() }))
+`)
+  const saved = process.env.UNLISTED_CAPTURE_PROBE
+  process.env.UNLISTED_CAPTURE_PROBE = 'shell'
+  t.after(() => (saved === undefined ? delete process.env.UNLISTED_CAPTURE_PROBE : (process.env.UNLISTED_CAPTURE_PROBE = saved)))
+  migrate(upstream, { PROBE: probe, CONNECTION_STRING: 'postgres://capture' })
+  const seen = JSON.parse(fs.readFileSync(probe, 'utf8'))
+  assert.equal(seen.dotEnv, false)
+  assert.notEqual(seen.cwd, fs.realpathSync(upstream))
+  assert.equal(fs.existsSync(seen.cwd), false)
+  const allowed = new Set(['PROBE', 'CONNECTION_STRING', 'PATH', 'HOME', 'TMPDIR', 'TZ', '__CF_USER_TEXT_ENCODING'])
+  assert.deepEqual(seen.names.filter(name => !allowed.has(name)), [])
+})
+
 test('an interrupted capture drops its database', async t => {
   const queries = path.join(scratch(t), 'queries')
   const program = `
@@ -214,17 +273,21 @@ test('an interrupted capture drops its database', async t => {
   assert.match(fs.readFileSync(queries, 'utf8'), /^CREATE DATABASE "(builder_capture_\S+)"\nDROP DATABASE IF EXISTS "\1" WITH \(FORCE\)\n$/)
 })
 
-test('the offline guard refuses addresses, names and proxies outside loopback', () => {
+test('the offline guard refuses addresses and names outside loopback', () => {
   const program = `
-    const net = require('node:net'), dns = require('node:dns')
+    const net = require('node:net'), dns = require('node:dns'), dgram = require('node:dgram')
     const report = {}
-    report.proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy ?? null
     const server = net.createServer(socket => socket.end()).listen(0, '127.0.0.1', () => {
       const local = net.connect(server.address().port, '127.0.0.1', () => {
         report.loopback = 'connected'
         local.destroy()
-        net.connect({ host: '192.0.2.10', port: 80 }).on('error', error => {
+        net.connect({ host: '192.0.2.10', port: 80 }).on('error', async error => {
           report.address = error.message
+          report.resolve = await new Promise(resolve => dns.resolve4('resolve.example.org', error => resolve(error.message)))
+          report.resolver = await new Promise(resolve => new dns.Resolver().resolveTxt('resolver.example.org', error => resolve(error.message)))
+          report.promises = await dns.promises.resolve('promises.example.org').catch(error => error.message)
+          report.promisedLookup = await dns.promises.lookup('lookup.example.org').catch(error => error.message)
+          try { dgram.createSocket('udp4').unref().send('x', 53, '192.0.2.53') } catch (error) { report.udp = error.message }
           dns.lookup('builder-api.example.org', error => {
             report.name = error.message
             server.close()
@@ -234,16 +297,34 @@ test('the offline guard refuses addresses, names and proxies outside loopback', 
       })
     })
   `
-  const env = { ...process.env, HTTPS_PROXY: 'http://127.0.0.1:9', https_proxy: 'http://127.0.0.1:9', NODE_OPTIONS: `--require=${guard}` }
+  const env = { ...process.env, NODE_OPTIONS: `--require=${guard}` }
+  for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NODE_USE_ENV_PROXY']) {
+    delete env[name]
+    delete env[name.toLowerCase()]
+  }
   const result = spawnSync(process.execPath, ['-e', program], { encoding: 'utf8', env })
   assert.equal(result.status, 1, result.stderr)
   assert.deepEqual(JSON.parse(result.stdout), {
-    proxy: null,
     loopback: 'connected',
     address: 'capture is offline: 192.0.2.10:80',
+    resolve: 'capture is offline: resolve.example.org',
+    resolver: 'capture is offline: resolver.example.org',
+    promises: 'capture is offline: promises.example.org',
+    promisedLookup: 'capture is offline: lookup.example.org',
+    udp: 'capture is offline: udp 192.0.2.53',
     name: 'capture is offline: builder-api.example.org'
   })
-  assert.match(result.stderr, /offline capture refused: 192\.0\.2\.10:80, builder-api\.example\.org/)
+  assert.match(result.stderr, /offline capture refused: 192\.0\.2\.10:80, resolve\.example\.org, resolver\.example\.org/)
+})
+
+test('the offline guard refuses to start under a proxy, in any spelling', () => {
+  for (const [name, value] of [['HTTPS_PROXY', 'http://127.0.0.1:9'], ['http_proxy', 'http://127.0.0.1:9'], ['NODE_USE_ENV_PROXY', '1']]) {
+    const env = { ...process.env, [name]: value, NODE_OPTIONS: `--require=${guard}` }
+    const result = spawnSync(process.execPath, ['-e', 'console.log("ran")'], { encoding: 'utf8', env })
+    assert.notEqual(result.status, 0, name)
+    assert.equal(result.stdout, '', name)
+    assert.match(result.stderr, new RegExp(`unset .*${name}`), name)
+  }
 })
 
 test('an error report never carries the database password', t => {
@@ -741,11 +822,60 @@ test('the fake newsletter service records each subscription as sent and fails on
   assert.deepEqual(newsletterRecord(received), { newsletter: received })
 })
 
+test('every committed capture and the seed parse into the shape the replay reads', () => {
+  const { CASES, readSeed } = require(script)
+  const folder = path.resolve(__dirname, '../../services/catalyst/tests/fixtures/conformance/builder')
+  const { BUILDER_REVISION } = require('../social-capture-common.cjs')
+  const optional = { volatile_equal: 'array', auth: 'string', sign: 'object', slack: 'array', queue: 'array', forum: 'array', validator_sign: 'object', review_flow: 'boolean', validation_of: 'string', newsletter: 'array', repeat: 'number' }
+  const kind = value => (Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value)
+  const strings = value => kind(value) === 'object' && Object.values(value).every(entry => typeof entry === 'string')
+  const problems = []
+  const files = fs.readdirSync(path.join(folder, 'source')).sort()
+  assert.deepEqual(files, CASES.map(item => `${item.name}.json`).sort())
+  for (const name of files) {
+    const capture = JSON.parse(fs.readFileSync(path.join(folder, 'source', name), 'utf8'))
+    const problem = message => problems.push(`${name}: ${message}`)
+    for (const [key, value] of Object.entries(capture)) {
+      if (['description', 'captured_from', 'captured_at'].includes(key)) { if (typeof value !== 'string') problem(`${key} is not a string`) }
+      else if (key === 'volatile_paths') { if (!Array.isArray(value) || !value.every(entry => typeof entry === 'string')) problem('volatile_paths is not a list of strings') }
+      else if (key === 'request' || key === 'response') continue
+      else if (!optional[key]) problem(`unknown field ${key}`)
+      else if (kind(value) !== optional[key]) problem(`${key} is not ${optional[key]}`)
+    }
+    if (capture.captured_from !== `github.com/decentraland/builder-server@${BUILDER_REVISION}`) problem('captured_from is not the pinned upstream')
+    const { request, response } = capture
+    if (kind(request) !== 'object' || kind(response) !== 'object') { problem('request or response is not an object'); continue }
+    if (typeof request.method !== 'string' || typeof request.path !== 'string' || !request.path.startsWith('/')) problem('request method or path')
+    if (kind(request.query) !== 'object' || !Object.values(request.query).every(value => typeof value === 'string' || (Array.isArray(value) && value.every(entry => typeof entry === 'string')))) problem('request query')
+    if (!strings(request.headers)) problem('request headers')
+    if (request.multipart !== undefined) {
+      if (request.body !== null) problem('a multipart request also has a body')
+      for (const part of request.multipart) {
+        if (Object.keys(part).sort().join() !== 'filename,name,text,type' || !strings(part)) problem('multipart part')
+      }
+    }
+    const unknownRequest = Object.keys(request).filter(key => !['method', 'path', 'query', 'headers', 'body', 'multipart'].includes(key))
+    if (unknownRequest.length) problem(`unknown request fields ${unknownRequest}`)
+    if (!Number.isInteger(response.status) || !strings(response.headers)) problem('response status or headers')
+    const bodies = ['body_json', 'body_bytes_b64'].filter(key => Object.hasOwn(response, key))
+    if (bodies.length !== 1) problem('response carries not exactly one body')
+    if (bodies[0] === 'body_bytes_b64' && Buffer.from(response.body_bytes_b64, 'base64').toString('base64') !== response.body_bytes_b64) problem('body_bytes_b64 is not base64')
+    const unknownResponse = Object.keys(response).filter(key => !['status', 'headers', 'body_json', 'body_bytes_b64'].includes(key))
+    if (unknownResponse.length) problem(`unknown response fields ${unknownResponse}`)
+  }
+  assert.deepEqual(problems, [])
+  assert.deepEqual(fs.readdirSync(folder).sort(), ['README.md', 'parity.json', 'seed.json', 'source'])
+  const seed = readSeed()
+  const objects = new Set(['wallets', 'chain'])
+  for (const [key, value] of Object.entries(seed)) assert.equal(kind(value), objects.has(key) ? 'object' : 'array', key)
+  assert.ok(Object.values(seed.wallets).every(address => /^0x[0-9a-f]{40}$/.test(address)))
+})
+
 test('the edge cases send their origin and keep the headers they are about, and only the limiter case repeats', () => {
   const { EDGE_CASES } = require(script)
   for (const item of EDGE_CASES.filter(item => item.name.includes('-cors-'))) {
     assert.ok(item.send.origin, item.name)
     assert.ok(item.keep.includes('access-control-allow-origin'), item.name)
   }
-  assert.deepEqual(EDGE_CASES.filter(item => item.repeat).map(item => [item.name, item.repeat]), [['521-review-writes-per-minute', 30]])
+  assert.deepEqual(EDGE_CASES.filter(item => item.repeat).map(item => [item.name, item.repeat, item.repeat_status]), [['521-review-writes-per-minute', 30, 404]])
 })
