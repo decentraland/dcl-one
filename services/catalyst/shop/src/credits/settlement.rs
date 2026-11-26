@@ -932,6 +932,8 @@ pub fn spawn_settlement_job(
     }
     let gate = Arc::new(PassGate::new(JOB_NAME));
     let report = Arc::new(StaleProcessingReport::default());
+    // The pass's gauges are cleared when the lease they were set under ends.
+    let gauges = Arc::new(metrics::LeaseGauges::settlement());
     jobs.spawn_periodic_leased(
         JOB_NAME,
         PeriodicCfg::every(interval)
@@ -942,6 +944,7 @@ pub fn spawn_settlement_job(
             let revoker = revoker.clone();
             let gate = gate.clone();
             let report = report.clone();
+            gauges.arm(&ctx.cancel);
             async move {
                 settlement_job_pass(
                     &credits,
@@ -1002,20 +1005,24 @@ pub(super) async fn settlement_pass(
             "retired pack orders nobody paid within a session's lifetime"
         );
     }
-    if let Some(revoker) = revoker {
-        let outcome = revoker
-            .run_pass(ctx)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let revoked = match revoker {
+        Some(revoker) => Some(revoker.run_pass(ctx).await),
+        None => None,
+    };
+    if let Some(Ok(outcome)) = &revoked {
         metrics::revocations(outcome.sent, outcome.confirmed, outcome.failed);
     }
-    // The settlement gauges, from one read per pass; a failed read leaves
-    // them as they were and never fails the pass.
+    // The settlement gauges, from one read per pass, taken whatever the
+    // revoker did (an RPC outage is when pending revocations matter); a
+    // failed read leaves them as they were and never fails the pass.
     match metrics::Snapshot::read(credits).await {
         Ok(snapshot) => snapshot.record(),
         Err(e) => {
             tracing::warn!(error = %e, "credits metrics snapshot failed; gauges keep their last values")
         }
+    }
+    if let Some(Err(e)) = revoked {
+        return Err(anyhow::anyhow!("{e}"));
     }
     Ok(true)
 }

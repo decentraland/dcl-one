@@ -575,8 +575,6 @@ impl UsageIndex {
         }
     }
 
-    /// The cursor row when the authorize lane may mint at `now`; a
-    /// database error reads as not ready (fail closed).
     /// `credits_usage_index_ready` and `credits_usage_index_lag_seconds`
     /// as [`Self::ready_at`] reads the lane at `now`; the lag is from the
     /// last folded block's time, set only while the lane is open.
@@ -589,6 +587,8 @@ impl UsageIndex {
         super::metrics::usage_index(ready.is_some(), lag);
     }
 
+    /// The cursor row when the authorize lane may mint at `now`; a
+    /// database error reads as not ready (fail closed).
     pub async fn ready_at(&self, now: DateTime<Utc>) -> Option<Cursor> {
         if !self.settings.is_configured() {
             return None;

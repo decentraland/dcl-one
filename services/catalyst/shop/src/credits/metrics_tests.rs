@@ -9,12 +9,15 @@ use sqlx::PgPool;
 
 use super::authorize::{LIVE_STATUSES, NewAuthorization};
 use super::metrics::{self, Snapshot};
+use super::packs::PackRow;
 use super::receipts;
 use super::receipts_tests::{Recorder, intent_succeeded, receipts_state, sender, session_event};
 use super::tests::{
     OwnDatabase, app, deliver, scratch_wallet, seed_wallet, session_order_fixture, unique,
 };
-use super::usage_tests::{auth_status, authorization, one_used_credit_index, salt};
+use super::usage_tests::{auth_status, authorization, one_used_credit_index, salt, usage_settings};
+use super::{RawSettings, Settings, SharedState, State};
+use crate::http::Outbound;
 use crate::shared::notifications::SendFailure;
 
 /// A recorder with the credits families declared, and its exposition.
@@ -198,6 +201,31 @@ async fn the_webhook_counts_purchases_and_reversals_once_they_commit() {
         2.0,
         "no new reversed amount"
     );
+    // A pack priced in another currency is granted, and adds no USD cents.
+    let usd = value(&handle, cents);
+    let euro_pack = PackRow {
+        sku: "euro-pack".into(),
+        title: "Euro".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "eur".into(),
+        sort_order: 0,
+    };
+    let euro_session = unique("cs");
+    state
+        .credits
+        .insert_pending_order(
+            &unique("ord"),
+            &buyer,
+            &euro_pack.order(1).unwrap(),
+            &euro_session,
+        )
+        .await
+        .unwrap();
+    let euro = paid_session(&euro_session, &unique("pi_metrics"), 500, "eur");
+    assert_eq!(deliver(&app, &euro).await.1["detail"], "processed");
+    assert_eq!(value(&handle, &outcome("granted")), 4.0);
+    assert_eq!(value(&handle, cents), usd, "euro cents are not USD cents");
     db.drop().await;
 }
 
@@ -391,18 +419,18 @@ async fn a_settled_use_counts_once() {
         value(&handle, "credits_pledges_total{outcome=\"consumed\"}"),
         1.0
     );
+    // The pass published a fresh fold: the lane is open, and the lag is the
+    // age of the folded block (the stub's finalized block is ~16,000 s old).
     let now = chrono::Utc::now();
     index.record_readiness(now).await;
-    let ready = index.ready_at(now).await;
-    assert_eq!(
-        value(&handle, "credits_usage_index_ready"),
-        if ready.is_some() { 1.0 } else { 0.0 }
-    );
-    if let Some(cursor) = ready {
-        let lag = (now.naive_utc() - cursor.folded_block_time.unwrap()).num_milliseconds() as f64
-            / 1000.0;
-        assert_eq!(value(&handle, "credits_usage_index_lag_seconds"), lag);
-    }
+    assert_eq!(value(&handle, "credits_usage_index_ready"), 1.0);
+    let lag = value(&handle, "credits_usage_index_lag_seconds");
+    assert!(lag > 15_000.0 && lag < 17_000.0, "{lag}");
+    // A day on, that fold is stale: the lane is closed.
+    index
+        .record_readiness(now + chrono::Duration::days(1))
+        .await;
+    assert_eq!(value(&handle, "credits_usage_index_ready"), 0.0);
     db.drop().await;
 }
 
@@ -558,4 +586,78 @@ fn the_families_register_and_render() {
             .count(),
         2
     );
+}
+
+/// Polls until `series` reads `want`.
+async fn wait_for(handle: &dcl_metrics::PrometheusHandle, series: &str, want: f64) {
+    for _ in 0..250 {
+        if value(handle, series) == want {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("{series} never read {want}:\n{}", handle.render());
+}
+
+/// A job's gauges read 0 once the lease they were set under ends (here the
+/// process stops its jobs), so a serve replica that no longer runs the job
+/// never keeps exporting what it last saw: the settlement job's snapshot,
+/// and the usage index's readiness over a fresh published fold.
+#[tokio::test]
+async fn a_job_clears_its_gauges_when_its_lease_ends() {
+    let Some(db) = OwnDatabase::create("metrics_lease").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let (recorder, handle) = recorder();
+    let _local = dcl_metrics::set_default_local_recorder(&recorder);
+    let later = super::store::now() + chrono::Duration::minutes(10);
+    authorization(
+        &pool,
+        &salt(),
+        &scratch_wallet().address,
+        100,
+        "authorized",
+        later,
+    )
+    .await;
+    let jobs = crate::jobs::Jobs::new().with_first_pass_now(true);
+    super::settlement::spawn_settlement_job(
+        &jobs,
+        state_credits(&pool),
+        None,
+        true,
+        std::time::Duration::from_secs(3600),
+    );
+    wait_for(&handle, "credits_pledges_live", 1.0).await;
+    jobs.shutdown(std::time::Duration::from_secs(5)).await;
+    wait_for(&handle, "credits_pledges_live", 0.0).await;
+
+    let contract = "0x00000000000000000000000000000000000000aa";
+    sqlx::query(
+        "INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_block_time, folded_at) \
+         VALUES (137, $1, 100, 100, timezone('UTC', now()) - interval '60 seconds', timezone('UTC', now()))",
+    )
+    .bind(contract)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let mut settings = Settings::parse(RawSettings::default()).unwrap();
+    settings.usage = usage_settings("http://127.0.0.1:9", 137, contract, 1);
+    let state: SharedState = std::sync::Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        std::sync::Arc::new(super::tests::FakeMarket::default()),
+        std::sync::Arc::new(super::tests::MockBroker::configured()),
+        None,
+    ));
+    let jobs = crate::jobs::Jobs::new().with_first_pass_now(true);
+    state.spawn_jobs(&jobs);
+    wait_for(&handle, "credits_usage_index_ready", 1.0).await;
+    assert!(value(&handle, "credits_usage_index_lag_seconds") >= 60.0);
+    jobs.shutdown(std::time::Duration::from_secs(5)).await;
+    wait_for(&handle, "credits_usage_index_ready", 0.0).await;
+    assert_eq!(value(&handle, "credits_usage_index_lag_seconds"), 0.0);
+    db.drop().await;
 }

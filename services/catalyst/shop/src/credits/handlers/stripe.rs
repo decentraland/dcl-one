@@ -374,7 +374,11 @@ async fn credit_settled(
             }
             receipts::enqueue_in_tx(tx, purchase.id, buyer_email.as_deref()).await?;
             facts.purchase(PurchaseOutcome::Granted);
-            facts.granted_cents(purchase.amount_cents);
+            // The counter is USD cents: a pack priced in another currency
+            // (the admin accepts any code) adds none.
+            if purchase.currency.eq_ignore_ascii_case("usd") {
+                facts.granted_cents(purchase.amount_cents);
+            }
             return Ok(Some(purchase));
         }
         MarkPaidOutcome::AmountMismatch {

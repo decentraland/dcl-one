@@ -985,6 +985,8 @@ impl State {
         let index = self.usage.clone();
         let writes_enabled = self.settings.writes_enabled;
         let gate = Arc::new(crate::shared::writes::PassGate::new(usage::JOB_NAME));
+        // The pass's gauges are cleared when the lease they were set under ends.
+        let gauges = Arc::new(metrics::LeaseGauges::usage_index());
         let interval = settings.interval;
         tracing::info!(chain_id = settings.chain_id, contract = ?settings.contract, start_block = settings.start_block, "credits usage index started");
         jobs.spawn_periodic_leased(
@@ -995,6 +997,7 @@ impl State {
             move |ctx| {
                 let index = index.clone();
                 let gate = gate.clone();
+                gauges.arm(&ctx.cancel);
                 async move {
                     index
                         .gated_pass(Some(&ctx), &gate, writes_enabled)

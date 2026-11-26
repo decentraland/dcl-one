@@ -12,7 +12,10 @@
 //!   claim makes it `already processed`, counts nothing either.
 //! - A gauge is set from one read per job pass, never per scrape, and reads
 //!   0 until the first pass. The jobs are leased, so in a fleet one serve
-//!   replica sets them: aggregate with `max`, never `sum`.
+//!   replica sets them, and a replica whose lease ends (lost, failed, or
+//!   shut down) sets its gauges back to 0 ([`LeaseGauges`]): a replica that
+//!   no longer holds the job never keeps exporting what it last saw.
+//!   Aggregate with `max` across serve targets, never `sum`.
 //! - Labels are enums; never an address, an id, a hash or an email. Money is
 //!   whole USD cents: credits can be fractional (a partial refund charges
 //!   back a proportion), and a counter only counts whole units.
@@ -35,8 +38,11 @@
 //! `last_worker_run_timestamp` were never declared or recorded (commented-out
 //! code); serve's `dcl_job_*` families cover each credits job by `worker`.
 
+use std::sync::Mutex;
+
 use dcl_metrics::{CounterFamily, Descriptor, GaugeFamily};
 use sqlx::Row;
+use tokio_util::sync::CancellationToken;
 
 use super::errors::ApiError;
 use super::store::Credits;
@@ -49,7 +55,7 @@ const PURCHASES: CounterFamily<1> = CounterFamily::new(
 );
 const PURCHASE_USD_CENTS: CounterFamily<0> = CounterFamily::new(
     "credits_purchase_usd_cents_total",
-    "USD cents charged by granted pack purchases.",
+    "USD cents charged by granted pack purchases priced in USD.",
     None,
     &[],
 );
@@ -269,6 +275,50 @@ pub fn revocations(sent: usize, confirmed: usize, failed: usize) {
         if n > 0 {
             REVOCATIONS.handle([status]).increment(n as u64);
         }
+    }
+}
+
+/// The gauges one leased job sets, cleared when the lease they were set
+/// under ends. The job owns one, built when it is spawned; [`Self::arm`] at
+/// each pass, with the pass's cancellation token (the lease session's,
+/// cancelled when the lease is lost, the run fails or the process stops),
+/// spawns one task per session that sets the gauges back to 0 once the
+/// session ends.
+pub struct LeaseGauges {
+    session: Mutex<Option<CancellationToken>>,
+    clear: fn(),
+}
+
+impl LeaseGauges {
+    const fn new(clear: fn()) -> Self {
+        Self {
+            session: Mutex::new(None),
+            clear,
+        }
+    }
+
+    /// The `credits-usage-index` job's: readiness and lag.
+    pub const fn usage_index() -> Self {
+        Self::new(|| usage_index(false, Some(0.0)))
+    }
+
+    /// The `credits-settlement` job's: the [`Snapshot`] gauges.
+    pub const fn settlement() -> Self {
+        Self::new(|| Snapshot::default().record())
+    }
+
+    /// Arms the clear for `session` unless this session is already armed.
+    pub fn arm(&self, session: &CancellationToken) {
+        let mut armed = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        if armed.as_ref().is_some_and(|t| !t.is_cancelled()) {
+            return;
+        }
+        *armed = Some(session.clone());
+        let (session, clear) = (session.clone(), self.clear);
+        tokio::spawn(async move {
+            session.cancelled().await;
+            clear();
+        });
     }
 }
 
