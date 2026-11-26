@@ -282,7 +282,8 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   those `dropped` by cause),
   `/reaction_simulate <local|nearest|address> <emoji> [count]` (takes a message of reactions as if
   that player had sent it, on this client only; replies with the `target` taken and the emoji's
-  wire `index`),
+  wire `index`), `/reaction_atlas_rebuild` (has the reactions' glyph atlas rebuilt at its next
+  upkeep; replies with nothing),
   `/voice_state` (the nearby mic, with `sceneBlocked` while the scene the player stands in turns
   nearby voice off or its room refused the player as banned, asking again every 15 seconds; the
   nearby voice rooms and, as `call`, the private call or community stream the player is in:

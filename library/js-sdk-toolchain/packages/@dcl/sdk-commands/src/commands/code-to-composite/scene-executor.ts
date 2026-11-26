@@ -1,10 +1,8 @@
 import path from 'path'
 import Module from 'module'
 import i18next from 'i18next'
+import type { IEngine, Transport, Entity } from '@dcl/ecs/dist-cjs'
 import {
-  IEngine,
-  Transport,
-  Entity,
   UiCanvasInformation,
   CameraMode,
   PutComponentOperation,
@@ -21,8 +19,8 @@ import {
 import { ReadWriteByteBuffer } from '@dcl/ecs/dist-cjs/serialization/ByteBuffer'
 import { createEngineContext } from '@dcl/inspector'
 
-import { CliComponents } from '../../components'
-import { SceneProject } from '../../logic/project-validations'
+import type { CliComponents } from '../../components'
+import type { SceneProject } from '../../logic/project-validations'
 import { CliError } from '../../logic/error'
 import { bundleProject } from '../../logic/bundle'
 

@@ -10,6 +10,7 @@ are external. Explorer images: pipeline.
 | `image-sites-polygon-credits` (`foundation-sites-polygon-credits:nix`) | `sites-server`, its Shop settling credits on Polygon through dcl-one's own CreditsManager | `/data` |
 | `image-gateway` (`foundation-gateway:nix`) | `gateway` (8080) | `/tmp` |
 
+- Probe each API replica at `GET /health` for readiness. HTTP 503 means a required replica check failed. The JSON body also reports shared dependencies for alerting. See [Catalyst API readiness](../../docs/adr/2026-11-24-serve-readiness.md).
 - Run API, indexer, Pulse and migrations from one `apis` digest; domain crates are not separate services.
 - The APIs image carries the community chat message router at `/bin/catalyst-message-router`
   (`.#message-router`, `infra/packages/message-router.nix`: the catalyst workspace member built
@@ -199,6 +200,7 @@ describes cache scope, trust boundaries, stale-entry replacement and retention.
 - APIs and Sites set `COMMIT_HASH` to the build revision (`unversioned` outside git): APIs report it in `/about` and the status routes, Sites in `window.__DCL_PUBLIC__.commitHash`, which `/play`'s sign-in screens show as their build when the Vite build recorded none. A deployment's own `COMMIT_HASH` overrides it.
 - APIs listen on 5210, Sites on 5212, as `1000:1000`. APIs need `DATABASE_URL`, posture, public URL, encryption key and integration secrets, and, behind the gateway, `HTTP_TRUSTED_PROXY_CIDRS` with the gateway's network ([gateway](../gateway/README.md)); Sites needs `CATALYST_URL`, `CATALYST_DATABASE_URL` and a session secret.
 - Sites' `/download` takes two addresses from the deployment: `EXPLORER_INSTALLERS_URL` is the host of the Explorer launcher installers (unset, the page offers no installer, the home page's download call leads to `/download` and `/download_success` answers 404: the node serves none), and `DOWNLOAD_COUNTS_URL` is the JSON of the download counts per platform (unset or unreachable, the page shows no total and the home page shows "+400K").
+- Sites' `/shop/cart` can send one document that a shared cache (a CDN) may keep: with `SHOP_CART_SHARED_CACHE=true` (off when unset) and `PUBLIC_CATALYST_URL` set (the document's links must not come from a request), a top-level navigation gets `Cache-Control: public, max-age=0, s-maxage=60`, `CDN-Cache-Control: max-age=60, stale-while-revalidate=300` and `Vary: Sec-Fetch-Dest`, without the visitor's session, wallet or language (`apps/sites/src/routes/shop/shared-cart.ts`). Browsers keep no copy. Turn it on only behind a cache that keys on `Sec-Fetch-Dest` and that a deploy purges.
 - Behind the gateway, `/play` dials Pulse on the page's host. Pulse is UDP, which an HTTP-only front (a CDN proxy, a load balancer) cannot carry, so a deployment whose Pulse sits elsewhere sets `PUBLIC_PULSE_SERVER` (`host[:port]`, port 7743 when omitted) on Sites, which hands it to `/play` as `window.__DCL_PUBLIC__.pulseServer`. Where `/play` composes services from a base domain instead (a `decentraland.*` subdomain, or a `?baseDomain=` other than the page host), it ignores it. The engine writes the Pulse host into every link it syncs, so changing or removing `PUBLIC_PULSE_SERVER` later sends links that still carry the old host through the untrusted-link gate.
 - Sites' blog (`/blog`) reads cms-server, the Contentful cache decentraland/sites reads: `BLOG_CMS_URL` is its full `<origin>/spaces/<space>/environments/<environment>` base. Unset, or with the CMS unreachable, the blog pages answer 503. TODO(cms-migration): point `BLOG_CMS_URL` at the in-tree catalyst CMS area once cms-server is migrated into dcl-one; today it is the external cms-server.
 - Sites' sign-in (`/auth/login`) offers each option only when its public identifier is set, the same ones decentraland.org ships: `THIRDWEB_CLIENT_ID` (email codes), `MAGIC_API_KEY` (Magic's publishable key: Google, Apple, Discord, X) and `WALLETCONNECT_PROJECT_ID`. A different identifier signs the same account into a different wallet. Magic must allow the site's origin and `<origin>/auth/callback`. `FEATURE_FLAGS_ORIGIN` names the site whose `dapps-sign-in-primary-option` rollout lays it out (decentraland.org when unset). Locally, `tooling/dev.py` takes the three identifiers, and nothing else of the shell's, from the environment it is started in.
@@ -222,10 +224,14 @@ registry history, API replicas prefer the native index and can serve manager and
 The NFT worker supplies wallet holdings for open mappings.
 
 Collections index upgrade: run `catalyst schema migrate` before deploying the updated index worker.
-Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The index is off
-under every posture; `MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true` with a Polygon RPC in `TRADE_RPC_URLS`
-(chain 137) starts its walk from block 15,202,000. Nothing reads it yet: the catalogue keeps serving the
-collections subgraph's copy.
+Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The mirror
+posture enables `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`. A Polygon RPC in `TRADE_RPC_URLS` (chain 137)
+lets it walk from block 15,202,000. Polygon accounts and lifetime creator rankings return HTTP 503
+until the collections and sales indexes publish their required history. Polygon accounts also require
+a fresh committee fold covering the published sales block. To warm the walks ahead of the API upgrade,
+enable the switches on the index worker and wait for the required publications before rolling out the sales readers.
+The catalogue continues to
+read the collections mirror unless the on-chain projection owns that network.
 
 Trade digest upgrade: run `catalyst schema migrate` before deploying. Step `0069_shop_trade_digest` adds
 `shop.trades.trade_digest` and `shop.trade_chain_state.digest_failed_at`, and needs no backfill: the next

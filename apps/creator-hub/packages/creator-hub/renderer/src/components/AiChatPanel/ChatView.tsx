@@ -1043,6 +1043,9 @@ export function ChatView(props: ChatViewProps) {
               <>
                 <MenuSeparator />
                 <div className={styles.menuSectionLabel}>{t('editor.ai.history.title')}</div>
+                {sharing?.status === 'on' && (
+                  <div className={styles.menuNote}>{t('editor.ai.history.shared_stays')}</div>
+                )}
               </>
             )}
             {savedSessions.map(s => (

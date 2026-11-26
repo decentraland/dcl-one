@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType, type ReactNode } from 'react'
+import { useEffect, useRef, type ComponentType, type ReactNode, type RefObject } from 'react'
 import { TabsBar, type TabsBarItem, type TabsBarLinkProps } from '../../components/TabsBar/TabsBar'
 import ChromeBody from '../../components/AppChrome/ChromeBody'
 import SiteLayout from '../../components/AppChrome/SiteLayout'
@@ -46,15 +46,10 @@ export function ShopNavigation({
   search,
   children
 }: ShopNavigationProps) {
-  const scrolled = useScrolled()
+  const subnavRef = useRef<HTMLDivElement>(null)
+  useScrolledMark(subnavRef)
   return (
-    <div
-      className="shop-subnav"
-      data-testid="subnav"
-      data-iap={iap || undefined}
-      data-set={set}
-      data-scrolled={scrolled || undefined}
-    >
+    <div ref={subnavRef} className="shop-subnav" data-testid="subnav" data-iap={iap || undefined} data-set={set}>
       <div className="shop-subnav__tabs" data-testid="subnav-tabs">
         <TabsBar
           mode="navigation"
@@ -77,13 +72,14 @@ const SCROLL_ENTER = 24
 const SCROLL_EXIT = 4
 
 // The bars deepen once the page scrolls, with hysteresis so a page resting near the threshold does not flicker.
-function useScrolled(): boolean {
-  const [scrolled, setScrolled] = useState(false)
+// The scroll event sets the marks itself, so the bars change in that frame, not after a render. The body mark is
+// for the site nav's rule (shoptheme.css).
+function useScrolledMark(subnav: RefObject<HTMLElement | null>): void {
   useEffect(() => {
     let on = false
     const apply = (next: boolean) => {
       on = next
-      setScrolled(next)
+      subnav.current?.toggleAttribute('data-scrolled', next)
       document.body.toggleAttribute('data-shop-scrolled', next)
     }
     const onScroll = () => {
@@ -96,6 +92,5 @@ function useScrolled(): boolean {
       window.removeEventListener('scroll', onScroll)
       document.body.removeAttribute('data-shop-scrolled')
     }
-  }, [])
-  return scrolled
+  }, [subnav])
 }

@@ -37,9 +37,12 @@ impl Material for ReactionMaterial {
         AlphaMode::Blend
     }
 
-    /// Blended meshes are drawn farthest first. This sorts a reaction as nearer than any other
-    /// within sight (an avatar's face is sorted 10,000 nearer than it is), so it is drawn
-    /// after them and shows over them, as it does over what is solid.
+    /// Blended meshes are drawn farthest first, sorted by the square of their distance from
+    /// the camera less this bias, so the bias is in square metres. A reaction is sorted as
+    /// nearer than any other blended mesh (an avatar's face is biased by 10,000) while it is
+    /// within 100 m of the camera, so it is drawn after them and shows over them, as it does
+    /// over what is solid. Other players' are within the 25 m they are drawn in; the local
+    /// player's may be farther from a scene's camera, and are then sorted as any mesh is.
     fn depth_bias(&self) -> f32 {
         20_000.0
     }

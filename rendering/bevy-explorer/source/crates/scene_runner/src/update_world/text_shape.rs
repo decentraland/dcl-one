@@ -974,6 +974,13 @@ impl GlyphAtlas {
         self.generation
     }
 
+    /// Have the atlas rebuilt at its next upkeep, as a glyph with no room left does: its
+    /// textures are replaced and the glyphs nothing draws are freed. With none to free, the
+    /// atlas is left as it is.
+    pub fn request_rebuild(&mut self) {
+        self.rebuild_requested = true;
+    }
+
     /// A page's texture and its size in pixels; `None` for a page not made yet.
     pub fn page_image(&self, page: Page) -> Option<(&Handle<Image>, u32)> {
         self.page(page).map(|page| (&page.image, page.size))

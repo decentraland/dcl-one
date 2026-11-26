@@ -49,6 +49,9 @@ pub struct SessionState {
     pub payment_status: String,
     pub url: Option<String>,
     pub payment_intent: Option<String>,
+    /// `customer_details.email`: the address the buyer typed into the
+    /// hosted page, which the purchase receipt goes to.
+    pub buyer_email: Option<String>,
 }
 
 impl SessionState {
@@ -72,6 +75,13 @@ pub enum Resume {
     NoLongerPayable(&'static str),
 }
 
+/// What the cancel return reads of an order.
+pub struct OrderForReturn {
+    pub status: String,
+    pub session: Option<String>,
+    /// The surface that opened the checkout (`builder`, or the Shop's).
+    pub source: Option<String>,
+}
 impl Credits {
     /// The order and its Checkout Session id, for the signer only.
     pub async fn get_order_with_session(
@@ -104,19 +114,24 @@ impl Credits {
         }))
     }
 
-    /// The order's status and session by id alone (the unauthenticated
-    /// cancel return: Stripe is then asked before anything moves).
+    /// The order's status, session and surface by id alone (the
+    /// unauthenticated cancel return: Stripe is then asked before anything
+    /// moves, and the buyer goes back to the surface that opened it).
     pub async fn get_order_with_session_any(
         &self,
         order_id: &str,
-    ) -> Result<Option<(String, Option<String>)>, ApiError> {
+    ) -> Result<Option<OrderForReturn>, ApiError> {
         let row = sqlx::query(
-            "SELECT status, stripe_checkout_session FROM credits.purchases WHERE order_id = $1",
+            "SELECT status, stripe_checkout_session, source FROM credits.purchases WHERE order_id = $1",
         )
         .bind(order_id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|r| (r.get("status"), r.get("stripe_checkout_session"))))
+        Ok(row.map(|r| OrderForReturn {
+            status: r.get("status"),
+            session: r.get("stripe_checkout_session"),
+            source: r.get("source"),
+        }))
     }
 
     /// The order behind a session id, for the unauthenticated cancel return.
@@ -196,6 +211,7 @@ mod tests {
             payment_status: "unpaid".into(),
             url: Some("https://checkout.stripe.test/cs".into()),
             payment_intent: None,
+            buyer_email: None,
         };
         assert!(open.is_payable() && !open.is_paid());
         let complete = SessionState {

@@ -251,6 +251,39 @@ describe('map layers', () => {
   })
 })
 
+describe('the parcels map age', () => {
+  const MINUTE = 60_000
+
+  async function pickMap(name: 'Parcels' | 'Satellite'): Promise<void> {
+    if (screen.queryByRole('region', { name: 'Layers' }) == null) await userEvent.click(screen.getByRole('button', { name: 'Layers' }))
+    await userEvent.click(within(screen.getByRole('region', { name: 'Layers' })).getByRole('radio', { name }))
+  }
+
+  it('says how long ago the map API last found its grid current, on the parcels map only', async () => {
+    fixMapPublicReads({ pois: [], peers: [], gridAge: { checkedAt: Date.now() - 12 * MINUTE, skew: 0 } })
+    serve()
+    renderMap()
+    expect(screen.queryByText(/^Updated /)).not.toBeInTheDocument()
+    await pickMap('Parcels')
+    expect(await screen.findByText('Updated 12 min ago')).toBeInTheDocument()
+
+    await pickMap('Satellite')
+    expect(screen.queryByText(/^Updated /)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['a grid found current in the last five minutes', { checkedAt: Date.now() - 4 * MINUTE, skew: 0 }],
+    ['no age', null]
+  ])('shows no age for %s', async (_case, gridAge) => {
+    fixMapPublicReads({ pois: [], peers: [], gridAge })
+    serve()
+    renderMap()
+    await pickMap('Parcels')
+    await act(async () => {})
+    expect(screen.queryByText(/^Updated /)).not.toBeInTheDocument()
+  })
+})
+
 describe('map search', () => {
   it('lists the results of a search with their live badges, and marks them on the map', async () => {
     serve({ search: [PLAZA, CLUB], events: [event('party', 'Friday Party', -20, 60, { live: true })] })

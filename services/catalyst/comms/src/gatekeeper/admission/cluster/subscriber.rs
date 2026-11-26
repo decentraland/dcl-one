@@ -672,17 +672,17 @@ impl ClusterSubscriber {
         if change.cluster_id.is_empty() || !accept_assignment_session(wallet, &change.session) {
             return;
         }
-        if let Some(authority) = &self.assignment_fence {
-            if !matches!(
+        if let Some(authority) = &self.assignment_fence
+            && !matches!(
                 tokio::time::timeout(
                     super::fence::FENCE_CALL_TIMEOUT,
                     authority.accept_selected_hint(wallet, change)
                 )
                 .await,
                 Ok(true)
-            ) {
-                return;
-            }
+            )
+        {
+            return;
         }
         self.reconcile_current(wallet, &change.session, true, takeover.as_ref())
             .await;
@@ -1336,15 +1336,12 @@ impl ClusterSubscriber {
         let Some(snapshot) = self.lookup_current(wallet, session).await else {
             if let Some(authority) = &self.assignment_fence {
                 authority.settle_idle(wallet).await;
-                if let Some(target) = retirement {
-                    if let Some(payload) = target.lookup.encode() {
-                        if let Ok(reply) = self.bus.request(&target.lookup.subject(), payload).await
-                        {
-                            if let Some(reply) = target.lookup.decode_reply(&reply) {
-                                authority.retire_selected(target, reply).await;
-                            }
-                        }
-                    }
+                if let Some(target) = retirement
+                    && let Some(payload) = target.lookup.encode()
+                    && let Ok(reply) = self.bus.request(&target.lookup.subject(), payload).await
+                    && let Some(reply) = target.lookup.decode_reply(&reply)
+                {
+                    authority.retire_selected(target, reply).await;
                 }
             }
             crate::gatekeeper::admission::cluster::metrics::cluster_reannounce_unresolved();

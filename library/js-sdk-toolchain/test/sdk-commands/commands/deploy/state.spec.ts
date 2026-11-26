@@ -1,8 +1,8 @@
-import {
-  createDeploymentState,
+import type {
   DeploymentState,
   IDeploymentStateComponent
 } from '../../../../packages/@dcl/sdk-commands/src/commands/deploy/state'
+import { createDeploymentState } from '../../../../packages/@dcl/sdk-commands/src/commands/deploy/state'
 
 const PROGRESS_INTERVAL_MS = 250
 

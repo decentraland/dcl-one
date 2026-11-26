@@ -4,13 +4,11 @@
 //! `CATALYST_TEST_DATABASE_URL`; skips otherwise.
 #![allow(dead_code)]
 
-#[path = "gate.rs"]
-mod gate;
-
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
 use super::db::{ScratchDb, scratch_database};
+use super::gate;
 
 pub struct Fixture {
     db: Option<ScratchDb>,

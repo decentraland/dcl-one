@@ -1105,7 +1105,7 @@ mod module_sources {
         assert_eq!(scene.creator, None);
         assert_eq!(scene.description, None);
         use stats::content::Source;
-        let docs = source.fetch(&[pointer.clone()]).await.unwrap();
+        let docs = source.fetch(std::slice::from_ref(&pointer)).await.unwrap();
         let http = stats::content::hot_scenes(&docs, &[(pointer, 1)], "").unwrap();
         assert!(http.contains(r#""name":{"z":1,"a":2}"#));
         assert!(http.contains(r#""usersTotalCount":2"#));
