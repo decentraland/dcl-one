@@ -5036,10 +5036,13 @@ commits in between is never half-seen:
 - fresh: complete and `folded_at` within 30 minutes. Every other reader needs
   it on the networks it reads (wearables both, emotes Polygon), and the lists
   also need the items mirror's complete pass (`shop.mirror_state`); otherwise
-  they answer the `nft-index` envelope. The `/v1/orders` routes answer 200 with the listings
-  backed by the published sources. V3 listings of LAND and Estates use the
-  land-authz ownership fold, and other NFTs use the NFT fold. Both readers
-  emit `x-listings-owner-check: checked`.
+  they answer the `nft-index` envelope. Where the node walks the NFT index,
+  `/v1/orders` and `/v1/orders/open-by-items` read their legacy orders and
+  backed v3 listings on the same book snapshot (see "Legacy Marketplace
+  orders"). The v3 proof uses the published land-authz fold for LAND and
+  Estates and the published NFT fold for other tokens. Nodes using the
+  configured graph for legacy orders use that same proof for v3 listings.
+  Both routes emit `x-listings-owner-check: checked`.
 
 Queries, all bounded by one owner or one batch:
 
@@ -5247,3 +5250,169 @@ CREATE INDEX CONCURRENTLY nft_ens_label_idx
 ```
 
 Its size and the lookup time on production data are unmeasured.
+
+## Legacy Marketplace orders
+
+`shop.legacy_order` is the legacy on-chain order book of `/v1/orders`,
+`/v1/orders/open-by-items` (and credits pricing through it) and the activity
+feed's orders leg on a node that walks the nft index. It is one row per
+`OrderCreated` of the Marketplace contracts the nft walk takes in, folded
+from `shop.nft_event` by `services/catalyst/shop/src/market/legacy_orders.rs`
+in the nft fold's transaction, so it is published with the ownership it is
+read beside. The shop writes and reads it; no other area does.
+
+Invariants:
+
+- The row of an order is a deterministic function of its token's order logs:
+  the latest creation of the id, sold or cancelled by the event naming the
+  id, otherwise cancelled by the token's next creation on either
+  Marketplace of the network, otherwise open. `expires_at` is milliseconds,
+  the log's normalised value.
+- A fold rewrites every order of each token an order event past its marker
+  touched, over the token's whole history, and leaves an unchanged row
+  alone. A rebuild (`since = -1`) folds every token.
+- A reorg rewind deletes the orders of the tokens whose events it deletes,
+  in its own transaction, and clears the publish marker; the rebuild that
+  follows restores the orders whose creation remains.
+- `transferred` is not stored: a reader derives it on its snapshot from the
+  token's owner (`shop.nft`, or `land_authz.token_right` for LAND and
+  estates). An open order reads `open` only while that owner is its seller;
+  another owner, none (burned, dissolved) or no row reads `transferred`,
+  before the status filter, the total and the page. The reader serves only
+  the orders of the catalogue the nft index walks on the served chain (a
+  `shop.collections` row of that `chain_id`, `testnet_verified` on a
+  testnet) and of that chain's LAND and Estate registries and DCLRegistrar,
+  in the page, the item filter and the total. Its rows carry the served
+  chain as `chainId`.
+- The book's marker per network (`shop.legacy_order_cursor`) is the nft
+  walk's last block when the order fold last ran and that block's hash. The
+  fold refolds the orders touched past the lower of the block and the nft
+  fold's `since`, so the book catches up with nft folds a replica on an
+  earlier binary ran during a rollout without writing it.
+- The sale-history repair rewrites `order_successful` rows at or below that
+  block: it fills a missing buyer, seller or block time, and inserts a sale
+  the walk missed. A row trigger on `shop.nft_event`, firing only for order
+  events, queues the token of any order event written at or below the
+  book's block in `shop.legacy_order_refold` (network, contract, token;
+  primary key only), whichever binary wrote it, an earlier one's included.
+  The next order fold refolds those tokens with the ones touched past its
+  marker, and deletes them in its own transaction; a rebuild clears the
+  network's. The queue holds a repair window's tokens until the next fold.
+  The trigger costs one primary-key read of `shop.legacy_order_cursor` per
+  order event written; transfers do not fire it. While a network has a
+  refold queued, its book is not read (`legacy_orders::caught_up`, on the
+  read's snapshot): an earlier binary can republish the same height
+  without folding it. Another network's queue does not withhold it.
+- The book stands only while the nft walk's recovery point at its block
+  (`shop.chain_checkpoint`) carries its hash. Every binary's rewind drops the
+  points past its target, so a branch republished at the same height carries
+  another hash; a book left behind past the 64 kept points loses its point.
+  A fold over a book that does not stand, and every rebuild (`since = -1`),
+  deletes the network's orders and refolds them whole, in the nft fold's
+  transaction, so no order of a lost branch survives. This binary's rewind
+  lowers the block to its target and clears the hash.
+- A reader serves the book only while it stands and its block, written in
+  the nft fold's transaction, is the published nft fold (`folded_block`),
+  checked on the read's snapshot; otherwise the `nft-index` envelope. The
+  walk publishes a fold only after it commits and reads the head, so between
+  the two the rows hold an unpublished fold: a read then answers the
+  envelope rather than rows past the published block. A walk that advanced
+  without folding leaves the book at the published block, still read.
+- A database that predates the table fills it in the schema run that creates
+  it. The seed statements after each `CREATE TABLE` (follow-ups, so they run
+  only then) record each network's nft `fold_through` and its recovery
+  point's hash as the book's marker (no point: the book does not stand and
+  the first fold refolds it whole), then apply the fold's rules to every
+  token up to that block. They hold no
+  creation, supersession or end past what the nft fold folded; the next fold
+  takes the rest.
+
+Reads, each on one `REPEATABLE READ, READ ONLY` snapshot that also checks the
+nft cursor (published within 30 minutes on the networks read, from the chain
+the node serves on each, `IndexSettings::chain_id`), the trades mirror and
+its verdicts and, when an open LAND or estate order could be answered, the
+land-authz cursor; each statement is bounded by the `/v1/nfts` statement
+timeout:
+
+- the page: the filters, a sort (`created_at`, `updated_at`, `price` or
+  `token_id`, ties by id) and `LIMIT first + skip`, beside the v3 listings
+  of the same snapshot;
+- the total: each network's count capped at 5,000, or at the deep window
+  for a deeper page, summed, as the subgraph reader counted;
+- open-by-items: per contract, its open orders cheapest first
+  (`legacy_order_open_idx`), up to `perContract`.
+
+Writers that predate the book's marker (an earlier binary's nft fold during
+a rollout) write `shop.nft` all the same. So readiness also reads
+`shop.projection_write` (below, "Fold-written projections and their
+publication"): a write to `shop.nft` or `shop.legacy_order` that no
+publication has acknowledged refuses the read, whichever binary wrote it and
+at whatever height. Reads refused that way are counted by
+`catalyst_shop_order_book_unpublished_fold_reads_total` (serve); they fall in
+each pass's window between the fold's commit and its publication.
+
+### Fold-written projections and their publication
+
+`shop.projection_write` holds, per cursor (`indexer`, `network`) and
+projection table, whether the projection holds a write no publication has
+acknowledged (`pending`), and the cursor's last block at the latest write.
+Statement-level triggers with transition tables on `shop.nft` and
+`shop.legacy_order` (the `nft` cursor) and `shop.nft_bid` (the `sales`
+cursor) set `pending` for the networks a statement wrote; a no-op upsert or
+an empty statement sets nothing. A trigger on `shop.chain_cursor` clears it
+when a publication commits (`folded_block` and `folded_at` set by any
+binary's `mark_folded`, at the same height too). The table is created by the
+object pass and seeded pending for every existing cursor, so an upgraded
+node serves again from its next publication. Workload: one row per
+(cursor, projection), rewritten by each fold statement that writes and each
+publication; the triggers add one transition table per write statement,
+sized by the rows it changed. A reader calls
+`chain_walk::rows_published_on` on its snapshot.
+
+Indexes: `legacy_order_token_idx` (`(contract_address, token_id)`: the
+fold's and the rewind's per-token rewrite, and a token filter, which names
+no network), `legacy_order_seller_idx` (an owner's orders newest first),
+`legacy_order_buyer_idx` (the orders a buyer filled),
+`legacy_order_created_idx` and `legacy_order_updated_idx` (the newest-first
+and recently-updated windows with no filter), `legacy_order_open_idx` (a
+contract's open orders by price) and `legacy_order_open_price_idx` (every
+open order by price).
+
+The fold finds the event that ends each order with one backward probe of
+`nft_event_token_idx` per order (`LATERAL ... LIMIT 1`). As a join of the
+created orders with the ending events, the planner estimated both at one
+row and rescanned every order per order: an Ethereum rebuild of 300,000
+orders did not finish in ten minutes.
+
+Measured on a synthetic upper bound (PostgreSQL 17, warm cache): 5M
+Polygon transfers, 700,000 Polygon orders over 400,000 tokens of 2,000
+collections and 300,000 Ethereum orders over LAND, estates and names, a
+quarter sold and 30% cancelled by id, 130,050 left open:
+
+| Operation | Time |
+|---|---|
+| the seed in the schema run (1M orders from 6.6M log rows, bounded by the nft fold) | 20.4 s, plus 2.8 s for the seven indexes |
+| a rebuild over a filled table (no row changes): Polygon / Ethereum | 11.1 s / 7.7 s |
+| a rebuild of Polygon from an empty table (after a rewind) | 25.5 s |
+| a steady pass (the last 1,000 Polygon blocks, nested loops) | 6.6 ms |
+| a catch-up pass (the last 200,000 Polygon blocks) | 0.87 s |
+
+The table holds 719 MB at that bound (346 MB heap, the primary key 145 MB,
+`legacy_order_token_idx` 98 MB, `legacy_order_seller_idx` 74 MB, the rest
+under 25 MB each).
+
+| Read (first = 100 unless noted) | Page | Capped total |
+|---|---|---|
+| no filter, newest first | 1.1 ms | 2.4 ms |
+| one owner (the activity leg) | 2.5 ms | 0.5 ms |
+| one buyer | 1.6 ms | |
+| one token (a LAND parcel) | 0.3 ms | |
+| a collection's open orders, cheapest (and open-by-items, 500) | 0.3 ms | |
+| every open order, cheapest | 65 ms | 0.86 s |
+| `status=sold`, recently updated | 1.6 ms | |
+| the deepest window (25,000), newest first | 128 ms | 7.4 ms |
+
+The capped total of every open order reads each open order's owner until it
+counts 5,000 open ones; in the synthetic data 98% of the open orders' tokens
+had moved or had no owner row, so it read all 130,050. Production row counts are
+unmeasured.
