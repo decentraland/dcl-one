@@ -19,8 +19,9 @@
 //! `decentraland/events@b60d5bbd`), cited per item.
 
 use std::collections::HashMap;
-use std::sync::{LazyLock, RwLock};
+use std::sync::LazyLock;
 
+use parking_lot::RwLock;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -126,7 +127,7 @@ fn is_email(value: &str) -> bool {
         Regex::new(
             r"(?i)^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
         )
-        .unwrap()
+        .expect("literal regex compiles")
     });
     EMAIL.is_match(value)
 }
@@ -136,7 +137,7 @@ fn is_email(value: &str) -> bool {
 /// `pattern: ^https?://` is what refuses it, as upstream's test shows).
 fn is_uri(value: &str) -> bool {
     static SCHEME: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"^[A-Za-z][A-Za-z0-9+.-]*:").unwrap());
+        LazyLock::new(|| Regex::new(r"^[A-Za-z][A-Za-z0-9+.-]*:").expect("literal regex compiles"));
     !value.is_empty()
         && !value.chars().any(char::is_whitespace)
         && SCHEME.is_match(value)
@@ -185,7 +186,7 @@ fn is_date_time(value: &str) -> bool {
     }
     static TIME: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"^(?i)([0-9]{2}):([0-9]{2}):([0-9]{2}(?:\.[0-9]+)?)(z|([+-])([0-9]{2})(?::?([0-9]{2}))?)$")
-            .unwrap()
+            .expect("literal regex compiles")
     });
     let Some(caps) = TIME.captures(time) else {
         return false;
@@ -449,10 +450,10 @@ pub fn one_of_enums(values: &[&str]) -> Prop {
 fn regex_for(pattern: &'static str) -> &'static Regex {
     static CACHE: LazyLock<RwLock<HashMap<&'static str, &'static Regex>>> =
         LazyLock::new(Default::default);
-    if let Some(re) = CACHE.read().unwrap_or_else(|e| e.into_inner()).get(pattern) {
+    if let Some(re) = CACHE.read().get(pattern) {
         return re;
     }
-    let mut cache = CACHE.write().unwrap_or_else(|e| e.into_inner());
+    let mut cache = CACHE.write();
     cache.entry(pattern).or_insert_with(|| {
         // ajv compiles with the `u` flag, where `\d` is ASCII; Rust's `\d` is Unicode.
         let rust = pattern.replace("\\d", "[0-9]");
