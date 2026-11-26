@@ -213,6 +213,7 @@ pub struct ItemRow {
     pub reviewed_at: i64,
     pub sold_at: i64,
     pub first_listed_at: Option<i64>,
+    pub content_hash: Option<String>,
 }
 
 /// Why a walked collection has no row at a block yet.
@@ -270,6 +271,7 @@ struct ItemState {
     allowances: Vec<(String, U256)>,
     /// The first block time the store could mint it.
     first_listed_at: Option<i64>,
+    content_hash: Option<String>,
 }
 
 impl ItemState {
@@ -358,12 +360,14 @@ impl CollectionState {
                         sold_at: None,
                         allowances: Vec::new(),
                         first_listed_at: store_global.then_some(t),
+                        content_hash: e.content_hash.clone(),
                     },
                 );
             }
             KIND_RESCUE_ITEM => {
                 if let Some(item) = self.item(id)? {
                     item.meta = parse_metadata(e.metadata.as_deref().unwrap_or_default());
+                    item.content_hash = e.content_hash.clone();
                     item.updated_at = t;
                 }
                 self.updated_at = t;
@@ -516,6 +520,7 @@ impl CollectionState {
                     reviewed_at: item.reviewed_at,
                     sold_at: item.sold_at.unwrap_or(0),
                     first_listed_at: item.first_listed_at,
+                    content_hash: item.content_hash,
                 })
             })
             .collect();
@@ -665,6 +670,7 @@ pub fn resume(
                     sold_at: (row.sold_at != 0).then_some(row.sold_at),
                     allowances: row.minters.into_iter().zip(row.minter_allowances).collect(),
                     first_listed_at: row.first_listed_at,
+                    content_hash: row.content_hash,
                 };
                 (row.item_id, item)
             })
@@ -1006,6 +1012,35 @@ mod tests {
             ("legendary", U256::from(2), U256::from(98))
         );
         assert_eq!(goggles.updated_at, 1_600_000_000 + 97_732_792);
+    }
+
+    /// An item's content hash is the one its newest `AddItem` or
+    /// `RescueItem` set, as the subgraph's `contentHash`; a data update
+    /// keeps it.
+    #[test]
+    fn an_items_content_hash_is_its_newest_add_or_rescue() {
+        let mut events = created(10);
+        events.extend([
+            CollectionEvent {
+                content_hash: Some("bafkreiadded".into()),
+                ..add(11, 0, HAT)
+            },
+            CollectionEvent {
+                item_id: Some("0".into()),
+                metadata: Some(HAT.into()),
+                content_hash: Some("bafkreirescued".into()),
+                ..ev(KIND_RESCUE_ITEM, 12)
+            },
+            CollectionEvent {
+                item_id: Some("0".into()),
+                amount: Some("9".into()),
+                beneficiary: Some(OTHER.into()),
+                metadata: Some(HAT.into()),
+                ..ev(KIND_UPDATE_ITEM_DATA, 13)
+            },
+        ]);
+        let (_, items) = folded(events);
+        assert_eq!(items[0].content_hash.as_deref(), Some("bafkreirescued"));
     }
 
     /// Intended difference: a minter or manager is listed once while its
