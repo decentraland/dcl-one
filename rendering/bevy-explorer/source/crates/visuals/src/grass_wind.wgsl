@@ -14,7 +14,7 @@
     mesh_view_bindings::view,
     view_transformations::position_world_to_clip,
 }
-#import "embedded://visuals/terrain_height.wgsl"::{terrain_height, terrain_normal}
+#import "embedded://visuals/terrain_height.wgsl"::{terrain_height, terrain_slope_normal}
 
 #ifdef PREPASS_PIPELINE
     #import bevy_pbr::prepass_io::{Vertex, VertexOutput}
@@ -70,6 +70,10 @@ const FLUTTER_SHARE: f32 = 0.25;
 const TAU: f32 = 6.2831855;
 // a grass card shows where the mask reaches this, as unity-explorer's grass material cuts
 const MASK_CUTOFF: f32 = 0.5;
+// An instance is lit by the terrain's slope across this many metres to each side of its root.
+// The ground's own normal turns so much from one metre to the next that neighbouring tufts lit
+// by it stand out from each other as light and dark patches.
+const NORMAL_REACH: f32 = 4.0;
 
 fn hash_u32(value: u32) -> u32 {
     var x = value;
@@ -141,7 +145,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 
 #ifdef PREPASS_PIPELINE
 #ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
-    out.world_normal = terrain_normal(root.xz);
+    out.world_normal = terrain_slope_normal(root.xz, NORMAL_REACH);
 #endif
 #ifdef MOTION_VECTOR_PREPASS
     out.previous_world_position = vec4(
@@ -154,8 +158,8 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.position.z = min(out.position.z, 1.0);
 #endif
 #else
-    // lit as the ground under the root: the ground's own normal there, over the whole instance
-    out.world_normal = terrain_normal(root.xz);
+    // lit as the slope the instance stands on, the same over the whole instance
+    out.world_normal = terrain_slope_normal(root.xz, NORMAL_REACH);
 #endif
 
 #ifdef VERTEX_OUTPUT_INSTANCE_INDEX
@@ -270,7 +274,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     pbr_input.material.base_color = vec4(albedo, 1.0);
-    // the ground's normal on both faces of a card
+    // the slope's normal on both faces of a card
     let normal = normalize(in.world_normal);
     pbr_input.N = normal;
     pbr_input.world_normal = normal;

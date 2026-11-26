@@ -134,13 +134,20 @@ fn terrain_height(xz: vec2<f32>) -> f32 {
 
 const NORMAL_EPSILON: f32 = 0.5;
 
-// The terrain's normal at bevy world x/z: the ground is lit by it, and so is what grows on it.
-fn terrain_normal(xz: vec2<f32>) -> vec3<f32> {
-    let dx = vec2<f32>(NORMAL_EPSILON, 0.0);
-    let dz = vec2<f32>(0.0, NORMAL_EPSILON);
+// The normal of the terrain's slope across the `reach` metres to each side of bevy world x/z.
+// The bumps turn the slope sharply from one metre to the next: a wider reach leaves them out
+// and keeps the hillside.
+fn terrain_slope_normal(xz: vec2<f32>, reach: f32) -> vec3<f32> {
+    let dx = vec2<f32>(reach, 0.0);
+    let dz = vec2<f32>(0.0, reach);
     return normalize(vec3<f32>(
         terrain_height(xz - dx) - terrain_height(xz + dx),
-        2.0 * NORMAL_EPSILON,
+        2.0 * reach,
         terrain_height(xz - dz) - terrain_height(xz + dz),
     ));
+}
+
+// The terrain's normal at bevy world x/z, which the ground is lit by.
+fn terrain_normal(xz: vec2<f32>) -> vec3<f32> {
+    return terrain_slope_normal(xz, NORMAL_EPSILON);
 }

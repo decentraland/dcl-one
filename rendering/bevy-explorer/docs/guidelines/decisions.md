@@ -1005,9 +1005,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     256, where Unity takes those in the camera's view. Only parcels the realm has confirmed empty
     and that lie inside the coast carry grass.
   - Instances stand upright, where Unity tilts each to the terrain's normal. They are lit as
-    the ground under their root: with the ground's normal there (four more height samples per
-    vertex) and the ground material's surface values, so a tuft and the ground it grows on take
-    the same light on any slope.
+    the slope they stand on: with the ground material's surface values and the normal of the
+    terrain across 4 m to each side of their root (four more height samples per vertex), so a
+    tuft takes the light of its hillside. The ground's own normal, which Unity's scatter reads
+    1 m to each side, turns so much from one metre to the next that tufts lit by it stood out
+    from their neighbours as light and dark patches; over 4 m the bumps average out and the
+    tufts of a patch share their light, at the price of not following each bump's shading.
   - A grass instance takes the colour Unity's scatter gives it: the ground and sand textures
     under the splat's weights, all three read under its root at the splat's 1024 m tiling, so
     the colour changes over metres and the tufts of a patch share it. A tuft is that colour from

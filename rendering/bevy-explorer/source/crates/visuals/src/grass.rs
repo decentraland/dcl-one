@@ -211,9 +211,9 @@ impl GrassAssets {
     }
 }
 
-/// The base of the grass material: the ground's surface, so that with the ground's normal (the
-/// shader's) a tuft takes the light exactly as the ground under it. Both faces drawn, and cut
-/// out (the shader discards by the blade mask; the mode has the prepasses run it).
+/// The base of the grass material: the ground's surface, so that with the normal of the slope it
+/// stands on (the shader's) a tuft takes the light as the ground of that slope does. Both faces
+/// drawn, and cut out (the shader discards by the blade mask; the mode has the prepasses run it).
 pub(crate) fn grass_base() -> StandardMaterial {
     StandardMaterial {
         alpha_mode: AlphaMode::Mask(0.5),
