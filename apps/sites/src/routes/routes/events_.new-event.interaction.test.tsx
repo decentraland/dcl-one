@@ -603,9 +603,13 @@ describe("when editing a hangout through its route", () => {
           expect(router.state.location.pathname).toBe(EDIT_PATH);
         });
 
-        it("should hand focus back to Delete event", async () => {
-          await user.click(screen.getByRole("button", { name: "Delete event" }));
-          expect(document.activeElement).toBe(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete event" }));
+        it("should keep focus on Delete event, also when it is refused twice in a row", async () => {
+          const del = within(screen.getByRole("dialog")).getByRole("button", { name: "Delete event" });
+          await user.click(del);
+          expect(document.activeElement).toBe(del);
+          await user.click(del);
+          expect(document.activeElement).toBe(del);
+          expect(authoring.deleteHangout).not.toHaveBeenCalled();
         });
       });
 

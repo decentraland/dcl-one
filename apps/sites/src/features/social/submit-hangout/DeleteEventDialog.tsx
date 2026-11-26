@@ -1,5 +1,5 @@
 import { Modal, Notice, useEventsCopy, Button } from "@dcl/one-ui";
-import { useEffect, useRef, type MouseEvent } from "react";
+import { useLayoutEffect, useRef, type MouseEvent } from "react";
 
 /** Why the last delete did not happen: the request failed, or the signed-in account is no longer the editor's. */
 export type DeleteEventError = "failed" | "session";
@@ -21,14 +21,16 @@ export default function DeleteEventDialog({ busy, error, onCancel, onConfirm }: 
   /** The Delete button that started the delete, set by its click. */
   const deleteButton = useRef<HTMLButtonElement | null>(null);
   const wasBusy = useRef(busy);
-  // A delete that ends without deleting, or is refused before it starts, hands focus back to Delete event.
-  useEffect(() => {
-    if (!busy && (wasBusy.current || error)) deleteButton.current?.focus();
+  // Only a delete that starts disables Delete event: focus waits on the dialog while it runs and comes back
+  // when it ends without deleting. A delete refused before it starts never takes focus off the button.
+  // Layout timing moves focus before the browser drops it from the disabled button.
+  useLayoutEffect(() => {
+    if (busy) deleteButton.current?.closest("dialog")?.focus();
+    else if (wasBusy.current) deleteButton.current?.focus();
     wasBusy.current = busy;
-  }, [busy, error]);
+  }, [busy]);
   const confirm = (event: MouseEvent<HTMLButtonElement>) => {
     deleteButton.current = event.currentTarget;
-    event.currentTarget.closest("dialog")?.focus();
     onConfirm();
   };
   return (
