@@ -25,7 +25,7 @@ pub async fn send_transaction(
 ) -> Response {
     match relay(&state, &headers, body).await {
         Ok(response) => response,
-        Err(Failure::NotSent(err)) => not_sent(err).await,
+        Err(Failure::NotSent(err)) => err.into_not_sent_response(),
         Err(Failure::MaybeSent(err)) => err.into_response(),
     }
 }
@@ -103,22 +103,24 @@ async fn relay(
         Err(err) => return Err(failed_send(state, &session_id, &sender, err).await),
     };
 
-    // The transaction is out, so the answer carries its hash whatever recording it does. An error
-    // here would tell the client nothing was sent, and it would sign again while this one lands. A
-    // reservation left without its hash still counts against the buyer's daily quota.
+    record_relay_hash(state, &session_id, &tx_hash).await;
+    Ok(Json(json!({ "ok": true, "txHash": tx_hash })).into_response())
+}
+
+/// The reservation still counts toward the buyer's quota if recording the hash fails.
+/// Preserve the observed relayer outcome because the signed transaction can still land.
+async fn record_relay_hash(state: &SharedState, session_id: &str, tx_hash: &str) {
     if let Err(err) = state
         .transaction
-        .confirm_reservation(&session_id, &tx_hash)
+        .confirm_reservation(session_id, tx_hash)
         .await
     {
         tracing::error!(
-            tx_hash = %tx_hash,
+            %tx_hash,
             error = %err,
-            "economy: relayed a transaction but could not record its hash on the quota reservation"
+            "economy: could not record the relayed transaction hash on the quota reservation"
         );
     }
-
-    Ok(Json(json!({ "ok": true, "txHash": tx_hash })).into_response())
 }
 
 /// A failed send or forward: the slot is released, and the answer says nothing was sent, only
@@ -129,40 +131,16 @@ async fn failed_send(
     sender: &MetaTxSender,
     err: ApiError,
 ) -> Failure {
+    if let ApiError::BroadcastFailed { tx_hash, .. } = &err {
+        record_relay_hash(state, session_id, tx_hash).await;
+        return Failure::MaybeSent(err);
+    }
     match reservation_disposition(&err) {
         ReservationDisposition::Release => {
             release_quota_slot(state, session_id, sender).await;
             Failure::NotSent(err)
         }
         ReservationDisposition::Keep => Failure::MaybeSent(err),
-    }
-}
-
-/// The error's envelope with `"not_sent": true` added (`marked_not_sent`).
-async fn not_sent(err: ApiError) -> Response {
-    let (mut parts, body) = err.into_response().into_parts();
-    let bytes = axum::body::to_bytes(body, 64 * 1024)
-        .await
-        .unwrap_or_default();
-    let body = match marked_not_sent(&bytes) {
-        Some(marked) => {
-            parts.headers.remove(header::CONTENT_LENGTH);
-            marked
-        }
-        None => bytes.to_vec(),
-    };
-    Response::from_parts(parts, axum::body::Body::from(body))
-}
-
-/// An error body with `"not_sent": true` added, or `None` for a body that is not a JSON object:
-/// that one is answered as it is, without the evidence, which a client reads as maybe sent.
-fn marked_not_sent(body: &[u8]) -> Option<Vec<u8>> {
-    match serde_json::from_slice::<serde_json::Value>(body) {
-        Ok(serde_json::Value::Object(mut envelope)) => {
-            envelope.insert("not_sent".into(), serde_json::Value::Bool(true));
-            serde_json::to_vec(&envelope).ok()
-        }
-        _ => None,
     }
 }
 
@@ -263,34 +241,7 @@ pub async fn get_user_transactions(
 
 #[cfg(test)]
 mod tests {
-    use super::{marked_not_sent, refunds_quota_slot};
-
-    #[test]
-    fn only_a_json_object_body_is_marked_not_sent() {
-        let marked =
-            marked_not_sent(br#"{"ok":false,"error":"invalid_transaction","message":"m"}"#)
-                .expect("an error envelope is marked");
-        let marked: serde_json::Value = serde_json::from_slice(&marked).unwrap();
-        assert_eq!(
-            marked,
-            serde_json::json!({"ok": false, "error": "invalid_transaction", "message": "m", "not_sent": true})
-        );
-        for body in [
-            &b""[..],
-            b"Bad Gateway",
-            b"[]",
-            br#""ok""#,
-            b"null",
-            b"{\"ok\":false",
-        ] {
-            assert_eq!(
-                marked_not_sent(body),
-                None,
-                "{}",
-                String::from_utf8_lossy(body)
-            );
-        }
-    }
+    use super::refunds_quota_slot;
 
     #[test]
     fn a_4xx_upstream_status_refunds_the_quota_slot_except_a_timeout_or_a_dropped_request() {

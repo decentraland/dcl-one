@@ -1,5 +1,7 @@
-import { Engine, IEngine } from '../../packages/@dcl/ecs/src'
-import { createTimers, Timers } from '../../packages/@dcl/ecs/src/runtime/helpers/timers'
+import type { IEngine } from '../../packages/@dcl/ecs/src'
+import { Engine } from '../../packages/@dcl/ecs/src'
+import type { Timers } from '../../packages/@dcl/ecs/src/runtime/helpers/timers'
+import { createTimers } from '../../packages/@dcl/ecs/src/runtime/helpers/timers'
 
 describe('timer callback errors', () => {
   let callback: jest.Mock

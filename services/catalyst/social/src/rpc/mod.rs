@@ -248,7 +248,8 @@ impl State {
         }
     }
 
-    pub(crate) fn initial_fanout_ready(&self) -> bool {
+    /// Whether Social RPC can admit sockets after initial fanout setup.
+    pub fn initial_fanout_ready(&self) -> bool {
         self.fanout_ready
             .lock()
             .as_ref()

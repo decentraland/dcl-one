@@ -32,6 +32,23 @@ describe('when Button owns content layout in a production bundle', () => {
   afterEach(() => {
     expect(b.session.runtimeErrors.slice(caseErrorStart)).toEqual([])
   })
+  it('should render the requested spinner sizes and distinguish destructive actions', async () => {
+    await ready()
+    expect(
+      await b.evaluate(
+        `Array.from(document.querySelectorAll('[role="progressbar"]'), e => [e.offsetWidth, e.offsetHeight])`
+      )
+    ).toEqual([16, 20, 24, 30, 40].map((n) => [n, n]))
+    expect(
+      await b.evaluate(`Array.from(document.querySelectorAll('[data-tone="danger"]'), e => {
+      const s = getComputedStyle(e)
+      return [s.backgroundColor, s.borderTopColor]
+    })`)
+    ).toEqual([
+      ['rgba(0, 0, 0, 0)', 'rgb(255, 205, 212)'],
+      ['rgb(204, 29, 44)', 'rgba(0, 0, 0, 0)']
+    ])
+  })
   it('should size the secondary-light icon and loading indicator for each button size', async () => {
     await ready()
     const metrics = await b.evaluate(

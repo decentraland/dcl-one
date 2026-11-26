@@ -1,13 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, globSync } from 'fs'
 import path from 'path'
-import {
-  Composite,
-  Engine,
-  Entity,
-  IEngine,
-  LastWriteWinElementSetComponentDefinition,
-  EntityMappingMode
-} from './../../packages/@dcl/ecs/src'
+import type { Entity, IEngine, LastWriteWinElementSetComponentDefinition } from './../../packages/@dcl/ecs/src'
+import { Composite, Engine, EntityMappingMode } from './../../packages/@dcl/ecs/src'
 
 import { getCompositeRootComponent } from './../../packages/@dcl/ecs/src/composite'
 import { getComponentDefinition, getComponentValue } from './../../packages/@dcl/ecs/src/composite/instance'
