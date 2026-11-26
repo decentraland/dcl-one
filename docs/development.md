@@ -250,6 +250,14 @@ Run both in a fresh checkout. `python3 tooling/ci-local.py run [REV]` checks a c
 (default `HEAD`) locally, with the checks its changes since `origin/main` select (images
 need Linux or `CI_LOCAL_IMAGES=1`).
 
+`python3 tooling/ci-local.py install` makes ci-local's pre-commit and pre-push checks the
+git hooks of every worktree. `CI_LOCAL_SKIP=1` skips them; a push then still uploads its
+Git LFS objects, which `--no-verify` skips too. Afterwards `git lfs install` stops at the
+existing pre-push, so the README's `git lfs install --local && git lfs pull` never pulls:
+run `git lfs pull` on its own, and avoid `git lfs update --force`, which puts back the
+plain LFS hook. To uninstall, delete `.git/hooks/pre-commit` and `.git/hooks/pre-push`,
+then run `git lfs update`.
+
 CI runs the Rust suites in `nix develop .#ci`: the toolchain, the services the tests
 start and the build tools, without the web and media tools.
 
