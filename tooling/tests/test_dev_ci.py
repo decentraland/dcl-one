@@ -168,7 +168,7 @@ class DevCiTest(unittest.TestCase):
         with patch.object(dev, 'load_ci_local', side_effect=FileNotFoundError('ci-local.py')):
             self.assertTrue(dev.plan('pull_request', 'HEAD', 'HEAD')[2])
 
-    def test_the_gate_always_reports_and_requires_rust_smoke_tooling_and_web(self):
+    def test_the_gate_always_reports_and_requires_rust_clippy_smoke_tooling_and_web(self):
         workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
         on = workflow.split('\non:\n', 1)[1].split('\npermissions:', 1)[0]
         pull_request = on.split('  pull_request:', 1)[1]
@@ -176,16 +176,16 @@ class DevCiTest(unittest.TestCase):
         self.assertNotIn('paths:', pull_request)
         gate = workflow.split('\n  gate:\n', 1)[1]
         self.assertIn('name: CI gate', gate)
-        self.assertIn('needs: [changes, rust, smoke, tooling, web]', gate)
-        self.assertIn('for result in "$CHANGES" "$RUST" "$SMOKE" "$TOOLING" "$WEB"; do', gate)
+        self.assertIn('needs: [changes, rust, clippy, smoke, tooling, web]', gate)
+        self.assertIn('for result in "$CHANGES" "$RUST" "$CLIPPY" "$SMOKE" "$TOOLING" "$WEB"; do', gate)
         self.assertIn('if: ${{ always() }}', gate)
         self.assertIn('success|skipped)', gate)
-        for job in ('rust', 'smoke', 'tooling', 'web'):
+        for job in ('rust', 'clippy', 'smoke', 'tooling', 'web'):
             body = workflow.split(f'\n  {job}:\n', 1)[1].split('\n  ', 1)[0] + workflow.split(f'\n  {job}:\n', 1)[1][:600]
             with self.subTest(job=job):
                 self.assertIn("needs.changes.outputs.run != 'false'", body)
-                # Only the Rust job reads the Rust answer: the others run on every watched change.
-                self.assertEqual("needs.changes.outputs.rust != 'false'" in body.split('\n    steps:', 1)[0], job == 'rust')
+                # Only the Rust jobs read the Rust answer: the others run on every watched change.
+                self.assertEqual("needs.changes.outputs.rust != 'false'" in body.split('\n    steps:', 1)[0], job in ('rust', 'clippy'))
         self.assertIn('      rust: ${{ steps.plan.outputs.rust }}\n', workflow)
 
     def rust(self, *changed):

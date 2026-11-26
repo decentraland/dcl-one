@@ -26,6 +26,13 @@ to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` 
 `source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs; there
 `CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
+For an isolated native session, set `DCL_PROFILE_DIR` to an absolute directory before launching.
+Config, logs and content cache use that directory instead of the OS profile. Temporary
+embedded-browser data continues to use the process's temporary directory. Relative or empty
+values fail before opening the profile. With the variable unset,
+the client uses its normal OS profile. Automation runs should place the directory beneath
+their temporary workspace; this does not redirect explicit scene exports to local projects.
+
 With Nix, `nix develop .#explorer` from the repository root has the tools and libraries of this
 loop on Linux and macOS, and one Cargo build directory for every worktree (see `source/readme.md`).
 
@@ -267,6 +274,12 @@ State, in every build:
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
+- `/permissions_in_force`: the permissions whose effect acts on the player now, as JSON:
+  `inForce`, a list of `scene` (the hash of the scene that causes it, a portable's or a
+  neighbour's included) and `type` (`ForceCamera` while the scene holds the camera,
+  `HideAvatarsNametags` while it hides the player's avatar, passport or nametag,
+  `SetLocomotion` while it changes or blocks the player's movement). The HUD's permissions
+  popover lists the ones of the scene the player stands in under "In force now".
 - `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
   stands in turns nearby voice off or its room refuses the player) and, in LiveKit builds, each voice room's state
   and the addresses speaking.

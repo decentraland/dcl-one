@@ -1,13 +1,14 @@
 // from: shop@2d3bf62:app/src/pages/OutfitDetail.tsx, app/src/pages/OutfitDetail.styles.ts,
 //       app/src/hooks/useOutfits.ts (useOutfitItems, useOutfitCart), app/src/lib/outfits.ts (classifyOutfitItem)
 
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 
 import { isShopApiError } from "@shop/api/client";
 import { shopCart, useCart } from "../../cart/store";
 import { BASE_FEMALE, BASE_MALE, requiredShape } from "@shop/detail/lib/bodyShape";
-import { fetchEmoteClipUrl } from "../../detail/lib/emoteBase64";
+import AvatarStage from "../../detail/components/AvatarStage";
+import { fetchEmoteBase64 } from "../../detail/lib/emoteBase64";
 import { itemUrn } from "@shop/detail/lib/urn";
 import { assetKey } from "@shop/model/asset";
 import { SHOP_BASE } from "../../routes";
@@ -35,7 +36,6 @@ import { shopReads } from "../reads";
 
 export { fetchOutfit, type Outfit } from "./outfits";
 
-const WearablePreview = lazy(() => import("../../../wearable-preview/WearablePreview"));
 
 const COPY = {
   notFoundTitle: "This outfit isn't available",
@@ -57,6 +57,35 @@ const COPY = {
   itemsCount: (n: number) => `${n} ${n === 1 ? "item" : "items"} in this outfit`,
   addCount: (n: number) => `Add ${n} ${n === 1 ? "item" : "items"} to cart`,
 };
+
+// The emote's definition is optional: past this the outfit draws with the emote's urn alone rather than wait on it.
+const EMOTE_DEFINITION_TIMEOUT_MS = 5_000;
+
+/**
+ * The emote's definition; the query's own signal still cancels it. A read past the deadline fails rather than answer
+ * null, so that answer is not kept for the next visit: the read is tried again then.
+ */
+export async function readEmoteDefinition(urn: string, signal: AbortSignal) {
+  const deadline = new AbortController();
+  const follow = () => deadline.abort();
+  if (signal.aborted) follow();
+  else signal.addEventListener("abort", follow, { once: true });
+  let late = false;
+  const timer = setTimeout(() => {
+    late = true;
+    deadline.abort();
+  }, EMOTE_DEFINITION_TIMEOUT_MS);
+  try {
+    // A read cut short, by the deadline or the query, comes back null (fetchEmoteBase64).
+    const playback = await fetchEmoteBase64(urn, undefined, deadline.signal);
+    // Not an AbortError: the query keeps waiting on those (query.ts), and this one should end the wait.
+    if (late) throw new Error("The emote's definition did not arrive in time.");
+    return playback;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", follow);
+  }
+}
 
 function webglAvailable(): boolean {
   return typeof window !== "undefined" && typeof (window as { WebGLRenderingContext?: unknown }).WebGLRenderingContext !== "undefined";
@@ -254,7 +283,13 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
   const body = forced ?? (outfit.bodyShape === "female" ? BASE_FEMALE : BASE_MALE);
   const emoteItem = useMemo(() => playingEmote(resolved), [resolved]);
   const emoteUrn = emoteItem ? (emoteItem.urn ?? itemUrn(emoteItem)) : null;
-  const clipQ = useShopQuery(emoteUrn ? ["emote-clip", emoteUrn, body] : null, (signal) => fetchEmoteClipUrl(emoteUrn!, body, signal), { staleMs: 30 * 60_000 });
+  // A published emote cannot be named to the preview: it goes as its own definition. Read before the preview mounts, so
+  // the iframe is built once with it instead of loading the avatar and reloading it. A read that fails or runs out of
+  // time leaves the emote's urn alone, where Babylon can still find it.
+  const playbackQ = useShopQuery(emoteUrn ? ["emote-base64", emoteUrn] : null, (signal) => readEmoteDefinition(emoteUrn!, signal), { staleMs: 30 * 60_000 });
+  const playback = playbackQ.data ?? null;
+  // Failed or late, the outfit draws with the emote's urn alone (isLoading is false once the read has failed).
+  const emotePending = !!emoteUrn && playbackQ.isLoading;
   const thumb = thumbnailUrl(outfit.thumbnailHash);
   const [webgl, setWebgl] = useState(false);
   useEffect(() => setWebgl(webglAvailable()), []);
@@ -304,10 +339,25 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
         <div className="shop-outfit__preview" data-testid="outfit-detail-preview" style={{ background: outfitRadialGradient(outfit) }}>
           {!show3d ? (
             thumb && !loading ? <img className="shop-outfit__fallback" src={thumb} alt={outfit.name} /> : null
+          ) : emotePending ? (
+            thumb ? <img className="shop-outfit__fallback" src={thumb} alt={outfit.name} /> : null
           ) : (
-            <Suspense fallback={thumb ? <img className="shop-outfit__fallback" src={thumb} alt={outfit.name} /> : null}>
-              <WearablePreview urns={urns} body={body} emote={clipQ.data ?? undefined} spin={false} zoom={1} />
-            </Suspense>
+            <AvatarStage
+              options={{
+                urns: emoteUrn ? [...urns, emoteUrn] : urns,
+                base64s: playback ? [playback.base64] : undefined,
+                profile: "default",
+                bodyShape: body,
+                type: "avatar",
+                emote: emoteUrn ? undefined : "fashion",
+                // Without a definition of its own the preview falls back to its default emote, idle, which loops: a
+                // play-once emote would never stop.
+                disableDefaultEmotes: playback && !playback.loop ? true : undefined,
+                disableBackground: true,
+                disableFadeEffect: true,
+              }}
+              cover={thumb ? <img className="shop-outfit__fallback" src={thumb} alt={outfit.name} /> : null}
+            />
           )}
         </div>
 

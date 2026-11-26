@@ -765,7 +765,7 @@ impl Flow<'_> {
             .into_iter()
             .filter(|(_, s)| *s != event.session_id)
             .collect();
-        persist_remaining_connections(conn, &visit, &remaining).await?;
+        persist_remaining_connections(conn, visit, &remaining).await?;
         self.remember_ended(
             conn,
             &visit.badge_id,

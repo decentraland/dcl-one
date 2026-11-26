@@ -3,6 +3,18 @@
 //! budget their wall-clock limits need. Each file stays a module named after it.
 #![allow(clippy::unwrap_used, reason = "test support")]
 
+// Support shared by several modules, loaded once; the modules `use crate::<name>`.
+#[path = "support/archipelago.rs"]
+mod archipelago;
+#[path = "support/db.rs"]
+mod db;
+#[path = "support/fence.rs"]
+mod fence;
+#[path = "support/gate.rs"]
+mod gate;
+#[path = "support/nats_broker.rs"]
+mod nats_broker;
+
 #[path = "archipelago_ban_reaches_v4_sockets.rs"]
 mod archipelago_ban_reaches_v4_sockets;
 #[path = "archipelago_control_extensions_websocket.rs"]

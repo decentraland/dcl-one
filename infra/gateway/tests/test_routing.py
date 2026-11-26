@@ -84,21 +84,35 @@ class HostAliasTest(unittest.TestCase):
     def test_credits_host_keeps_other_prefixed_paths(self):
         # Stripe's webhook for credits-server is /credits/webhook, the node's
         # mount's /webhook; a path already written for the node passes as sent.
+        # The node's own /packs/... and /checkout/{id} keep their prefixed form:
+        # credits-server's pack list and pack purchase are the bare paths alone.
         for path in ["/credits/webhook", "/credits/credits/packs", "/credits/users/0xab/credits",
-                     "/credits/checkout-other"]:
+                     "/credits/checkout-other", "/credits/packs/sku_1/intent",
+                     "/credits/packs/sku_1/mock-purchase", "/credits/checkout/chk_1"]:
             with self.subTest(path=path):
                 self.assertEqual(route("credits.example.test", path), (path, path))
 
     def test_credits_server_mounts_cover_the_credits_router(self):
         # Every /credits/<x> route the node's credits mount serves, and every
         # /credits/credits/<x> path the Shop's path table lists, is one of
-        # credits-server's own paths, so the credits host reaches it.
+        # credits-server's own paths, so the credits host reaches it; one with
+        # subpaths is a mount, which takes any tail. No mount shares its first
+        # segment with a route of the node's own at the mount's root, whose
+        # prefixed form would be prefixed twice.
         shop = Path(__file__).parents[3] / "services/catalyst/shop/src"
         router = (shop / "credits/mod.rs").read_text()
-        mounts = set(re.findall(r'\.route\(\s*"/credits/([^/"{]+)', router))
-        mounts |= set(re.findall(r'/credits/credits/([a-z-]+)', (shop / "paths.rs").read_text()))
-        self.assertTrue(mounts, "the credits router's /credits/... routes")
-        self.assertLessEqual(mounts, set(gateway.CREDITS_SERVER_MOUNTS))
+        table = (shop / "paths.rs").read_text()
+        paths = set(re.findall(r'\.route\(\s*"/credits/([^/"{]+)', router))
+        paths |= set(re.findall(r'/credits/credits/([a-z-]+)', table))
+        self.assertTrue(paths, "the credits router's /credits/... routes")
+        self.assertLessEqual(paths, set(gateway.CREDITS_SERVER_PATHS) | set(gateway.CREDITS_SERVER_MOUNTS))
+        deep = set(re.findall(r'\.route\(\s*"/credits/([^/"{]+)/', router))
+        deep |= set(re.findall(r'/credits/credits/([a-z-]+)/', table))
+        self.assertTrue(deep, "the credits router's /credits/<x>/... routes")
+        self.assertLessEqual(deep, set(gateway.CREDITS_SERVER_MOUNTS))
+        own = set(re.findall(r'\.route\(\s*"/([^/"{]+)/', router)) - {"credits"}
+        self.assertTrue(own, "the credits router's own /<x>/... routes")
+        self.assertTrue(own.isdisjoint(gateway.CREDITS_SERVER_MOUNTS), own & set(gateway.CREDITS_SERVER_MOUNTS))
 
     def test_worlds_host_reaches_the_prefixed_worlds_routes(self):
         for path in ["/world/w.dcl.eth/settings", "/livekit-webhook", "/health/live",
