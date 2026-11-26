@@ -222,13 +222,15 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_THIRD_PARTY_REGISTRY_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_third_party_registry_index_enabled: bool,
 
-    /// Walk the Polygon collection factories and their collections' events into
-    /// `shop.collection_event` over the `TRADE_RPC_URLS` 137 entry for collection counts and sales analytics.
+    /// Walk the Polygon collection factories and their collections' events, and on Ethereum
+    /// mainnet the collections-v1 contracts', into `shop.collection_event`, over each network's
+    /// `TRADE_RPC_URLS` entry (Ethereum's falls back to `ETH_RPC_URL`).
     #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_collections_index_enabled: bool,
 
     /// The networks whose `shop.collections` and `shop.items` rows the collections index's fold
-    /// takes from the collections mirror and writes (`matic`); empty, it keeps its log alone.
+    /// takes from the collections mirror and writes (`matic`, `ethereum`); empty, it keeps its log
+    /// alone.
     #[arg(long, env = "MARKETPLACE_COLLECTIONS_INDEX_OWNS", default_value = "")]
     pub marketplace_collections_index_owns: String,
 
@@ -732,6 +734,15 @@ pub struct ShopConfig {
         allow_negative_numbers = true
     )]
     pub credits_daily_studio_deposit_limit_cents: Option<i64>,
+
+    /// The most one studio grant may give, in USD cents (credits-server's
+    /// `STUDIO_GRANT_MAX_CENTS`). Unset or negative refuses studio grants.
+    #[arg(
+        long,
+        env = "CREDITS_STUDIO_GRANT_MAX_CENTS",
+        allow_negative_numbers = true
+    )]
+    pub credits_studio_grant_max_cents: Option<i64>,
 
     /// Attach the CreditUsed index (credits.usages, over RPC_ENDPOINT_POLYGON
     /// and CREDITS_MANAGER_CONTRACT); POST /credits/authorize mints only while it is ready.

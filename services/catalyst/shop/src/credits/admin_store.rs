@@ -135,9 +135,6 @@ const CREDITS_GRANT_NS: uuid::Uuid =
 /// The old processor's `${CDN_URL}credits/notification-icon.png`.
 pub(crate) const CREDITS_NOTIFICATION_ICON_PATH: &str = "credits/notification-icon.png";
 
-/// The longest studio name, as credits-server's studio admin allows.
-pub const MAX_STUDIO_NAME_CHARS: usize = 80;
-
 /// The credits-server USD `ON_DEMAND_CREDITS_GRANTED` event as the old
 /// parser stored it, keyed on the grant's audit row.
 struct GrantNotice<'a> {
@@ -268,6 +265,17 @@ impl Credits {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         grant: GrantRequest<'_>,
     ) -> Result<GrantOutcome, ApiError> {
+        Ok(self.paid_credit_in_tx(tx, grant).await?.0)
+    }
+
+    /// [`Self::admin_grant_credits_in_tx`], with the id of the ledger row it
+    /// wrote (`None` on a replay, which writes none): a studio grant names it
+    /// in its budget entry.
+    pub(crate) async fn paid_credit_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        grant: GrantRequest<'_>,
+    ) -> Result<(GrantOutcome, Option<i64>), ApiError> {
         let GrantRequest {
             address,
             amount,
@@ -322,11 +330,14 @@ impl Credits {
                         "idempotency key already used for a different grant (address/amount mismatch)",
                     ));
                 }
-                return Ok(GrantOutcome {
-                    available: prior.get("available"),
-                    applied: prior.get("amount"),
-                    replayed: true,
-                });
+                return Ok((
+                    GrantOutcome {
+                        available: prior.get("available"),
+                        applied: prior.get("amount"),
+                        replayed: true,
+                    },
+                    None,
+                ));
             }
         }
 
@@ -351,20 +362,20 @@ impl Credits {
                 ("kind", JsonValue::String(kind.to_string())),
             ],
         );
-        let (audit_id, usd_cents): (i64, Option<i64>) = sqlx::query_as(
+        let (audit_id, usd_cents, ledger_id): (i64, Option<i64>, i64) = sqlx::query_as(
             "WITH a AS ( \
                  INSERT INTO ops.admin_audit (actor, domain, action, target, detail, result) \
                  VALUES ($5, 'credits', 'grant', $1, $6, 'ok') RETURNING id \
              ), l AS ( \
                  INSERT INTO credits.ledger (address, kind, amount, bucket, captcha_ok, admin_audit_id) \
-                 SELECT $1, $3, $2::numeric, 'paid', FALSE, a.id FROM a \
+                 SELECT $1, $3, $2::numeric, 'paid', FALSE, a.id FROM a RETURNING id \
              ), i AS ( \
                  UPDATE credits.idempotency \
                  SET available = $4::numeric, applied = $2::numeric \
                  WHERE scope = 'grant' AND idempotency_key = $7 \
              ) \
-             SELECT a.id, CASE WHEN c = trunc(c) AND c < 9e18 THEN c::int8 END \
-             FROM a, (SELECT $2::numeric * 10 AS c) cents",
+             SELECT a.id, CASE WHEN c = trunc(c) AND c < 9e18 THEN c::int8 END, l.id \
+             FROM a, l, (SELECT $2::numeric * 10 AS c) cents",
         )
         .bind(address)
         .bind(amount)
@@ -392,11 +403,14 @@ impl Credits {
             crate::shared::notifications::insert_notifications(&mut **tx, &[notification]).await?;
         }
 
-        Ok(GrantOutcome {
-            available,
-            applied: amount.to_string(),
-            replayed: false,
-        })
+        Ok((
+            GrantOutcome {
+                available,
+                applied: amount.to_string(),
+                replayed: false,
+            },
+            Some(ledger_id),
+        ))
     }
 
     pub async fn admin_revoke_credits(

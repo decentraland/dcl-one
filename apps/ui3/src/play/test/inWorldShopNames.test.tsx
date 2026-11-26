@@ -142,6 +142,21 @@ afterEach(() => {
 })
 
 describe('the in-world Shop’s Names', () => {
+  it('has the engine draw the avatar as Names does (smaller and lower), the stage staying up, and as before once left', async () => {
+    serve()
+    const { props } = renderShop()
+    const stage = vi.mocked(props.stage)
+    // jsdom lays nothing out: the stage image's 1920×1080 at scale 1, its top 70px above the page.
+    const rect = { x: 0, y: -70, width: 1920, height: 1080 }
+    expect(stage).toHaveBeenLastCalledWith(rect, 'catalog')
+    stage.mockClear()
+    await openNames()
+    expect(stage.mock.calls).toEqual([[rect, 'names']])
+    stage.mockClear()
+    await userEvent.click(screen.getByRole('tab', { name: 'Wearables' }))
+    expect(stage.mock.calls).toEqual([[rect, 'catalog']])
+  })
+
   it('opens on UNIQUE NAME, the nametag over the avatar reading the placeholder until a NAME is typed', async () => {
     serve()
     renderShop()

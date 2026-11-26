@@ -1,14 +1,23 @@
--- Attach metadata to ledger rows already imported. The link, audit row and
--- batch checkpoint commit together; an existing link makes a replay a no-op.
+-- Classify the batch once. Keep matched rows locked until the audit and the
+-- ledger link commit together, so an existing link is never overwritten.
+CREATE TEMP TABLE grant_audit_candidates ON COMMIT DROP AS
+SELECT s.*, l.id AS ledger_id, l.admin_audit_id
+FROM stage s
+LEFT JOIN LATERAL (
+    SELECT l.id, l.admin_audit_id
+    FROM credits.ledger l
+    WHERE l.tx_ref = 'credits-server:credit:' || s.credit_id
+      AND l.address = s.address AND l.kind = 'grant' AND l.bucket = 'paid'
+    ORDER BY l.id LIMIT 1
+    FOR UPDATE
+) l ON true;
+
 WITH pending AS (
-    SELECT s.*, l.id AS ledger_id, studio.name AS studio_name
-    FROM stage s
-    JOIN credits.ledger l ON l.tx_ref = 'credits-server:credit:' || s.credit_id
-                         AND l.address = s.address
-    LEFT JOIN credits.studio_budget_entries e ON e.ledger_id = l.id
+    SELECT c.*, studio.name AS studio_name
+    FROM grant_audit_candidates c
+    LEFT JOIN credits.studio_budget_entries e ON e.ledger_id = c.ledger_id
     LEFT JOIN credits.studios studio ON studio.id = e.studio_id
-    WHERE l.kind = 'grant' AND l.bucket = 'paid' AND l.admin_audit_id IS NULL
-    FOR UPDATE OF l
+    WHERE c.ledger_id IS NOT NULL AND c.admin_audit_id IS NULL
 ), audits AS (
     INSERT INTO ops.admin_audit (at, actor, domain, action, target, detail)
     SELECT granted_at AT TIME ZONE 'UTC', actor, 'credits', 'grant', address,
@@ -23,3 +32,25 @@ SET admin_audit_id = a.id
 FROM pending p
 JOIN audits a ON a.credit_id = p.credit_id AND a.target = p.address
 WHERE l.id = p.ledger_id;
+
+DO $$
+DECLARE
+    imported bigint;
+    already_linked bigint;
+    missing_ids text[];
+    missing_id text;
+BEGIN
+    SELECT count(*) FILTER (WHERE ledger_id IS NOT NULL AND admin_audit_id IS NULL),
+           count(*) FILTER (WHERE admin_audit_id IS NOT NULL),
+           COALESCE(array_agg(credit_id ORDER BY credit_id) FILTER (WHERE ledger_id IS NULL), ARRAY[]::text[])
+    INTO imported, already_linked, missing_ids
+    FROM grant_audit_candidates;
+
+    FOREACH missing_id IN ARRAY missing_ids LOOP
+        RAISE WARNING 'credits-server/grant_audit: no matching paid ledger grant for upstream credit %',
+            to_json(missing_id);
+    END LOOP;
+    -- INFO is sent even when the dry run's client_min_messages is warning.
+    RAISE INFO 'credits-server/grant_audit: imported %, skipped already linked %, skipped no matching ledger row %',
+        imported, already_linked, cardinality(missing_ids);
+END $$;

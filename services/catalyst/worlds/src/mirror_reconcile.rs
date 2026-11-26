@@ -287,7 +287,10 @@ async fn refresh_listed_scenes(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the mirror pass takes its client, stores, policy and catalogue"
+)]
 pub(super) async fn mirror_world(
     client: &crate::http::Outbound,
     pool: &PgPool,

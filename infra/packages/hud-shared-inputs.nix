@@ -6,7 +6,7 @@ let
     sort stringLength substring;
   web = "rendering/bevy-explorer/source/react-web/";
   manifestPath = web + "shared-inputs.json";
-  domains = [ "library/ui" "library/shop" "library/catalyst-api" "library/explorer-core" ];
+  domains = [ "library/ui" "library/shop" "library/catalyst-api" "library/explorer-core" "library/web-core" ];
   resolverNames = [ "package.json" "tsconfig.json" "jsconfig.json" ];
   requiredControls = map (name: web + name) [
     "package.json" "pnpm-lock.yaml" "tsconfig.json" "vite.config.ts"

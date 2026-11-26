@@ -15,6 +15,11 @@ type TabsBaseProps = {
   variant?: 'underline' | 'compact' | 'pill'
   /** Fixes the Figma device size; without it the tab follows the viewport. */
   device?: 'mobile' | 'desktop'
+  /**
+   * `hud` is a tab of the Explorer HUD's strip: the TabsBar it sits in (also `appearance="hud"`) gives it
+   * its look, so `variant` and `device` do not apply.
+   */
+  appearance?: 'default' | 'hud'
 }
 
 type TabsLinkTabProps = TabsBaseProps & {
@@ -37,12 +42,15 @@ function PanelTabs(props: PanelTabsProps) {
     selected = false,
     variant = 'underline',
     device,
+    appearance = 'default',
     className,
     tabIndex,
     linkComponent: LinkComponent,
     ...rest
   } = props
-  const classes = [styles.root, styles[variant], device && styles[device], className]
+  const classes = (
+    appearance === 'hud' ? [styles.hud, className] : [styles.root, styles[variant], device && styles[device], className]
+  )
     .filter(Boolean)
     .join(' ')
   const shared = {

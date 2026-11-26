@@ -1,0 +1,88 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+/* Not from Figma's pill-icon-text (Pills): the Explorer HUD's filter chip. The clear box's 45 % white outline has no token. */
+@layer dcl.components {
+  .root {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    height: 42px;
+    padding: 0 14px;
+    gap: 8px;
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-shadow);
+  }
+
+  /* A row of category pills: 10px a side, the selected one 12px on its icon's side. */
+  .dark {
+    height: 40px;
+    padding: 0 10px;
+    gap: 6px;
+    border-radius: var(--dcl-radius-full);
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-neutrals-snow);
+  }
+
+  /* a11y exception chip-selected-contrast (docs/ui-standards.md): snow on this orange is 2.62:1. */
+  .selected {
+    background: var(--dcl-brand-orange);
+    color: var(--dcl-neutrals-snow);
+  }
+
+  .dark.selected {
+    padding-left: 12px;
+  }
+
+  .main {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 100%;
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .dark .main {
+    gap: 6px;
+  }
+
+  .label {
+    font-size: var(--dcl-font-size-label-md-caps);
+    font-weight: 600;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  /* The keyboard's focus: a ring in the chip's own text colour, so it shows on the light, the dark and the
+     selected chip. */
+  .main:focus-visible,
+  .clear:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
+
+  /* The clear button's snow would not show on the light, unselected chip. */
+  .root:not(.dark):not(.selected) .clear:focus-visible {
+    outline-color: var(--dcl-neutrals-shadow);
+  }
+
+  .clear {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin-right: -2px;
+    padding: 0;
+    border: 1.5px solid rgba(255, 255, 255, 0.45);
+    border-radius: var(--dcl-radius-sm);
+    background: none;
+    color: var(--dcl-neutrals-snow);
+    cursor: pointer;
+  }
+}

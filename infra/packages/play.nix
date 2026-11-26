@@ -18,6 +18,7 @@ let
     fileset = lib.fileset.unions (sharedFiles ++ (map (p: lib.fileset.maybeMissing (root + p)) [
       /rendering/bevy-explorer/source
       /rendering/bevy-explorer/vendor
+      /rendering/avatar-preview
       /library/protocol/proto
       /library/hashing
       /apps/creator-hub/packages/zip-extract
@@ -51,7 +52,7 @@ in runCommand "foundation-built-play-web" {
   python ${contract}/tooling/play-artifact.py verify "$src" --root ${contract} \
     ${if builtins.getEnv "PLAY_ALLOW_UNOPTIMIZED" == "1" then "--trust-inputs" else "--production"}
   mkdir -p "$out"
-  for part in engine bridge-scene service_worker.js preview_realm.js sites-play.json; do
+  for part in engine bridge-scene service_worker.js preview_realm.js avatar-preview sites-play.json; do
     cp -r "$src/$part" "$out/$part"
   done
 ''

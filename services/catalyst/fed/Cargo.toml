@@ -23,5 +23,5 @@ test-support = ["dep:alloy"]
 [dev-dependencies]
 alloy.workspace = true
 
-[lints.clippy]
-unwrap_used = "deny"
+[lints]
+workspace = true
