@@ -15902,11 +15902,11 @@
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesNotificationsDialog.module.css",
-      "sha256": "8afb60fca121159dcda590caf08740167eedc31ab345de3ffab984aefa28b644"
+      "sha256": "c6a09a7a4ac1184efaeaeb6c8ed10f64478c95ac53277f25476d7c6365bc045b"
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
-      "sha256": "f3e2f5274a5253824a2a183e944ed9e4cb2c88889bc7174835d4fa8c3244e58b"
+      "sha256": "50a2147c38dfbaffeba8afdfc877b261889c7a52c4fc7e71d5165effa6dfe947"
     },
     {
       "path": "library/ui/apps/sites/chrome/SitesSectionNavigation.module.css",
@@ -54112,6 +54112,21 @@
     {
       "from": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
       "to": "library/ui/apps/sites/chrome/notification-media.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/sites/chrome/SitesNotificationsDialog.tsx",
+      "to": "library/ui/components/CloseButton/CloseButton.tsx",
       "kind": "test:runtime"
     },
     {
