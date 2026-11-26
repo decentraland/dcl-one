@@ -170,6 +170,21 @@ describe('PublishToWorld', () => {
       expect(store.getState().management.worldSettings.scenes).toEqual([]);
     });
 
+    it('defaults to multiple scenes when the targets show distinct locations', async () => {
+      const scene = (base: string) => ({
+        entityId: `entity-${base}`,
+        parcels: [base],
+        entity: { content: [], metadata: { scene: { base, parcels: [base] } } },
+      });
+      api.fetchWorldScenes.mockResolvedValue({ scenes: [scene('0,0')], total: 1 });
+      api.fetchPublishScenes.mockResolvedValue({ scenes: [scene('5,5')], total: 1 });
+      await renderStep();
+
+      expect(
+        screen.getByTestId('publish-modal-publish-to-world-select-world-action').textContent,
+      ).toBe('Select Location');
+    });
+
     it('keeps publishing blocked when the upload target layout cannot be loaded', async () => {
       api.fetchPublishScenes.mockResolvedValue(null);
       await renderStep();

@@ -74,6 +74,7 @@ export function Deploy(props: Props) {
   const { getDeployment, executeDeployment } = useDeploy();
   const { pushCustom } = useSnackbar();
   const worldScenes = useSelector(managementSelectors.getWorldScenes);
+  const publishSceneLayout = useSelector(state => state.management.publishSceneLayout);
   const names = useSelector(state => state.ens.data);
   const [showWarning, setShowWarning] = useState(false);
   const [skipWarning, setSkipWarning] = useState(project.info.skipPublishWarning ?? false);
@@ -104,6 +105,19 @@ export function Deploy(props: Props) {
   // An independent .dev upload cannot replace an entire .org World atomically.
   // Require an explicit removal through Manage for layouts that need a whole-World delete.
   const requiresManualRemoval = needsUndeploy && managesCanonicalWorlds;
+  const localLayoutConflicts =
+    managesCanonicalWorlds &&
+    isWorld &&
+    deploymentMetadata?.isMultiScene === false &&
+    publishSceneLayout.worldName === worldName &&
+    publishSceneLayout.scenes.some(scene =>
+      scene.parcels.every(parcel => !project.scene.parcels.includes(parcel)),
+    );
+  const publishBlockedReason = requiresManualRemoval
+    ? t('modal.publish_project.deploy.deploying.errors.canonical_removal_required')
+    : localLayoutConflicts
+      ? t('modal.publish_project.deploy.deploying.errors.pending_publish_layout')
+      : undefined;
   /** Publishing empties the world first: the same condition `handlePublish` undeploys on. */
   const willEmptyWorld = needsUndeploy && !managesCanonicalWorlds && !!wallet && !!worldName;
 
@@ -130,7 +144,7 @@ export function Deploy(props: Props) {
   }, [isWorld, worldScenes, project.scene.parcels]);
 
   const handlePublish = useCallback(async () => {
-    if (requiresManualRemoval) return;
+    if (publishBlockedReason) return;
     setShowWarning(false);
     updateProjectInfo(project.path, { skipPublishWarning: skipWarning }); // write skip warning flag
 
@@ -154,7 +168,7 @@ export function Deploy(props: Props) {
   }, [
     skipWarning,
     project,
-    requiresManualRemoval,
+    publishBlockedReason,
     willEmptyWorld,
     worldName,
     wallet,
@@ -328,7 +342,7 @@ export function Deploy(props: Props) {
         className="Deploy"
         data-testid="publish-modal-deploy"
       >
-        {showWarning ? (
+        {showWarning && !publishBlockedReason ? (
           <div
             className="publish-warning"
             data-testid="publish-modal-deploy-warning"
@@ -405,13 +419,7 @@ export function Deploy(props: Props) {
                   <Idle
                     files={deployment.files}
                     error={deployment.error}
-                    publishBlockedReason={
-                      requiresManualRemoval
-                        ? t(
-                            'modal.publish_project.deploy.deploying.errors.canonical_removal_required',
-                          )
-                        : undefined
-                    }
+                    publishBlockedReason={publishBlockedReason}
                     sceneSizeLimit={sceneSizeLimit}
                     isSceneSizeLimitLoading={isSceneSizeLimitLoading}
                     onClick={() =>

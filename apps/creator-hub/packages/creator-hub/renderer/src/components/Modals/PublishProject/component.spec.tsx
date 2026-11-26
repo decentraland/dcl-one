@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,7 @@ import { PublishProject } from './component';
 import type { Props } from './types';
 
 const crash = { enabled: true };
+let wallet: string | undefined;
 
 vi.mock('@sentry/electron/renderer', () => ({ captureException: vi.fn() }));
 vi.mock('#store', () => ({ useDispatch: () => vi.fn() }));
@@ -22,7 +24,7 @@ vi.mock('./PublishModal', () => ({
   PublishModal: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
     open ? <div>{children}</div> : null,
 }));
-vi.mock('/@/hooks/useAuth', () => ({ useAuth: () => ({ wallet: undefined }) }));
+vi.mock('/@/hooks/useAuth', () => ({ useAuth: () => ({ wallet }) }));
 vi.mock('./steps/Initial', () => ({
   Initial: ({ onStep, onClose }: Props) => {
     if (crash.enabled) {
@@ -39,7 +41,16 @@ vi.mock('./steps/Initial', () => ({
 }));
 
 vi.mock('./steps/AlternativeServers', () => ({ AlternativeServers: () => null }));
-vi.mock('./steps/PublishToWorld', () => ({ PublishToWorld: () => null }));
+vi.mock('./steps/PublishToWorld', () => ({
+  PublishToWorld: function WorldStep() {
+    const [selected, setSelected] = useState(false);
+    return (
+      <button onClick={() => setSelected(true)}>
+        {selected ? 'Old World selected' : 'Select a World'}
+      </button>
+    );
+  },
+}));
 vi.mock('./steps/PublishToLand', () => ({ PublishToLand: () => null }));
 vi.mock('./steps/Deploy', () => ({ Deploy: () => null }));
 
@@ -144,6 +155,34 @@ describe('PublishProject error boundary', () => {
       expect(screen.getByText('Initial step')).toBeTruthy();
     });
   });
+});
+
+it('starts a fresh World picker when the wallet changes while publishing', () => {
+  const onClose = vi.fn();
+  const modal = () => (
+    <TestProviders>
+      <PublishProject
+        open
+        project={project}
+        onClose={onClose}
+        initialStep="publish-to-world"
+      />
+    </TestProviders>
+  );
+  wallet = '0xa';
+  const { rerender } = render(modal());
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Select a World' }));
+    expect(screen.getByRole('button', { name: 'Old World selected' })).toBeTruthy();
+
+    wallet = '0xb';
+    rerender(modal());
+
+    expect(screen.getByRole('button', { name: 'Select a World' })).toBeTruthy();
+  } finally {
+    wallet = undefined;
+    cleanup();
+  }
 });
 
 describe('PublishProject analytics', () => {

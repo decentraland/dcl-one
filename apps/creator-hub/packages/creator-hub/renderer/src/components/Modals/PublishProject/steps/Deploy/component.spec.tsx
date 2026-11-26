@@ -24,6 +24,7 @@ const hooks = vi.hoisted(() => ({
   canonicalManagement: false,
   names: {} as Record<string, { nftOwnerAddress?: string }>,
   worldScenes: [] as { parcels: string[] }[],
+  publishSceneLayout: { worldName: '', scenes: [] as { parcels: string[] }[] },
   wallet: '0xabc' as string | undefined,
   fetchWorldSceneSizeLimit: vi.fn(async () => null),
 }));
@@ -33,7 +34,10 @@ vi.mock('#store', () => ({
   useSelector: (selector: (state: unknown) => unknown) =>
     selector({
       ens: { data: hooks.names },
-      management: { worldSettings: { scenes: hooks.worldScenes } },
+      management: {
+        worldSettings: { scenes: hooks.worldScenes },
+        publishSceneLayout: hooks.publishSceneLayout,
+      },
     }),
 }));
 vi.mock('/shared/urls', async importOriginal => ({
@@ -126,6 +130,7 @@ describe('Deploy step', () => {
     hooks.deployment = undefined;
     hooks.names = {};
     hooks.worldScenes = [];
+    hooks.publishSceneLayout = { worldName: '', scenes: [] };
     hooks.canonicalManagement = false;
     hooks.dispatch.mockClear();
     hooks.executeDeployment.mockClear();
@@ -483,6 +488,48 @@ describe('Deploy step', () => {
       });
     },
   );
+
+  it('blocks a single-scene publish that would leave a pending local scene outside the layout', async () => {
+    hooks.canonicalManagement = true;
+    hooks.publishSceneLayout = { worldName: 'name.dcl.eth', scenes: [{ parcels: ['5,5'] }] };
+    hooks.deployment = createDeployment({
+      status: 'idle',
+      phase: undefined,
+      info: { isWorld: true, rootCID: 'bafy', parcels: ['0,0'] } as Deployment['info'],
+    });
+    props.previousStep = 'publish-to-world';
+    props.project = {
+      ...PROJECT,
+      info: { ...PROJECT.info, skipPublishWarning: true },
+      worldConfiguration: { name: 'name.dcl.eth' },
+    };
+    props.deploymentMetadata = { isMultiScene: false };
+    mount();
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+    hooks.dispatch.mockClear();
+
+    const publish = screen.getByRole('button', {
+      name: 'modal.publish_project.deploy.files.publish',
+    });
+    expect(publish).toHaveProperty('disabled', true);
+    fireEvent.click(publish);
+    expect(hooks.dispatch).not.toHaveBeenCalled();
+    expect(hooks.executeDeployment).not.toHaveBeenCalled();
+    expect(
+      screen.getByText('modal.publish_project.deploy.deploying.errors.pending_publish_layout'),
+    ).toBeTruthy();
+    expect(hooks.fetchWorldSceneSizeLimit).toHaveBeenCalledWith('name.dcl.eth', ['0,0'], {
+      replacesWorld: false,
+    });
+
+    props.deploymentMetadata = { isMultiScene: true };
+    rerender();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'modal.publish_project.deploy.files.publish' }),
+    );
+    expect(hooks.dispatch).not.toHaveBeenCalled();
+    expect(hooks.executeDeployment).toHaveBeenCalledWith(PROJECT.path);
+  });
 
   describe('when publishing to a single-scene world with other scenes but no wallet to remove them', () => {
     beforeEach(() => {

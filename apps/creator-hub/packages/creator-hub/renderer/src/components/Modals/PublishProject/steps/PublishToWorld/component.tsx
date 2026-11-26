@@ -134,13 +134,19 @@ export function PublishToWorld(props: Props) {
   // to single scene stuck (a restricted collaborator, whose switch is locked, saw the
   // "lose its Places listing" warning instead of the parcel picker).
   // A restricted collaborator always has to choose a location.
+  // One scene on each server can represent two separate locations during forwarding.
+  const canonicalFirstScene = worldSettings.scenes[0];
+  const publishFirstScene = usesSeparatePublishTarget ? publishLayout?.scenes[0] : undefined;
+  const hasDistinctLocations =
+    !!canonicalFirstScene &&
+    !!publishFirstScene &&
+    !canonicalFirstScene.parcels.some(parcel => publishFirstScene.parcels.includes(parcel));
   const isMultiSceneEnabled =
     !hasWorldWidePermissions ||
     (multiSceneChoice ??
-      Math.max(
-        worldSettings.scenes.length,
-        usesSeparatePublishTarget ? (publishLayout?.scenes.length ?? 0) : 0,
-      ) > 1);
+      (hasDistinctLocations ||
+        worldSettings.scenes.length > 1 ||
+        (usesSeparatePublishTarget && (publishLayout?.scenes.length ?? 0) > 1)));
 
   const handleBack = useCallback(() => {
     if (step === Step.CONFIRM_OVERWRITE) {
@@ -981,6 +987,7 @@ function ConfirmOverwrite({
     });
   }, [worldScenes, parcels]);
 
+  // The replacement list covers both servers. Places only tracks accepted canonical scenes.
   const overlap = useMemo(
     () => countOverlappedWorldScenes(canonicalScenes, parcels),
     [canonicalScenes, parcels],

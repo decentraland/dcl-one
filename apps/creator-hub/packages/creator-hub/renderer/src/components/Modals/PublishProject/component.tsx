@@ -106,7 +106,12 @@ export function PublishProject({
       {step === 'initial' && <Initial {...props} />}
       {step === 'alternative-servers' && <AlternativeServers {...props} />}
       {step === 'publish-to-land' && <PublishToLand {...props} />}
-      {step === 'publish-to-world' && <PublishToWorld {...props} />}
+      {step === 'publish-to-world' && (
+        <PublishToWorld
+          key={wallet}
+          {...props}
+        />
+      )}
       {step === 'deploy' && <Deploy {...props} />}
     </ErrorBoundary>
   );
