@@ -737,6 +737,15 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     ch.postMessage({ to: 'page', msg } satisfies Envelope)
   }
 
+  // A saved outfit's work takes a moment, as the scene's does, so the slot's busy state shows.
+  const outfitWork = (slot: number, action: 'save' | 'delete' | 'equip', work: () => void): void => {
+    reply({ kind: 'outfitBusy', slot, action, busy: true })
+    setTimeout(() => {
+      work()
+      reply({ kind: 'outfitBusy', slot, action, busy: false })
+    }, 800)
+  }
+
   // ?mockportables=1: the portables the mock engine lists. The jetpack runs until the player stops it
   // (then it can be restarted); the pet is paused by the scene; the scene's portable failed to load.
   const portables: PortableInfo[] = [
@@ -1370,27 +1379,33 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'saveOutfit') {
-      // Capture the full current look (equippedNow includes the off-catalog item), so a saved slot
-      // equals the equipped set and shows the "matches current look" marker.
-      mockOutfits.outfits = mockOutfits.outfits.filter((o) => o.slot !== msg.slot)
-      mockOutfits.outfits.push({ slot: msg.slot, outfit: mockOutfit(equippedNow().map((w) => w.urn)) })
-      mockOutfits.outfits.sort((a, b) => a.slot - b.slot)
-      reply({ kind: 'outfits', metadata: mockOutfits })
+      outfitWork(msg.slot, 'save', () => {
+        // Capture the full current look (equippedNow includes the off-catalog item), so a saved slot
+        // equals the equipped set and shows the "matches current look" marker.
+        mockOutfits.outfits = mockOutfits.outfits.filter((o) => o.slot !== msg.slot)
+        mockOutfits.outfits.push({ slot: msg.slot, outfit: mockOutfit(equippedNow().map((w) => w.urn)) })
+        mockOutfits.outfits.sort((a, b) => a.slot - b.slot)
+        reply({ kind: 'outfits', metadata: mockOutfits })
+      })
       return
     }
     if (msg.kind === 'deleteOutfit') {
-      mockOutfits.outfits = mockOutfits.outfits.filter((o) => o.slot !== msg.slot)
-      reply({ kind: 'outfits', metadata: mockOutfits })
+      outfitWork(msg.slot, 'delete', () => {
+        mockOutfits.outfits = mockOutfits.outfits.filter((o) => o.slot !== msg.slot)
+        reply({ kind: 'outfits', metadata: mockOutfits })
+      })
       return
     }
     if (msg.kind === 'equipOutfit') {
-      // Reflect the outfit's wearables as equipped so the Wearables tab updates too.
-      const found = mockOutfits.outfits.find((o) => o.slot === msg.slot)
-      if (found) {
-        const set = new Set(found.outfit.wearables)
-        for (const w of wardrobe()) w.equipped = set.has(w.urn)
-        reply({ kind: 'wearables', equipped: equippedNow(), bodyShape: BASE_MALE, colors: mockColors })
-      }
+      outfitWork(msg.slot, 'equip', () => {
+        // Reflect the outfit's wearables as equipped so the Wearables tab updates too.
+        const found = mockOutfits.outfits.find((o) => o.slot === msg.slot)
+        if (found) {
+          const set = new Set(found.outfit.wearables)
+          for (const w of wardrobe()) w.equipped = set.has(w.urn)
+          reply({ kind: 'wearables', equipped: equippedNow(), bodyShape: BASE_MALE, colors: mockColors })
+        }
+      })
       return
     }
     if (msg.kind === 'setNearbyMute') {

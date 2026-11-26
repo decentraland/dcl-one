@@ -5384,6 +5384,10 @@
           "kind": "regular"
         },
         {
+          "name": "backpackOutfitBusy.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "backpackOutfitErrors.test.tsx",
           "kind": "regular"
         },
@@ -6139,7 +6143,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/outfits.ts",
-      "sha256": "4940b5f381241e8a35be703bbba78d802623ddda3f2ca74391f508d20fd4095c"
+      "sha256": "eb88155d818d0294ed4c000dac1b9d0d6b67052d6c3797b4263151d313a103dc"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/permissions.ts",
@@ -6399,7 +6403,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
-      "sha256": "b0648f5f93f52685a6d9cc61630644c70850cb5e52ad532fb0cf80d59748f48b"
+      "sha256": "71c8f97ff73b964a513b6c084b631ef2c4da4127c189a0058ced0248232dac3e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePermissionsInForce.test.ts",
@@ -6739,7 +6743,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "9ea352bccec286016e9a42ea636772fc21de8bdaadd1db67e3085422eb67b405"
+      "sha256": "a0a53ea7631a2b170ec96e8fd080ca13040b1ba4311e17227b85bd4dfc0aa53c"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6779,7 +6783,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "d253ae22e3bb7feb9f4bec40829a181ca19d806ed1d3b8119e0adfe3d5ce5f28"
+      "sha256": "e3f81fc17e60f882fa470c51e37176986d097fa9b926b4c0060cd47716ea253a"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -9395,11 +9399,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.module.css",
-      "sha256": "f72fa40d72eaaf93d736e4ef43cf9cd5b2876c765731686d143b6f4bd2cc172a"
+      "sha256": "6e2097c65a81e85878f649531262f6bffe365793fd1ead67f23087048b2767c8"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
-      "sha256": "b0254650c3b4b108f47a360695704dadce234df7e7059d1bd8b2ab157d979e50"
+      "sha256": "78ae93395c2d85b096d77643454a340a6cda4024082a665c2c9f4466a50d4d43"
     },
     {
       "path": "library/ui/apps/hud/features/backpack/categoryIcons.tsx",
@@ -10387,7 +10391,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "b99d25fd5b0b7af07db14d4e1a20c7a4808fefe4fb16a5824dace337bbf19e61"
+      "sha256": "09403ada9bd57da1ce3efef0d2cb8561e52c0c7797d8cbe1139aa354dd6e1168"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10735,7 +10739,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "b61c62674f62d5e68d57ae0704a41ae62de3067a194d6b7c874d480d2a09dbd0"
+      "sha256": "180371c972c6da8e64caeb4133f653f28a1f821cee7d684c67fe83ca272cc54f"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -10772,6 +10776,10 @@
     {
       "path": "library/ui/apps/hud/test/hosted/backpackHints.test.tsx",
       "sha256": "530f7b11609660f8146f4ecc2da29765fe8e59c2d9313929328b3bed0857bf68"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
+      "sha256": "5080e65c4347803eb7cbee197e0bfab4b9a5a817c0c50d8b7134e9747376e31f"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/backpackOutfitErrors.test.tsx",
@@ -39302,6 +39310,51 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
+      "to": "library/ui/apps/hud/features/backpack/BackpackPage.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/hosted/backpackOutfitErrors.test.tsx",
       "to": "library/explorer-core/test/console.ts",
       "kind": "native:runtime"
@@ -49309,6 +49362,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/backpackHints.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/backpackOutfitBusy.test.tsx",
       "kind": "type"
     },
     {

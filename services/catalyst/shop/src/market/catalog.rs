@@ -384,12 +384,12 @@ impl Serialize for CatalogPage {
 
 type Page = Arc<(Vec<CatalogItem>, i64)>;
 
-/// Pages keyed by `(is_v2, filters, the catalogue read's copy)`
+/// Descriptive pages keyed by `(filters, the catalogue read's copy)`
 /// ([`CatalogueRead::key`]) and anonymous pick stats keyed by the page's
 /// ids, under `MARKETPLACE_CATALOG_CACHE_TTL_SECS` (0 disables).
 pub struct Cache {
     enabled: bool,
-    pages: TtlMap<(bool, CatalogFilters, String), Page>,
+    pages: TtlMap<(CatalogFilters, String), Page>,
     picks: TtlMap<Vec<String>, Arc<Vec<PickStats>>>,
 }
 
@@ -424,12 +424,12 @@ impl Cache {
     /// ([`crate::shared::cache::TtlMap::get_or_fetch_holding`]).
     async fn page_or_fetch_holding<F>(
         &self,
-        key: (bool, CatalogFilters, String),
+        key: (CatalogFilters, String),
         held: &mut Option<CatalogueRead>,
         fetch: F,
-    ) -> Result<Option<Page>, ApiError>
+    ) -> Result<Option<Page>, Response>
     where
-        F: AsyncFnOnce(&mut CatalogueRead) -> Result<Page, ApiError>,
+        F: AsyncFnOnce(&mut CatalogueRead) -> Result<Page, Response>,
     {
         if !self.enabled {
             let read = held.as_mut().expect("a request holds its read");
@@ -558,6 +558,84 @@ pub fn uint_or_null(expr: &str) -> String {
     format!("(CASE WHEN {expr} ~ '^(0|[1-9][0-9]{{0,77}})$' THEN {expr}::numeric END)")
 }
 
+/// Ownership of the sent ERC-721 in the same snapshot as the trade verdict.
+fn nft_trade_backed_sql(now_p: &str, token_num: &str, eth: i64, matic: i64) -> String {
+    use super::chain_walk::{ChainNet, MAX_CLOCK_SKEW, READY_WINDOW};
+    use crate::land_authz::{LAND_MAINNET, LAND_SEPOLIA};
+    let land = if eth == 11_155_111 {
+        LAND_SEPOLIA
+    } else {
+        LAND_MAINNET
+    };
+    let nft_ready = super::chain_walk::published_sql_on("c", now_p, eth, matic);
+    format!(
+        "(sent.asset_type = 3 AND {token_num} IS NOT NULL
+          AND NOT EXISTS (
+              SELECT FROM shop.trade_assets other
+              WHERE other.trade_id = t.id AND other.direction = 'sent' AND other.id <> sent.id
+          )
+          AND CASE WHEN lower(t.network) = 'ethereum' AND sent.contract_address IN
+              ('{main_land}', '{main_estate}', '{test_land}', '{test_estate}')
+          THEN EXISTS (
+              SELECT FROM land_authz.index_cursor c
+              JOIN land_authz.token_right n ON n.token_address = sent.contract_address
+                   AND n.token_id = {token_num}
+              WHERE c.network = '{land_network}'
+                AND c.land_registry = '{land_registry}' AND c.estate_registry = '{estate_registry}'
+                AND sent.contract_address IN (c.land_registry, c.estate_registry)
+                AND c.full_replay_started AND c.folded_block IS NOT NULL
+                AND c.folded_at BETWEEN {now_p} - interval '{window} seconds'
+                                    AND {now_p} + interval '{skew} seconds'
+                AND n.owner = lower(t.signer) AND n.updated_block <= c.folded_block
+                AND NOT EXISTS (
+                    SELECT FROM land_authz.authz_event e
+                    WHERE e.token_address = n.token_address AND e.token_id = n.token_id
+                      AND e.kind = 'transfer' AND e.block_number > c.folded_block
+                )
+          ) ELSE EXISTS (
+              SELECT FROM shop.chain_cursor c
+              JOIN shop.nft n ON n.network = c.network AND n.contract_address = sent.contract_address
+                   AND n.token_id = {token_num}
+              WHERE c.indexer = 'nft' AND c.network = lower(t.network) AND {nft_ready}
+                AND n.owner = lower(t.signer) AND n.transferred_block <= c.folded_block
+                AND (c.chain_id IN ({ethereum}, {polygon})
+                  OR (c.network = 'ethereum' AND n.contract_address = '{registrar}')
+                  OR EXISTS (
+                      SELECT FROM shop.nft_contract watched
+                      JOIN shop.collections active ON active.network = watched.network
+                         AND active.contract_address = watched.contract_address
+                      WHERE watched.network = n.network AND watched.contract_address = n.contract_address
+                        AND active.chain_id = c.chain_id AND active.testnet_verified
+                  )
+                )
+                AND NOT EXISTS (
+                    SELECT FROM shop.nft_event e
+                    WHERE e.network = n.network AND e.contract_address = n.contract_address
+                      AND e.token_id = n.token_id AND e.kind = 'transfer'
+                      AND e.block_number > c.folded_block
+                )
+                AND NOT EXISTS (
+                    SELECT FROM shop.nft_contract watched
+                    WHERE watched.network = n.network AND watched.contract_address = n.contract_address
+                      AND (watched.refold_owed OR ({backfill_pending}))
+                )
+          ) END)",
+        ethereum = ChainNet::Ethereum.chain_id(),
+        polygon = ChainNet::Matic.chain_id(),
+        registrar = super::nft_index::Catalogue::Testnet.registrar(),
+        backfill_pending = super::nft_index::BACKFILL_PENDING_SQL,
+        window = READY_WINDOW.num_seconds(),
+        skew = MAX_CLOCK_SKEW.num_seconds(),
+        main_land = LAND_MAINNET.land_registry,
+        main_estate = LAND_MAINNET.estate_registry,
+        test_land = LAND_SEPOLIA.land_registry,
+        test_estate = LAND_SEPOLIA.estate_registry,
+        land_network = land.network,
+        land_registry = land.land_registry,
+        estate_registry = land.estate_registry,
+    )
+}
+
 /// `unified_trades`: the open off-chain listings of `shop.trades` as
 /// one row per trade with its sent asset resolved to `(contract, item_id,
 /// token_id)` and its received amount, asset type and token contract. Open = effective, not expired at
@@ -568,7 +646,8 @@ pub fn uint_or_null(expr: &str) -> String {
 /// left out, never listed on a stale verdict); and counted at
 /// `since_p` (a bound nullable timestamp, `trades::mirrored_since`). An item
 /// order also needs its creator's signature and its marketplace among the
-/// collection's minters, as no other contract can mint the item.
+/// collection's minters. An NFT order needs current ownership evidence
+/// for its signer from the published NFT or LAND/Estate fold.
 pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
     unified_trades_cte_of(now_p, since_p, None)
 }
@@ -577,9 +656,17 @@ pub fn unified_trades_cte(now_p: &str, since_p: &str) -> String {
 /// trades that sell from those contracts, as a semi-join that stays hashed
 /// whatever the array's length.
 pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&str>) -> String {
+    use super::chain_walk::ChainNet;
     let of = contracts_p
         .map(|p| format!(" AND sent.contract_address IN (SELECT unnest({p}::text[]))"))
         .unwrap_or_default();
+    let (eth, matic) = served_chains();
+    let token_num = uint_or_null("sent_erc721.token_id");
+    let mainnet = format!(
+        "t.chain_id IN ({}, {})",
+        ChainNet::Ethereum.chain_id(),
+        ChainNet::Matic.chain_id()
+    );
     format!(
         "unified_trades AS ( \
            SELECT t.id, t.type::text AS type, t.signer, t.created_at, t.expires_at, t.network, t.chain_id, t.contract AS trade_contract, \
@@ -604,20 +691,23 @@ pub fn unified_trades_cte_of(now_p: &str, since_p: &str, contracts_p: Option<&st
              AND {served} \
              AND (sent_item.asset_id IS NULL OR {item_num} IS NOT NULL) \
              AND (sent_erc721.asset_id IS NULL OR {token_num} IS NOT NULL) \
+             AND (t.type <> 'public_nft_order' OR {backed}) \
              AND (t.type <> 'public_item_order' OR EXISTS ( \
                    SELECT 1 FROM shop.items ci \
                    WHERE ci.network = lower(t.network) AND ci.contract_address = lower(sent.contract_address) \
+                     AND ci.chain_id = t.chain_id AND ({mainnet} OR ci.testnet_verified) \
                      AND ci.item_id = {item_num} AND lower(ci.creator) = lower(t.signer))) \
              AND (t.type <> 'public_item_order' OR EXISTS ( \
                    SELECT 1 FROM shop.collections mc \
                    WHERE mc.network = lower(t.network) AND mc.contract_address = lower(sent.contract_address) \
+                     AND mc.chain_id = t.chain_id AND ({mainnet} OR mc.testnet_verified) \
                      AND lower(t.contract) = ANY(mc.minters))) \
          )",
         served = served_chain_sql("t"),
         item_num = uint_or_null("sent_item.item_id"),
-        token_num = uint_or_null("sent_erc721.token_id"),
         shift = ITEM_ID_SHIFT,
         listable = super::trade_events::listable_on_chain_sql("t", now_p),
+        backed = nft_trade_backed_sql(now_p, &token_num, eth, matic),
         counted = super::trades::counted_sql("t.", since_p)
     )
 }
@@ -1170,7 +1260,7 @@ pub async fn fetch_page(
     read: &mut CatalogueRead,
     f: &CatalogFilters,
     is_v2: bool,
-) -> Result<(Vec<CatalogItem>, i64), ApiError> {
+) -> Result<(Vec<CatalogItem>, i64), Response> {
     // The read's clock: the trades check decided on the same instant.
     let now = read.now.naive_utc();
     let since = super::trades::mirrored_since(&state.settings, now);
@@ -1180,7 +1270,12 @@ pub async fn fetch_page(
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, "catalog query failed");
-            ApiError::bad_request("Couldn't fetch the catalog with the filters provided")
+            if super::nft_reads::cancelled(&e) {
+                super::nft_reads::timed_out()
+            } else {
+                ApiError::bad_request("Couldn't fetch the catalog with the filters provided")
+                    .into_response()
+            }
         })?;
     let total: i64 = match rows.first() {
         Some(r) => r.get("total"),
@@ -1189,8 +1284,8 @@ pub async fn fetch_page(
             sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
                 .fetch_one(&mut *read.tx)
                 .await
-                .map(|r| r.get::<i64, _>("total"))
-                .unwrap_or(0)
+                .map_err(super::nft_reads::read_error)?
+                .get("total")
         }
         None => 0,
     };
@@ -1225,15 +1320,24 @@ async fn catalog_inner(
         };
         // The v2 legs (price, isOnSale, tradeId, the listing counts) are
         // computed from shop.trades: a partial mirror is not the order book.
-        if is_v2 && let Err(envelope) = read.trades_ready(&state).await {
-            return envelope;
+        if is_v2 {
+            if let Err(envelope) = read.trades_ready(&state).await {
+                return envelope;
+            }
+            match fetch_page(&state, &mut read, &filters, true).await {
+                Ok(page) => {
+                    read.note(&state);
+                    break Arc::new(page);
+                }
+                Err(e) => return e.into_response(),
+            }
         }
-        let (key, stamp) = ((is_v2, filters.clone(), read.key()), read.stamp());
+        let (key, stamp) = ((filters.clone(), read.key()), read.stamp());
         let mut held = Some(read);
         match state
             .catalog_cache
             .page_or_fetch_holding(key, &mut held, async |read: &mut CatalogueRead| {
-                fetch_page(&state, read, &filters, is_v2)
+                fetch_page(&state, read, &filters, false)
                     .await
                     .map(Arc::new)
             })
@@ -1635,6 +1739,127 @@ mod tests {
         assert_eq!(escape_like("50%_off\\"), "50\\%\\_off\\\\");
     }
 
+    #[tokio::test]
+    async fn sepolia_land_uses_its_ownership_publication_with_clock_skew() {
+        use crate::land_authz::{LAND_MAINNET, LAND_SEPOLIA};
+        use crate::market::chain_walk::ChainNet;
+        let Some(db) = crate::test_db::OwnDatabase::create("listing_sepolia").await else {
+            return;
+        };
+        let pool = &db.pool;
+        let now = chrono::Utc::now().naive_utc();
+        let signer = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        for land in [LAND_MAINNET, LAND_SEPOLIA] {
+            sqlx::query(
+                "INSERT INTO land_authz.index_cursor (network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started)
+                 VALUES ($1, $2, $3, 101, 100, $4, true)",
+            )
+            .bind(land.network)
+            .bind(land.land_registry)
+            .bind(land.estate_registry)
+            .bind(now + chrono::Duration::minutes(5))
+            .execute(pool).await.unwrap();
+            sqlx::query(
+                "INSERT INTO land_authz.token_right (token_address,token_id,owner,updated_block,updated_log)
+                 VALUES ($1, 1, $2, 90, 0)",
+            )
+            .bind(land.land_registry).bind(signer)
+            .execute(pool).await.unwrap();
+        }
+        let backed = nft_trade_backed_sql(
+            "$1::timestamp",
+            "1::numeric",
+            ChainNet::Ethereum.testnet_chain_id(),
+            ChainNet::Matic.testnet_chain_id(),
+        );
+        let query = format!(
+            "SELECT {backed} FROM (SELECT 'ETHEREUM' AS network, $2::text AS signer, gen_random_uuid() AS id) t
+             CROSS JOIN (SELECT 3 AS asset_type, $3::text AS contract_address, gen_random_uuid() AS id) sent"
+        );
+        for (registry, expected) in [
+            (LAND_SEPOLIA.land_registry, true),
+            (LAND_MAINNET.land_registry, false),
+        ] {
+            let held: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(query.as_str()))
+                .bind(now)
+                .bind(signer)
+                .bind(registry)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert_eq!(held, expected, "{registry}");
+        }
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn amoy_listing_ownership_needs_a_verified_watched_collection() {
+        use crate::market::chain_walk::ChainNet;
+        let Some(db) = crate::test_db::OwnDatabase::create("listing_amoy").await else {
+            return;
+        };
+        let pool = &db.pool;
+        let now = chrono::Utc::now().naive_utc();
+        let signer = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let contract = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO shop.chain_cursor (indexer, network, chain_id, start_block, last_block, folded_block, folded_at, full_history)
+             VALUES ('nft', 'matic', 80002, 0, 100, 100, timezone('UTC', now()), true);
+             INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, transferred_block, transferred_at, transferred_log)
+             VALUES ('matic', '{contract}', 1, '{signer}', 2, 2, 2, 2, 0);
+             INSERT INTO shop.nft_contract (network, contract_address, walked_from_block) VALUES ('matic', '{contract}', 1);
+             INSERT INTO shop.collections
+               (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at)
+             VALUES ('matic', '{contract}', 80002, 'Amoy', '{signer}', '{signer}', 'urn:amoy:collection', true, true, false, 1, 1, 1, now())"
+        ))).execute(pool).await.unwrap();
+        let backed = nft_trade_backed_sql(
+            "$1::timestamp",
+            "1::numeric",
+            ChainNet::Ethereum.testnet_chain_id(),
+            ChainNet::Matic.testnet_chain_id(),
+        );
+        let query = format!(
+            "SELECT {backed} FROM (SELECT 'MATIC' AS network, $2::text AS signer, gen_random_uuid() AS id) t
+             CROSS JOIN (SELECT 3 AS asset_type, $3::text AS contract_address, gen_random_uuid() AS id) sent"
+        );
+        let held = || async {
+            sqlx::query_scalar::<_, bool>(sqlx::AssertSqlSafe(query.as_str()))
+                .bind(now)
+                .bind(signer)
+                .bind(contract)
+                .fetch_one(pool)
+                .await
+                .unwrap()
+        };
+        assert!(
+            !held().await,
+            "an unverified collection cannot prove ownership"
+        );
+        sqlx::query(
+            "UPDATE shop.collections SET testnet_verified = true WHERE contract_address = $1",
+        )
+        .bind(contract)
+        .execute(pool)
+        .await
+        .unwrap();
+        assert!(
+            held().await,
+            "the verified and watched collection proves ownership"
+        );
+        sqlx::query(
+            "DELETE FROM shop.nft_contract WHERE network = 'matic' AND contract_address = $1",
+        )
+        .bind(contract)
+        .execute(pool)
+        .await
+        .unwrap();
+        assert!(
+            !held().await,
+            "removing the contract's watch withdraws the ownership proof"
+        );
+        db.drop().await;
+    }
+
     /// Two open item orders for one item: the catalogue names the cheapest
     /// and its own price, never one order's id with another's price.
     #[tokio::test]
@@ -1692,6 +1917,9 @@ mod tests {
                     .await
                     .unwrap(),
             );
+        }
+        for id in &ids {
+            crate::test_db::open_trade_verdict(pool, id).await;
         }
         // The greater id gets the lower price, so neither MAX pairs them.
         ids.sort();
