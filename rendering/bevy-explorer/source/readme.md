@@ -276,6 +276,14 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   showing that message; replies with nothing), `/nametag_official <address> [bool]` (reads or
   sets, for the session, whether a wallet's nametag carries the official badge; replies with
   `address` and `official`),
+  `/reaction_state` (the situational reactions: whether they show in the `world`, the `picked`,
+  `outbox`, `refusedPicks`, `sent`, `received`, `queued`, `played` and `streamed` counts, the `subscribers`
+  streams, the `particles` alive, drawn and waiting for glyphs, the glyph `atlas` page size, and
+  those `dropped` by cause),
+  `/reaction_simulate <local|nearest|address> <emoji> [count]` (takes a message of reactions as if
+  that player had sent it, on this client only; replies with the `target` taken and the emoji's
+  wire `index`), `/reaction_atlas_rebuild` (has the reactions' glyph atlas rebuilt at its next
+  upkeep; replies with nothing),
   `/voice_state` (the nearby mic, with `sceneBlocked` while the scene the player stands in turns
   nearby voice off or its room refused the player as banned, asking again every 15 seconds; the
   nearby voice rooms and, as `call`, the private call or community stream the player is in:
@@ -299,10 +307,11 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   and the scene commands.
 - Social: `/block_user <address>` and `/unblock_user <address>` block and unblock through the
   social service, as the passport does.
-- Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`
-  and `/react <channel> <message id> <emoji>` send as the HUD does; `/community_channels [add
-  <id>|remove <id>|clear]` lists or edits the community channels the engine listens to, which
-  the HUD sets from the user's communities (the engine drops community messages on any other).
+- Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`,
+  `/react <channel> <message id> <emoji>` and `/reaction_send <emoji>` send as the HUD does;
+  `/community_channels [add <id>|remove <id>|clear]` lists or edits the community channels the
+  engine listens to, which the HUD sets from the user's communities (the engine drops community
+  messages on any other).
 - Voice chat, as the HUD's buttons do it and through the same refusals: `/voice call <address>`
   rings a user, `/voice accept` and `/voice reject` answer a ringing call, `/voice end` hangs up
   or leaves a stream, `/voice start|join <community id>` opens or joins a stream, `/voice close`
@@ -362,6 +371,8 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   to the engine through `engine_console_command` and write Bevy input events, unlike `/press_key`
   and `/click_at`, which need a DevTools client for real input. `docs/guidelines/interaction.md`
   has the options, replies and diagnoses.
+- Movement: `/movement_state` reads the locomotion settings, the last movement step and the
+  height over the ground.
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 **The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC

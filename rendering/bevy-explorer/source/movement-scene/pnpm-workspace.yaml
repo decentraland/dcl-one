@@ -1,0 +1,12 @@
+# A flat node_modules: the SDK's published type declarations reach a sibling package by relative path.
+nodeLinker: hoisted
+overrides:
+  # @dcl/inspector asks for ^2.17.0; the scene keeps the version it was imported with.
+  '@dcl/asset-packs': 2.15.3
+  # @dcl/quests-client asks for the "latest" @dcl/sdk; this keeps it on the scene's version.
+  '@dcl/quests-client>@dcl/sdk': 7.27.1-33247605236.commit-732120a
+minimumReleaseAge: 1440
+allowBuilds:
+  '@dcl/sdk-commands': false
+  esbuild: false
+  protobufjs: false

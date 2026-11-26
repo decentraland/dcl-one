@@ -82,7 +82,7 @@ describe('PhotoDetail', () => {
 
   it('offers the public toggle and Delete only on your own photos', () => {
     const { rerender } = render(<PhotoDetail {...viewer()} />)
-    expect(screen.getByRole('switch', { name: 'Set as Public' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('switch', { name: 'Set as Public' })).toBeChecked()
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
     rerender(<PhotoDetail {...viewer({ canEdit: false })} />)
     expect(screen.queryByRole('switch', { name: 'Set as Public' })).toBeNull()
@@ -97,9 +97,9 @@ describe('PhotoDetail', () => {
     const toggle = screen.getByRole('switch', { name: 'Set as Public' })
     await userEvent.click(toggle)
     expect(onSetPublic).toHaveBeenCalledWith(photos[1], false)
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    expect(toggle).not.toBeChecked()
     await act(async () => settle(false))
-    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    expect(toggle).toBeChecked()
   })
 
   it('a second choice stays while the first write settles, and a refused one shows the photo\'s value', async () => {
@@ -111,13 +111,13 @@ describe('PhotoDetail', () => {
     await userEvent.click(toggle)
     await userEvent.click(toggle)
     expect(onSetPublic.mock.calls.map((c) => (c as unknown[])[1])).toEqual([false, true, false])
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    expect(toggle).not.toBeChecked()
     await act(async () => settle[1](true))
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    expect(toggle).not.toBeChecked()
     await act(async () => settle[0](true))
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    expect(toggle).not.toBeChecked()
     await act(async () => settle[2](false))
-    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    expect(toggle).toBeChecked()
   })
 
   it('the info toggle slides the panel away and back', async () => {

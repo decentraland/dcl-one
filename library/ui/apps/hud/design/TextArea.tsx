@@ -1,9 +1,9 @@
-// TextArea — the multi-line field (the passport's About Me). Pairs with CharCounter when a
-// `maxLength` is set: the counter is the only warning a user gets before the browser silently
-// stops accepting characters.
+// TextArea — the shared InputExplorerNames in its HUD look, over several lines (the passport's About Me), with
+// the kit's uncontrolled mode. Pairs with CharCounter when a `maxLength` is set: the counter is the only
+// warning a user gets before the browser silently stops accepting characters. Its stylesheet only stacks the two.
 
 import { useState } from 'react'
-import { CharCounter } from './CharCounter'
+import { CharCounter, InputExplorerNames } from '@dcl/one-ui'
 import styles from './TextArea.module.css'
 
 export interface TextAreaProps extends Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'onChange' | 'value'> {
@@ -31,10 +31,13 @@ export function TextArea({
 
   return (
     <div className={styles.wrap}>
-      <textarea
+      <InputExplorerNames
+        appearance="hud"
+        multiline
         {...rest}
         rows={rows}
-        className={[styles.field, styles[variant], className ?? ''].filter(Boolean).join(' ')}
+        className={className}
+        variant={variant}
         value={v}
         onChange={(e) => {
           if (!isControlled) setInternal(e.target.value)

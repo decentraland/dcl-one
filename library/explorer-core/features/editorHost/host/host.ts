@@ -374,8 +374,12 @@ function publishHost(source: EditorSource, pageDir: string, deps: EditorHostDeps
     clock = null
     void deps
       .engineConsole('/set_scene')
-      .then(() => restore)
-      .then((line) => (line == null ? undefined : deps.engineConsole(line)))
+      .then(async () => {
+        // the editor never stopped the clock: nothing to put back
+        if (restore == null) return
+        // the clock was not read: at least release the editor's pin on the sky
+        await deps.engineConsole((await restore) ?? '/time --resume')
+      })
       .catch((e: unknown) => console.error('[editor host] restoring the engine failed', e))
     deps.setMode('off')
     const back = home
@@ -436,6 +440,8 @@ function publishHost(source: EditorSource, pageDir: string, deps: EditorHostDeps
       await deps.travel(realm, { x: Number(parcel[1]), y: Number(parcel[2]) })
     },
     spawnEditorScene() {
+      // the editor's scene pins the sky: read the clock to put back, whichever call comes first
+      readClock()
       scene ??= (async () => {
         let hash = source.editorSceneEntity
         if (hash == null) {

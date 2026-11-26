@@ -7,7 +7,7 @@ use bevy::{
     prelude::*,
 };
 use common::{
-    dynamics::{PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS, PLAYER_GROUND_THRESHOLD},
+    dynamics::{landed, PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS, PLAYER_GROUND_THRESHOLD},
     inputs::MOVE_SET,
     sets::{PostUpdateSets, SceneSets},
     structs::{
@@ -69,6 +69,7 @@ impl Plugin for AvatarMovementPlugin {
         );
 
         app.init_resource::<AvatarMovementInfo>();
+        app.init_resource::<LastMovementStep>();
         app.register_required_components::<PrimaryUser, LocomotionSpeeds>();
         app.register_required_components::<RendererSceneContext, MovementPeriod>();
         app.init_resource::<CollisionPush>();
@@ -105,7 +106,6 @@ impl Plugin for AvatarMovementPlugin {
                 apply_impulses,
                 apply_movement,
                 record_own_movement,
-                record_ground_collider,
                 accumulate_movement_periods,
             )
                 .chain()
@@ -172,6 +172,7 @@ fn update_scene_driven_animation(
     mut commands: Commands,
     player: Query<(Entity, &ActivePlayerComponent<AvatarMovement>), With<PrimaryUser>>,
     scenes: Query<&RendererSceneContext>,
+    portables: Res<PortableScenes>,
     ipfas: IpfsAssetServer,
     mut logged_failures: Local<HashSet<String>>,
 ) {
@@ -241,6 +242,7 @@ fn update_scene_driven_animation(
             transition_seconds: anim.transition_seconds.unwrap_or(0.2),
             seek: anim.playback_time,
             sounds,
+            movement_scene: is_startup_portable(ctx, &portables),
         })
     })();
 
@@ -262,6 +264,15 @@ pub struct AvatarMovement {
     /// or the yaw broadcast to other clients. 0 = upright.
     pub tilt_pitch: f32,
     pub tilt_roll: f32,
+}
+
+impl AvatarMovement {
+    /// The velocity a movement step applies: the scene's, or zero when it is not finite.
+    fn requested_velocity(&self) -> Vec3 {
+        Some(self.velocity)
+            .filter(|velocity| velocity.is_finite())
+            .unwrap_or(Vec3::ZERO)
+    }
 }
 
 impl Default for AvatarMovement {
@@ -295,7 +306,8 @@ impl FromConfig for AvatarLocomotionSettings {
             run_speed: Some(config.player_settings.run_speed),
             jump_height: Some(config.player_settings.jump_height),
             run_jump_height: Some(config.player_settings.run_jump_height),
-            hard_landing_cooldown: Some(0.0),
+            // unset, so that the movement scene keeps its own landing stun. 0 removes the stun
+            hard_landing_cooldown: None,
             double_jump_height: None,
             gliding_speed: None,
             gliding_falling_speed: None,
@@ -343,6 +355,17 @@ impl<C: Component> ActivePlayerComponent<C> {
     pub fn scene(&self) -> Entity {
         self.scene
     }
+}
+
+/// The velocities of the last completed movement step, in SDK world axes. The broadcast to the
+/// scenes clears [`AvatarMovementInfo`] before `Update` systems and console commands can read it.
+#[derive(Resource, Default, Clone, Copy, Debug)]
+pub struct LastMovementStep {
+    pub requested_velocity: Option<Vector3>,
+    /// After collisions. Zero when the step did not move.
+    pub actual_velocity: Option<Vector3>,
+    /// From SDK forces and impulses.
+    pub external_velocity: Option<Vector3>,
 }
 
 impl<C: Component + FromConfig> FromConfig for ActivePlayerComponent<C> {
@@ -394,7 +417,7 @@ pub struct AvatarMovementInfo(pub PbAvatarMovementInfo);
 // engine frames (its reply lands after the frame's scene-loop deadline), so each scene is
 // told about the whole period since it last looked rather than the last frame only.
 #[derive(Component, Default)]
-struct MovementPeriod {
+pub(crate) struct MovementPeriod {
     time: f64,
     // requested and actual velocity are the latest frame's, not a total: scenes use them to
     // tell whether their own output is what was applied
@@ -611,25 +634,34 @@ pub fn apply_rotation(
     }
 }
 
-pub fn apply_movement(
+pub(crate) fn apply_movement(
     mut player: Query<
         (
+            Entity,
             &mut Transform,
             &mut AvatarDynamicState,
             &ActivePlayerComponent<AvatarMovement>,
+            &mut GroundCollider,
         ),
         With<PrimaryUser>,
     >,
     mut scenes: Query<(Entity, &mut SceneColliderData)>,
+    containing_scenes: ContainingScene,
     time_res: Res<Time>,
     mut info: ResMut<AvatarMovementInfo>,
-    mut jumping: Local<bool>,
+    mut last_step: ResMut<LastMovementStep>,
     movement_control: Res<EngineMovementControl>,
     central: Res<CentralCollisions>,
 ) {
-    let Ok((mut transform, mut dynamic_state, movement)) = player.single_mut() else {
+    let Ok((player, mut transform, mut dynamic_state, movement, mut ground)) = player.single_mut()
+    else {
         return;
     };
+    let around = (movement.component.ground_direction != Vec3::ZERO)
+        .then(|| containing_scenes.get_area(player, PLAYER_COLLIDER_RADIUS));
+    let moves_with_ground = |scene: Entity| around.as_ref().is_some_and(|a| a.contains(&scene));
+    let rose = dynamic_state.velocity.y > 0.0;
+    let requested = movement.component.requested_velocity();
 
     info.0.step_time = time_res.delta_secs();
 
@@ -637,24 +669,17 @@ pub fn apply_movement(
     // here we only apply velocity. The same suppression gate still governs velocity.
     let suppress = movement_suppressed(&movement_control, movement);
 
-    if suppress || movement.component.velocity == Vec3::ZERO {
+    if suppress || requested == Vec3::ZERO {
         dynamic_state.velocity = Vec3::ZERO;
-        let ground_height =
-            scenes
-                .iter_mut()
-                .fold(transform.translation.y, |gh, (_, mut collider_data)| {
-                    if !collider_data.grounds_avatar(transform.translation.as_dvec3()) {
-                        return gh;
-                    }
-                    gh.min(
-                        collider_data
-                            .get_ground(transform.translation)
-                            .map(|(h, _)| h)
-                            .unwrap_or(f32::INFINITY),
-                    )
-                });
-        dynamic_state.ground_height = ground_height;
+        (dynamic_state.ground_height, *ground) =
+            find_ground(&mut scenes, transform.translation, moves_with_ground);
+        start_jump_on_take_off(&mut dynamic_state, rose, time_res.elapsed_secs_f64());
         end_jump_on_landing(&mut dynamic_state);
+        *last_step = LastMovementStep {
+            requested_velocity: Some(Vector3::world_vec_from_vec3(&requested)),
+            actual_velocity: Some(Vector3::world_vec_from_vec3(&Vec3::ZERO)),
+            external_velocity: info.0.external_velocity,
+        };
         return;
     };
 
@@ -666,7 +691,7 @@ pub fn apply_movement(
 
     let mut position = transform.translation.as_dvec3();
     let mut time = time_res.delta_secs_f64();
-    let mut velocity = movement.component.velocity.as_dvec3();
+    let mut velocity = requested.as_dvec3();
     let mut steps = 0;
 
     // deliberately penetrating (placed here by movePlayerTo): don't move deeper into
@@ -711,13 +736,23 @@ pub fn apply_movement(
 
     debug!(
         "move {:.7} + {:.7} = {:.7} ({steps} iterations)",
-        transform.translation, movement.component.velocity, position
+        transform.translation, requested, position
     );
 
-    info.0.requested_velocity = Some(Vector3::world_vec_from_vec3(&movement.component.velocity));
+    info.0.requested_velocity = Some(Vector3::world_vec_from_vec3(&requested));
     info.0.actual_velocity = Some(Vector3::world_vec_from_vec3(
-        &((position - transform.translation.as_dvec3()) / time_res.delta_secs_f64()).as_vec3(),
+        &actual_velocity(
+            transform.translation.as_dvec3(),
+            position,
+            time_res.delta_secs_f64(),
+        )
+        .as_vec3(),
     ));
+    *last_step = LastMovementStep {
+        requested_velocity: info.0.requested_velocity,
+        actual_velocity: info.0.actual_velocity,
+        external_velocity: info.0.external_velocity,
+    };
 
     let position = position.as_vec3();
     let velocity = velocity.as_vec3();
@@ -726,37 +761,68 @@ pub fn apply_movement(
 
     // for now we hack in the old dynamic state values for animations
     dynamic_state.velocity = velocity;
-    if movement.component.velocity.y > 10.0 {
-        if !*jumping {
-            dynamic_state.jump_time = time_res.elapsed_secs_f64();
-            *jumping = true;
-        }
-    } else {
-        *jumping = false;
-    }
-    let ground_height =
-        scenes
-            .iter_mut()
-            .fold(transform.translation.y, |gh, (_, mut collider_data)| {
-                if !collider_data.grounds_avatar(transform.translation.as_dvec3()) {
-                    return gh;
-                }
-                gh.min(
-                    collider_data
-                        .get_ground(transform.translation)
-                        .map(|(h, _)| h)
-                        .unwrap_or(f32::INFINITY),
-                )
-            });
-    dynamic_state.ground_height = ground_height;
+    (dynamic_state.ground_height, *ground) =
+        find_ground(&mut scenes, transform.translation, moves_with_ground);
+    start_jump_on_take_off(&mut dynamic_state, rose, time_res.elapsed_secs_f64());
     end_jump_on_landing(&mut dynamic_state);
+}
+
+/// Zero for a step with no elapsed time, such as the first frame.
+fn actual_velocity(from: DVec3, to: DVec3, delta: f64) -> DVec3 {
+    if delta > 0.0 {
+        (to - from) / delta
+    } else {
+        DVec3::ZERO
+    }
+}
+
+/// The ground under the player's `feet`, asked of each scene once: the height of the feet above
+/// the ground in every scene that can ground the player, and the collider it stands on, the lowest
+/// within [`PLAYER_GROUND_THRESHOLD`] in a scene for which `moves_with_ground` holds.
+fn find_ground(
+    scenes: &mut Query<(Entity, &mut SceneColliderData)>,
+    feet: Vec3,
+    moves_with_ground: impl Fn(Entity) -> bool,
+) -> (f32, GroundCollider) {
+    let mut height = feet.y;
+    let mut collider = GroundCollider::default();
+    let mut collider_height = PLAYER_GROUND_THRESHOLD;
+    for (scene, mut collider_data) in scenes.iter_mut() {
+        if !collider_data.grounds_avatar(feet.as_dvec3()) {
+            continue;
+        }
+        let Some((above, id)) = collider_data.get_standing_ground(feet) else {
+            continue;
+        };
+        height = height.min(above);
+        if above < collider_height && moves_with_ground(scene) {
+            if let Some(entity) = collider_data.get_collider_entity(&id) {
+                collider_height = above;
+                collider = GroundCollider(Some((entity, id, default())));
+            }
+        }
+    }
+    (height, collider)
+}
+
+/// Record the take-off time when the player rises off the ground, or starts rising again in the
+/// air (an air jump): off the ground is not [`landed`], where [`end_jump_on_landing`] stops. `rose`
+/// is whether the player rose on the previous step. The engine's ground and the player's vertical
+/// speed mark the jump under every scene, whatever clip it plays, so a rise that ends within the
+/// landed height, such as walking up a low step, is no jump.
+fn start_jump_on_take_off(dynamic_state: &mut AvatarDynamicState, rose: bool, now: f64) {
+    let rising = dynamic_state.velocity.y > 0.0;
+    let airborne = !landed(dynamic_state.ground_height);
+    if rising && airborne && (dynamic_state.jump_time <= 0.0 || !rose) {
+        dynamic_state.jump_time = now;
+    }
 }
 
 /// Forget the take-off time once the player is back on the ground and no longer rising, so that
 /// `jump_time` marks a jump in flight (`<= 0.0` for none): the animation's take-off window and the
 /// `jump_count` this client broadcasts both read it.
 fn end_jump_on_landing(dynamic_state: &mut AvatarDynamicState) {
-    if dynamic_state.ground_height < 0.2 && dynamic_state.velocity.y <= 0.0 {
+    if landed(dynamic_state.ground_height) && dynamic_state.velocity.y <= 0.0 {
         dynamic_state.jump_time = -1.0;
     }
 }
@@ -789,17 +855,14 @@ fn record_own_movement(
     };
     let startup_controller = scenes
         .get(movement.scene())
-        .ok()
-        .filter(|ctx| ctx.is_portable)
-        .and_then(|ctx| portables.get(&ctx.hash))
-        .is_some_and(|source| source.is_startup());
+        .is_ok_and(|ctx| is_startup_portable(ctx, &portables));
     let pushed = info
         .0
         .external_velocity
         .is_some_and(|v| v.world_vec_to_vec3().length() > NO_EXTERNAL_VELOCITY);
     // a zero request skips `apply_movement`'s solve, leaving `actual_velocity` stale
     let own = startup_controller
-        && movement.component.velocity != Vec3::ZERO
+        && movement.component.requested_velocity() != Vec3::ZERO
         && !movement_suppressed(&movement_control, movement)
         && !pushed
         && input_manager.get_analog(MOVE_SET, InputPriority::Scene) != Vec2::ZERO;
@@ -812,50 +875,18 @@ fn record_own_movement(
     dynamic_state.own_displacement = velocity * info.0.step_time;
 }
 
+/// Whether the scene is a startup portable (launch-time, console or server-hosted), as the default
+/// movement scene is.
+fn is_startup_portable(scene: &RendererSceneContext, portables: &PortableScenes) -> bool {
+    scene.is_portable
+        && portables
+            .get(&scene.hash)
+            .is_some_and(|source| source.is_startup())
+}
+
 // (scene entity, collider id) of collider player is standing on
 #[derive(Component, Default)]
 pub struct GroundCollider(pub Option<(Entity, ColliderId, GlobalTransform)>);
-
-fn record_ground_collider(
-    mut player: Query<(
-        Entity,
-        &Transform,
-        &ActivePlayerComponent<AvatarMovement>,
-        &mut GroundCollider,
-    )>,
-    containing_scenes: ContainingScene,
-    mut scenes: Query<&mut SceneColliderData>,
-) {
-    let Ok((player_ent, transform, movement, mut ground)) = player.single_mut() else {
-        return;
-    };
-
-    ground.0 = None;
-
-    if movement.component.ground_direction == Vec3::ZERO {
-        return;
-    }
-
-    let mut best_height = PLAYER_GROUND_THRESHOLD;
-
-    for scene in containing_scenes.get_area(player_ent, PLAYER_COLLIDER_RADIUS) {
-        let Ok(mut collider_data) = scenes.get_mut(scene) else {
-            continue;
-        };
-        if !collider_data.grounds_avatar(transform.translation.as_dvec3()) {
-            continue;
-        }
-
-        if let Some((height, collider_id)) = collider_data.get_ground(transform.translation) {
-            if height < best_height {
-                if let Some(entity) = collider_data.get_collider_entity(&collider_id) {
-                    best_height = height;
-                    ground.0 = Some((entity, collider_id.clone(), Default::default()));
-                }
-            }
-        }
-    }
-}
 
 fn apply_ground_collider_movement(
     ground_transforms: Query<(&GlobalTransform, &PreviousColliderTransform)>,
@@ -1165,6 +1196,101 @@ fn accumulate_movement_periods(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::time::{TimePlugin, TimeUpdateStrategy};
+    use common::structs::EngineMovementControl;
+    use scene_runner::update_world::mesh_collider::ColliderId;
+
+    fn set_velocity(app: &mut App, player: Entity, velocity: Vec3) {
+        app.world_mut()
+            .get_mut::<ActivePlayerComponent<AvatarMovement>>(player)
+            .unwrap()
+            .component
+            .velocity = velocity;
+    }
+
+    /// `apply_movement` over a floor with its top at y 0, with the player still at `start`. The
+    /// steps last 20 ms, except the first, which has no elapsed time.
+    fn movement_app(start: Vec3) -> (App, Entity) {
+        let mut app = App::new();
+        app.add_plugins(TimePlugin)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_millis(20),
+            ))
+            .init_resource::<AvatarMovementInfo>()
+            .init_resource::<LastMovementStep>()
+            .init_resource::<CentralCollisions>()
+            .insert_resource(EngineMovementControl {
+                accept_movement_after: -1.0,
+                ..default()
+            })
+            .add_systems(PostUpdate, apply_movement);
+        add_scene_resources(&mut app);
+        let mut colliders = SceneColliderData::default();
+        let id = ColliderId::new(SceneEntityId::ROOT, None, 0);
+        colliders.set_wall(
+            &id,
+            Vec3::new(start.x, -0.5, start.z),
+            Vec3::new(50.0, 0.5, 50.0),
+            Quat::IDENTITY,
+        );
+        app.world_mut().spawn(colliders);
+        let movement = ActivePlayerComponent::<AvatarMovement>::from_config(&default());
+        let player = app
+            .world_mut()
+            .spawn((
+                PrimaryUser::default(),
+                movement,
+                AvatarDynamicState::default(),
+                GroundCollider::default(),
+                Transform::from_translation(start),
+            ))
+            .id();
+        (app, player)
+    }
+
+    fn add_scene_resources(app: &mut App) {
+        use scene_runner::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
+
+        app.init_resource::<LiveScenes>()
+            .init_resource::<PortableScenes>()
+            .init_resource::<ScenePointers>();
+    }
+
+    fn run_for(app: &mut App, player: Entity, velocity: Vec3, frames: usize) -> Vec3 {
+        set_velocity(app, player, velocity);
+        for _ in 0..frames {
+            app.update();
+        }
+        app.world().get::<Transform>(player).unwrap().translation
+    }
+
+    #[test]
+    fn a_scene_velocity_that_is_not_finite_moves_nothing() {
+        for velocity in [
+            Vec3::NAN,
+            Vec3::new(f32::INFINITY, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, f32::NEG_INFINITY),
+        ] {
+            // `record_own_movement` counts no own movement either
+            let movement = AvatarMovement {
+                velocity,
+                ..default()
+            };
+            assert_eq!(movement.requested_velocity(), Vec3::ZERO, "{velocity}");
+            let start = Vec3::new(8.0, 0.0, -8.0);
+            let (mut app, player) = movement_app(start);
+            app.update();
+            let end = run_for(&mut app, player, velocity, 3);
+            assert_eq!(end, start, "{velocity}");
+        }
+    }
+
+    #[test]
+    fn without_a_scene_setting_the_hard_landing_cooldown_reaches_scenes_unset() {
+        let settings = AvatarLocomotionSettings::from_config(&default()).0;
+        assert_eq!(settings.hard_landing_cooldown, None);
+        assert!(settings.walk_speed.is_some() && settings.jump_height.is_some());
+    }
 
     #[test]
     fn unset_locomotion_speeds_use_the_players_own() {
@@ -1205,12 +1331,51 @@ mod scene_reach_tests;
 mod jump_tests {
     use super::*;
 
+    const DT: f32 = 1.0 / 60.0;
+    /// The movement scene's deceleration of a jump's rise (`JUMP_RISE_DECEL`).
+    const RISE_DECEL: f32 = 40.0;
+
     fn state(ground_height: f32, vertical_velocity: f32) -> AvatarDynamicState {
         AvatarDynamicState {
             velocity: Vec3::new(0.0, vertical_velocity, 0.0),
             ground_height,
             jump_time: 5.0,
             ..default()
+        }
+    }
+
+    /// Movement steps at 60 frames a second, with the jump rules as `apply_movement` applies them.
+    #[derive(Default)]
+    struct Steps {
+        state: AvatarDynamicState,
+        frame: u32,
+    }
+
+    impl Steps {
+        /// One step at `vertical_velocity`, ending `ground_height` over the ground. Returns the
+        /// jump time after the step.
+        fn step(&mut self, vertical_velocity: f32, ground_height: f32) -> f64 {
+            self.frame += 1;
+            let rose = self.state.velocity.y > 0.0;
+            self.state.velocity.y = vertical_velocity;
+            self.state.ground_height = ground_height;
+            start_jump_on_take_off(&mut self.state, rose, f64::from(self.frame) * f64::from(DT));
+            end_jump_on_landing(&mut self.state);
+            self.state.jump_time
+        }
+
+        /// The rise of a jump of `height` from the ground, as the movement scene launches it.
+        /// Returns the jump time after each step.
+        fn rise(&mut self, height: f32) -> Vec<f64> {
+            let mut vertical_velocity = (2.0 * height * RISE_DECEL).sqrt();
+            let mut ground_height = 0.0;
+            let mut jump_times = vec![];
+            while vertical_velocity > 0.0 {
+                ground_height += vertical_velocity * DT;
+                jump_times.push(self.step(vertical_velocity, ground_height));
+                vertical_velocity -= RISE_DECEL * DT;
+            }
+            jump_times
         }
     }
 
@@ -1231,5 +1396,82 @@ mod jump_tests {
         let mut airborne = state(1.5, -3.0);
         end_jump_on_landing(&mut airborne);
         assert_eq!(airborne.jump_time, 5.0);
+    }
+
+    /// The take-off time a jump of `height` records, and checks that the rise keeps it.
+    fn take_off_of_a_jump(height: f32) -> f64 {
+        let jump_times = Steps::default().rise(height);
+        let take_off = jump_times
+            .iter()
+            .copied()
+            .find(|&time| time > 0.0)
+            .expect("the jump records its take-off");
+        assert!(
+            jump_times
+                .iter()
+                .skip_while(|&&time| time <= 0.0)
+                .all(|&time| time == take_off),
+            "{jump_times:?}"
+        );
+        take_off
+    }
+
+    #[test]
+    fn a_jump_records_its_take_off_whatever_its_height() {
+        // the default jump, and a lower one a scene's locomotion settings may ask for
+        assert!(take_off_of_a_jump(1.0) < 0.1);
+        assert!(take_off_of_a_jump(0.5) < 0.1);
+    }
+
+    #[test]
+    fn rising_on_the_ground_is_no_jump() {
+        // following the ground up a slope or a step
+        let mut walking = state(0.0, 3.0);
+        walking.jump_time = -1.0;
+        start_jump_on_take_off(&mut walking, true, 9.0);
+        assert!(walking.jump_time <= 0.0);
+    }
+
+    #[test]
+    fn walking_up_a_step_within_the_landed_height_is_no_jump() {
+        // the feet measure to the floor below until they are over the step
+        let mut steps = Steps::default();
+        for n in 1..=3 {
+            let jump_time = steps.step(3.0, 0.05 * n as f32);
+            assert!(jump_time <= 0.0, "{n}: {jump_time}");
+        }
+        assert!(steps.step(0.0, 0.0) <= 0.0);
+    }
+
+    #[test]
+    fn an_air_jump_records_a_new_take_off() {
+        // the air jump holds the height, then launches
+        let mut hovering = state(1.5, 0.0);
+        start_jump_on_take_off(&mut hovering, false, 6.0);
+        assert_eq!(hovering.jump_time, 5.0);
+
+        let mut launched = state(1.5, 8.0);
+        start_jump_on_take_off(&mut launched, false, 6.2);
+        assert_eq!(launched.jump_time, 6.2);
+
+        let mut rising = state(2.0, 6.0);
+        rising.jump_time = 6.2;
+        start_jump_on_take_off(&mut rising, true, 6.3);
+        assert_eq!(rising.jump_time, 6.2);
+    }
+
+    #[test]
+    fn a_jump_and_its_air_jump_record_their_take_offs_until_the_landing() {
+        let mut steps = Steps::default();
+        let first = steps.rise(1.0);
+        let take_off = first[first.len() - 1];
+        assert!(take_off > 0.0);
+        assert_eq!(steps.step(-2.0, 1.2), take_off);
+        // the air jump holds the height, then launches
+        assert_eq!(steps.step(0.0, 1.2), take_off);
+        let air_jump = steps.step(8.0, 1.4);
+        assert!(air_jump > take_off);
+        assert_eq!(steps.step(-3.0, 1.0), air_jump);
+        assert!(steps.step(-3.0, 0.0) <= 0.0);
     }
 }

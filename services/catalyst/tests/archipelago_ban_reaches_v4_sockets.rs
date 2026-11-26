@@ -11,10 +11,8 @@ use catalyst::comms::archipelago::enforcement::Enforcement;
 use catalyst::comms::archipelago::registry::{PeersRegistry, SocketEvent};
 use catalyst::worlds::policy::{PersonalWorldsPolicy, Policy};
 
-#[path = "support/archipelago.rs"]
-mod archipelago;
-#[path = "support/db.rs"]
-mod db;
+use crate::archipelago;
+use crate::db;
 
 const BANNED: &str = "0x00000000000000000000000000000000000bad01";
 const CLEAN: &str = "0x00000000000000000000000000000000000c1ea0";

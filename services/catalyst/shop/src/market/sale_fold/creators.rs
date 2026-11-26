@@ -129,11 +129,7 @@ pub(super) async fn write(
                 continue;
             }
             for &(block, index, ordinal, _, issue) in g.iter().rev() {
-                while history
-                    .last()
-                    .is_some_and(|(at, _, _)| *at > i64::from(issue))
-                {
-                    let (_, prev, _) = history.pop().unwrap();
+                while let Some((_, prev, _)) = history.pop_if(|(at, _, _)| *at > i64::from(issue)) {
                     creator = prev;
                 }
                 days.insert(block);

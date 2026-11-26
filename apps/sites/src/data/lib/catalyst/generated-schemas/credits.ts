@@ -17,6 +17,7 @@ import type { CreditsProgramProgressResponse } from "@catalyst-api/credits/Credi
 import type { CreditsTotals } from "@catalyst-api/credits/CreditsTotals";
 import type { CurrentSeasonInfo } from "@catalyst-api/credits/CurrentSeasonInfo";
 import type { GoalData } from "@catalyst-api/credits/GoalData";
+import type { GoalEventStay } from "@catalyst-api/credits/GoalEventStay";
 import type { GoalMetadata } from "@catalyst-api/credits/GoalMetadata";
 import type { GoalProgressData } from "@catalyst-api/credits/GoalProgressData";
 import type { HeldOut } from "@catalyst-api/credits/HeldOut";
@@ -133,8 +134,16 @@ export const CreditsOrderStatusOutSchema = z.object({
   error: z.string(),
 });
 
+export const GoalEventStaySchema = z.object({
+  id: z.string(),
+  total_time_spent: z.number(),
+  startedAt: z.number().nullable(),
+});
+
 export const GoalMetadataSchema = z.object({
-  photosTaken: z.array(z.string()),
+  photosTaken: z.array(z.string()).optional(),
+  dates: z.array(z.string()).optional(),
+  eventsVisitedAndStayed: z.array(GoalEventStaySchema).optional(),
 });
 
 export const GoalProgressDataSchema = z.object({
@@ -360,6 +369,7 @@ export type _AssertCreditsProgramProgressResponse = Assert<Mutual<CreditsProgram
 export type _AssertCreditsTotals = Assert<Mutual<CreditsTotals, z.infer<typeof CreditsTotalsSchema>>>;
 export type _AssertCurrentSeasonInfo = Assert<Mutual<CurrentSeasonInfo, z.infer<typeof CurrentSeasonInfoSchema>>>;
 export type _AssertGoalData = Assert<Mutual<GoalData, z.infer<typeof GoalDataSchema>>>;
+export type _AssertGoalEventStay = Assert<Mutual<GoalEventStay, z.infer<typeof GoalEventStaySchema>>>;
 export type _AssertGoalMetadata = Assert<Mutual<GoalMetadata, z.infer<typeof GoalMetadataSchema>>>;
 export type _AssertGoalProgressData = Assert<Mutual<GoalProgressData, z.infer<typeof GoalProgressDataSchema>>>;
 export type _AssertHeldOut = Assert<Mutual<HeldOut, z.infer<typeof HeldOutSchema>>>;
