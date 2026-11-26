@@ -57,6 +57,26 @@ A synthetic PostgreSQL 17.6 fixture on a laptop held 5M Polygon and 1M Ethereum 
 
 Each side walks its index in the order the activity merges in (time, then position), with no sort step. On Polygon, each side of the 50,000-transfer wallet walked about 4,800 index rows to find 500 transfers that were not sales. Each walked row made one `sale_asset_read_token` probe and, when it found a sale, one probe of the execution's primary key. Other agents' builds were running during these measurements.
 
+### LAND and Estate transfers
+
+A synthetic PostgreSQL 17.6 fixture on a laptop held 1.05M `land_authz.authz_event` rows over blocks 4.9M to 20.65M. A third of them were transfers: 280,000 LAND and 70,000 Estate among 60,000 wallets, a tenth of them mints. 109,500 of the transfers settled a priced MANA sale in their transaction. The heavy wallet had 2,500 transfers on each side, and 90% of them were sales. The table took 293 MB.
+
+| Index | Size | Concurrent build |
+| --- | ---: | ---: |
+| `authz_event_transfer_from_idx` | 32 MB | 0.48 s |
+| `authz_event_transfer_to_idx` | 32 MB | 0.46 s |
+| `authz_event_transfer_unrepaired_idx`, every transfer due (right after the step) | 7.5 MB | 0.22 s |
+| `authz_event_transfer_unrepaired_idx`, none due | 8 kB | 0.14 s |
+
+| LAND read, both sides capped at 500 | Rows | First run | Repeated |
+| --- | ---: | ---: | ---: |
+| 23 transfers | 15 | 6.5 ms | 0.9 ms |
+| 5,000 transfers, 90% of them sales | 500 | 94 ms | 17 to 30 ms |
+
+On the heavy wallet each side read its 2,500 rows through its index (a bitmap scan and a sort at that size) and made one `sale_asset_pkey` probe per row. The readiness probe (`EXISTS` over the due set) took 0.05 ms.
+
+The repair, with every transfer due: the next due row took 4.1 ms; one 50,000-block window's `UPDATE` of 1,111 rows took 20 ms; the check for an unfilled row took 0.4 ms. The fixture's history is about 322 windows. Each costs two header reads and at least one `eth_getLogs`. At the defaults (`LAND_AUTHZ_INDEX_REQUESTS_PER_PASS` 50, which counts the repair's header reads, a pass every 120 s), an idle pass leaves room for about 15 windows. The repair then takes about 22 passes, some 45 minutes, unless the endpoint narrows the ranges. That estimate is not a measurement against a real endpoint. Other agents' builds were running during these measurements.
+
 ## Latest sale per token
 
 The fixtures below are synthetic, measured on a laptop with PostgreSQL 17.6 while other builds were running. Treat the ranges as an order of magnitude.

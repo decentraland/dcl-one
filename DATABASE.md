@@ -2546,11 +2546,17 @@ The schema object pass creates the sales read indexes. On an existing large ledg
 
 ### Wallet activity transfers
 
-The transfer leg of `/v1/activity` reads `shop.nft_event` transfers: the collections' wearables and emotes on both networks, and DCL names. LAND and Estate transfers live in `land_authz.authz_event`, which keeps no sender or transaction hash, so the leg does not read them ([#2363](https://github.com/decentraland/dcl-one/issues/2363)). Each network is read inside its sales publication snapshot (`sale_fold::snapshot`, REPEATABLE READ, READ ONLY), up to the published block. The sales fold has proven the settlement inputs of the `nft`, `sales` and `trade_events` walks through that block, on the published branch. A network without a valid publication contributes no transfers, so a testnet node or a node without the sales index serves none.
+The transfer leg of `/v1/activity` reads `shop.nft_event` transfers: the collections' wearables and emotes on both networks, and DCL names. Each network is read inside its sales publication snapshot (`sale_fold::snapshot`, REPEATABLE READ, READ ONLY), up to the published block. The sales fold has proven the settlement inputs of the `nft`, `sales` and `trade_events` walks through that block, on the published branch. A network without a valid publication contributes no transfers, so a testnet node or a node without the sales index serves none.
+
+On Ethereum the same snapshot also reads LAND and Estate transfers from the land-authz log, `land_authz.authz_event` rows of kind `transfer`, with the category `parcel` or `estate` by registry. They follow the same rules: sent and received, a mint left out, never a transfer to oneself, and a transfer that settled a public sale of the ledger shows only as that sale. They are bounded by the lower of the sales publication and the land-authz fold (`index_cursor.folded_block`). The read runs only while, on that snapshot, the land-authz index of the node's registries is ready (`indexer::observation_ready`) and no transfer row lacks its sender or transaction. Otherwise the collections are still served and the leg names `land-authz-index`.
+
+The land-authz walk stores each transfer's sender (`from_address`, the log's topic 1) and transaction (`tx_hash`). Every other kind leaves both NULL. Step `0073_land_authz_transfer_parties` adds the two columns, and the rows indexed before it hold NULL. The indexer's transfer repair (`indexer::repair_transfer_parties`) runs after each published pass, within the pass's remaining request budget and the 30 s repair limit. It fills those rows oldest first, only up to the cursor's checkpoint (at least 128 blocks deep, past finality). Each window of at most 50,000 blocks re-reads the registries' `Transfer` logs between two reads of the checkpoint block, and both reads must answer its recorded hash. A row takes the values only from the log at its own position, with the same token and receiver. If any due row in the window is left unfilled, nothing in that window is committed and the repair logs the row and stops. That happens when the row's log no longer matches the chain, which a replay re-reads, or when the endpoint served the log without its transaction. The folds and the map grid read neither column, so the repair does not count as a rewrite (`rewrites`). LAND rights stay served throughout: the repair runs only after the pass has published its fold and never touches a column the fold or the rights readers use. Each window costs two header reads of the checkpoint block and at least one `eth_getLogs`, all counted in `LAND_AUTHZ_INDEX_REQUESTS_PER_PASS` (50 by default), and one `UPDATE` by position. A pass with nothing to index leaves room for about 15 windows. On the database, each window is the due-set probe and an `UPDATE` of its rows through `authz_event_transfer_unrepaired_idx`; see METRICS.md for the measured costs and an estimate of the whole repair. Completeness check: `SELECT count(*) FROM land_authz.authz_event WHERE kind = 'transfer' AND (from_address IS NULL OR tx_hash IS NULL)` is 0.
 
 Each side of a wallet walks its own partial index, newest first, until it has 500 rows. `nft_event_transfer_from_idx` covers transfers out and `nft_event_transfer_to_idx` covers transfers in, both on `(network, address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer'`. They walk in the order the activity merges in, so a legacy row with time 0 cannot displace a newer transfer from the cap. Each candidate is checked against the ledger's public sales of the token in its block (`sale_asset_read_token`, then the execution's primary key). A wallet whose recent transfers are mostly sales walks more rows to fill its cap.
 
 The nft walk records each log's transaction hash. Rows indexed before this change keep NULL until their log is read again. A replay fills a missing hash only from the same log (same emitter, token, parties and payload) and never replaces one.
+
+LAND and Estate rows walk the same way: `authz_event_transfer_from_idx` and `authz_event_transfer_to_idx`, on `(from_address | account, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer'`. Each candidate is checked against the ledger's sales of the token in its block, with the registry as the contract. `authz_event_transfer_unrepaired_idx`, on `(block_number)` over the transfers without a sender or transaction, gives the repair its next row and the read its readiness probe. It empties once the repair is done.
 
 On a populated deployment, the schema object pass creates both indexes. To keep writes available during the build, run these statements outside a transaction before `catalyst schema migrate`.
 
@@ -2559,6 +2565,17 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS nft_event_transfer_from_idx
 ON shop.nft_event (network, from_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
 CREATE INDEX CONCURRENTLY IF NOT EXISTS nft_event_transfer_to_idx
 ON shop.nft_event (network, to_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
+```
+
+The land-authz indexes need the columns of step `0073_land_authz_transfer_parties`. Run them after that step, or let the object pass create them; on the synthetic fixture each took under half a second.
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS authz_event_transfer_from_idx
+ON land_authz.authz_event (from_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
+CREATE INDEX CONCURRENTLY IF NOT EXISTS authz_event_transfer_to_idx
+ON land_authz.authz_event (account, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
+CREATE INDEX CONCURRENTLY IF NOT EXISTS authz_event_transfer_unrepaired_idx
+ON land_authz.authz_event (block_number) WHERE kind = 'transfer' AND (from_address IS NULL OR tx_hash IS NULL);
 ```
 
 See the [synthetic fixture measurements](METRICS.md#wallet-activity-transfers) for index sizes, build times and reads. Production table sizes have not been measured.

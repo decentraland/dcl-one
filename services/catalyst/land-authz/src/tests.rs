@@ -498,6 +498,9 @@ fn ev(
         account: account.map(|a| a.to_string()),
         operator: operator.map(|o| o.to_string()),
         approved,
+        // As the indexer writes a transfer: its sender and transaction.
+        from_address: (kind == KIND_TRANSFER).then(|| ZERO_ADDR.to_string()),
+        tx_hash: (kind == KIND_TRANSFER).then(|| tx_hash(block as u64, index as u32)),
     }
 }
 
@@ -1771,6 +1774,11 @@ fn topic_token(decimal: &str) -> String {
     format!("0x{body:0>64}")
 }
 
+/// The transaction a fake log was emitted in: one per log.
+fn tx_hash(block: u64, index: u32) -> String {
+    format!("0x{:064x}", (block << 16) | index as u64)
+}
+
 struct Log {
     block: u64,
     index: u32,
@@ -1788,7 +1796,7 @@ impl Log {
             "blockNumber": format!("0x{:x}", self.block),
             "logIndex": format!("0x{:x}", self.index),
             "blockTimestamp": format!("0x{:x}", 1_500_000_000 + self.block * 12),
-            "transactionHash": "0x00", "transactionIndex": "0x0", "blockHash": format!("0x{:064x}", self.block), "removed": false
+            "transactionHash": tx_hash(self.block, self.index), "transactionIndex": "0x0", "blockHash": format!("0x{:064x}", self.block), "removed": false
         })
     }
 }
@@ -2060,9 +2068,18 @@ async fn rpc(
             )
             .unwrap();
             assert_eq!(filter["address"], json!([LAND, ESTATE]));
-            assert_eq!(
-                filter["topics"][0].as_array().unwrap().len(),
-                ALL_TOPICS.len()
+            // The walk asks for every topic, the transfer repair for the
+            // three `Transfer` shapes.
+            let topics: Vec<String> = filter["topics"][0]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t.as_str().unwrap().to_string())
+                .collect();
+            assert!(
+                topics.len() == ALL_TOPICS.len()
+                    || topics == [TOPIC_TRANSFER_3, TOPIC_TRANSFER_5, TOPIC_TRANSFER_6],
+                "{topics:?}"
             );
             if to - from + 1 > chain.max_span {
                 return axum::Json(json!({ "jsonrpc": "2.0", "id": body["id"], "error": { "code": -32602, "message": "block range too wide" } }))
@@ -2072,6 +2089,7 @@ async fn rpc(
             let mut hits: Vec<&Value> = logs
                 .iter()
                 .filter(|l| (from..=to).contains(&block_of(l)))
+                .filter(|l| topics.iter().any(|t| l["topics"][0] == json!(t)))
                 .collect();
             hits.sort_by_key(|l| (block_of(l), l["logIndex"].as_str().unwrap().to_string()));
             if hits.len() > chain.cap {
@@ -5667,5 +5685,161 @@ async fn lands_access_answers_the_creator_hubs_lists_from_the_index() {
         StatusCode::OK,
         "an absent body is no rentals"
     );
+    db.drop().await;
+}
+
+/// A transfer's sender and transaction, as the log holds them.
+async fn parties(pool: &PgPool, block: u64) -> (Option<String>, Option<String>) {
+    sqlx::query_as(
+        "SELECT from_address, tx_hash FROM land_authz.authz_event \
+         WHERE block_number = $1 AND log_index = 0 AND kind = 'transfer'",
+    )
+    .bind(block as i64)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// The walk keeps each transfer's sender and transaction. Transfers indexed
+/// before it did are repaired from the chain's logs, oldest first, at or
+/// below the verified checkpoint; one window commits whole or not at all:
+/// a row whose log no longer matches the chain leaves its window unfilled,
+/// and so does a checkpoint the endpoint no longer answers.
+#[tokio::test]
+async fn transfers_indexed_without_their_parties_are_repaired_up_to_the_checkpoint() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let token = land_token(1, 1);
+    let chain = FakeChain::new(
+        START + 300,
+        vec![
+            transfer(START, 0, LAND, ZERO_ADDR, ALICE, &token),
+            transfer(START + 1, 0, LAND, ALICE, BOB, &token),
+            transfer(START + 2, 0, ESTATE, ALICE, BOB, "5"),
+            update_operator(START + 3, 0, LAND, &token, CARL),
+            transfer(START + 250, 0, LAND, BOB, CARL, &token),
+        ],
+        1000,
+        u64::MAX,
+    );
+    let mut settings = Settings::for_tests();
+    settings.rpc_url = Some(serve(chain.clone()).await);
+    let state = state_over(pool.clone(), settings);
+    let (jobs, ctx) = job_ctx().await;
+    let pass = || async { indexer::run_pass(&state, &ctx).await.unwrap() };
+    assert!(pass().await.published);
+    let walked = [
+        (START, ZERO_ADDR),
+        (START + 1, ALICE),
+        (START + 2, ALICE),
+        (START + 250, BOB),
+    ];
+    for (block, from) in walked {
+        assert_eq!(
+            parties(pool, block).await,
+            (Some(from.to_string()), Some(tx_hash(block, 0))),
+            "the walk keeps block {block}'s parties"
+        );
+    }
+    let operator: (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT from_address, tx_hash FROM land_authz.authz_event WHERE kind = 'update_operator'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(operator, (None, None), "only a transfer keeps them");
+
+    // As an older writer left them; the next pass verifies the cursor and
+    // sets the checkpoint 128 blocks below it.
+    let forget = |blocks: &'static [u64]| async move {
+        sqlx::query(
+            "UPDATE land_authz.authz_event SET from_address = NULL, tx_hash = NULL \
+             WHERE kind = 'transfer' AND block_number = ANY($1)",
+        )
+        .bind(blocks.iter().map(|b| *b as i64).collect::<Vec<_>>())
+        .execute(pool)
+        .await
+        .unwrap();
+    };
+    forget(&[START, START + 1, START + 2, START + 250]).await;
+    let first_requests = chain.requests.load(Ordering::SeqCst);
+    assert!(pass().await.published);
+    assert!(chain.requests.load(Ordering::SeqCst) > first_requests);
+    for (block, from) in &walked[..3] {
+        assert_eq!(
+            parties(pool, *block).await,
+            (Some(from.to_string()), Some(tx_hash(*block, 0))),
+            "block {block} is repaired"
+        );
+    }
+    assert_eq!(
+        parties(pool, START + 250).await,
+        (None, None),
+        "above the checkpoint a row waits for it"
+    );
+
+    // A row whose receiver the chain does not have keeps its whole window
+    // unfilled, the matching row beside it included, until it matches.
+    forget(&[START, START + 1]).await;
+    sqlx::query("UPDATE land_authz.authz_event SET account = $1 WHERE block_number = $2")
+        .bind(CARL)
+        .bind((START + 1) as i64)
+        .execute(pool)
+        .await
+        .unwrap();
+    assert!(pass().await.published, "the repair never holds the index");
+    assert_eq!(parties(pool, START).await, (None, None));
+    assert_eq!(parties(pool, START + 1).await, (None, None));
+    sqlx::query("UPDATE land_authz.authz_event SET account = $1 WHERE block_number = $2")
+        .bind(BOB)
+        .bind((START + 1) as i64)
+        .execute(pool)
+        .await
+        .unwrap();
+
+    // Nor while the endpoint answers another hash at the checkpoint.
+    let checkpoint: String =
+        sqlx::query_scalar("SELECT checkpoint_hash FROM land_authz.index_cursor")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE land_authz.index_cursor SET checkpoint_hash = $1")
+        .bind(format!("0x{:064x}", 7))
+        .execute(pool)
+        .await
+        .unwrap();
+    assert!(pass().await.published);
+    assert_eq!(parties(pool, START).await, (None, None));
+    sqlx::query("UPDATE land_authz.index_cursor SET checkpoint_hash = $1")
+        .bind(&checkpoint)
+        .execute(pool)
+        .await
+        .unwrap();
+    assert!(pass().await.published);
+    assert_eq!(
+        parties(pool, START + 1).await,
+        (Some(ALICE.to_string()), Some(tx_hash(START + 1, 0)))
+    );
+
+    // Once the cursor is twice the depth past the checkpoint, the checkpoint
+    // moves up and the last row is repaired; none is left.
+    chain.head.store(START + 450, Ordering::SeqCst);
+    assert!(pass().await.published);
+    assert!(pass().await.published);
+    assert_eq!(
+        parties(pool, START + 250).await,
+        (Some(BOB.to_string()), Some(tx_hash(START + 250, 0)))
+    );
+    let due: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM land_authz.authz_event \
+         WHERE kind = 'transfer' AND (from_address IS NULL OR tx_hash IS NULL)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(due, 0);
+    jobs.shutdown(std::time::Duration::from_secs(1)).await;
     db.drop().await;
 }
