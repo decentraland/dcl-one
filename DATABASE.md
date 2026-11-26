@@ -2057,7 +2057,9 @@ Invariants:
 - An NFT listing sends one ERC-721 held by its signer in the published
   `shop.nft` or LAND/Estate rights fold. A same-token transfer past the
   ownership publication withholds it. The NFT leg also checks the tracked
-  contract's outstanding backfill and refold. These reads use the same
+  contract's outstanding backfill and refold. A testnet NFT collection
+  also needs a verified catalogue row on its chain and a recorded watch.
+  These reads use the same
   snapshot as their listing rows and totals. Listing-bearing catalog pages
   and price histograms recompute their rows on each request so a catalogue
   refresh is unnecessary for a cancellation or change of owner to take effect.
@@ -4313,7 +4315,7 @@ builds it from its own indexes.
   WAL and 60 reloads per process). The live atlas published no revision in 80 minutes on
   2026-11-24 (its `landVersion` and `overlayVersion` held), so the floor
   bounds bursts, not the usual rate. Watching costs the marks every 5 s
-  (about 7 ms for land-authz and 27 ms for Shop, under 25 s of database
+  (under 25 s of database
   time an hour) and at most 60 single-row `checked_at` updates an hour,
   which leave the stored body untouched.
 - **Deploy:** one additive step, `0066_map_grid_change_marks` (the

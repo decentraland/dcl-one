@@ -4676,6 +4676,9 @@ async fn an_open_listing_stays_only_while_its_signer_holds_that_token() {
         crate::http::Outbound::for_tests(),
         market_settings(&url, &url, true),
     ));
+    not_walking
+        .test_allow_loopback
+        .store(true, Ordering::Relaxed);
     assert!(!super::owned_items::walks_here(&not_walking));
     let (rows, _) = super::orders::list_orders(&not_walking, &open)
         .await
@@ -6644,6 +6647,79 @@ async fn sepolia_owner_pages_require_the_matching_publications_and_keep_the_wire
     assert_eq!(status, StatusCode::OK, "{empty}");
     assert_eq!(empty["total"], 0);
     assert!(graph.requests.lock().unwrap().is_empty());
+    db.drop().await;
+}
+
+/// Cancelling an optional V3 statement leaves the parcel page's required
+/// rental read usable on the same snapshot.
+#[tokio::test]
+async fn a_parcel_list_keeps_rentals_when_optional_orders_time_out() {
+    use crate::land_authz::LAND_MAINNET;
+    use crate::rentals::index::RENTALS_MAINNET;
+    let graph = FakeGraph::new();
+    let url = serve_graph(graph).await;
+    let Some((state, db)) = state_over_own(&url, true).await else {
+        return;
+    };
+    let pool = &db.pool;
+    let land = LAND_MAINNET.land_registry;
+    for token in ["1", "2"] {
+        crate::test_db::publish_land_owner(pool, land, token, WALLET_A).await;
+    }
+    sqlx::query("UPDATE land_authz.token_right SET x=0,y=token_id::int WHERE token_address=$1")
+        .bind(land)
+        .execute(pool)
+        .await
+        .unwrap();
+    super::owned_items::test_support::publish(
+        pool,
+        &[super::chain_walk::ChainNet::Ethereum],
+        false,
+        Duration::ZERO,
+    )
+    .await;
+    super::trade_events::tests::publish_cursors(pool).await;
+    sqlx::query(
+        "INSERT INTO shop.nft_order(network,contract_address,token_id,order_id,marketplace_address,status,seller,price,expires_at,created_at,updated_at,updated_block,updated_log)
+         VALUES('ethereum',$1,1,'legacy-1',$2,'open',$3,25,4102444800000,1,2,13,0)",
+    )
+    .bind(land).bind(CREATOR).bind(WALLET_A).execute(pool).await.unwrap();
+    let rental = crate::rentals::index::tests::seed_listing(
+        pool,
+        land,
+        "2",
+        ["0"; 3],
+        "0x42",
+        WALLET_A,
+        RENTALS_MAINNET,
+    )
+    .await
+    .to_string();
+
+    let app = market_router(state);
+    let uri = "/v1/nfts?category=parcel&first=2";
+    let check = |status, body: &Value| {
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let rows = body["data"].as_array().unwrap();
+        assert_eq!(rows.len(), 2, "{body}");
+        assert!(
+            rows.iter().any(|r| r["order"]["id"] == "legacy-1"),
+            "{body}"
+        );
+        assert!(rows.iter().any(|r| r["rental"]["id"] == rental), "{body}");
+    };
+    let (status, before) = get(app.clone(), uri).await;
+    check(status, &before);
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE shop.trades IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let started = std::time::Instant::now();
+    let (status, after) = get(app, uri).await;
+    lock.rollback().await.unwrap();
+    assert!(started.elapsed() >= super::nft_reads::READ_STATEMENT_TIMEOUT);
+    check(status, &after);
     db.drop().await;
 }
 

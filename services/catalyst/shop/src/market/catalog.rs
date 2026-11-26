@@ -560,7 +560,7 @@ pub fn uint_or_null(expr: &str) -> String {
 
 /// Ownership of the sent ERC-721 in the same snapshot as the trade verdict.
 fn nft_trade_backed_sql(now_p: &str, token_num: &str, eth: i64, matic: i64) -> String {
-    use super::chain_walk::{MAX_CLOCK_SKEW, READY_WINDOW};
+    use super::chain_walk::{ChainNet, MAX_CLOCK_SKEW, READY_WINDOW};
     use crate::land_authz::{LAND_MAINNET, LAND_SEPOLIA};
     let land = if eth == 11_155_111 {
         LAND_SEPOLIA
@@ -598,6 +598,16 @@ fn nft_trade_backed_sql(now_p: &str, token_num: &str, eth: i64, matic: i64) -> S
                    AND n.token_id = {token_num}
               WHERE c.indexer = 'nft' AND c.network = lower(t.network) AND {nft_ready}
                 AND n.owner = lower(t.signer) AND n.transferred_block <= c.folded_block
+                AND (c.chain_id IN ({ethereum}, {polygon})
+                  OR (c.network = 'ethereum' AND n.contract_address = '{registrar}')
+                  OR EXISTS (
+                      SELECT FROM shop.nft_contract watched
+                      JOIN shop.collections active ON active.network = watched.network
+                         AND active.contract_address = watched.contract_address
+                      WHERE watched.network = n.network AND watched.contract_address = n.contract_address
+                        AND active.chain_id = c.chain_id AND active.testnet_verified
+                  )
+                )
                 AND NOT EXISTS (
                     SELECT FROM shop.nft_event e
                     WHERE e.network = n.network AND e.contract_address = n.contract_address
@@ -610,6 +620,9 @@ fn nft_trade_backed_sql(now_p: &str, token_num: &str, eth: i64, matic: i64) -> S
                       AND (watched.refold_owed OR ({backfill_pending}))
                 )
           ) END)",
+        ethereum = ChainNet::Ethereum.chain_id(),
+        polygon = ChainNet::Matic.chain_id(),
+        registrar = super::nft_index::Catalogue::Testnet.registrar(),
         backfill_pending = super::nft_index::BACKFILL_PENDING_SQL,
         window = READY_WINDOW.num_seconds(),
         skew = MAX_CLOCK_SKEW.num_seconds(),
@@ -1776,6 +1789,74 @@ mod tests {
                 .unwrap();
             assert_eq!(held, expected, "{registry}");
         }
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn amoy_listing_ownership_needs_a_verified_watched_collection() {
+        use crate::market::chain_walk::ChainNet;
+        let Some(db) = crate::test_db::OwnDatabase::create("listing_amoy").await else {
+            return;
+        };
+        let pool = &db.pool;
+        let now = chrono::Utc::now().naive_utc();
+        let signer = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let contract = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO shop.chain_cursor (indexer, network, chain_id, start_block, last_block, folded_block, folded_at, full_history)
+             VALUES ('nft', 'matic', 80002, 0, 100, 100, timezone('UTC', now()), true);
+             INSERT INTO shop.nft (network, contract_address, token_id, owner, minted_block, minted_at, transferred_block, transferred_at, transferred_log)
+             VALUES ('matic', '{contract}', 1, '{signer}', 2, 2, 2, 2, 0);
+             INSERT INTO shop.nft_contract (network, contract_address, walked_from_block) VALUES ('matic', '{contract}', 1);
+             INSERT INTO shop.collections
+               (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at)
+             VALUES ('matic', '{contract}', 80002, 'Amoy', '{signer}', '{signer}', 'urn:amoy:collection', true, true, false, 1, 1, 1, now())"
+        ))).execute(pool).await.unwrap();
+        let backed = nft_trade_backed_sql(
+            "$1::timestamp",
+            "1::numeric",
+            ChainNet::Ethereum.testnet_chain_id(),
+            ChainNet::Matic.testnet_chain_id(),
+        );
+        let query = format!(
+            "SELECT {backed} FROM (SELECT 'MATIC' AS network, $2::text AS signer, gen_random_uuid() AS id) t
+             CROSS JOIN (SELECT 3 AS asset_type, $3::text AS contract_address, gen_random_uuid() AS id) sent"
+        );
+        let held = || async {
+            sqlx::query_scalar::<_, bool>(sqlx::AssertSqlSafe(query.as_str()))
+                .bind(now)
+                .bind(signer)
+                .bind(contract)
+                .fetch_one(pool)
+                .await
+                .unwrap()
+        };
+        assert!(
+            !held().await,
+            "an unverified collection cannot prove ownership"
+        );
+        sqlx::query(
+            "UPDATE shop.collections SET testnet_verified = true WHERE contract_address = $1",
+        )
+        .bind(contract)
+        .execute(pool)
+        .await
+        .unwrap();
+        assert!(
+            held().await,
+            "the verified and watched collection proves ownership"
+        );
+        sqlx::query(
+            "DELETE FROM shop.nft_contract WHERE network = 'matic' AND contract_address = $1",
+        )
+        .bind(contract)
+        .execute(pool)
+        .await
+        .unwrap();
+        assert!(
+            !held().await,
+            "removing the contract's watch withdraws the ownership proof"
+        );
         db.drop().await;
     }
 

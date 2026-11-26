@@ -820,23 +820,44 @@ pub async fn list_nfts(
             )
         })
         .collect();
+    let rental_assets: Vec<String> = if prefetched.is_none() {
+        data.iter()
+            .filter(|r| matches!(r.nft.category.as_str(), "parcel" | "estate"))
+            .map(|r| r.nft.id.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut trade_orders = if unlisted.is_empty() {
         Default::default()
     } else {
         let read = async {
             if let Some(conn) = snapshot.as_mut() {
-                // A price/order filter already checked this snapshot before reading the page.
-                if !super::nft_reads::needs_orders(f) {
-                    super::trades::ready_on(state, conn, now).await?;
+                let load = async |conn: &mut sqlx::PgConnection| {
+                    // A price/order filter already checked this snapshot.
+                    if !super::nft_reads::needs_orders(f) {
+                        super::trades::ready_on(state, conn, now).await?;
+                    }
+                    super::orders::open_trade_orders_on(state, conn, &unlisted, now.naive_utc())
+                        .await
+                        .map_err(super::nft_reads::read_error)
+                };
+                if single_token || rental_assets.is_empty() {
+                    return load(conn).await;
                 }
-                return super::orders::open_trade_orders_on(
-                    state,
-                    &mut **conn,
-                    &unlisted,
-                    now.naive_utc(),
-                )
-                .await
-                .map_err(super::nft_reads::read_error);
+                // An optional order statement must leave the snapshot usable
+                // for the rentals query, including after a PostgreSQL timeout.
+                let mut savepoint = sqlx::Connection::begin(&mut **conn)
+                    .await
+                    .map_err(super::nft_reads::read_error)?;
+                let result = load(&mut savepoint).await;
+                let finish = if result.is_ok() {
+                    savepoint.commit().await
+                } else {
+                    savepoint.rollback().await
+                };
+                finish.map_err(super::nft_reads::read_error)?;
+                return result;
             }
             super::orders::open_trade_orders(state, &unlisted).await
         };
@@ -863,33 +884,33 @@ pub async fn list_nfts(
     }
     let listings = match prefetched {
         Some(listings) => listings,
-        None => {
-            let land: Vec<String> = data
-                .iter()
-                .filter(|r| matches!(r.nft.category.as_str(), "parcel" | "estate"))
-                .map(|r| r.nft.id.clone())
-                .collect();
-            match snapshot.as_mut() {
-                Some(conn) => {
-                    match super::rentals::listings_of_nfts(&mut **conn, chain_id, &land, &statuses)
-                        .await
-                    {
-                        Ok(listings) => listings,
-                        Err(e) if strict_land => return Err(super::nft_reads::read_error(e)),
-                        Err(e) => {
-                            tracing::warn!(error = %e, "/v1/nfts: the rentals read failed");
-                            Vec::new()
-                        }
+        None => match snapshot.as_mut() {
+            Some(conn) => {
+                match super::rentals::listings_of_nfts(
+                    &mut **conn,
+                    chain_id,
+                    &rental_assets,
+                    &statuses,
+                )
+                .await
+                {
+                    Ok(listings) => listings,
+                    Err(e) if strict_land => return Err(super::nft_reads::read_error(e)),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "/v1/nfts: the rentals read failed");
+                        Vec::new()
                     }
                 }
-                None => super::rentals::listings_of_nfts(&state.pool, chain_id, &land, &statuses)
+            }
+            None => {
+                super::rentals::listings_of_nfts(&state.pool, chain_id, &rental_assets, &statuses)
                     .await
                     .unwrap_or_else(|e| {
                         tracing::warn!(error = %e, "/v1/nfts: the rentals read failed");
                         Vec::new()
-                    }),
+                    })
             }
-        }
+        },
     };
     let by_nft: std::collections::HashMap<&str, &crate::rentals::types::RentalListing> =
         listings.iter().map(|l| (l.nft_id.as_str(), l)).collect();
