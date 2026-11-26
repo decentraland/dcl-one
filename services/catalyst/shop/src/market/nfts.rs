@@ -482,7 +482,7 @@ pub fn graph_where(f: &NftFilters, now_ms: i64) -> Value {
     match f.is_on_sale {
         Some(true) => {
             w["searchOrderStatus"] = json!("open");
-            w["or"] = super::orders::graph_unexpired("searchOrderExpiresAt", now_ms);
+            w["and"] = super::orders::graph_unexpired("searchOrderExpiresAt", now_ms);
         }
         Some(false) => w["searchOrderStatus_not"] = json!("open"),
         None => {}
@@ -715,7 +715,7 @@ pub async fn list_nfts(
     let chain_id = state.settings.market.indexes.chain_id_ethereum;
     // The pinned Decentraland contracts address book (01b40cff154a046f9ec509ac84be3643b51181c6,
     // addresses.json) has LANDProxy, EstateProxy and DCLRegistrar on Sepolia only on this pair.
-    if super::owned_items::walks_here(state)
+    if (super::owned_items::walks_here(state) || super::nft_reads::needs_orders(f))
         && state.settings.catalogue() == super::nft_index::Catalogue::Testnet
         && f.network == Some(Network::Matic)
         && (f.is_land
@@ -727,7 +727,8 @@ pub async fn list_nfts(
         return Ok((vec![], 0));
     }
     let mut snapshot = None;
-    if (super::owned_items::walks_here(state) || super::nft_reads::needs_orders(f))
+    if (super::owned_items::walks_here(state)
+        || (super::nft_reads::needs_orders(f) && !merges_land(f)))
         && let Some(land) = state.land_network()
         && let Some(sources) = super::nft_reads::land_page_sources(f, land)
     {
@@ -1168,7 +1169,7 @@ mod tests {
         assert_eq!(w["category"], "wearable");
         assert_eq!(w["searchOrderStatus"], "open");
         assert_eq!(
-            w["or"],
+            w["and"][0]["or"],
             json!([
                 {"searchOrderExpiresAt_gt":"5","searchOrderExpiresAt_lt":"100000000000"},
                 {"searchOrderExpiresAt_gt":"5000","searchOrderExpiresAt_gte":"100000000000"}

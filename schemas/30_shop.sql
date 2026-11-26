@@ -17566,6 +17566,12 @@ CREATE TRIGGER nft_written_update AFTER UPDATE ON shop.nft
 REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
 CREATE TRIGGER nft_written_delete AFTER DELETE ON shop.nft
 REFERENCING OLD TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_order_written_insert AFTER INSERT ON shop.nft_order
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_order_written_update AFTER UPDATE ON shop.nft_order
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_order_written_delete AFTER DELETE ON shop.nft_order
+REFERENCING OLD TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
 CREATE TRIGGER legacy_order_written_insert AFTER INSERT ON shop.legacy_order
 REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
 CREATE TRIGGER legacy_order_written_update AFTER UPDATE ON shop.legacy_order
@@ -17597,6 +17603,27 @@ $$;
 
 CREATE TRIGGER chain_cursor_publication AFTER INSERT OR UPDATE OF folded_block, folded_at ON shop.chain_cursor
 FOR EACH ROW EXECUTE FUNCTION shop.acknowledge_projection_writes();
+
+-- On upgrade an existing NFT cursor must publish once after the object pass
+-- adds the nft_order triggers. Even an empty order projection gains proof.
+-- The shared publication trigger acknowledges writes on existing rows.
+CREATE FUNCTION shop.record_nft_order_publication() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.indexer = 'nft' AND NEW.folded_block IS NOT NULL AND NEW.folded_at IS NOT NULL
+       AND (TG_OP = 'INSERT' OR NEW.folded_at IS DISTINCT FROM OLD.folded_at
+            OR NEW.folded_block IS DISTINCT FROM OLD.folded_block) THEN
+        INSERT INTO shop.projection_write (indexer, network, projection, pending, written_through)
+        VALUES ('nft', NEW.network, 'nft_order', false, NEW.folded_block)
+        ON CONFLICT (indexer, network, projection) DO NOTHING;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER chain_cursor_nft_order_publication
+AFTER INSERT OR UPDATE OF folded_block, folded_at ON shop.chain_cursor
+FOR EACH ROW EXECUTE FUNCTION shop.record_nft_order_publication();
 
 -- The nft walk's rewinds, for the bids fold: a seller inferred from the nft
 -- walk's transfers may name an owner the rewind took away, so the next fold

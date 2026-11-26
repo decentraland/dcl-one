@@ -185,14 +185,7 @@ pub(super) async fn names_page_if_admitted(
         return Ok(None);
     }
     if needs_orders(f) {
-        super::trades::ready_checked_for_networks_on(
-            state,
-            &mut conn,
-            &page_networks(f, sources),
-            now,
-        )
-        .await
-        .map_err(|error| error.into_response(read_error))?;
+        require_listing_sources(state, &mut conn, f, sources, now).await?;
     }
     let (data, total) = list_page_at(
         state,
@@ -1110,7 +1103,9 @@ fn candidate_legs(
              COALESCE(lo.created_at * 1000, (EXTRACT(EPOCH FROM v3.created_at) * 1000)::bigint) AS order_created_at",
             " LEFT JOIN LATERAL (SELECT u.amount_received, u.created_at FROM unified_trades u WHERE u.type = 'public_nft_order' \
                 AND lower(u.network) = b.network AND u.contract_address_sent = b.contract_address AND u.token_id = b.token_id::text \
-                AND u.signer = b.owner ORDER BY u.created_at DESC LIMIT 1) v3 ON true",
+                AND u.signer = b.owner
+                ORDER BY (EXTRACT(EPOCH FROM u.created_at) * 1000)::bigint DESC, u.id ASC, u.amount_received, u.beneficiary
+                LIMIT 1) v3 ON true",
             restrict,
         )
     } else {
@@ -1519,6 +1514,51 @@ pub(super) async fn estate_parcels(
     Ok(out)
 }
 
+/// Listing filters need the rows acknowledged by the source publications.
+/// LAND ownership comes from the already admitted land-authz snapshot.
+async fn require_listing_sources(
+    state: &MarketplaceState,
+    conn: &mut PgConnection,
+    f: &NftFilters,
+    sources: Sources,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), Response> {
+    let nets = page_networks(f, sources);
+    let collection_nets = if sources.collections {
+        collection_networks(f)
+    } else {
+        Vec::new()
+    };
+    for &net in &nets {
+        let nft_ownership =
+            collection_nets.contains(&net) || (sources.names && net == ChainNet::Ethereum);
+        let published: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM shop.projection_write
+                WHERE indexer='nft' AND network=$1 AND projection='nft_order' AND NOT pending
+             ) AND NOT EXISTS (
+                SELECT 1 FROM shop.projection_write
+                WHERE indexer='nft' AND network=$1 AND projection='nft' AND $2 AND pending
+             )",
+        )
+        .bind(net.db_name())
+        .bind(nft_ownership)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(super::readers::index_read_error)?;
+        if !published {
+            return Err(owned_items::not_ready(&format!(
+                "the {} nft index has not published the listing rows",
+                net.db_name()
+            )));
+        }
+    }
+    super::trades::ready_checked_for_networks_on(state, conn, &nets, now)
+        .await
+        .map(|_| ())
+        .map_err(|error| error.into_response(super::readers::index_read_error))
+}
+
 pub(super) async fn land_page_snapshot(
     state: &MarketplaceState,
     f: &NftFilters,
@@ -1530,14 +1570,7 @@ pub(super) async fn land_page_snapshot(
         super::rentals::require_sepolia_listings(&mut conn).await?;
     }
     if needs_orders(f) {
-        super::trades::ready_checked_for_networks_on(
-            state,
-            &mut conn,
-            &page_networks(f, sources),
-            now,
-        )
-        .await
-        .map_err(|error| error.into_response(read_error))?;
+        require_listing_sources(state, &mut conn, f, sources, now).await?;
     }
     Ok(conn)
 }
@@ -1609,14 +1642,7 @@ pub(super) async fn indexed_page(
         }
     };
     if needs_orders(f) {
-        super::trades::ready_checked_for_networks_on(
-            state,
-            &mut conn,
-            &page_networks(f, sources),
-            now,
-        )
-        .await
-        .map_err(|error| error.into_response(read_error))?;
+        require_listing_sources(state, &mut conn, f, sources, now).await?;
     }
     let (data, total) = list_page_on(state, f, first, skip, sources, &mut conn, now).await?;
     Ok((data, total, conn))

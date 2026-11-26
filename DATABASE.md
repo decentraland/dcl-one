@@ -5244,7 +5244,14 @@ An order-dependent LAND or estate page also uses this snapshot on a node
 that reads publications without running the walkers. The sale filter joins
 backed v3 listings and open legacy orders before counting and paging. An
 order-dependent NAME page uses the published NFT and trade sources on its
-page snapshot.
+page snapshot. These pages require every order projection they read to be
+acknowledged by its NFT publication, plus the NFT ownership rows for
+collections and NAMEs. The schema object pass adds the `nft_order` write
+and cursor triggers. After an upgrade, the next NFT publication establishes
+the order proof, including on an empty network. Until then, order-dependent
+reads that need that projection return `nft-index`.
+A mixed non-walking page keeps its optional LAND and NAME sources when
+those publications are available.
 Both owner searches and ownerless catalogue pages read the collections, NAME
 and LAND sources that their filters can include. This includes unfiltered
 browsing, search, sale filters and sorting. A missing required publication returns its source's 503

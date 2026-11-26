@@ -292,7 +292,7 @@ pub(super) async fn open_trade_orders_on<'e>(
         "WITH {} SELECT DISTINCT ON (x.network, x.nft_address, x.token_id) x.* FROM (SELECT {} {TRADE_ORDER_FROM} \
            AND (lower(u.network), u.contract_address_sent, u.token_id, u.signer) IN \
                (SELECT * FROM unnest($3::text[], $4::text[], $5::text[], $6::text[]))) x \
-         ORDER BY x.network, x.nft_address, x.token_id, x.created_at DESC, x.id ASC",
+         ORDER BY x.network, x.nft_address, x.token_id, x.created_at DESC, x.id ASC, x.price::numeric, x.payee",
         unified_trades_cte("$1", "$2"),
         TRADE_ORDER_COLUMNS.replace("SHIFT", ITEM_ID_SHIFT)
     );
@@ -1017,14 +1017,15 @@ async fn book_total(
 const ORDER_FIELDS: &str = "id marketplaceAddress nftAddress tokenId owner buyer price status expiresAt createdAt updatedAt nft { issuedId }";
 
 /// Compare the two raw expiry encodings on the Graph before paging.
-/// The boundary matches the NFT walk's `expires_ms` conversion.
+/// Nest OR under AND so it can share a query with column filters and the
+/// count cursor. The boundary is the NFT walk's `expires_ms` conversion.
 pub(super) fn graph_unexpired(field: &str, now_ms: i64) -> Value {
     let threshold = super::nft_index::LEGACY_EXPIRY_UNIT_THRESHOLD.to_string();
     let gt = format!("{field}_gt");
-    json!([
+    json!([{ "or": [
         { (&gt): now_ms.div_euclid(1_000).to_string(), (format!("{field}_lt")): threshold },
         { (&gt): now_ms.to_string(), (format!("{field}_gte")): threshold },
-    ])
+    ] }])
 }
 
 fn legacy_where(f: &OrderFilters, now_ms: i64) -> Value {
@@ -1047,10 +1048,10 @@ fn legacy_where(f: &OrderFilters, now_ms: i64) -> Value {
     match f.status.as_deref() {
         Some("open") => {
             w["status"] = json!("open");
-            w["or"] = graph_unexpired("expiresAt", now_ms);
+            w["and"] = graph_unexpired("expiresAt", now_ms);
         }
         Some(s) => w["status"] = json!(s),
-        None => w["or"] = graph_unexpired("expiresAt", now_ms),
+        None => w["and"] = graph_unexpired("expiresAt", now_ms),
     }
     if let Some(v) = &f.item_id {
         let composite = if v.contains('-') {
@@ -1594,7 +1595,7 @@ mod tests {
         assert_eq!(w["nftAddress"], "0xabc");
         assert_eq!(w["item"], "0xabc-12");
         assert_eq!(
-            w["or"],
+            w["and"][0]["or"],
             json!([
                 {"expiresAt_gt":"1","expiresAt_lt":"100000000000"},
                 {"expiresAt_gt":"1000","expiresAt_gte":"100000000000"}
