@@ -6,7 +6,8 @@
 //   2. every runtime page draws every example in its iframe canvas with a nonzero box and no example error, and at
 //      1280px and 375px keeps its layout (LAYOUT): the page fits the viewport, every picture loads and paints inside
 //      its own box, and no in-flow text covers other text; so do the foundations pages and the HUD Showcase; at 375px
-//      the gallery page around it fits a 375px window too;
+//      the gallery page around it fits a 375px window too; the components Showcase, the first runtime page listed,
+//      passes the same checks and draws every other runtime page, in the sidebar's order, none of them empty;
 //   3. the canvas is a real viewport: NavBar shows its menu button at 375px and hides it at 1280px;
 //   4. every runtime foundations page renders;
 //   5. the HUD section lists the Explorer HUD's Showcase first, then its pages; the Showcase page draws every page
@@ -172,6 +173,17 @@ const EXAMPLES = `(() => {
     error: section.querySelector('[data-example-error]')?.textContent ?? null
   }))
 })()`
+
+// The pages the components Showcase draws, in order: each one's name and whether it draws its examples (inline, or in
+// a canvas of its own with a nonzero box for a page positioned against the viewport).
+const SHOWCASE_PAGES = `[...${CANVAS}.querySelectorAll('[data-showcase-page]')].map((page) => ({
+  name: page.dataset.showcasePage,
+  drawn: !page.querySelector('[data-showcase-empty]') &&
+    [...page.querySelectorAll('[data-example], iframe')].some((node) => {
+      const box = node.getBoundingClientRect()
+      return box.width > 0 && box.height > 0
+    })
+}))`
 
 // How far, in CSS pixels, a picture the component positions may overhang its slot.
 const POSITIONED_OVERHANG = 4
@@ -367,6 +379,10 @@ async function checkGallery({ dist, prefix = '/', hosted = false, csp, browser }
     if (hosted && listed.generated.length)
       throw new Error(`the hosted preview lists ${listed.generated.length} generated pages`)
 
+    // The Showcase leads the runtime pages, as the HUD's leads its sections.
+    const [overview, ...runtimePages] = listed.runtime
+    if (!overview || !runtimePages.length)
+      throw new Error(`the sidebar lists no runtime pages: ${listed.runtime.join(', ')}`)
     const examples = []
     for (const name of listed.runtime) {
       for (const width of [1280, 375]) {
@@ -400,7 +416,16 @@ async function checkGallery({ dist, prefix = '/', hosted = false, csp, browser }
               `the ${name} gallery page is ${page[0]}px wide in a ${page[1]}px window: ${page[2].join('; ') || 'the canvas'}`
             )
         }
-        if (width === 1280) examples.push(...drawn.map((example) => `${name}/${example.id}`))
+        if (name === overview) {
+          const shown = await session.evaluate(SHOWCASE_PAGES)
+          const names = shown.map((page) => page.name)
+          if (names.join() !== runtimePages.join())
+            throw new Error(
+              `the ${overview} page at ${width}px draws ${names.join(', ') || 'no page'}; the sidebar lists ${runtimePages.join(', ')}`
+            )
+          const empty = shown.find((page) => !page.drawn)
+          if (empty) throw new Error(`the ${overview} page draws nothing for ${empty.name}`)
+        } else if (width === 1280) examples.push(...drawn.map((example) => `${name}/${example.id}`))
       }
     }
 
@@ -581,7 +606,7 @@ async function checkGallery({ dist, prefix = '/', hosted = false, csp, browser }
     summary = {
       entry: `${base}${hosted ? 'index.html' : 'gallery/'}`,
       hosted,
-      runtimePages: listed.runtime.length,
+      runtimePages: runtimePages.length,
       examples: examples.length,
       foundations: foundations.length,
       hudPages: pages.length,

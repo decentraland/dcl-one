@@ -4,6 +4,12 @@ A review page for the hand-written runtime components that `@dcl/one-ui` exports
 
 The sidebar lists the foundations first, then the components grouped by kind, then the HUD, then a collapsed Figma reference section: the generated Review (`figma/review`), previews generated from the Figma capture for comparison, which apps never use. The generated Review itself is unchanged and keeps its own deep links. Only names present in both the runtime and Figma lists (Button, NavBar and others) carry a `runtime` or `Figma` label. Selecting an entry navigates in place (back and forward work), so the sidebar keeps its scroll position. A grouped export opens by its own name (`?component=EventCardHost` shows the EventCard page).
 
+The heading of each group (Foundations, each kind of component, HUD) is a button that collapses and expands its list, and the button under the filter collapses every group, or expands them all once every one is collapsed. The browser remembers the collapsed groups (`localStorage`; without it they last for the visit). Opening a page expands the group that lists it, and a filter shows every match whatever is collapsed.
+
+## Components Showcase
+
+`Showcase`, the first entry under Components, draws every component page on one canvas (`src/frame/ComponentShowcase.tsx`): the groups in the sidebar's order, each page under its name, which opens the page itself, and its summary. It renders the registry's examples with the canvas's own example view, so a page and the Showcase cannot differ. A page whose content is positioned against the viewport (a `minHeight` in its entry: Modal, NavBar, Dropdown) is drawn in a canvas of its own inside the Showcase, loaded as it nears the window, so a dialog covers its own page only.
+
 ## HUD
 
 The HUD section shows the Explorer HUD's Showcase (`apps/hud/design/Showcase.tsx`, `?showcase=1` in a HUD host), its single source: `Showcase` opens every section, and each section has a page of its own, named in `apps/hud/design/ShowcaseIndex.ts`. A component shown on another section opens it by its own name (`?hud=MenuRow` shows MenuPanel). The glyphs (`apps/hud/design/Glyphs.tsx`) have a page the gallery draws itself, every glyph, as it draws the foundations' icons: a Showcase section would keep the glyphs the HUD does not use in the HUD's design chunk.
@@ -40,6 +46,7 @@ The build writes `figma/review/review-dist/gallery/`, beside the generated Revie
 | URL                                       | Opens                                                      |
 | ----------------------------------------- | ---------------------------------------------------------- |
 | `gallery/?component=Button&width=375`     | a runtime page at a canvas width (`fill` when omitted)     |
+| `gallery/?component=Showcase`             | every component page, in one canvas                        |
 | `gallery/?foundations=icons`              | a runtime foundations page                                 |
 | `gallery/?hud=Tabs&width=1280`            | a HUD Showcase section in a HUD window of that width       |
 | `gallery/?hud=Showcase`                   | every HUD Showcase section, then the glyphs, in one window |

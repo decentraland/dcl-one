@@ -46,6 +46,85 @@
   color: var(--dcl-text-secondary);
 }
 
+/* A group's heading is the button that collapses and expands its list: it keeps the heading's type. */
+.groupToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-8);
+  inline-size: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: var(--dcl-space-4) var(--dcl-space-8) var(--dcl-space-4) 0;
+  border: 0;
+  border-radius: var(--dcl-radius-xs);
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.groupToggle:hover:not(:disabled),
+.collapseAll:hover:not(:disabled) {
+  background: var(--dcl-bg-hover);
+}
+
+.groupToggle:focus-visible,
+.collapseAll:focus-visible,
+.navLink:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
+.groupToggle:disabled,
+.collapseAll:disabled {
+  cursor: default;
+}
+
+.chevron {
+  flex-shrink: 0;
+  inline-size: 6px;
+  block-size: 6px;
+  border-inline-end: 2px solid currentColor;
+  border-block-end: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 120ms ease-out;
+}
+
+.groupToggle[aria-expanded='true'] .chevron {
+  transform: rotate(45deg);
+}
+
+.groupToggle:disabled .chevron {
+  visibility: hidden;
+}
+
+.collapseAll {
+  display: block;
+  margin: var(--dcl-space-8) 0 0 auto;
+  padding: var(--dcl-space-4) var(--dcl-space-8);
+  border: 1px solid var(--dcl-border-default);
+  border-radius: var(--dcl-radius-xs);
+  background: none;
+  color: var(--dcl-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.collapseAll:disabled {
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}
+
 .navList {
   list-style: none;
   margin: 0;
