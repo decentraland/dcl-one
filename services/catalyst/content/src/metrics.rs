@@ -1,4 +1,5 @@
-//! Content write, peer sync and history pruning metrics exposed by serve.
+//! Content write, peer sync and history pruning metrics exposed by serve, under dcl-one's own
+//! names. The families that keep a legacy content server series are in [`crate::series`].
 use crate::{history_prune::*, sync::retry_failed::UNDECIDED_RECORDS};
 use dcl_metrics::{CounterFamily, Descriptor, GaugeFamily, Unit};
 

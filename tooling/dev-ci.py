@@ -32,7 +32,9 @@ MACOS = ('tooling/dev*', 'tooling/catalyst-test*', 'tooling/tests/test_catalyst_
 # Inputs whose Rust-job behaviour the Linux leg covers: web apps, other Python tooling and Rust/SQL
 # source whose compiled code is the same on both platforms. Main pushes still run them on macOS.
 LINUX_ONLY = ('apps/sites/**', 'apps/ui3/**', 'apps/creator-hub/packages/zip-extract/**',
-              'tooling/*.py', 'tooling/tests/**', 'tooling/migration/**', 'services/catalyst/**', 'library/**', 'schemas/**')
+              'tooling/*.py', 'tooling/tests/**', 'tooling/migration/**', 'services/catalyst/**', 'library/**', 'schemas/**',
+              '.github/workflows/closed-pr-cache.yml', '.github/workflows/creator-hub-ci.yml',
+              '.github/workflows/bevy-explorer-benchmark.yml')
 # What the Rust job reads besides the paths its Rust sources name: the crates it compiles, the SQL, protocol
 # and API contract they embed, the toolchain, the dev shell and stack, and the scripts and tests
 # dev-test.sh runs. A pull request runs the Rust tests only when it changes one of these or a named path.

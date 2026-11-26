@@ -1580,11 +1580,17 @@ pub async fn get_suggested_catalog(
     if let Err(r) = ready(&state).await {
         return r;
     }
-    let verified =
-        match super::signed::optional_signer(&headers, "get", "/v3/catalog/suggested").await {
-            Ok(v) => v.map(|a| a.to_lowercase()),
-            Err(e) => return e.into_response(),
-        };
+    let verified = match super::signed::optional_signer(
+        state.eip1654.as_deref(),
+        &headers,
+        "get",
+        "/v3/catalog/suggested",
+    )
+    .await
+    {
+        Ok(v) => v.map(|a| a.to_lowercase()),
+        Err(e) => return e.into_response(),
+    };
     let p = Params::new(&pairs);
     let first = finite_i64(p.get_number("first", None));
     let limit = first.unwrap_or(12).clamp(1, 40) as usize;

@@ -1,4 +1,5 @@
-import { CrdtMessageType, Engine, IEngine, CrdtMessage, Transport } from '../../packages/@dcl/ecs/src'
+import type { IEngine, CrdtMessage, Transport } from '../../packages/@dcl/ecs/src'
+import { CrdtMessageType, Engine } from '../../packages/@dcl/ecs/src'
 import { ReadWriteByteBuffer } from '../../packages/@dcl/ecs/src/serialization/ByteBuffer'
 import { readMessage } from '../../packages/@dcl/ecs/src/serialization/crdt/message'
 import { int8Component } from './int8component'
