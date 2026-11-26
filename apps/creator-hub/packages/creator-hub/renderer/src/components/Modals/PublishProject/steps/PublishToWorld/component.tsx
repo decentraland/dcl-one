@@ -82,14 +82,22 @@ export function PublishToWorld(props: Props) {
   const usesSeparatePublishTarget =
     worldsManagementUrl(WORLDS_CONTENT_SERVER) !== WORLDS_CONTENT_SERVER;
   const publishLayout = publishSceneLayout.worldName === name ? publishSceneLayout : undefined;
-  // Keep both footprints visible while a local upload is waiting to reach the canonical world.
-  const previewScenes = useMemo(() => {
-    if (!usesSeparatePublishTarget || !publishLayout) return worldSettings.scenes;
-    const canonicalIds = new Set(worldSettings.scenes.map(scene => scene.entityId));
-    return [
-      ...worldSettings.scenes,
-      ...publishLayout.scenes.filter(scene => !canonicalIds.has(scene.entityId)),
-    ];
+  const { previewScenes, publishOnlyScenes } = useMemo(() => {
+    const canonicalScenes = worldSettings.scenes;
+    if (!usesSeparatePublishTarget || !publishLayout) {
+      return { previewScenes: canonicalScenes, publishOnlyScenes: [] };
+    }
+    const canonicalIds = new Set(canonicalScenes.map(scene => scene.entityId));
+    const publishOnlyScenes = publishLayout.scenes.filter(
+      scene => !canonicalIds.has(scene.entityId),
+    );
+    // Two versions with the same parcel footprint occupy one location. Show the upload target's
+    // version there, while retaining the canonical list for Places and delete protection.
+    const byFootprint = new Map<string, WorldScene>();
+    for (const scene of [...canonicalScenes, ...publishOnlyScenes]) {
+      byFootprint.set([...scene.parcels].sort().join('|'), scene);
+    }
+    return { previewScenes: [...byFootprint.values()], publishOnlyScenes };
   }, [usesSeparatePublishTarget, publishLayout, worldSettings.scenes]);
   const worldPermissions = useSelector(state =>
     managementSelectors.getParcelsStateForAddress(state, wallet || '', 'content', name),
@@ -315,7 +323,7 @@ export function PublishToWorld(props: Props) {
               project={project}
               worldSettings={worldSettings}
               previewScenes={previewScenes}
-              usesSeparatePublishTarget={usesSeparatePublishTarget}
+              publishOnlyScenes={publishOnlyScenes}
               isMultiSceneEnabled={isMultiSceneEnabled}
               onChangeMultiScene={setMultiSceneChoice}
               hasWorldWidePermissions={hasWorldWidePermissions}
@@ -358,7 +366,7 @@ function SelectWorld({
   project,
   worldSettings,
   previewScenes,
-  usesSeparatePublishTarget,
+  publishOnlyScenes,
   hasWorldWidePermissions,
   worldLoadFailed,
   worldLoading,
@@ -373,7 +381,7 @@ function SelectWorld({
   project: Project;
   worldSettings: WorldSettingsState;
   previewScenes: WorldScene[];
-  usesSeparatePublishTarget: boolean;
+  publishOnlyScenes: WorldScene[];
   hasWorldWidePermissions: boolean;
   worldLoadFailed: boolean;
   worldLoading: boolean;
@@ -460,7 +468,7 @@ function SelectWorld({
       };
       if (
         getWorldPlaceContinuityBreak(worldSettings.scenes, scene.parcels, isMultiSceneEnabled) ||
-        (usesSeparatePublishTarget && countOverlappedWorldScenes(previewScenes, scene.parcels) > 0)
+        countOverlappedWorldScenes(publishOnlyScenes, scene.parcels) > 0
       ) {
         onShowConfirmation({ worldConfiguration, scene });
       } else {
@@ -473,7 +481,7 @@ function SelectWorld({
     isMultiSceneEnabled,
     worldSettings.scenes,
     previewScenes,
-    usesSeparatePublishTarget,
+    publishOnlyScenes,
     onPublish,
     onSelectLocation,
     onShowConfirmation,

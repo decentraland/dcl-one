@@ -170,6 +170,44 @@ describe('PublishToWorld', () => {
       expect(store.getState().management.worldSettings.scenes).toEqual([]);
     });
 
+    it('uses the ordinary republish path when both targets report the same scene', async () => {
+      const scene = {
+        entityId: 'already-forwarded',
+        parcels: ['0,0'],
+        entity: { content: [], metadata: { scene: { base: '0,0', parcels: ['0,0'] } } },
+      };
+      api.fetchWorldScenes.mockResolvedValue({ scenes: [scene], total: 1 });
+      api.fetchPublishScenes.mockResolvedValue({ scenes: [scene], total: 1 });
+      await renderStep();
+
+      fireEvent.click(screen.getByTestId('publish-modal-publish-to-world-select-world-action'));
+
+      await waitFor(() => expect(useEditor().publishScene).toHaveBeenCalledOnce());
+    });
+
+    it('shows one replacement when forwarding has not caught up with a new version', async () => {
+      const scene = (id: string, title: string) => ({
+        entityId: id,
+        parcels: ['0,0'],
+        entity: {
+          content: [],
+          metadata: { display: { title }, scene: { base: '0,0', parcels: ['0,0'] } },
+        },
+      });
+      api.fetchWorldScenes.mockResolvedValue({ scenes: [scene('old', 'Older Scene')], total: 1 });
+      api.fetchPublishScenes.mockResolvedValue({
+        scenes: [scene('new', 'Pending Scene')],
+        total: 1,
+      });
+      await renderStep();
+
+      fireEvent.click(screen.getByTestId('publish-modal-publish-to-world-select-world-action'));
+
+      expect(await screen.findByText('Pending Scene')).toBeTruthy();
+      expect(screen.queryByText('Older Scene')).toBeNull();
+      expect(useEditor().publishScene).not.toHaveBeenCalled();
+    });
+
     it('defaults to multiple scenes when the targets show distinct locations', async () => {
       const scene = (base: string) => ({
         entityId: `entity-${base}`,
