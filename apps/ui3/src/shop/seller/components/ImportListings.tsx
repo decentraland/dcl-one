@@ -9,7 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import EmptyState from "../../../components/EmptyState";
 import { CENTS_PER_CREDIT, formatUsd, parseManaWei, usdCents } from "@shop/model/money";
 import { shopPath } from "../../routes";
@@ -129,7 +129,7 @@ export function ImportListingsView({ creations, owned }: { creations: ImportItem
             {confirmations ? ` · ${confirmations.total} wallet confirmations` : ""}
           </p>
           <div className="mk-actions">
-            <Button disabled={!provider || !!block || running || chosen.length === 0 || invalid} onClick={() => void run()}>
+            <Button size="md" disabled={!provider || !!block || running || chosen.length === 0 || invalid} onClick={() => void run()}>
               {running ? "Listing…" : `List ${chosen.length} ${chosen.length === 1 ? "item" : "items"}`}
             </Button>
           </div>

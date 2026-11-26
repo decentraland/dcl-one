@@ -463,31 +463,13 @@ button.shop-pdp__textlink {
   cursor: pointer;
 }
 
-.shop-pdp .shop-pdp__tip .tt__tip {
-  z-index: 20;
-  width: max-content;
-  max-width: min(240px, calc(100vw - 32px));
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: #16141a;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.4;
+.shop-pdp__tip {
+  --tooltip-bg: var(--dcl-neutrals-charcoal);
+  --tooltip-text: var(--dcl-neutrals-white);
+  --tooltip-radius: var(--dcl-radius-sm);
+  --tooltip-pad: var(--dcl-space-8) 10px;
+  --tooltip-weight: 500;
   text-align: center;
-  text-transform: none;
-  letter-spacing: 0;
-  white-space: normal;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
-}
-.shop-pdp .shop-pdp__tip .tt__tip::after {
-  content: "";
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  border: 5px solid transparent;
-  border-top-color: #16141a;
 }
 
 .shop-pdp__ctas {

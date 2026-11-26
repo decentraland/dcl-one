@@ -55,6 +55,8 @@ pub enum AuthError {
     EipNotImplemented,
     #[error("signature validation unavailable: {0}")]
     ValidatorUnavailable(String),
+    #[error("too many contract-wallet signature checks from this client")]
+    RateLimited,
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +168,7 @@ fn chain_error(e: ChainError) -> AuthError {
         },
         ChainError::Eip1654NotImplemented => AuthError::EipNotImplemented,
         ChainError::Eip1654ValidationFailed(d) => AuthError::ValidatorUnavailable(d),
+        ChainError::Eip1654RateLimited => AuthError::RateLimited,
         other => AuthError::InvalidSignature(format!("{other:?}")),
     }
 }

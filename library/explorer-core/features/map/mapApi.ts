@@ -29,6 +29,7 @@ import type {
 import { nextRequestId } from '../../engine/requestIds'
 import type { DiscoverPlace } from '../places/placesApi'
 import { parcelKey, type Vec2 } from './mapCoords'
+import { fixMapGridAge, type MapGridAge } from './gridAge'
 
 export type { PlacePhoto }
 
@@ -255,12 +256,15 @@ export async function fetchPlacePhotos(placeId: string, offset: number): Promise
   return { images, total }
 }
 
-/** `worlds`: the World each wallet (lowercase) is connected to; a wallet not in it is in none. */
-let fixedPublicReads: { pois: Vec2[]; peers: Peer[]; worlds?: Record<string, string> } | null = null
+/** `worlds`: the World each wallet (lowercase) is connected to; a wallet not in it is in none.
+ *  `gridAge`: the parcel grid's age the map API answers; none shows no age label. */
+type FixedPublicReads = { pois: Vec2[]; peers: Peer[]; worlds?: Record<string, string>; gridAge?: MapGridAge | null }
+let fixedPublicReads: FixedPublicReads | null = null
 
 /** Answer the unsigned reads from fixed data instead of the network (the HUD's mock mode). */
-export function fixMapPublicReads(data: { pois: Vec2[]; peers: Peer[]; worlds?: Record<string, string> } | null): void {
+export function fixMapPublicReads(data: FixedPublicReads | null): void {
   fixedPublicReads = data
+  fixMapGridAge(data == null ? undefined : (data.gridAge ?? null))
 }
 
 export async function fetchPoiParcels(signal?: AbortSignal): Promise<Vec2[]> {

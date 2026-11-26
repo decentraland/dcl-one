@@ -1,6 +1,8 @@
 import * as components from '../../../packages/@dcl/ecs/src/components'
-import { Engine, Entity } from '../../../packages/@dcl/ecs/src/engine'
-import { createInputSystem, IInputSystem } from '../../../packages/@dcl/ecs/src/engine/input'
+import type { Entity } from '../../../packages/@dcl/ecs/src/engine'
+import { Engine } from '../../../packages/@dcl/ecs/src/engine'
+import type { IInputSystem } from '../../../packages/@dcl/ecs/src/engine/input'
+import { createInputSystem } from '../../../packages/@dcl/ecs/src/engine/input'
 import { InputAction, PointerEventType } from '../../../packages/@dcl/ecs/src'
 import { createTestPointerDownCommand } from './utils'
 

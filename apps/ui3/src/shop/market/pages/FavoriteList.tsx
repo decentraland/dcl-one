@@ -8,7 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
-import Button from "../../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import Icon from "../../discovery/components/Icon";
 import SkeletonCards from "../../discovery/components/SkeletonCards";
 import { useCreatorName, useSeo } from "../../discovery/hooks";
@@ -79,7 +79,7 @@ function ListItems({ list, viewer, editable, owner }: { list: List; viewer: stri
   if (items.isError)
     return (
       <Panel icon={couldNotLoad} title="Oops! This list couldn't load." subtitle="Please try again." testId="shop-list-error">
-        <Button onClick={() => void items.refetch()}>Try again</Button>
+        <Button size="md" onClick={() => void items.refetch()}>Try again</Button>
       </Panel>
     );
   if (items.data.length === 0)
@@ -147,7 +147,7 @@ export function FavoriteListView({ listId }: { listId: string }) {
       );
     return (
       <Panel icon={couldNotLoad} title="Oops! This list couldn't load." subtitle="Please try again." testId="shop-list-error">
-        <Button onClick={() => void list.refetch()}>Try again</Button>
+        <Button size="md" onClick={() => void list.refetch()}>Try again</Button>
       </Panel>
     );
   }

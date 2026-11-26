@@ -36,7 +36,7 @@ class CheckedGraphTests(unittest.TestCase):
         self.commit()
 
     def git(self, *args):
-        return subprocess.check_output(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+        return subprocess.check_output(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
                                         *args], cwd=self.root, text=True, stderr=subprocess.PIPE).strip()
 
     def write(self, name, value):

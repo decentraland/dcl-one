@@ -813,7 +813,6 @@ mod tests {
                 db.pool.clone(),
                 crate::http::Outbound::for_tests(),
                 land_settings.clone(),
-                None,
             )
         )));
         for (status, _) in estate_and_token(&state, "501").await {

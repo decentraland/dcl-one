@@ -1,5 +1,5 @@
+import type { Entity, PBUiTransform } from '../../packages/@dcl/ecs'
 import {
-  Entity,
   YGWrap,
   YGUnit,
   YGFlexDirection,
@@ -8,18 +8,11 @@ import {
   YGDisplay,
   YGPositionType,
   YGJustify,
-  PointerFilterMode,
-  PBUiTransform
+  PointerFilterMode
 } from '../../packages/@dcl/ecs'
 import { components } from '../../packages/@dcl/ecs/src'
-import {
-  BorderRadius,
-  Position,
-  PositionUnit,
-  ReactEcs,
-  UiEntity,
-  UiTransformProps
-} from '../../packages/@dcl/react-ecs/src'
+import type { BorderRadius, Position, PositionUnit, UiTransformProps } from '../../packages/@dcl/react-ecs/src'
+import { ReactEcs, UiEntity } from '../../packages/@dcl/react-ecs/src'
 import { CANVAS_ROOT_ENTITY } from '../../packages/@dcl/react-ecs/src/components/uiTransform'
 import { Color4 } from '../../packages/@dcl/sdk/math'
 import { setupEngine, WHOLE_SCREEN } from './utils'

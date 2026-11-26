@@ -1,7 +1,8 @@
-import { Entity, IEngine } from '../../engine'
-import { LastWriteWinElementSetComponentDefinition } from '../../engine/component'
+import type { Entity, IEngine } from '../../engine'
+import type { LastWriteWinElementSetComponentDefinition } from '../../engine/component'
 import { AudioAnalysis } from '../generated/index.gen'
-import { PBAudioAnalysis, PBAudioAnalysisMode } from '../generated/pb/decentraland/sdk/components/audio_analysis.gen'
+import type { PBAudioAnalysis } from '../generated/pb/decentraland/sdk/components/audio_analysis.gen'
+import { PBAudioAnalysisMode } from '../generated/pb/decentraland/sdk/components/audio_analysis.gen'
 
 export interface AudioAnalysisComponentDefinitionExtended
   extends LastWriteWinElementSetComponentDefinition<PBAudioAnalysis> {

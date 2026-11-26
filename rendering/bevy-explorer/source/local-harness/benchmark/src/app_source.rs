@@ -46,6 +46,7 @@ pub fn provision(
     destination: &Path,
     cancel: &CancellationToken,
 ) -> Result<PathBuf, Failure> {
+    check_source(source)?;
     if let Some(url) = web_address(source) {
         let mut zip = destination.as_os_str().to_owned();
         zip.push(".zip");
@@ -54,18 +55,28 @@ pub fn provision(
         let unpacked = download(&url, &zip, cancel).and_then(|()| extract(&zip, destination));
         let _ = fs::remove_file(&zip);
         unpacked?;
-    } else if Path::new(source).is_file() && source.to_ascii_lowercase().ends_with(".zip") {
+    } else if is_zip(source) {
         extract(Path::new(source), destination)?;
-    } else if Path::new(source).is_dir() {
-        return find_app_root(&std::path::absolute(source)?);
     } else {
-        return Err(Failure::usage(format!(
-            "'{}' is not a web app folder, a .zip or a URL",
-            out::safe(source)
-        )));
+        return find_app_root(&std::path::absolute(source)?);
     }
 
     find_app_root(&std::path::absolute(destination)?)
+}
+
+/// Refuses a source that is not a web app folder, a `.zip` on this machine or a URL.
+pub fn check_source(source: &str) -> Result<(), Failure> {
+    if web_address(source).is_some() || is_zip(source) || Path::new(source).is_dir() {
+        return Ok(());
+    }
+    Err(Failure::usage(format!(
+        "'{}' is not a web app folder, a .zip or a URL",
+        out::safe(source)
+    )))
+}
+
+fn is_zip(source: &str) -> bool {
+    Path::new(source).is_file() && source.to_ascii_lowercase().ends_with(".zip")
 }
 
 fn web_address(source: &str) -> Option<Url> {

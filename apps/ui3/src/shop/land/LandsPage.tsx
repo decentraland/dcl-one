@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import ManaMark from "../../atoms/ManaMark";
 import EmptyState from "../../components/EmptyState";
 import type { ShopClient } from "@shop/api/shop";
@@ -33,6 +33,7 @@ import {
 import { landChainId } from "./chain";
 import LandCard from "./LandCard";
 import LandMap from "./LandMap";
+import MapGridAge from "./MapGridAge";
 import LandPriceChart from "./LandPriceChart";
 import { daysByPeriod, PERIOD_LABEL, PERIOD_OPTIONS } from "./rentals";
 import { fetchTiles, MapNotReadyError, nearestTile, type TilesResult } from "./tiles";
@@ -326,7 +327,7 @@ export default function LandsPage({ client, loadTiles }: LandsPageProps) {
               <Button size="sm" variant="secondary" onClick={tiles.reload}>
                 Try again
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setView(false)}>
+              <Button size="sm" variant="outline" onClick={() => setView(false)}>
                 Show the list instead
               </Button>
             </div>
@@ -339,6 +340,7 @@ export default function LandsPage({ client, loadTiles }: LandsPageProps) {
               onOpen={(href) => navigate(href)}
               withLegend
               label="LAND map: drag to move, use the zoom buttons, select a parcel to open it"
+              status={<MapGridAge />}
             />
           )}
           <div className="shop-lb-maptop">
@@ -356,6 +358,12 @@ export default function LandsPage({ client, loadTiles }: LandsPageProps) {
               ) : null}
             </div>
             <ViewToggle isMap onChange={setView} />
+            {/* On phones this bar spans the map's top edge over its status corner: the age shows here instead, while the map does. */}
+            {tiles.status === "error" ? null : (
+              <div className="shop-lb-maptop__age">
+                <MapGridAge />
+              </div>
+            )}
           </div>
           {tiles.status === "loading" ? (
             <p className="shop-lb-map__loading" role="status" aria-live="polite">
