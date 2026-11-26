@@ -32,6 +32,8 @@ pub const LANE: Lane = Lane {
     source_sql: "SELECT s.deployment_auth_chain FROM worlds.forward_outbox o \
                  JOIN worlds.world_scenes s ON s.world_name = o.world_name AND s.entity_id = o.entity_id \
                  WHERE o.id = $1 AND s.mirror_source IS NULL",
+    retain_accepted: Some("EXISTS (SELECT 1 FROM worlds.world_scenes s
+        WHERE s.world_name = o.world_name AND s.entity_id = o.entity_id AND s.mirror_source IS NULL)"),
     world_column: Some("world_name"),
     max_age_ms: super::deploy::ENTITY_TTL_MS,
     max_ahead_ms: super::deploy::MAX_DEPLOYMENT_FUTURE_SKEW_MS,

@@ -172,21 +172,26 @@ pub(super) async fn catalogue_pass(
     Ok(outcome)
 }
 
-/// Local scenes accepted by the configured source in worlds missing from its catalogue.
-pub(super) async fn uncatalogued_forwards(
+/// Revisit worlds missing from the index while this source holds a local receipt or a mirrored scene.
+pub(super) async fn uncatalogued_worlds(
     pool: &PgPool,
     settings: &MirrorSettings,
 ) -> Result<Vec<String>> {
     Ok(sqlx::query_scalar(
-        r#"SELECT DISTINCT o.world_name
-           FROM worlds.forward_outbox o
-           JOIN worlds.world_scenes s USING (world_name, entity_id)
-           WHERE o.target = $1 AND o.status = 'accepted' AND s.mirror_source IS NULL
-             AND (cardinality($2::text[]) = 0 OR o.world_name = ANY($2))
+        r#"SELECT candidate.world_name FROM (
+               SELECT o.world_name FROM worlds.forward_outbox o
+               JOIN worlds.world_scenes s USING (world_name, entity_id)
+               WHERE o.target = $1 AND o.status = 'accepted' AND s.mirror_source IS NULL
+               UNION
+               SELECT w.name FROM worlds.worlds w WHERE w.mirror_source = $1
+               AND EXISTS (SELECT 1 FROM worlds.world_scenes s
+                           WHERE s.world_name = w.name AND s.mirror_source = $1)
+           ) candidate
+           WHERE (cardinality($2::text[]) = 0 OR candidate.world_name = ANY($2))
              AND NOT EXISTS (
                  SELECT 1 FROM worlds.remote_worlds r
-                 WHERE r.world_name = o.world_name AND r.unlisted_at IS NULL)
-           ORDER BY o.world_name"#,
+                 WHERE r.world_name = candidate.world_name AND r.unlisted_at IS NULL)
+           ORDER BY candidate.world_name"#,
     )
     .bind(&settings.source)
     .bind(&settings.names)

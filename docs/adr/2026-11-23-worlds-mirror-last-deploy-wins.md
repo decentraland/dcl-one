@@ -87,27 +87,29 @@ trimming whitespace and trailing slashes.
   the complete current `/scenes` listing. A listed local scene keeps its place
   identity and storage when converted in place. For an accepted scene missing
   from the listing, the pass verifies absence with an entity-filtered request
-  before retirement. An unlimited pass checks uncatalogued worlds with
-  accepted local scenes, within any explicit name filter. A bounded pass
-  only checks its first-N catalogue names. If the upstream has no scenes,
-  the pass can retire confirmed local
-  scenes and retains the local world settings and grants.
+  before retirement. An accepted scene can retire after confirmed removal
+  while a different local scene keeps the world local. An unlimited pass
+  checks uncatalogued worlds with accepted local scenes or active mirrored
+  scenes from that source, within any explicit name filter. A bounded pass
+  checks its first-N catalogue names. A confirmed empty listing retires
+  the matching scenes and preserves the world settings and grants.
 - **Hosting.** Mirrored scenes are served as copies. Handover ends local
   authoritative SDK7 hosting and local collaborator and `logsPermissions`
   eligibility for those scenes. Mirrored scenes stop counting toward local
   personal-world quotas.
 - **Access and settings.** The mirror reads access before committing a
-  scene-set change. A failure or an unknown access type leaves the local
-  world in place. Access and settings set here stay in effect while the
+  takeover. A failure or an unknown access type leaves the local world in
+  place. Access and settings set here stay in effect while the
   recorded owner still holds the name. Upstream deployment and streaming
   grants are not imported.
 - **Receipt limits.** The operator can read forwarding status under
-  `/admin/forwarding`. If a response is lost after an upstream commit, or an
-  accepted receipt expires after 30 days, the pass cannot use it for a
-  handover. The same applies to rejection, including when a deployment
-  relies on a grant the upstream does not know. In these cases the ordinary
-  timestamp and tie rules apply. A read-through fill does not hand off a
-  local publish.
+  `/admin/forwarding`. The sweep retains an accepted receipt while its scene
+  is still active locally. Once the scene is handed over or retired, the
+  receipt follows the regular 30-day retention window. A response lost after
+  an upstream commit and a rejection provide no affirmative receipt, including
+  deployments relying on a grant the upstream does not know. In those cases
+  the ordinary timestamp and tie rules apply. A read-through fill leaves the
+  local publish in place.
 
 ## Consequences
 

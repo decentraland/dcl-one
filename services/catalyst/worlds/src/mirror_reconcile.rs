@@ -13,13 +13,26 @@ async fn has_local_publish(conn: &mut sqlx::PgConnection, world: &str) -> sqlx::
 
 /// A world whose local publish stands holds no mirrored scene: the mirror never
 /// refreshes it again, so what it wrote there before is retired and the world
-/// row says local, as a publish leaves it (core::store::deploy_scene).
-async fn retire_beside_local(pool: &PgPool, name: &str) -> Result<u64> {
+/// row says local, as a publish leaves it (core::store::deploy_scene). A pass can
+/// also retire the exact accepted local receipts whose scenes the source removed.
+async fn retire_beside_local(
+    pool: &PgPool,
+    name: &str,
+    world_key: &str,
+    source: &str,
+    absent_receipts: &[i64],
+) -> Result<(u64, u64)> {
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT name FROM worlds.worlds WHERE name = lower($1) FOR UPDATE")
         .bind(name)
         .execute(&mut *tx)
         .await?;
+    let absent =
+        crate::core::store::retire_absent_forwards(&mut tx, world_key, source, absent_receipts)
+            .await?;
+    if absent > 0 {
+        crate::explore::places::derive::mark_world_dirty(&mut tx, world_key).await?;
+    }
     let retired = sqlx::query(
         r#"DELETE FROM worlds.world_scenes
            WHERE world_name = lower($1) AND mirror_source IS NOT NULL
@@ -44,7 +57,7 @@ async fn retire_beside_local(pool: &PgPool, name: &str) -> Result<u64> {
     if retired > 0 {
         tracing::info!(world = %name, retired, "retired the mirrored scenes beside a local publish");
     }
-    Ok(retired)
+    Ok((retired, absent))
 }
 
 /// Who holds `world`'s name as this node's own owner lookup says ([`Policy::current_owner`]),
@@ -310,43 +323,83 @@ async fn accepted_forwards(pool: &PgPool, world: &str, source: &str) -> Result<V
     .await?)
 }
 
-/// An empty listing can retire accepted forwards even if the upstream never catalogued the
-/// world. Retain local settings and grants. Without a usable listing there is no retirement.
-async fn retire_empty_forwarded_world(
+/// Double-check omissions because a paginated listing can move during a pass.
+async fn confirm_absent(
     client: &crate::http::Outbound,
-    pool: &PgPool,
     source: &str,
     world: &str,
-    accepted: &[(i64, String)],
-) -> Result<Outcome> {
-    for (_, entity_id) in accepted {
+    entities: &[&str],
+) -> Result<()> {
+    for entity_id in entities {
         if source_lists_scene(client, source, world, entity_id).await? {
             bail!(
                 "the scene listing of {world} changed while it was read ({entity_id} is still listed)"
             );
         }
     }
+    Ok(())
+}
+
+/// Retires confirmed absent scenes while preserving the world row and its local settings.
+async fn retire_empty_upstream(
+    client: &crate::http::Outbound,
+    pool: &PgPool,
+    source: &str,
+    world: &str,
+    accepted: &[(i64, String)],
+    held: &[String],
+) -> Result<Outcome> {
+    confirm_absent(
+        client,
+        source,
+        world,
+        &held
+            .iter()
+            .map(String::as_str)
+            .chain(accepted.iter().map(|(_, id)| id.as_str()))
+            .collect::<Vec<_>>(),
+    )
+    .await?;
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT name FROM worlds.worlds WHERE name = $1 FOR UPDATE")
         .bind(world)
         .execute(&mut *tx)
         .await?;
     let receipts: Vec<_> = accepted.iter().map(|(receipt, _)| *receipt).collect();
-    if crate::core::store::local_scene_stands(&mut tx, world, None, source, &receipts).await? {
-        return Ok(Outcome::RefusedLocalPublish { retired: 0 });
+    let superseded =
+        crate::core::store::retire_absent_forwards(&mut tx, world, source, &receipts).await?;
+    let retired_mirrored = sqlx::query(
+        "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND mirror_source = $2
+           AND entity_id = ANY($3::text[])",
+    )
+    .bind(world)
+    .bind(source)
+    .bind(held)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    let local_stands = has_local_publish(&mut tx, world).await?;
+    let retired = retired_mirrored + superseded;
+    if retired > 0 {
+        crate::explore::places::derive::mark_world_dirty(&mut tx, world).await?;
+        scene_identity::retire_orphans(&mut tx, &[world.to_owned()]).await?;
     }
-    let retired = crate::core::store::retire_local_scenes(&mut tx, world, &[]).await?;
-    if retired.is_empty() {
+    tx.commit().await?;
+    if local_stands {
+        return Ok(Outcome::RefusedLocalPublish {
+            retired_mirrored,
+            superseded,
+        });
+    }
+    if retired == 0 {
         return Ok(Outcome::Unchanged);
     }
-    crate::explore::places::derive::mark_world_dirty(&mut tx, world).await?;
-    scene_identity::retire_orphans(&mut tx, &[world.to_owned()]).await?;
-    tx.commit().await?;
     Ok(Outcome::Synced {
         scenes: 0,
         new_blobs: 0,
-        superseded: retired.len() as u64,
+        superseded,
         handed_over: 0,
+        retired_mirrored,
     })
 }
 
@@ -368,11 +421,18 @@ pub(super) async fn mirror_world(
         .with_context(|| format!("checking local publish for {name}"))?;
     // A read-through never replaces a local publish; a pass does when the upstream deployed last.
     if locally_published && verify.is_some() {
-        let retired = retire_beside_local(pool, name).await?;
-        return Ok(Outcome::RefusedLocalPublish { retired });
+        let (retired_mirrored, superseded) =
+            retire_beside_local(pool, name, &world_key, source, &[]).await?;
+        return Ok(Outcome::RefusedLocalPublish {
+            retired_mirrored,
+            superseded,
+        });
     }
     if verify.is_some() && kept_here(pool, name).await? {
-        return Ok(Outcome::RefusedLocalPublish { retired: 0 });
+        return Ok(Outcome::RefusedLocalPublish {
+            retired_mirrored: 0,
+            superseded: 0,
+        });
     }
 
     let held: Vec<String> = sqlx::query_scalar(
@@ -382,7 +442,16 @@ pub(super) async fn mirror_world(
     .fetch_all(pool)
     .await
     .with_context(|| format!("reading the scenes held for {name}"))?;
-    if !locally_published && holds_every_scene(catalogue_scene_ids, &held) {
+    // Uncatalogued worlds can take the unchanged-scenes path too, after their per-name
+    // listing confirms the held scene set. Never use the held set as a source of truth.
+    let check_held = verify.is_none() && catalogue_scene_ids.is_empty() && !held.is_empty();
+    let mut preflight_listing = None;
+    let expected = if check_held {
+        &held
+    } else {
+        catalogue_scene_ids
+    };
+    if !locally_published && (check_held || holds_every_scene(expected, &held)) {
         // Every file, not only the entities: a read-through fill leaves all but the scene
         // host's to be read through, and the pass fetches them.
         let files: Vec<String> = sqlx::query_scalar(
@@ -395,46 +464,49 @@ pub(super) async fn mirror_world(
         .fetch_all(pool)
         .await
         .with_context(|| format!("reading the files of the scenes held for {name}"))?;
-        let wanted: Vec<&str> = catalogue_scene_ids
-            .iter()
-            .chain(&files)
-            .map(String::as_str)
-            .collect();
+        let wanted: Vec<&str> = expected.iter().chain(&files).map(String::as_str).collect();
         let present = storage.exist_multiple(&wanted).await?;
         if wanted
             .iter()
             .all(|hash| present.get(*hash).copied().unwrap_or(false))
         {
-            // The scenes are current. The access setting and the world settings change upstream
-            // without a deployment, and the listing carries what rows written before it was kept
-            // (or while it gave none) lack: the deploy times, size, chain and deployer.
-            // An unreadable access setting keeps the stored one and the rest of the sync.
-            let access = upstream_access(client, source, name)
+            let listed = listed_scenes(client, source, name).await?;
+            let unchanged = !check_held
+                || (listed.len() == held.len()
+                    && listed.iter().all(|scene| held.contains(&scene.id)));
+            if !unchanged {
+                preflight_listing = Some(listed);
+            } else {
+                // The scenes are current. The access setting and the world settings change upstream
+                // without a deployment, and the listing carries what rows written before it was kept
+                // (or while it gave none) lack: the deploy times, size, chain and deployer.
+                // An unreadable access setting keeps the stored one and the rest of the sync.
+                let access = upstream_access(client, source, name)
                 .await
                 .inspect_err(|e| {
                     tracing::warn!(world = %name, error = %e, "keeping the stored access setting");
                 })
                 .ok();
-            let listed = listed_scenes(client, source, name).await?;
-            let world_settings = upstream_settings(client, pool, storage, source, name).await;
-            let world = WorldName::parse(name)?;
-            let holder = name_holder(pool, owners, &world).await;
-            let mut tx = pool.begin().await.context("begin tx")?;
-            let thumbnail = world_settings
-                .as_ref()
-                .and_then(|c| c.thumbnail_hash.clone());
-            still_stored(&mut tx, storage, name, thumbnail.as_slice()).await?;
-            if let Some(access) = &access {
-                replace_mirrored_access(&mut tx, &world, access, holder.as_ref())
-                    .await
-                    .with_context(|| format!("access setting of {name}"))?;
+                let world_settings = upstream_settings(client, pool, storage, source, name).await;
+                let world = WorldName::parse(name)?;
+                let holder = name_holder(pool, owners, &world).await;
+                let mut tx = pool.begin().await.context("begin tx")?;
+                let thumbnail = world_settings
+                    .as_ref()
+                    .and_then(|c| c.thumbnail_hash.clone());
+                still_stored(&mut tx, storage, name, thumbnail.as_slice()).await?;
+                if let Some(access) = &access {
+                    replace_mirrored_access(&mut tx, &world, access, holder.as_ref())
+                        .await
+                        .with_context(|| format!("access setting of {name}"))?;
+                }
+                if let Some(copy) = &world_settings {
+                    apply_settings(&mut tx, &world, copy, holder.as_ref()).await?;
+                }
+                refresh_listed_scenes(&mut tx, name, &listed).await?;
+                tx.commit().await.context("commit tx")?;
+                return Ok(Outcome::Unchanged);
             }
-            if let Some(copy) = &world_settings {
-                apply_settings(&mut tx, &world, copy, holder.as_ref()).await?;
-            }
-            refresh_listed_scenes(&mut tx, name, &listed).await?;
-            tx.commit().await.context("commit tx")?;
-            return Ok(Outcome::Unchanged);
         }
     }
 
@@ -443,6 +515,7 @@ pub(super) async fn mirror_world(
     } else {
         Vec::new()
     };
+    let can_retire_empty = verify.is_none() && (!accepted.is_empty() || !held.is_empty());
     let receipts: Vec<_> = accepted.iter().map(|(receipt, _)| *receipt).collect();
     let forwarded_entities: HashSet<&str> = accepted.iter().map(|(_, cid)| cid.as_str()).collect();
     let url = world_url(source, name, "about")?;
@@ -452,11 +525,15 @@ pub(super) async fn mirror_world(
         .await
         .with_context(|| format!("GET {url}"))?;
     if !resp.status().is_success() {
-        if resp.status() == reqwest::StatusCode::NOT_FOUND
-            && !accepted.is_empty()
-            && listed_scenes(client, source, name).await?.is_empty()
-        {
-            return retire_empty_forwarded_world(client, pool, source, &world_key, &accepted).await;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND && can_retire_empty {
+            let listed = match preflight_listing {
+                Some(listed) => listed,
+                None => listed_scenes(client, source, name).await?,
+            };
+            if listed.is_empty() {
+                return retire_empty_upstream(client, pool, source, &world_key, &accepted, &held)
+                    .await;
+            }
         }
         return Ok(Outcome::NothingUpstream(
             "upstream /about did not answer 2xx",
@@ -465,15 +542,18 @@ pub(super) async fn mirror_world(
     let about: Value = serde_json::from_slice(&read_body_capped(resp, MAX_ABOUT_BYTES).await?)
         .with_context(|| format!("parsing {url}"))?;
     let base = scene_refs(&about).into_iter().next().map(|(_, base)| base);
-    if base.is_none() && accepted.is_empty() {
+    if base.is_none() && !can_retire_empty {
         return Ok(Outcome::NothingUpstream("upstream world has no scenes"));
     }
     // `/about` lists the newest scene only; `/scenes` lists them all, under the same `baseUrl`.
     // The listing decides what is retired below, so any doubt about it stops this world's sync.
-    let listed = listed_scenes(client, source, name).await?;
+    let listed = match preflight_listing {
+        Some(listed) => listed,
+        None => listed_scenes(client, source, name).await?,
+    };
     if listed.is_empty() {
-        if !accepted.is_empty() {
-            return retire_empty_forwarded_world(client, pool, source, &world_key, &accepted).await;
+        if can_retire_empty {
+            return retire_empty_upstream(client, pool, source, &world_key, &accepted, &held).await;
         }
         return Ok(Outcome::NothingUpstream("upstream world has no scenes"));
     }
@@ -482,6 +562,15 @@ pub(super) async fn mirror_world(
             "upstream /about has no scene base URL",
         ));
     };
+    let listed_ids: HashSet<&str> = listed.iter().map(|scene| scene.id.as_str()).collect();
+    let missing_forwards: Vec<_> = accepted
+        .iter()
+        .filter(|(_, id)| !listed_ids.contains(id.as_str()))
+        .collect();
+    let absent_receipts: Vec<_> = missing_forwards
+        .iter()
+        .map(|(receipt, _)| *receipt)
+        .collect();
     // A forward accounts for its own scene. Only another upstream deployment can
     // outdate a local scene whose forward was never accepted.
     if locally_published {
@@ -503,22 +592,36 @@ pub(super) async fn mirror_world(
             .await?
         {
             drop(conn);
-            let retired = retire_beside_local(pool, name).await?;
-            return Ok(Outcome::RefusedLocalPublish { retired });
+            confirm_absent(
+                client,
+                source,
+                name,
+                &missing_forwards
+                    .iter()
+                    .map(|(_, id)| id.as_str())
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
+            let (retired_mirrored, superseded) =
+                retire_beside_local(pool, name, &world_key, source, &absent_receipts).await?;
+            return Ok(Outcome::RefusedLocalPublish {
+                retired_mirrored,
+                superseded,
+            });
         }
     }
-    // A scene held here and missing from the listing is retired, with its storage identity. One
-    // the source still lists by id means the listing moved under the pages (a redeploy shifts
-    // every later row), so the world waits for the next pass instead.
-    for cid in held
-        .iter()
-        .chain(accepted.iter().map(|(_, cid)| cid))
-        .filter(|cid| !listed.iter().any(|scene| &scene.id == *cid))
-    {
-        if source_lists_scene(client, source, name, cid).await? {
-            bail!("the scene listing of {name} changed while it was read ({cid} is still listed)");
-        }
-    }
+    confirm_absent(
+        client,
+        source,
+        name,
+        &held
+            .iter()
+            .map(String::as_str)
+            .filter(|id| !listed_ids.contains(id))
+            .chain(missing_forwards.iter().map(|(_, id)| id.as_str()))
+            .collect::<Vec<_>>(),
+    )
+    .await?;
     // The world's settings as the source stores them, not as its `/about` derives them from the
     // newest scene: a fixed hour or offline adapter there may be the scene's own.
     let world_settings = upstream_settings(client, pool, storage, source, name).await;
@@ -732,7 +835,10 @@ pub(super) async fn mirror_world(
     .with_context(|| format!("upsert world {name}"))?;
     if upserted.rows_affected() == 0 {
         // Kept here since the check above: the transaction rolls back on drop.
-        return Ok(Outcome::RefusedLocalPublish { retired: 0 });
+        return Ok(Outcome::RefusedLocalPublish {
+            retired_mirrored: 0,
+            superseded: 0,
+        });
     }
     // The upsert holds the world row, which a local publish takes first
     // (core::store::deploy_scene), so this fresh read sees any publish that
@@ -764,8 +870,12 @@ pub(super) async fn mirror_world(
     .with_context(|| format!("re-checking local publish for {name}"))?;
     if local_stands {
         tx.rollback().await.context("rollback tx")?;
-        let retired = retire_beside_local(pool, name).await?;
-        return Ok(Outcome::RefusedLocalPublish { retired });
+        let (retired_mirrored, superseded) =
+            retire_beside_local(pool, name, &world_key, source, &absent_receipts).await?;
+        return Ok(Outcome::RefusedLocalPublish {
+            retired_mirrored,
+            superseded,
+        });
     }
     // A local scene the upstream lists too (one it accepted from this node's forward, or a
     // row the import wrote) becomes the mirrored row below, in place.
@@ -918,5 +1028,6 @@ pub(super) async fn mirror_world(
         new_blobs,
         superseded: superseded.len() as u64,
         handed_over: handed_over as u64,
+        retired_mirrored: 0,
     })
 }

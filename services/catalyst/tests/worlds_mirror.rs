@@ -73,6 +73,7 @@ struct Upstream {
     worlds: BTreeMap<String, Vec<Scene>>,
     blobs: HashMap<String, Vec<u8>>,
     about_calls: BTreeMap<String, usize>,
+    index_hidden: Option<String>,
     /// Scene base URL override per world (the loop-guard check).
     base_override: HashMap<String, String>,
     /// While set, /about for this world cancels `hold_token` and then waits on `hold`.
@@ -201,7 +202,7 @@ async fn fake_index(State(s): State<(Shared, String)>) -> Json<Value> {
     let data: Vec<Value> = st
         .worlds
         .iter()
-        .filter(|(_, scenes)| !scenes.is_empty())
+        .filter(|(name, scenes)| !scenes.is_empty() && st.index_hidden.as_ref() != Some(*name))
         .map(|(name, scenes)| {
             json!({"name": name, "scenes": scenes.iter().map(|sc| json!({
                 "id": sc.id, "title": sc.entity["metadata"]["display"]["title"],
@@ -3014,6 +3015,164 @@ async fn an_accepted_publish_removed_before_handover_is_retired() {
     assert_eq!(active_identity(&node.pool, world, &removed).await, None);
     assert_eq!(retired_ids(&node.pool, world).await, vec![removed]);
     assert_eq!(access_type(&node, world).await, json!("shared-secret"));
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_forward_sweep_keeps_only_accepted_receipts_still_needed_for_handoff() {
+    use catalyst::content::forward::{Forwarder, Retry};
+    use catalyst::worlds::core::forwarding::LANE;
+
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "receipt-retention").await;
+    let world = "receipt-retention.dcl.eth";
+    let at = now_ms() - 3_600_000;
+    let accepted = deploy_upstream(&mut fake.state.lock(), world, "Accepted", &["0,0"], at).0;
+    publish_here(&node.pool, world, &accepted, &["0,0"], at).await;
+    forwarded(&node.pool, &fake.base, world, &accepted, "accepted").await;
+    forwarded(&node.pool, &fake.base, world, "rejected", "rejected").await;
+    sqlx::query("UPDATE worlds.forward_outbox SET updated_at = now() - interval '31 days' WHERE world_name = $1")
+        .bind(world)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    let forwarder = Forwarder::new(
+        node.pool.clone(),
+        node.storage.clone(),
+        node.client.clone(),
+        LANE,
+        &fake.base,
+        Retry::new(3, 1),
+    );
+    let cutoff = (chrono::Utc::now() - chrono::Duration::days(30)).naive_utc();
+    let cancel = CancellationToken::new();
+    assert_eq!(forwarder.sweep(cutoff, &cancel).await.unwrap(), 1);
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.handed_over, 1);
+    assert_eq!(forwarder.sweep(cutoff, &cancel).await.unwrap(), 1);
+    assert_eq!(forwarder.sweep(cutoff, &cancel).await.unwrap(), 0);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(forwarder);
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_uncatalogued_handoff_keeps_following_upstream_without_a_receipt() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "uncatalogued-handoff").await;
+    let world = "handover.dcl.eth";
+    let at = now_ms() - 3_600_000;
+    let (first, other) = {
+        let mut st = fake.state.lock();
+        deploy_upstream(&mut st, "anchor.dcl.eth", "Anchor", &["0,0"], at);
+        st.index_hidden = Some(world.into());
+        let first = deploy_upstream(&mut st, world, "First", &["0,0"], at).0;
+        let other = deploy_upstream(&mut st, world, "Other", &["5,5"], at).0;
+        (first, other)
+    };
+    publish_here(&node.pool, world, &first, &["0,0"], at).await;
+    forwarded(&node.pool, &fake.base, world, &first, "accepted").await;
+    let ctx = node.ctx().await;
+    assert_eq!(node.pass(&ctx).await.scenes.handed_over, 1);
+    assert_eq!(node.scene_rows(world).await.len(), 2);
+    let other_identity = active_identity(&node.pool, world, &other).await.unwrap();
+    sqlx::query("DELETE FROM worlds.forward_outbox WHERE world_name = $1")
+        .bind(world)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    assert_eq!(node.pass(&ctx).await.scenes.unchanged, 2);
+    assert_eq!(fake.state.lock().about_calls.get(world), Some(&1));
+
+    {
+        let mut st = fake.state.lock();
+        st.worlds
+            .get_mut(world)
+            .unwrap()
+            .retain(|scene| scene.id != first);
+        st.scenes_status = Some(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    assert!(node.pass(&ctx).await.scenes.failed > 0);
+    assert_eq!(node.scene_rows(world).await.len(), 2);
+
+    fake.state.lock().scenes_status = None;
+    node.pass(&ctx).await;
+    let rows = node.scene_rows(world).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, other);
+    assert_eq!(
+        active_identity(&node.pool, world, &other).await,
+        Some(other_identity)
+    );
+
+    fake.state.lock().worlds.remove(world);
+    assert_eq!(node.pass(&ctx).await.scenes.retired_scenes, 1);
+    assert!(node.scene_rows(world).await.is_empty());
+    assert!(!identity_active(&node.pool, other_identity).await);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_confirmed_removed_forward_does_not_retire_an_unaccepted_local_scene() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "removed-beside-local").await;
+    let world = "mixed.dcl.eth";
+    let at = now_ms() - 3_600_000;
+    let (removed, survivor) = {
+        let mut st = fake.state.lock();
+        let removed = deploy_upstream(&mut st, world, "Removed", &["0,0"], at).0;
+        let survivor = deploy_upstream(&mut st, world, "Still upstream", &["8,8"], at - 10_000).0;
+        (removed, survivor)
+    };
+    let removed_identity = publish_here(&node.pool, world, &removed, &["0,0"], at).await;
+    forwarded(&node.pool, &fake.base, world, &removed, "accepted").await;
+    let legacy = "local-only";
+    let legacy_identity = publish_here(&node.pool, world, legacy, &["5,5"], at).await;
+    forwarded(&node.pool, &fake.base, world, legacy, "rejected").await;
+    {
+        let mut st = fake.state.lock();
+        st.worlds
+            .get_mut(world)
+            .unwrap()
+            .retain(|scene| scene.id == survivor);
+        st.scenes_status = Some(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let ctx = node.ctx().await;
+    node.pass(&ctx).await;
+    assert!(identity_active(&node.pool, removed_identity).await);
+    fake.state.lock().scenes_status = None;
+    let pass = node.pass(&ctx).await;
+    assert_eq!((pass.scenes.refused, pass.scenes.superseded_local), (1, 1));
+    assert!(!identity_active(&node.pool, removed_identity).await);
+    assert_eq!(retired_ids(&node.pool, world).await, vec![removed]);
+    assert_eq!(
+        active_identity(&node.pool, world, legacy).await,
+        Some(legacy_identity)
+    );
+    let rows = node.scene_rows(world).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, legacy);
+    assert!(rows[0].2.is_none());
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

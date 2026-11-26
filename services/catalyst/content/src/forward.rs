@@ -114,6 +114,8 @@ pub struct Lane {
     /// `$1` the outbox row id: the stored auth chain while the row's entity is
     /// still this node's local deployment; no row once it is not.
     pub source_sql: &'static str,
+    /// Predicate over outbox alias `o` for accepted receipts still needed by this lane.
+    pub retain_accepted: Option<&'static str>,
     /// An outbox column the status rows carry as `worldName`.
     pub world_column: Option<&'static str>,
     /// How far behind and ahead of the upstream's clock an entity's signed
@@ -154,6 +156,7 @@ pub const CONTENT_LANE: Lane = Lane {
                  WHERE o.id = $1 AND d.deleter_deployment IS NULL \
                  AND NOT EXISTS (SELECT 1 FROM content.local_entities le \
                                  WHERE le.entity_id = d.entity_id AND le.tombstoned_at IS NOT NULL)",
+    retain_accepted: None,
     world_column: None,
     max_age_ms: super::write_deployer::REQUEST_TTL_BACKWARDS_MS,
     max_ahead_ms: super::write_deployer::REQUEST_TTL_FORWARDS_MS,
@@ -656,16 +659,19 @@ impl Forwarder {
         .await
     }
 
-    /// Deletes terminal rows last updated before `cutoff`, [`in_batches`].
+    /// Deletes terminal rows last updated before `cutoff`, [`in_batches`],
+    /// while keeping accepted receipts still needed by the lane.
     /// Answers the rows deleted.
     pub async fn sweep(
         &self,
         cutoff: NaiveDateTime,
         cancel: &CancellationToken,
     ) -> sqlx::Result<u64> {
+        let guard = self.lane.retain_accepted.unwrap_or("false");
         let sql = format!(
-            "DELETE FROM {t} WHERE id IN (SELECT id FROM {t} \
-             WHERE status NOT IN ('queued', 'sending') AND updated_at < $1 LIMIT $2)",
+            "DELETE FROM {t} WHERE id IN (SELECT o.id FROM {t} o
+             WHERE o.status NOT IN ('queued', 'sending') AND o.updated_at < $1
+               AND (o.status <> 'accepted' OR NOT ({guard})) LIMIT $2)",
             t = self.lane.table
         );
         let (sql, pool) = (sql.as_str(), &self.pool);

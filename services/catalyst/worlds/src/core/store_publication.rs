@@ -4,7 +4,7 @@ use super::*;
 /// `$delete` (a `DELETE FROM worlds.world_scenes ...`) moving the rows it
 /// removes into `worlds.retired_world_scenes` (a re-retired id restarts its TTL).
 macro_rules! retiring {
-    ($delete:literal) => {
+    ($delete:literal $(, $returning:literal)?) => {
         concat!(
             "WITH gone AS (",
             $delete,
@@ -14,6 +14,7 @@ macro_rules! retiring {
              ON CONFLICT (world_name, entity_id) DO UPDATE SET entity = EXCLUDED.entity, \
                parcels = EXCLUDED.parcels, mirror_source = EXCLUDED.mirror_source, \
                retired_at = timezone('UTC', now())"
+            $(, $returning)?
         )
     };
 }
@@ -511,21 +512,42 @@ pub(crate) async fn retire_local_scenes(
     world: &str,
     keep: &[&str],
 ) -> Result<Vec<String>, sqlx::Error> {
-    sqlx::query_scalar(
-        "WITH gone AS (DELETE FROM worlds.world_scenes \
-             WHERE world_name = $1 AND mirror_source IS NULL AND entity_id <> ALL($2::text[]) \
-             RETURNING world_name, entity_id, entity, parcels, mirror_source), \
-         moved AS (INSERT INTO worlds.retired_world_scenes (world_name, entity_id, entity, parcels, mirror_source) \
-             SELECT world_name, entity_id, entity, parcels, mirror_source FROM gone \
-             ON CONFLICT (world_name, entity_id) DO UPDATE SET entity = EXCLUDED.entity, \
-               parcels = EXCLUDED.parcels, mirror_source = EXCLUDED.mirror_source, \
-               retired_at = timezone('UTC', now())) \
-         SELECT entity_id FROM gone",
-    )
+    sqlx::query_scalar(retiring!(
+        "DELETE FROM worlds.world_scenes
+             WHERE world_name = $1 AND mirror_source IS NULL AND entity_id <> ALL($2::text[])",
+        " RETURNING entity_id"
+    ))
     .bind(world)
     .bind(keep)
     .fetch_all(conn)
     .await
+}
+
+/// Retires only local publications whose captured accepted receipt still matches.
+pub(crate) async fn retire_absent_forwards(
+    conn: &mut sqlx::PgConnection,
+    world: &str,
+    source: &str,
+    receipts: &[i64],
+) -> Result<u64, sqlx::Error> {
+    if receipts.is_empty() {
+        return Ok(0);
+    }
+    Ok(sqlx::query(retiring!(
+        "DELETE FROM worlds.world_scenes s
+         WHERE s.world_name = $1 AND s.mirror_source IS NULL
+           AND EXISTS (SELECT 1 FROM worlds.forward_outbox o
+                       WHERE o.world_name = s.world_name AND o.entity_id = s.entity_id
+                         AND o.target = $2 AND o.status = 'accepted' AND o.id = ANY($3::bigint[]))
+           AND NOT EXISTS (SELECT 1 FROM worlds.worlds w
+                           WHERE w.name = s.world_name AND w.blocked_since IS NOT NULL)"
+    ))
+    .bind(world)
+    .bind(source)
+    .bind(receipts)
+    .execute(conn)
+    .await?
+    .rows_affected())
 }
 
 /// Refused publish to a world the operator disabled (`/admin/worlds/{w}/disable`).

@@ -244,12 +244,14 @@ enum Outcome {
         superseded: u64,
         /// Local scenes the upstream accepted from this node and lists, now mirrored rows.
         handed_over: u64,
+        retired_mirrored: u64,
     },
     Unchanged,
     /// A local publish the upstream did not outdate, or on a read-through any local publish
     /// or a blocked world.
     RefusedLocalPublish {
-        retired: u64,
+        retired_mirrored: u64,
+        superseded: u64,
     },
     NothingUpstream(&'static str),
 }
@@ -304,7 +306,7 @@ async fn scenes_pass(
 
     // Bounded passes mirror only the first configured catalogue names.
     let uncatalogued = if settings.limit.is_none() {
-        uncatalogued_forwards(pool, settings).await?
+        uncatalogued_worlds(pool, settings).await?
     } else {
         Vec::new()
     };
@@ -371,17 +373,19 @@ async fn scenes_pass(
                     new_blobs,
                     superseded,
                     handed_over,
+                    retired_mirrored,
                 }) => {
                     out.synced += 1;
                     out.scenes += scenes;
                     out.new_blobs += new_blobs;
                     out.superseded_local += superseded;
+                    out.retired_scenes += retired_mirrored;
                     out.handed_over += handed_over;
                     if handed_over > 0 {
                         tracing::info!(world = %name, handed_over, "the upstream holds this node's forwarded publish: the world follows the upstream");
                     }
                     if superseded > 0 {
-                        tracing::info!(world = %name, superseded, "the upstream deployed last: its scenes replace the local publish");
+                        tracing::info!(world = %name, superseded, "retired local scenes after upstream reconciliation");
                     }
                     mark_world(pool, &name, None).await?;
                 }
@@ -389,9 +393,13 @@ async fn scenes_pass(
                     out.unchanged += 1;
                     mark_world(pool, &name, None).await?;
                 }
-                Ok(Outcome::RefusedLocalPublish { retired }) => {
+                Ok(Outcome::RefusedLocalPublish {
+                    retired_mirrored,
+                    superseded,
+                }) => {
                     out.refused += 1;
-                    out.retired_scenes += retired;
+                    out.retired_scenes += retired_mirrored;
+                    out.superseded_local += superseded;
                     tracing::info!(world = %name, "refused: a scene published to this node stands (newer than the upstream's, being forwarded, or the world is blocked)");
                     mark_world(pool, &name, Some("a local publish stands; not mirrored")).await?;
                 }
