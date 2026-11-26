@@ -94,6 +94,7 @@ export type ManagementState = {
   accountHoldings: AccountHoldings | null;
   worldSettings: WorldSettingsState;
   worldPermissions: WorldPermissionsState;
+  publishParcels: Pick<WorldPermissionsState, 'worldName' | 'parcels'>;
   lands: LandProjectsState;
   /** The latest request id of each wallet-scoped thunk, keyed by its type prefix. */
   requestIds: Partial<Record<string, string>>;
@@ -115,6 +116,7 @@ export const initialState: Async<ManagementState> = {
   error: null,
   worldSettings: getWorldSettingsInitialState(),
   worldPermissions: getWorldPermissionsInitialState(),
+  publishParcels: { worldName: '', parcels: {} },
   lands: {
     projects: [],
     deployments: {},
@@ -790,28 +792,30 @@ const slice = createSlice({
         state.worldPermissions.error = action.error.message || 'Failed to fetch world permissions';
       })
       .addCase(fetchParcelsPermission.pending, (state, action) => {
-        const { walletAddress, worldName } = action.meta.arg;
-        // Parcels are stored per wallet, not per world: carrying another world's list over
-        // would show its parcels as deployable here until this fetch settles.
-        const sameWorld = state.worldPermissions.worldName === worldName;
-        state.worldPermissions.worldName = worldName;
-        state.worldPermissions.parcels[walletAddress] = {
-          parcels: sameWorld ? state.worldPermissions.parcels[walletAddress]?.parcels || [] : [],
+        const { walletAddress, worldName, purpose } = action.meta.arg;
+        const permissions = parcelPermissionsForPurpose(state, purpose);
+        // A parcel list belongs to one world on one server.
+        if (permissions.worldName !== worldName) permissions.parcels = {};
+        permissions.worldName = worldName;
+        permissions.parcels[walletAddress] = {
+          parcels: permissions.parcels[walletAddress]?.parcels || [],
           status: 'loading',
         };
       })
       .addCase(fetchParcelsPermission.fulfilled, (state, action) => {
-        if (action.meta.arg.worldName !== state.worldPermissions.worldName) return;
+        const permissions = parcelPermissionsForPurpose(state, action.meta.arg.purpose);
+        if (action.meta.arg.worldName !== permissions.worldName) return;
         const { walletAddress, parcels } = action.payload;
-        state.worldPermissions.parcels[walletAddress] = {
+        permissions.parcels[walletAddress] = {
           parcels: parcels?.parcels || [],
           status: 'succeeded',
         };
       })
       .addCase(fetchParcelsPermission.rejected, (state, action) => {
-        if (action.meta.arg.worldName !== state.worldPermissions.worldName) return;
+        const permissions = parcelPermissionsForPurpose(state, action.meta.arg.purpose);
+        if (action.meta.arg.worldName !== permissions.worldName) return;
         const { walletAddress } = action.meta.arg;
-        state.worldPermissions.parcels[walletAddress] = { parcels: [], status: 'failed' };
+        permissions.parcels[walletAddress] = { parcels: [], status: 'failed' };
       })
       .addCase(fetchLandDeployers.fulfilled, (state, action) => {
         Object.assign(state.lands.deployers, action.payload);
@@ -894,11 +898,19 @@ const getError = createSelector(getManagementState, managementState => managemen
 
 const getPermissionsState = (state: AppState) => state.management.worldPermissions;
 
+function parcelPermissionsForPurpose(state: ManagementState, purpose?: WorldsPurpose) {
+  return purpose === 'content' ? state.publishParcels : state.worldPermissions;
+}
+
 const getParcelsStateForAddress = (
   state: AppState,
   walletAddress: string,
+  purpose?: WorldsPurpose,
+  worldName?: string,
 ): ParcelsPermission | undefined => {
-  return state.management.worldPermissions.parcels[walletAddress];
+  const permissions = parcelPermissionsForPurpose(state.management, purpose);
+  if (worldName && permissions.worldName !== worldName) return undefined;
+  return permissions.parcels[walletAddress];
 };
 
 export const actions = {

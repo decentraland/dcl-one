@@ -78,7 +78,7 @@ export function PublishToWorld(props: Props) {
   const [multiSceneChoice, setMultiSceneChoice] = useState<boolean | null>(null);
   const worldSettings = useSelector(managementSelectors.getWorldSettings);
   const worldPermissions = useSelector(state =>
-    managementSelectors.getParcelsStateForAddress(state, wallet || ''),
+    managementSelectors.getParcelsStateForAddress(state, wallet || '', 'content', name),
   );
   const [step, setStep] = useState<Step>(Step.SELECTION);
   /** Step the confirmation was reached from, so going back returns to it. */

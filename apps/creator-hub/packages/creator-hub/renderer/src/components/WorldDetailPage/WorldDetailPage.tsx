@@ -33,7 +33,7 @@ export function WorldDetailPage() {
       item => item.id === name,
     ),
   );
-  const ens = useSelector(state => state.ens.data[name]);
+  const ens = useSelector(state => state.ens.managementData[name] ?? state.ens.data[name]);
   const status = useSelector(state => state.management.status);
   const [unpublishing, setUnpublishing] = useState<string | null>(null);
   const [resolved, setResolved] = useState<ManagedProject | null>(null);

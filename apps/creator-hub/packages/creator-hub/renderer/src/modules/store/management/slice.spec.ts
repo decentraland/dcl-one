@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthServerProvider } from '../../../lib/auth';
+import { WorldPermissionName } from '/@/lib/worlds';
 import type { ManagedProject } from '../../../../../shared/types/manage';
 import { SortBy, FilterBy, ManagedProjectType } from '../../../../../shared/types/manage';
 import { createTestStore } from '../../../../tests/utils/testStore';
@@ -2364,4 +2365,26 @@ describe('management slice', () => {
       expect(state.accountHoldings).toEqual({ ownedLands: 1 });
     });
   });
+});
+
+it('keeps publish and management parcel permissions separate for the same wallet and world', () => {
+  const management = {
+    worldName: TEST_WORLD_NAME,
+    walletAddress: TEST_WALLET_ADDRESS,
+    permissionName: WorldPermissionName.Deployment,
+  };
+  const publish = { ...management, purpose: 'content' as const };
+  const grants = (parcel: string) => ({
+    walletAddress: TEST_WALLET_ADDRESS,
+    parcels: { parcels: [parcel], total: 1 },
+  });
+  const state = [
+    fetchParcelsPermission.pending('manage', management),
+    fetchParcelsPermission.pending('publish', publish),
+    fetchParcelsPermission.fulfilled(grants('0,0'), 'manage', management),
+    fetchParcelsPermission.fulfilled(grants('1,1'), 'publish', publish),
+  ].reduce(reducer, initialState);
+
+  expect(state.worldPermissions.parcels[TEST_WALLET_ADDRESS].parcels).toEqual(['0,0']);
+  expect(state.publishParcels.parcels[TEST_WALLET_ADDRESS].parcels).toEqual(['1,1']);
 });

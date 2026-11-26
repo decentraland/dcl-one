@@ -260,13 +260,18 @@ export const fetchContributableNames = createAsyncThunk(
 export const fetchENSList = createAsyncThunk(
   'ens/fetchENSList',
   async (
-    { address, contributable }: { address: string; contributable?: ContributableNames },
+    {
+      address,
+      contributable,
+      purpose,
+    }: { address: string; contributable?: ContributableNames; purpose?: WorldsPurpose },
     thunkApi,
   ) => {
     const dclNames = await thunkApi.dispatch(fetchDCLNames({ address })).unwrap();
     const ensNames = await thunkApi.dispatch(fetchENS({ address })).unwrap();
     const { names: contributableNames } =
-      contributable ?? (await thunkApi.dispatch(fetchContributableNames({ address })).unwrap());
+      contributable ??
+      (await thunkApi.dispatch(fetchContributableNames({ address, purpose })).unwrap());
 
     const owned = [...dclNames, ...ensNames];
     const ownedSubdomains = new Set(owned.map(({ subdomain }) => subdomain));
@@ -283,6 +288,9 @@ export const fetchENSList = createAsyncThunk(
 export type ENSState = {
   chainId: ChainId;
   data: Record<string, ENS>;
+  /** Canonical management names are separate from the configured publish server's picker. */
+  managementData: Record<string, ENS>;
+  managementRequestIds: string[];
   /** NAME list requests still in flight for the current account, oldest first. */
   requestIds: string[];
 };
@@ -290,6 +298,8 @@ export type ENSState = {
 export const initialState: Async<ENSState> = {
   chainId: DEFAULT_CHAIN_ID,
   data: {},
+  managementData: {},
+  managementRequestIds: [],
   status: 'idle',
   error: null,
   requestIds: [],
@@ -308,10 +318,21 @@ export const slice = createSlice({
     builder
       .addCase(accountChanged, state => ({ ...initialState, chainId: state.chainId }))
       .addCase(fetchENSList.pending, (state, action) => {
+        if (action.meta.arg?.purpose === 'management') {
+          state.managementRequestIds.push(action.meta.requestId);
+          return;
+        }
         state.status = 'loading';
         state.requestIds.push(action.meta.requestId);
       })
       .addCase(fetchENSList.fulfilled, (state, action) => {
+        if (action.meta.arg?.purpose === 'management') {
+          if (!settleRequestAndOlder(state.managementRequestIds, action.meta.requestId)) return;
+          state.managementData = Object.fromEntries(
+            action.payload.map(ens => [ens.subdomain, ens]),
+          );
+          return;
+        }
         if (!settleRequestAndOlder(state.requestIds, action.meta.requestId)) return;
         state.data = {
           ...state.data,
@@ -326,6 +347,10 @@ export const slice = createSlice({
         state.status = 'succeeded';
       })
       .addCase(fetchENSList.rejected, (state, action) => {
+        if (action.meta.arg?.purpose === 'management') {
+          settleRequest(state.managementRequestIds, action.meta.requestId);
+          return; // The management thunk reports its own failure.
+        }
         if (!settleRequest(state.requestIds, action.meta.requestId)) return;
         state.status = state.requestIds.length
           ? 'loading'
