@@ -600,7 +600,7 @@
             "invalid_identity": "身份验证失败。",
             "max_file_size_exceeded": "一个或多个资产超过了允许的限制（{maxFileSizeInMb}MB）。\n优化或移除大文件并重试。",
             "canonical_removal_required": "此布局会移除世界中现有的场景。请返回并选择多场景模式，或先在管理页面明确取消发布现有场景，再发布新场景。",
-            "pending_publish_layout": "上传服务器上有不在此单场景布局中的场景。请返回并选择多场景模式，或等待转发完成后在管理页面处理现有场景。",
+            "upload_layout_conflict": "上传服务器上有不在此单场景布局中的场景。请返回并选择多场景模式以保留这些场景。",
             "max_scene_size_exceeded": "您的场景超过了允许的最大大小。\n请减少资产的数量或大小，然后重试。",
             "deploy_state_lost": "已无法跟踪此次发布，它可能仍会完成。\n再次发布前，请在“管理”部分查看该场景。",
             "deploy_request_timeout": "发布未在 60 分钟内完成，可能仍在进行中。\n再次发布前，请在“管理”部分查看该场景。",

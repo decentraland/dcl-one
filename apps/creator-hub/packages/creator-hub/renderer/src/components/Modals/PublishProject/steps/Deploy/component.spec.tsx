@@ -516,7 +516,7 @@ describe('Deploy step', () => {
     expect(hooks.dispatch).not.toHaveBeenCalled();
     expect(hooks.executeDeployment).not.toHaveBeenCalled();
     expect(
-      screen.getByText('modal.publish_project.deploy.deploying.errors.pending_publish_layout'),
+      screen.getByText('modal.publish_project.deploy.deploying.errors.upload_layout_conflict'),
     ).toBeTruthy();
     expect(hooks.fetchWorldSceneSizeLimit).toHaveBeenCalledWith('name.dcl.eth', ['0,0'], {
       replacesWorld: false,

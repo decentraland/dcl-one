@@ -600,7 +600,7 @@
             "invalid_identity": "Failed to validate your identity.",
             "max_file_size_exceeded": "One or more assets exceed the allowed limit ({maxFileSizeInMb}MB).\nOptimize or remove large files and try again.",
             "canonical_removal_required": "This layout would remove existing World scenes. Go back and choose Multi-scene, or explicitly unpublish the existing scenes in Manage before publishing.",
-            "pending_publish_layout": "The upload server has scenes outside this single-scene layout. Go back and choose Multi-Scene, or wait for forwarding and manage the existing scenes from Manage.",
+            "upload_layout_conflict": "The upload server has scenes outside this single-scene layout. Go back and choose Multi-Scene to keep those scenes.",
             "max_scene_size_exceeded": "Your scene exceeds the maximum allowed size.\nReduce the number or size of assets and try again.",
             "deploy_state_lost": "Lost track of the deployment, which may still finish.\nCheck the scene in the Manage section before publishing again.",
             "deploy_request_timeout": "The deployment did not finish within 60 minutes and may still be running.\nCheck the scene in the Manage section before publishing again.",

@@ -600,7 +600,7 @@
             "invalid_identity": "No se pudo validar su identidad.",
             "max_file_size_exceeded": "Uno o más activos exceden el límite permitido ({maxFileSizeInMb}MB).\nOptimiza o elimina archivos grandes y vuelve a intentarlo.",
             "canonical_removal_required": "Esta distribución eliminaría escenas existentes del Mundo. Volvé y elegí la opción de varias escenas, o retiralas explícitamente desde Gestionar antes de publicar.",
-            "pending_publish_layout": "El servidor de publicación tiene escenas fuera del diseño de escena única. Volvé y elegí la opción de varias escenas, o esperá a que se reenvíen para gestionarlas desde Gestionar.",
+            "upload_layout_conflict": "El servidor de publicación tiene escenas fuera del diseño de escena única. Volvé y elegí la opción de varias escenas para conservarlas.",
             "max_scene_size_exceeded": "Tu escena excede el tamaño máximo permitido.\nReducí la cantidad o el tamaño de los assets e intentá de nuevo.",
             "deploy_state_lost": "Se perdió el seguimiento de la publicación, que aún podría completarse.\nRevisa la escena en la sección Gestionar antes de volver a publicar.",
             "deploy_request_timeout": "La publicación no terminó en 60 minutos y aún podría estar en curso.\nRevisa la escena en la sección Gestionar antes de volver a publicar.",

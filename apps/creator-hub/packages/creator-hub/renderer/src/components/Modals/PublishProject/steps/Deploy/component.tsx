@@ -116,7 +116,7 @@ export function Deploy(props: Props) {
   const publishBlockedReason = requiresManualRemoval
     ? t('modal.publish_project.deploy.deploying.errors.canonical_removal_required')
     : localLayoutConflicts
-      ? t('modal.publish_project.deploy.deploying.errors.pending_publish_layout')
+      ? t('modal.publish_project.deploy.deploying.errors.upload_layout_conflict')
       : undefined;
   /** Publishing empties the world first: the same condition `handlePublish` undeploys on. */
   const willEmptyWorld = needsUndeploy && !managesCanonicalWorlds && !!wallet && !!worldName;
