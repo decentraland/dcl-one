@@ -1,7 +1,9 @@
 # cargo-deny policy for the Catalyst workspace and the cast-bot workspace (its own lock).
-# Run from the repository root (.github/workflows/rust-deps.yml):
-#   cargo deny --manifest-path services/catalyst/Cargo.toml --workspace --config services/catalyst/deny.toml check
-#   cargo deny --manifest-path services/catalyst/cast-bot/Cargo.toml --config services/catalyst/deny.toml check
+# Run from the repository root, with cargo-deny at the flake's pin (.github/workflows/rust-deps.yml):
+#   nix shell --inputs-from . nixpkgs#cargo-deny -c cargo deny --manifest-path services/catalyst/Cargo.toml \
+#     --workspace --config services/catalyst/deny.toml --locked check
+#   nix shell --inputs-from . nixpkgs#cargo-deny -c cargo deny --manifest-path services/catalyst/cast-bot/Cargo.toml \
+#     --workspace --config services/catalyst/deny.toml --locked check
 
 [graph]
 all-features = true

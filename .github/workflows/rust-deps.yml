@@ -13,12 +13,16 @@ on:
       - '**/Cargo.lock'
       - '**/Cargo.toml'
       - 'services/catalyst/deny.toml'
+      - 'services/catalyst/rust-toolchain.toml'
+      - 'flake.*'
       - '.github/workflows/rust-deps.yml'
   pull_request:
     paths:
       - '**/Cargo.lock'
       - '**/Cargo.toml'
       - 'services/catalyst/deny.toml'
+      - 'services/catalyst/rust-toolchain.toml'
+      - 'flake.*'
       - '.github/workflows/rust-deps.yml'
 permissions:
   contents: read

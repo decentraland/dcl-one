@@ -679,7 +679,8 @@ class RustDependencyWorkflowTest(unittest.TestCase):
     def test_runs_on_dependency_changes_and_daily(self):
         text = self.DEPS.read_text()
         self.assertRegex(text, r"(?m)^  schedule:\n    - cron: '[\d ]+\* \* \*'\n")
-        inputs = ['**/Cargo.lock', '**/Cargo.toml', 'services/catalyst/deny.toml', '.github/workflows/rust-deps.yml']
+        inputs = ['**/Cargo.lock', '**/Cargo.toml', 'services/catalyst/deny.toml',
+                  'services/catalyst/rust-toolchain.toml', 'flake.*', '.github/workflows/rust-deps.yml']
         local = runpy.run_path(str(WORKFLOW.parents[2] / 'tooling/ci-local.py'))
         for event in ('push', 'pull_request'):
             self.assertEqual(local['workflow_paths']('rust-deps.yml', event), inputs, event)
