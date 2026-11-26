@@ -9387,6 +9387,15 @@ async fn the_bids_legs_read_the_snapshot_their_readiness_checked() {
     };
     super::trade_events::tests::publish_cursors(&state.pool).await;
     let pool = state.pool.clone();
+    // The token-bid leg can rely on an empty, published NFT projection.
+    sqlx::query(
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, \
+                                      fold_through, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'matic', 1, 200, 200, 200, timezone('UTC', now()), true, 137)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     let c = contract_of(&tag(), 8);
     let (trade, _) = insert_trade(
         &pool,
