@@ -1,0 +1,450 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+@layer dcl.components {
+  .root {
+    position: relative;
+    display: inline-flex;
+    flex-direction: column;
+    gap: 10px;
+    box-sizing: border-box;
+    width: 344px;
+    max-width: 100%;
+    min-width: 0;
+    color: var(--dcl-neutrals-snow);
+  }
+
+  .hidden {
+    position: absolute;
+    overflow: hidden;
+    width: 1px;
+    height: 1px;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--dcl-space-8);
+    min-width: 0;
+  }
+
+  .label {
+    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    min-width: 0;
+    line-height: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .control {
+    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--dcl-space-8);
+    box-sizing: border-box;
+    width: 100%;
+    height: 40px;
+    margin: 0;
+    padding: 0 var(--dcl-space-16);
+    border: 0;
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-shadow);
+    line-height: normal;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .control:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+
+  .control:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .value {
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Not in the design: the text of an empty choice, on the secondary text of a light surface. */
+  .value[data-placeholder] {
+    color: var(--dcl-neutrals-pale-black);
+  }
+
+  .arrow {
+    flex: none;
+    overflow: visible;
+    width: 12px;
+    height: 6px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .control[aria-expanded='true'] .arrow {
+    transform: rotate(180deg);
+  }
+
+  /* The list has the page's gutter on each side at any width; the script moves it back inside. */
+  .list {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    box-sizing: border-box;
+    width: max-content;
+    min-width: 100%;
+    max-width: calc(100vw - var(--dcl-space-32));
+    max-height: 230px;
+    padding: 10px var(--dcl-space-12);
+    /* The capture's 8px scroll thumb at black 20%. */
+    scrollbar-color: var(--dcl-transparencies-black-20) transparent;
+    scrollbar-width: thin;
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-shadow);
+    transform: translateX(var(--dropdown-shift, 0px));
+  }
+
+  .list[data-side='top'] {
+    top: auto;
+    bottom: 50px;
+  }
+
+  .list[hidden],
+  .bubble[hidden] {
+    display: none;
+  }
+
+  .option {
+    composes: text626f64792f6d642d7374726f6e67 from '../../foundations/typography/text-styles.module.css';
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--dcl-space-12);
+    box-sizing: border-box;
+    min-height: 40px;
+    padding: var(--dcl-space-8) var(--dcl-space-12);
+    border-radius: var(--dcl-radius-md);
+    line-height: normal;
+    cursor: pointer;
+  }
+
+  .option[data-active] {
+    background: var(--dcl-neutrals-pearl);
+  }
+
+  .option[aria-disabled='true'] {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .optionLabel {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .check {
+    flex: none;
+    overflow: visible;
+    width: 13px;
+    height: 10px;
+    fill: none;
+    stroke: var(--dcl-primary-alt-primary-alt-dark-2);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    visibility: hidden;
+  }
+
+  .option[aria-selected='true'] .check {
+    visibility: visible;
+  }
+
+  .help {
+    position: relative;
+    flex: none;
+    display: inline-flex;
+  }
+
+  /* The capture's 18px info mark at white 70%, in a 24px target. */
+  .helpButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin: -3px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--dcl-radius-full);
+    background: none;
+    color: color-mix(in srgb, var(--dcl-neutrals-white) 70%, transparent);
+    cursor: pointer;
+  }
+
+  .helpButton:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 0;
+  }
+
+  /* Not in the design: the open help text, on the raised surface. */
+  .bubble {
+    composes: text626f64792f736d from '../../foundations/typography/text-styles.module.css';
+    position: absolute;
+    top: calc(100% + var(--dcl-space-8));
+    right: 0;
+    z-index: 11;
+    width: max-content;
+    max-width: min(240px, calc(100vw - var(--dcl-space-32)));
+    padding: var(--dcl-space-8) var(--dcl-space-12);
+    border: 1px solid var(--dcl-border-subtle);
+    border-radius: var(--dcl-radius-sm);
+    background: var(--dcl-bg-surface-raised);
+    color: var(--dcl-text-primary);
+    transform: translateX(var(--dropdown-shift, 0px));
+  }
+
+  .bubble[data-side='top'] {
+    top: auto;
+    bottom: calc(100% + var(--dcl-space-8));
+  }
+
+  @media (forced-colors: active) {
+    .control,
+    .list {
+      border: 1px solid ButtonText;
+    }
+
+    .option[data-active] {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
+    }
+
+    .check {
+      stroke: currentColor;
+    }
+  }
+}
+
+/* Not in Figma: the Explorer HUD's select (`appearance="hud"`). Its 8% white field, its 70% white ink, its panel
+   shadow and its 140ms have no token. The host supplies --z-overlay for the list, and the
+   box model: the rules set none, as the HUD's did. */
+@layer dcl.components {
+  .hudRoot {
+    position: relative;
+    display: inline-block;
+    min-width: 160px;
+  }
+
+  .hudField {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--dcl-space-8);
+    width: 100%;
+    height: 40px;
+    padding: 0 14px;
+    border: 1px solid var(--dcl-transparencies-white-10);
+    border-radius: var(--dcl-radius-md);
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--dcl-neutrals-snow);
+    font-family: inherit;
+    font-size: var(--dcl-font-size-body-sm);
+    cursor: pointer;
+    transition: background-color 140ms ease;
+  }
+
+  .hudField:hover:not(:disabled) {
+    background: var(--dcl-transparencies-white-10);
+  }
+
+  .hudField:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .hudLight {
+    border-color: transparent;
+    background: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-shadow);
+    font-weight: 600;
+  }
+
+  .hudLight:hover:not(:disabled) {
+    background: var(--dcl-neutrals-white);
+  }
+
+  .hudLight .hudChevron {
+    color: var(--dcl-neutrals-shadow);
+  }
+
+  .hudValue {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .hudChevron {
+    flex: none;
+    width: 12px;
+    height: 12px;
+    color: rgba(255, 255, 255, 0.7);
+    transition: transform 140ms ease;
+  }
+
+  .hudChevronOpen {
+    transform: rotate(180deg);
+  }
+
+  .hudList {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    left: 0;
+    z-index: var(--z-overlay);
+    max-height: 260px;
+    margin: 0;
+    padding: 6px;
+    overflow-y: auto;
+    border: 1px solid var(--dcl-transparencies-white-10);
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-neutrals-shadow);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    list-style: none;
+    scrollbar-width: thin;
+  }
+
+  .hudListUp {
+    top: auto;
+    bottom: calc(100% + 6px);
+  }
+
+  .hudOption {
+    display: block;
+    width: 100%;
+    padding: var(--dcl-space-8) 10px;
+    border: none;
+    border-radius: var(--dcl-radius-sm);
+    background: transparent;
+    color: rgba(255, 255, 255, 0.7);
+    font-family: inherit;
+    font-size: var(--dcl-font-size-body-sm);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .hudOption:hover {
+    background: var(--dcl-transparencies-white-10);
+    color: var(--dcl-neutrals-snow);
+  }
+
+  .hudOptionActive {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--dcl-neutrals-snow);
+  }
+}
+
+/* Not in Figma: the Explorer HUD's sort list (`appearance="hud"`, `kind="sort"`). Its 6% and 8% white fills, its
+   85% white ink, its 10px and 14px corners and its panel shadow have no token. The host supplies --z-overlay
+   and the box model. */
+@layer dcl.components {
+  .hudSort {
+    position: relative;
+    width: 100%;
+  }
+
+  .hudSortField {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--dcl-space-8);
+    width: 100%;
+    padding: var(--dcl-space-8) var(--dcl-space-12);
+    border: 1px solid var(--dcl-transparencies-white-10);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--dcl-neutrals-snow);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .hudSortField:hover {
+    background: var(--dcl-transparencies-white-10);
+  }
+
+  .hudSortOpen .hudSortField {
+    border-color: var(--dcl-brand-ruby);
+  }
+
+  .hudSortCaret {
+    color: rgba(255, 255, 255, 0.5);
+    transition: transform 0.12s ease;
+  }
+
+  .hudSortOpen .hudSortCaret {
+    transform: rotate(180deg);
+  }
+
+  .hudSortMenu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    left: 0;
+    z-index: var(--z-overlay);
+    max-height: 240px;
+    margin: 0;
+    padding: 6px;
+    overflow: auto;
+    border: 1px solid var(--dcl-transparencies-white-10);
+    border-radius: 14px;
+    background: var(--dcl-neutrals-shadow);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    list-style: none;
+  }
+
+  .hudSortOption {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--dcl-space-8);
+    padding: var(--dcl-space-8) var(--dcl-space-12);
+    border-radius: var(--dcl-radius-sm);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .hudSortOption:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--dcl-neutrals-snow);
+  }
+
+  .hudSortOptionActive {
+    color: var(--dcl-neutrals-snow);
+  }
+
+  .hudSortOptionActive::after {
+    content: '';
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--dcl-brand-orange);
+  }
+}

@@ -1,10 +1,10 @@
 import { Provider } from 'react-redux';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Dispatch } from '@reduxjs/toolkit';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../tests/utils/TestProviders';
 
 import { useAuth } from '/@/hooks/useAuth';
 import { LandType, RoleType, type Land } from '/@/lib/land';
@@ -70,14 +70,14 @@ function renderPage(path: string, lands: Land[]) {
   render(
     <Provider store={store as never}>
       <MemoryRouter initialEntries={[path]}>
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <Routes>
             <Route
               path="/manage/land/:id/:tab?"
               element={<LandDetailPage />}
             />
           </Routes>
-        </ThemeProvider>
+        </TestProviders>
       </MemoryRouter>
     </Provider>,
   );

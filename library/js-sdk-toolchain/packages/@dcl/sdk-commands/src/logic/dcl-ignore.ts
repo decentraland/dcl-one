@@ -1,5 +1,5 @@
 import path from 'path'
-import { CliComponents } from '../components'
+import type { CliComponents } from '../components'
 
 export const defaultDclIgnore = [
   '.*',
@@ -22,7 +22,10 @@ export const defaultDclIgnore = [
   '*.fbx',
   '*.zip',
   '*.rar',
-  '*.map'
+  '*.map',
+  // editor and agent files scene templates ship without a leading dot
+  'cursor.config',
+  'cursorignore'
 ]
 
 export async function getDCLIgnoreFileContents(

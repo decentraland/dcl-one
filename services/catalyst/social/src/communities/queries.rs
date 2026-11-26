@@ -155,13 +155,14 @@ pub async fn members_gate(
     .await
 }
 
-pub async fn is_private(pool: &PgPool, id: CommunityId) -> sqlx::Result<bool> {
-    let row: Option<bool> =
-        sqlx::query_scalar("SELECT private FROM social.communities WHERE id = $1 AND active")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
-    Ok(row.unwrap_or(false))
+/// The community's privacy; `None` when it is missing, inactive or suspended.
+pub async fn is_private(pool: &PgPool, id: CommunityId) -> sqlx::Result<Option<bool>> {
+    sqlx::query_scalar(
+        "SELECT private FROM social.communities WHERE id = $1 AND active AND NOT suspended",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
 }
 
 pub(crate) async fn banned(pool: &PgPool, id: CommunityId, wallet: &Address) -> sqlx::Result<bool> {
@@ -305,7 +306,7 @@ type ListRow = (
     i64,
 );
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, reason = "one argument per list filter")]
 pub async fn list(
     pool: &PgPool,
     pagination: &Pagination,
@@ -747,7 +748,8 @@ pub async fn admin_list(
 }
 
 /// The suspension CHECK ties `suspended_at`/`suspended_by` to the flag, so
-/// both directions set all four columns together.
+/// both directions set all four columns together. Suspension is local
+/// moderation and leaves the import's metadata edit timestamp intact.
 pub async fn set_suspended(
     pool: &PgPool,
     id: CommunityId,
@@ -759,7 +761,7 @@ pub async fn set_suspended(
         sqlx::query(
             "UPDATE social.communities \
              SET suspended = TRUE, suspended_at = timezone('UTC', now()), suspended_by = $2, \
-                 suspension_reason = $3, updated_at = timezone('UTC', now()) \
+                 suspension_reason = $3 \
              WHERE id = $1",
         )
         .bind(id)
@@ -772,7 +774,7 @@ pub async fn set_suspended(
         sqlx::query(
             "UPDATE social.communities \
              SET suspended = FALSE, suspended_at = NULL, suspended_by = NULL, \
-                 suspension_reason = NULL, updated_at = timezone('UTC', now()) \
+                 suspension_reason = NULL \
              WHERE id = $1",
         )
         .bind(id)
@@ -935,10 +937,15 @@ pub async fn list_members(
 pub async fn list_online_members(
     pool: &PgPool,
     id: CommunityId,
-    online: &[String],
+    online: &std::collections::BTreeSet<String>,
     pagination: &Pagination,
 ) -> sqlx::Result<(Vec<CommunityMember>, i64)> {
-    let filter: Vec<String> = online.iter().map(|a| a.to_lowercase()).collect();
+    // nobody online: no member can be, and the database need not say so
+    if online.is_empty() {
+        return Ok((Vec::new(), 0));
+    }
+    // the topology's wallets are lowercased already
+    let filter: Vec<&str> = online.iter().map(String::as_str).collect();
     let sql = format!(
         "SELECT community_id, member_address, role, joined_at, COUNT(*) OVER () AS total \
          FROM social.community_members WHERE community_id = $1 AND member_address = ANY($2::text[]) \

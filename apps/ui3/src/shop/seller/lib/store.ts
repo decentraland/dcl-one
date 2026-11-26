@@ -7,7 +7,7 @@
 // their own store: the entity's pointer is the owner's URN and the content server checks the signer.
 
 import { catalystBase } from "../../../data/catalyst/client";
-import type { AuthIdentity } from "../../../data/auth/identity";
+import type { AuthIdentity } from "@web-core/auth/identity";
 import { buildEntity, deployEntity, hashV1, signEntityId } from "./entity";
 
 export type CreatorStore = {

@@ -3,6 +3,7 @@ use std::{f32::consts::TAU, sync::Arc};
 use alloy_core::primitives::Address;
 use bevy::{
     app::Propagate,
+    ecs::{component::HookContext, system::SystemParam, world::DeferredWorld},
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::view::RenderLayers,
@@ -12,10 +13,10 @@ use common::{
     rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin, RpcStreamSender},
     structs::{
         AudioDecoderError, EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent, EmoteLifecycleSource,
-        EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerLanguage, PointAtSync,
-        SceneDrivenAnimationRequest,
+        EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerAddress, PlayerLanguage,
+        PointAtSync, SceneDrivenAnimationRequest, TimeOfDay,
     },
-    util::ModifyComponentExt,
+    util::{AsH160, ModifyComponentExt},
 };
 use serde_json::json;
 use system_bridge::{SystemApi, VoiceMessage};
@@ -39,7 +40,7 @@ use crate::{
     chat_reaction::{canonical_message_id, received_emoji, ChatReactionEvent},
     scene_rooms::SceneRooms,
     scene_topics::SceneTopicRouter,
-    Transport,
+    Transport, TransportType,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -147,6 +148,7 @@ impl Plugin for GlobalCrdtPlugin {
         app.add_event::<PlayerSceneAnimEvent>();
         app.add_event::<ProfileEvent>();
         app.add_event::<ChatEvent>();
+        app.add_event::<ReactionEvent>();
     }
 }
 
@@ -401,6 +403,25 @@ impl CrdtContexts {
             .copied()
             .or_else(|| (!common::structs::multi_tenant()).then(|| self.shared()))
     }
+
+    /// Removes the contexts `keep` rejects and returns their entities. Marks the resource changed
+    /// only when something was removed: change-detecting readers (the listener AoI rebuild) must
+    /// not run on every frame of a per-frame sweep.
+    pub fn reap(contexts: &mut ResMut<Self>, mut keep: impl FnMut(&str) -> bool) -> Vec<Entity> {
+        let doomed: Vec<String> = contexts
+            .0
+            .iter()
+            .filter(|(hash, _)| !keep(hash))
+            .map(|(hash, _)| hash.clone())
+            .collect();
+        if doomed.is_empty() {
+            return Vec::new();
+        }
+        doomed
+            .iter()
+            .filter_map(|hash| contexts.0.remove(hash))
+            .collect()
+    }
 }
 
 impl GlobalCrdtState {
@@ -492,7 +513,7 @@ impl GlobalCrdtState {
         );
     }
 
-    pub fn update_time(&mut self, time: f32) {
+    pub fn update_time(&mut self, time: TimeOfDay) {
         self.send_update(GlobalCrdtStateUpdate::Time(time), "time");
     }
 
@@ -512,8 +533,13 @@ impl GlobalCrdtState {
     }
 }
 
+/// Requires `ForeignAvatar`: the avatar crate tells remote avatars apart by that marker, as it
+/// does not depend on comms. Inserting it also inserts the entity's `PlayerAddress`.
 #[derive(Component, Debug)]
+#[require(common::structs::ForeignAvatar)]
+#[component(on_insert = Self::on_insert)]
 pub struct ForeignPlayer {
+    /// The same as the entity's `PlayerAddress`; use that for local or foreign players.
     pub address: Address,
     /// the crdt context (player-presence view) this player entity belongs to; the same
     /// wallet connected to several rooms is a separate entity in each room's context
@@ -525,6 +551,30 @@ pub struct ForeignPlayer {
     pub scene_id: SceneEntityId,
     pub profile_version: u32,
     audio_sender: mpsc::Sender<ForeignAudioData>,
+}
+
+impl ForeignPlayer {
+    fn on_insert(mut world: DeferredWorld, context: HookContext) {
+        let Some(address) = world
+            .get::<Self>(context.entity)
+            .map(|player| player.address)
+        else {
+            return;
+        };
+        world
+            .commands()
+            .entity(context.entity)
+            .try_insert(PlayerAddress(address));
+    }
+
+    /// Whether the player belongs to a Pulse transport that still exists.
+    pub fn has_pulse_transport(&self, transports: &Query<&Transport>) -> bool {
+        self.transports.iter().any(|&entity| {
+            transports
+                .get(entity)
+                .is_ok_and(|transport| transport.transport_type == TransportType::Pulse)
+        })
+    }
 }
 
 pub enum ChannelControl {
@@ -625,17 +675,17 @@ pub struct PlayerPositionEvent {
     pub rotation: DclQuat,
     pub velocity: Vec3,
     pub grounded: Option<bool>,
-    /// MoveKind inferred from the packet:
+    /// MoveKind inferred from the packet, first match wins:
+    ///   - `glide_state` is `OPENING_PROP` or `GLIDING`, or `CLOSING_PROP` in the air → `Glide`
     ///   - `jump_count >= 2` → `DoubleJump`
-    ///   - `jump_count == 1` → `Jump`
-    ///   - `glide_state` is `OPENING_PROP` or `GLIDING` → `Glide`
-    ///   - `is_jumping` or `is_long_jump` → `Jump`
+    ///   - `jump_count == 1`, `is_jumping` or `is_long_jump` → `Jump`
     ///
     /// `None` means no movement-state indicator — the velocity fallback picks. Drives `jump_time`
-    /// (Jump) and the matching emote (DoubleJump / Glide) on foreign avatars.
+    /// and the matching emote (DoubleJump / Glide) on foreign avatars; a Jump after DoubleJump or
+    /// Glide continues the fall (see `foreign_dynamics::apply_remote_move_kind`).
     pub remote_move_kind: Option<MoveKind>,
-    /// This update is a discontinuous reposition (a Pulse `TeleportPerformed`), so `foreign_dynamics`
-    /// snaps straight to it instead of interpolating across the gap.
+    /// This update is a discontinuous reposition, such as a Pulse `TeleportPerformed` or the
+    /// first snapshot for a newly observed join. The avatar snaps to this position.
     pub teleport: bool,
     /// Per-axis ± box the true position lies within (the position quantization half-step). `ZERO`
     /// for precise sources (LiveKit, full-state snapshots); set only by the Pulse delta receiver,
@@ -683,6 +733,14 @@ pub struct ChatEvent {
     pub sender: Entity,
     pub channel: String,
     pub message: String,
+}
+
+/// An rfc4 `Reaction` as a peer sent it: an emoji to show over their avatar, `count` times.
+/// Nothing in it is checked yet.
+#[derive(Event, Debug, Clone)]
+pub struct ReactionEvent {
+    pub sender: Entity,
+    pub reaction: rfc4::Reaction,
 }
 
 /// The rfc4 chat wire timestamp for now. unity-explorer decodes it with DateTime.FromOADate: days
@@ -736,18 +794,19 @@ fn prune_player_map<V>(
 }
 
 /// The movement state a movement packet announces, `None` when it announces none.
-fn remote_move_kind(
+pub(crate) fn remote_move_kind(
     glide_state: rfc4::movement::GlideState,
     jump_count: i32,
     jumping: bool,
+    grounded: bool,
 ) -> Option<MoveKind> {
-    // Glide is checked before DoubleJump because Unity keeps `jump_count`
-    // at its last value (usually 2) through the whole glide — so the
-    // DoubleJump-first ordering would mask an active glide.
+    use rfc4::movement::GlideState::{ClosingProp, Gliding, OpeningProp};
+    // Glide is checked before DoubleJump because senders keep `jump_count` at its last value
+    // (usually 2) through the whole glide, closing included, so the DoubleJump-first ordering
+    // would mask the glide. A glider closing on the ground is the landing, not a glide.
     match (glide_state, jump_count, jumping) {
-        (rfc4::movement::GlideState::OpeningProp | rfc4::movement::GlideState::Gliding, _, _) => {
-            Some(MoveKind::Glide)
-        }
+        (OpeningProp | Gliding, _, _) => Some(MoveKind::Glide),
+        (ClosingProp, _, _) if !grounded => Some(MoveKind::Glide),
         (_, c, _) if c >= 2 => Some(MoveKind::DoubleJump),
         (_, 1, _) | (_, _, true) => Some(MoveKind::Jump),
         _ => None,
@@ -758,7 +817,6 @@ fn remote_move_kind(
 /// [`PlayerMessage::Movement`]) or as a legacy rfc4 packet over a websocket transport (as
 /// [`PlayerMessage::PlayerData`]). Writes the CRDT transform and emits a [`PlayerPositionEvent`]
 /// for `foreign_dynamics` to interpolate.
-#[allow(clippy::too_many_arguments)]
 fn apply_foreign_movement(
     m: &rfc4::Movement,
     entity: Entity,
@@ -806,6 +864,7 @@ fn apply_foreign_movement(
         m.glide_state(),
         m.jump_count,
         m.is_jumping || m.is_long_jump,
+        m.is_grounded,
     );
     // Set only by the Pulse delta receiver; absent (→ ZERO, exact) for LiveKit and full-state.
     // A symmetric ± box, so the z-axis negation above doesn't affect it.
@@ -828,7 +887,6 @@ fn apply_foreign_movement(
     });
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn process_transport_updates(
     mut commands: Commands,
     mut contexts: Query<(Entity, &mut GlobalCrdtState)>,
@@ -838,36 +896,41 @@ pub fn process_transport_updates(
     mut position_events: EventWriter<PlayerPositionEvent>,
     mut anim_events: EventWriter<PlayerSceneAnimEvent>,
     mut emote_events: EventWriter<EmoteLifecycleEvent>,
-    (mut chat_events, mut reaction_events): (
+    (mut chat_events, mut reaction_events, mut situational_events): (
         EventWriter<ChatEvent>,
         EventWriter<ChatReactionEvent>,
+        EventWriter<ReactionEvent>,
     ),
-    mut string_senders: Local<HashMap<String, RpcEventSender>>,
-    mut binary_senders: Local<HashMap<String, RpcStreamSender<(String, Vec<u8>)>>>,
+    mut messagebus: SceneMessageBus,
     mut subscribers: EventReader<RpcCallEvent>,
     mut duplicate_chat_filter: Local<HashMap<Entity, f64>>,
     mut remote_anim: Local<RemoteAnimState>,
-    (discard_player_updates, transports, scene_rooms, mut scene_topics): (
+    (discard_player_updates, transports): (
         Res<DiscardPlayerUpdates>,
-        Query<Option<&crate::room_connection::ConnectionHealth>, With<Transport>>,
-        SceneRooms,
-        SceneTopicRouter,
+        Query<(
+            &Transport,
+            Option<&crate::room_connection::ConnectionHealth>,
+        )>,
     ),
 ) {
     // gather any event receivers
     for ev in subscribers.read() {
         match (&ev.origin, &ev.call) {
             (RpcOrigin::Scene { hash, .. }, RpcCall::SubscribeMessageBus { sender }) => {
-                string_senders.insert(hash.to_string(), sender.clone());
+                messagebus
+                    .string_senders
+                    .insert(hash.to_string(), sender.clone());
             }
             (RpcOrigin::Scene { hash, .. }, RpcCall::SubscribeBinaryBus { sender }) => {
-                binary_senders.insert(hash.to_string(), sender.clone());
+                messagebus
+                    .binary_senders
+                    .insert(hash.to_string(), sender.clone());
             }
             _ => (),
         }
     }
-    string_senders.retain(|_, s| !s.is_closed());
-    binary_senders.retain(|_, s| !s.is_closed());
+    messagebus.string_senders.retain(|_, s| !s.is_closed());
+    messagebus.binary_senders.retain(|_, s| !s.is_closed());
 
     // forget per-player state for despawned players (cheap unless a map outgrew the live set)
     let live_players = players.iter().len();
@@ -894,7 +957,7 @@ pub fn process_transport_updates(
                     // would hold the player forever, as nothing can remove it again
                     if !transports
                         .get(update.transport_id)
-                        .is_ok_and(|health| health.is_none_or(|health| health.is_connected()))
+                        .is_ok_and(|(_, health)| health.is_none_or(|health| health.is_connected()))
                     {
                         debug!(
                             "dropping update from {} on despawned transport {}",
@@ -907,6 +970,14 @@ pub fn process_transport_updates(
                         if let Some((entity, scene_id, channel)) =
                             created_this_frame.get(&update.address)
                         {
+                            // The spawn is queued, so register later arrivals on this entity in
+                            // the command queue alongside any departures in this same batch.
+                            let transport_id = update.transport_id;
+                            commands.entity(*entity).modify_component(
+                                move |foreign_player: &mut ForeignPlayer| {
+                                    foreign_player.transports.insert(transport_id);
+                                },
+                            );
                             (*entity, *scene_id, channel.clone())
                         } else if let Some(existing) = state.lookup.get_by_left(&update.address) {
                             let mut foreign_player = players.get_mut(*existing).unwrap();
@@ -1050,15 +1121,7 @@ pub fn process_transport_updates(
                                     continue;
                                 }
                             }
-                            process_messagebus(
-                                scene,
-                                address,
-                                update.transport_id,
-                                &mut string_senders,
-                                &mut binary_senders,
-                                &scene_rooms,
-                                &mut scene_topics,
-                            );
+                            messagebus.process(scene, address, update.transport_id, false);
                         }
                         PlayerMessage::PlayerData(Message::Voice(_)) => (),
                         PlayerMessage::Movement {
@@ -1158,7 +1221,11 @@ pub fn process_transport_updates(
                             debug!("look at position: {look_at_position:?}");
                         }
                         PlayerMessage::PlayerData(Message::Reaction(reaction)) => {
-                            debug!("reaction: {reaction:?}");
+                            debug!("reaction from {:#x}: {reaction:?}", update.address);
+                            situational_events.write(ReactionEvent {
+                                sender: entity,
+                                reaction,
+                            });
                         }
                         PlayerMessage::PlayerData(Message::ChatReaction(chat_reaction)) => {
                             debug!(
@@ -1185,7 +1252,20 @@ pub fn process_transport_updates(
                     }
                 }
                 NetworkUpdate::NonPlayer(update) => {
-                    if update.address != "authoritative-server" {
+                    let is_presenter_state = update
+                        .address
+                        .strip_prefix("presentation-bot:")
+                        .is_some_and(|id| !id.is_empty())
+                        && transports
+                            .get(update.transport_id)
+                            .is_ok_and(|(transport, health)| {
+                                transport.transport_type == TransportType::Livekit
+                                    && transport.context == context_entity
+                                    && health.is_none_or(|health| health.is_connected())
+                            })
+                        && matches!(&update.message, Message::Scene(scene)
+                            if scene.data.starts_with(b"\x03\x0c\x00presentation"));
+                    if update.address != "authoritative-server" && !is_presenter_state {
                         warn!(
                             "skipping unexpected update from {}: {:?}",
                             update.address, update.message
@@ -1207,14 +1287,12 @@ pub fn process_transport_updates(
                                 }
                             }
 
-                            process_messagebus(
+                            let authoritative = update.address == "authoritative-server";
+                            messagebus.process(
                                 scene,
                                 update.address,
                                 update.transport_id,
-                                &mut string_senders,
-                                &mut binary_senders,
-                                &scene_rooms,
-                                &mut scene_topics,
+                                authoritative,
                             );
                         }
                         // a server resolving a guest profile asks the guest directly — the
@@ -1352,74 +1430,102 @@ fn resolve_remote_anim(
         transition_seconds,
         seek: anim.playback_time,
         sounds: anim.sound_content_hashes,
+        movement_scene: false,
     })
 }
 
-fn process_messagebus(
-    mut scene: rfc4::Scene,
-    address: String,
-    transport: Entity,
-    string_senders: &mut HashMap<String, RpcStreamSender<String>>,
-    binary_senders: &mut HashMap<String, RpcStreamSender<(String, Vec<u8>)>>,
-    scene_rooms: &SceneRooms,
-    scene_topics: &mut SceneTopicRouter,
-) {
-    if scene.data.is_empty() {
-        warn!("empty scene message");
-        return;
-    }
+/// Scene bus subscriptions and delivery policy used by transport processing.
+#[derive(SystemParam)]
+pub struct SceneMessageBus<'w, 's> {
+    string_senders: Local<'s, HashMap<String, RpcEventSender>>,
+    binary_senders: Local<'s, HashMap<String, RpcStreamSender<(String, Vec<u8>)>>>,
+    scene_rooms: SceneRooms<'w, 's>,
+    scene_topics: SceneTopicRouter<'w, 's>,
+    realm: Res<'w, common::structs::CurrentRealm>,
+    preview: Res<'w, common::structs::PreviewMode>,
+}
 
-    let comms_type = match *scene.data.first().unwrap() {
-        c if c == CommsMessageType::String as u8 => {
-            scene.data.remove(0);
-            CommsMessageType::String
+impl SceneMessageBus<'_, '_> {
+    fn process(
+        &mut self,
+        mut scene: rfc4::Scene,
+        address: String,
+        transport: Entity,
+        authoritative: bool,
+    ) {
+        let is_topic = scene.data.first() == Some(&(CommsMessageType::CommsData as u8));
+        if !self.scene_rooms.carries(transport, &scene.scene_id) {
+            if is_topic {
+                self.scene_topics.drop_topic_message();
+            }
+            return;
         }
-        c if c == CommsMessageType::Binary as u8 => {
-            scene.data.remove(0);
-            CommsMessageType::Binary
+        let trusted = match crate::scene_messages::peer_trust(
+            self.scene_rooms.moderation(&scene.scene_id),
+            address.as_h160(),
+            authoritative || self.preview.is_preview || self.realm.is_local(),
+        ) {
+            crate::scene_messages::PeerTrust::Banned => {
+                self.scene_topics.record_banned(is_topic);
+                return;
+            }
+            crate::scene_messages::PeerTrust::Peer => false,
+            crate::scene_messages::PeerTrust::Trusted => true,
+        };
+        let Some(filtered) = crate::scene_messages::filter_scene_message(&scene.data, trusted)
+        else {
+            self.scene_topics.record_invalid(is_topic);
+            return;
+        };
+        if let std::borrow::Cow::Owned(filtered) = filtered {
+            self.scene_topics.record_filtered_inbound();
+            scene.data = filtered;
         }
-        c if c == CommsMessageType::CommsData as u8 => {
-            scene.data.remove(0);
-            CommsMessageType::CommsData
-        }
-        _ => CommsMessageType::String,
-    };
+        let Some((&kind, _)) = scene.data.split_first() else {
+            return;
+        };
+        let comms_type = match kind {
+            c if c == CommsMessageType::String as u8 => {
+                scene.data.remove(0);
+                CommsMessageType::String
+            }
+            c if c == CommsMessageType::Binary as u8 => {
+                scene.data.remove(0);
+                CommsMessageType::Binary
+            }
+            c if c == CommsMessageType::CommsData as u8 => {
+                scene.data.remove(0);
+                CommsMessageType::CommsData
+            }
+            _ => CommsMessageType::String,
+        };
 
-    debug!(
-        "messagebus received from {} to scene {}: [{:?}] `{:?}`",
-        address, scene.scene_id, comms_type, scene.data
-    );
-
-    if !scene_rooms.carries(transport, &scene.scene_id) {
         debug!(
-            "dropping message for scene {} from {address}: not its scene room",
-            scene.scene_id
+            "messagebus received from {} to scene {}: [{:?}] `{:?}`",
+            address, scene.scene_id, comms_type, scene.data
         );
-        if matches!(comms_type, CommsMessageType::CommsData) {
-            scene_topics.drop_without_room();
-        }
-        return;
-    }
 
-    match comms_type {
-        CommsMessageType::String => {
-            if let Some(sender) = string_senders.get(&scene.scene_id) {
-                let _ = sender.send(
-                    json!({
-                        "message": String::from_utf8(scene.data).unwrap_or_default(),
-                        "sender": address,
-                    })
-                    .to_string(),
-                );
+        match comms_type {
+            CommsMessageType::String => {
+                if let Some(sender) = self.string_senders.get(&scene.scene_id) {
+                    let _ = sender.send(
+                        json!({
+                            "message": String::from_utf8(scene.data).unwrap_or_default(),
+                            "sender": address,
+                        })
+                        .to_string(),
+                    );
+                }
             }
-        }
-        CommsMessageType::Binary => {
-            if let Some(sender) = binary_senders.get(&scene.scene_id) {
-                let _ = sender.send((address, scene.data));
+            CommsMessageType::Binary => {
+                if let Some(sender) = self.binary_senders.get(&scene.scene_id) {
+                    let _ = sender.send((address, scene.data));
+                }
             }
-        }
-        CommsMessageType::CommsData => {
-            scene_topics.deliver(&scene.scene_id, address, scene.data);
+            CommsMessageType::CommsData => {
+                self.scene_topics
+                    .deliver(&scene.scene_id, address, scene.data);
+            }
         }
     }
 }
@@ -1508,7 +1614,11 @@ fn remove_transport_from_foreign_audio_source(
 
 fn handle_foreign_audio(
     transports: Query<(Entity, &Transport)>,
-    mut q: Query<(&mut ForeignAudioSource, &ForeignPlayer)>,
+    mut q: Query<(
+        &mut ForeignAudioSource,
+        &ForeignPlayer,
+        Has<crate::BlockedOrBanned>,
+    )>,
     #[cfg(feature = "livekit")] call_rooms: Query<
         &crate::livekit::participant::ParticipantIndex,
         With<crate::voice_chat::VoiceRoom>,
@@ -1519,26 +1629,7 @@ fn handle_foreign_audio(
         .filter_map(|(e, transport)| transport.control.as_ref().map(|t| (e, t)))
         .collect::<HashMap<_, _>>();
 
-    for (mut source, player) in q.iter_mut() {
-        // a call's peers are heard flat through the call, not spatially as well
-        #[cfg(feature = "livekit")]
-        let in_call_with = call_rooms.iter().any(|index| {
-            index.contains_key(&crate::livekit::participant::ParticipantIndex::key(
-                &format!("{:#x}", player.address),
-            ))
-        });
-        #[cfg(not(feature = "livekit"))]
-        let in_call_with = false;
-        if in_call_with {
-            if let Some(current) = source.current_transport.take() {
-                if let Some(control) = transports.get(&current) {
-                    let _ = control.try_send(ChannelControl::VoiceUnsubscribe(player.address));
-                }
-                source.audio_receiver = None;
-            }
-            continue;
-        }
-
+    for (mut source, player, blocked_or_banned) in q.iter_mut() {
         let prev_available = source.available_transports.clone();
         let prev_transport = source.current_transport;
 
@@ -1568,8 +1659,25 @@ fn handle_foreign_audio(
             source.audio_receiver = None;
         }
 
-        // request a new source
-        if source.current_transport.is_none() {
+        // A call's peers are heard flat through the call, not spatially as well. Skipping after
+        // the availability events are read keeps a long skip from filling their channel.
+        #[cfg(feature = "livekit")]
+        let in_call_with = call_rooms.iter().any(|index| {
+            index.contains_key(&crate::livekit::participant::ParticipantIndex::key(
+                &format!("{:#x}", player.address),
+            ))
+        });
+        #[cfg(not(feature = "livekit"))]
+        let in_call_with = false;
+        if in_call_with || blocked_or_banned {
+            if let Some(current) = source.current_transport.take() {
+                if let Some(control) = transports.get(&current) {
+                    let _ = control.try_send(ChannelControl::VoiceUnsubscribe(player.address));
+                }
+                source.audio_receiver = None;
+            }
+        } else if source.current_transport.is_none() {
+            // request a new source
             if let Some(entity) = source.available_transports.iter().next() {
                 let control = transports.get(entity).unwrap();
                 let (sx, rx) = oneshot::channel();
@@ -1626,25 +1734,77 @@ pub fn acceptable_emote_urn(urn: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[derive(Resource, Default)]
+    struct Doomed(Option<String>);
+
+    #[derive(Resource, Default)]
+    struct Observed {
+        changed: bool,
+    }
+
+    fn reap_doomed(mut contexts: ResMut<CrdtContexts>, doomed: Res<Doomed>) {
+        CrdtContexts::reap(&mut contexts, |hash| Some(hash) != doomed.0.as_deref());
+    }
+
+    fn observe(contexts: Res<CrdtContexts>, mut observed: ResMut<Observed>) {
+        observed.changed = contexts.is_changed();
+    }
+
+    #[test]
+    fn reaping_marks_contexts_changed_only_when_something_is_removed() {
+        let mut app = App::new();
+        let shared = app.world_mut().spawn_empty().id();
+        let room = app.world_mut().spawn_empty().id();
+        app.insert_resource(CrdtContexts(HashMap::from_iter([
+            (String::new(), shared),
+            ("room".to_owned(), room),
+        ])))
+        .init_resource::<Doomed>()
+        .init_resource::<Observed>()
+        .add_systems(Update, (reap_doomed, observe).chain());
+
+        // the first frame sees the resource as added
+        app.update();
+        assert!(app.world().resource::<Observed>().changed);
+
+        app.update();
+        assert!(!app.world().resource::<Observed>().changed);
+        assert_eq!(app.world().resource::<CrdtContexts>().0.len(), 2);
+
+        app.world_mut().resource_mut::<Doomed>().0 = Some("room".to_owned());
+        app.update();
+        assert!(app.world().resource::<Observed>().changed);
+        assert_eq!(
+            app.world()
+                .resource::<CrdtContexts>()
+                .0
+                .keys()
+                .collect::<Vec<_>>(),
+            vec![""]
+        );
+
+        app.update();
+        assert!(!app.world().resource::<Observed>().changed);
+    }
+
     #[test]
     fn a_packet_names_the_movement_state_it_announces() {
-        use rfc4::movement::GlideState::{Gliding, OpeningProp, PropClosed};
+        use rfc4::movement::GlideState::{ClosingProp, Gliding, OpeningProp, PropClosed};
+        let kind = |glide, count, jumping| remote_move_kind(glide, count, jumping, false);
 
-        assert_eq!(remote_move_kind(PropClosed, 0, false), None);
+        assert_eq!(kind(PropClosed, 0, false), None);
         // Pulse never sets `is_jumping`; a first jump travels as a jump count of 1
-        assert_eq!(remote_move_kind(PropClosed, 1, false), Some(MoveKind::Jump));
-        assert_eq!(remote_move_kind(PropClosed, 0, true), Some(MoveKind::Jump));
-        assert_eq!(
-            remote_move_kind(PropClosed, 2, false),
-            Some(MoveKind::DoubleJump)
-        );
+        assert_eq!(kind(PropClosed, 1, false), Some(MoveKind::Jump));
+        assert_eq!(kind(PropClosed, 0, true), Some(MoveKind::Jump));
+        assert_eq!(kind(PropClosed, 2, false), Some(MoveKind::DoubleJump));
         // the jump count stays at 2 through a glide, which wins
-        assert_eq!(
-            remote_move_kind(OpeningProp, 2, false),
-            Some(MoveKind::Glide)
-        );
-        assert_eq!(remote_move_kind(Gliding, 2, true), Some(MoveKind::Glide));
-        assert_eq!(remote_move_kind(Gliding, 0, false), Some(MoveKind::Glide));
+        assert_eq!(kind(OpeningProp, 2, false), Some(MoveKind::Glide));
+        assert_eq!(kind(Gliding, 2, true), Some(MoveKind::Glide));
+        assert_eq!(kind(Gliding, 0, false), Some(MoveKind::Glide));
+        // closing the glider in the air is still the glide, not a second air jump
+        assert_eq!(kind(ClosingProp, 2, false), Some(MoveKind::Glide));
+        // closing it on landing is the landing
+        assert_eq!(remote_move_kind(ClosingProp, 0, false, true), None);
     }
 
     #[test]
@@ -1757,6 +1917,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Time>();
         app.init_resource::<DiscardPlayerUpdates>();
+        app.init_resource::<common::structs::PreviewMode>();
         app.add_event::<RpcCallEvent>();
         app.add_event::<ProfileEvent>();
         app.add_event::<PlayerPositionEvent>();
@@ -1764,6 +1925,7 @@ mod tests {
         app.add_event::<EmoteLifecycleEvent>();
         app.add_event::<ChatEvent>();
         app.add_event::<ChatReactionEvent>();
+        app.add_event::<ReactionEvent>();
         crate::scene_rooms::test_support::init_scene_rooms(&mut app);
         app.add_plugins(crate::scene_topics::SceneTopicsRoutingPlugin);
         app.add_systems(
@@ -1860,8 +2022,357 @@ mod tests {
         (bus_rx, topics_rx)
     }
 
+    fn queue_presenter_message(
+        app: &App,
+        context: Entity,
+        transport: Entity,
+        identity: &str,
+        scene: &str,
+        data: Vec<u8>,
+    ) {
+        app.world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender()
+            .try_send(
+                NonPlayerUpdate {
+                    transport_id: transport,
+                    address: identity.to_owned(),
+                    message: Message::Scene(rfc4::Scene {
+                        scene_id: scene.to_owned(),
+                        data,
+                    }),
+                }
+                .into(),
+            )
+            .unwrap();
+    }
+
+    fn presentation_state_frame() -> Vec<u8> {
+        let mut frame = vec![3, 12, 0];
+        frame.extend_from_slice(b"presentation");
+        frame.extend_from_slice(
+            br#"{"type":"presentation:state","id":"slides","currentSlide":0,"slideCount":2}"#,
+        );
+        frame
+    }
+
+    #[test]
+    fn presentation_bot_state_reaches_the_scene_topic_inbox() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+        let frame = presentation_state_frame();
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "presentation-bot:session",
+            "bafyscene",
+            frame.clone(),
+        );
+        app.update();
+        assert_eq!(
+            topics_rx.try_recv().expect("presentation state delivered"),
+            ("presentation-bot:session".to_owned(), frame[1..].to_vec())
+        );
+        assert!(bus_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn authoritative_server_retains_video_crdt_authority() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        let (binary, mut binary_rx) = RpcStreamSender::<(String, Vec<u8>)>::channel();
+        let scene = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(RpcCallEvent {
+            origin: RpcOrigin::Scene {
+                entity: scene,
+                hash: "bafyscene".into(),
+            },
+            call: RpcCall::SubscribeBinaryBus { sender: binary },
+        });
+        app.update();
+        // Binary scene frame, CRDT batch, then a VideoPlayer put with an empty value.
+        let mut frame = vec![2, 1];
+        for word in [
+            24_u32,
+            1,
+            1,
+            dcl_component::SceneComponentId::VIDEO_PLAYER.0,
+            1,
+            0,
+        ] {
+            frame.extend(word.to_le_bytes());
+        }
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "authoritative-server",
+            "bafyscene",
+            frame.clone(),
+        );
+        app.update();
+        assert_eq!(
+            binary_rx.try_recv().unwrap(),
+            ("authoritative-server".into(), frame[1..].to_vec())
+        );
+    }
+
+    #[test]
+    fn presentation_bot_cannot_deliver_other_topics_or_use_another_transport() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        let socket = spawn_transport(&mut app, context);
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+        for (transport, identity, scene, frame) in [
+            (
+                room,
+                "stream:session",
+                "bafyscene",
+                presentation_state_frame(),
+            ),
+            (
+                room,
+                "presentation-bot:",
+                "bafyscene",
+                presentation_state_frame(),
+            ),
+            (
+                room,
+                "presentation-bot:session",
+                "another-scene",
+                presentation_state_frame(),
+            ),
+            (
+                socket,
+                "presentation-bot:session",
+                "bafyscene",
+                presentation_state_frame(),
+            ),
+            (
+                room,
+                "presentation-bot:session",
+                "bafyscene",
+                vec![3, 1, 0, b't', b'x'],
+            ),
+            (
+                room,
+                "presentation-bot:session",
+                "bafyscene",
+                vec![1, b'h', b'i'],
+            ),
+            (
+                room,
+                "presentation-bot:session",
+                "bafyscene",
+                vec![3, 12, 0, b'p'],
+            ),
+        ] {
+            queue_presenter_message(&app, context, transport, identity, scene, frame);
+        }
+        app.update();
+        assert!(topics_rx.try_recv().is_err());
+        assert!(bus_rx.try_recv().is_err());
+        app.world_mut()
+            .entity_mut(room)
+            .insert(crate::room_connection::ConnectionHealth::default());
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "presentation-bot:session",
+            "bafyscene",
+            presentation_state_frame(),
+        );
+        app.update();
+        assert!(
+            topics_rx.try_recv().is_err(),
+            "a disconnected presenter cannot deliver queued state"
+        );
+        app.world_mut()
+            .entity_mut(room)
+            .remove::<crate::room_connection::ConnectionHealth>();
+        app.world_mut().get_mut::<Transport>(room).unwrap().context = Entity::PLACEHOLDER;
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "presentation-bot:session",
+            "bafyscene",
+            presentation_state_frame(),
+        );
+        app.update();
+        assert!(
+            topics_rx.try_recv().is_err(),
+            "a presenter cannot enter another context"
+        );
+        app.world_mut().get_mut::<Transport>(room).unwrap().context = context;
+        app.world_mut()
+            .get_mut::<Transport>(room)
+            .unwrap()
+            .transport_type = TransportType::WebsocketRoom;
+        queue_presenter_message(
+            &app,
+            context,
+            room,
+            "presentation-bot:session",
+            "bafyscene",
+            presentation_state_frame(),
+        );
+        app.update();
+        assert!(
+            topics_rx.try_recv().is_err(),
+            "a websocket cannot impersonate a LiveKit presenter"
+        );
+    }
+
     const TOPIC_MESSAGE: [u8; 5] = [3, 1, 0, b't', b'x'];
     const BUS_MESSAGE: [u8; 3] = [1, b'h', b'i'];
+
+    #[test]
+    fn banned_scene_senders_cannot_deliver_any_message_channel() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        queue_joined(&mut app, context, room, peer);
+        app.update();
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+        let (binary, mut binary_rx) = RpcStreamSender::<(String, Vec<u8>)>::channel();
+        let scene = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(RpcCallEvent {
+            origin: RpcOrigin::Scene {
+                entity: scene,
+                hash: "bafyscene".into(),
+            },
+            call: RpcCall::SubscribeBinaryBus { sender: binary },
+        });
+        let mut metadata = crate::SceneRoomModeration::default();
+        metadata.scene_admins.insert(peer);
+        metadata.banned_addresses.insert(peer);
+        app.world_mut().entity_mut(room).insert(metadata);
+        app.update();
+        for data in [BUS_MESSAGE.to_vec(), TOPIC_MESSAGE.to_vec(), vec![2, 0, 42]] {
+            queue_scene_message(&mut app, context, room, peer, data);
+        }
+        app.update();
+        assert!(bus_rx.try_recv().is_err());
+        assert!(topics_rx.try_recv().is_err());
+        assert!(binary_rx.try_recv().is_err());
+        assert_eq!(
+            app.world()
+                .resource::<crate::scene_messages::SceneMessageTraffic>()
+                .banned_senders,
+            3
+        );
+        let traffic = app
+            .world()
+            .resource::<crate::scene_messages::SceneMessageTraffic>();
+        assert_eq!((traffic.received, traffic.receive_dropped), (1, 1));
+        app.world_mut()
+            .get_mut::<crate::SceneRoomModeration>(room)
+            .unwrap()
+            .banned_addresses
+            .clear();
+        queue_scene_message(&mut app, context, room, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(bus_rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn development_peers_can_sync_video_without_admins_but_bans_still_win() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        for development in ["production", "preview", "local"] {
+            let (mut app, context) = presence_app();
+            app.world_mut()
+                .resource_mut::<common::structs::PreviewMode>()
+                .is_preview = development == "preview";
+            if development == "local" {
+                app.world_mut()
+                    .resource_mut::<common::structs::CurrentRealm>()
+                    .config
+                    .local_scene_parcels = Some(vec!["0,0".into()]);
+            }
+            let peer = Address::repeat_byte(0xab);
+            let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+            queue_joined(&mut app, context, room, peer);
+            let (sender, mut rx) = RpcStreamSender::<(String, Vec<u8>)>::channel();
+            let scene = app.world_mut().spawn_empty().id();
+            app.world_mut().send_event(RpcCallEvent {
+                origin: RpcOrigin::Scene {
+                    entity: scene,
+                    hash: "bafyscene".into(),
+                },
+                call: RpcCall::SubscribeBinaryBus { sender },
+            });
+            app.update();
+            for envelope in [vec![1], vec![3, 0]] {
+                let mut frame = vec![CommsMessageType::Binary as u8];
+                frame.extend_from_slice(&envelope);
+                for word in [24_u32, 1, 1, SceneComponentId::VIDEO_PLAYER.0, 1, 0] {
+                    frame.extend(word.to_le_bytes());
+                }
+                queue_scene_message(&mut app, context, room, peer, frame.clone());
+                app.update();
+                assert_eq!(
+                    rx.try_recv().unwrap().1,
+                    if development == "production" {
+                        envelope
+                    } else {
+                        frame[1..].to_vec()
+                    },
+                    "{development}"
+                );
+            }
+            let mut frame = vec![2, 1];
+            for word in [24_u32, 1, 1, SceneComponentId::VIDEO_PLAYER.0, 1, 0] {
+                frame.extend(word.to_le_bytes());
+            }
+            let mut moderation = crate::SceneRoomModeration::default();
+            moderation.banned_addresses.insert(peer);
+            app.world_mut().entity_mut(room).insert(moderation);
+            queue_scene_message(&mut app, context, room, peer, frame);
+            app.update();
+            assert!(rx.try_recv().is_err(), "a ban must win in {development}");
+        }
+    }
+
+    #[test]
+    fn scene_video_crdt_requires_room_admin_permissions() {
+        use crate::scene_rooms::test_support::spawn_client_room;
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        queue_joined(&mut app, context, room, peer);
+        let (sender, mut rx) = RpcStreamSender::<(String, Vec<u8>)>::channel();
+        let scene = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(RpcCallEvent {
+            origin: RpcOrigin::Scene {
+                entity: scene,
+                hash: "bafyscene".into(),
+            },
+            call: RpcCall::SubscribeBinaryBus { sender },
+        });
+        app.update();
+        let mut frame = vec![2, 1];
+        for word in [24_u32, 1, 1, SceneComponentId::VIDEO_PLAYER.0, 1, 0] {
+            frame.extend(word.to_le_bytes());
+        }
+        queue_scene_message(&mut app, context, room, peer, frame.clone());
+        app.update();
+        assert_eq!(rx.try_recv().unwrap().1, vec![1]);
+        let mut metadata = crate::SceneRoomModeration::default();
+        metadata.scene_admins.insert(peer);
+        app.world_mut().entity_mut(room).insert(metadata);
+        queue_scene_message(&mut app, context, room, peer, frame.clone());
+        app.update();
+        assert_eq!(rx.try_recv().unwrap().1, frame[1..]);
+    }
 
     #[test]
     fn scene_messages_reach_the_scene_on_its_own_room_only() {
@@ -1969,6 +2480,65 @@ mod tests {
         assert!(topics_rx.try_recv().is_err());
     }
 
+    #[test]
+    fn unpublished_own_profile_does_not_delay_peer_version_events() {
+        use crate::profile::{process_profile_events, CurrentUserProfile, ProfileCache};
+        use bevy::asset::{io::memory::MemoryAssetReader, AssetPlugin};
+        use ipfs::{IpfsIo, IpfsResource};
+
+        let (mut app, context) = presence_app();
+        let owner = Address::repeat_byte(7);
+        let mut wallet = wallet::Wallet::default();
+        wallet.finalize_remote(owner, owner, vec![], false);
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .insert_resource(wallet)
+            .init_resource::<CurrentUserProfile>()
+            .init_resource::<ProfileCache>()
+            .insert_resource(IpfsResource {
+                inner: Arc::new(IpfsIo::new(
+                    false,
+                    Box::new(MemoryAssetReader { root: default() }),
+                    None,
+                    default(),
+                    1,
+                    mpsc::unbounded_channel().0,
+                )),
+            })
+            .add_systems(Update, process_profile_events);
+        let transport = spawn_transport(&mut app, context);
+        queue_joined(&mut app, context, transport, Address::repeat_byte(8));
+        app.update();
+        let peer = app
+            .world_mut()
+            .query_filtered::<Entity, With<ForeignPlayer>>()
+            .single(app.world())
+            .unwrap();
+
+        for event in [
+            ProfileEventType::Request {
+                request: rfc4::ProfileRequest {
+                    address: format!("{owner:#x}"),
+                    ..default()
+                },
+                transport,
+            },
+            ProfileEventType::Version(rfc4::AnnounceProfileVersion { profile_version: 3 }),
+        ] {
+            app.world_mut().send_event(ProfileEvent {
+                sender: peer,
+                event,
+            });
+        }
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<ForeignPlayer>(peer)
+                .unwrap()
+                .profile_version,
+            3
+        );
+    }
+
     /// Each foreign player's presence set.
     fn foreign_players(app: &mut App) -> Vec<HashSet<Entity>> {
         app.world_mut()
@@ -2006,6 +2576,45 @@ mod tests {
     }
 
     #[test]
+    fn a_peers_reaction_is_raised_for_its_player_as_sent() {
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let transport = spawn_transport(&mut app, context);
+        let reaction = rfc4::Reaction {
+            emoji_index: -7,
+            timestamp: 12.5,
+            count: 900,
+        };
+        app.world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender()
+            .try_send(
+                PlayerUpdate {
+                    transport_id: transport,
+                    message: PlayerMessage::PlayerData(Message::Reaction(reaction.clone())),
+                    address: peer,
+                }
+                .into(),
+            )
+            .unwrap();
+        app.update();
+
+        let mut players = app.world_mut().query::<(Entity, &ForeignPlayer)>();
+        let (player, heard) = players.single(app.world()).unwrap();
+        assert_eq!(heard.address, peer);
+        let raised = app
+            .world()
+            .resource::<Events<ReactionEvent>>()
+            .iter_current_update_events()
+            .collect::<Vec<_>>();
+        assert_eq!(raised.len(), 1);
+        assert_eq!(raised[0].sender, player);
+        // its bounds are the reader's to enforce: the event carries what the peer sent
+        assert_eq!(raised[0].reaction, reaction);
+    }
+
+    #[test]
     fn disconnected_socket_retires_presence_without_removing_other_room_memberships() {
         let (mut app, context) = presence_app();
         let peer = Address::repeat_byte(0xab);
@@ -2031,5 +2640,99 @@ mod tests {
             foreign_players(&mut app),
             vec![HashSet::from_iter([other, socket])]
         );
+    }
+
+    fn voice_app() -> (App, Entity, Entity, mpsc::Receiver<ChannelControl>) {
+        let mut app = App::new();
+        app.add_systems(Update, handle_foreign_audio);
+        let context = app.world_mut().spawn(GlobalCrdtState::new(None)).id();
+        let (sender, _) = mpsc::channel(1);
+        let (control, control_rx) = mpsc::channel(8);
+        let transport = app
+            .world_mut()
+            .spawn(Transport {
+                transport_type: crate::TransportType::Livekit,
+                sender,
+                control: Some(control),
+                context,
+            })
+            .id();
+        let peer = Address::repeat_byte(0xab);
+        let (audio_sender, audio_receiver) = mpsc::channel(10);
+        audio_sender
+            .try_send(ForeignAudioData::TransportAvailable(transport))
+            .unwrap();
+        let player = app
+            .world_mut()
+            .spawn((
+                ForeignPlayer {
+                    address: peer,
+                    context,
+                    transports: HashSet::from_iter([transport]),
+                    scene_id: SceneEntityId::new(*SceneEntityId::FOREIGN_PLAYER_RANGE.start(), 0),
+                    profile_version: 0,
+                    audio_sender,
+                },
+                ForeignAudioSource {
+                    audio_available_receiver: audio_receiver,
+                    audio_receiver: None,
+                    available_transports: Default::default(),
+                    current_transport: None,
+                },
+            ))
+            .id();
+        (app, player, transport, control_rx)
+    }
+
+    fn voice_controls(rx: &mut mpsc::Receiver<ChannelControl>) -> Vec<&'static str> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|control| match control {
+                ChannelControl::VoiceSubscribe(..) => "subscribe",
+                ChannelControl::VoiceUnsubscribe(_) => "unsubscribe",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_foreign_player_also_gets_its_player_address() {
+        let (app, player, ..) = voice_app();
+        assert_eq!(
+            app.world().get::<PlayerAddress>(player),
+            Some(&PlayerAddress(Address::repeat_byte(0xab)))
+        );
+    }
+
+    #[test]
+    fn a_blocked_or_banned_player_is_unsubscribed_and_heard_again_once_cleared() {
+        let (mut app, player, _, mut controls) = voice_app();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["subscribe"]);
+
+        app.world_mut()
+            .entity_mut(player)
+            .insert(crate::BlockedOrBanned);
+        app.update();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["unsubscribe"]);
+
+        app.world_mut()
+            .entity_mut(player)
+            .remove::<crate::BlockedOrBanned>();
+        app.update();
+        assert_eq!(voice_controls(&mut controls), ["subscribe"]);
+    }
+
+    #[test]
+    fn a_blocked_or_banned_player_is_never_subscribed_and_keeps_its_streams_known() {
+        let (mut app, player, transport, mut controls) = voice_app();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(crate::BlockedOrBanned);
+        app.update();
+        assert!(voice_controls(&mut controls).is_empty());
+        let mut sources = app.world_mut().query::<&ForeignAudioSource>();
+        let source = sources.single(app.world()).unwrap();
+        assert!(source.available_transports.contains(&transport));
+        assert!(source.current_transport.is_none());
     }
 }

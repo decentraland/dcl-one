@@ -22,6 +22,16 @@
 //! [`app_router`] composes them at the old gateway's prefixes behind the
 //! [`writes`] switch.
 
+// Production routes go through `shared::routing` (worlds/clippy.toml); test routers may use axum's.
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "test routers may use axum's routing"
+    )
+)]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
 use catalyst_comms as comms;
@@ -56,8 +66,8 @@ pub mod writes;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get};
 use axum::Router;
-use axum::routing::get;
 use sqlx::PgPool;
 
 use crate::config::Config;
@@ -86,6 +96,9 @@ pub struct Settings {
     /// worlds published here so a stock client does not resolve them against
     /// Decentraland's registry. Mirrored worlds keep it either way.
     pub realm_name_strip_ens: bool,
+    /// `REALM_NAME`: this node's Genesis City realm (default `main`), which a
+    /// realm name signed beside the worlds host never stands for a world in.
+    pub realm_name: String,
     pub map_parcel_view_url: String,
     /// `MAP_ESTATE_VIEW_URL`.
     pub map_estate_view_url: String,
@@ -121,12 +134,16 @@ fn non_empty(value: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
+/// `REALM_NAME`, trimmed, `main` when unset or blank (as the gatekeeper reads it).
+pub fn node_realm_name(config: &Config) -> String {
+    non_empty(config.node.realm_name.as_deref())
+        .unwrap_or_else(|| crate::comms::world_identity::GENESIS_CITY_REALM.to_string())
+}
+
 /// `NETWORK_ID` as the old worlds service read it, derived from `ETH_NETWORK`.
 pub fn network_id_for(eth_network: &str) -> i64 {
-    match eth_network.trim().to_ascii_lowercase().as_str() {
-        "sepolia" => 11_155_111,
-        _ => 1,
-    }
+    crate::shared::network::ChainPair::from_eth_network(eth_network)
+        .map_or(1, |pair| pair.chain_ids().0)
 }
 
 impl Settings {
@@ -153,6 +170,7 @@ impl Settings {
             network_id: network_id_for(&config.node.eth_network),
             global_scenes_urn: Vec::new(),
             realm_name_strip_ens: true,
+            realm_name: node_realm_name(config),
             map_parcel_view_url: content.map_parcel_view_url,
             map_estate_view_url: "http://127.0.0.1:5162/v1/estatemap.png".to_string(),
             commit_hash: content.commit_hash,
@@ -204,6 +222,7 @@ impl Settings {
             network_id: 1,
             global_scenes_urn: Vec::new(),
             realm_name_strip_ens: true,
+            realm_name: crate::comms::world_identity::GENESIS_CITY_REALM.to_string(),
             map_parcel_view_url: "http://127.0.0.1:5162/v1/minimap.png".to_string(),
             map_estate_view_url: "http://127.0.0.1:5162/v1/estatemap.png".to_string(),
             commit_hash: None,
@@ -382,7 +401,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/world/{world_name}/about", get(about::get_about))
         .route(
             "/world/{world_name}/scenes",
-            get(scenes::list_scenes).post(scenes::post_list_scenes),
+            get(scenes::list_scenes).post(erase(scenes::post_list_scenes)),
         )
         .route(
             "/world/{world_name}/preview-wearables",
@@ -439,7 +458,7 @@ pub fn app_router(
         .route(
             "/contents/{hashId}",
             get(crate::content::get_content::get_world_content)
-                .head(crate::content::get_content::get_world_content)
+                .head(erase(crate::content::get_content::get_world_content))
                 .with_state(blobs.clone()),
         )
         // The deploy clients' pre-upload check, over the same blob store.
@@ -450,7 +469,7 @@ pub fn app_router(
         .route(
             "/ipfs/{hashId}",
             get(crate::content::get_content::get_world_content)
-                .head(crate::content::get_content::get_world_content)
+                .head(erase(crate::content::get_content::get_world_content))
                 .with_state(blobs),
         )
         .route(
@@ -509,4 +528,16 @@ mod tests {
         assert_eq!(s.network_id, 1);
         assert!(s.global_scenes_urn.is_empty());
     }
+}
+
+/// Production routes stay on `shared::routing` (see `shared::routing::guard`).
+#[cfg(test)]
+#[test]
+fn production_routes_use_shared_routing() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let found = crate::shared::routing::guard::direct_axum_routes(&src);
+    assert!(
+        found.is_empty(),
+        "use crate::shared::routing instead of axum's method routers at {found:?}"
+    );
 }

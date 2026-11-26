@@ -96,7 +96,6 @@ enum AnimLoadState {
 #[derive(Resource, Default)]
 pub struct BaseEmotes(pub HashSet<CollectibleUrn<Emote>>);
 
-#[allow(clippy::type_complexity)]
 fn load_animations(
     asset_server: Res<AssetServer>,
     mut gltfs: ResMut<Assets<Gltf>>,
@@ -385,6 +384,15 @@ pub struct Emote {
 }
 
 impl Emote {
+    /// Whether the emote's GLB failed to load, so its clip never arrives. False while it is
+    /// still loading, and for a handle the asset server does not track.
+    pub fn load_failed(&self, asset_server: &AssetServer) -> bool {
+        matches!(
+            asset_server.get_load_state(self.gltf.id()),
+            Some(bevy::asset::LoadState::Failed(_))
+        )
+    }
+
     pub fn avatar_animation(
         &self,
         gltfs: &Assets<Gltf>,

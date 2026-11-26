@@ -3,8 +3,9 @@
 // Its steps: loading, the form, the tip being prepared (the wallet's window), processing (an outcome not yet
 // known), sent (rays, OK) and failed (TRY AGAIN, Contact Support).
 
+import { Button, Spinner } from '@dcl/one-ui'
 import { useState } from 'react'
-import { Avatar, Button, Modal, ModalActions, ModalTitle, Spinner, VerifiedBadge } from '../../design'
+import { ArmedButton, Avatar, Modal, ModalActions, ModalTitle, VerifiedBadge } from '../../design'
 import { MIN_TIP, TIP_AMOUNT, type DonateCreator, type DonateHandlers, type DonateView } from './types'
 import styles from './DonatePanel.module.css'
 
@@ -97,7 +98,7 @@ function Form({ view, handlers }: { view: Extract<DonateView, { step: 'form' }>;
         <div className={styles.balance} data-invalid={tooMuch || undefined}>
           <span className={styles.balanceValue}>{formatBalance(view.balance)}</span>
           <span className={styles.balanceLabel}>{tooMuch ? 'Insufficient MANA' : 'Available'}</span>
-          <Button variant="outline" size="sm" onClick={handlers.onBuyMana}>
+          <Button appearance="hud" variant="outline" size="sm" onClick={handlers.onBuyMana}>
             BUY MANA
           </Button>
         </div>
@@ -148,12 +149,14 @@ function Form({ view, handlers }: { view: Extract<DonateView, { step: 'form' }>;
         )}
       </div>
       <ModalActions>
-        <Button variant="secondary" onClick={handlers.onClose}>
+        <Button appearance="hud" variant="secondary" onClick={handlers.onClose}>
           Cancel
         </Button>
-        <Button disabled={!valid} onClick={() => valid && handlers.onSend?.(mana.trim())}>
+        {/* The first suggestion is already picked, so the form opens ready to send: a second click of the press
+            that opened it must not. */}
+        <ArmedButton disabled={!valid} onClick={() => valid && handlers.onSend?.(mana.trim())}>
           SEND TIP
-        </Button>
+        </ArmedButton>
       </ModalActions>
     </>
   )
@@ -167,7 +170,7 @@ export function DonatePanel({ view, handlers }: { view: DonateView; handlers: Do
         <Modal ariaLabel={label} width={480}>
           <ModalTitle title="Send a Tip" onClose={handlers.onClose} />
           <div className={styles.loading}>
-            <Spinner />
+            <Spinner variant="thin" />
           </div>
         </Modal>
       )
@@ -184,7 +187,7 @@ export function DonatePanel({ view, handlers }: { view: DonateView; handlers: Do
           <div className={styles.status} role="status">
             <span className={styles.title}>Preparing {view.amount} MANA Tip for</span>
             <Creator creator={view.creator} />
-            {!(view.step === 'processing' && view.final) && <Spinner />}
+            {!(view.step === 'processing' && view.final) && <Spinner variant="thin" />}
             <span className={styles.note}>
               {view.step === 'sending'
                 ? 'A browser window should open for you to confirm this transfer.'
@@ -195,7 +198,7 @@ export function DonatePanel({ view, handlers }: { view: DonateView; handlers: Do
           </div>
           {/* Closing while sending cancels before the wallet signs; after, the tip goes on and is watched. */}
           <ModalActions>
-            <Button variant="secondary" onClick={handlers.onClose}>
+            <Button appearance="hud" variant="secondary" onClick={handlers.onClose}>
               CLOSE
             </Button>
           </ModalActions>
@@ -210,7 +213,7 @@ export function DonatePanel({ view, handlers }: { view: DonateView; handlers: Do
             <Avatar src={view.creator.face} name={view.creator.name ?? view.creator.address} color={view.creator.nameColor} size={96} />
             <span className={styles.title}>{view.creator.name ? 'Tip Sent to' : `Tip Sent to ${shortAddress(view.creator.address)}`}</span>
             {view.creator.name && <span className={styles.creatorName}>{view.creator.name}</span>}
-            <Button onClick={handlers.onClose}>OK</Button>
+            <Button appearance="hud" onClick={handlers.onClose}>OK</Button>
           </div>
         </div>
       )
@@ -219,11 +222,11 @@ export function DonatePanel({ view, handlers }: { view: DonateView; handlers: Do
         <Modal ariaLabel={label} width={480}>
           <div className={styles.status} role="status">
             <span className={styles.title}>A tip is in progress in another tab</span>
-            <Spinner />
+            <Spinner variant="thin" />
             <span className={styles.note}>This panel continues once it finishes. You can close it meanwhile.</span>
           </div>
           <ModalActions>
-            <Button variant="secondary" onClick={handlers.onClose}>
+            <Button appearance="hud" variant="secondary" onClick={handlers.onClose}>
               CLOSE
             </Button>
           </ModalActions>
@@ -240,10 +243,10 @@ export function DonatePanel({ view, handlers }: { view: DonateView; handlers: Do
             </button>
           </div>
           <ModalActions>
-            <Button variant="secondary" onClick={handlers.onClose}>
+            <Button appearance="hud" variant="secondary" onClick={handlers.onClose}>
               CLOSE
             </Button>
-            <Button onClick={handlers.onRetry}>TRY AGAIN</Button>
+            <Button appearance="hud" onClick={handlers.onRetry}>TRY AGAIN</Button>
           </ModalActions>
         </Modal>
       )

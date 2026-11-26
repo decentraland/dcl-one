@@ -16,7 +16,7 @@ import { tokenRoute } from "../../discovery/lib/routes";
 import { useShopQuery } from "../../discovery/query";
 import { useProfiles, type CreatorProfile } from "../../discovery/hooks";
 import Pager from "../../discovery/components/Pager";
-import { addressAvatarColor, avatarInitial } from "../../discovery/lib/avatarColor";
+import { addressAvatarColor, avatarInitial } from "@web-core/profile/avatarColor";
 import { dateText, epochMs, relativeText } from "../../land/format";
 import { fetchOwners, fetchSales } from "../../market/lib/api";
 import { shopPath } from "../../routes";

@@ -8,41 +8,49 @@ use crate::archipelago::registry::PeersRegistry;
 use crate::deny_list::DenyList;
 use std::sync::Arc;
 
-pub struct AppStateInner {
-    #[cfg(feature = "test-support")]
-    pub ws_ping_gate: super::ws::assignment_test_support::PingGate,
-    pub settings: Settings,
-    pub sockets: Arc<tokio::sync::Semaphore>,
-    /// Sockets that have not completed the handshake; released at the welcome.
-    pub pending_handshakes: Arc<PendingHandshakes>,
-    /// Pending handshakes per client source, so a few sources cannot hold the whole pending share.
-    pub pending_handshakes_per_ip: Arc<IpSlots>,
-    pub sockets_per_ip: Arc<IpSlots>,
-    pub handlers: Arc<tokio::sync::Semaphore>,
-    pub restart: tokio_util::sync::CancellationToken,
-    pub enforcement: Arc<Enforcement>,
-    pub statistics: Arc<crate::stats::Reader>,
-    pub(crate) _statistics_subscription: crate::gatekeeper::bus::NatsSubscription,
-    pub connector_metrics: Arc<crate::stats::runtime::Metrics>,
-    pub observations: super::observations::Observations,
-    pub started_at: std::time::Instant,
-    pub started: std::sync::atomic::AtomicBool,
-    pub registry: Arc<PeersRegistry>,
-    pub feed: Arc<FeedCache>,
-    pub outbox: Outbox,
-    /// The gatekeeper this connector runs beside: its NATS link (`bus`) carries the feed, and its
-    /// LiveKit removes a kicked wallet's participant.
-    pub gatekeeper: crate::gatekeeper::SharedState,
-    pub challenges: Arc<ChallengeStore>,
+crate::shared::send_sync_once! {
+    pub struct AppStateInner {
+        #[cfg(feature = "test-support")]
+        pub ws_ping_gate: super::ws::assignment_test_support::PingGate,
+        pub settings: Settings,
+        pub sockets: Arc<tokio::sync::Semaphore>,
+        /// Sockets that have not completed the handshake; released at the welcome.
+        pub pending_handshakes: Arc<PendingHandshakes>,
+        /// Pending handshakes per client source, so a few sources cannot hold the whole pending share.
+        pub pending_handshakes_per_ip: Arc<IpSlots>,
+        pub sockets_per_ip: Arc<IpSlots>,
+        pub handlers: Arc<tokio::sync::Semaphore>,
+        pub restart: tokio_util::sync::CancellationToken,
+        pub enforcement: Arc<Enforcement>,
+        pub statistics: Arc<crate::stats::Reader>,
+        pub(crate) _statistics_subscription: crate::gatekeeper::bus::NatsSubscription,
+        pub observations: super::observations::Observations,
+        pub started_at: std::time::Instant,
+        pub started: std::sync::atomic::AtomicBool,
+        pub registry: Arc<PeersRegistry>,
+        pub feed: Arc<FeedCache>,
+        pub outbox: Outbox,
+        /// The gatekeeper this connector runs beside: its NATS link (`bus`) carries the feed, and its
+        /// LiveKit removes a kicked wallet's participant.
+        pub gatekeeper: crate::gatekeeper::SharedState,
+        pub challenges: Arc<ChallengeStore>,
 
-    pub control_v4: Arc<AssignmentAuthority>,
-    pub replica_id: String,
+        pub control_v4: Arc<AssignmentAuthority>,
+        pub replica_id: String,
 
-    pub ban_checker: Arc<BanChecker>,
-    pub deny_list: Arc<DenyList>,
+        pub ban_checker: Arc<BanChecker>,
+        pub deny_list: Arc<DenyList>,
+    }
 }
 
 pub type AppState = Arc<AppStateInner>;
+
+impl AppStateInner {
+    /// The serve listener has started and has not begun draining.
+    pub fn listener_ready(&self) -> bool {
+        self.started.load(std::sync::atomic::Ordering::Acquire) && !self.restart.is_cancelled()
+    }
+}
 
 /// A socket's hold on the pending-handshake share, global and per source; released at the
 /// welcome or when the socket ends.
@@ -56,7 +64,7 @@ pub(crate) struct PendingHandshake {
 /// new joins: a client that completes its handshake promptly is never the oldest for long.
 pub struct PendingHandshakes {
     max: usize,
-    inner: std::sync::Mutex<PendingInner>,
+    inner: parking_lot::Mutex<PendingInner>,
 }
 
 #[derive(Default)]
@@ -82,7 +90,7 @@ impl PendingHandshakes {
 
     /// Takes a place for a new socket, evicting the oldest pending socket when the share is full.
     pub fn admit(self: &Arc<Self>) -> PendingSlot {
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut inner = self.inner.lock();
         if inner.held.len() >= self.max
             && let Some((_, oldest)) = inner.held.pop_first()
         {
@@ -104,17 +112,13 @@ impl PendingHandshakes {
 
     /// Sockets currently holding a place.
     pub fn held(&self) -> usize {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .held
-            .len()
+        self.inner.lock().held.len()
     }
 }
 
 impl Drop for PendingSlot {
     fn drop(&mut self) {
-        let mut inner = self.set.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut inner = self.set.inner.lock();
         if inner.held.remove(&self.id).is_some() {
             crate::gatekeeper::admission::cluster::metrics::ws_pending_handshakes(inner.held.len());
         }
@@ -125,7 +129,7 @@ impl Drop for PendingSlot {
 /// that cannot be attributed to one client is not counted.
 pub struct IpSlots {
     max: usize,
-    held: std::sync::Mutex<std::collections::HashMap<String, usize>>,
+    held: parking_lot::Mutex<std::collections::HashMap<String, usize>>,
 }
 
 /// One socket's share of its source; released on drop.
@@ -143,13 +147,13 @@ impl IpSlots {
     }
 
     /// `Err` when the address already holds its limit; `Ok(None)` when it is not counted.
-    #[allow(clippy::result_unit_err)]
+    #[allow(clippy::result_unit_err, reason = "the only refusal is a full address")]
     pub fn try_acquire(self: &Arc<Self>, client_ip: Option<&str>) -> Result<Option<IpSlot>, ()> {
         let Some(ip) = client_ip.filter(|_| self.max > 0) else {
             return Ok(None);
         };
         let source = crate::shared::client_ip::source_key(ip);
-        let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+        let mut held = self.held.lock();
         let count = held.entry(source.clone()).or_default();
         if *count >= self.max {
             return Err(());
@@ -169,7 +173,7 @@ impl IpSlots {
 
 impl Drop for IpSlot {
     fn drop(&mut self) {
-        let mut held = self.slots.held.lock().unwrap_or_else(|e| e.into_inner());
+        let mut held = self.slots.held.lock();
         if let Some(count) = held.get_mut(&self.source) {
             *count -= 1;
             if *count == 0 {

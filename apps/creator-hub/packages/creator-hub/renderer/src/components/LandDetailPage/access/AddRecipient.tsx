@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import AddIcon from '@mui/icons-material/Add';
+import { AddIcon } from '@ui/atoms/icons-material';
 
 import { useAuth } from '/@/hooks/useAuth';
 import { t } from '/@/modules/store/translation/utils';
 
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 import { RecipientField, type Recipient } from '../../ManagePage/RecipientField';
 import { AddButton, AddRow, Notice } from './access.styled';
 
@@ -29,9 +29,8 @@ export function AddRecipient({ onAdd, notice }: Props) {
         action={
           <AddButton>
             <Button
-              variant="contained"
-              color="primary"
-              size="small"
+              size="sm"
+              className="hub-button hub-button--primary"
               startIcon={<AddIcon />}
               disabled={!recipient || !!notice}
               onClick={() => {

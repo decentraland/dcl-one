@@ -1,13 +1,15 @@
 use bevy::{
+    ecs::query::QueryData,
     math::{FloatOrd, Mat3A, Vec3A},
     prelude::*,
 };
 use common::{
     sets::PostUpdateSets,
-    structs::{AttachPoints, AvatarDynamicState, MoveKind},
+    structs::{AttachPoints, AvatarDynamicState, MoveKind, PlayerModifiers, PrimaryUser},
 };
+use comms::BlockedOrBanned;
 
-use crate::ghost::AvatarGhost;
+use crate::{ghost::AvatarGhost, BeyondMaxAvatars};
 use bevy_console::ConsoleCommand;
 use console::DoAddConsoleCommand;
 
@@ -100,6 +102,43 @@ fn nametag_height(head: f32, head_scale: f32, others: [f32; 3], offset: f32, gli
     }
 }
 
+/// What of a player decides whether anything shows over their head. The nametag and the
+/// reactions both ask it, so an avatar hidden for one is hidden for the other.
+#[derive(QueryData)]
+pub(crate) struct Overhead {
+    is_local: Has<PrimaryUser>,
+    beyond_max: Has<BeyondMaxAvatars>,
+    blocked: Has<BlockedOrBanned>,
+    modifiers: Option<&'static PlayerModifiers>,
+    drawn: Option<&'static InheritedVisibility>,
+}
+
+impl OverheadItem<'_> {
+    pub(crate) fn is_local(&self) -> bool {
+        self.is_local
+    }
+
+    /// Whether the space over the player's head is one to draw in: nametags are on, and the
+    /// avatar, standing at `avatar`, is not one too many, blocked, hidden or scaled to
+    /// nothing, nor the local player's own seen through their eyes (`first_person`).
+    pub(crate) fn shows(
+        &self,
+        visible: &NametagsVisible,
+        avatar: &GlobalTransform,
+        first_person: bool,
+    ) -> bool {
+        visible.0
+            && !self.beyond_max
+            && !self.blocked
+            && !self.modifiers.is_some_and(|modifiers| modifiers.hide)
+            // a scene hides its avatars by their visibility, their parents' or a scale of
+            // nothing
+            && self.drawn.is_none_or(|drawn| drawn.get())
+            && avatar_units(avatar).is_some()
+            && !(self.is_local && first_person)
+    }
+}
+
 /// An avatar's height scale, and the way from the world's axes back to the avatar's own. A
 /// scene can scale, turn and tilt an avatar: heights are the world's, straight up, counted in
 /// the avatar's units, so the offsets grow and shrink with it, and the anchor, the avatar's
@@ -126,7 +165,6 @@ pub(crate) fn smallest_scale(avatar: &GlobalTransform) -> Option<f32> {
     (smallest > SCALE_MIN).then_some(smallest)
 }
 
-#[allow(clippy::type_complexity)]
 pub(crate) fn dynamic_nametag_position(
     players: Query<(
         &AttachPoints,

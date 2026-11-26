@@ -30,7 +30,7 @@ use super::cluster::subscriber::{ClusterGateway, island_token_not_before};
 use crate::Address;
 use crate::auth::auth_chain::{AuthLink, AuthLinkType, parse_ephemeral_payload};
 use crate::gatekeeper::SharedState;
-use crate::gatekeeper::auth::{device_identifier, verify_signed_fetch};
+use crate::gatekeeper::auth::{device_identifier, verify_wallet_signed_fetch};
 use crate::shared::signed_fetch::SignedPath;
 
 pub const ISLAND_REFRESH_PATH: &str = "/island-refresh";
@@ -99,7 +99,7 @@ async fn refresh_bounded(
 ) -> Result<Response, IslandRefreshError> {
     let chain = crate::shared::signed_fetch::extract_auth_chain(headers)
         .map_err(|_| IslandRefreshError(StatusCode::BAD_REQUEST))?;
-    let signed = verify_signed_fetch(headers, "post", path, &[], state.eip1654())
+    let signed = verify_wallet_signed_fetch(headers, "post", path, state.eip1654())
         .await
         .map_err(|error| {
             IslandRefreshError(
@@ -332,6 +332,56 @@ mod tests {
         );
     }
 
+    struct UnreadAssignments;
+    #[async_trait::async_trait]
+    impl RealmAssignmentReader for UnreadAssignments {
+        async fn current_realm_assignment(
+            &self,
+            _wallet: &str,
+            _session: &str,
+        ) -> Result<RealmAssignmentSnapshot, FenceError> {
+            panic!("a refused request never reads the assignment");
+        }
+    }
+
+    #[tokio::test]
+    async fn scene_signer_is_refused_before_any_assignment_read() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
+        let state: SharedState = Arc::new(CommsState::new(
+            pool,
+            Outbound::for_tests(),
+            Settings::for_tests(),
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(StubScenes::default()),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+        ));
+        let owner = Delegate::new();
+        let uri = ISLAND_REFRESH_PATH.parse().unwrap();
+        for metadata in [
+            json!({ "signer": crate::gatekeeper::auth::SCENE_SIGNER }),
+            json!({ "Signer": crate::gatekeeper::auth::SCENE_SIGNER }),
+            json!({ "signer": " decentraland-kernel-scene" }),
+            json!({ "signer": "Decentraland-Kernel-Scene" }),
+            json!({ "signer": 1 }),
+            json!({ "signer": true }),
+            json!({ "signer": {} }),
+        ] {
+            let headers = owner.headers(&metadata.to_string()).await;
+            let refused = refresh_bounded(
+                &state,
+                &UnreadAssignments,
+                &headers,
+                &SignedPath::at(&uri, ISLAND_REFRESH_PATH),
+            )
+            .await
+            .expect_err("refused");
+            assert_eq!(refused.0, StatusCode::BAD_REQUEST, "{metadata}");
+        }
+    }
+
     const AUDIENCE: &str = "island-refresh-test";
 
     #[tokio::test]
@@ -384,7 +434,7 @@ mod tests {
             .await
             .unwrap();
         client.flush().await.unwrap();
-        let source = Arc::new(std::sync::Mutex::new(None::<PeerClusterSnapshot>));
+        let source = Arc::new(parking_lot::Mutex::new(None::<PeerClusterSnapshot>));
         let current = source.clone();
         let responder = client.clone();
         let worker = tokio::spawn(async move {
@@ -395,7 +445,7 @@ mod tests {
                 ) else {
                     continue;
                 };
-                let snapshot = current.lock().unwrap().clone();
+                let snapshot = current.lock().clone();
                 if let Some(snapshot) = snapshot
                     && snapshot.wallet == lookup.wallet
                     && snapshot.session == lookup.session
@@ -475,7 +525,7 @@ mod tests {
                 .pulse_admission
                 .unwrap();
             assert_eq!(restored, stamp, "{}", vector["id"]);
-            *source.lock().unwrap() = Some(snapshot.clone());
+            *source.lock() = Some(snapshot.clone());
             let (status, bytes) = call(&app, owner.headers("{}").await, b"").await;
             assert_eq!(status, StatusCode::OK, "{}", vector["id"]);
             let response = IslandRefreshResponse::decode(bytes).unwrap();
@@ -518,8 +568,6 @@ mod tests {
                 ("identity", snapshot.clone()),
                 ("cleanup", snapshot.clone()),
                 ("unknown", snapshot.clone()),
-                ("wallet", snapshot.clone()),
-                ("session", snapshot.clone()),
                 ("cluster", snapshot.clone()),
                 ("realm", snapshot.clone()),
                 ("source", snapshot.clone()),
@@ -532,8 +580,6 @@ mod tests {
                     }
                     "identity" => changed.selected_identity = Some(0),
                     "cleanup" => changed.assignment_state = 2,
-                    "wallet" => changed.wallet = SESSION_A.into(),
-                    "session" => changed.session = SESSION_A.into(),
                     "cluster" => changed.cluster_id.push_str("-changed"),
                     "realm" => changed.realm.push_str("-changed"),
                     "source" => changed.source_incarnation.push_str("-changed"),
@@ -544,18 +590,37 @@ mod tests {
                         changed.selected_origin = 0;
                     }
                 }
-                *source.lock().unwrap() = Some(changed);
+                *source.lock() = Some(changed);
                 let (status, body) = call(&app, owner.headers("{}").await, b"").await;
                 assert_ne!(status, StatusCode::OK, "{} {field}", vector["id"]);
                 assert!(body.is_empty());
             }
             snapshot.pass += 1;
-            *source.lock().unwrap() = Some(snapshot);
+            *source.lock() = Some(snapshot);
             assert_eq!(
                 call(&app, owner.headers("{}").await, b"").await.0,
                 StatusCode::OK
             );
         }
+        // Pulse has no reply for another wallet or session whatever the vector,
+        // so each case waits out the refresh deadline once, not per vector.
+        let current = source.lock().clone().expect("a valid vector");
+        for field in ["wallet", "session"] {
+            let mut changed = current.clone();
+            match field {
+                "wallet" => changed.wallet = SESSION_A.into(),
+                _ => changed.session = SESSION_A.into(),
+            }
+            *source.lock() = Some(changed);
+            let (status, body) = call(&app, owner.headers("{}").await, b"").await;
+            assert_ne!(status, StatusCode::OK, "{field}");
+            assert!(body.is_empty());
+        }
+        *source.lock() = Some(current);
+        assert_eq!(
+            call(&app, owner.headers("{}").await, b"").await.0,
+            StatusCode::OK
+        );
         worker.abort();
         let _ = worker.await;
         pool.close().await;
@@ -794,7 +859,7 @@ mod tests {
             let owner = Delegate::new();
             seed(&pool, &owner.wallet(), &owner.session(), "island-C7", false).await;
             let (entered, waiting) = std::sync::mpsc::channel();
-            let release = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+            let release = Arc::new((parking_lot::Mutex::new(false), parking_lot::Condvar::new()));
             let gate = release.clone();
             let hook = Arc::new(move |n| {
                 if n == 1 {
@@ -802,13 +867,12 @@ mod tests {
                     entered.send(()).unwrap();
                     tokio::task::block_in_place(|| {
                         let (lock, ready) = &*gate;
-                        let (guard, timeout) = ready
-                            .wait_timeout_while(
-                                lock.lock().unwrap(),
-                                Duration::from_secs(5),
-                                |released| !*released,
-                            )
-                            .unwrap();
+                        let mut guard = lock.lock();
+                        let timeout = ready.wait_while_for(
+                            &mut guard,
+                            |released| !*released,
+                            Duration::from_secs(5),
+                        );
                         assert!(
                             *guard && !timeout.timed_out(),
                             "test must release paused lookup"
@@ -875,7 +939,7 @@ mod tests {
                 }
                 _ => {}
             }
-            *release.0.lock().unwrap() = true;
+            *release.0.lock() = true;
             release.1.notify_one();
             let (status, body) = work.await.unwrap();
             if status != StatusCode::OK {

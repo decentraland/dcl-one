@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import type { SpawnPointTarget } from '../../../lib/renderer/types';
 import { withSdk } from '../../../hoc/withSdk';
 import { useComponentValue } from '../../../hooks/sdk/useComponentValue';
@@ -271,9 +271,23 @@ export default withSdk<Props>(({ sdk }) => {
                 onChange={e => handleModify({ default: e.target.checked })}
               />
               <MoreOptionsMenu>
-                <Button onClick={handleResetToDefaults}>Reset to defaults</Button>
-                <Button onClick={handleDuplicate}>Duplicate</Button>
                 <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleResetToDefaults}
+                >
+                  Reset to defaults
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleDuplicate}
+                >
+                  Duplicate
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
                   className="RemoveButton"
                   disabled={isLastSpawnArea}
                   onClick={handleDelete}

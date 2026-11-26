@@ -1,16 +1,14 @@
 // HeaderButton — the dark round (or pill) buttons on a full-screen header: a 40px circle for an
-// icon, or a 46px pill for a label such as the profile chip. A faint ring keeps them readable over
-// a busy background.
+// icon, or a 46px pill for a label such as the profile chip. Drawn by the shared Button.
 
-import styles from './HeaderButton.module.css'
+import { Button } from '@dcl/one-ui'
 
 type Shape = 'circle' | 'pill'
+type SharedProps = Extract<React.ComponentProps<typeof Button>, { appearance: 'hud'; control: 'header' | 'headerPill'; href?: undefined }>
 
 export function HeaderButton({
   shape = 'circle',
-  className = '',
-  type = 'button',
   ...rest
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { shape?: Shape }): React.JSX.Element {
-  return <button type={type} className={`${styles.btn} ${styles[shape]} ${className}`.trim()} {...rest} />
+  return <Button {...({ ...rest, appearance: 'hud', control: shape === 'pill' ? 'headerPill' : 'header' } as SharedProps)} />
 }

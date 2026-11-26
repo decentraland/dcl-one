@@ -30,3 +30,12 @@ impl ActiveTransmitter {
         watch_send_if_modified(&self.state, new_state)
     }
 }
+
+/// On the [`ActiveTransmitter`] while a receiver shows the automatic output: its frames are
+/// needed only then.
+#[derive(Component)]
+pub struct AutomaticVideoShown;
+
+/// A shared output for screens selecting this track explicitly.
+#[derive(Component, Deref)]
+pub struct SelectedVideoTransmitter(pub ActiveTransmitter);

@@ -1,5 +1,5 @@
 //! One throwaway database per test, created on the cluster CATALYST_TEST_DATABASE_URL
-//! points at and seeded with schema.sql, so the global sync state (the frontier, the
+//! points at and cloned from the schema template, so the global sync state (the frontier, the
 //! cursors, resolve_deleter_deployments over the whole table) can be asserted without
 //! other tests in the way. Dropped on teardown; a test that panics leaves its
 //! `catalyst_test_lib_<pid>_*` database behind until a later test process,
@@ -20,7 +20,7 @@ pub async fn scratch_database() -> Option<ScratchDb> {
 
 /// A scratch database outside the swept family, for a run that keeps it
 /// (`EXPLORE_PARITY_KEEP_DB`); a later run reuses it by name.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "only the explore parity tests use it")]
 pub async fn kept_database() -> Option<ScratchDb> {
     create("catalyst_kept").await
 }
@@ -40,25 +40,19 @@ async fn create(prefix: &str) -> Option<ScratchDb> {
         "{prefix}_{}",
         &uuid::Uuid::new_v4().simple().to_string()[..12]
     );
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-        .execute(&admin)
-        .await
-        .unwrap_or_else(|e| panic!("CREATE DATABASE {name}: {e}"));
+    catalyst_db::scratch::create_database_with_schema(&admin, &name).await;
     let pool = PgPoolOptions::new()
         .max_connections(8)
         .acquire_timeout(Duration::from_secs(10))
         .connect_with(base.database(&name).options([("TimeZone", "UTC")]))
         .await
         .unwrap_or_else(|e| panic!("connecting to {name}: {e}"));
-    catalyst::db::apply_schema(&pool)
-        .await
-        .unwrap_or_else(|e| panic!("applying schema.sql to {name}: {e}"));
     Some(ScratchDb { pool, admin, name })
 }
 
 /// A database an earlier run kept (`EXPLORE_PARITY_KEEP_DB`), with its schema
 /// and data as they are; `teardown` drops it like any scratch database.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "only the explore parity tests use it")]
 pub async fn existing_database(name: &str) -> Option<ScratchDb> {
     let url = std::env::var("CATALYST_TEST_DATABASE_URL").ok()?;
     let base: PgConnectOptions = url

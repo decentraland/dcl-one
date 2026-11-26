@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { homeQueries, type OutfitSummary } from '../features/shop/homeQuery'
-import { fetchItemEntity } from '../features/shop/itemEntity'
+import { homeQueries, type OutfitSummary } from '@dcl/one-ui/apps/shop/homeQuery'
+import { fetchItemEntity } from '@dcl/one-ui/apps/shop/itemEntity'
 
 afterEach(() => {
   vi.unstubAllGlobals()

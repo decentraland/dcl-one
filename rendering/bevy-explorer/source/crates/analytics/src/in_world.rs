@@ -4,7 +4,10 @@
 //! in chunks, so the sum per session is the playtime and a closed page loses at most one chunk.
 
 use bevy::prelude::*;
-use common::structs::{AvatarDynamicState, OutOfWorld, PrimaryUser};
+use common::{
+    dynamics::landed,
+    structs::{AvatarDynamicState, OutOfWorld, PrimaryUser},
+};
 
 use crate::{
     data_definition::{SegmentEvent, SegmentEventFirstMoveInWorld, SegmentEventTimeSpentInWorld},
@@ -84,7 +87,6 @@ impl FirstMove {
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub fn report_in_world(
     player: Query<(&AvatarDynamicState, Has<OutOfWorld>), With<PrimaryUser>>,
     time: Res<Time>,
@@ -106,7 +108,9 @@ pub fn report_in_world(
     }
 
     let grounded_speed = match player {
-        Some((dynamics, false)) if dynamics.ground_height <= 0.2 => dynamics.velocity.xz().length(),
+        Some((dynamics, false)) if landed(dynamics.ground_height) => {
+            dynamics.velocity.xz().length()
+        }
         _ => 0.0,
     };
     if first_move.tick(&common.dcl_eth_address, grounded_speed, dt) {

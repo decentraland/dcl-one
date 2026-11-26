@@ -66,7 +66,7 @@ export const WEB_PARAMS: WebParam[] = [
     "name": "abgenCdn",
     "kind": "string",
     "delivery": "resolved",
-    "doc": "Asset-bundle generator CDN (Bevy variants); absent = `https://abgen-cdn.<base>`"
+    "doc": "Asset-bundle generator CDN (Bevy variants, the scenes' near-LOD descriptors and far-LOD meshes); absent = `https://abgen-cdn.<base>`"
   },
   {
     "name": "storage",
@@ -171,6 +171,12 @@ export const WEB_PARAMS: WebParam[] = [
     "doc": "Builder api (the newsletter sign-up), used by the HUD; absent = `https://builder-api.<base>`"
   },
   {
+    "name": "featureFlags",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Feature flags (the engine reads `/explorer.json`); absent = `https://feature-flags.<base>`"
+  },
+  {
     "name": "pulseServer",
     "kind": "string",
     "delivery": "resolved",
@@ -198,7 +204,7 @@ export const WEB_PARAMS: WebParam[] = [
     "name": "portables",
     "kind": "string",
     "delivery": "launch",
-    "doc": "`;`-separated portable/startup scene sources; absent = `basiccontroller.dcl.eth` (DEFAULT_PORTABLES)"
+    "doc": "`;`-separated portable/startup scene sources; absent = `movecontroller.dcl.eth` (DEFAULT_PORTABLES)"
   },
   {
     "name": "contentServer",
@@ -253,5 +259,11 @@ export const WEB_PARAMS: WebParam[] = [
     "kind": "string",
     "delivery": "host",
     "doc": "The landing page's Segment anonymous id, stamped on every analytics event so the warehouse joins this session to the web visit it came from"
+  },
+  {
+    "name": "ff",
+    "kind": "string",
+    "delivery": "launch",
+    "doc": "Override the remote feature flags, a comma list: `name` forces a flag on, `name:variant` on with that variant, `-name` off; `-*` ignores the service entirely (nothing is fetched and every flag not forced on is off). Names the client does not read are dropped. A link may set it: a flag only hides or shows a feature, never a permission"
   }
 ]

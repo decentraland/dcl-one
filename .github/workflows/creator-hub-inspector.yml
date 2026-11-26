@@ -64,7 +64,9 @@ jobs:
           bump_each_commit_patch_pattern: "/^(patch|fix).+/"
           search_commit_body: true
           user_format_type: "json"
-          change_path: "apps/creator-hub/packages/inspector"
+          # The bundle also holds apps/ui3/src/atoms (the `@ui` alias in build.js), built with the ui3
+          # package (sideEffects) and compiler settings (jsx, paths).
+          change_path: "apps/creator-hub/packages/inspector apps/ui3/package.json apps/ui3/tsconfig.json apps/ui3/src/atoms library/ui/components/Tooltip library/ui/package.json"
 
       # With no `@dcl/inspector@X.Y.Z` tag, semantic-version counts from 0.0.0, and a release on main
       # would publish 0.1.0 as the npm `latest`. Tag the last released version first (cut-over runbook).
@@ -157,7 +159,7 @@ jobs:
               echo "@dcl/asset-packs@${{ inputs.asset_packs_version }} not resolvable yet (attempt $i); retrying in 30s"
               sleep 30
             done
-            npm view @dcl/asset-packs versions --json | tail -5 || true
+            pnpm view @dcl/asset-packs versions --json | tail -5 || true
             exit 1
           elif [[ -n "$ASSET_PACKS_S3_KEY" ]]; then
             echo "Installing asset-packs version from S3 bucket: $ASSET_PACKS_S3_KEY"
@@ -174,7 +176,7 @@ jobs:
       - name: build
         run: make build-inspector
 
-      - name: npm version
+      - name: version
         working-directory: apps/creator-hub/packages/inspector
         run: |
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
@@ -182,14 +184,15 @@ jobs:
           else
             VERSION="${{ needs.version.outputs.version }}-commit-${{ github.sha }}"
           fi
-          npm version "$VERSION" --force --no-git-tag-version --allow-same-version
+          # pnpm has no --force; skipping its git checks is what --force did for npm.
+          pnpm version "$VERSION" --no-git-checks --no-git-tag-version --allow-same-version
 
-      - name: npm pack
+      - name: pack
         working-directory: apps/creator-hub/packages/inspector
         id: npm-pack
         run: |
-          PACK_OUTPUT=$(npm pack --json)
-          PACK_FILENAME=$(echo "$PACK_OUTPUT" | jq -r '.[0].filename')
+          PACK_OUTPUT=$(pnpm pack --json)
+          PACK_FILENAME=$(echo "$PACK_OUTPUT" | jq -r '.filename')
           echo "pack-filename=$PACK_FILENAME" >> $GITHUB_OUTPUT
 
       - name: upload package to S3
@@ -292,8 +295,9 @@ jobs:
         with:
           previous_version: ${{ needs.version.outputs.previous_version }}
           current_version: ${{ needs.version.outputs.version }}
-          paths: 'apps/creator-hub/packages/inspector'
-          section_names: 'Inspector Changes'
+          # The same paths as change_path in the version job: each one that bumps the version has a section here.
+          paths: 'apps/creator-hub/packages/inspector,apps/ui3/src/atoms,apps/ui3/package.json,apps/ui3/tsconfig.json,library/ui/components/Tooltip,library/ui/package.json'
+          section_names: 'Inspector Changes,Shared UI Changes,Shared UI Package Changes,Shared UI Compiler Settings Changes,Tooltip Changes,UI Library Package Changes'
           release_title: '@dcl/inspector'
           github_token: ${{ secrets.GITHUB_TOKEN }}
           tag_prefix: '@dcl/inspector@'

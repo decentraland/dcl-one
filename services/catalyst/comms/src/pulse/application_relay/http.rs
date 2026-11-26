@@ -7,11 +7,10 @@ use super::{
 use crate::protocol::room_authority::{
     self as wire, AUTHORITY_PATH, MAX_BODY, MAX_LEASES, address_bytes,
 };
+use crate::shared::signed_request;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures::StreamExt;
-use hmac::{Hmac, KeyInit, Mac};
 use prost::Message;
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     future::Future,
@@ -177,18 +176,8 @@ fn signed_headers_with_source(
     nonce: &str,
     source: Option<&str>,
 ) -> Result<String, ()> {
-    let hash = Sha256::digest(body)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
-    let input = if let Some(source) = source {
-        format!("POST\n{AUTHORITY_PATH}\n{timestamp}\n{nonce}\n{source}\n{hash}")
-    } else {
-        format!("POST\n{AUTHORITY_PATH}\n{timestamp}\n{nonce}\n{hash}")
-    };
-    let mut signature = Hmac::<Sha256>::new_from_slice(key).map_err(|_| ())?;
-    signature.update(input.as_bytes());
-    Ok(URL_SAFE_NO_PAD.encode(signature.finalize().into_bytes()))
+    let preimage = signed_request::preimage(AUTHORITY_PATH, timestamp, nonce, source, body);
+    Ok(signed_request::sign(key, &preimage))
 }
 async fn request(
     inner: &Inner,
@@ -492,7 +481,7 @@ impl HttpAuthority {
             return;
         };
         let inner = self.inner.clone();
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             let _permit = permit;
             let operation =
                 wire::authority_request::Operation::Release(context(&inner, &nonce, &lease));
@@ -505,6 +494,8 @@ impl HttpAuthority {
 mod tests {
     use super::*;
     use crate::pulse::application_relay::PendingJoin;
+    use hmac::{Hmac, KeyInit, Mac};
+    use sha2::{Digest, Sha256};
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     struct Generation {
@@ -552,7 +543,15 @@ mod tests {
             authority.authorize(credential()).await,
             Err(AuthorityError::Unavailable)
         );
-        assert!(authority.inner.registry.lock().unwrap().entries.is_empty());
+        assert!(
+            authority
+                .inner
+                .registry
+                .lock()
+                .expect("registry lock poisoned")
+                .entries
+                .is_empty()
+        );
         assert_eq!(server.await.unwrap().len(), 1);
     }
     fn credential() -> AuthorityInput {
@@ -797,14 +796,29 @@ mod tests {
             fixture(vec![(200, lease(7, 2000), Answer::After(answer_held))]).await;
         let copy = authority.clone();
         let job = tokio::spawn(async move { copy.authorize(credential()).await });
-        while authority.inner.registry.lock().unwrap().entries.is_empty() {
+        while authority
+            .inner
+            .registry
+            .lock()
+            .expect("registry lock poisoned")
+            .entries
+            .is_empty()
+        {
             tokio::task::yield_now().await;
         }
         authority.release(admitted());
         // The lease arrives only after the release.
         answer.send(()).unwrap();
         assert!(job.await.unwrap().is_err());
-        assert!(authority.inner.registry.lock().unwrap().entries.is_empty());
+        assert!(
+            authority
+                .inner
+                .registry
+                .lock()
+                .expect("registry lock poisoned")
+                .entries
+                .is_empty()
+        );
         server.await.unwrap();
     }
     #[tokio::test]
@@ -836,7 +850,15 @@ mod tests {
                 authority.authorize(credential()).await,
                 Err(AuthorityError::Unavailable)
             );
-            assert!(authority.inner.registry.lock().unwrap().entries.is_empty());
+            assert!(
+                authority
+                    .inner
+                    .registry
+                    .lock()
+                    .expect("registry lock poisoned")
+                    .entries
+                    .is_empty()
+            );
             server.await.unwrap();
         }
         for reason in [0, 1, 2, 3, 4, 5, 99] {
@@ -952,7 +974,7 @@ mod tests {
                 .inner
                 .registry
                 .lock()
-                .unwrap()
+                .expect("registry lock poisoned")
                 .entries
                 .values()
                 .next()
@@ -1192,7 +1214,16 @@ mod tests {
         };
         assert_eq!(result.error, ApplicationErrorCode::ApplicationLimit as i32);
         assert!(!relay.state.holds_scope(1000));
-        assert_eq!(authority.inner.registry.lock().unwrap().entries.len(), 1);
+        assert_eq!(
+            authority
+                .inner
+                .registry
+                .lock()
+                .expect("registry lock poisoned")
+                .entries
+                .len(),
+            1
+        );
         relay.state.disconnect(1);
         while chrono::Utc::now().timestamp() < expiry {
             tokio::time::sleep(Duration::from_millis(5)).await;
@@ -1201,7 +1232,11 @@ mod tests {
         // after the real expiry wait so that wait cannot consume the warm-cache
         // window. Preserve the original lease and the normal lease duration.
         {
-            let mut registry = authority.inner.registry.lock().unwrap();
+            let mut registry = authority
+                .inner
+                .registry
+                .lock()
+                .expect("registry lock poisoned");
             assert_eq!(registry.entries.len(), 1);
             let entry = registry.entries.values_mut().next().unwrap();
             assert!(entry.lease.is_some());
@@ -1213,7 +1248,7 @@ mod tests {
                 .inner
                 .registry
                 .lock()
-                .unwrap()
+                .expect("registry lock poisoned")
                 .entries
                 .values()
                 .all(|entry| entry.deadline > Instant::now())

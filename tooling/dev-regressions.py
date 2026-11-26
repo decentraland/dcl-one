@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,6 +18,22 @@ VENDOR = "cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.to
 VENDOR_CHECK = "cargo check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets"
 BEVY = "cargo test --all --profile ci-test --locked -- --test-threads=1"
 EXTERNAL_COMMAND = "python3 tooling/dev-regressions.py --archipelago-external"
+RUNTIME = 'make -C "$FOUNDATION_DEV_ROOT" catalyst-test || broad=$?'
+# The provisioned tests run beside the broad runtime; the step waits for both and fails if either does.
+CONCURRENT = [
+    EXTERNAL_COMMAND + " > >(sed -u 's/^/[provisioned] /') 2>&1 &",
+    'provisioned=$!',
+    'trap \'kill -- -"$provisioned" 2>/dev/null || kill "$provisioned" 2>/dev/null; foundation-dev down\' EXIT',
+    'broad=0',
+    RUNTIME,
+    'external=0',
+    'wait "$provisioned" || external=$?',
+    "trap 'foundation-dev down' EXIT",
+    '[ "$external" -eq 0 ] || echo "dev-test: the provisioned Archipelago tests failed with status $external"',
+    '[ "$external" -eq 0 ] || [ "${GITHUB_ACTIONS:-}" != true ] || echo "::error title=Provisioned Archipelago tests failed::status $external"',
+    '[ "$broad" -eq 0 ] || exit "$broad"',
+    '[ "$external" -eq 0 ] || exit "$external" ;;',
+]
 AUTH_STRESS = "rpc_validator::tests::provisioned_rpc_workload_runs_3000_verifiers_at_nine_links"
 EXTERNAL_SHARD = "CATALYST_TEST_PROVISIONED_SHARD"
 EXTERNAL = [
@@ -24,11 +41,13 @@ EXTERNAL = [
     ("sockets_3", "test", "archipelago_socket_bounds::orderly_shutdown_drains_authenticated_disconnect_to_live_pulse"),
     ("sockets_3", "test", "archipelago_socket_bounds::idle_transport_retires_no_pong_but_preserves_pong_and_data_activity"),
 ]
-# The isolated V8 process must keep exactly one initializer. Ordinary target
-# inventories remain subsets so unrelated tests can grow without a manifest edit.
-EXACT_ARCHIPELAGO = {("stats_metrics_engine", "test")}
 MANDATORY_ARCHIPELAGO = {
     ("catalyst_comms", "lib"): [
+        "stats::tests::http_tests::method_admission_preserves_the_stats_response_and_bounds_process_labels",
+        "stats::tests::http_tests::process_http_metrics_cover_claimed_routes_nested_services_and_retired_scrapes",
+        "stats::tests::http_tests::retired_scrapes_follow_the_stats_fallback_and_lifecycle_probes_keep_their_values",
+        "archipelago::handlers::tests::diagnostics_record_into_the_process_and_the_connector_scrape_is_gone",
+        "stats::runtime::tests::lifecycle_reports_real_listener_start_and_shutdown_without_dependency_probes",
         "archipelago::ws::io::bounds_tests::congestion_requires_ten_continuously_full_seconds_and_emits_1013_at_a_frame_boundary",
         "archipelago::ws::io::bounds_tests::full_queue_preserves_accepted_frames_and_rejects_later_assignments",
         "archipelago::registry::mailbox::tests::occupancy_deadline_survives_handoff_and_resets_only_after_release",
@@ -83,14 +102,7 @@ MANDATORY_ARCHIPELAGO = {
         "pulse::cluster::nats::statistics_tests::statistics_publisher_preserves_checkpoint_prefix_during_continuous_backlog",
         "pulse::statistics::tests::overflow_and_failed_transfer_discard_pending_checkpoint_for_complete_recovery",
         "archipelago::ws::io::tests::legacy_heartbeat_encodings_receive_identical_rate_accounting",
-        "stats::tests::http_tests::root_bypasses_non_candidates_and_records_exact_selection_paths",
-        "stats::tests::http_tests::root_collision_suppresses_claim_and_matcher_fault_is_not_a_nonmatch",
-        "stats::tests::http_tests::configured_metrics_auth_scrapes_and_actual_lifecycle_values_are_used",
-        "stats::tests::http_tests::metrics_observe_route_templates_skip_probes_and_keep_request_semantics",
         "stats::tests::http_tests::standalone_normalizes_dot_segments_without_collapsing_slashes",
-        "stats::tests::http_tests::standalone_selection_duration_includes_match_and_nonmatch",
-        "stats::tests::http_tests::claimed_root_duration_includes_raw_and_normalized_selection",
-        "stats::tests::http_tests::normalized_selection_failure_keeps_raw_selection_duration",
         "archipelago::auth::tests::contract_challenge_is_verified_by_configured_validator",
         "archipelago::auth::tests::pending_contract_verifications_release_lock_and_commit_only_current_issuance_once",
         "archipelago::auth::tests::discarded_or_cancelled_contract_verification_cannot_consume_a_challenge",
@@ -99,26 +111,6 @@ MANDATORY_ARCHIPELAGO = {
         "archipelago::auth::tests::delegated_and_mixed_contract_chains_preserve_binding_expiry_and_ten_link_limit",
         "archipelago::auth::tests::a_cached_delegation_cannot_authorize_a_new_challenge_after_revocation",
         "archipelago::ws::tests::dedup_preserves_fractional_infinite_and_number_subtraction_boundaries",
-        "archipelago::handlers::tests::connector_metrics_native_segments_preserve_separators_and_bytes",
-        "archipelago::handlers::tests::connector_metrics_native_segment_limit_terminates_registration_and_traversal",
-        "archipelago::handlers::tests::connector_metrics_http_selection_preserves_native_precedence_and_methods",
-        "archipelago::handlers::tests::connector_metrics_observes_selected_handlers_and_skips_rejected_scrapes",
-        "archipelago::handlers::tests::connector_metrics_socket_yield_uses_http_selection_and_one_observation",
-        "archipelago::handlers::tests::connector_metrics_socket_claim_keeps_non_key_header_rejections",
-        "archipelago::handlers::tests::connector_metrics_socket_upgrade_bypasses_colliding_scrapes_and_challenges",
-        "stats::runtime::tests::midnight_reset_resolves_gaps_with_pre_gap_offset_and_ambiguity_with_earlier_instant",
-        "stats::runtime::tests::midnight_reset_bounds_unresolved_timezone_lookups_without_claiming_a_gap",
-        "stats::runtime::tests::scrape_reads_clocks_after_render_and_uses_fresh_reset_date",
-        "stats::runtime::tests::scrape_clock_history_keeps_strict_boundary_and_feed_baseline_with_one_delayed_reset",
-        "stats::runtime::tests::scrape_without_rotation_does_not_read_reset_clocks",
-        "stats::runtime::process::tests::registry_cpu_ordinary_missing_sample_retains_measured_origin_on_recovery",
-        "stats::runtime::process::tests::registry_missing_cpu_at_reset_starts_recovery_at_first_known_sample",
-        "stats::runtime::process::tests::registry_measured_cpu_reset_serializes_old_interval_before_starting_new_interval",
-        "stats::runtime::process::tests::registry_unavailable_initial_cpu_sample_waits_for_measured_origin",
-        "stats::runtime::process::tests::registry_memory_and_fd_failures_omit_only_unavailable_families_and_recover",
-        "stats::runtime::process::tests::registry_disabled_default_collection_never_samples_before_or_after_reset",
-        "stats::runtime::process::tests::registry_unavailable_initial_soft_limit_stays_omitted_in_its_isolated_cache",
-        "stats::runtime::tests::rejected_scrape_keeps_reset_boundary_and_success_is_observed_after_old_body",
         "stats::tests::http_tests::selected_sql_metadata_order_reaches_hot_scenes_http",
         "stats::tests::content_tests::selected_sql_content_applies_shared_denylist_before_top_100",
         "archipelago::tests::mounted_hot_scenes_share_local_content_policy_for_get_and_head",
@@ -161,7 +153,6 @@ MANDATORY_ARCHIPELAGO = {
         "stats::tests::render_tests::f32_position_extremes_and_receipt_rounding_keep_exact_public_bytes",
         "stats::tests::render_tests::discovery_uses_absolute_strict_age_and_advertised_count",
         "stats::tests::content_tests::selected_metadata_keeps_index_key_order_and_distinguishes_omitted_fields",
-        "stats::tests::http_tests::method_admission_bounds_labels_without_relabeling_accepted_extensions",
         "stats::tests::content_tests::thumbnail_only_sql_matches_full_projection_for_metadata_and_selection_variants",
         "gatekeeper::bus::broker::tests::terminal_submission_waits_for_capacity_without_admission_readiness",
         "gatekeeper::bus::broker::tests::cancelled_terminal_heads_cannot_publish_after_a_link_rebuild",
@@ -169,8 +160,6 @@ MANDATORY_ARCHIPELAGO = {
         "gatekeeper::bus::broker::tests::retained_capability_rejects_every_non_disconnect_payload",
         "archipelago::observations::tests::shutdown_deadline_cancels_unsubmitted_disconnect_and_counts_all_forced_loss_once",
         "gatekeeper::bus::broker::tests::retained_sdk_deadline_and_link_changes_leave_submission_unconfirmed",
-        "archipelago::handlers::tests::connector_method_flood_preserves_http_without_creating_metric_series",
-        "stats::runtime::tests::connector_observer_bounds_method_labels_and_preserves_known_lowercase_labels",
         "archipelago::observations::tests::producer_registration_is_lazy_and_recovers_restart_without_replaying_events",
         "pulse::statistics::tests::invalid_observations_are_counted_without_changing_population",
         "pulse::statistics::tests::capacity_refuses_registration_without_forgetting_any_cursor",
@@ -216,19 +205,17 @@ MANDATORY_ARCHIPELAGO = {
         "presence::tests::module_sources::numeric_statistics_reach_about_and_realm_routes_without_signed_narrowing",
         "presence::tests::module_sources::archive_retains_one_statistics_snapshot_while_content_awaits",
         "presence::tests::module_sources::archive_reads_selected_sql_metadata_and_omits_non_string_fields",
-        "metrics_matcher::tests::canceled_queued_and_running_matchers_keep_single_submission",
-        "metrics_matcher::tests::panicked_work_returns_error_and_releases_admission",
         "presence::tests::module_sources::selected_sql_archive_observes_shared_content_policy",
     ],
-    ("stats_metrics_engine", "test"): [
-        "configured_stats_engine_and_http_contract",
-    ],
     ("node_2", "test"): [
-        "stats_metrics_startup::stats_compilation_is_serve_only_and_follows_cli_refusals",
+        "stats_metrics_startup::cli_preflight_precedes_role_startup",
+        "stats_metrics_startup::serve_warns_once_with_only_the_names_of_retired_metrics_settings",
         "comms_v4_assignment_fence::selected_identity_domains_survive_production_assignment_json_postgres_roundtrip",
         "comms_v4_assignment_fence::selected_realm_ownership_tracks_native_without_ws_and_borrows_external_rows_read_only",
         "comms_v4_assignment_fence::lost_selected_claim_and_publication_acknowledgments_reconcile_without_restoring_a_predecessor",
-        "comms_v4_assignment_fence::recovery::started_native_periodic_replay_retries_borrowed_and_foreign_rows_after_lapse",
+        "comms_v4_assignment_fence::recovery::started_native_periodic_replay_retries_a_borrowed_null_row_after_lapse",
+        "comms_v4_assignment_fence::recovery::started_native_periodic_replay_retries_a_borrowed_assignment_row_after_lapse",
+        "comms_v4_assignment_fence::recovery::started_native_periodic_replay_retries_a_foreign_row_after_lapse",
         "comms_v4_assignment_fence::recovery::started_native_periodic_replay_survives_one_lookup_failure_without_another_hint",
         "comms_v4_assignment_fence::recovery::started_selected_periodic_retirement_reclaims_capacity_across_native_and_legacy_churn",
         "comms_v4_assignment_fence::recovery::started_selected_retirement_rejects_a_delayed_negative_after_native_reconnect_or_successor",
@@ -329,17 +316,42 @@ MANDATORY_ARCHIPELAGO = {
     ],
 }
 TEST_SCRIPT = [
-    'cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | python3 -c \'',
+    'durations="$root/tooling/catalyst-test-durations.tsv"',
+    'inventory=',
+    'targets=(--lib --bins)',
+    'if [ "${1:-}" = "--write-inventory" ]; then',
+    'inventory="$2"',
+    'cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | tee "${inventory:-/dev/null}" | python3 -c \'',
     'if artifact.get("executable") and artifact.get("profile", {}).get("test"):',
     'print(os.path.relpath(target["src_path"]), ",".join(target["kind"]), artifact["executable"], sep="\\t")',
-    '\' > "$logs/binaries"',
+    'python3 "$root/tooling/catalyst-test-targets.py" plan "$@" > "$logs/binaries"',
+    'if [ "$planned" = false ]; then build_targets "$@" > "$logs/binaries"; fi',
     '[ -s "$logs/binaries" ] || { echo "catalyst-test: no test binaries found" >&2; exit 1; }',
     'shard="${CATALYST_TEST_SHARD:-1/1}"',
     'index="${shard%/*}" total="${shard#*/}"',
     '[[ "$shard" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]] && [ "$index" -le "$total" ] || { echo "catalyst-test: CATALYST_TEST_SHARD must be i/n with i from 1 to n" >&2; exit 1; }',
+    'doc="${CATALYST_TEST_DOC_SHARD:-$index}"',
+    '[[ "$doc" =~ ^[1-9][0-9]*$ ]] && [ "$doc" -le "$total" ] || { echo "catalyst-test: CATALYST_TEST_DOC_SHARD must name one shard from 1 to $total" >&2; exit 1; }',
     'same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)',
     '[ -z "$same" ] || { echo "catalyst-test: two test binaries have one source file and kind: $same" >&2; exit 1; }',
-    'LC_ALL=C sort "$logs/binaries" | cut -f3- | awk -v i="$index" -v n="$total" \'NR % n == i % n\' > "$logs/shard"',
+    'LC_ALL=C sort "$logs/binaries" | python3 -c \'',
+    'rows = [line.rstrip("\\n").split("\\t", 2) for line in sys.stdin]',
+    'order = lambda shard: sorted(shard, key=lambda row: (time(row) is not None, -(time(row) or 0)))',
+    'for number, row in enumerate(rows):',
+    'if time(row) is None:',
+    'shards[number % total].append(row)',
+    'for row in sorted((row for row in rows if time(row) is not None), key=lambda row: (not socket(row), -time(row))):',
+    'best = min((i for i in range(total) if taken[i] == min(taken)), key=lambda i: (cost(shards[i] + [row]), i))',
+    'shards[best].append(row)',
+    'for row in order(shards[index - 1]):',
+    'print(row[2])',
+    '\' "$index" "$total" "$durations" > "$logs/shard"',
+    'case "$target" in test/*) targets+=(--test "${target#test/}");; esac',
+    'done < "$logs/shard"',
+    'build_targets "$@" "${targets[@]}" > "$logs/artifacts"',
+    'python3 "$root/tooling/catalyst-test-targets.py" resolve "$logs/shard" "$logs/binaries" "$logs/artifacts" > "$logs/executables"',
+    'mv "$logs/executables" "$logs/shard"',
+    'if [ -n "$inventory" ]; then exit 0; fi',
     'grep -E \'/sockets_[^/]*$\' "$logs/shard" > "$logs/sockets" || [ $? -eq 1 ]',
     'grep -v -E \'/sockets_[^/]*$\' "$logs/shard" > "$logs/others" || [ $? -eq 1 ]',
     'xargs -P "$1" -I{} sh -c \'',
@@ -348,6 +360,7 @@ TEST_SCRIPT = [
     'echo "$line" >> "$2/failures"; exit 1',
     'run "$jobs" < "$logs/others"',
     'run "$socket_jobs" < "$logs/sockets"',
+    'if [ "$doc" -eq "$index" ]; then',
     'cargo test --locked "$@" --doc',
 ]
 
@@ -383,14 +396,6 @@ def verify(required, normal, ignored, label):
     print(f"{label}: {len(required)} mandatory tests present once, zero ignored", flush=True)
 
 
-def verify_exact(required, normal, ignored, label):
-    require(len(required) == 1, f"{label}: isolated engine manifest must require exactly one test")
-    verify(required, normal, ignored, label)
-    require(Counter(inventory_entries(normal)) == Counter((name, "test") for name in required),
-            f"{label}: isolated engine inventory must contain only its required tests; remove extra tests/benchmarks")
-    require(not inventory_entries(ignored), f"{label}: isolated engine inventory must have no ignored entries")
-
-
 def validate_invocation(output, environ):
     # Deliberately a fixed contract, not a Makefile or shell parser. make -n sees
     # command-line/environment overrides exactly as the following real make does.
@@ -403,7 +408,7 @@ def validate_runtime_script(script):
     # Shell removes escaped newlines before recognizing assignments/commands.
     logical = re.sub(r"\\\r?\n", "", script)
     make_lines = [line.strip() for line in logical.splitlines() if re.search(r"\bmake\s", line)]
-    require(make_lines == ['make -C "$FOUNDATION_DEV_ROOT" catalyst-test ;;'], "dev-test Rust runtime must invoke broad catalyst-test exactly once without filters")
+    require(make_lines == [RUNTIME], "dev-test Rust runtime must invoke broad catalyst-test exactly once without filters")
     vendor_lines = [line.strip() for line in logical.splitlines() if line.strip().startswith("cargo test")]
     require(vendor_lines == [VENDOR], "vendor runtime must be the unfiltered locked default lib suite exactly once")
 
@@ -411,9 +416,10 @@ def validate_runtime_script(script):
     require(compile_lines == [VENDOR_CHECK], "vendor compile gate must check locked all-features/all-targets exactly once")
     sequence = "      python3 tooling/dev-regressions.py\n      " + VENDOR_CHECK + "\n      " + VENDOR + "\n"
     require(logical.count(sequence) == 1, "vendor compile gate must run unconditionally before the default runtime")
-    external = "      " + VENDOR + "\n      " + EXTERNAL_COMMAND + '\n      make -C "$FOUNDATION_DEV_ROOT" catalyst-test ;;'
-    require(logical.count(external) == 1 and logical.count(EXTERNAL_COMMAND) == 1,
-            "provisioned Archipelago tests must run exactly once after vendor tests and before the broad runtime")
+    lines = [line.strip() for line in logical.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    start = lines.index(VENDOR) + 1
+    require(lines[start:start + len(CONCURRENT)] == CONCURRENT and logical.count(EXTERNAL_COMMAND) == 1,
+            "provisioned Archipelago tests must run exactly once after vendor tests, beside the broad runtime, and fail the step")
     fixture_commands = [
         "python3 -m unittest discover -s tooling/tests -p 'test_archipelago_fixtures.py'",
         "python3 tooling/archipelago-fixtures.py check",
@@ -452,15 +458,16 @@ def validate_auth_stress_workflow(workflow):
 
 
 def validate_test_script(script):
-    # Pins the lines that keep the run complete: bash under set -e, the selection compiled
-    # unfiltered, every listed binary of the shard (all of them without CATALYST_TEST_SHARD) run
-    # without arguments in both phases, the doc-tests, and no exit before the end. Comment lines are inert.
+    # Pins the lines that keep the run complete: bash under set -e, the selected targets compiled,
+    # every listed binary of the shard (all of them without CATALYST_TEST_SHARD) run
+    # without arguments in both phases, the doc-tests in one shard (every shard without
+    # CATALYST_TEST_DOC_SHARD), and an early return for inventory builds. Comment lines are inert.
     require(script.splitlines()[:1] == ["#!/usr/bin/env bash"], "catalyst-test.sh must run under bash")
     lines = [line.strip() for line in script.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     require(lines[:1] == ["set -euo pipefail"], "catalyst-test.sh must stop at the first failing step")
     positions = [[index for index, line in enumerate(lines) if line == pinned] for pinned in TEST_SCRIPT]
     require(all(len(found) == 1 for found in positions) and positions == sorted(positions),
-            "catalyst-test.sh must compile the selection unfiltered, run every listed binary without arguments and the doc-tests exactly once; update the guard's pinned lines with the script")
+            "catalyst-test.sh must build the selected targets, run every assigned binary without arguments and run the designated doc-tests; update the guard's pinned lines with the script")
     require(not any(line.startswith("exit") for line in lines), "catalyst-test.sh must not exit before the doc-tests")
 
 
@@ -488,6 +495,8 @@ def run(command, cwd=ROOT):
 
 
 def compiled_targets(arguments, cwd, *, selected=None, kind=None):
+    if selected and kind == "lib":
+        arguments = [*arguments, "--lib"]
     output = run(["cargo", "test", "--locked", *arguments, "--no-run", "--message-format=json-render-diagnostics"], cwd)
     return artifact_targets(output, selected, kind=kind)
 
@@ -572,6 +581,10 @@ def external_shard(environ):
     return index == int(chosen), f"{int(chosen)}/{total}"
 
 
+def external_targets():
+    return set(MANDATORY_ARCHIPELAGO) | {(target, kind) for target, kind, _ in EXTERNAL}
+
+
 def check_external():
     binary = external_prerequisites(os.environ)
     execute, owner = external_shard(os.environ)
@@ -579,17 +592,20 @@ def check_external():
                              stderr=subprocess.STDOUT, check=True, timeout=10)
     print(version.stdout, flush=True)
     # Preserve the broad runner's feature graph; choose targets from this exact build.
-    output = run(["cargo", "test", "--locked", *SELECTION.split(), "--no-run",
+    selected = external_targets()
+    filters = ["--lib"]
+    for name, kind in sorted(selected):
+        if kind != "lib":
+            filters.extend([f"--{kind}", name])
+    output = run(["cargo", "test", "--locked", *SELECTION.split(), *filters, "--no-run",
                   "--message-format=json-render-diagnostics"], ROOT / "services/catalyst")
-    selected = set(MANDATORY_ARCHIPELAGO) | {(target, kind) for target, kind, _ in EXTERNAL}
     targets = {kind: artifact_targets(output, {target for target, selected_kind in selected
                                               if selected_kind == kind}, kind=kind)
                for kind in {kind for _, kind in selected}}
     for (target, kind), names in MANDATORY_ARCHIPELAGO.items():
         require(target in targets[kind], f"missing provisioned {kind} target: {target}")
         # The broad runner executes these normally; guard their presence without a second run.
-        options = {"exact": True} if (target, kind) in EXACT_ARCHIPELAGO else {}
-        check_executable(names, targets[kind][target], f"mandatory {target} corpus/transitions", **options)
+        check_executable(names, targets[kind][target], f"mandatory {target} corpus/transitions")
     for target, kind, name in EXTERNAL:
         require(target in targets[kind], f"missing provisioned {kind} target: {target}")
         if execute:
@@ -624,10 +640,10 @@ def verify_targets(required, targets):
         check_executable(names, targets[target], target)
 
 
-def check_executable(required, executable, label, required_ignored=(), *, exact=False):
+def check_executable(required, executable, label, required_ignored=()):
     normal = run([executable, "--list", "--format", "terse"])
     ignored = run([executable, "--list", "--ignored", "--format", "terse"])
-    (verify_exact if exact else verify)(required, normal, ignored, label)
+    verify(required, normal, ignored, label)
     for name in required_ignored:
         require(inventory(normal)[name] == 1 and inventory(ignored)[name] == 1, f"{label}: provisioned external test must remain ignored by default: {name}")
 
@@ -637,6 +653,17 @@ def check_auth_stress():
                                selected={"dcl_auth"}, kind="lib")
     require("dcl_auth" in targets, "auth stress library target missing")
     run_external(targets["dcl_auth"], AUTH_STRESS, show_output=True)
+
+
+def regression_targets(required):
+    if os.environ.get("CATALYST_TEST_SHARD", "1/1") == "1/1":
+        return compiled_targets(SELECTION.split(), ROOT / "services/catalyst", selected=required, kind="test")
+    names = set(required) | {name for name, kind in external_targets() if kind == "test"}
+    with tempfile.TemporaryDirectory() as temporary:
+        inventory = Path(temporary) / "artifacts.jsonl"
+        subprocess.run([str(ROOT / "tooling/catalyst-test.sh"), "--write-inventory", str(inventory),
+                        *sorted(names), "--", *SELECTION.split()], check=True)
+        return artifact_targets(inventory.read_text(), required, kind="test")
 
 
 def main():
@@ -652,6 +679,11 @@ def main():
         check_auth_stress()
         return
     if args.archipelago_external:
+        # Lead a process group so tooling/dev-test.sh can stop the test binaries and their brokers with it.
+        try:
+            os.setpgid(0, 0)
+        except OSError:
+            pass
         check_external()
         return
     manifest = json.loads((ROOT / "tooling/dev-regressions.json").read_text())
@@ -671,7 +703,7 @@ def main():
         for target, names in manifest["unix"].items():
             required[target] += names
     # Match the runtime selection so Cargo reuses the same feature graph and binaries.
-    targets = compiled_targets(SELECTION.split(), ROOT / "services/catalyst", selected=required, kind="test")
+    targets = regression_targets(required)
     verify_targets(required, targets)
     vendor_targets = compiled_targets(["--manifest-path", "library/vendor/rusty_enet/Cargo.toml", "--lib"], ROOT)
     require("rusty_enet" in vendor_targets, "missing vendor lib target")

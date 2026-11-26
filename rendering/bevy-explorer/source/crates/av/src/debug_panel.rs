@@ -11,6 +11,8 @@ pub(super) struct MediaDebugPanelPlugin;
 
 impl Plugin for MediaDebugPanelPlugin {
     fn build(&self, app: &mut App) {
+        #[cfg(feature = "html")]
+        app.add_console_command::<MediaRetryDelay, _>(media_retry_delay);
         app.add_console_command::<MediaState, _>(media_state)
             .add_debug_section(DebugSection {
                 title: "Media player",
@@ -31,12 +33,34 @@ impl Plugin for MediaDebugPanelPlugin {
     }
 }
 
+/// Set the wait before a failed web media source's first reopen; later waits double from it.
+#[cfg(feature = "html")]
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/media_retry_delay")]
+struct MediaRetryDelay {
+    /// Milliseconds; without it, the current wait is reported.
+    milliseconds: Option<u64>,
+}
+
+#[cfg(feature = "html")]
+fn media_retry_delay(mut cmd: ConsoleCommand<MediaRetryDelay>) {
+    let Some(Ok(MediaRetryDelay { milliseconds })) = cmd.take() else {
+        return;
+    };
+    if let Some(milliseconds) = milliseconds {
+        media::set_first_reopen_delay(std::time::Duration::from_millis(milliseconds));
+    }
+    cmd.reply_ok(
+        json!({"firstDelayMs": media::first_reopen_delay().as_millis() as u64, "maxReopens": media::MAX_REOPENS})
+            .to_string(),
+    );
+}
+
 /// Inspect scene media players and their requested and scheduled playback states.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/media_state")]
 struct MediaState;
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn media_state(
     mut cmd: ConsoleCommand<MediaState>,
     video: Query<(
@@ -56,6 +80,7 @@ fn media_state(
     scenes: Query<&RendererSceneContext>,
     player: Query<Entity, With<PrimaryUser>>,
     containing: ContainingScene,
+    receivers: Query<&livestream_manager::ReceiverImage>,
     #[cfg(any(feature = "ffmpeg", feature = "html"))] images: Res<Assets<Image>>,
     #[cfg(any(feature = "ffmpeg", feature = "html"))] video_sinks: Query<&AVSinks<VideoPlayer>>,
     #[cfg(any(feature = "ffmpeg", feature = "html"))] audio_sinks: Query<&AVSinks<AudioStream>>,
@@ -86,6 +111,15 @@ fn media_state(
         item["source"] = json!(source_label(player.url()));
         #[cfg(any(feature = "ffmpeg", feature = "html"))]
         add_sink(&mut item, video_sinks.get(_ent).ok(), &images);
+        if let Ok(receiver) = receivers.get(_ent) {
+            item["lastPlaybackState"] = json!(receiver.state.borrow().as_str_name());
+            #[cfg(any(feature = "ffmpeg", feature = "html"))]
+            {
+                item["textureSize"] = json!(images
+                    .get(&receiver.image)
+                    .map(|image| [image.width(), image.height()]));
+            }
+        }
         rows.push(item);
     }
     for (_ent, player, entity, here, scheduled) in &audio {
@@ -114,6 +148,9 @@ fn media_state(
 // identifies the source without exposing playback credentials in the panel or console logs.
 fn source_label(source: &str) -> String {
     let source = source.trim();
+    if livestream_manager::is_livekit_video(source) {
+        return String::from("livekit-video stream");
+    }
     if source.starts_with("//") {
         return String::from("remote media");
     }
@@ -147,6 +184,17 @@ fn add_sink<T: AVPlayer>(row: &mut Value, sinks: Option<&AVSinks<T>>, images: &A
         .filter(|s| s.current_time >= 0.0)
         .map(|s| s.current_time));
     row["durationSeconds"] = json!(sink.and_then(|s| s.length));
+    #[cfg(feature = "html")]
+    {
+        let retry = sinks.map(|s| *s.retry.borrow());
+        row["retryAttempt"] = json!(retry.map(|r| r.attempt));
+        row["retryFailures"] = json!(retry.map(|r| r.failures));
+        row["retryDelaySeconds"] = json!(retry
+            .and_then(|r| r.next_delay)
+            .map(|delay| delay.as_secs_f64()));
+        row["retryGaveUp"] = json!(retry.map(|r| r.gave_up));
+        row["lastError"] = json!(retry.and_then(|r| r.last_error));
+    }
 }
 
 #[cfg(all(test, feature = "ffmpeg"))]
@@ -164,6 +212,10 @@ mod tests {
             assert!(!source_label(source).contains("private"));
         }
         assert_eq!(source_label("videos/intro.mp4"), "videos/intro.mp4");
+        assert_eq!(
+            source_label("livekit-video://stream:private/TR_private"),
+            "livekit-video stream"
+        );
     }
 
     #[test]

@@ -21,7 +21,7 @@ use common::{
     inputs::SystemAction,
     rpc::RpcStreamSender,
     sets::SetupSets,
-    structs::{PrimaryPlayerRes, PrimaryUser, SystemAudio, ToolTips, TooltipSource},
+    structs::{PlayerAddress, PrimaryPlayerRes, PrimaryUser, SystemAudio, ToolTips, TooltipSource},
     util::{AsH160, ModifyComponentExt, RingBuffer, RingBufferReceiver, TryPushChildrenEx},
 };
 use comms::{
@@ -41,7 +41,6 @@ use dcl_types::{SceneLogLevel, SceneLogMessage};
 use history::ChatHistoryPlugin;
 use input_manager::{InputManager, InputPriority};
 use scene_runner::{renderer_context::RendererSceneContext, ContainingScene};
-use shlex::Shlex;
 use social::FriendshipEvent;
 use system_bridge::{ChatMessage, ChatReactionData, NativeUi, SystemApi};
 use ui_core::{
@@ -224,17 +223,19 @@ fn debug_chat(
                 setup_chat_popup(commands, root, dui);
             }
             "add" => {
-                tab.single_mut()
-                    .unwrap()
-                    .add(
-                        &mut commands,
-                        &dui,
-                        Some(3),
-                        DuiButton::new_enabled("new tab", || {}),
-                        false,
-                        None,
-                    )
-                    .unwrap();
+                let Ok(mut tab) = tab.single_mut() else {
+                    input.reply_failed("chat tabs not found");
+                    return;
+                };
+                tab.add(
+                    &mut commands,
+                    &dui,
+                    Some(3),
+                    DuiButton::new_enabled("new tab", || {}),
+                    false,
+                    None,
+                )
+                .unwrap();
             }
             _ => (),
         }
@@ -308,6 +309,10 @@ fn setup_chat_popup(mut commands: Commands, root: Res<SystemUiRoot>, dui: Res<Du
         ChatboxContainer,
         On::<Click>::new(
             |mut commands: Commands, q: Query<Entity, With<ChatInput>>| {
+                #[allow(
+                    clippy::unwrap_used,
+                    reason = "the chat template spawns the ChatInput with the chatbox; a missing input is a template bug"
+                )]
                 commands.entity(q.single().unwrap()).try_insert(Focus);
             },
         ),
@@ -441,7 +446,6 @@ fn make_log(commands: &mut Commands, log: SceneLogMessage) -> Entity {
         .id()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn display_chat(
     mut commands: Commands,
     mut chatbox: Query<(Entity, &mut ChatBox, Option<&Children>)>,
@@ -544,7 +548,34 @@ pub struct ChatInput;
 #[derive(Event)]
 pub struct PrivateChatEntered(pub String);
 
-#[allow(clippy::too_many_arguments)]
+/// Why a `/command` typed as chat did not run.
+enum CommandFault {
+    /// the line does not split: empty, or a double quote left open
+    Split(String),
+    /// the console has no such command
+    Unknown,
+}
+
+/// Run a chat line that starts with `/` as a console command, split as every console line is
+/// (`console::line`).
+fn enter_command(
+    line: &str,
+    config: &ConsoleConfiguration,
+    command_entered: &mut EventWriter<ConsoleCommandEntered>,
+) -> Result<(), CommandFault> {
+    let (command_name, args) = console::line::split(line, config).map_err(CommandFault::Split)?;
+    debug!("Command entered: `{command_name}`, with args: `{args:?}`");
+    if !config.commands.contains_key(command_name.as_str()) {
+        return Err(CommandFault::Unknown);
+    }
+    command_entered.write(ConsoleCommandEntered {
+        command_name,
+        args,
+        responder: None,
+    });
+    Ok(())
+}
+
 fn emit_user_chat(
     mut commands: Commands,
     mut chats: EventWriter<ChatEvent>,
@@ -604,25 +635,29 @@ fn emit_user_chat(
                 message: message.clone(),
             });
 
+            // This panel's own send sound. A line sent from the HUD page is sounded by the
+            // page, which knows the notification ping setting.
+            if output.active_tab == "Nearby" && !message.starts_with('/') {
+                commands.send_event(SystemAudio(
+                    "embedded://sounds/ui/widget_chat_message_private_send.wav".to_owned(),
+                ));
+            }
+
             if message.starts_with('/') {
-                let mut args = Shlex::new(message).collect::<Vec<_>>();
-
-                let command_name = args.remove(0);
-                debug!("Command entered: `{command_name}`, with args: `{args:?}`");
-
-                let command = console_config.commands.get(command_name.as_str());
-
-                if command.is_some() {
-                    command_entered.write(ConsoleCommandEntered {
-                        command_name,
-                        args,
-                        responder: None,
-                    });
-                } else {
-                    debug!(
+                match enter_command(message, &console_config, &mut command_entered) {
+                    Ok(()) => {}
+                    Err(CommandFault::Unknown) => debug!(
                         "Command not recognized, recognized commands: `{:?}`",
                         console_config.commands.keys().collect::<Vec<_>>()
-                    );
+                    ),
+                    Err(CommandFault::Split(fault)) => {
+                        chats.write(ChatEvent {
+                            timestamp: time.elapsed_secs_f64(),
+                            sender: Entity::PLACEHOLDER,
+                            channel: "System".to_owned(),
+                            message: format!("Command not run: {fault}"),
+                        });
+                    }
                 }
             }
         }
@@ -639,7 +674,6 @@ fn emit_user_chat(
 }
 
 pub fn broadcast_nearby_chats(
-    mut commands: Commands,
     mut chat_events: EventReader<ChatEvent>,
     transports: Query<&Transport>,
     player: Query<Entity, With<PrimaryUser>>,
@@ -654,10 +688,6 @@ pub fn broadcast_nearby_chats(
         .filter(|ev| ev.sender == player)
         .filter(|ev| !ev.message.starts_with("/"))
     {
-        commands.send_event(SystemAudio(
-            "embedded://sounds/ui/widget_chat_message_private_send.wav".to_owned(),
-        ));
-
         // we display receive time
         let timestamp = ev.timestamp;
 
@@ -682,7 +712,6 @@ pub fn broadcast_nearby_chats(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn select_chat_tab(
     In(tab): In<Option<&'static str>>,
     mut commands: Commands,
@@ -721,9 +750,19 @@ pub(crate) fn select_chat_tab(
                     false,
                 );
             }
-            text_entry.single_mut().unwrap().enabled = true;
+            #[allow(
+                clippy::unwrap_used,
+                reason = "the chat template spawns the ChatInput with the chatbox; a missing input is a template bug"
+            )]
+            let mut text_entry = text_entry.single_mut().unwrap();
+            text_entry.enabled = true;
         } else if tab == "Scene Log" {
-            text_entry.single_mut().unwrap().enabled = false;
+            #[allow(
+                clippy::unwrap_used,
+                reason = "the chat template spawns the ChatInput with the chatbox; a missing input is a template bug"
+            )]
+            let mut text_entry = text_entry.single_mut().unwrap();
+            text_entry.enabled = false;
         }
 
         debug!("tab set to {}", tab);
@@ -731,7 +770,6 @@ pub(crate) fn select_chat_tab(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn pipe_chats_to_scene(
     mut chat_events: EventReader<ChatEvent>,
     #[cfg(feature = "livekit")] mut dms: EventReader<comms::private_chat::PrivateChatReceived>,
@@ -743,9 +781,7 @@ fn pipe_chats_to_scene(
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ChatMessage>>>,
     mut bubbles: EventWriter<ChatBubbleRequest>,
-    players: Query<(Entity, &ForeignPlayer)>,
-    primary_player: Res<PrimaryPlayerRes>,
-    wallet: Res<Wallet>,
+    players: Query<(Entity, &PlayerAddress, Has<ForeignPlayer>)>,
 ) {
     // a community's name for the bubble of one of its messages
     #[cfg(feature = "livekit")]
@@ -757,8 +793,8 @@ fn pipe_chats_to_scene(
     let player_of = |address: Address| {
         players
             .iter()
-            .find(|(_, player)| player.address == address)
-            .map(|(entity, _)| entity)
+            .find(|(_, player, is_foreign)| *is_foreign && player.0 == address)
+            .map(|(entity, ..)| entity)
     };
 
     senders.extend(requests.read().filter_map(|ev| {
@@ -785,14 +821,7 @@ fn pipe_chats_to_scene(
             let player_address = players
                 .get(chat_event.sender)
                 .ok()
-                .map(|(_, fp)| fp.address)
-                .or_else(|| {
-                    if chat_event.sender == primary_player.0 {
-                        wallet.address()
-                    } else {
-                        None
-                    }
-                });
+                .map(|(_, &PlayerAddress(address), _)| address);
 
             let Some(player_address) = player_address else {
                 warn!("no player for {chat_event:?}");
@@ -807,7 +836,9 @@ fn pipe_chats_to_scene(
 
             #[cfg(feature = "livekit")]
             if chat_event.channel == "Nearby"
-                && chat_event.sender != primary_player.0
+                && players
+                    .get(chat_event.sender)
+                    .is_ok_and(|(_, _, is_foreign)| is_foreign)
                 && ban_block.is_addr_banned_in_scene(player_address)
             {
                 continue;
@@ -1043,7 +1074,6 @@ fn react(mut input: ConsoleCommand<ReactCommand>, mut events: EventWriter<System
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn pipe_chats_from_scene(
     mut sender: EventWriter<ChatEvent>,
     primary_player: Res<PrimaryPlayerRes>,
@@ -1079,28 +1109,20 @@ fn pipe_chats_from_scene(
                 message: message.clone(),
             });
 
-            let mut args = Shlex::new(&message).collect::<Vec<_>>();
-
-            let command_name = args.remove(0);
-            debug!("Command entered: `{command_name}`, with args: `{args:?}`");
-
-            let command = console_config.commands.get(command_name.as_str());
-
-            if command.is_some() {
-                command_entered.write(ConsoleCommandEntered {
-                    command_name,
-                    args,
-                    responder: None,
-                });
-            } else {
+            let reply = match enter_command(&message, &console_config, &mut command_entered) {
+                Ok(()) => None,
+                Err(CommandFault::Unknown) => Some(format!(
+                    "Command not recognized, recognized commands: `{:?}`",
+                    console_config.commands.keys().collect::<Vec<_>>()
+                )),
+                Err(CommandFault::Split(fault)) => Some(format!("Command not run: {fault}")),
+            };
+            if let Some(message) = reply {
                 sender.write(ChatEvent {
                     timestamp: time.elapsed_secs_f64(),
                     sender: Entity::PLACEHOLDER,
                     channel: "System".to_owned(),
-                    message: format!(
-                        "Command not recognized, recognized commands: `{:?}`",
-                        console_config.commands.keys().collect::<Vec<_>>()
-                    ),
+                    message,
                 });
             }
         } else {

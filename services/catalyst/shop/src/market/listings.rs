@@ -1,11 +1,12 @@
 //! `POST /v1/trades`: a wallet-signed off-chain listing or bid accepted as
 //! local authority (`shop.trades`, `mirrored_from` NULL) behind
-//! `DATA_WRITES_ENABLED`. The old policy exactly: the signed-fetch chain
-//! must carry `signer` dcl:marketplace|dcl:builder and intent
-//! `dcl:create-trade`, the recovered address must be the trade's signer,
-//! the EIP-712 signature must verify against one of the chain's off-chain
-//! marketplaces (v3 first, then v2), an erc721 listing's token must be owned
-//! by the signer per `ownerOf` on `TRADE_RPC_URLS` (never the mirror: a
+//! `DATA_WRITES_ENABLED`. The old policy, except that only the current
+//! marketplace accepts new trades: the signed-fetch chain must carry
+//! `signer` dcl:marketplace|dcl:builder and intent `dcl:create-trade`, the
+//! recovered address must be the trade's signer, the EIP-712 signature must
+//! verify against the chain's current off-chain marketplace (v3; one that
+//! verifies only on v2 is a 400 naming v3), an erc721 listing's token must
+//! be owned by the signer per `ownerOf` on `TRADE_RPC_URLS` (never the mirror: a
 //! stale index is not a reason to accept a listing), and a duplicate
 //! signature is a 409. As marketplace-server ae872a4a
 //! (`src/ports/trades/utils.ts`) does, each side carries exactly one asset,
@@ -14,9 +15,10 @@
 //! order for one NFT or item, or a second open bid by one bidder on one
 //! asset, is a 409; every amount, token id and item id is canonical decimal
 //! before it is stored. The RPC calls go through the ONE outbound client
-//! and its SSRF guard. v2's `trades` row has no `trade_digest` column: a v3
-//! cancellation digest is the signing hash, which the `trade_events` fold
-//! recomputes from the stored trade (`trade_chain_state.digest`); `GET
+//! and its SSRF guard. A V3 trade stores its cancellation digest, the
+//! EIP-712 signing hash the signature was verified over (`trade_digest`, as
+//! marketplace-server stores it); the `trade_events` fold verifies it and
+//! keys the trade's V3 cancellation on it (`trade_chain_state.digest`); `GET
 //! /v1/trades/{hash}/accept` is served there. `GET /v1/activity` (a
 //! wallet's sales, bids and orders across the squid tables) answers the
 //! envelope.
@@ -26,12 +28,14 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use catalyst_shared::json_number::{integral_i64, integral_u64};
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
 use serde_json::json;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 use std::str::FromStr;
 
+use super::catalogue::{self, Purpose};
 use super::signed::{
     CREATE_TRADE_INTENT, MARKETPLACE_AUTH_SIGNERS, require_auth_metadata, require_signer,
 };
@@ -89,6 +93,8 @@ impl RpcEndpoints {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OffChainMarketplace {
+    /// The deployment's contract name, as error messages name it.
+    pub contract: &'static str,
     pub name: &'static str,
     pub version: &'static str,
     pub address: &'static str,
@@ -97,25 +103,28 @@ pub struct OffChainMarketplace {
 }
 
 pub const ETHEREUM_MAINNET: i64 = 1;
-pub const ETHEREUM_SEPOLIA: i64 = 11155111;
+pub const ETHEREUM_SEPOLIA: i64 = crate::types::ChainId::SEPOLIA.0 as i64;
 pub const MATIC_MAINNET: i64 = 137;
-pub const MATIC_AMOY: i64 = 80002;
+pub const MATIC_AMOY: i64 = crate::types::ChainId::AMOY.0 as i64;
 
 pub fn offchain_marketplace_v2(chain_id: i64) -> Option<OffChainMarketplace> {
     match chain_id {
         ETHEREUM_MAINNET | ETHEREUM_SEPOLIA => Some(OffChainMarketplace {
+            contract: "OffChainMarketplaceV2",
             name: "DecentralandMarketplaceEthereum",
             version: "1.0.0",
             address: "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
             cancels_by_digest: false,
         }),
         MATIC_MAINNET => Some(OffChainMarketplace {
+            contract: "OffChainMarketplaceV2",
             name: "DecentralandMarketplacePolygon",
             version: "1.0.0",
             address: "0xa40b1d129b8906888720686f3a01921ddf37716f",
             cancels_by_digest: false,
         }),
         MATIC_AMOY => Some(OffChainMarketplace {
+            contract: "OffChainMarketplaceV2",
             name: "DecentralandMarketplacePolygon",
             version: "1.0.0",
             address: "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
@@ -128,24 +137,28 @@ pub fn offchain_marketplace_v2(chain_id: i64) -> Option<OffChainMarketplace> {
 pub fn offchain_marketplace_v3(chain_id: i64) -> Option<OffChainMarketplace> {
     match chain_id {
         ETHEREUM_MAINNET => Some(OffChainMarketplace {
+            contract: "OffChainMarketplaceV3",
             name: "DecentralandMarketplaceEthereum",
             version: "1.0.0",
             address: "0x0f11d0d1671519683bd48abf3dbe779e300941cd",
             cancels_by_digest: true,
         }),
         MATIC_MAINNET => Some(OffChainMarketplace {
+            contract: "OffChainMarketplaceV3",
             name: "DecentralandMarketplacePolygon",
             version: "1.0.0",
             address: "0xe38ef22abe871513555cba89adfe45ab4f548ada",
             cancels_by_digest: true,
         }),
         ETHEREUM_SEPOLIA => Some(OffChainMarketplace {
+            contract: "OffChainMarketplaceV3",
             name: "DecentralandMarketplaceEthereum",
             version: "1.0.0",
             address: "0x257db44ac97789c16ab277eae87dcde0c246cc9f",
             cancels_by_digest: true,
         }),
         MATIC_AMOY => Some(OffChainMarketplace {
+            contract: "OffChainMarketplaceV3",
             name: "DecentralandMarketplacePolygon",
             version: "1.0.0",
             address: "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c",
@@ -239,79 +252,6 @@ pub struct TradeChecksInput {
     pub allowed_proof: Option<Vec<String>>,
     #[serde(rename = "externalChecks", default)]
     pub external_checks: Option<Vec<ExternalCheckInput>>,
-}
-
-/// ajv's `type: 'number'`: `137` and `137.0` are one chain id; a fraction is refused.
-enum JsonNumber {
-    Unsigned(u64),
-    Signed(i64),
-    Float(f64),
-}
-
-impl<'de> Deserialize<'de> for JsonNumber {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let number = serde_json::Number::deserialize(deserializer)?;
-        if let Some(v) = number.as_u64() {
-            Ok(Self::Unsigned(v))
-        } else if let Some(v) = number.as_i64() {
-            Ok(Self::Signed(v))
-        } else {
-            number
-                .as_f64()
-                .map(Self::Float)
-                .ok_or_else(|| serde::de::Error::custom("number is outside the supported range"))
-        }
-    }
-}
-
-impl JsonNumber {
-    fn integral<E: serde::de::Error>(value: f64) -> Result<f64, E> {
-        if value.is_finite() && value.fract() == 0.0 {
-            Ok(value)
-        } else {
-            Err(E::custom(format!("{value} is not an integer")))
-        }
-    }
-    fn into_i64<E: serde::de::Error>(self) -> Result<i64, E> {
-        match self {
-            JsonNumber::Unsigned(v) => {
-                i64::try_from(v).map_err(|_| E::custom(format!("{v} does not fit in an i64")))
-            }
-            JsonNumber::Signed(v) => Ok(v),
-            JsonNumber::Float(v) => {
-                let v = Self::integral(v)?;
-                if v >= -(2f64.powi(63)) && v < 2f64.powi(63) {
-                    Ok(v as i64)
-                } else {
-                    Err(E::custom(format!("{v} does not fit in an i64")))
-                }
-            }
-        }
-    }
-    fn into_u64<E: serde::de::Error>(self) -> Result<u64, E> {
-        match self {
-            JsonNumber::Unsigned(v) => Ok(v),
-            JsonNumber::Signed(v) => {
-                u64::try_from(v).map_err(|_| E::custom(format!("{v} is negative")))
-            }
-            JsonNumber::Float(v) => {
-                let v = Self::integral(v)?;
-                if (0.0..2f64.powi(64)).contains(&v) {
-                    Ok(v as u64)
-                } else {
-                    Err(E::custom(format!("{v} does not fit in a u64")))
-                }
-            }
-        }
-    }
-}
-
-fn integral_i64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
-    JsonNumber::deserialize(d)?.into_i64()
-}
-
-fn integral_u64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
-    JsonNumber::deserialize(d)?.into_u64()
 }
 
 #[derive(Debug, Deserialize)]
@@ -774,6 +714,11 @@ pub enum TradeCreationError {
     },
     InvalidStructure(String),
     InvalidSignature(String),
+    /// Signed against an off-chain marketplace other than the chain's current one.
+    RetiredMarketplace {
+        signed_on: &'static str,
+        current: &'static str,
+    },
     OwnershipUnverifiable(i64),
     OwnershipLookupFailed(String),
     NotTheOwner {
@@ -786,6 +731,9 @@ pub enum TradeCreationError {
     },
     /// The item is not in the mirrored catalogue (yet).
     ItemUnknown,
+    /// The collections index owns the item's network and cannot authorize
+    /// a read of it: why.
+    CatalogueUnavailable(String),
     NotTheCreator,
     /// The price is not the chain's MANA (nor USD-pegged MANA).
     InvalidPriceAsset,
@@ -815,6 +763,10 @@ impl std::fmt::Display for TradeCreationError {
             }
             Self::InvalidStructure(why) => write!(f, "invalid trade structure: {why}"),
             Self::InvalidSignature(why) => write!(f, "{why}"),
+            Self::RetiredMarketplace { signed_on, current } => write!(
+                f,
+                "Trades signed on {signed_on} are no longer accepted, sign it on {current}"
+            ),
             Self::OwnershipUnverifiable(chain) => write!(
                 f,
                 "ownership cannot be verified: no rpc endpoint is configured for chain {chain}"
@@ -831,6 +783,7 @@ impl std::fmt::Display for TradeCreationError {
                 )
             }
             Self::ItemUnknown => write!(f, "the item is not in the catalogue yet; retry later"),
+            Self::CatalogueUnavailable(why) => write!(f, "{why}; retry later"),
             Self::NotTheCreator => {
                 write!(f, "only the item's creator may sell it as a primary sale")
             }
@@ -862,7 +815,19 @@ pub fn served_chain(indexes: &super::chain_walk::IndexSettings, network: &str) -
     }
 }
 
-/// A public item order is a primary sale: only the item's creator may sign it.
+/// The item's creator and its network's catalogue state, in one statement.
+static ITEM_CREATOR_SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "SELECT {columns}, i.creator FROM (SELECT lower($1) AS network) AS n {joins} \
+         LEFT JOIN shop.items i ON i.network = n.network AND i.contract_address = lower($2) AND i.item_id = $3::numeric",
+        columns = catalogue::STATE_COLUMNS,
+        joins = *catalogue::STATE_JOINS,
+    )
+});
+
+/// A public item order is a primary sale: only the item's creator may sign
+/// it. On a network the collections index owns, the creator is read under
+/// its authorizing publication, in the statement that reads the verdict.
 async fn verify_item_creator(
     pool: &PgPool,
     network: &str,
@@ -870,15 +835,17 @@ async fn verify_item_creator(
 ) -> Result<(), TradeCreationError> {
     let sent = &trade.sent[0];
     let item_id = sent.item_id.as_deref().unwrap_or_default();
-    let creator: Option<String> = sqlx::query_scalar(
-        "SELECT creator FROM shop.items \
-         WHERE network = lower($1) AND contract_address = lower($2) AND item_id = $3::numeric",
-    )
-    .bind(network)
-    .bind(&sent.contract_address)
-    .bind(item_id)
-    .fetch_optional(pool)
-    .await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(ITEM_CREATOR_SQL.as_str()))
+        .bind(network)
+        .bind(&sent.contract_address)
+        .bind(item_id)
+        .fetch_one(pool)
+        .await?;
+    let state = catalogue::NetworkState::from_row(&row)?;
+    if let Some(Err(why)) = state.owned_verdict(trade.chain_id, Purpose::Authorize, Utc::now()) {
+        return Err(TradeCreationError::CatalogueUnavailable(why));
+    }
+    let creator: Option<String> = row.try_get("creator")?;
     match creator {
         None => Err(TradeCreationError::ItemUnknown),
         Some(c) if c.eq_ignore_ascii_case(&trade.signer) => Ok(()),
@@ -1206,6 +1173,15 @@ pub async fn create_trade(
     validate_structure(trade)?;
     let matched = resolve_signature(trade, &candidates)
         .map_err(|e| TradeCreationError::InvalidSignature(e.to_string()))?;
+    // Candidates are newest first and non-empty; older versions still verify, so a trade
+    // signed on one is told where to sign instead.
+    let current = candidates[0];
+    if matched.marketplace != current {
+        return Err(TradeCreationError::RetiredMarketplace {
+            signed_on: matched.marketplace.contract,
+            current: current.contract,
+        });
+    }
     verify_sent_ownership(state, trade).await?;
     verify_estate_fingerprint(state, trade).await?;
     if trade.trade_type == TRADE_TYPE_PUBLIC_ITEM_ORDER {
@@ -1259,8 +1235,8 @@ pub async fn create_trade(
 }
 
 const CREATE_TRADE_SQL: &str = "WITH t AS (
-        INSERT INTO shop.trades (network, chain_id, signature, hashed_signature, checks, signer, type, expires_at, effective_since, contract)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::shop.trade_type, $8, $9, $10)
+        INSERT INTO shop.trades (network, chain_id, signature, hashed_signature, checks, signer, type, expires_at, effective_since, contract, trade_digest)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::shop.trade_type, $8, $9, $10, $12)
         ON CONFLICT (hashed_signature) DO NOTHING
         RETURNING id
      ), input AS MATERIALIZED (
@@ -1279,9 +1255,21 @@ const CREATE_TRADE_SQL: &str = "WITH t AS (
      )
      SELECT id::text FROM t";
 
+/// The V3 cancellation key of `trade` signed on `contract`: its EIP-712
+/// signing hash against that marketplace's domain, `None` on a marketplace
+/// that cancels by signature (V1, V2) or one this node does not know.
+pub(crate) fn cancellation_digest(trade: &TradeCreation, contract: &str) -> Option<String> {
+    offchain_marketplaces(trade.chain_id)
+        .into_iter()
+        .find(|m| m.cancels_by_digest && m.address.eq_ignore_ascii_case(contract))
+        .and_then(|m| signing_hash(trade, &m).ok())
+        .map(|h| format!("{h:#x}"))
+}
+
 /// Head, assets and the typed sub-rows in one statement; a duplicate
 /// signature inserts nothing. The signature is stored lowercase, as the
-/// mirror stores upstream's, so one listing cannot land twice re-cased.
+/// mirror stores upstream's, so one listing cannot land twice re-cased. A
+/// trade on a V3 marketplace stores its [`cancellation_digest`].
 pub(crate) async fn insert_trade<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     trade: &TradeCreation,
@@ -1331,12 +1319,25 @@ pub(crate) async fn insert_trade<'e>(
         .bind(effective_since.naive_utc())
         .bind(contract)
         .bind(serde_json::Value::Array(rows))
+        .bind(cancellation_digest(trade, contract))
         .fetch_optional(executor)
         .await?;
     let Some((trade_id,)) = inserted else {
         return Err(TradeCreationError::Duplicate);
     };
     Ok(trade_id)
+}
+
+/// The 503 of a trade the catalogue cannot judge yet, with `Retry-After`: the
+/// mirror catches up within a pass, and the collections index publishes
+/// within one.
+fn retryable_creation_error(e: TradeCreationError) -> Response {
+    let mut response = creation_error_to_api(e).into_response();
+    response.headers_mut().insert(
+        axum::http::header::RETRY_AFTER,
+        axum::http::HeaderValue::from_static("60"),
+    );
+    response
 }
 
 fn creation_error_to_api(e: TradeCreationError) -> ApiError {
@@ -1350,7 +1351,8 @@ fn creation_error_to_api(e: TradeCreationError) -> ApiError {
         }
         TradeCreationError::OwnershipUnverifiable(_)
         | TradeCreationError::OwnershipLookupFailed(_)
-        | TradeCreationError::ItemUnknown => ApiError::http(503, message),
+        | TradeCreationError::ItemUnknown
+        | TradeCreationError::CatalogueUnavailable(_) => ApiError::http(503, message),
         TradeCreationError::Duplicate | TradeCreationError::DuplicateOpen(_) => {
             ApiError::http(409, message)
         }
@@ -1388,7 +1390,13 @@ async fn post_trade_inner(
         return Err(ApiError::http(429, "rate limit exceeded".to_string()));
     }
     require_auth_metadata(headers, MARKETPLACE_AUTH_SIGNERS, Some(CREATE_TRADE_INTENT))?;
-    let recovered = require_signer(headers, "post", "/v1/trades").await?;
+    let recovered = require_signer(
+        super::signed::fresh(state.eip1654.as_deref()),
+        headers,
+        "post",
+        "/v1/trades",
+    )
+    .await?;
     if TRADE_LIMITER.check(&recovered.to_ascii_lowercase()) == RateLimitDecision::Deny {
         return Err(ApiError::http(429, "rate limit exceeded".to_string()));
     }
@@ -1409,22 +1417,33 @@ async fn post_trade_inner(
     .await
     {
         Ok(id) => id,
-        // The mirror catches up within a pass: tell the client when to retry.
-        Err(TradeCreationError::ItemUnknown) => {
-            let mut response =
-                creation_error_to_api(TradeCreationError::ItemUnknown).into_response();
-            response.headers_mut().insert(
-                axum::http::header::RETRY_AFTER,
-                axum::http::HeaderValue::from_static("60"),
-            );
-            return Ok(response);
+        Err(
+            e @ (TradeCreationError::ItemUnknown | TradeCreationError::CatalogueUnavailable(_)),
+        ) => {
+            return Ok(retryable_creation_error(e));
         }
         Err(e) => return Err(creation_error_to_api(e)),
     };
     state.catalog_cache.invalidate();
+    // The stored trade as `GET /v1/trades/{id}` answers it; its id alone if that read fails.
+    let data = match super::trades::get_trade_by_id(
+        &state.pool,
+        &id,
+        None,
+        super::trades::TradeScope::Any,
+    )
+    .await
+    {
+        Ok(Some(trade)) => json!(trade),
+        Ok(None) => json!({ "id": id }),
+        Err(e) => {
+            tracing::warn!(error = %e, trade_id = %id, "created trade could not be read back");
+            json!({ "id": id })
+        }
+    };
     Ok((
         StatusCode::CREATED,
-        Json(json!({ "ok": true, "data": { "id": id } })),
+        Json(json!({ "ok": true, "data": data })),
     )
         .into_response())
 }
@@ -1507,7 +1526,7 @@ pub(crate) mod test_support {
     pub fn signed_trade() -> TradeCreation {
         signed_trade_on(
             MATIC_MAINNET,
-            &offchain_marketplace_v2(MATIC_MAINNET).unwrap(),
+            &offchain_marketplace_v3(MATIC_MAINNET).unwrap(),
         )
     }
 }
@@ -1516,6 +1535,27 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::*;
     use super::*;
+
+    /// A trade the catalogue cannot judge yet answers 503 with `Retry-After`:
+    /// an item the mirror has not brought, or an owned network the
+    /// collections index refuses.
+    #[test]
+    fn a_trade_the_catalogue_cannot_judge_yet_says_when_to_retry() {
+        for e in [
+            TradeCreationError::ItemUnknown,
+            TradeCreationError::CatalogueUnavailable("the index is rewinding".into()),
+        ] {
+            let response = retryable_creation_error(e);
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(
+                response
+                    .headers()
+                    .get(axum::http::header::RETRY_AFTER)
+                    .unwrap(),
+                "60"
+            );
+        }
+    }
 
     #[test]
     fn endpoints_parse_per_chain_and_owner_words_decode() {
@@ -1540,6 +1580,7 @@ mod tests {
     fn a_real_mainnet_trade_signature_recovers_its_signer() {
         const SIGNER: &str = "0x02d0bb59a5f04a12d883751dc1605e15b4959b7e";
         let marketplace = OffChainMarketplace {
+            contract: "OffChainMarketplaceV1",
             name: "DecentralandMarketplacePolygon",
             version: "1.0.0",
             address: "0x540fb08edb56aae562864b390542c97f562825ba",
@@ -1737,6 +1778,62 @@ mod tests {
         assert_ne!(status("[2001:db8:7:2::1]").await, 429, "another /64 posts");
     }
 
+    /// A trade that verifies only against an older off-chain marketplace is answered 400 naming
+    /// the contract to sign on, before ownership or the database is consulted.
+    #[tokio::test]
+    async fn a_trade_signed_on_an_older_marketplace_is_refused() {
+        let state = crate::market::tests::support::state_without_db();
+        for chain_id in [
+            MATIC_MAINNET,
+            ETHEREUM_MAINNET,
+            MATIC_AMOY,
+            ETHEREUM_SEPOLIA,
+        ] {
+            let mut trade = signed_trade_on(chain_id, &offchain_marketplace_v2(chain_id).unwrap());
+            if network_for_chain(chain_id) == Some("ETHEREUM") {
+                trade.network = "ETHEREUM".into();
+                sign(&mut trade, &offchain_marketplace_v2(chain_id).unwrap());
+            }
+            let err = create_trade(&state.pool, None, &trade, &trade.signer.clone(), 1_000)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, TradeCreationError::RetiredMarketplace { .. }),
+                "{chain_id}: {err}"
+            );
+            let response = creation_error_to_api(err).into_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body: serde_json::Value = serde_json::from_slice(
+                &axum::body::to_bytes(response.into_body(), 1 << 16)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                body["message"],
+                "Trades signed on OffChainMarketplaceV2 are no longer accepted, sign it on OffChainMarketplaceV3"
+            );
+        }
+    }
+
+    /// The refusal names the marketplace the trade was signed on and the chain's current one.
+    #[test]
+    fn the_retired_marketplace_message_names_both_contracts() {
+        let current = offchain_marketplace_v3(MATIC_MAINNET).unwrap();
+        for signed_on in ["OffChainMarketplaceV1", "OffChainMarketplaceV2"] {
+            let err = TradeCreationError::RetiredMarketplace {
+                signed_on,
+                current: current.contract,
+            };
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "Trades signed on {signed_on} are no longer accepted, sign it on OffChainMarketplaceV3"
+                )
+            );
+        }
+    }
+
     #[tokio::test]
     async fn the_policy_refuses_before_any_signature_or_database_work() {
         let state = crate::market::tests::support::state_without_db();
@@ -1908,7 +2005,7 @@ mod tests {
         pegged.received[0].asset_type = ASSET_TYPE_USD_PEGGED_MANA;
         pegged.received[0].contract_address = NOT_MANA.into();
         for mut trade in [checksummed, pegged] {
-            sign(&mut trade, &offchain_marketplace_v2(MATIC_MAINNET).unwrap());
+            sign(&mut trade, &offchain_marketplace_v3(MATIC_MAINNET).unwrap());
             assert!(matches!(
                 create_trade(pool, None, &trade, &address, 1_000)
                     .await

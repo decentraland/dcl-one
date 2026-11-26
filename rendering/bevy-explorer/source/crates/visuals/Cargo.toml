@@ -3,6 +3,9 @@ name = "visuals"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [lib]
 
 [dependencies]
@@ -20,9 +23,7 @@ bevy_atmosphere = { workspace = true }
 bevy_console = { workspace = true }
 
 clap = { workspace = true }
-chrono = { workspace = true }
-noise = "0.9"
-web-time = { workspace = true }
+half = { workspace = true }
 
 [dev-dependencies]
 assets = { workspace = true }

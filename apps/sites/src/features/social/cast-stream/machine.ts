@@ -1,6 +1,6 @@
 import { delay, makeStepSlugs } from "@/core/lib/stories/index";
 import { toErrorMessage } from "@/core/lib/errors";
-import { assign, fromPromise, setup } from "xstate";
+import { and, assign, fromPromise, setup } from "xstate";
 
 import { track as defaultTrack, type TrackContext, type TrackFn } from "@/core/lib/telemetry/track";
 
@@ -84,6 +84,8 @@ type CastContext = {
   credentials?: StreamerCredentials;
   devices: DeviceSelection;
   permissionsDenied: boolean;
+  /** The devices were chosen with the page's one join action: go live once access is granted. */
+  joinOnGrant: boolean;
   screenSharing: boolean;
   screenShareFailed: boolean;
   joinError?: string;
@@ -93,10 +95,11 @@ type CastContext = {
 };
 
 type CastEvent =
-  | { type: "SELECT_DEVICES"; devices: DeviceSelection; name?: string }
+  /** `join`: the page's one join action chose the devices; join as soon as access is granted. */
+  | { type: "SELECT_DEVICES"; devices: DeviceSelection; name?: string; join?: boolean }
   | { type: "GRANT" }
   | { type: "RETRY_PERMISSIONS" }
-  | { type: "JOIN" }
+  | { type: "JOIN"; name?: string }
   | { type: "BACK" }
   | { type: "TOGGLE_SCREENSHARE" }
   | { type: "SHARE_ENDED" }
@@ -314,6 +317,11 @@ export const castMachine = setup({
         event.type === "SELECT_DEVICES" && event.name?.trim()
           ? event.name.trim()
           : context.identity,
+      joinOnGrant: ({ event }) => event.type === "SELECT_DEVICES" && event.join === true,
+    }),
+    setJoinName: assign({
+      identity: ({ context, event }) =>
+        event.type === "JOIN" && event.name?.trim() ? event.name.trim() : context.identity,
     }),
     trackDevicesSelected: ({ context }) =>
       context.track(
@@ -384,6 +392,7 @@ export const castMachine = setup({
   guards: {
     granted: ({ event }) =>
       "output" in event && (event.output as { granted: boolean }).granted === true,
+    joinOnGrant: ({ context }) => context.joinOnGrant,
     published: ({ event }) =>
       "output" in event && (event.output as { published: boolean }).published === true,
   },
@@ -402,6 +411,7 @@ export const castMachine = setup({
     track: input.track ?? defaultTrack,
     devices: DEFAULT_DEVICES,
     permissionsDenied: false,
+    joinOnGrant: false,
     screenSharing: false,
     screenShareFailed: false,
     connectionLost: false,
@@ -450,6 +460,11 @@ export const castMachine = setup({
         }),
         onDone: [
           {
+            guard: and(["granted", "joinOnGrant"]),
+            target: "joining",
+            actions: ["trackPermissionsGranted", "clearJoinError", "trackJoinRequested"],
+          },
+          {
             guard: "granted",
             target: "preview",
             actions: "trackPermissionsGranted",
@@ -471,7 +486,10 @@ export const castMachine = setup({
     preview: {
       entry: "trackPreviewReady",
       on: {
-        JOIN: { target: "joining", actions: ["clearJoinError", "trackJoinRequested"] },
+        JOIN: {
+          target: "joining",
+          actions: ["setJoinName", "clearJoinError", "trackJoinRequested"],
+        },
         BACK: { target: "deviceSelect" },
       },
     },
@@ -601,6 +619,7 @@ export function resolveCastSnapshot(args: {
     track: track ?? defaultTrack,
     devices: DEFAULT_DEVICES,
     permissionsDenied: false,
+    joinOnGrant: false,
     screenSharing: false,
     screenShareFailed: false,
     connectionLost: false,

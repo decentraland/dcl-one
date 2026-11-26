@@ -78,7 +78,7 @@ export interface MountEngineOptions {
  * `position` and `systemScene` on its query string. The host page reads them and
  * drives the engine's boot contract (`__bevyBootConfig` + `__bevyLaunch`); it
  * leaves `portables` undefined so the engine loads its default
- * `basiccontroller.dcl.eth` PX, which provides the avatar's movement controller
+ * `movecontroller.dcl.eth` PX, which provides the avatar's movement controller
  * (required for WASD walking on the react-web engine). Kept pure + exported for testing.
  */
 export function buildEngineUrl(

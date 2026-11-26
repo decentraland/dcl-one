@@ -1,0 +1,323 @@
+/* The reference's form on decentraland-ui2's dark theme
+   (spacing 8 px, shape radius 6 px, breakpoint md 1024 px, MUI typography). Colours, spacing, radii and font sizes
+   are @dcl/one-ui foundation tokens where the reference value equals one; the others keep the reference value and
+   say so. Font weights, line-heights and letter-spacings are MUI's: no text style has the same set. Widths, heights
+   and offsets are sizes, not tokens. */
+.page {
+  --report-text: rgb(240, 240, 240);
+  --report-text-secondary: rgba(240, 240, 240, 0.7);
+  --report-hover: rgba(255, 255, 255, 0.08);
+
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--dcl-space-96) var(--dcl-space-32) var(--dcl-space-64);
+  box-sizing: border-box;
+  color: var(--report-text);
+  font-family: Inter, Helvetica, Arial, sans-serif;
+}
+
+.content {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.card {
+  background-color: rgba(22, 7, 35, 0.92);
+  border-radius: var(--dcl-radius-md);
+  padding: var(--dcl-space-48) var(--dcl-space-32);
+  max-width: 608px;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-48);
+}
+
+.logoWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  margin-bottom: var(--dcl-space-16);
+}
+
+.logo {
+  width: 64px;
+  height: 64px;
+}
+
+.title {
+  margin: 0;
+  letter-spacing: normal;
+  font-size: 48px; /* reference 48px, no token (heading-lg is 32px below 768px) */
+  line-height: 1.167;
+  font-weight: 600;
+  text-align: center;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+}
+
+.label {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  font-size: var(--dcl-font-size-heading-2);
+  line-height: 1.334;
+  font-weight: 500;
+  letter-spacing: normal;
+}
+
+.bullet {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background-color: var(--dcl-neutrals-white);
+  color: var(--dcl-neutrals-shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--dcl-font-size-button-sm);
+  font-weight: 600;
+  line-height: 24px;
+  flex-shrink: 0;
+}
+
+.required {
+  color: var(--dcl-feedback-error);
+}
+
+.optional {
+  color: var(--dcl-text-secondary);
+}
+
+.helper {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1.43;
+  letter-spacing: 0.01071em;
+  color: var(--dcl-text-secondary);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-xs);
+  line-height: 1.66;
+  letter-spacing: 0.03333em;
+  color: var(--dcl-feedback-error);
+}
+
+.inputGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.counter {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-xs);
+  line-height: 1.66;
+  letter-spacing: 0.03333em;
+  color: var(--report-text-secondary);
+  text-align: right;
+}
+
+.hint {
+  margin: 0 14px;
+  font-size: var(--dcl-font-size-body-xs);
+  line-height: 1.5;
+  letter-spacing: 0.00938em;
+  color: var(--dcl-text-secondary);
+}
+
+.signIn {
+  background-color: rgba(237, 108, 2, 0.12);
+  border: 1px solid var(--dcl-feedback-warning);
+  border-radius: var(--dcl-radius-xs);
+  padding: var(--dcl-space-12) var(--dcl-space-16);
+  color: var(--dcl-feedback-warning);
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1.43;
+  letter-spacing: 0.01071em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-16);
+}
+
+/* Button (text, sm) from @dcl/one-ui, drawn as the reference's MUI warning text button. */
+.signInButton {
+  --button-height: 32px; /* reference 32px: 24px line + 4px padding, no border */
+  height: auto;
+  min-width: 64px;
+  padding: 4px 5px;
+  border: 0;
+  border-radius: var(--dcl-radius-xs);
+  color: var(--dcl-feedback-warning);
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+  flex-shrink: 0;
+}
+
+.signInButton:hover {
+  background-color: rgba(254, 156, 42, 0.08);
+}
+
+.signInNotice {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.signInActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dcl-space-8);
+}
+
+.mismatch {
+  background-color: rgba(251, 59, 59, 0.16);
+  border: 1px solid var(--dcl-feedback-error);
+  border-radius: var(--dcl-radius-xs);
+  padding: var(--dcl-space-12) var(--dcl-space-16);
+  color: var(--dcl-feedback-error);
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1.43;
+  letter-spacing: 0.01071em;
+}
+
+.upload {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-16);
+}
+
+.fileInput {
+  display: none;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dcl-space-8);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  background-color: var(--report-hover);
+  max-width: 100%;
+  box-sizing: border-box;
+  border-radius: var(--dcl-radius-md);
+  padding-inline-start: var(--dcl-space-12);
+  font-size: var(--dcl-font-size-body-xs);
+  line-height: 1.66;
+  letter-spacing: 0.03333em;
+  color: var(--report-text-secondary);
+}
+
+.fileName {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Button (md) from @dcl/one-ui, drawn as the reference's MUI contained small button. */
+.addFile,
+.submit {
+  --button-height: 36px; /* reference 36px: 24px line + 6px padding, no border */
+  align-self: flex-start;
+  height: auto;
+  min-width: 64px;
+  padding: 6px var(--dcl-space-16);
+  border: 0;
+  border-radius: var(--dcl-radius-xs);
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.4px;
+}
+
+.addFile {
+  background-color: var(--dcl-neutrals-pale-black);
+  color: var(--dcl-neutrals-snow);
+}
+
+.addFile:hover:not(:disabled) {
+  background-color: rgb(46, 44, 51);
+}
+
+.addFile:disabled {
+  cursor: default;
+}
+
+.submitError {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1.43;
+  letter-spacing: 0.01071em;
+  color: var(--dcl-feedback-error);
+}
+
+.submit:hover:not(:disabled) {
+  background-color: var(--dcl-primary-primary);
+}
+
+.submit:disabled {
+  opacity: 1;
+  background-color: rgb(248, 145, 157);
+  color: rgb(254, 233, 236);
+  cursor: default;
+}
+
+.footer {
+  margin: var(--dcl-space-16) 0 0;
+  font-size: var(--dcl-font-size-body-xs);
+  line-height: 1.66;
+  letter-spacing: 0.03333em;
+  color: var(--report-text-secondary);
+  text-align: center;
+}
+
+.footerLink {
+  color: var(--dcl-primary-primary);
+  text-decoration: none;
+}
+
+.footerLink:hover {
+  text-decoration: underline;
+}
+
+.footerLink:focus-visible,
+.signInButton:focus-visible,
+.addFile:focus-visible,
+.submit:focus-visible {
+  outline: 2px solid var(--dcl-primary-primary);
+  outline-offset: 2px;
+}
+
+@media (min-width: 1024px) {
+  .page {
+    padding-top: 128px;
+    padding-bottom: var(--dcl-space-96);
+  }
+
+  .card {
+    padding: var(--dcl-space-48) var(--dcl-space-64);
+  }
+}

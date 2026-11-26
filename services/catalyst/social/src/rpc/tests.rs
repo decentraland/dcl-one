@@ -34,6 +34,14 @@ use super::{Settings, State};
 use crate::comms::gatekeeper::voice::db::{PendingPrivateCall, VoiceDb};
 use crate::jobs::Jobs;
 
+/// A pool on a closed port: every acquire fails after 500 ms instead of sqlx's 30 s default.
+pub(crate) fn closed_pool() -> sqlx::PgPool {
+    sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(500))
+        .connect_lazy("postgres://localhost/unused")
+        .unwrap()
+}
+
 mod auxiliary_source_cases;
 mod community_voice;
 mod connectivity;
@@ -882,9 +890,7 @@ async fn sweep_tick_issues_no_delete_until_a_call_is_due() {
 
 #[tokio::test]
 async fn self_call_is_forbidden_before_any_read() {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .connect_lazy("postgres://localhost/unused")
-        .unwrap();
+    let pool = closed_pool();
     let ctx = test_ctx(
         Db::new(pool.clone()),
         Arc::new(FakeVoiceRooms::new(pool.clone())),
@@ -914,9 +920,7 @@ async fn self_call_is_forbidden_before_any_read() {
 
 #[tokio::test]
 async fn a_missing_voice_runtime_refuses_the_call_explicitly() {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .connect_lazy("postgres://localhost/unused")
-        .unwrap();
+    let pool = closed_pool();
     let ctx = test_ctx(
         Db::new(pool),
         Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
@@ -1159,6 +1163,11 @@ async fn reject_and_disconnect_delete_through_voice_owner_before_signalling() {
 
 async fn seed_community(pool: &PgPool, active: bool, address: &str, role: &str) -> Uuid {
     let id = Uuid::new_v4();
+    seed_community_with_id(pool, id, active, address, role).await;
+    id
+}
+
+async fn seed_community_with_id(pool: &PgPool, id: Uuid, active: bool, address: &str, role: &str) {
     sqlx::query(
         "INSERT INTO social.communities (id, name, description, owner_address, private, active, unlisted) \
          VALUES ($1, 'Voice Soft Delete Community', 'description', $2, FALSE, $3, FALSE)",
@@ -1176,7 +1185,6 @@ async fn seed_community(pool: &PgPool, active: bool, address: &str, role: &str) 
         .execute(pool)
         .await
         .unwrap();
-    id
 }
 
 async fn drop_community(pool: &PgPool, id: Uuid) {
@@ -1553,11 +1561,7 @@ async fn spawn_server_with(
     settings: Settings,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
 ) -> Server {
-    let pool = pool.unwrap_or_else(|| {
-        sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://localhost/unused")
-            .unwrap()
-    });
+    let pool = pool.unwrap_or_else(closed_pool);
     let ctx = test_ctx(
         Db::new(pool.clone()),
         Arc::new(FakeVoiceRooms::new(pool.clone())),
@@ -2071,11 +2075,7 @@ async fn a_malformed_request_body_is_a_400_remote_error() {
     let mut def = super::drpc::service_module_definition::ServiceModuleDefinition::<Context>::new();
     let svc = Arc::new(SocialServiceImpl);
     let ctx = test_ctx(
-        Db::new(
-            sqlx::postgres::PgPoolOptions::new()
-                .connect_lazy("postgres://localhost/unused")
-                .unwrap(),
-        ),
+        Db::new(closed_pool()),
         Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
     );
     {
@@ -2107,4 +2107,68 @@ async fn a_malformed_request_body_is_a_400_remote_error() {
         .await
         .unwrap_err();
     assert_eq!(err.error_code, 400);
+}
+
+/// Communities' online members come from the Pulse topology `start_topology` hands the
+/// social RPC: whichever of the two is attached first, the communities state reads it.
+#[tokio::test]
+async fn communities_read_the_topology_whichever_is_attached_first() {
+    use crate::comms::protocol::pulse::decentraland::kernel::comms::v3::{
+        IslandData, IslandStatusMessage,
+    };
+    const WALLET: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let frame = IslandStatusMessage {
+        data: vec![IslandData {
+            peers: vec![WALLET.into()],
+            ..Default::default()
+        }],
+    }
+    .encode_to_vec();
+    let dir = std::env::temp_dir().join(format!("catalyst-topology-wiring-{}", Uuid::new_v4()));
+    let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+    let communities = || {
+        let pool = closed_pool();
+        Arc::new(crate::communities::State::new(
+            pool.clone(),
+            storage.clone(),
+            crate::communities::Settings::for_tests(),
+            None,
+            &crate::http::Outbound::for_tests(),
+            crate::communities::State::explore_for_tests(&pool),
+        ))
+    };
+    let rpc = || {
+        let pool = closed_pool();
+        Arc::new(State::with_context(
+            Settings::default(),
+            test_ctx(Db::new(pool.clone()), Arc::new(FakeVoiceRooms::new(pool))),
+            None,
+        ))
+    };
+    let jobs = Jobs::new();
+
+    // serve's order: the communities first, then the topology
+    let (state, attached) = (rpc(), communities());
+    state.ctx.set_communities(attached.clone());
+    let topology = Arc::new(crate::comms::topology::Topology::default());
+    state.start_topology(&jobs, topology.clone());
+    topology.receive(&frame).unwrap();
+    assert_eq!(
+        attached.online_wallets().iter().collect::<Vec<_>>(),
+        vec![WALLET]
+    );
+
+    // the topology first, then the communities
+    let (state, attached) = (rpc(), communities());
+    let topology = Arc::new(crate::comms::topology::Topology::default());
+    state.start_topology(&jobs, topology.clone());
+    state.ctx.set_communities(attached.clone());
+    topology.receive(&frame).unwrap();
+    assert_eq!(
+        attached.online_wallets().iter().collect::<Vec<_>>(),
+        vec![WALLET]
+    );
+
+    jobs.shutdown(Duration::from_secs(2)).await;
+    let _ = std::fs::remove_dir_all(&dir);
 }

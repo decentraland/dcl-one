@@ -160,7 +160,7 @@ abgen can publish, per scene, wearable and emote entity, GPU-ready variants of i
 
 With a base url:
 
-- For each scene, wearable and emote entity it loads, the explorer fetches `{base}/bevy/manifest/{entityId}.json` once per session; a scene's is requested with its entity file. Manifests and variants are fetched in one attempt with short timeouts, since the original is the retry. A 404 means no variants for that entity. The entity's files wait for the manifest for at most two seconds from the request; after that they load their originals, and a manifest that arrives later serves only the files read after it. The manifest (schema `v: 3`) maps each original content CID to the paths of its variants, `bevy/{prefix}/{name}`; a prefix's first letter is the variant's class (`t` a BC KTX2 texture, `m` a `glb-br` model, `g` a GLB). It names no hash for a variant: abgen keeps a path's bytes fixed for the life of its generation, so the explorer trusts a variant by its path from the configured service and rejects only what fails to decode.
+- For each scene, wearable and emote entity it loads, the explorer fetches `{base}/bevy/manifest/{entityId}.json` once per session; a scene's is requested with its entity file. Manifests and variants are fetched in one attempt with short timeouts, since the original is the retry. A 404 means no variants for that entity. The entity's files wait for the manifest for at most two seconds from the request; after that they load their originals, and a manifest that arrives later serves only the files read after it. The manifest maps each original content CID to the list of paths of its variants, `bevy/{prefix}/{name}`, and a prefix's first letter is the variant's class (`t` a BC KTX2 texture, `m` a `glb-br` model, `g` a GLB). The `files` map is required; the manifest's `v` is abgen's and does not decide whether the manifest is accepted, and fields the explorer does not know are ignored. It names no hash for a variant: abgen keeps a path's bytes fixed for the life of its generation, so the explorer trusts a variant by its path from the configured service and rejects only what fails to decode.
 - Nothing in preview mode asks for a manifest, including wearables and emotes, nor do `b64-` entity ids or entities served from a loopback or `file://` content server.
 - When a content file `.png`, `.jpg`, `.jpeg`, `.webp` or `.ktx2`, or one without an extension, has a texture variant and the GPU supports BC textures, the file is read from `{base}/{path}` instead. The bytes are cached under a digest of that url, never under the original's hash.
 - The reader hands the KTX2 to the image loaders as it is, after checking that its header names a BC format (BC1, BC5 or BC7). The loaders for `.png`, `.jpg`, `.jpeg`, `.webp`, `.ktx2` and paths without an extension unwrap it into a DDS with a DX10 header, inside the asset load: each level is zstd-decoded, and its size must be exactly the block bytes its dimensions need. Dimensions above 8192, a level 0 that is not whole 4×4 blocks, more levels than the mip chain, sRGB or other formats, and any other supercompression are rejected. The asset keeps its original path, and the texture is sRGB or linear as it is requested.
@@ -219,6 +219,14 @@ Console commands:
   portables included: a debug listing, where `/portables` and the scenes' own
   `getPortableExperiencesLoaded` hide them.
 
+A scene loaded as a portable experience whose scene.json also declares
+`isPortableExperience: true` can place map pins (`MapPin`); no other scene's pins are read. The
+HUD follows them through `getMapPinsStream` (`MapPinInfo`: the parcel and the title cut to 100
+characters) and draws them, each as the default quest pin,
+on the full map and the minimap under the Layers panel's Quest Mini-Games switch.
+`/map_pins_state` (the debug panel's Map pins section) reports the scenes read, the pins read and
+ignored, and the list last sent to the HUD.
+
 ## Testing
 
 ```bash
@@ -243,13 +251,21 @@ The console (`/help` lists it; `window.engine_console_command` in the app frame 
 client's agent surface, the same in every build: end-to-end tests and people's own agents drive the
 deployed clients through it, the HUD included, so nothing outside the client rebuilds the plumbing.
 Replies are JSON where the command says so; a failed command rejects (web) or answers `ok: false`
-(loopback), with no marker in the text. Arguments split on whitespace.
+(loopback), with no marker in the text. Arguments split on whitespace, and a double-quoted run is
+one argument (`/chat nearby "two words"`), in the chat input as over a transport; a command that
+takes JSON takes the rest of the line, split on whitespace alone. A reply with a screen position carries `screen` (`width`, `height` in logical pixels, `scale`);
+the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.md) has the rules
+(quoting, normalized coordinates).
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
   after a teleport reads it first; `keyboardClaimed`, true while a text field holds the keys),
+  `/teleport_state` (`pending`, the spawn point a landing under way looks for by name, and `last`:
+  the `name` the last such landing looked for and `found`, whether its scene had it;
+  `/teleport <x> <y> [realm] --spawn <name>` asks for such a landing),
   `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only, as received: blocks and scene bans are not applied), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
+  `/preview_textures` (the preview server's last texture optimization status, in preview mode),
   `/nametag_state` (the nametags: `visible`, `shown`, `sceneAvatars` and `hidden` counts, the glyph `atlas` page
   sizes, the chat `bubbles` setting, and each shown tag's `player`, `sceneAvatar`, `name`, `suffix`, `verified`,
   `official`, `voice`, `distance`, `opacity`, `scale`, `position`, `headOffset` and `bubble`, which is its
@@ -260,26 +276,42 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   showing that message; replies with nothing), `/nametag_official <address> [bool]` (reads or
   sets, for the session, whether a wallet's nametag carries the official badge; replies with
   `address` and `official`),
+  `/reaction_state` (the situational reactions: whether they show in the `world` and on the
+  `screenLane`, the `picked`, `outbox`, `refusedPicks`, `sent`, `received`, `queued`, `played`
+  and `streamed` counts, the `subscribers` streams, the `particles` alive, drawn and waiting for
+  glyphs, the glyph `atlas` page size, and those `dropped` by cause),
+  `/reaction_simulate <local|nearest|address> <emoji> [count]` (takes a message of reactions as if
+  that player had sent it, on this client only; replies with the `target` taken and the emoji's
+  wire `index`), `/reaction_atlas_rebuild` (has the reactions' glyph atlas rebuilt at its next
+  upkeep; replies with nothing),
   `/voice_state` (the nearby mic, with `sceneBlocked` while the scene the player stands in turns
-  nearby voice off, the nearby voice rooms and, as `call`, the private call or community stream the
-  player is in: `status`, `kind`, `peer`, `communityId`, `connection`, `participants`,
-  `micEnabled`, `localSpeaker`, `localRole`, `error`, `errorIsNotice`),
+  nearby voice off or its room refused the player as banned, asking again every 15 seconds; the
+  nearby voice rooms and, as `call`, the private call or community stream the player is in:
+  `status`, `kind`, `peer`, `communityId`, `connection`, `participants`, `micEnabled`,
+  `localSpeaker`, `localRole`, `error`, `errorIsNotice`),
   `/connectivity_state` (safe room state, offline warning and reachability probe; room states
   match voice diagnostics, with `connecting` for first admission and `failed` for refused dials),
   `/connectivity_retry` (immediate recovery without overriding denied access),
   `/ban_block_state [address]` (platform ban, current scene admission, social blocks and
   scene moderation lists; Nearby chat and reactions from an address the scene room bans are
-  dropped; `/ban_block_refresh` re-checks the platform ban), `/entity_screen_position <entity>
-  [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
+  dropped, and nearby voice is not subscribed from an address blocked either way or banned by the
+  connected scene room, while calls still carry it; `/ban_block_refresh` re-checks the platform
+  ban), `/scene_topics` (scene-room routing, topic traffic, rejection and CRDT-filter counters,
+  plus the binary payload limit), `/item_purchase_state` (the scene item purchase request in
+  flight and how the last one ended; `/item_purchase_cancel` drops the one in flight),
+  `/home_state` (the signed-in account's home and the home that applies at startup;
+  `/home_clear` takes that account's home back), `/entity_screen_position <entity>
+  [--bounds]` (pixels, `normalized` and `screen`), `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
   close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
   and the scene commands.
 - Social: `/block_user <address>` and `/unblock_user <address>` block and unblock through the
   social service, as the passport does.
-- Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`
-  and `/react <channel> <message id> <emoji>` send as the HUD does; `/community_channels [add
-  <id>|remove <id>|clear]` lists or edits the community channels the engine listens to, which
-  the HUD sets from the user's communities (the engine drops community messages on any other).
+- Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`,
+  `/react <channel> <message id> <emoji>` and `/reaction_send <emoji>` send as the HUD does;
+  `/community_channels [add <id>|remove <id>|clear]` lists or edits the community channels the
+  engine listens to, which the HUD sets from the user's communities (the engine drops community
+  messages on any other).
 - Voice chat, as the HUD's buttons do it and through the same refusals: `/voice call <address>`
   rings a user, `/voice accept` and `/voice reject` answer a ringing call, `/voice end` hangs up
   or leaves a stream, `/voice start|join <community id>` opens or joins a stream, `/voice close`
@@ -290,16 +322,23 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 - Saved mutes for nearby voice: `/nearby_mute on|off <address>` mutes or unmutes a wallet, as the
   profile menu's Hush and Hear do, and `/nearby_mutes` reports the account's list. The debug
   panel's "Nearby voice mutes" section shows it and binds both.
-- In development builds the lower-right bug button toggles the debug panel. In all builds,
-  open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by
+- Start the desktop client with `--debug-panel` or add `debugPanel=1` to the web page query
+  to show the lower-right bug button. In all builds, open **Sidebar settings (•••) → Debug panel**
+  or type `/debug` in chat. Search by
   section or control, or enter `/debug Performance` directly. Expanded sections refresh
   about once per second. `/debug help` lists the available sections. Engine plugins
-  advertise their queries, fields and controls through `/debug_panel`. The HUD offers session actions
-  and checks `/debug_panel --dev-build` for the engine's compile-time development flag.
+  advertise their queries, fields and controls through `/debug_panel`. The HUD also offers session actions.
   Use the panel to inspect a scene, compare frame and memory measurements, diagnose
   room and media connections, and exercise supported controls. Availability depends
   on the build, platform and preview mode. `/performance_state` reports the effective
-  frame-rate target and session override independently of the panel.
+  frame-rate target and session override, the sampling status, the latest 15 s performance
+  snapshot and the frame-time breakdown independently of the panel; `/debug_memory`, and in a
+  `performance-profiler` build `/render_state` and `/profile_top`, the rest
+  ([profiling](../docs/guidelines/profiling.md)). On the web, `/scene_loop_state` reports the
+  scene loop's scheduling (mode, the last loop's deadline source and budget, the frame tail's
+  reserve, the waits' lateness and the scenes whose relays wake) and `/scene_loop_mode
+  <both|relay|deadline|legacy>` switches its mode without a reload
+  ([scheduling](../docs/guidelines/scheduling.md)).
 - The HUD, by role and accessible name (`library/explorer-core/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON
@@ -314,12 +353,14 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   that keeps its start page. `/hud_logout` signs the HUD out, the engine with it, so `/hud_login`
   can sign in again; the engine's `/logout` leaves the HUD signed in.
 - Input: `/press_key <code> [--state down|up]` (`KeyboardEvent.code` names) and
-  `/click_at <x> <y> [--button left|right|middle]`. Natively these and the HUD commands go through
+  `/click_at <x> <y> [--button left|right|middle] [--normalized]` (logical pixels, or 0 to 1 of the
+  window with `--normalized`; replies JSON `x`, `y`, `normalized`, `button`, `screen`). Natively these and the HUD commands go through
   CEF and the window's own input, always real. On the web the page needs a DevTools client to make
   them real (below); without one they fall back to DOM events and say `"input": "synthetic"`.
 - Portables and smart wearables: `/portables`, `/stop_portable <hash>`, `/smart_wearables`,
   `/smart_wearable run|kill|restart <urn>` and the `, smart wearable` mark in `/live_scenes`
-  ([Smart wearables and portables](#smart-wearables-and-portables)).
+  ([Smart wearables and portables](#smart-wearables-and-portables)); a portable experience's map
+  pins: `/map_pins_state`.
 - Scene pointer: `/hover_entity <entity>` and `/click_entity <entity>` hover and click a scene
   entity by id through the pointer pipeline, on native and web alike, and answer with the hit, the
   hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`). A hover
@@ -330,6 +371,13 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   to the engine through `engine_console_command` and write Bevy input events, unlike `/press_key`
   and `/click_at`, which need a DevTools client for real input. `docs/guidelines/interaction.md`
   has the options, replies and diagnoses.
+- Scene animations: `/scene_animations` (the `models` that animate and how many are
+  `withAnimator`; the clips `playing`, `stopped` by their scene and `finished`; `finishReports`,
+  the finished clips reported to scenes; and up to 32 `clips`, each with its `scene` (the base
+  parcel), `entity`, `clip`, `state`, `weight`, `speed`, `seekSeconds`, `durationSeconds` and
+  `looping`).
+- Movement: `/movement_state` reads the locomotion settings, the last movement step and the
+  height over the ground.
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 **The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC
@@ -361,6 +409,13 @@ its modifier on every event until its `up`. The page waits 10 s for the answer, 
 command. Nothing else about the runner is part of the contract; `local-harness/web-driver/README.md`
 documents that runner (Node 24 and Chrome, no dependency), and the end-to-end suite in
 `apps/bevy-explorer/e2e` builds on it.
+
+**Driving a local scene by hand or by agent.** `pnpm run drive --scene <dir> [--position x,y]
+< commands.txt` in `apps/bevy-explorer/e2e` serves the web app and a loopback realm holding the
+built scene folders, boots a guest at the parcel (the first scene's base parcel by default), runs
+each console line read from stdin and prints one `{line, ok, reply, ms}` JSON line per command;
+it keeps the last frame as `final.png` when stdin closes. The e2e README's "Drive a scene by hand
+or by agent" has the flags.
 
 ## CI and release channels
 

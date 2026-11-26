@@ -1,15 +1,7 @@
 import { useCallback } from 'react';
-import PushPinIcon from '@mui/icons-material/PushPin';
-import DownloadIcon from '@mui/icons-material/FileDownloadOutlined';
-import {
-  Box,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
-  Typography,
-} from 'decentraland-ui2';
+import Text from '@ui/atoms/Text';
+
+import { PushPinIcon, FileDownloadOutlinedIcon as DownloadIcon } from '@ui/atoms/icons-material';
 
 import type { PlaceAnalyticsSummary } from '/shared/types/place-analytics';
 
@@ -25,6 +17,11 @@ import {
 } from '../utils';
 
 import './styles.css';
+
+const PALETTE_COLORS: Record<string, string> = {
+  'success.main': 'var(--success)',
+  'primary.main': 'var(--primary)',
+};
 
 type Props = {
   places: PlaceAnalyticsSummary[];
@@ -55,96 +52,102 @@ export function PlacesTable({ places, pinnedPlaceIds, onTogglePin, onSelectPlace
   );
 
   return (
-    <Table className="PlacesTable">
-      <TableHead>
-        <TableRow>
-          <TableCell>{t('analytics.list.columns.place')}</TableCell>
-          <TableCell>{t('analytics.list.columns.total_visits')}</TableCell>
+    <table className="PlacesTable">
+      <thead>
+        <tr>
+          <th scope="col">{t('analytics.list.columns.place')}</th>
+          <th scope="col">{t('analytics.list.columns.total_visits')}</th>
           {/* new_users: awaiting a first-time-visitor metric.
-          <TableCell>{t('analytics.list.columns.new_users')}</TableCell> */}
-          <TableCell>{t('analytics.list.columns.day_7_retention')}</TableCell>
+          <th scope="col">{t('analytics.list.columns.new_users')}</th> */}
+          <th scope="col">{t('analytics.list.columns.day_7_retention')}</th>
           {/* revenue: awaiting a revenue metric.
-          <TableCell>{t('analytics.list.columns.revenue')}</TableCell> */}
-          <TableCell>{t('analytics.list.columns.median_playtime')}</TableCell>
-          <TableCell>{t('analytics.list.columns.concurrent_users')}</TableCell>
-          <TableCell className="ActionsCell" />
-        </TableRow>
-      </TableHead>
-      <TableBody>
+          <th scope="col">{t('analytics.list.columns.revenue')}</th> */}
+          <th scope="col">{t('analytics.list.columns.median_playtime')}</th>
+          <th scope="col">{t('analytics.list.columns.concurrent_users')}</th>
+          <th className="ActionsCell" />
+        </tr>
+      </thead>
+      <tbody>
         {places.map(place => (
-          <TableRow
+          <tr
             key={place.placeId}
-            hover
             tabIndex={0}
             role="button"
             aria-label={place.name}
             onClick={() => onSelectPlace(place.placeId)}
             onKeyDown={e => {
+              // Keys from the options button and its menu (in a portal, but in this React tree) are not for the row.
+              if (e.target !== e.currentTarget) return;
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
                 onSelectPlace(place.placeId);
               }
             }}
           >
-            <TableCell>
-              <Box className="PlaceCell">
+            <td>
+              <div className="PlaceCell">
                 <img
                   className="Thumbnail"
                   src={place.thumbnail}
                   alt=""
                 />
-                <Typography variant="body2">{place.name}</Typography>
+                <Text
+                  variant="body2"
+                  className="PlaceName"
+                >
+                  {place.name}
+                </Text>
                 {pinnedPlaceIds.includes(place.placeId) && (
                   <PushPinIcon
                     className="PinnedIcon"
                     fontSize="small"
-                    titleAccess={t('analytics.list.pinned')}
+                    title={t('analytics.list.pinned')}
                   />
                 )}
-              </Box>
-            </TableCell>
+              </div>
+            </td>
             {place.hasNoData ? (
               /*
                * The API returned nothing for this scene — either it holds no rows
                * in today's export or this wallet may not read it, deliberately
                * indistinguishable. Neither is an error.
                */
-              <TableCell
+              <td
                 colSpan={4}
                 className="NoDataCell"
               >
-                <Typography variant="body2">{t('analytics.no_data_yet')}</Typography>
-              </TableCell>
+                <Text variant="body2">{t('analytics.no_data_yet')}</Text>
+              </td>
             ) : (
               <>
-                <TableCell>{formatCount(place.totalVisits)}</TableCell>
+                <td>{formatCount(place.totalVisits)}</td>
                 {/* new_users: awaiting a first-time-visitor metric.
-                <TableCell>{formatCount(place.newUsers)}</TableCell> */}
-                <TableCell>
-                  <Typography
+                <td>{formatCount(place.newUsers)}</td> */}
+                <td>
+                  <Text
                     variant="body2"
-                    color={getRetentionColor(place.day7Retention)}
+                    style={{ color: PALETTE_COLORS[getRetentionColor(place.day7Retention) ?? ''] }}
                   >
                     {formatPercentage(place.day7Retention)}
-                  </Typography>
-                </TableCell>
+                  </Text>
+                </td>
                 {/* revenue: awaiting a revenue metric.
-                <TableCell>
+                <td>
                   <ManaValue>{formatRevenue(place.revenue)}</ManaValue>
-                </TableCell> */}
-                <TableCell>{formatMinutes(place.medianPlaytime)}</TableCell>
-                <TableCell>{formatDecimal(place.concurrentUsers)}</TableCell>
+                </td> */}
+                <td>{formatMinutes(place.medianPlaytime)}</td>
+                <td>{formatDecimal(place.concurrentUsers)}</td>
               </>
             )}
-            <TableCell className="ActionsCell">
+            <td className="ActionsCell">
               <Dropdown
                 label={t('menu.options_for', { name: place.name })}
                 options={getDropdownOptions(place)}
               />
-            </TableCell>
-          </TableRow>
+            </td>
+          </tr>
         ))}
-      </TableBody>
-    </Table>
+      </tbody>
+    </table>
   );
 }

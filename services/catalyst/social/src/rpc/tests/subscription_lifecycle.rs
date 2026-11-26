@@ -32,11 +32,9 @@ impl ServiceClient<MemoryTransport> for MemoryClient {
 /// rejected duplicates must not allocate another pubsub receiver.
 #[tokio::test]
 async fn duplicate_rpc_streams_send_the_pinned_final_notice_and_source_metrics() {
-    let recorder = crate::comms::metrics::prometheus_builder()
-        .unwrap()
-        .build_recorder();
+    let recorder = crate::rpc::metrics_builder().unwrap().build_recorder();
     let handle = recorder.handle();
-    let _recording = metrics::set_default_local_recorder(&recorder);
+    let _recording = dcl_metrics::set_default_local_recorder(&recorder);
     let ctx = context_without_database();
     let me = addr("dup");
     ctx.register_identity(1, me.clone());

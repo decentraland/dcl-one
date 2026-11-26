@@ -1,4 +1,3 @@
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- ReactEcs is the JSX factory
 import ReactEcs, { UiEntity } from '@dcl/react-ecs';
 import type { DeepReadonlyObject, Entity, IEngine, PBVideoPlayer } from '@dcl/ecs';
 import { openExternalUrl } from '~system/RestrictedActions';
@@ -28,6 +27,7 @@ export function LiveStream({
   const [showResetStreamKey, setResetStreamKey] = ReactEcs.useState<boolean>(false);
   const [loading, setLoading] = ReactEcs.useState<boolean>(false);
   const [hasStreamKey, setHasStreamKey] = ReactEcs.useState<boolean>(false);
+  const [streamingUrl, setStreamingUrl] = ReactEcs.useState<string | undefined>(undefined);
   const { VideoControlState } = getComponents(engine);
   const videoControlState = VideoControlState.getOrNull(state.adminToolkitUiEntity);
   const streamKeyEndsAt = videoControlState?.endsAt;
@@ -42,6 +42,7 @@ export function LiveStream({
         setHasStreamKey(false);
       } else {
         videoControlState.endsAt = data?.endsAt;
+        setStreamingUrl(data?.streamingUrl);
         setHasStreamKey(true);
       }
       setLoading(false);
@@ -96,6 +97,7 @@ export function LiveStream({
       ) : hasStreamKey ? (
         <ShowStreamKey
           endsAt={streamKeyEndsAt ?? 0}
+          streamingUrl={streamingUrl}
           engine={engine}
           entity={entity}
           video={video}
@@ -104,7 +106,10 @@ export function LiveStream({
       ) : (
         <GenerateStreamKey
           engine={engine}
-          onGenerate={() => setHasStreamKey(true)}
+          onGenerate={url => {
+            setStreamingUrl(url);
+            setHasStreamKey(true);
+          }}
         />
       )}
     </UiEntity>

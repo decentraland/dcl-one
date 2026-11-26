@@ -176,6 +176,18 @@ Notes for reviewers:
   rebuilds `agents/bevy` whenever its sources are newer than its bundle. Note a
   running watch server does NOT re-run it — restart `pnpm run start` (or run `make
   build-bevy-agent`) after an agent change.
+- **AI sharing against a local service.** The service that stores shared AI
+  conversations (Assistant Insights, in the private dcl-two repository) runs on
+  a laptop with `make dev && make seed` in `services/assistant-insights`. Point
+  a dev build at it with one variable; no JSON config to edit and no flag to set:
+
+  ```bash
+  cd packages/creator-hub && VITE_AI_SHARING_API_URL=http://localhost:3000 pnpm run start
+  ```
+
+  In a dev build it overrides `AI_SHARING_API_URL` and turns the
+  `creatorhub-ai-prompt-sharing` flag on (a stored flag override can still turn
+  it off). Packaged and release builds ignore it (`renderer/src/lib/aiSharingDevUrl.ts`).
 
 ## 📋 Makefile Commands
 
@@ -207,8 +219,8 @@ The project uses a Makefile to manage common development tasks:
 
 | Command          | Description                           |
 | ---------------- | ------------------------------------- |
-| `make lint`      | Run ESLint across all packages        |
-| `make lint-fix`  | Fix ESLint issues automatically       |
+| `make lint`      | Run oxlint across all packages        |
+| `make lint-fix`  | Fix oxlint issues automatically       |
 | `make format`    | Format code with Prettier             |
 | `make typecheck` | Run TypeScript type checking          |
 | `make test`      | Run unit tests for all packages       |
@@ -216,10 +228,9 @@ The project uses a Makefile to manage common development tasks:
 
 ### Dependency Management
 
-| Command              | Description                                             |
-| -------------------- | ------------------------------------------------------- |
-| `make sync-deps`     | Synchronize dependencies across packages using syncpack |
-| `make lint-packages` | Check for dependency mismatches                         |
+| Command              | Description                     |
+| -------------------- | ------------------------------- |
+| `make lint-packages` | Check for dependency mismatches |
 
 ### Cleanup Commands
 
@@ -350,11 +361,11 @@ Handles inspector package deployment:
 
 Handles desktop application builds:
 
-- **Multi-platform Builds** - macOS and Windows
-- **Code Signing** - Automatic code signing for both platforms
+- **Multi-platform Builds** - macOS, Windows and Linux (x64 AppImage and deb), for Ubuntu 22.04 and later or any system with glibc 2.35 and later
+- **Code Signing** - Automatic code signing for macOS and Windows
 - **Notarization** - macOS notarization
 - **Artifact Distribution** - Uploads to S3 and GitHub releases
-- **PR Testing** - Provides download links for PR testing; a pull request builds the desktop app only with the `ci:desktop` label (label, then push or reopen)
+- **PR Testing** - Provides download links for PR testing; a pull request builds the macOS, Windows and Linux installers only with the `ci:desktop` label, and the Linux installers alone with the `ci:linux` label (label, then push or reopen)
 
 ## 🏗️ Architecture
 
@@ -370,10 +381,10 @@ packages:
 
 ### Dependency Management
 
-- **syncpack** is used to synchronize dependencies across packages
+- `make lint-packages` checks that the packages agree on the version of each dependency they share
 - Shared dependencies are defined in the root `package.json`
 - Package-specific dependencies are in each package's `package.json`
-- The `@dcl/inspector` dependency is managed specially in `.syncpackrc.json`
+- The `@dcl/inspector` and `@dcl/asset-packs` dependencies are local packages, so that check skips them
 
 ### Protocol Buffers
 
@@ -504,10 +515,9 @@ xattr -c /Applications/Decentraland\ Creator\ Hub.app/
 
 ### Code Quality
 
-- **ESLint** - Code linting with custom rules
+- **oxlint** - Code linting with custom rules
 - **Prettier** - Code formatting
 - **TypeScript** - Static type checking
-- **syncpack** - Dependency synchronization
 
 ## 📦 Publishing
 
@@ -528,7 +538,7 @@ xattr -c /Applications/Decentraland\ Creator\ Hub.app/
 
 ### Creator Hub App
 
-- Multi-platform builds (macOS, Windows)
+- Multi-platform builds (macOS, Windows, Linux)
 - Code signed and notarized
 - Distributed via GitHub releases and S3
 - PR builds available for testing

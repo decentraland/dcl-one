@@ -3,7 +3,8 @@
 // reminder set here shows on the card too.
 
 import { useEffect } from 'react'
-import { Button, MaskIcon, openPopup } from '../../design'
+import type { EventData } from '@explorer-core/engine/protocol'
+import { openPopup } from '../../design'
 import closeIcon from '../../assets/events/close-icn-thin.png'
 import calendarAddIcon from '../../assets/events/add-to-calendar-icn.png'
 import jumpInIcon from '../../assets/events/jump-in-outline.png'
@@ -14,8 +15,12 @@ import { EventActionButtons, EventImage } from './EventCard'
 import { eventPlaceText, eventTimeText, scheduleDates, scheduleText } from './eventFormat'
 import { useEventActions } from './useEventActions'
 import styles from './EventDetail.module.css'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
-function EventDetail({ eventId, onClose }: { eventId: string; onClose: () => void }): React.JSX.Element | null {
+/** Travels to the event; false when it could not, and the detail stays open. */
+export type EventJumpIn = (event: EventData) => boolean
+
+function EventDetail({ eventId, onJumpIn, onClose }: { eventId: string; onJumpIn?: EventJumpIn; onClose: () => void }): React.JSX.Element | null {
   const { store } = useSession().events.data
   const actions = useEventActions()
   const event = store.byId[eventId]
@@ -27,7 +32,7 @@ function EventDetail({ eventId, onClose }: { eventId: string; onClose: () => voi
   if (event == null) return null
   const place = event.place_id != null ? store.places[event.place_id] : undefined
   const jumpIn = (): boolean => {
-    const travelling = actions.jumpIn(event)
+    const travelling = (onJumpIn ?? actions.jumpIn)(event)
     if (travelling) onClose()
     return travelling
   }
@@ -69,20 +74,20 @@ function EventDetail({ eventId, onClose }: { eventId: string; onClose: () => voi
             <div className={styles.place}>
               <MaskIcon src={pinIcon} size={24} className={styles.icon} />
               <span className={styles.placeName}>{eventPlaceText(event, place)}</span>
-              <Button size="bare" radius="button" variant="primary" className={styles.placeJump} aria-label={`Jump in to ${eventPlaceText(event, place)}`} onClick={jumpIn}>
+              <Button appearance="hud" size="bare" radius="button" variant="primary" className={styles.placeJump} aria-label={`Jump in to ${eventPlaceText(event, place)}`} onClick={jumpIn}>
                 <span>JUMP IN</span>
                 <MaskIcon src={jumpInIcon} size={20} />
               </Button>
             </div>
           </div>
         </div>
-        <Button size="bare" radius="md" variant="shade" className={styles.close} aria-label="Close event detail" onClick={onClose}>
+        <Button appearance="hud" size="bare" radius="md" variant="shade" className={styles.close} aria-label="Close event detail" onClick={onClose}>
           <MaskIcon src={closeIcon} size={14} />
         </Button>
     </div>
   )
 }
 
-export function openEventDetail(eventId: string): void {
-  openPopup((close) => <EventDetail eventId={eventId} onClose={close} />, { deep: true })
+export function openEventDetail(eventId: string, onJumpIn?: EventJumpIn): void {
+  openPopup((close) => <EventDetail eventId={eventId} onJumpIn={onJumpIn} onClose={close} />, { deep: true })
 }

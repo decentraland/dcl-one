@@ -36,8 +36,6 @@
 //! in this tree (the old `catalyrst-ab-cdn`), so those calls go
 //! to it over loopback HTTP as before ([`super::create`]).
 
-#![allow(clippy::result_large_err)]
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -587,6 +585,18 @@ pub(super) fn routes() -> axum::Router<SharedState> {
             post(super::explore::blocklist_reload),
         )
         .route(
+            "/admin/api/events/moderators-list",
+            post(super::explore::event_moderators_list),
+        )
+        .route(
+            "/admin/api/events/moderator-add",
+            post(super::explore::event_moderator_add),
+        )
+        .route(
+            "/admin/api/events/moderator-remove",
+            post(super::explore::event_moderator_remove),
+        )
+        .route(
             "/admin/api/explorer-api/challenges-list",
             post(super::explore::challenges_list),
         )
@@ -743,6 +753,9 @@ pub const CONSOLE_ROUTES: &[&str] = &[
     "/admin/api/places/world-rating",
     "/admin/api/events/moderate",
     "/admin/api/events/create",
+    "/admin/api/events/moderators-list",
+    "/admin/api/events/moderator-add",
+    "/admin/api/events/moderator-remove",
 ];
 
 #[cfg(test)]

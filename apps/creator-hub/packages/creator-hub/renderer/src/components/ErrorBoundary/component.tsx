@@ -1,6 +1,8 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { captureException } from '@sentry/electron/renderer';
 
+import { misc } from '#preload';
+
 export type FallbackProps = {
   error: unknown;
   reset: () => void;
@@ -37,6 +39,17 @@ export class ErrorBoundary extends Component<Props, State> {
       extra: { componentStack: info.componentStack },
     });
     console.error(`[ErrorBoundary:${this.props.name}]`, error);
+    // The console stays in the window; main.log is what a user sends with a report. The
+    // boundary must not throw itself, whatever the bridge does.
+    void Promise.resolve()
+      .then(() =>
+        misc.logRendererError({
+          boundary: this.props.name,
+          error: error instanceof Error ? error.stack || error.message : String(error),
+          componentStack: info.componentStack ?? undefined,
+        }),
+      )
+      .catch(() => undefined);
   }
 
   componentDidUpdate(prevProps: Props, prevState: State) {

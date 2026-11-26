@@ -47,6 +47,12 @@ describe('profile passport', () => {
     expect(screen.getByRole('link', { name: /x account/i })).toHaveAttribute('href', 'https://x.com/kurd')
   })
 
+  it("draws the user's picture with no online dot, as unity-explorer's passport does", () => {
+    render(<ProfilePassport profile={profile} onClose={vi.fn()} />)
+    const picture = screen.getAllByRole('img', { name: 'kurd' })[0]
+    expect(picture.parentElement?.querySelector('[class*="hudDot"]')).toBeNull()
+  })
+
   it.each([
     ['none', 'ADD FRIEND', 'onAddFriend'],
     ['friend', 'FRIEND', 'onUnfriend'],
@@ -134,7 +140,7 @@ describe('profile passport', () => {
     it('lists every badge as a card with its unlock month, a dash while locked', async () => {
       await open()
       const cards = screen.getAllByRole('button').filter((b) => b.hasAttribute('aria-pressed'))
-      expect(cards.map((c) => c.textContent)).toEqual(['Festive TrailDec. 2024', 'Traveler · StarterNov. 2024', 'Vertical Voyager—'])
+      expect(cards.map((c) => c.textContent)).toEqual(['Festive TrailDec. 2024', 'TravelerNov. 2024', 'Vertical Voyager—'])
       expect(screen.getByText('Dec. 2024')).toHaveAttribute('dateTime', '2024-12-04T14:16:34.000Z')
     })
 
@@ -167,7 +173,9 @@ describe('profile passport', () => {
       expect(screen.getByText('Locked')).toBeInTheDocument()
       expect(screen.getByText('50 scenes explored', { selector: 'p' })).toBeInTheDocument()
       expect(screen.getByText('NEXT TIER: Bronze')).toBeInTheDocument()
-      expect(screen.getAllByText('5/50')).toHaveLength(2) // the card's bar and the detail's
+      // The card carries the bar alone; the detail adds the count.
+      expect(screen.getAllByText('5/50')).toHaveLength(1)
+      expect(screen.getAllByRole('progressbar')).toHaveLength(2)
     })
   })
 
@@ -213,10 +221,9 @@ const equippedProfile: Profile = {
 }
 
 describe('passport equipped items', () => {
-  it('renders both sections with a tile per item', () => {
+  it('renders one Equipped Items section with a tile per item, wearables then emotes', () => {
     render(<ProfilePassport profile={equippedProfile} onClose={vi.fn()} />)
-    expect(screen.getByRole('heading', { name: 'Equipped Wearables' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Equipped Emotes' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Equipped Items' })).toBeInTheDocument()
     for (const name of ['Neon Tiara', 'Casual Hair', 'Disco', 'Wave']) {
       expect(screen.getByText(name)).toBeInTheDocument()
     }
@@ -229,7 +236,7 @@ describe('passport equipped items', () => {
     expect(shop.map((a) => a.getAttribute('href')).sort()).toEqual([SHOP_TIARA, SHOP_DISCO].sort())
     for (const a of shop) {
       expect(a).toHaveAttribute('target', '_blank')
-      expect(a).toHaveAttribute('rel', 'noopener')
+      expect(a).toHaveAttribute('rel', 'noopener noreferrer')
     }
   })
 
@@ -253,13 +260,13 @@ describe('passport equipped items', () => {
   it('orders the Overview as About Me → Equipped → Badges', () => {
     render(<ProfilePassport profile={equippedProfile} onClose={vi.fn()} />)
     const titles = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-    expect(titles).toEqual(['About Me', 'Equipped Wearables', 'Equipped Emotes', 'Badges'])
+    expect(titles).toEqual(['About Me', 'Equipped Items', 'Badges'])
   })
 
-  it('omits a section when nothing is equipped in it', () => {
+  it('keeps the section while either kind is equipped', () => {
     render(<ProfilePassport profile={{ ...equippedProfile, equippedEmotes: [] }} onClose={vi.fn()} />)
-    expect(screen.getByRole('heading', { name: 'Equipped Wearables' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Equipped Emotes' })).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Equipped Items' })).toBeInTheDocument()
+    expect(screen.queryByText('Disco')).toBeNull()
   })
 
   it('counts as Overview content on its own (no empty state)', () => {
@@ -273,8 +280,8 @@ describe('passport equipped items', () => {
   })
 
   it('a body-shape-only equipped set leaves no section behind', () => {
-    render(<ProfilePassport profile={{ ...equippedProfile, equippedWearables: [BODY_SHAPE] }} onClose={vi.fn()} />)
-    expect(screen.queryByRole('heading', { name: 'Equipped Wearables' })).toBeNull()
+    render(<ProfilePassport profile={{ ...equippedProfile, equippedWearables: [BODY_SHAPE], equippedEmotes: [] }} onClose={vi.fn()} />)
+    expect(screen.queryByRole('heading', { name: 'Equipped Items' })).toBeNull()
   })
 })
 
@@ -285,7 +292,8 @@ describe('passport photos', () => {
     remove: vi.fn(async () => ({ ok: true })),
     metas: {},
     loadPhoto: vi.fn(),
-    onTeleport: vi.fn()
+    loadWearables: vi.fn(async () => []),
+    onJumpIn: vi.fn(() => true)
   })
   async function openPhotos(isSelf: boolean, a = actions()): Promise<PassportPhotoActions> {
     const fetcher = vi.fn(async (_address: string, offset: number, limit: number) => ({ ok: true, photos: reel.slice(offset, offset + limit), total: reel.length, max: 500 }))
@@ -307,6 +315,23 @@ describe('passport photos', () => {
     await openPhotos(false)
     expect(screen.getAllByRole('button', { name: 'Open photo' })).toHaveLength(3)
     expect(screen.queryByRole('button', { name: 'Photo options' })).toBeNull()
+  })
+
+  it('the photo viewer opens outside the passport panel', async () => {
+    await openPhotos(false)
+    await userEvent.click(screen.getAllByRole('button', { name: 'Open photo' })[0])
+    expect(screen.getByRole('dialog', { name: 'Photo' }).closest('[data-tab]')).toBeNull()
+  })
+
+  it.each([
+    ['your own', true],
+    ["another player's", false]
+  ])('an empty reel on %s passport: the public-photos line shows only to the owner', async (_whose, isSelf) => {
+    setPublicReelFetcher(async () => ({ ok: true, photos: [], total: 0, max: 500 }))
+    render(<ProfilePassport profile={profile} isSelf={isSelf} onClose={vi.fn()} />)
+    await userEvent.click(screen.getByRole('tab', { name: 'PHOTOS' }))
+    expect(await screen.findByText('No photos here yet!')).toBeInTheDocument()
+    expect(screen.queryAllByText(/Set your photos as public/)).toHaveLength(isSelf ? 1 : 0)
   })
 
   it('your own photos have every option, Delete included', async () => {

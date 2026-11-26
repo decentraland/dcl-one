@@ -1,2 +1,4 @@
 # The handlers answer `Result<T, axum::response::Response>`; the response is 128 bytes.
 large-error-threshold = 256
+allow-unwrap-in-tests = true
+allow-print-in-tests = true

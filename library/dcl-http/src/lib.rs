@@ -1,7 +1,8 @@
 //! The default outbound HTTP handle: a hardened [`reqwest::Client`] built through
 //! [`HttpClientCfg`] and wrapped in the shared [`Outbound`] `serve` hands to
-//! readers (peer sync and the RPC validator take its `raw` client; mirrors and
-//! upstream readers send through the guard). Provider adapters that construct
+//! readers (the RPC validator takes its `raw` client; mirrors and upstream
+//! readers send through the guard; peer sync builds its own client over
+//! [`PublicAddressResolver`]). Provider adapters that construct
 //! an Outbound with distinct transport settings own separate HTTP pools. The SSRF guard
 //! ([`is_safe_http_url`] on the string, [`resolve_and_pin`] on the socket),
 //! the retry ladder ([`retry_with_backoff`]) and the capped body reader.
@@ -9,17 +10,18 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use parking_lot::Mutex;
 
 #[cfg(feature = "db")]
 pub mod api_error;
 mod body;
 pub mod jsonrpc;
 
-pub use body::read_body_capped;
+pub use body::{TransferRateGuard, read_body_capped, read_peer_body_capped};
 
 pub const USER_AGENT: &str = concat!("catalyst/", env!("CARGO_PKG_VERSION"));
 
@@ -200,6 +202,150 @@ impl reqwest::dns::Resolve for ReservedNamesResolver {
             None => (self.system)(host),
         }
     }
+}
+
+/// A resolver that answers only public addresses, except for the `trusted`
+/// names (operator-configured hosts, which may be private): a name with any
+/// non-public address fails, so a connection is only opened to addresses
+/// this check accepted, on the same lookup. reqwest dials an IP-literal host
+/// without asking the resolver, so a caller that must refuse private literals
+/// checks the URL itself ([`is_safe_http_url`]).
+#[derive(Clone)]
+pub struct PublicAddressResolver {
+    inner: ReservedNamesResolver,
+    trusted: Arc<std::collections::HashSet<String>>,
+}
+
+impl PublicAddressResolver {
+    pub fn trusting(hosts: impl IntoIterator<Item = String>) -> Self {
+        Self::over(ReservedNamesResolver::default(), hosts)
+    }
+
+    pub fn over(inner: ReservedNamesResolver, hosts: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            inner,
+            trusted: Arc::new(
+                hosts
+                    .into_iter()
+                    .map(|h| h.trim_end_matches('.').to_ascii_lowercase())
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl reqwest::dns::Resolve for PublicAddressResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().trim_end_matches('.').to_ascii_lowercase();
+        let lookup = self.inner.resolve(name);
+        if self.trusted.contains(&host) {
+            return lookup;
+        }
+        Box::pin(async move {
+            let addrs: Vec<SocketAddr> = lookup.await?.collect();
+            if addrs.is_empty() || addrs.iter().any(|a| is_blocked_ip(a.ip())) {
+                return Err(format!("{host} does not resolve to a public address only").into());
+            }
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
+/// A client built without redirects, paired with the client its file
+/// downloads dial a hop to another origin with: one that trusts no name,
+/// follows no redirect and uses no proxy. Built per caller, so its pool lives
+/// on that caller's runtime and takes its idle setting.
+#[derive(Clone)]
+pub struct CheckedRedirectClient {
+    client: reqwest::Client,
+    other_origins: reqwest::Client,
+}
+
+impl CheckedRedirectClient {
+    /// `resolver` answers the other-origin client; production passes
+    /// `PublicAddressResolver::trusting([])`.
+    pub fn new(
+        client: reqwest::Client,
+        resolver: PublicAddressResolver,
+        connections_max_idle: usize,
+    ) -> reqwest::Result<Self> {
+        let other_origins = HttpClientCfg {
+            max_redirects: None,
+            ..HttpClientCfg::serve(connections_max_idle)
+        }
+        .builder()
+        .dns_resolver(resolver)
+        .no_proxy()
+        .build()?;
+        Ok(Self {
+            client,
+            other_origins,
+        })
+    }
+}
+
+impl std::ops::Deref for CheckedRedirectClient {
+    type Target = reqwest::Client;
+
+    fn deref(&self) -> &reqwest::Client {
+        &self.client
+    }
+}
+
+/// `GET url`, following at most `max` 301/302/303/307/308 redirects by hand.
+/// A hop on the first URL's origin (scheme, host and port) is dialled with
+/// the main client; a hop to any other origin must be a public http(s) URL
+/// and is dialled by the other-origin client, so its address check and its
+/// connection share one lookup.
+pub async fn get_following_checked_redirects(
+    client: &CheckedRedirectClient,
+    url: &str,
+    max: usize,
+) -> Result<reqwest::Response, SendError> {
+    follow_checked_redirects(&client.client, &client.other_origins, url, max).await
+}
+
+async fn follow_checked_redirects(
+    client: &reqwest::Client,
+    other_origins: &reqwest::Client,
+    url: &str,
+    max: usize,
+) -> Result<reqwest::Response, SendError> {
+    let mut url = reqwest::Url::parse(url)
+        .map_err(|e| SendError::Refused(format!("{url:?} is not a URL: {e}")))?;
+    let first = url.origin();
+    for hop in 0..=max {
+        let dial = if url.origin() == first {
+            client
+        } else {
+            other_origins
+        };
+        let resp = dial.get(url.clone()).send().await?;
+        if !matches!(resp.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+            return Ok(resp);
+        }
+        let Some(location) = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+        else {
+            return Ok(resp);
+        };
+        if hop == max {
+            return Err(SendError::Refused(format!("more than {max} redirects")));
+        }
+        let next = url.join(location).map_err(|e| {
+            SendError::Refused(format!("redirect target {location:?} is not a URL: {e}"))
+        })?;
+        if next.origin() != first && !is_safe_http_url(next.as_str()) {
+            let host = next.host_str().unwrap_or("?").to_string();
+            return Err(SendError::Refused(format!(
+                "redirect to {host} refused: not a public http(s) host"
+            )));
+        }
+        url = next;
+    }
+    unreachable!("the loop returns on its last hop")
 }
 
 /// Follows at most `max` hops, and only to a public http(s) host once the
@@ -725,7 +871,6 @@ impl Outbound {
     fn with_test_pin(self, host: &str, addr: SocketAddr) -> Self {
         self.test_pins
             .lock()
-            .unwrap()
             .insert(host.to_ascii_lowercase(), addr);
         self
     }
@@ -756,9 +901,8 @@ impl Outbound {
         self.allow_private
     }
 
-    /// The shared pooled client, unguarded: for peer sync, whose sources are
-    /// operator-configured content servers (a development peer may be on the
-    /// loopback), and the RPC validator.
+    /// The shared pooled client, unguarded: for operator-configured endpoints
+    /// such as the RPC validator.
     pub fn raw(&self) -> &reqwest::Client {
         &self.shared
     }
@@ -892,13 +1036,13 @@ impl Outbound {
             return Ok(self.direct.clone());
         }
         let key = host.to_ascii_lowercase();
-        if let Some(p) = self.pinned.lock().unwrap().get(&key)
+        if let Some(p) = self.pinned.lock().get(&key)
             && p.resolved_at.elapsed() < PIN_TTL
         {
             return Ok(p.client.clone());
         }
         #[cfg(test)]
-        let test_pin = self.test_pins.lock().unwrap().get(&key).copied();
+        let test_pin = self.test_pins.lock().get(&key).copied();
         #[cfg(not(test))]
         let test_pin: Option<SocketAddr> = None;
         let addr = match test_pin {
@@ -909,7 +1053,7 @@ impl Outbound {
                 ))
             })?,
         };
-        let mut pinned = self.pinned.lock().unwrap();
+        let mut pinned = self.pinned.lock();
         if let Some(p) = pinned.get_mut(&key)
             && p.addr.ip() == addr.ip()
         {
@@ -948,7 +1092,7 @@ impl Outbound {
 
     #[cfg(test)]
     fn pinned_hosts(&self) -> Vec<String> {
-        let mut hosts: Vec<String> = self.pinned.lock().unwrap().keys().cloned().collect();
+        let mut hosts: Vec<String> = self.pinned.lock().keys().cloned().collect();
         hosts.sort();
         hosts
     }
@@ -1041,7 +1185,7 @@ mod tests {
         let asked = Arc::new(Mutex::new(Vec::<String>::new()));
         let seen = asked.clone();
         let resolver = ReservedNamesResolver::over(move |host| {
-            seen.lock().unwrap().push(host);
+            seen.lock().push(host);
             Box::pin(async {
                 Ok(
                     Box::new(std::iter::once(SocketAddr::from(([192, 0, 2, 1], 0))))
@@ -1065,9 +1209,9 @@ mod tests {
             );
         }
         assert!(
-            asked.lock().unwrap().is_empty(),
+            asked.lock().is_empty(),
             "asked the system resolver for {:?}",
-            asked.lock().unwrap()
+            asked.lock()
         );
         let addrs: Vec<SocketAddr> = resolver
             .resolve("peer.example.org".parse().unwrap())
@@ -1075,7 +1219,7 @@ mod tests {
             .unwrap()
             .collect();
         assert_eq!(addrs, [SocketAddr::from(([192, 0, 2, 1], 0))]);
-        assert_eq!(*asked.lock().unwrap(), ["peer.example.org"]);
+        assert_eq!(*asked.lock(), ["peer.example.org"]);
     }
 
     #[tokio::test]
@@ -1115,6 +1259,144 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), 204);
+    }
+
+    #[tokio::test]
+    async fn only_trusted_names_may_resolve_to_private_addresses_on_any_hop() {
+        use axum::http::StatusCode;
+        use axum::response::Redirect;
+        use axum::routing::get;
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counting = |hits: &Arc<AtomicUsize>| {
+            let hits = hits.clone();
+            get(move || async move {
+                hits.fetch_add(1, SeqCst);
+                "ok"
+            })
+        };
+        let other_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let other_port = other_listener.local_addr().unwrap().port();
+        let other_hits = Arc::new(AtomicUsize::new(0));
+        let other_app = axum::Router::new().route("/ok", counting(&other_hits));
+        tokio::spawn(async move { axum::serve(other_listener, other_app).await.unwrap() });
+        // Redirects plain http to https on its own host and port, so only the
+        // scheme changes; it counts TLS handshakes (first byte 0x16) and drops
+        // them. A dialled https hop would fail its handshake either way, so
+        // only the count shows the hop was refused before any dial.
+        let scheme_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let scheme_port = scheme_listener.local_addr().unwrap().port();
+        let tls_dials = Arc::new(AtomicUsize::new(0));
+        let dials = tls_dials.clone();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            while let Ok((mut socket, _)) = scheme_listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let Ok(n) = socket.read(&mut buf).await else {
+                    continue;
+                };
+                if buf[..n].first() == Some(&0x16) {
+                    dials.fetch_add(1, SeqCst);
+                    continue;
+                }
+                let reply = format!(
+                    "HTTP/1.1 307 Temporary Redirect\r\nlocation: https://peer.example:{scheme_port}/ok\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let to = |target: String| get(move || async move { Redirect::temporary(&target) });
+        let app = axum::Router::new()
+            .route("/ok", counting(&hits))
+            .route("/to-name", to(format!("http://public.example:{port}/ok")))
+            .route("/to-ip", to(format!("http://127.0.0.1:{port}/ok")))
+            .route("/to-trusted", to(format!("http://other.example:{port}/ok")))
+            .route(
+                "/to-port",
+                to(format!("http://peer.example:{other_port}/ok")),
+            )
+            .route("/same", to("/ok".to_string()))
+            .route("/loop", to("/loop".to_string()))
+            .route(
+                "/choices",
+                get(|| async { (StatusCode::MULTIPLE_CHOICES, [("location", "/ok")]) }),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        // Every name answers the loopback, as a public-looking name can.
+        // `lookups` counts those of other.example.
+        let lookups = Arc::new(AtomicUsize::new(0));
+        let counted = lookups.clone();
+        let inner = ReservedNamesResolver::over(move |host| {
+            if host == "other.example" {
+                counted.fetch_add(1, SeqCst);
+            }
+            Box::pin(async {
+                let addrs = [SocketAddr::from(([127, 0, 0, 1], 0))];
+                Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+            })
+        });
+        let client = HttpClientCfg::default()
+            .builder()
+            .dns_resolver(PublicAddressResolver::over(
+                inner.clone(),
+                ["peer.example".to_string(), "other.example".to_string()],
+            ))
+            .build()
+            .unwrap();
+        let redirecting =
+            CheckedRedirectClient::new(client.clone(), PublicAddressResolver::over(inner, []), 4)
+                .unwrap();
+        let peer = |path: &str| format!("http://peer.example:{port}{path}");
+        let follow =
+            async |path: &str| get_following_checked_redirects(&redirecting, &peer(path), 2).await;
+
+        assert!(
+            client
+                .get(format!("http://public.example:{port}/ok"))
+                .send()
+                .await
+                .is_err()
+        );
+        let ok = follow("/ok").await.unwrap();
+        assert_eq!(ok.text().await.unwrap(), "ok");
+        let same = follow("/same").await.unwrap();
+        assert_eq!(same.status(), 200);
+        // A 300 is an answer, not a hop.
+        assert_eq!(follow("/choices").await.unwrap().status(), 300);
+        assert_eq!(hits.load(SeqCst), 2);
+        // A trusted name is trusted only as the origin first asked for.
+        assert_eq!(
+            client
+                .get(format!("http://other.example:{port}/ok"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+        hits.store(0, SeqCst);
+        for path in ["/to-name", "/to-ip", "/to-trusted", "/to-port", "/loop"] {
+            assert!(follow(path).await.is_err(), "{path}");
+        }
+        let to_https = format!("http://peer.example:{scheme_port}/to-https");
+        let refused = get_following_checked_redirects(&redirecting, &to_https, 2).await;
+        assert!(refused.is_err());
+        // The hop to the trusted name was refused on the one lookup its dial made.
+        assert_eq!(lookups.load(SeqCst), 2);
+        assert_eq!(hits.load(SeqCst), 0);
+        assert_eq!(other_hits.load(SeqCst), 0);
+        assert_eq!(tls_dials.load(SeqCst), 0);
+        let not_followed = client.get(peer("/to-name")).send().await.unwrap();
+        assert!(not_followed.status().is_redirection());
+        // An IP literal is dialled without asking the resolver.
+        let literal = client
+            .get(format!("http://127.0.0.1:{port}/ok"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(literal.status(), 200);
     }
 
     #[tokio::test]
@@ -1636,7 +1918,7 @@ mod tests {
                     let headers = request.headers().clone();
                     let bytes = axum::body::to_bytes(request.into_body(), 1 << 20).await.unwrap();
                     let header = |name: &str| headers.get(name).map(|value| value.to_str().unwrap().to_string());
-                    observed.lock().unwrap().push(serde_json::json!({"path":path,"method":method,"content_type":header("content-type"),"content_length":header("content-length"),"token":header("x-token"),"body":String::from_utf8(bytes.to_vec()).unwrap()}));
+                    observed.lock().push(serde_json::json!({"path":path,"method":method,"content_type":header("content-type"),"content_length":header("content-length"),"token":header("x-token"),"body":String::from_utf8(bytes.to_vec()).unwrap()}));
                     let parts: Vec<_> = path.split('/').collect();
                     let status: u16 = parts[2].parse().unwrap();
                     let remaining: usize = parts[3].parse().unwrap();
@@ -1672,7 +1954,7 @@ mod tests {
             );
             drop(result);
             assert_eq!(
-                *requests.lock().unwrap(),
+                *requests.lock(),
                 *case["requests"].as_array().unwrap(),
                 "status={} hops={}",
                 case["status"],
@@ -1702,7 +1984,7 @@ mod tests {
                 let headers = request.headers().clone();
                 let bytes = axum::body::to_bytes(request.into_body(), 1 << 20).await.unwrap();
                 let header = |name: &str| headers.get(name).map(|value| value.to_str().unwrap().to_string());
-                observed.lock().unwrap().push(serde_json::json!({"path":path,"method":method,"content_type":header("content-type"),"content_length":header("content-length"),"token":header("x-token"),"body":String::from_utf8(bytes.to_vec()).unwrap()}));
+                observed.lock().push(serde_json::json!({"path":path,"method":method,"content_type":header("content-type"),"content_length":header("content-length"),"token":header("x-token"),"body":String::from_utf8(bytes.to_vec()).unwrap()}));
                 if path.ends_with("/1") {
                     (axum::http::StatusCode::TEMPORARY_REDIRECT, [("location", format!("http://other.example.test:{}/jump/307/0",address.port()))]).into_response()
                 } else { "unused".into_response() }
@@ -1723,10 +2005,7 @@ mod tests {
             .await
             .unwrap();
         drop(response);
-        assert_eq!(
-            *requests.lock().unwrap(),
-            *expected["requests"].as_array().unwrap()
-        );
+        assert_eq!(*requests.lock(), *expected["requests"].as_array().unwrap());
         assert_eq!(
             http.pinned_hosts(),
             vec!["other.example.test", "public.example.test"]
@@ -1934,7 +2213,7 @@ mod tests {
         let start = tokio::time::Instant::now();
         let result: Option<()> =
             retry_with_backoff("test", attempts, base_ms, move || async move {
-                times_ref.lock().unwrap().push(start.elapsed());
+                times_ref.lock().push(start.elapsed());
                 Ok(RetryDecision::Retry {
                     after,
                     rate_limited,
@@ -1943,7 +2222,7 @@ mod tests {
             .await
             .unwrap();
         assert!(result.is_none());
-        times.into_inner().unwrap()
+        times.into_inner()
     }
 
     #[tokio::test(start_paused = true)]

@@ -1,4 +1,4 @@
-import { PBMeshCollider } from '../../../packages/@dcl/ecs/src/components/generated/pb/decentraland/sdk/components/mesh_collider.gen'
+import type { PBMeshCollider } from '../../../packages/@dcl/ecs/src/components/generated/pb/decentraland/sdk/components/mesh_collider.gen'
 import { Engine, components, ColliderLayer } from '../../../packages/@dcl/ecs/src'
 import { testComponentSerialization } from './assertion'
 

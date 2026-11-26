@@ -7,10 +7,12 @@
 // it, and its description on hover. The sidebar's Invites & Requests opens the user's invites, the
 // join requests their communities received and their own requests.
 
+import { Button, CountBadge, EmptyState, Spinner, SwapLabel, Tooltip } from '@dcl/one-ui'
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Button, Chip, CountBadge, EmptyState, SearchField, Spinner, SwapLabel, Tooltip } from '../../design'
+import { Avatar, Chip, SearchField } from '../../design'
 import { nameColor } from '@explorer-core/lib/identity'
 import { MainMenuShell } from '../menu/MainMenuShell'
+import { MenuBackdrop } from '../menu/MenuBackdrop'
 import { confirmRejectInvite, MemberRow, openCommunityModal, SECTION_LOAD_ERROR } from './CommunityModal'
 import { RequestRowActions, type RequestAnswer } from './RequestRowActions'
 import { openProfileCard } from '../profileCard/ProfileCard'
@@ -21,6 +23,8 @@ import type { CommunitiesState, ProfileState, VoiceChatSession } from '../sessio
 import { streamLive } from '../voiceChat/callGate'
 import styles from './CommunitiesPage.module.css'
 import { LoadMore } from './LoadMore'
+import { getHudScale } from '@explorer-core/lib/hudScale'
+import { Mark } from '../../design/Glyphs'
 
 /** The wait after the last keystroke before searching, so typing sends one read. */
 export const SEARCH_DELAY_MS = 1000
@@ -66,8 +70,8 @@ function CardButton({ c, onOpen, onJoin, onRequestToJoin, onCancelRequest, onAcc
   if (inviteId != null) {
     return (
       <span className={styles.cardBtns}>
-        <Button size="sm" className={styles.cardBtn} aria-label="Accept invite" onClick={act(() => onAcceptInvite(c.id, inviteId))}>Accept</Button>
-        <Button
+        <Button appearance="hud" size="sm" className={styles.cardBtn} aria-label="Accept invite" onClick={act(() => onAcceptInvite(c.id, inviteId))}>Accept</Button>
+        <Button appearance="hud"
           size="sm"
           variant="secondary"
           className={styles.cardBtn}
@@ -80,20 +84,20 @@ function CardButton({ c, onOpen, onJoin, onRequestToJoin, onCancelRequest, onAcc
     )
   }
   if (isMember(c.role)) {
-    return <Button size="sm" variant="ghost" className={styles.cardBtn} onClick={act(onOpen)}>View</Button>
+    return <Button appearance="hud" size="sm" variant="ghost" className={styles.cardBtn} onClick={act(onOpen)}>View</Button>
   }
   if (c.privacy !== 'private') {
-    return <Button size="sm" className={styles.cardBtn} onClick={act(() => onJoin(c.id))}>Join</Button>
+    return <Button appearance="hud" size="sm" className={styles.cardBtn} onClick={act(() => onJoin(c.id))}>Join</Button>
   }
   const requestId = c.pendingRequestId
   if (requestId != null) {
     return (
-      <Button size="sm" variant="ghost" className={styles.cardBtn} aria-label="Cancel join request" onClick={act(() => onCancelRequest(c.id, requestId))}>
+      <Button appearance="hud" size="sm" variant="ghost" className={styles.cardBtn} aria-label="Cancel join request" onClick={act(() => onCancelRequest(c.id, requestId))}>
         <SwapLabel idle="Request Sent" hover="Cancel Request" />
       </Button>
     )
   }
-  return <Button size="sm" className={styles.cardBtn} onClick={act(() => onRequestToJoin(c.id))}>Request to Join</Button>
+  return <Button appearance="hud" size="sm" className={styles.cardBtn} onClick={act(() => onRequestToJoin(c.id))}>Request to Join</Button>
 }
 
 function CommunityCard({ c, live, onOpen, ...actions }: CardActions & { c: Community; live: boolean; onOpen: () => void }): React.JSX.Element {
@@ -104,8 +108,8 @@ function CommunityCard({ c, live, onOpen, ...actions }: CardActions & { c: Commu
   return (
     // named by its whole text, as the e2e suite reads it (apps/bevy-explorer/e2e/specs/communities.test.ts)
     <div className={styles.card} onClick={onOpen} role="button" tabIndex={0}>
-      <div className={styles.cover} style={{ background: showImg ? undefined : nameColor(c.id) }}>
-        {live && <span className={styles.live} role="img" aria-label="Live stream">● LIVE</span>}
+      <div className={styles.cover} data-community-cover style={{ background: showImg ? undefined : nameColor(c.id) }}>
+        {live && <span className={styles.live} role="img" aria-label="Live stream"><Mark name="dot" /> LIVE</span>}
         {showImg ? (
           <img className={styles.coverImg} src={c.thumbnail} alt="" onError={() => setFailed(true)} />
         ) : (
@@ -119,7 +123,7 @@ function CommunityCard({ c, live, onOpen, ...actions }: CardActions & { c: Commu
           {friends.length > 0 && (
             <span className={styles.friends} aria-label={`Friends in this community: ${friends.map((f) => f.name).join(', ')}`}>
               {friends.map((f) => (
-                <Tooltip key={f.address} label={f.name} side="top" className={styles.friend}>
+                <Tooltip appearance="hud" key={f.address} label={f.name} side="top" className={styles.friend}>
                   <Avatar src={f.picture} name={f.name} color={nameColor(f.address)} size={20} />
                 </Tooltip>
               ))}
@@ -140,7 +144,7 @@ function CommunityCard({ c, live, onOpen, ...actions }: CardActions & { c: Commu
  *  Call, Block, Report, Invite to Community). */
 function openRequestMenu(member: CommunityRequestMember, anchor: HTMLElement, onClose: () => void): void {
   const r = anchor.getBoundingClientRect()
-  openProfileCard(member.address, r.left + r.width / 2 + 5, r.top + r.height / 2 - 10, { above: true, context: 'community', onClose })
+  openProfileCard(member.address, r.left + r.width / 2 + 5 * (getHudScale() || 1), r.top + r.height / 2 - 10 * (getHudScale() || 1), { above: true, context: 'community', onClose })
 }
 
 function RequestsGroup({
@@ -214,7 +218,7 @@ function InvitesAndRequests({
   /** Read the section again (a list could not be read). */
   onRetry: () => void
 }): React.JSX.Element {
-  if (invites == null) return <div className={styles.loading}><Spinner /></div>
+  if (invites == null) return <div className={styles.loading}><Spinner variant="thin" /></div>
   // a list that could not be read says so, rather than claiming nothing is pending
   const failed = (list: CommunityInvitesMessage['failed'][number]): boolean => invites.failed.includes(list)
   const unread = <EmptyState variant="inline" tone="error" title={SECTION_LOAD_ERROR} actions={[{ label: 'RETRY', variant: 'outline', onClick: onRetry }]} />
@@ -255,14 +259,18 @@ export function CommunitiesPage({
   communities,
   profile,
   voiceChat,
+  compact,
   onNavigate
 }: {
   communities: CommunitiesState
   profile: ProfileState
   /** The live streams; without them the communities' own snapshot says what is live. */
   voiceChat?: VoiceChatSession
+  /** Hosted in the lobby's section modal. */
+  compact?: { onTravel: () => void }
   onNavigate: (page: string) => void
 }): React.JSX.Element | null {
+  const active = communities.open || compact != null
   // The search field's text; the grid shows the search last run (communities.browse.search).
   const [query, setQuery] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
@@ -278,8 +286,8 @@ export function CommunitiesPage({
 
   // The community detail modal lives in the HUD-wide popup layer (openCommunityModal), not this page's
   // own JSX — CommunityModalContainer reads live data itself. Re-opens on a different selection; closes
-  // when the page closes (communities.open → false) or a selection clears, via the effect cleanup.
-  const wantOpen = communities.open ? openId : null
+  // when the page closes (`active` → false) or a selection clears, via the effect cleanup.
+  const wantOpen = active ? openId : null
   useEffect(() => {
     if (wantOpen == null) return
     // Only clear if `wantOpen` (captured here) is still the current selection: when switching directly
@@ -294,14 +302,14 @@ export function CommunitiesPage({
   }
   // Every opening shows every community, with the search cleared.
   useEffect(() => {
-    if (!communities.open) return
+    if (!active) return
     setQuery('')
     setTab('browse')
     loadBrowse('')
     // the sidebar's counter alone: the section is read when it opens
     loadInvitesCount()
     return cancelSearch
-  }, [communities.open, loadBrowse, loadInvitesCount])
+  }, [active, loadBrowse, loadInvitesCount])
 
   // The same text again does nothing; empty text lists
   // every community; a search always shows the grid, even from My Communities.
@@ -323,7 +331,7 @@ export function CommunitiesPage({
     loadBrowse('')
   }
 
-  if (!communities.open) return null
+  if (!active) return null
 
   const mine = communities.list.filter((c) => isMember(c.role))
   const showingInvites = tab === 'invites'
@@ -350,22 +358,16 @@ export function CommunitiesPage({
   const count = showingMine || streaming ? `(${gridList.length})` : browse.loading || browse.failed === true ? '' : `(${browse.total})`
 
   const p = profile.data
-  return (
-    <MainMenuShell
-      active="communities"
-      profileName={p?.name}
-      profilePicture={p?.picture}
-      profileAddress={p?.address}
-      profileClaimed={p?.hasClaimedName}
-      onNavigate={onNavigate}
-      onClose={communities.toggle}
-    >
+  const body = (
+    <>
       <div className={styles.head}>
         <h1 className={styles.title}>Communities</h1>
-        <div className={styles.search}>
-          <SearchField value={query} onChange={onQuery} onSubmit={runSearch} clearable onClear={clearSearch} placeholder="Search" />
+        <div className={styles.streaming}>
+          <Chip label="Streaming" selected={streaming} onClick={() => setStreaming((s) => !s)} />
         </div>
-        <Chip label="Streaming" selected={streaming} onClick={() => setStreaming((s) => !s)} />
+        <div className={styles.search}>
+          <SearchField variant="light" value={query} onChange={onQuery} onSubmit={runSearch} clearable onClear={clearSearch} placeholder="Search" />
+        </div>
       </div>
 
       <div className={styles.layout}>
@@ -386,6 +388,7 @@ export function CommunitiesPage({
           >
             <span className={styles.invitesLabel}>Invites &amp; Requests</span>
             <CountBadge count={pendingCount} />
+            <span className={styles.invitesChevron} aria-hidden="true">›</span>
           </button>
           <div className={styles.myHead}>
             <span className={styles.sideHead}>My Communities</span>
@@ -435,7 +438,7 @@ export function CommunitiesPage({
             {count !== '' && <span className={styles.count}>{count}</span>}
           </div>
           {!showingMine && browse.loading ? (
-            <div className={styles.loading}><Spinner /></div>
+            <div className={styles.loading}><Spinner variant="thin" /></div>
           ) : !showingMine && browse.failed === true ? null : gridList.length === 0 ? (
             <div className={styles.empty}>{showingMine ? 'You haven’t joined any communities yet.' : 'No Communities match your search terms.'}</div>
           ) : (
@@ -446,12 +449,30 @@ export function CommunitiesPage({
                 ))}
               </div>
               {!showingMine && browse.items.length < browse.total && <LoadMore count={browse.items.length} onVisible={loadMoreBrowse} />}
-              {!showingMine && browse.loadingMore && <div className={styles.loadingMore}><Spinner size={22} /></div>}
+              {!showingMine && browse.loadingMore && <div className={styles.loadingMore}><Spinner variant="thin" size={22} /></div>}
             </>
           )}
           </>
           )}
         </section>
+      </div>
+    </>
+  )
+  if (compact != null) return <div className={`${styles.page} ${styles.compact}`}>{body}</div>
+  return (
+    <MainMenuShell
+      active="communities"
+      profileName={p?.name}
+      profilePicture={p?.picture}
+      profileAddress={p?.address}
+      profileClaimed={p?.hasClaimedName}
+      onNavigate={onNavigate}
+      onClose={communities.toggle}
+      transparentBody
+    >
+      <div className={styles.page}>
+        <MenuBackdrop />
+        {body}
       </div>
     </MainMenuShell>
   )

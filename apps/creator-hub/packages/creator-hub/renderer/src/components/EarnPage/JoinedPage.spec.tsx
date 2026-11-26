@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Provider } from 'react-redux';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { misc } from '#preload';
 import { useDispatch } from '#store';
@@ -14,6 +13,7 @@ import { FeatureFlag, fetchFeatureFlags } from '/@/modules/store/featureFlags';
 import * as api from '/@/lib/creatorFundApi';
 
 import { tracked } from '../../../tests/utils/analytics';
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../tests/utils/testStore';
 import { CYCLES, LAUNCH_CYCLES, LAUNCH_VARIANT, ok } from './joined/fixtures';
 import { JoinedPage, type JoinedTab } from './JoinedPage';
@@ -24,6 +24,7 @@ vi.mock('/@/lib/creatorFundApi', () => ({
   getCycles: vi.fn(),
   getPayouts: vi.fn(),
   getPayoutWallet: vi.fn(),
+  getPlaces: vi.fn(),
 }));
 vi.mock('./joined/LeaderboardTab', () => ({ LeaderboardTab: () => <p>leaderboard panel</p> }));
 vi.mock('./joined/MyPlacesTab', () => ({ MyPlacesTab: () => <p>my places panel</p> }));
@@ -57,7 +58,7 @@ const JOINED = {
 
 async function renderPage(
   tab: JoinedTab = 'leaderboard',
-  { awaitCycles = true, payout = true, variants = {} } = {},
+  { awaitCycles = true, payout = true, variants = {}, loadPayoutSetup = false } = {},
 ) {
   const store = createTestStore();
   store.dispatch(
@@ -70,16 +71,22 @@ async function renderPage(
     await store.dispatch(actions.fetchEnrollment());
     const cycles = store.dispatch(actions.fetchCycles());
     if (awaitCycles) await cycles;
+    if (loadPayoutSetup) {
+      await Promise.all([
+        store.dispatch(actions.fetchPayoutWallet()),
+        store.dispatch(actions.fetchHasActivePlace()),
+      ]);
+    }
   });
   const onTabChange = vi.fn();
   const { container } = render(
     <Provider store={store}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <StatefulJoinedPage
           initialTab={tab}
           onTabChange={onTabChange}
         />
-      </ThemeProvider>
+      </TestProviders>
     </Provider>,
   );
   return { container, onTabChange };
@@ -163,6 +170,67 @@ describe('JoinedPage', () => {
       expect(within(container).queryByText(PAYOUTS_LOCKED)).toBeNull();
       expect(api.getPayouts).toHaveBeenCalled();
       expect(api.getPayoutWallet).toHaveBeenCalled();
+    });
+  });
+
+  describe('when the Payouts setup has a step to take', () => {
+    const PENDING = 'PAYOUTS, setup not finished';
+    const dot = (tab: HTMLElement) => tab.querySelector('[aria-hidden="true"]');
+    const placesWith = (status: string) =>
+      ({ ok: true, status: 200, data: { cycle: null, places: [{ id: 'a', status }] } }) as any;
+
+    beforeEach(() => {
+      vi.mocked(api.getPayoutWallet).mockResolvedValue({
+        ok: false,
+        status: 404,
+        error: 'Not Found',
+      });
+      vi.mocked(api.getPlaces).mockResolvedValue(placesWith('in_program'));
+    });
+
+    it('should mark the Payouts tab with a dot and name the pending setup', async () => {
+      await renderPage('leaderboard', { loadPayoutSetup: true });
+
+      const payouts = screen.getByRole('tab', { name: PENDING });
+      expect(payouts.textContent).toBe('Payouts');
+      expect(dot(payouts)).toBeTruthy();
+    });
+
+    it('should hide the dot while Payouts is the active tab, and show it again after leaving', async () => {
+      await renderPage('payouts', { loadPayoutSetup: true });
+
+      const payouts = screen.getByRole('tab', { name: 'Payouts', selected: true });
+      expect(dot(payouts)).toBeNull();
+
+      fireEvent.click(screen.getByRole('tab', { name: 'My Places' }));
+      expect(dot(screen.getByRole('tab', { name: PENDING }))).toBeTruthy();
+    });
+
+    it('should show no dot while both steps are locked for want of a place in the program', async () => {
+      vi.mocked(api.getPlaces).mockResolvedValue(placesWith('not_eligible'));
+      await renderPage('leaderboard', { loadPayoutSetup: true });
+
+      expect(dot(screen.getByRole('tab', { name: 'Payouts' }))).toBeNull();
+    });
+
+    it('should show no dot once the setup is complete', async () => {
+      vi.mocked(api.getEnrollment).mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { ...JOINED, email_verified_at: '2026-11-02T10:00:00Z' },
+      });
+      vi.mocked(api.getPayoutWallet).mockResolvedValue(
+        ok({ address: '0x0000000000000000000000000000000000000002', updated_at: '' }),
+      );
+      await renderPage('leaderboard', { loadPayoutSetup: true });
+
+      expect(dot(screen.getByRole('tab', { name: 'Payouts' }))).toBeNull();
+    });
+
+    it('should show no dot when the Payouts flag is off', async () => {
+      await renderPage('leaderboard', { payout: false, loadPayoutSetup: true });
+
+      expect(dot(screen.getByRole('tab', { name: 'Payouts' }))).toBeNull();
     });
   });
 

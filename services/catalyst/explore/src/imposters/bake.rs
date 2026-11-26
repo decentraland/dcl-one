@@ -39,8 +39,8 @@ use crate::imposters::key::{TileKey, parse_zip_request};
 use crate::imposters::quarantine::Quarantine;
 use crate::imposters::zips;
 
-/// How often the baker looks for markers other processes left.
-const POLL: Duration = Duration::from_secs(5);
+/// How often the baker looks for markers other processes left ([`BakeConfig::poll`]).
+pub const POLL: Duration = Duration::from_secs(5);
 /// A tile baked successfully is not baked again for this long, whatever crc
 /// a later miss asked for; short, so a redeployed scene's imposter follows soon.
 const BAKE_COOLDOWN: Duration = Duration::from_secs(600);
@@ -62,6 +62,8 @@ pub struct BakeConfig {
     pub sdk6_adaption_layer: String,
     pub timeout: Duration,
     pub queue_depth: usize,
+    /// [`POLL`]; no environment variable sets it.
+    pub poll: Duration,
 }
 
 pub struct BakeQueue {
@@ -202,7 +204,7 @@ impl BakeQueue {
             let Some((tile, wanted)) = markers(&self.wanted).into_iter().next() else {
                 tokio::select! {
                     _ = self.notify.notified() => {}
-                    _ = tokio::time::sleep(POLL) => {}
+                    _ = tokio::time::sleep(self.cfg.poll) => {}
                     _ = cancel.cancelled() => return,
                 }
                 continue;
@@ -298,6 +300,16 @@ pub fn bake_args(tile: TileKey, cfg: &BakeConfig, staging: &Path) -> Vec<String>
     args
 }
 
+/// Kills the process group a bake child leads (`process_group(0)`).
+#[cfg(unix)]
+#[allow(unsafe_code, reason = "libc killpg on the bake process group")]
+fn kill_group(pid: u32) {
+    // SAFETY: killpg takes plain integers and touches no memory.
+    unsafe {
+        libc::killpg(pid as i32, libc::SIGKILL);
+    }
+}
+
 pub async fn run_bake(cfg: &BakeConfig, store: Arc<FileCache>, tile: TileKey) -> Result<usize> {
     let staging = store
         .tmp_dir()
@@ -345,11 +357,7 @@ pub async fn run_bake(cfg: &BakeConfig, store: Arc<FileCache>, tile: TileKey) ->
         Err(_) => {
             #[cfg(unix)]
             if let Some(pid) = pid {
-                // SAFETY: killpg on the process group the child leads
-                // (`process_group(0)`); no memory is touched.
-                unsafe {
-                    libc::killpg(pid as i32, libc::SIGKILL);
-                }
+                kill_group(pid);
             }
             // No process groups here: kill the child itself.
             #[cfg(not(unix))]
@@ -454,7 +462,13 @@ mod tests {
             sdk6_adaption_layer: String::new(),
             timeout: Duration::from_secs(30),
             queue_depth: 1,
+            poll: POLL,
         }
+    }
+
+    #[test]
+    fn production_bake_poll_is_five_seconds() {
+        assert_eq!(POLL, Duration::from_secs(5));
     }
 
     #[cfg(unix)]

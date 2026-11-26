@@ -1,0 +1,26 @@
+[package]
+name = "cast-bot"
+version = "0.1.0"
+edition = "2024"
+description = "The Cast presenter's LiveKit participant: one process per presentation, driven by the node over stdio"
+license = "AGPL-3.0-only"
+publish = false
+
+# A workspace of its own, so the node's lock and build never take libwebrtc
+# (docs/adr/2026-11-17-cast-presenter-bot-process.md).
+[workspace]
+
+[dependencies]
+# The Explorer's LiveKit pin (rendering/bevy-explorer/source/Cargo.toml).
+livekit = { git = "https://github.com/decentraland/dcl-one", rev = "b2f8bc84000333ea843578959c9d11caccaa9474", features = ["rustls-tls-native-roots"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+anyhow = "1"
+
+[dev-dependencies]
+livekit-api = { git = "https://github.com/decentraland/dcl-one", rev = "b2f8bc84000333ea843578959c9d11caccaa9474", default-features = false, features = ["access-token"] }
+
+[lints.clippy]
+unwrap_used = "deny"

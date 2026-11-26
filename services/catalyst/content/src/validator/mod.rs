@@ -15,9 +15,10 @@
 //! the reference catalyst's on-chain validator does ([`onchain`], `chain.rs`
 //! has the table): the Checker contract and the item contracts over
 //! `ETH_RPC_URL` (L1) and `RPC_ENDPOINT_POLYGON` (L2) at the block of the
-//! entity timestamp, then five minutes before it; the escrow lease overlay
-//! (`shop.usage_grants`) over the ONE pool, content probes against the ONE
-//! blob store, every RPC call through the ONE `http::Outbound`.
+//! entity timestamp, then five minutes before it; the opt-in escrow lease
+//! overlay (`shop.usage_grants`, `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`)
+//! over the ONE pool, content probes against the ONE blob store, every RPC
+//! call through the ONE `http::Outbound`.
 //!
 //! Each error has a kind ([`ValidationError`]): `Rejected` is the
 //! deployment's fault (400); `Unavailable` means this node could not decide
@@ -52,6 +53,7 @@ mod spring_bones;
 pub mod synced;
 pub mod third_party;
 pub mod types;
+pub(crate) mod urn;
 
 #[cfg(test)]
 mod tests;
@@ -87,6 +89,11 @@ pub struct Settings {
     /// Decentraland address's rights (default profiles, off-chain items,
     /// legacy content, v1 collection items).
     pub additional_dcl_address: Option<String>,
+    /// `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`: an active escrow lease
+    /// (`shop.usage_grants`) counts, until its `unlock_at`, as ownership of the leased item worn by a
+    /// profile or outfits. `parse` leaves it off, the default: a peer that
+    /// checks ownership on chain only rejects such an entity. `serve` sets it.
+    pub escrow_lease_ownership: bool,
     /// `ETH_NETWORK`: mainnet (with polygon) or sepolia (with amoy).
     pub eth_network: String,
     /// `ETH_RPC_URL`: the L1 JSON-RPC.
@@ -101,6 +108,7 @@ impl std::fmt::Debug for Settings {
         f.debug_struct("Settings")
             .field("ignore_blockchain_access", &self.ignore_blockchain_access)
             .field("additional_dcl_address", &self.additional_dcl_address)
+            .field("escrow_lease_ownership", &self.escrow_lease_ownership)
             .field("eth_network", &self.eth_network)
             .field("l1_rpc_url", &self.l1_rpc_url.is_some())
             .field("l2_rpc_url", &self.l2_rpc_url.is_some())
@@ -129,14 +137,16 @@ impl Settings {
                 .map(str::to_string)
         };
         let required = content_writes && !ignore_blockchain_access;
-        let eth_network = eth_network.trim().to_string();
+        let eth_network = crate::shared::network::ChainPair::from_eth_network(eth_network)
+            .map_or(eth_network.trim(), |pair| pair.names().0)
+            .to_string();
         let l2_raw = clean(l2_rpc_url);
         let l2_https = l2_raw
             .as_deref()
             .is_some_and(|url| url::Url::parse(url).is_ok_and(|u| u.scheme() == "https"));
         if required {
             let fix = "or set IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true";
-            if !matches!(eth_network.as_str(), "mainnet" | "sepolia") {
+            if crate::shared::network::ChainPair::from_eth_network(&eth_network).is_none() {
                 bail!(
                     "ETH_NETWORK={eth_network} has no checker contracts (mainnet|sepolia): \
                      local deploys could not be checked; set it {fix}"
@@ -167,6 +177,7 @@ impl Settings {
         Ok(Self {
             ignore_blockchain_access,
             additional_dcl_address,
+            escrow_lease_ownership: false,
             eth_network,
             l1_rpc_url,
             l2_rpc_url,
@@ -183,7 +194,7 @@ impl Settings {
             return Ok(());
         }
         let fix = "or set IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true";
-        if !matches!(self.eth_network.as_str(), "mainnet" | "sepolia") {
+        if crate::shared::network::ChainPair::from_eth_network(&self.eth_network).is_none() {
             bail!(
                 "ETH_NETWORK={} has no checker contracts (mainnet|sepolia): synced entities \
                  could not be checked; set it {fix}",
@@ -203,7 +214,7 @@ impl Settings {
     }
 }
 
-/// What the validator reads, built once by `serve`: the ONE pool (the
+/// What the validator reads, built once by `serve`: the ONE pool (the opt-in
 /// `shop.usage_grants` overlay), the ONE blob store, the shared EIP-1654
 /// validator (`None` without `ETH_RPC_URL`: a contract-wallet link is then
 /// undecidable) and the chain access checks over the ONE client.
@@ -214,6 +225,7 @@ pub struct Sources {
     access: Arc<onchain::OnChainAccess>,
     ignore_blockchain_access: bool,
     additional_dcl_address: Option<String>,
+    escrow_lease_ownership: bool,
 }
 
 impl Sources {
@@ -237,6 +249,7 @@ impl Sources {
             access: Arc::new(access),
             ignore_blockchain_access: settings.ignore_blockchain_access,
             additional_dcl_address: settings.additional_dcl_address,
+            escrow_lease_ownership: settings.escrow_lease_ownership,
         }
     }
 
@@ -286,13 +299,94 @@ impl ExternalCalls for Sources {
         auth_chain: &AuthChain,
         timestamp: types::Timestamp,
     ) -> Result<(), AuthError> {
-        crate::auth::verify_auth_chain_async(
+        verify_local_entity_chain(
             auth_chain,
             entity_id,
-            Some(timestamp),
-            self.eip1654.as_deref(),
+            timestamp,
+            self.eip1654(),
+            Some(&self.access),
         )
         .await
+    }
+}
+
+/// A local entity's chain: a contract-wallet link refused at latest is asked again at the
+/// L1 block `@dcl/crypto` selects for the entity timestamp, found by the access checks'
+/// search when `access` is given.
+pub(crate) async fn verify_local_entity_chain(
+    auth_chain: &AuthChain,
+    entity_id: &str,
+    timestamp_ms: i64,
+    eip1654: Option<&dyn Eip1654Validator>,
+    access: Option<&onchain::OnChainAccess>,
+) -> Result<(), AuthError> {
+    let at_entity_time = eip1654.zip(access).map(|(inner, access)| AtEntityTime {
+        inner,
+        access,
+        without_l1: WithoutL1::Delegate,
+    });
+    let eip1654 = match &at_entity_time {
+        Some(v) => Some(v as &dyn Eip1654Validator),
+        None => eip1654,
+    };
+    crate::auth::verify_entity_auth_chain(auth_chain, entity_id, timestamp_ms, eip1654).await
+}
+
+/// What [`AtEntityTime`] does when the node has no L1 RPC.
+#[derive(Clone, Copy)]
+pub(crate) enum WithoutL1 {
+    /// Ask the inner validator's own selector (local deploys).
+    Delegate,
+    /// Undecidable (synced entities).
+    Undecidable,
+}
+
+/// The node's EIP-1654 validator, its historical block taken from the access checks' L1
+/// search ([`onchain::OnChainAccess::l1_verification_block`]). A failed search is undecidable.
+/// The block is chosen even when the inner validator's own selector answers `None`: an inner
+/// validator without history then fails the call there (undecidable) instead of its latest
+/// refusal standing.
+pub(crate) struct AtEntityTime<'a> {
+    pub(crate) inner: &'a dyn Eip1654Validator,
+    pub(crate) access: &'a onchain::OnChainAccess,
+    pub(crate) without_l1: WithoutL1,
+}
+
+#[async_trait]
+impl Eip1654Validator for AtEntityTime<'_> {
+    async fn validate_signature(
+        &self,
+        contract_address: &str,
+        hash: &[u8],
+        signature: &[u8],
+    ) -> Result<bool, AuthError> {
+        self.inner
+            .validate_signature(contract_address, hash, signature)
+            .await
+    }
+
+    async fn validate_signature_at_block(
+        &self,
+        contract_address: &str,
+        hash: &[u8],
+        signature: &[u8],
+        block: u64,
+    ) -> Result<bool, AuthError> {
+        self.inner
+            .validate_signature_at_block(contract_address, hash, signature, block)
+            .await
+    }
+
+    async fn verification_time_block(&self, timestamp_ms: i64) -> Result<Option<u64>, AuthError> {
+        match self.access.l1_verification_block(timestamp_ms).await {
+            Ok(block) => Ok(Some(block)),
+            Err(ValidatorError::Unconfigured(_))
+                if matches!(self.without_l1, WithoutL1::Delegate) =>
+            {
+                self.inner.verification_time_block(timestamp_ms).await
+            }
+            Err(e) => Err(AuthError::Eip1654ValidationFailed(e.to_string())),
+        }
     }
 }
 
@@ -308,7 +402,7 @@ pub struct Context<'a> {
 /// kind.
 pub async fn validate(
     entity: &Entity,
-    files: &HashMap<String, bytes::Bytes>,
+    files: &HashMap<String, types::UploadedFile>,
     ctx: &Context<'_>,
 ) -> Result<(), Vec<ValidationError>> {
     let deployment = Deployment {
@@ -328,12 +422,42 @@ pub async fn validate(
     .into_result()
 }
 
+/// The access step alone, asked of the chain as it stands now instead of at
+/// the entity timestamp: a deployer must still hold the pointers of an
+/// entity published after `REQUEST_TTL_BACKWARDS` (a partial upload). The
+/// block five minutes before now still grants, as for every access check.
+pub async fn validate_current_access(
+    entity: &Entity,
+    ctx: &Context<'_>,
+) -> Result<(), Vec<ValidationError>> {
+    let now = Entity {
+        timestamp: chrono::Utc::now().timestamp_millis(),
+        ..entity.clone()
+    };
+    let files = HashMap::new();
+    let deployment = Deployment {
+        entity: &now,
+        files: &files,
+        auth_chain: ctx.auth_chain,
+    };
+    ContentValidator {
+        external_calls: ctx.sources,
+        blockchain_checker: ctx.sources,
+        ignore_blockchain_access: ctx.sources.ignore_blockchain_access,
+        synced: false,
+        access_passed: false,
+    }
+    .validate_access_only(&deployment)
+    .await
+    .into_result()
+}
+
 /// Validates one batch of a partial upload ([`ContentValidator::validate_staging`]):
 /// `files` holds the entity file under its id and the batch's other keys
 /// (their bytes are not read).
 pub async fn validate_staging(
     entity: &Entity,
-    files: &HashMap<String, bytes::Bytes>,
+    files: &HashMap<String, types::UploadedFile>,
     ctx: &Context<'_>,
     include_access: bool,
 ) -> Result<(), Vec<ValidationError>> {

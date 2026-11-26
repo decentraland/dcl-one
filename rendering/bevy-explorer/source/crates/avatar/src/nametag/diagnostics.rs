@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 use super::{
     bubble::{BubbleKind, ChatBubbleRequest, ChatBubbleRetext},
     layout::Voice,
+    plate::NametagPlate,
     tag_opacity, tag_scale,
     text::TextShaper,
     ChatBubble, Nametag, NametagContent, NametagVoice, OfficialWallets, SceneAvatarNametag,
@@ -27,9 +28,10 @@ pub const SECTION: DebugSection = DebugSection {
     fields: &[
         ("Shown", "shown"),
         ("Of scene avatars", "sceneAvatars"),
+        ("With a scene's plate", "plates"),
         ("Hidden", "hidden"),
         ("Glyph atlas (distance field / colour px)", "atlas"),
-        ("Chat bubbles", "bubbles"),
+        ("Chat bubbles and reactions", "bubbles"),
     ],
     actions: &[(
         "Show a test bubble",
@@ -44,12 +46,16 @@ pub const SECTION: DebugSection = DebugSection {
 };
 
 /// Report the nametags as JSON: `visible` (the nametags toggle), `shown`, `sceneAvatars` (of
-/// those shown, the ones over a scene's avatars) and `hidden` (the tags that don't show: out
+/// those shown, the ones over a scene's avatars), `plates` (of those shown, the ones with a
+/// scene's `AvatarNametag` plate) and `hidden` (the tags that don't show: out
 /// of range, blocked, or hidden by the scene or a setting), `atlas` (the glyph atlas'
 /// distance-field and colour page sizes in pixels, 0 for a page not made), `bubbles` (the chat
 /// bubble setting) and `tags`, one per shown tag: `player` (an address, or `local`, or null
 /// for an avatar with no wallet), `sceneAvatar` (the tag is over an avatar a scene made),
-/// `name`, `suffix`, `verified`, `official`, `voice` (`off`, `idle`, `speaking`, `hushed`),
+/// `nameShown` (false for a tag that is its plate alone: the avatar has no name, or a scene's
+/// area hides it), `plate` (null, or the plate's `label` and its `labelColor`, `backgroundColor`
+/// and `borderColor` as `#RRGGBB`), `name` and `suffix` (empty for an avatar with no name),
+/// `verified`, `official`, `voice` (`off`, `idle`, `speaking`, `hushed`),
 /// `distance` in metres from the camera, `opacity` (0 to 1), `scale` (metres per tag unit),
 /// `position` (world, metres; all four as of the last frame drawn), `headOffset` (how far over
 /// the head bone the tag sits, in metres for an avatar at a scale of one; null until the
@@ -59,7 +65,6 @@ pub const SECTION: DebugSection = DebugSection {
 #[command(name = "/nametag_state")]
 pub struct NametagStateCommand;
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn nametag_state(
     mut cmd: ConsoleCommand<NametagStateCommand>,
     visible: Res<NametagsVisible>,
@@ -68,7 +73,8 @@ pub fn nametag_state(
     camera: Query<(&GlobalTransform, &Projection), With<PrimaryCamera>>,
     tags: Query<(&Nametag, &ChildOf, &GlobalTransform, &Visibility)>,
     owners: Query<(
-        &NametagContent,
+        Option<&NametagContent>,
+        Option<&NametagPlate>,
         &NametagVoice,
         Option<&ForeignPlayer>,
         Option<&NametagHeadOffset>,
@@ -100,11 +106,12 @@ pub fn nametag_state(
             hidden += 1;
             continue;
         }
-        let Ok((content, voice, foreign, head_offset, bubble, scene_avatar)) =
+        let Ok((content, plate, voice, foreign, head_offset, bubble, scene_avatar)) =
             owners.get(owner.parent())
         else {
             continue;
         };
+        let hex = |color: Color| color.to_srgba().to_hex();
         let player = match foreign {
             Some(player) => json!(format!("{:#x}", player.address)),
             None if owner.parent() == local.0 => json!("local"),
@@ -118,10 +125,17 @@ pub fn nametag_state(
         shown.push(json!({
             "player": player,
             "sceneAvatar": scene_avatar,
-            "name": content.name,
-            "suffix": content.suffix,
-            "verified": content.verified,
-            "official": content.official,
+            "nameShown": nametag.name_shown,
+            "plate": plate.map(|plate| json!({
+                "label": plate.label,
+                "labelColor": hex(plate.label_color),
+                "backgroundColor": hex(plate.background),
+                "borderColor": hex(plate.border),
+            })),
+            "name": content.map_or("", |content| &content.name),
+            "suffix": content.map_or("", |content| &content.suffix),
+            "verified": content.is_some_and(|content| content.verified),
+            "official": content.is_some_and(|content| content.official),
             "voice": match voice.0 {
                 Voice::Off => "off",
                 Voice::Idle => "idle",
@@ -140,7 +154,7 @@ pub fn nametag_state(
                     BubbleKind::Dm { .. } => "dm",
                 },
                 "mention": bubble.mention,
-                "length": bubble.message.chars().count(),
+                "length": bubble.message.text.chars().count(),
             })),
         }));
     }
@@ -150,6 +164,7 @@ pub fn nametag_state(
             "visible": visible.0,
             "shown": shown.len(),
             "sceneAvatars": shown.iter().filter(|tag| tag["sceneAvatar"] == true).count(),
+            "plates": shown.iter().filter(|tag| !tag["plate"].is_null()).count(),
             "hidden": hidden,
             "atlas": atlas,
             "bubbles": format!("{:?}", config.chat_bubble_visibility),
@@ -202,7 +217,7 @@ pub fn nametag_bubble(
     };
     let senders = tags
         .iter()
-        .filter(|(nametag, _)| nametag.shown)
+        .filter(|(nametag, _)| nametag.shown && nametag.name_shown)
         .map(|(_, owner)| owner.parent())
         .filter(|player| match address {
             Some(address) => players

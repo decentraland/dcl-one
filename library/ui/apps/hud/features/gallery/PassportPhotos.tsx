@@ -1,11 +1,12 @@
 // The reel is read unsigned, so even your own passport lists only PUBLIC photos.
 
+import { EmptyState, Spinner } from '@dcl/one-ui'
 import { useCallback, useState } from 'react'
-import { EmptyState, Spinner } from '../../design'
-import type { GalleryPhotoMeta } from '@explorer-core/engine/protocol'
+import type { GalleryPhotoMeta, Wearable } from '@explorer-core/engine/protocol'
 import type { ReelWrite } from '../session/useEngineSession'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
-import { PhotoDetail } from './PhotoDetail'
+import { usePhotoViewer } from './usePhotoViewer'
+import type { PhotoPlace } from './reelActions'
 import { fetchPublicReelPage } from './publicReels'
 import { ReelGrid, type ReelGridLayout, type ReelGridMenu } from './ReelGrid'
 import { useReelList } from './useReelList'
@@ -31,11 +32,24 @@ export interface PassportPhotoActions {
   remove: (id: string) => Promise<ReelWrite>
   metas: Record<string, GalleryPhotoMeta | null | undefined>
   loadPhoto: (id: string) => void
-  onTeleport: (x: number, y: number) => void
+  loadWearables: (urns: string[]) => Promise<Wearable[] | null>
+  /** False when the travel is refused: the photo stays open. */
+  onJumpIn: (place: PhotoPlace) => boolean
   onViewPerson?: (user: ChatUser) => void
 }
 
-export function PassportPhotos({ address, isSelf, actions }: { address: string; isSelf: boolean; actions?: PassportPhotoActions }): React.JSX.Element {
+export function PassportPhotos({
+  address,
+  isSelf,
+  actions,
+  empty
+}: {
+  address: string
+  isSelf: boolean
+  actions?: PassportPhotoActions
+  /** Shown for a reel with no public photos. */
+  empty: React.ReactNode
+}): React.JSX.Element {
   const key = address.toLowerCase()
   const fetchPage = useCallback((offset: number, limit: number) => fetchPublicReelPage(key, offset, limit), [key])
   const list = useReelList(key, fetchPage)
@@ -44,22 +58,49 @@ export function PassportPhotos({ address, isSelf, actions }: { address: string; 
   const menu: ReelGridMenu | null =
     isSelf && actions != null ? { showDelete: true, onSetPublic: writes.setPublic, onDelete: (photo) => void writes.remove(photo) } : null
 
+  // A photo made private leaves this public-only list: show the next one, wrapping, or close when none are left.
+  if (index != null && list.loaded && index >= list.photos.length) setIndex(list.photos.length > 0 ? index % list.photos.length : null)
   const selected = index != null ? list.photos[index] : null
+  usePhotoViewer(
+    selected != null && index != null
+      ? {
+          photos: list.photos,
+          index,
+          meta: actions?.metas[selected.id],
+          canEdit: menu != null,
+          onIndex: (i) => {
+            setIndex(i)
+            list.loadMore(i)
+          },
+          onLoadMeta: actions?.loadPhoto ?? noop,
+          loadWearables: actions?.loadWearables ?? noWearables,
+          onClose: () => setIndex(null),
+          onSetPublic: menu != null ? writes.setPublic : undefined,
+          onJumpIn: (place) => {
+            if (actions?.onJumpIn(place)) setIndex(null)
+          },
+          onDelete:
+            menu != null
+              ? (photo) =>
+                  void writes.remove(photo).then((removed) => {
+                    if (removed) setIndex(null)
+                  })
+              : undefined,
+          onViewPerson: actions?.onViewPerson
+        }
+      : null
+  )
 
   return (
     <section className={styles.section}>
       {!list.loaded ? (
         <div className={styles.center}>
-          <Spinner size={34} />
+          <Spinner variant="thin" size={34} />
         </div>
       ) : list.error && list.photos.length === 0 ? (
         <EmptyState variant="inline" tone="error" title="Photos couldn't be loaded" actions={[{ label: 'RETRY', onClick: list.retry }]} />
       ) : list.photos.length === 0 ? (
-        <EmptyState
-          variant="inline"
-          title="No photos here yet!"
-          subtitle="✨ Set your photos as public to make them visible in your Profile & Communities ✨"
-        />
+        empty
       ) : (
         <ReelGrid
           photos={list.photos}
@@ -71,37 +112,11 @@ export function PassportPhotos({ address, isSelf, actions }: { address: string; 
           aria-label="Photos"
         />
       )}
-      {selected != null && index != null && (
-        <PhotoDetail
-          photos={list.photos}
-          index={index}
-          meta={actions?.metas[selected.id]}
-          isSelf={isSelf}
-          onIndex={(i) => {
-            setIndex(i)
-            list.loadMore(i)
-          }}
-          onLoadMeta={actions?.loadPhoto ?? noop}
-          onClose={() => setIndex(null)}
-          onTeleport={(x, y) => {
-            setIndex(null)
-            actions?.onTeleport(x, y)
-          }}
-          onDelete={
-            menu != null
-              ? (photo) =>
-                  void writes.remove(photo).then((removed) => {
-                    if (removed) setIndex(null)
-                  })
-              : undefined
-          }
-          onViewPerson={actions?.onViewPerson}
-        />
-      )}
     </section>
   )
 }
 
 const noop = (): void => {}
+const noWearables = async (): Promise<null> => null
 // Never called: without `actions` there is no menu.
 const NO_WRITES: ReelWrites = { setPublic: async () => ({ ok: false }), remove: async () => ({ ok: false }) }

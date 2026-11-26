@@ -304,6 +304,17 @@ fn a_light_node_despawned_by_an_earlier_slice_does_not_stop_processing() {
     );
 }
 
+fn triangle() -> Mesh {
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+    )
+}
+
 #[test]
 fn a_model_whose_material_is_gone_is_spawned_again() {
     let mut app = app();
@@ -311,15 +322,10 @@ fn a_model_whose_material_is_gone_is_spawned_again() {
     let (container, instance) = spawn_container(&mut app, root, &["top", "painted"]);
     // spawned whole, not processed: no context yet
     app.update();
-    let triangle = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    )
-    .with_inserted_attribute(
-        Mesh::ATTRIBUTE_POSITION,
-        vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-    );
-    let mesh = app.world_mut().resource_mut::<Assets<Mesh>>().add(triangle);
+    let mesh = app
+        .world_mut()
+        .resource_mut::<Assets<Mesh>>()
+        .add(triangle());
     let mut materials = app.world_mut().resource_mut::<Assets<StandardMaterial>>();
     let material = materials.add(StandardMaterial::default());
     materials.remove(&material);
@@ -411,6 +417,58 @@ fn removing_the_container_drops_its_progress() {
     assert!(!has_node(&mut app, "a"));
 }
 
+/// What an animated model leaves on its container.
+fn animated(app: &mut App, container: Entity) {
+    app.world_mut().entity_mut(container).insert((
+        AnimationPlayer::default(),
+        AnimationGraphHandle::default(),
+        Clips {
+            default: None,
+            named: HashMap::default(),
+        },
+        PlaysOnce,
+    ));
+}
+
+fn is_animated(app: &App, container: Entity) -> bool {
+    let container = app.world().entity(container);
+    container.contains::<AnimationPlayer>()
+        || container.contains::<AnimationGraphHandle>()
+        || container.contains::<Clips>()
+        || container.contains::<PlaysOnce>()
+}
+
+#[test]
+fn a_model_without_animations_drops_the_player_of_the_model_it_replaces() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    give_context(&mut app, root);
+    let (container, _) = spawn_container(&mut app, root, &["node"]);
+    animated(&mut app, container);
+
+    app.update();
+
+    assert!(is_processed(&app, container));
+    assert!(!is_animated(&app, container));
+}
+
+#[test]
+fn removing_the_container_drops_its_player() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    give_context(&mut app, root);
+    let (container, _) = spawn_container(&mut app, root, &["node"]);
+    app.update();
+    animated(&mut app, container);
+
+    app.world_mut()
+        .entity_mut(container)
+        .remove::<GltfDefinition>();
+    app.update();
+
+    assert!(!is_animated(&app, container));
+}
+
 #[test]
 fn removing_the_container_while_its_model_spawns_leaves_nothing() {
     let mut app = app();
@@ -454,4 +512,192 @@ fn a_model_with_nothing_to_process_does_not_wait_behind_one_in_progress() {
 
     assert!(is_processed(&app, empty));
     assert!(!is_processed(&app, busy));
+}
+
+/// The name of the primitive `spawn_mesh_node` gives its node.
+const PRIMITIVE: &str = "mesh";
+
+/// A glTF container in `root` whose model is a node named `name` with one primitive, laid out
+/// as the loader does it: the node has the name and the extras, and its child, named
+/// [`PRIMITIVE`], has the mesh. Spawned whole and not processed: the scene has no context yet.
+fn spawn_mesh_node(app: &mut App, root: Entity, name: &str, mesh: Mesh) -> Entity {
+    let (container, _) = spawn_container(app, root, &[name, PRIMITIVE]);
+    app.update();
+    let mesh = app.world_mut().resource_mut::<Assets<Mesh>>().add(mesh);
+    let primitive = node(app, PRIMITIVE);
+    app.world_mut().entity_mut(primitive).insert(Mesh3d(mesh));
+    container
+}
+
+/// Gives the spawned node named `name` the glTF extras `json`.
+fn give_extras(app: &mut App, name: &str, json: &str) {
+    let node = node(app, name);
+    app.world_mut().entity_mut(node).insert(GltfExtras {
+        value: json.to_owned(),
+    });
+}
+
+/// Sets the masks the container gives its visible and its invisible meshes.
+fn set_container_masks(
+    app: &mut App,
+    container: Entity,
+    visible: Option<u32>,
+    invisible: Option<u32>,
+) {
+    let mut definition = app
+        .world_mut()
+        .get_mut::<GltfDefinition>(container)
+        .expect("the container");
+    definition.0.visible_meshes_collision_mask = visible;
+    definition.0.invisible_meshes_collision_mask = invisible;
+}
+
+/// Processes the models of `root`, then gives the mask of the collider the primitive got.
+fn processed_collider_mask<T: ColliderType>(app: &mut App, root: Entity) -> Option<u32> {
+    give_context(app, root);
+    app.update();
+    let primitive = node(app, PRIMITIVE);
+    app.world()
+        .get::<MeshCollider<T>>(primitive)
+        .map(|collider| collider.collision_mask)
+}
+
+#[test]
+fn a_nodes_collider_mask_extra_beats_the_containers_mask() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    let container = spawn_mesh_node(&mut app, root, "floor_collider", triangle());
+    set_container_masks(&mut app, container, None, Some(512));
+    give_extras(&mut app, "floor_collider", r#"{"dcl_collider_mask":256}"#);
+
+    assert_eq!(
+        processed_collider_mask::<CtCollider>(&mut app, root),
+        Some(256)
+    );
+}
+
+#[test]
+fn a_primitives_collider_mask_extra_is_read_too() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    spawn_mesh_node(&mut app, root, "floor_collider", triangle());
+    give_extras(&mut app, PRIMITIVE, r#"{"dcl_collider_mask":256}"#);
+
+    assert_eq!(
+        processed_collider_mask::<CtCollider>(&mut app, root),
+        Some(256)
+    );
+}
+
+#[test]
+fn the_extra_spelled_collision_mask_is_read_too() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    spawn_mesh_node(&mut app, root, "floor_collider", triangle());
+    give_extras(&mut app, "floor_collider", r#"{"dcl_collision_mask":256}"#);
+
+    assert_eq!(
+        processed_collider_mask::<CtCollider>(&mut app, root),
+        Some(256)
+    );
+}
+
+#[test]
+fn a_node_naming_its_mask_both_ways_gets_the_collider_mask_one() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    spawn_mesh_node(&mut app, root, "floor_collider", triangle());
+    give_extras(
+        &mut app,
+        "floor_collider",
+        r#"{"dcl_collider_mask":256,"dcl_collision_mask":512}"#,
+    );
+
+    assert_eq!(
+        processed_collider_mask::<CtCollider>(&mut app, root),
+        Some(256)
+    );
+}
+
+#[test]
+fn a_collider_mask_extra_that_is_not_a_u32_leaves_the_other_spelling() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    spawn_mesh_node(&mut app, root, "floor_collider", triangle());
+    give_extras(
+        &mut app,
+        "floor_collider",
+        r#"{"dcl_collider_mask":"256","dcl_collision_mask":512}"#,
+    );
+
+    assert_eq!(
+        processed_collider_mask::<CtCollider>(&mut app, root),
+        Some(512)
+    );
+}
+
+#[test]
+fn a_node_with_other_extras_leaves_the_containers_visible_mask() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    let container = spawn_mesh_node(&mut app, root, "wall", triangle());
+    let pointer_only = ColliderLayer::ClPointer as u32;
+    set_container_masks(&mut app, container, Some(pointer_only), None);
+    give_extras(&mut app, "wall", r#"{"author":"someone"}"#);
+
+    assert_eq!(
+        processed_collider_mask::<CtCollider>(&mut app, root),
+        Some(pointer_only)
+    );
+}
+
+#[test]
+fn a_node_with_other_extras_leaves_the_containers_invisible_mask() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    let container = spawn_mesh_node(&mut app, root, "wall_collider", triangle());
+    set_container_masks(&mut app, container, None, Some(512));
+    give_extras(&mut app, "wall_collider", r#"{"author":"someone"}"#);
+
+    assert_eq!(
+        processed_collider_mask::<CtCollider>(&mut app, root),
+        Some(512)
+    );
+}
+
+#[test]
+fn a_trigger_under_a_node_with_other_extras_gets_the_containers_invisible_mask() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    let container = spawn_mesh_node(&mut app, root, "zone_trigger", triangle());
+    set_container_masks(&mut app, container, None, Some(512));
+    give_extras(&mut app, "zone_trigger", r#"{"author":"someone"}"#);
+
+    assert_eq!(
+        processed_collider_mask::<CtTrigger>(&mut app, root),
+        Some(512)
+    );
+}
+
+#[test]
+fn a_skinned_mesh_under_a_node_with_other_extras_gets_no_collider() {
+    let mut app = app();
+    let root = scene_root(&mut app);
+    let skinned = triangle()
+        .with_inserted_attribute(
+            Mesh::ATTRIBUTE_JOINT_INDEX,
+            VertexAttributeValues::Uint16x4(vec![[0; 4]; 3]),
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT, vec![[1.0, 0.0, 0.0, 0.0]; 3]);
+    spawn_mesh_node(&mut app, root, "arm_collider", skinned);
+    let primitive = node(&mut app, PRIMITIVE);
+    app.world_mut().entity_mut(primitive).insert(SkinnedMesh {
+        inverse_bindposes: Handle::default(),
+        joints: Vec::new(),
+    });
+    give_extras(&mut app, "arm_collider", r#"{"author":"someone"}"#);
+
+    assert_eq!(processed_collider_mask::<CtCollider>(&mut app, root), None);
+    // processed as a skinned mesh, which is what leaves it without a collider
+    assert!(app.world().get::<NoFrustumCulling>(primitive).is_some());
 }

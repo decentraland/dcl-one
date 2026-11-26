@@ -6,12 +6,13 @@ import { engine, PlayerIdentityData, PointerLock } from '@dcl/sdk/ecs'
 import { getPlayer } from '@dcl/sdk/players'
 import { getPlayerData } from '~system/Players'
 import { BevyApi } from '../bevy-api'
+import type { AvatarModifierSnapshot } from './avatarModifiers'
 import { httpOrUndef, profileKey } from './profile'
-import { relay } from '../system-helpers'
+import { relay, throttleByDt } from '../system-helpers'
 import type { Ctx } from '../bridge'
 import type { NearbyMember } from '@explorer-core/engine/protocol'
 
-export function registerChat(ctx: Ctx): void {
+export function registerChat(ctx: Ctx, avatarModifiers: () => AvatarModifierSnapshot): void {
   // React → engine.
   ctx.on('sendChat', (msg) => {
     BevyApi.sendChat(msg.message, msg.channel)
@@ -63,7 +64,8 @@ export function registerChat(ctx: Ctx): void {
     if (pl != null) pl.isPointerLocked = false
   })
 
-  // Nearby players (PlayerIdentityData set) → chat header "Nearby · N". Poll ~3s, push on change.
+  // Scene identity includes room-only peers. Nearby uses the last known Pulse membership.
+  // Rebuild about every three seconds and publish on change.
   // Faces come from the engine's profile cache, which already holds every nearby player's profile
   // for their nametag: one RPC per address, answered once the engine has resolved it. An address
   // it couldn't resolve is dropped, so the next tick asks again.
@@ -76,16 +78,14 @@ export function registerChat(ctx: Ctx): void {
     const key = profileKey(ev.address)
     if (faces.has(key)) stale.add(key)
   })
-  let acc = 3
   let lastKey = ''
-  ctx.push((dt) => {
-    acc += dt
-    if (acc < 3) return
-    acc = 0
+  ctx.push(throttleByDt(3, () => {
+    const { pulseAbsent } = avatarModifiers()
     const members: NearbyMember[] = []
     for (const [, data] of engine.getEntitiesWith(PlayerIdentityData)) {
       const address = data.address
       const key = profileKey(address)
+      if (pulseAbsent.has(key)) continue
       if (!faces.has(key) || stale.has(key)) {
         const refreshing = faces.has(key)
         stale.delete(key)
@@ -120,5 +120,5 @@ export function registerChat(ctx: Ctx): void {
     if (key === lastKey) return
     lastKey = key
     ctx.send({ kind: 'members', members })
-  })
+  }))
 }

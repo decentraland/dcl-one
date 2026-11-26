@@ -14,7 +14,7 @@ use common::{
 
 use crate::{
     dui_utils::PropsExt,
-    focus::Focus,
+    focus::{Focus, PopupFocus},
     interact_style::{Active, InteractStyle, InteractStyles},
     scrollable::ScrollTargetEvent,
     text_size::FontSize,
@@ -240,17 +240,6 @@ fn update_comboboxen(
                         (0.0, v_space_above)
                     };
 
-                    // dbg!(ui_size);
-                    // dbg!(v_space_required);
-                    // dbg!(node_bottom);
-                    // dbg!(node_top);
-                    // dbg!(v_space_below);
-                    // dbg!(v_space_above);
-                    // dbg!(top);
-                    // dbg!(height);
-                    // dbg!(gt.translation());
-                    // dbg!(node.size());
-
                     let text_lightness =
                         Lcha::from(cbox.style.as_ref().map(|s| s.1 .0).unwrap_or(Color::WHITE))
                             .lightness;
@@ -287,6 +276,7 @@ fn update_comboboxen(
                                 Node::default(),
                                 Interaction::default(),
                                 Focus,
+                                PopupFocus,
                                 On::<Defocus>::new(close_ui_silent),
                                 On::<Click>::new(move |mut commands: Commands| {
                                     debug!("selected {ix:?}");

@@ -202,7 +202,7 @@ async fn members_page(
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     let (members, total) = if only_online {
-        let online = state.presence.connected_peers().await;
+        let online = state.online_wallets();
         queries::list_online_members(&state.pool, id, &online, &pagination)
             .await
             .map_err(super::http::database_error)?
@@ -552,10 +552,11 @@ pub async fn member_communities_by_ids(
         )
             .into_response();
     };
-    let memberships = match queries::member_communities_by_ids(&state.pool, &ids, &member).await {
-        Ok(v) => v,
-        Err(e) => return *map_db::<()>(Err(e)).unwrap_err(),
-    };
+    let memberships =
+        match map_db(queries::member_communities_by_ids(&state.pool, &ids, &member).await) {
+            Ok(v) => v,
+            Err(refusal) => return *refusal,
+        };
     let communities: Vec<serde_json::Value> = memberships
         .into_iter()
         .map(|(id, role)| json!({ "id": id.to_string(), "role": role }))

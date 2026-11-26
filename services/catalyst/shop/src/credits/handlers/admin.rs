@@ -3,37 +3,45 @@
 //! posted by an operator), the pack
 //! catalogue, the purchase/checkout/ledger pages, the manual
 //! refund and force-fulfil of a checkout, the escrow reclaim/release of a
-//! lease (through the economy broker) and the reconciler. Every mutation
-//! audits into `ops.admin_audit` with the server-chosen actor.
+//! lease (through the economy broker), the reconciler and the test send of
+//! the purchase receipt. Every mutation and every test send audits into
+//! `ops.admin_audit` with the server-chosen actor.
 
+use crate::shared::routing::{delete, erase, get, post, put};
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post, put};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
 use crate::credits::SharedState;
 use crate::credits::admin::{
-    FlagBody, RequireAdmin, normalize_address, paginate, validate_currency, validate_escrow_ref,
-    validate_idempotency_key, validate_positive_amount, validate_price_cents, validated_reason,
-    validated_studio_name,
+    FlagBody, RequireAdmin, normalize_address, paginate, refuse_studio_name, validate_currency,
+    validate_escrow_ref, validate_idempotency_key, validate_positive_amount, validate_price_cents,
+    validated_reason,
 };
 use crate::credits::admin_store::{GrantRequest, PackAdminRow, PackSpec};
 use crate::credits::errors::ApiError;
 use crate::credits::packs::validate_sku;
+use crate::credits::receipts;
 use crate::credits::reconcile::ReconcileReport;
+use crate::credits::store::{AuditEntry, Credits};
+use crate::shared::notifications::SendFailure;
+use crate::subscriptions::delivery::{Outcome, outcome_after};
 
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/admin/credits/grant", post(grant_credits))
         .route("/admin/credits/revoke", post(revoke_credits))
         .route("/admin/users/{address}/block", post(block_user))
-        .route("/admin/flags", get(list_flags).post(flag_wallets))
+        .route("/admin/flags", get(list_flags).post(erase(flag_wallets)))
         .route("/admin/flags/{address}", delete(unflag_wallet))
-        .route("/admin/packs", get(list_packs).post(create_pack))
-        .route("/admin/packs/{sku}", put(update_pack).delete(delete_pack))
+        .route("/admin/packs", get(list_packs).post(erase(create_pack)))
+        .route(
+            "/admin/packs/{sku}",
+            put(update_pack).delete(erase(delete_pack)),
+        )
         .route("/admin/purchases", get(list_purchases))
         .route("/admin/checkouts", get(list_checkouts))
         .route("/admin/ledger", get(list_ledger))
@@ -45,6 +53,7 @@ pub fn router() -> Router<SharedState> {
         .route("/admin/grants/{escrow_ref}/reclaim", post(reclaim_grant))
         .route("/admin/grants/{escrow_ref}/release", post(release_grant))
         .route("/admin/reconcile", get(reconcile))
+        .route("/admin/test-purchase-email", post(test_purchase_email))
 }
 
 /// The canonical `/shop-api/admin/*` paths of the same handlers: the ledger
@@ -54,10 +63,13 @@ pub fn shop_router() -> Router<SharedState> {
         .route("/admin/credits/grant", post(grant_credits))
         .route("/admin/credits/revoke", post(revoke_credits))
         .route("/admin/users/{address}/block", post(block_user))
-        .route("/admin/flags", get(list_flags).post(flag_wallets))
+        .route("/admin/flags", get(list_flags).post(erase(flag_wallets)))
         .route("/admin/flags/{address}", delete(unflag_wallet))
-        .route("/admin/packs", get(list_packs).post(create_pack))
-        .route("/admin/packs/{sku}", put(update_pack).delete(delete_pack))
+        .route("/admin/packs", get(list_packs).post(erase(create_pack)))
+        .route(
+            "/admin/packs/{sku}",
+            put(update_pack).delete(erase(delete_pack)),
+        )
         .route("/admin/purchases", get(list_purchases))
         .route("/admin/checkouts", get(list_checkouts))
         .route("/admin/credits/ledger", get(list_ledger))
@@ -69,6 +81,10 @@ pub fn shop_router() -> Router<SharedState> {
         .route("/admin/grants/{escrow_ref}/reclaim", post(reclaim_grant))
         .route("/admin/grants/{escrow_ref}/release", post(release_grant))
         .route("/admin/credits/reconcile", get(reconcile))
+        .route(
+            "/admin/credits/test-purchase-email",
+            post(test_purchase_email),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,9 +95,9 @@ pub struct GrantBody {
     reason: Option<String>,
     #[serde(rename = "idempotencyKey", default)]
     idempotency_key: Option<String>,
-    /// Grant only: the studio the notice names as the giver.
+    /// Refused when set ([`refuse_studio_name`]).
     #[serde(rename = "studioName", default)]
-    studio_name: Option<String>,
+    studio_name: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -101,7 +117,7 @@ async fn grant_credits(
     let address = normalize_address(&b.address)?;
     let amount = validate_positive_amount(&b.amount)?;
     let reason = validated_reason(&b.reason)?;
-    let studio_name = validated_studio_name(&b.studio_name)?;
+    refuse_studio_name(b.studio_name.as_ref())?;
     let mut idempotency_key = validate_idempotency_key(&b.idempotency_key)?;
     // A recovered MANA top-up takes the claim's own key and is paid for, like the claim.
     let topup = match idempotency_key
@@ -115,10 +131,7 @@ async fn grant_credits(
         None => false,
     };
     let actor = admin.audit_actor_description();
-    let mut detail = json!({ "address": address, "amount": amount, "reason": reason, "idempotencyKey": idempotency_key });
-    if let Some(studio) = &studio_name {
-        detail["studioName"] = json!(studio);
-    }
+    let detail = json!({ "address": address, "amount": amount, "reason": reason, "idempotencyKey": idempotency_key });
     let outcome = state
         .credits
         .admin_grant_credits(GrantRequest {
@@ -129,7 +142,7 @@ async fn grant_credits(
             actor: Some(&actor),
             idempotency_key: idempotency_key.as_deref(),
             detail: &detail,
-            studio_name: studio_name.as_deref(),
+            studio_name: None,
         })
         .await?;
     Ok(Json(GrantOut {
@@ -503,9 +516,10 @@ async fn refund_checkout(
         .await?
         .ok_or_else(|| ApiError::not_found("checkout not found"))?;
 
+    // re-checked under the checkout's lock by the refund
     if checkout.status != "fulfilling" && checkout.status != "fulfilled" {
         return Err(ApiError::conflict(
-            "checkout is not refundable (only a debited, not-yet-reversed checkout in 'fulfilling'/'fulfilled' can be manually refunded)",
+            crate::credits::checkout::NOT_MANUALLY_REFUNDABLE,
         ));
     }
 
@@ -699,6 +713,95 @@ async fn reconcile(
     tracing::info!(action = "reconcile", "admin reconciliation run");
     let report = state.reconcile_report().await?;
     Ok(Json(report))
+}
+
+/// The credits a test receipt shows when the body names none.
+pub const TEST_RECEIPT_CREDITS: u64 = 500;
+
+/// `POST /admin/test-purchase-email`: renders and sends the purchase receipt
+/// on demand, so it can be checked on a deployed node without paying for a
+/// pack. It writes no purchase and no receipt row. The send is audited
+/// without its recipient, and answers what happened to it: `sent` with the
+/// provider's message id, `skipped` with the reason, or 502 when the
+/// provider refused it; no answer carries an email address. The body
+/// (`{ address, credits?, email? }`) is read by hand, so every malformed
+/// one is upstream's 400.
+async fn test_purchase_email(
+    admin: RequireAdmin,
+    State(state): State<SharedState>,
+    body: axum::body::Bytes,
+) -> Result<Json<JsonValue>, ApiError> {
+    let body: JsonValue =
+        serde_json::from_slice(&body).map_err(|_| ApiError::bad_request("invalid JSON body"))?;
+    let address = body
+        .get("address")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| ApiError::bad_request("invalid wallet address"))
+        .and_then(normalize_address)?;
+    let credits = match body.get("credits") {
+        None | Some(JsonValue::Null) => TEST_RECEIPT_CREDITS,
+        Some(value) => value
+            .as_u64()
+            .filter(|credits| *credits > 0)
+            .ok_or_else(|| ApiError::bad_request("credits must be a positive integer"))?,
+    };
+    let given = match body.get("email") {
+        None | Some(JsonValue::Null) => None,
+        Some(JsonValue::String(email)) => Some(email.trim()).filter(|email| !email.is_empty()),
+        Some(_) => return Err(ApiError::bad_request("email must be a string")),
+    };
+    let Some(sender) = state.receipts.get() else {
+        return Err(ApiError::service_unavailable(
+            "purchase receipts are not set up on this node",
+        ));
+    };
+    let detail = json!({ "credits": credits, "recipient": if given.is_some() { "given" } else { "account" } });
+    Credits::audit(
+        &state.credits.pool,
+        AuditEntry {
+            action: "test_purchase_email",
+            actor: &admin.audit_actor_description(),
+            target: Some(&address),
+            detail: &detail,
+        },
+    )
+    .await?;
+    let to = match given {
+        Some(email) => Some(email.to_string()),
+        None => receipts::account_email(&state.credits.pool, &address).await?,
+    };
+    let answer = |status: &str| json!({ "address": address, "credits": credits, "status": status });
+    let Some(to) = to else {
+        let mut out = answer("skipped");
+        out["reason"] = json!("no recipient");
+        return Ok(Json(out));
+    };
+    let result = if sender.mailer.is_configured() {
+        let custom_args = json!({ "credits_test_receipt": "true" });
+        sender
+            .send(&to, &address, &credits.to_string(), &custom_args)
+            .await
+    } else {
+        Err(SendFailure::NotConfigured)
+    };
+    match outcome_after(1, result) {
+        Outcome::Sent(message_id) => {
+            let mut out = answer("sent");
+            out["messageId"] = json!(message_id);
+            Ok(Json(out))
+        }
+        Outcome::Skipped(reason) => {
+            let mut out = answer("skipped");
+            out["reason"] = json!(reason);
+            Ok(Json(out))
+        }
+        Outcome::Failed(error) | Outcome::Retry { error, .. } => {
+            Err(ApiError::bad_gateway(format!(
+                "the receipt was not sent: {}",
+                receipts::redact_addresses(&error)
+            )))
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

@@ -1,4 +1,4 @@
-import cx from 'classnames';
+import { cx } from '/@/lib/cx';
 import type { Props } from './types';
 
 import './styles.css';

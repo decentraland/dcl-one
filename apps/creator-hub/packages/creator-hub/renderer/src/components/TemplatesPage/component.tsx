@@ -1,6 +1,8 @@
 import { useCallback, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { MenuItem, type SelectChangeEvent, Chip, Typography } from 'decentraland-ui2';
+import { useNavigate } from 'react-router';
+import Chip from '@ui/atoms/Chip';
+import { SelectOption } from '@ui/atoms/Select';
+import Text from '@ui/atoms/Text';
 
 import { useWorkspace } from '/@/hooks/useWorkspace';
 import { ProjectCard } from '/@/components/ProjectCard';
@@ -9,11 +11,11 @@ import { TEMPLATES, Difficulty, type Template } from '/@/modules/templates';
 
 import NewScenePng from '/assets/images/new-scene.png';
 
-import { misc } from '#preload';
+import { analytics, misc } from '#preload';
 import { Container } from '../Container';
 import { FiltersBar } from '../FiltersBar';
 import { Navbar, NavbarItem } from '../Navbar';
-import { Select } from '../Select';
+import { ToolbarSelect } from '../ToolbarSelect';
 import { Title } from '../Title';
 import { TutorialsWrapper } from '../Tutorials';
 import { CreateProject } from '../Modals/CreateProject';
@@ -46,6 +48,7 @@ export function TemplatesPage() {
 
   const handleClickTemplate = useCallback(
     (repo?: string) => async () => {
+      void analytics.track('Template Clicked', { template: repo ?? 'empty' });
       const [error, data] = await getAvailableProject();
       if (!error) {
         const { name, path } = data;
@@ -71,12 +74,14 @@ export function TemplatesPage() {
   const handleViewCode = useCallback(
     ({ repo }: Template) =>
       () => {
+        void analytics.track('Template Code Viewed', { template: repo });
         misc.openExternal(repo);
       },
     [],
   );
 
   const handleClickDifficulty = useCallback((value?: Difficulty) => {
+    void analytics.track('Templates Filtered', { difficulty: value ?? 'all' });
     setDifficulty(value);
     setTemplates(value ? TEMPLATES.filter($ => $.difficulty === value) : TEMPLATES);
   }, []);
@@ -111,7 +116,7 @@ export function TemplatesPage() {
           />
           <FiltersBar>
             <>
-              <Typography variant="h6">{t('templates.results', { count })}</Typography>
+              <Text variant="h6">{t('templates.results', { count })}</Text>
               <Filters
                 value={difficulty}
                 onClick={handleClickDifficulty}
@@ -146,8 +151,8 @@ export function TemplatesPage() {
                 content={template.tags.map($ => (
                   <Chip
                     key={$}
+                    className="tag-chip"
                     label={$}
-                    color="default"
                     size="medium"
                     variant="outlined"
                   />
@@ -185,15 +190,14 @@ function Filters({
 
   return (
     <div className="filter-by">
-      <Typography variant="body1">{t('templates.filters.title')}</Typography>
+      <Text variant="body1">{t('templates.filters.title')}</Text>
       {DIFFICULTY_FILTERS.map(filter => (
         <Chip
           key={filter.value}
+          className="filter-chip"
           label={t(filter.label)}
-          color="default"
           size="medium"
           variant={value === filter.value ? 'filled' : 'outlined'}
-          clickable
           onClick={handleClick(filter.value)}
         />
       ))}
@@ -202,31 +206,30 @@ function Filters({
 }
 
 function Sort({ value, onChange }: { value: SortBy; onChange: (value: SortBy) => void }) {
-  const handleSort = useCallback((e: SelectChangeEvent<SortBy>) => {
-    onChange(e.target.value as SortBy);
+  const handleSort = useCallback((value: SortBy) => {
+    onChange(value);
   }, []);
 
   return (
     <>
       <p>{t('templates.sort.title')}</p>
-      <Select
-        variant="standard"
+      <ToolbarSelect
         value={value}
         onChange={handleSort}
       >
-        <MenuItem
+        <SelectOption
           className="sort-item"
           value={SortBy.DEFAULT}
         >
           {t('templates.sort.default')}
-        </MenuItem>
-        <MenuItem
+        </SelectOption>
+        <SelectOption
           className="sort-item"
           value={SortBy.NEWEST}
         >
           {t('templates.sort.newest')}
-        </MenuItem>
-      </Select>
+        </SelectOption>
+      </ToolbarSelect>
     </>
   );
 }

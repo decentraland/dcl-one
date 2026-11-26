@@ -6,7 +6,7 @@ export const MappingSchema = z.object({
   to: z.string(),
   carry: z.array(z.string()),
   param: z
-    .object({ name: z.string(), queryKey: z.string().nullable() })
+    .object({ name: z.string() })
     .nullable(),
 });
 export type Mapping = z.infer<typeof MappingSchema>;
@@ -37,37 +37,37 @@ export const REDIRECT_DASHBOARD: RedirectFixture = {
     {
       from: "item-editor",
       legacyPath: "/builder/item-editor",
-      to: "/create/wearables/item-editor",
-      carry: ["collection", "item", "step", "variant"],
+      to: "/create/collections/editor",
+      carry: ["collection", "item", "reviewing"],
       param: null,
     },
     {
       from: "publish-collection",
       legacyPath: "/builder/publish-collection",
-      to: "/create/wearables/publish",
-      carry: ["collection", "step", "variant"],
-      param: null,
+      to: "/create/collections/:collection",
+      carry: [],
+      param: { name: "collection" },
     },
     {
       from: "curation",
       legacyPath: "/builder/curation",
-      to: "/create/curate",
-      carry: ["step", "id", "decision", "status", "type", "assignee", "committee", "variant"],
+      to: "/create/curation",
+      carry: ["status", "type", "assignee"],
       param: null,
     },
     {
       from: "collection-detail",
       legacyPath: "/builder/collection/:id",
-      to: "/create/wearables/collections/:id",
-      carry: ["address", "tab", "variant"],
-      param: { name: "id", queryKey: null },
+      to: "/create/collections/:id",
+      carry: [],
+      param: { name: "id" },
     },
     {
       from: "item-detail",
       legacyPath: "/builder/item/:id",
-      to: "/create/wearables/item-editor",
-      carry: ["variant"],
-      param: { name: "id", queryKey: "item" },
+      to: "/create/collections",
+      carry: [],
+      param: null,
     },
   ],
   rollup: [],

@@ -2,6 +2,7 @@ use alloy_primitives::{Address, U256};
 use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
+use chrono::NaiveDateTime;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -9,6 +10,9 @@ use crate::checkout::calls::{
     BrokerCall, PurchaseMode, build_forward_to_escrow, build_mana_approve, build_primary,
     build_secondary, minted_token_id_from_logs, parse_address, parse_item_id, parse_token_id,
     parse_wei, parse_wei_allow_zero,
+};
+use crate::checkout::claims::{
+    BROKER_PENDING_TAKEOVER_SECS, BrokerPurchaseClaim, checkout_frozen, claim_broker_purchase,
 };
 use crate::checkout::trade::{
     TradeDelivery, TradeExpectations, TradeIn, ValidatedTrade, build_trade_accept,
@@ -20,8 +24,9 @@ use crate::evm::errors::ApiError;
 use crate::evm::handlers::admin::require_admin;
 use crate::evm::handlers::{idempotency_key, require_broadcast_enabled};
 use crate::evm::oracle::{UsdPeggedExpectation, fetch_mana_usd_rate};
-use crate::evm::signer::{DirectSigner, ReceiptOutcome};
+use crate::evm::signer::{DirectSigner, Rebroadcast, ReceiptOutcome, SignedTx};
 use crate::types::ASSET_TYPE_USD_PEGGED_MANA;
+use crate::types::chain_id_column;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -227,11 +232,16 @@ pub async fn buy(
             })?;
             build_primary(&contracts, collection, item_id, price_wei, relayer)
         }
-        PurchaseMode::Trade => build_trade_accept(validated_trade.as_ref().unwrap(), relayer),
+        PurchaseMode::Trade => build_trade_accept(
+            validated_trade
+                .as_ref()
+                .expect("trade mode always sets validated_trade or returns early"),
+            relayer,
+        ),
         _ => build_secondary(
             &contracts,
             collection,
-            token_id_for_secondary.unwrap(),
+            token_id_for_secondary.expect("secondary mode always parses tokenId or returns early"),
             price_wei,
         ),
     };
@@ -272,30 +282,28 @@ pub async fn buy(
         .as_ref()
         .map(|v| format!("{:#x}", v.hashed_signature));
 
-    let claim = sqlx::query(
-        "INSERT INTO shop.broker_purchases \
-         (idempotency_key, collection, item_id, token_id, buyer_address, escrow_address, price_wei, chain_id, mode, trade_hashed_signature, usd_amount_wei, mana_usd_rate_wei, status) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9, $10, $11::numeric, $12::numeric, 'pending') \
-         ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING",
+    let claimed_at = crate::evm::now();
+    let claim = claim_broker_purchase(
+        &state.pool,
+        &BrokerPurchaseClaim {
+            key: &key,
+            collection: &collection_hex,
+            item_id: item_id_text.as_deref(),
+            token_id: token_id_text.as_deref(),
+            buyer_address: &buyer_hex,
+            escrow_address: &escrow_hex,
+            price_wei: &price_text,
+            chain_id: chain_id_column(chain_id)?,
+            mode: mode.as_str(),
+            trade_hashed_signature: trade_sig_hash.as_deref(),
+            usd_amount_wei: usd_amount_text.as_deref(),
+            mana_usd_rate_wei: usd_rate_text.as_deref(),
+        },
+        claimed_at,
     )
-    .bind(&key)
-    .bind(&collection_hex)
-    .bind(item_id_text.as_deref())
-    .bind(token_id_text.as_deref())
-    .bind(&buyer_hex)
-    .bind(&escrow_hex)
-    .bind(&price_text)
-    .bind(chain_id as i64)
-    .bind(mode.as_str())
-    .bind(trade_sig_hash.as_deref())
-    .bind(usd_amount_text.as_deref())
-    .bind(usd_rate_text.as_deref())
-    .execute(&state.pool)
     .await
     .map_err(|e| match &e {
-        sqlx::Error::Database(db)
-            if db.constraint() == Some("broker_purchases_trade_sig_uidx") =>
-        {
+        sqlx::Error::Database(db) if db.constraint() == Some("broker_purchases_trade_sig_uidx") => {
             ApiError::InvalidTransaction(
                 "this signed trade is already being (or has been) purchased under another \
                  request; a 1-use trade listing cannot be sold twice"
@@ -316,10 +324,10 @@ pub async fn buy(
         relayer,
         trade: validated_trade.as_ref(),
     };
-    let outcome = if claim.rows_affected() == 0 {
-        resume_existing(ctx).await?
+    let outcome = if claim.claimed || claim.rearmed {
+        drive_buy_then_forward(ctx, buy_call, token_id_for_secondary, claimed_at).await?
     } else {
-        drive_buy_then_forward(ctx, buy_call, token_id_for_secondary).await?
+        resume_existing(ctx).await?
     };
 
     tracing::info!(
@@ -432,22 +440,19 @@ struct BuyContext<'a> {
     trade: Option<&'a ValidatedTrade>,
 }
 
+/// Buys under the claim made at `claimed_at`: the buy is recorded ('sent',
+/// its hash and signed bytes) before it is broadcast, then confirmed and
+/// forwarded to escrow.
 async fn drive_buy_then_forward(
     ctx: BuyContext<'_>,
     buy_call: BrokerCall,
     token_id_secondary: Option<U256>,
+    claimed_at: NaiveDateTime,
 ) -> Result<BuyOutcome, ApiError> {
     let BuyContext {
         state, signer, key, ..
     } = ctx;
-    let buy_tx = match signer.send_direct_call(buy_call.to, buy_call.data).await {
-        Ok(h) => h,
-        Err(e) => {
-            mark_error(state, key).await;
-            return Err(e);
-        }
-    };
-    set_buy_sent(state, key, &buy_tx).await?;
+    let buy_tx = send_recorded_buy(state, signer, key, claimed_at, buy_call).await?;
 
     let token_id = confirm_buy(ctx, &buy_tx, token_id_secondary).await?;
     drive_forward(ctx, token_id).await
@@ -511,11 +516,29 @@ async fn drive_forward(ctx: BuyContext<'_>, token_id: U256) -> Result<BuyOutcome
         relayer,
         ..
     } = ctx;
+    if let Some(mined) = settle_by_released_forward(state, signer, key).await? {
+        return Ok(BuyOutcome {
+            forward_tx_hash: mined,
+        });
+    }
     let fwd = build_forward_to_escrow(collection, relayer, escrow, token_id, buyer);
-    let fwd_tx = signer.send_direct_call(fwd.to, fwd.data).await?;
-    set_forwarding(state, key, &fwd_tx, &token_id.to_string()).await?;
+    let token_id_text = token_id.to_string();
+    let fwd_tx = signer
+        .send_direct_call_recorded(fwd.to, fwd.data, |signed| {
+            record_forward(state, key, signed, token_id_text)
+        })
+        .await?;
 
     let outcome = signer.await_receipt(&fwd_tx).await?;
+    // A forward that reverts or has not mined may have lost the token to a
+    // released forward that mined after all: that one settles the claim.
+    if outcome != ReceiptOutcome::Confirmed
+        && let Some(mined) = settle_by_released_forward(state, signer, key).await?
+    {
+        return Ok(BuyOutcome {
+            forward_tx_hash: mined,
+        });
+    }
     match outcome {
         ReceiptOutcome::Confirmed => {
             set_confirmed(state, key).await?;
@@ -617,6 +640,13 @@ pub async fn resume(state: &SharedState, key: &str) -> Result<String, ApiError> 
     Ok(resume_existing(ctx).await?.forward_tx_hash)
 }
 
+fn frozen_checkout(key: &str) -> ApiError {
+    ApiError::Conflict(format!(
+        "broker buy {key:?} refused: its credits checkout is frozen (reversing, reversed or \
+         failed), so it is not bought"
+    ))
+}
+
 async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
     let BuyContext {
         state,
@@ -626,12 +656,15 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
         ..
     } = ctx;
     let row: ExistingRow = sqlx::query_as(
-        "SELECT status, tx_hash, forward_tx_hash, token_id, minted_token_id \
+        "SELECT status, tx_hash, forward_tx_hash, token_id, minted_token_id, \
+                forward_signed_tx, write_ahead \
          FROM shop.broker_purchases WHERE idempotency_key = $1",
     )
     .bind(key)
-    .fetch_one(&state.pool)
-    .await?;
+    .fetch_optional(&state.pool)
+    .await?
+    // only a frozen credits checkout's line is refused a claim row
+    .ok_or_else(|| frozen_checkout(key))?;
 
     match row.status.as_str() {
         "confirmed" => {
@@ -648,27 +681,29 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
         "reverted" => Err(ApiError::RelayReverted(format!(
             "broker buy {key:?} reverted on a prior attempt; not re-broadcasting"
         ))),
-        "error" => {
-            let rearmed = sqlx::query(
-                "UPDATE shop.broker_purchases SET status = 'pending', updated_at = timezone('UTC', now()) \
-                 WHERE idempotency_key = $1 AND status = 'error'",
-            )
-            .bind(key)
-            .execute(&state.pool)
-            .await?;
-            if rearmed.rows_affected() == 0 {
-                return Err(ApiError::Conflict(format!(
-                    "broker buy {key:?} changed state concurrently; retry"
-                )));
+        // A `write_ahead` claim is re-armed by the claim in [`buy`], which
+        // has the request to build the transaction from; reaching here, it
+        // was taken by a concurrent caller, or it is a claim kept from before
+        // transactions were recorded ahead of their broadcast, whose failure
+        // cannot prove that nothing was sent.
+        "error" if row.write_ahead => {
+            if checkout_frozen(&state.pool, key).await? {
+                return Err(frozen_checkout(key));
             }
             Err(ApiError::Conflict(format!(
-                "broker buy {key:?} previously failed before broadcast and was re-armed; retry to re-broadcast"
+                "broker buy {key:?} failed before broadcast; retry the buy request to buy it again"
             )))
         }
+        "error" => Err(ApiError::Conflict(format!(
+            "broker buy {key:?} failed under a claim that did not record its transaction \
+             before sending; it may have been broadcast, so it is not bought again \u{2014} \
+             reconcile manually"
+        ))),
         "sent" => {
-            let buy_tx = row.tx_hash.ok_or_else(|| {
+            let buy_tx = row.tx_hash.clone().ok_or_else(|| {
                 ApiError::Internal(format!("broker buy {key:?} is 'sent' without a tx_hash"))
             })?;
+            rebroadcast_recorded_buy(state, signer, key, &buy_tx).await?;
             let token_id_secondary = match (mode, row.token_id.as_deref()) {
                 (PurchaseMode::Secondary, Some(t)) | (PurchaseMode::Trade, Some(t)) => {
                     Some(parse_token_id(t)?)
@@ -688,7 +723,37 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
                     "broker buy {key:?} is 'forwarding' without a forward_tx_hash"
                 ))
             })?;
+            // A released forward that mined already holds the token, so the
+            // recorded one would only revert: settle before paying gas again.
+            if let Some(mined) = settle_by_released_forward(state, signer, key).await? {
+                return Ok(BuyOutcome {
+                    forward_tx_hash: mined,
+                });
+            }
+            if let Some(raw) = row.forward_signed_tx.as_deref() {
+                if signer.rebroadcast(&fwd_tx, raw).await? == Rebroadcast::Dead {
+                    // The buy mined and the token is with the relayer; once the
+                    // recorded forward is confirmed dead, one new forward is
+                    // signed in its place.
+                    dead_look(state, key, &fwd_tx).await?;
+                    if !release_dead_forward(state, key, &fwd_tx).await? {
+                        return Err(ApiError::Conflict(format!(
+                            "broker buy {key:?} changed state concurrently; retry"
+                        )));
+                    }
+                    let token_id = resume_token_id(ctx, &row).await?;
+                    return drive_forward(ctx, token_id).await;
+                }
+                clear_dead_look(state, key).await?;
+            }
             let outcome = signer.await_receipt(&fwd_tx).await?;
+            if outcome != ReceiptOutcome::Confirmed
+                && let Some(mined) = settle_by_released_forward(state, signer, key).await?
+            {
+                return Ok(BuyOutcome {
+                    forward_tx_hash: mined,
+                });
+            }
             match outcome {
                 ReceiptOutcome::Confirmed => {
                     set_confirmed(state, key).await?;
@@ -710,9 +775,17 @@ async fn resume_existing(ctx: BuyContext<'_>) -> Result<BuyOutcome, ApiError> {
                 }
             }
         }
-        "pending" => Err(ApiError::Conflict(format!(
-            "broker buy {key:?} is in flight (status 'pending'); not re-broadcasting \u{2014} retry once it settles"
-        ))),
+        "pending" => {
+            if release_stale_pending(state, key).await? {
+                return Err(ApiError::Conflict(format!(
+                    "broker buy {key:?} stopped before its transaction was recorded, so nothing \
+                     was sent; it is marked failed and the next buy request buys it"
+                )));
+            }
+            Err(ApiError::Conflict(format!(
+                "broker buy {key:?} is in flight (status 'pending'); not re-broadcasting \u{2014} retry once it settles"
+            )))
+        }
         other => Err(ApiError::Conflict(format!(
             "broker buy {key:?} has unexpected status {other:?}; reconcile manually"
         ))),
@@ -789,43 +862,375 @@ struct ExistingRow {
     forward_tx_hash: Option<String>,
     token_id: Option<String>,
     minted_token_id: Option<String>,
+    forward_signed_tx: Option<String>,
+    write_ahead: bool,
 }
 
-pub(crate) async fn set_buy_sent(
+/// Signs the claim's buy, records it (`sent`, its hash and signed bytes)
+/// and only then broadcasts it. The record is fenced on the claim made at
+/// `claimed_at` still being `pending`, so a caller whose claim was taken over
+/// sends nothing. A failure before the record leaves nothing sent and marks
+/// the claim `error`, which the next claim re-arms; after the record, the
+/// claim stays `sent` and a resume re-sends the recorded bytes.
+///
+/// A claim re-armed after a dead buy was released first checks the
+/// released hashes: if one mined successfully after all, that buy is
+/// recorded again (`sent`) and returned for the caller to settle, and
+/// nothing new is signed. One that reverted spent nothing, so it is bought
+/// again.
+pub(crate) async fn send_recorded_buy(
     state: &SharedState,
+    signer: &DirectSigner,
     key: &str,
-    buy_tx: &str,
-) -> Result<(), ApiError> {
-    sqlx::query(
-        "UPDATE shop.broker_purchases SET tx_hash = $2, status = 'sent', updated_at = timezone('UTC', now()) \
-         WHERE idempotency_key = $1",
+    claimed_at: NaiveDateTime,
+    call: BrokerCall,
+) -> Result<String, ApiError> {
+    let sent = match mined_released_tx(state, signer, key).await {
+        Ok(Some((mined, ReceiptOutcome::Confirmed))) => {
+            restore_mined_buy(state, key, claimed_at, &mined)
+                .await
+                .map(|()| mined)
+        }
+        // a released buy that reverted spent nothing: buy again
+        Ok(_) => {
+            signer
+                .send_direct_call_recorded(call.to, call.data, |signed| {
+                    record_buy(state, key, claimed_at, signed)
+                })
+                .await
+        }
+        Err(e) => Err(e),
+    };
+    if sent.is_err() {
+        // Fenced on `pending` and the claim's clock: a no-op once recorded.
+        mark_error(state, key, claimed_at).await;
+    }
+    sent
+}
+
+/// A buy released as dead under `key` that has a receipt after all (a later
+/// look than the two that released it), with its outcome: a confirmed one if
+/// any, else the first that reverted. An RPC error is returned, never read
+/// as "none mined".
+pub(crate) async fn mined_released_tx(
+    state: &SharedState,
+    signer: &DirectSigner,
+    key: &str,
+) -> Result<Option<(String, ReceiptOutcome)>, ApiError> {
+    mined_released(state, signer, key, "released_tx_hashes").await
+}
+
+async fn mined_released(
+    state: &SharedState,
+    signer: &DirectSigner,
+    key: &str,
+    column: &'static str,
+) -> Result<Option<(String, ReceiptOutcome)>, ApiError> {
+    let released: Option<Vec<String>> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT {column} FROM shop.broker_purchases WHERE idempotency_key = $1"
+    )))
+    .bind(key)
+    .fetch_optional(&state.pool)
+    .await?
+    .flatten();
+    // a confirmed receipt anywhere in the list wins over an earlier revert
+    let mut reverted = None;
+    for hash in released.unwrap_or_default() {
+        let (outcome, _) = signer.fetch_receipt_once(&hash).await?;
+        if outcome != ReceiptOutcome::Pending {
+            tracing::error!(idempotency_key = %key, tx_hash = %hash, ?outcome, "a broker transaction released as dead has a receipt after all");
+        }
+        match outcome {
+            ReceiptOutcome::Confirmed => return Ok(Some((hash, outcome))),
+            ReceiptOutcome::Reverted if reverted.is_none() => reverted = Some((hash, outcome)),
+            _ => {}
+        }
+    }
+    Ok(reverted)
+}
+
+/// A forward released as dead that mined successfully after all delivered
+/// the token to escrow: the claim is confirmed with that forward, and no
+/// other forward is signed. Returns its hash when it settled the claim.
+async fn settle_by_released_forward(
+    state: &SharedState,
+    signer: &DirectSigner,
+    key: &str,
+) -> Result<Option<String>, ApiError> {
+    let Some((mined, ReceiptOutcome::Confirmed)) =
+        mined_released(state, signer, key, "released_forward_tx_hashes").await?
+    else {
+        return Ok(None);
+    };
+    let settled = sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'confirmed', forward_tx_hash = $2, \
+         forward_signed_tx = NULL, \
+         released_forward_tx_hashes = array_remove(released_forward_tx_hashes, $2), \
+         updated_at = timezone('UTC', now()) \
+         WHERE idempotency_key = $1 AND status IN ('sent', 'bought', 'forwarding')",
     )
     .bind(key)
-    .bind(buy_tx)
+    .bind(&mined)
+    .execute(&state.pool)
+    .await?;
+    if settled.rows_affected() == 0 {
+        return Err(ApiError::Conflict(format!(
+            "broker buy {key:?} changed state concurrently; retry"
+        )));
+    }
+    Ok(Some(mined))
+}
+
+/// Records a released buy that mined after all back on its re-armed claim,
+/// fenced like [`record_buy`].
+async fn restore_mined_buy(
+    state: &SharedState,
+    key: &str,
+    claimed_at: NaiveDateTime,
+    mined: &str,
+) -> Result<(), ApiError> {
+    let restored = sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'sent', tx_hash = $2, signed_tx = NULL, \
+         released_tx_hashes = array_remove(released_tx_hashes, $2), \
+         updated_at = timezone('UTC', now()) \
+         WHERE idempotency_key = $1 AND status = 'pending' AND tx_hash IS NULL AND updated_at = $3",
+    )
+    .bind(key)
+    .bind(mined)
+    .bind(claimed_at)
+    .execute(&state.pool)
+    .await?;
+    if restored.rows_affected() == 0 {
+        return Err(ApiError::Conflict(format!(
+            "broker buy {key:?} changed state concurrently; retry"
+        )));
+    }
+    Ok(())
+}
+
+async fn record_buy(
+    state: &SharedState,
+    key: &str,
+    claimed_at: NaiveDateTime,
+    signed: SignedTx,
+) -> Result<(), ApiError> {
+    let recorded = sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'sent', tx_hash = $2, signed_tx = $3, \
+         updated_at = timezone('UTC', now()) \
+         WHERE idempotency_key = $1 AND status = 'pending' AND tx_hash IS NULL AND updated_at = $4",
+    )
+    .bind(key)
+    .bind(&signed.hash)
+    .bind(&signed.raw)
+    .bind(claimed_at)
+    .execute(&state.pool)
+    .await?;
+    if recorded.rows_affected() == 0 {
+        return Err(ApiError::Conflict(format!(
+            "broker buy {key:?} was taken over before its transaction was recorded; nothing was \
+             sent by this request"
+        )));
+    }
+    Ok(())
+}
+
+/// Records the forward leg (its hash, signed bytes and the token it moves)
+/// before it is broadcast; only one forward is ever recorded per claim.
+async fn record_forward(
+    state: &SharedState,
+    key: &str,
+    signed: SignedTx,
+    token_id: String,
+) -> Result<(), ApiError> {
+    let recorded = sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'forwarding', forward_tx_hash = $2, \
+         forward_signed_tx = $3, minted_token_id = $4, updated_at = timezone('UTC', now()) \
+         WHERE idempotency_key = $1 AND status IN ('sent', 'bought') AND forward_tx_hash IS NULL",
+    )
+    .bind(key)
+    .bind(&signed.hash)
+    .bind(&signed.raw)
+    .bind(&token_id)
+    .execute(&state.pool)
+    .await?;
+    if recorded.rows_affected() == 0 {
+        return Err(ApiError::Conflict(format!(
+            "broker buy {key:?} already has a forward recorded or changed state; nothing was \
+             sent by this request"
+        )));
+    }
+    Ok(())
+}
+
+/// Re-sends the buy leg recorded under `key`, unless it already has a
+/// receipt; a claim recorded without its bytes is left to its receipt. A
+/// recorded buy that can never mine (a finalized transaction holds its
+/// nonce, confirmed by two looks; see [`dead_look`]) spent nothing: the
+/// claim is released to `error` with the hash kept in `released_tx_hashes`,
+/// the next buy request re-arms it, and this call answers 409.
+pub(crate) async fn rebroadcast_recorded_buy(
+    state: &SharedState,
+    signer: &DirectSigner,
+    key: &str,
+    tx_hash: &str,
+) -> Result<(), ApiError> {
+    let raw: Option<String> = sqlx::query_scalar(
+        "SELECT signed_tx FROM shop.broker_purchases WHERE idempotency_key = $1",
+    )
+    .bind(key)
+    .fetch_optional(&state.pool)
+    .await?
+    .flatten();
+    let Some(raw) = raw else { return Ok(()) };
+    if signer.rebroadcast(tx_hash, &raw).await? != Rebroadcast::Dead {
+        return clear_dead_look(state, key).await;
+    }
+    dead_look(state, key, tx_hash).await?;
+    if !release_dead_buy(state, key, tx_hash).await? {
+        return Err(ApiError::Conflict(format!(
+            "broker buy {key:?} changed state concurrently; retry"
+        )));
+    }
+    Err(ApiError::Conflict(format!(
+        "broker buy {key:?}'s recorded transaction {tx_hash} can never mine (a finalized \
+         transaction holds its nonce); nothing was spent, and the next buy request buys again"
+    )))
+}
+
+/// Releases a dead recorded buy to `error`, keeping its hash in
+/// `released_tx_hashes`. Fenced on the dead look still being at least
+/// [`DEAD_CONFIRM_SECS`] old, so a look that found the transaction alive
+/// (and a fresh dead look after it) in between releases nothing.
+pub(crate) async fn release_dead_buy(
+    state: &SharedState,
+    key: &str,
+    tx_hash: &str,
+) -> Result<bool, ApiError> {
+    let released = sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'error', tx_hash = NULL, signed_tx = NULL, \
+         released_tx_hashes = array_append(released_tx_hashes, tx_hash), dead_seen_at = NULL, \
+         updated_at = timezone('UTC', now()) \
+         WHERE idempotency_key = $1 AND status = 'sent' AND tx_hash = $2 AND write_ahead \
+           AND dead_seen_at <= $3 - make_interval(secs => $4)",
+    )
+    .bind(key)
+    .bind(tx_hash)
+    .bind(crate::evm::now())
+    .bind(DEAD_CONFIRM_SECS as f64)
+    .execute(&state.pool)
+    .await?;
+    if released.rows_affected() > 0 {
+        tracing::error!(idempotency_key = %key, tx_hash = %tx_hash, "broker buy's recorded transaction can never mine; claim released for a new buy");
+    }
+    Ok(released.rows_affected() > 0)
+}
+
+/// How long apart two dead looks at a recorded leg must be before it is
+/// released: one lookup can be wrong (a lagging load-balanced backend), two
+/// minutes apart agreeing are taken as final.
+const DEAD_CONFIRM_SECS: i64 = 600;
+
+/// The oldest claim a dead look may release. Nodes may prune the lookup
+/// index of old transactions, so for an older claim a missing receipt is
+/// not evidence: it is logged and left for manual reconciliation.
+const DEAD_RELEASE_MAX_AGE_DAYS: i32 = 7;
+
+/// Records a dead look at the recorded leg `tx_hash` and decides: `Ok` when
+/// an earlier look at least [`DEAD_CONFIRM_SECS`] ago agrees (release it);
+/// a retryable `RelayerTimeout` after a first look; `Conflict` for a claim
+/// older than [`DEAD_RELEASE_MAX_AGE_DAYS`], which needs reconciliation.
+async fn dead_look(state: &SharedState, key: &str, tx_hash: &str) -> Result<(), ApiError> {
+    let now = crate::evm::now();
+    let looked: Option<(bool, bool)> = sqlx::query_as(
+        "UPDATE shop.broker_purchases SET dead_seen_at = COALESCE(dead_seen_at, $3) \
+         WHERE idempotency_key = $1 \
+           AND ((status = 'sent' AND tx_hash = $2) OR (status = 'forwarding' AND forward_tx_hash = $2)) \
+         RETURNING dead_seen_at <= $3 - make_interval(secs => $4) AS confirmed, \
+                   created_at >= $3 - make_interval(days => $5) AS recent",
+    )
+    .bind(key)
+    .bind(tx_hash)
+    .bind(now)
+    .bind(DEAD_CONFIRM_SECS as f64)
+    .bind(DEAD_RELEASE_MAX_AGE_DAYS)
+    .fetch_optional(&state.pool)
+    .await?;
+    match looked {
+        None => Err(ApiError::Conflict(format!(
+            "broker buy {key:?} changed state concurrently; retry"
+        ))),
+        Some((_, false)) => {
+            tracing::error!(idempotency_key = %key, tx_hash = %tx_hash, "recorded broker transaction looks dead but its claim is too old to trust a missing receipt; reconcile manually");
+            Err(ApiError::Conflict(format!(
+                "broker buy {key:?}'s recorded transaction {tx_hash} looks dead, but the claim \
+                 is older than {DEAD_RELEASE_MAX_AGE_DAYS} days \u{2014} reconcile manually"
+            )))
+        }
+        Some((false, true)) => Err(ApiError::RelayerTimeout(format!(
+            "broker buy {key:?}'s recorded transaction {tx_hash} looks dead; a retry at least \
+             {DEAD_CONFIRM_SECS} s later confirms it before anything is released"
+        ))),
+        Some((true, true)) => Ok(()),
+    }
+}
+
+/// Forgets an earlier dead look once a look finds the recorded leg alive.
+async fn clear_dead_look(state: &SharedState, key: &str) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE shop.broker_purchases SET dead_seen_at = NULL \
+         WHERE idempotency_key = $1 AND dead_seen_at IS NOT NULL",
+    )
+    .bind(key)
     .execute(&state.pool)
     .await?;
     Ok(())
 }
 
-/// Records the forward leg together with the token it moves: the buy receipt is not
-/// written on its own ('bought' is left to the reconciler), so one write covers both.
-async fn set_forwarding(
+/// Clears a recorded forward that can never mine so a new one can be
+/// recorded: the row goes back to `bought` (the buy mined; the token is with
+/// the relayer). Fenced on the dead forward still being the recorded one and
+/// its dead look still being at least [`DEAD_CONFIRM_SECS`] old.
+pub(crate) async fn release_dead_forward(
     state: &SharedState,
     key: &str,
     fwd_tx: &str,
-    token_id: &str,
-) -> Result<(), ApiError> {
-    sqlx::query(
-        "UPDATE shop.broker_purchases SET status = 'forwarding', forward_tx_hash = $2, \
-         minted_token_id = $3, updated_at = timezone('UTC', now()) \
-         WHERE idempotency_key = $1",
+) -> Result<bool, ApiError> {
+    let released = sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'bought', forward_tx_hash = NULL, \
+         forward_signed_tx = NULL, \
+         released_forward_tx_hashes = array_append(released_forward_tx_hashes, forward_tx_hash), \
+         dead_seen_at = NULL, updated_at = timezone('UTC', now()) \
+         WHERE idempotency_key = $1 AND status = 'forwarding' AND forward_tx_hash = $2 \
+           AND dead_seen_at <= $3 - make_interval(secs => $4)",
     )
     .bind(key)
     .bind(fwd_tx)
-    .bind(token_id)
+    .bind(crate::evm::now())
+    .bind(DEAD_CONFIRM_SECS as f64)
     .execute(&state.pool)
     .await?;
-    Ok(())
+    if released.rows_affected() > 0 {
+        tracing::error!(idempotency_key = %key, forward_tx_hash = %fwd_tx, "broker forward's recorded transaction can never mine; signing a new forward");
+    }
+    Ok(released.rows_affected() > 0)
+}
+
+/// Marks a `write_ahead` claim `error` once it has stayed `pending` with no
+/// recorded transaction past the takeover delay: its caller stopped before
+/// recording, so nothing was sent. Fenced like the record, so an in-flight
+/// caller's record then fails and it sends nothing.
+async fn release_stale_pending(state: &SharedState, key: &str) -> Result<bool, ApiError> {
+    let released = sqlx::query(
+        "UPDATE shop.broker_purchases SET status = 'error', updated_at = $2 \
+         WHERE idempotency_key = $1 AND status = 'pending' AND write_ahead AND tx_hash IS NULL \
+           AND updated_at < $2 - make_interval(secs => $3)",
+    )
+    .bind(key)
+    .bind(crate::evm::now())
+    .bind(BROKER_PENDING_TAKEOVER_SECS as f64)
+    .execute(&state.pool)
+    .await?;
+    Ok(released.rows_affected() > 0)
 }
 
 async fn set_confirmed(state: &SharedState, key: &str) -> Result<(), ApiError> {
@@ -839,10 +1244,10 @@ async fn set_confirmed(state: &SharedState, key: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-async fn set_reverted(state: &SharedState, key: &str) {
+pub(crate) async fn set_reverted(state: &SharedState, key: &str) {
     if let Err(e) = sqlx::query(
         "UPDATE shop.broker_purchases SET status = 'reverted', updated_at = timezone('UTC', now()) \
-         WHERE idempotency_key = $1",
+         WHERE idempotency_key = $1 AND status IN ('sent', 'bought', 'forwarding')",
     )
     .bind(key)
     .execute(&state.pool)
@@ -878,12 +1283,13 @@ async fn reverted_or_pending_error(
     }
 }
 
-pub(crate) async fn mark_error(state: &SharedState, key: &str) {
+async fn mark_error(state: &SharedState, key: &str, claimed_at: NaiveDateTime) {
     if let Err(e) = sqlx::query(
         "UPDATE shop.broker_purchases SET status = 'error', updated_at = timezone('UTC', now()) \
-         WHERE idempotency_key = $1 AND status = 'pending'",
+         WHERE idempotency_key = $1 AND status = 'pending' AND tx_hash IS NULL AND updated_at = $2",
     )
     .bind(key)
+    .bind(claimed_at)
     .execute(&state.pool)
     .await
     {

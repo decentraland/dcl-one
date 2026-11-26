@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 import secrets
 import subprocess
 import time
@@ -47,6 +48,14 @@ def main():
         if args.revision:
             assert config['Labels']['org.opencontainers.image.revision'] == args.revision
             assert f'COMMIT_HASH={args.revision}' in config['Env'], 'Images must report their build revision'
+    # The Cast presenter's process (CAST_BOT_BIN) loads in the APIs image: on an empty stdin it exits 0.
+    apis_env = dict(item.split('=', 1) for item in
+                    json.loads(docker('image', 'inspect', args.apis).stdout)[0]['Config']['Env'])
+    assert 'CAST_BOT_BIN' in apis_env, 'The APIs image must name its cast-bot'
+    docker('run', '--rm', '--read-only', '--network', 'none', '--entrypoint', apis_env['CAST_BOT_BIN'], args.apis)
+    # The message router, run as its own container from the APIs image, loads: its help exits 0.
+    docker('run', '--rm', '--read-only', '--network', 'none', '--entrypoint', '/bin/catalyst-message-router',
+           args.apis, '--help')
 
     name = 'foundation-image-smoke-' + secrets.token_hex(5)
     db, api, sites = (name + suffix for suffix in ('-db', '-api', '-sites'))
@@ -97,7 +106,7 @@ def main():
                 fetch(process.argv[1], {signal: AbortSignal.timeout(30000)}).then(async r => {
                     if (!r.ok) process.exit(1);
                     const data = Buffer.from(await r.arrayBuffer());
-                    console.log(JSON.stringify({bytes: data.length,
+                    console.log(JSON.stringify({bytes: data.length, cacheControl: r.headers.get('cache-control'),
                         sha256: require('crypto').createHash('sha256').update(data).digest('hex'),
                         body: process.argv[2] === 'json' ? JSON.parse(data.toString())
                             : process.argv[2] === 'text' ? data.toString() : null}));
@@ -130,6 +139,24 @@ def main():
             delivered = get(sites_url + '/play/' + path)
             assert delivered and delivered['sha256'] == play['files'][path], f'Sites serves different Explorer bytes: {path}'
         print(f"Sites serves verified Bevy producer {play['build_revision']}")
+        # The avatar preview from the same build: its page revalidates, the files it loads are
+        # content-hashed and immutable (react-router-serve's /assets/).
+        page = get(sites_url + '/avatar-preview/', body='text')
+        assert page and page['sha256'] == play['files']['avatar-preview/index.html'], 'Sites serves a different avatar preview page'
+        assert 'max-age=0' in (page['cacheControl'] or ''), f"The avatar preview page must revalidate: {page['cacheControl']}"
+        module = next(name for name in play['files']
+                      if re.fullmatch(r'avatar-preview/assets/pkg\.[0-9a-f]{16}/dcl_avatar_preview_bg\.wasm', name))
+        script = re.search(r"\.\./assets/avatar-preview/(preview\.[0-9a-f]{16}\.js)", page['body'])
+        assert script and 'avatar-preview/assets/' + script[1] in play['files'], 'The avatar preview page must load its own build'
+        delivered = get(sites_url + '/assets/avatar-preview/' + module.removeprefix('avatar-preview/assets/'))
+        assert delivered and delivered['sha256'] == play['files'][module], f'Sites serves different avatar preview bytes: {module}'
+        assert 'immutable' in (delivered['cacheControl'] or ''), f"Avatar preview modules must be immutable: {delivered['cacheControl']}"
+        # The component gallery (infra/packages/ui-gallery.nix): static files ahead of the Sites routes.
+        gallery = get(sites_url + '/ui-gallery/', body='text')
+        assert gallery and 'name="robots" content="noindex"' in gallery['body'], 'Sites must serve the UI gallery at /ui-gallery/'
+        script = re.search(r'src="\./(assets/[^"]+\.js)"', gallery['body'])
+        assert script and get(sites_url + '/ui-gallery/' + script[1]), 'UI gallery assets must resolve under /ui-gallery/'
+        assert get(sites_url + '/ui-gallery/hud.html'), 'The UI gallery must ship its HUD canvas'
         realm = get(sites_url + '/play/bridge/about', body=True)
         assert realm, 'Sites must expose the bundled bridge realm'
         urn = realm['body']['configurations']['scenesUrn'][0]

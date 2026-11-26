@@ -1,8 +1,7 @@
-import "@dcl/one-ui/foundations/foundations.css";
 import { useEffect, useRef, type MouseEvent } from "react";
 import { redirect, useNavigate } from "react-router";
-import SitesChrome from "@ui/web/frames/SitesChrome";
-import { LegalPageLayout } from "@dcl/one-ui/apps/sites/legal/LegalPageLayout";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
+import { LegalPageLayout } from "@dcl/one-ui";
 import { LEGAL_DOCS, type LegalKey } from "@/data/legal";
 import { LEGAL_SIDEBAR, legalPath, resolveLegalKey } from "@/data/legal/nav";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
@@ -12,6 +11,8 @@ import {
 } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
+import { absoluteUrl, publicBase, socialMeta } from "../lib/social-meta";
+import { isStaticPagePath, staticPageMeta } from "../lib/static-page-meta";
 import type { Route } from "./+types/$slug";
 
 const STORY: StoryId = "misc/legal";
@@ -33,26 +34,25 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
 
   const { sid, wrap } = await pageLoader(request, context, FALLBACK);
 
-  // Only the requested document reaches the client, not all nine.
+  // Only the requested document reaches the client, not every one.
   const payload = { doc: key, legal: LEGAL_DOCS[key], sid };
   return wrap(payload);
 }
 
-export function meta({ loaderData }: Route.MetaArgs) {
-  const legal = loaderData?.legal;
-  return [
-    { title: legal?.pageTitle ?? "Legal | Decentraland" },
-    {
-      name: "description",
-      content: legal
-        ? `Read Decentraland’s ${legal.title}, including the policies and conditions that apply to the community.`
-        : "Decentraland policies and legal documents.",
-    },
-    // An alias (/rewards, /content-policy, ...) serves the same document as its slug.
-    ...(loaderData?.doc
-      ? [{ tagName: "link", rel: "canonical", href: legalPath(loaderData.doc) }]
-      : []),
-  ];
+export function meta({ loaderData, matches }: Route.MetaArgs) {
+  if (!loaderData) {
+    return socialMeta({ title: "Legal | Decentraland", description: "Decentraland policies and legal documents." });
+  }
+  const { doc, legal } = loaderData;
+  // An alias (/rewards, /content-policy, ...) serves the same document as its slug.
+  const path = legalPath(doc);
+  const base = publicBase(matches);
+  if (isStaticPagePath(path)) return staticPageMeta(path, base);
+  return socialMeta({
+    title: legal.pageTitle,
+    description: `Read Decentraland’s ${legal.title}, including the policies and conditions that apply to the community.`,
+    url: absoluteUrl(base, path),
+  });
 }
 
 export default function LegalSlugRoute({ loaderData }: Route.ComponentProps) {
@@ -75,7 +75,7 @@ export default function LegalSlugRoute({ loaderData }: Route.ComponentProps) {
       );
   };
   return (
-    <SitesChrome active="legal" overlayNav>
+    <SitesLayout active="legal" overlayNav="mobile">
       <main onClickCapture={onSectionClick}>
         <LegalPageLayout
           title={legal.title}
@@ -93,6 +93,6 @@ export default function LegalSlugRoute({ loaderData }: Route.ComponentProps) {
           onNavigate={(href) => void navigate(href)}
         />
       </main>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

@@ -3,14 +3,15 @@
 // announcement and an author their own (asked first), and anyone who sees the list likes and
 // unlikes. Pages of 10 load as the list's end comes into view; failures are toasted by the session.
 
+import { Button, DclLogo, MaskIcon, Spinner } from '@dcl/one-ui'
 import { useRef, useState } from 'react'
-import { Avatar, Button, DclLogo, MaskIcon, Spinner, TextArea, Trash, VerifiedBadge, showConfirm } from '../../design'
+import { Avatar, TextArea, Trash, VerifiedBadge, showConfirm } from '../../design'
 import heartOutline from '../../assets/communities/favourite-outline.png'
 import heartSolid from '../../assets/communities/favourite-solid.png'
 import { splitName } from '@explorer-core/lib/identity'
 import type { CommunityPost } from '@explorer-core/engine/protocol'
 import { EmojiButton } from '../chat/EmojiButton'
-import { EmojiPicker } from '../chat/EmojiPicker'
+import { EmojiPicker, useCloseEmojiPanelOnOutsidePress } from '../chat/EmojiPicker'
 import { EmojiSuggestList, emojiSuggestionAt, moveSelection, type EmojiSuggestion } from '../chat/EmojiSuggestList'
 import { isCancelKey } from '../../lib/bindingLabels'
 import { knownUserColor } from '../session/profileStore'
@@ -124,6 +125,10 @@ function Composer({
   const [picker, setPicker] = useState(false)
   const [sug, setSug] = useState<EmojiSuggestion | null>(null)
   const field = useRef<HTMLTextAreaElement | null>(null)
+  // As unity-explorer's: the panel closes on a press outside it (the field and POST included).
+  const pickerRef = useRef<HTMLDivElement>(null)
+  const emojiRef = useRef<HTMLButtonElement>(null)
+  useCloseEmojiPanelOnOutsidePress(picker, pickerRef, emojiRef, () => setPicker(false))
   // the text clears once a post went through, not when it is sent
   const [seen, setSeen] = useState(posted)
   if (seen !== posted) {
@@ -194,7 +199,7 @@ function Composer({
         />
         {sug != null && <EmojiSuggestList className={styles.suggest} suggestion={sug} onAccept={(i) => accept(sug, i)} />}
         {picker && (
-          <div className={styles.picker}>
+          <div ref={pickerRef} className={styles.picker}>
             <EmojiPicker
               onPick={insertAtCaret}
               onClose={() => {
@@ -205,14 +210,17 @@ function Composer({
           </div>
         )}
         <div className={styles.composeFoot}>
-          <EmojiButton open={picker} onToggle={() => setPicker((p) => !p)} />
+          <EmojiButton ref={emojiRef} open={picker} onToggle={() => setPicker((p) => !p)} />
           {draft.length > 0 && (
             <span className={styles.count}>
               {draft.length}/{ANNOUNCEMENT_MAX}
             </span>
           )}
-          <Button size="sm" disabled={draft.trim() === '' || posting} onClick={() => onPost(draft.trim())} aria-label="Post announcement">
-            {posting ? <Spinner size={14} /> : 'POST'}
+          <Button appearance="hud" size="sm" disabled={draft.trim() === '' || posting} onClick={() => {
+              setPicker(false)
+              onPost(draft.trim())
+            }} aria-label="Post announcement">
+            {posting ? <Spinner variant="thin" size={14} /> : 'POST'}
           </Button>
         </div>
       </div>
@@ -265,7 +273,7 @@ export function Announcements({
       {posts.posts.length < posts.total && <LoadMore count={posts.posts.length} onVisible={onLoadMore} />}
       {posts.loadingMore && (
         <div className={styles.loadingMore}>
-          <Spinner size={20} />
+          <Spinner variant="thin" size={20} />
         </div>
       )}
     </div>

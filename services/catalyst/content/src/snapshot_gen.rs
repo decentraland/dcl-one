@@ -54,6 +54,32 @@
 //!   still bootstrapping would be marked processed by a peer and replaced
 //!   later, and the replacement is skipped as already covered.
 //!
+//! `Syncing` means a bootstrap pass over every peer ended, not that every
+//! peer finished it: a peer that was unreachable or did not fully deploy is
+//! retried in the background (`sync::orchestrator`), and generation does not
+//! wait for it, because a peer can stay away for any length of time. A
+//! window can therefore be written without that peer's entities. An entity
+//! that lands after its window was written (that peer catching up, a failed
+//! deployment retried) is stamped with a new `local_timestamp`, and reaches
+//! the peers of this node as follows, for a peer running this tree's sync
+//! client (`sync::snapshots`, `sync::orchestrator`):
+//! * A peer streaming this node's pointer changes receives it there: they
+//!   are served in `local_timestamp` order.
+//! * The first pass after it landed regenerates its window while the entity
+//!   is active, up to one interval later, with the earlier file in
+//!   `replacedSnapshotHashes`. A peer that never processed the earlier file
+//!   deploys the new one.
+//! * A peer that reads `/snapshots` before that pass starts its pointer
+//!   changes 20 minutes before the newest listed window's end, which is
+//!   earlier than the entity landed, and receives it there.
+//! * A peer that marked the earlier file processed and bootstraps again once
+//!   the new file is listed skips the new file as already covered. Its
+//!   pointer changes start 20 minutes before the later of its own cursor and
+//!   the newest listed window's end; when the entity landed before that,
+//!   this node does not deliver it to that peer, which then has it only from
+//!   another peer it syncs from. The rebuild does not change this: its rows
+//!   list the files they replace too.
+//!
 //! A window the deleter repair superseded rows in carries `outdated = true`
 //! (its generation time is left as it was, so `/snapshots` keeps publishing
 //! the real one) and is regenerated at the job's next tick.
@@ -382,25 +408,47 @@ impl SnapshotGenerator {
             if cancel.is_some_and(CancellationToken::is_cancelled) {
                 return Err(GenerationError::Cancelled);
             }
+            // Why the window is written, as `dcl_content_server_snapshot_generation_time` labels
+            // it: upstream reads the saved rows inside the window, so a window that grows over
+            // smaller ones it now replaces is `replace_multiple_snapshots`.
+            let inside: Vec<&TimeRange> = saved
+                .iter()
+                .map(|s| &s.time_range)
+                .filter(|r| {
+                    r.init_timestamp >= interval.init_timestamp
+                        && r.end_timestamp <= interval.end_timestamp
+                })
+                .collect();
+            let mut why = Why {
+                covered: covered_by(interval, &inside),
+                multiple: inside.len() > 1,
+                ..Why::default()
+            };
             if let Some(candidate) = saved.iter().find(|s| !rebuild && s.time_range == *interval) {
-                let outdated = candidate.outdated
+                why.outdated = candidate.outdated
                     || snapshot_is_outdated(pool, interval, candidate.generation_timestamp)
                         .await
                         .unwrap_or_else(|e| {
                             warn!(error = %e, "outdated probe failed; regenerating the window");
                             true
                         });
-                // A failed count keeps the window: rebuilding every month-old
-                // window while the database struggles is the heaviest work at
-                // the worst time, and the next pass counts again.
-                let inactive = !outdated
-                    && has_inactive_entities(pool, candidate, end_ms)
-                        .await
-                        .unwrap_or_else(|e| {
+                // A failed count keeps a window that is not outdated: rebuilding
+                // every month-old window while the database struggles is the
+                // heaviest work at the worst time, and the next pass counts
+                // again. An outdated window is rebuilt anyway; it is counted for
+                // its label, which names inactive entities first as upstream's does.
+                let outdated = why.outdated;
+                why.inactive = has_inactive_entities(pool, candidate, end_ms)
+                    .await
+                    .unwrap_or_else(|e| {
+                        if outdated {
+                            warn!(error = %e, "inactive-entities count failed; regenerating the outdated window");
+                        } else {
                             warn!(error = %e, "inactive-entities count failed; keeping the window until the next pass");
-                            false
-                        });
-                if !outdated && !inactive {
+                        }
+                        false
+                    });
+                if !why.outdated && !why.inactive {
                     match self.reusable(candidate).await {
                         Reuse::Verified => {
                             summary.reused += 1;
@@ -413,9 +461,17 @@ impl SnapshotGenerator {
                         }
                         Reuse::No => {}
                     }
+                } else if let Some(hash) = candidate.hash.as_deref() {
+                    why.stored = self.content.storage.exist(hash).await.unwrap_or(true);
                 }
             }
-            let written = generate_window(pool, &self.content.storage, *interval, cancel).await?;
+            let reason = if rebuild { "unknown" } else { why.reason() };
+            let started = Instant::now();
+            let written = generate_window(pool, &self.content.storage, *interval, cancel).await;
+            if !matches!(written, Err(GenerationError::Cancelled)) {
+                crate::series::snapshot_generated(started, written.is_ok(), interval, reason);
+            }
+            let written = written?;
             self.verified.lock().insert(written.hash);
             summary.generated += 1;
             summary.entities_written += written.entities;
@@ -493,6 +549,54 @@ impl SnapshotGenerator {
             }
         }
     }
+}
+
+/// What upstream's `getReasonForMetric` reads of a window it regenerates. `stored` stays false
+/// for a single saved window that is neither outdated nor inactive: it is regenerated only when
+/// its file cannot be reused.
+#[derive(Default)]
+struct Why {
+    covered: bool,
+    multiple: bool,
+    stored: bool,
+    inactive: bool,
+    outdated: bool,
+}
+
+impl Why {
+    fn reason(&self) -> &'static str {
+        if !self.covered {
+            "cover_time_range"
+        } else if self.multiple {
+            "replace_multiple_snapshots"
+        } else if !self.stored {
+            "snapshots_not_stored"
+        } else if self.inactive {
+            "inactive_entities"
+        } else if self.outdated {
+            "is_outdated"
+        } else {
+            "unknown"
+        }
+    }
+}
+
+/// Upstream's `isTimeRangeCoveredBy`: the saved windows inside `window`, together, leave none
+/// of it uncovered.
+fn covered_by(window: &TimeRange, inside: &[&TimeRange]) -> bool {
+    let mut ranges = inside.to_vec();
+    ranges.sort_by_key(|r| r.init_timestamp);
+    let Some(first) = ranges.first() else {
+        return false;
+    };
+    let mut reached = first.end_timestamp;
+    for r in &ranges {
+        if r.init_timestamp > reached {
+            return false;
+        }
+        reached = reached.max(r.end_timestamp);
+    }
+    first.init_timestamp <= window.init_timestamp && reached >= window.end_timestamp
 }
 
 enum Reuse {
@@ -982,6 +1086,64 @@ mod tests {
         assert_eq!(parsed[0].entity_id, "bafya");
         assert_eq!(parsed[1].entity_timestamp, 2_000);
         assert_eq!(parsed[1].local_timestamp, None);
+    }
+
+    /// The `reason` label follows upstream's `getReasonForMetric`, first match wins.
+    #[test]
+    fn the_generation_reason_follows_upstreams_order() {
+        let range = |init, end| TimeRange {
+            init_timestamp: init,
+            end_timestamp: end,
+        };
+        let month = range(0, 28);
+        let weeks: Vec<TimeRange> = (0..4).map(|w| range(w * 7, (w + 1) * 7)).collect();
+        assert!(covered_by(&month, &weeks.iter().collect::<Vec<_>>()));
+        assert!(!covered_by(&month, &weeks[..3].iter().collect::<Vec<_>>()));
+        assert!(!covered_by(&month, &[&weeks[0], &weeks[2], &weeks[3]]));
+        assert!(!covered_by(&month, &[]));
+
+        let single = Why {
+            covered: true,
+            stored: true,
+            ..Why::default()
+        };
+        for (why, reason) in [
+            (Why::default(), "cover_time_range"),
+            (
+                Why {
+                    covered: true,
+                    multiple: true,
+                    ..Why::default()
+                },
+                "replace_multiple_snapshots",
+            ),
+            (
+                Why {
+                    stored: false,
+                    inactive: true,
+                    outdated: true,
+                    ..single
+                },
+                "snapshots_not_stored",
+            ),
+            (
+                Why {
+                    inactive: true,
+                    outdated: true,
+                    ..single
+                },
+                "inactive_entities",
+            ),
+            (
+                Why {
+                    outdated: true,
+                    ..single
+                },
+                "is_outdated",
+            ),
+        ] {
+            assert_eq!(why.reason(), reason);
+        }
     }
 
     #[test]

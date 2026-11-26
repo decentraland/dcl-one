@@ -114,6 +114,7 @@
       "paths": [
         "/library/dcl-auth/",
         "/library/dcl-http/",
+        "/library/dcl-metrics/",
         "/library/catalyst-api/",
         "/services/catalyst/fed/",
         "/services/catalyst/jobs/",
@@ -144,7 +145,8 @@
       "paths": [
         "/library/js-sdk-toolchain/",
         "/library/hashing/",
-        "/.github/workflows/sdk.yml"
+        "/.github/workflows/sdk.yml",
+        "/.github/workflows/sdk-release.yml"
       ]
     },
     {
@@ -177,14 +179,18 @@
     },
     {
       "id": "comms",
-      "description": "Communication and multiplayer crate (layer 8): the archipelago connector, the gatekeeper (admission, moderation, voice, streaming, LiveKit webhook, room events), live presence and Pulse",
+      "description": "Communication and multiplayer crate (layer 8): the archipelago connector, the gatekeeper (admission, moderation, voice, streaming, LiveKit webhook, room events), live presence and Pulse; and the community chat message router (its own process)",
       "owners": [
         "@decentraland/apis"
       ],
       "paths": [
         "/services/catalyst/comms/",
+        "/services/catalyst/message-router/",
+        "/services/catalyst/cast-bot/",
+        "/.github/workflows/cast-presenter.yml",
         "/library/vendor/rusty_enet/",
-        "/library/dcl-livekit-token/"
+        "/library/dcl-livekit-token/",
+        "/services/catalyst/comms-e2e/"
       ]
     },
     {
@@ -206,7 +212,11 @@
       "paths": [
         "/apps/sites/",
         "/apps/ui3/",
-        "/library/ui/"
+        "/library/ui/",
+        "/library/web-core/",
+        "/tooling/creators-e2e/",
+        "/tooling/ui-kit-ceiling.json",
+        "/tooling/ui-token-floor.json"
       ]
     },
     {
@@ -229,6 +239,7 @@
       "paths": [
         "/apps/ui3/src/shop/",
         "/library/shop/",
+        "/library/ui/apps/shop/",
         "/apps/sites/src/routes/shop/",
         "/tooling/shop-parity/",
         "/tooling/shop-trade-journey/"
@@ -251,7 +262,6 @@
         "@decentraland/web-applications"
       ],
       "paths": [
-        "/apps/ui3/src/editor/",
         "/apps/ui3/editor-scene/",
         "/apps/creator-hub/",
         "/.github/workflows/creator-hub-*.yml",
@@ -312,6 +322,17 @@
         "/tooling/native-lock/",
         "/.github/workflows/uuav-native.yml",
         "/.github/workflows/uuav-verify.yml"
+      ]
+    },
+    {
+      "id": "avatar-preview",
+      "description": "Avatar preview renderer: the standalone wasm build of the Explorer's avatar look that the shop and the creator hub embed, its page, build and release workflow",
+      "owners": [
+        "@decentraland/client"
+      ],
+      "paths": [
+        "/rendering/avatar-preview/",
+        "/.github/workflows/avatar-preview*.yml"
       ]
     },
     {

@@ -8,15 +8,23 @@ import { acceptedEntryParams, entryRealm, unrecognisedEntryParams } from './lib/
 import { untrustedLaunchParams } from './lib/launchGate'
 import { PAGE_DIR, publicUrl } from './lib/publicUrl'
 import { engineLaunch, seedBridgeSession } from './lib/engineLaunch'
+import { mockGifting } from './lib/mockGifting'
 
 /** Site pages follow the domain the Explorer runs against (`?baseDomain=`, decentraland.org by default). */
 const siteUrl = (path: string): string => `https://${BASE_DOMAIN}${path}`
+// This host's Shop reads the deployment siteUrl names, so its funding page is that site's.
+const checkoutSiteUrl = siteUrl
 /** Items open on the marketplace: this deployment has no Shop page of its own. */
 const ownShopItemUrl = (_contract: string, _item: string): string | null => null
 /** The Shop opens the web Shop: this HUD's in-world Shop page is the catalogue (ShopPage). */
 const IN_WORLD_SHOP = false
 /** No Donate: this HUD's page holds no wallet that can sign a tip. */
 const donations: HudHost['donations'] = null
+/** No Gift: this HUD's page holds no wallet that can sign a transfer. The mock HUD (?mock=1) fakes one, so the
+ *  picker can be seen without an engine. */
+const gifting: HudHost['gifting'] = new URLSearchParams(location.search).get('mock') === '1' ? mockGifting : null
+/** This page's shell never asks before the page goes. */
+const CAN_ASK_BEFORE_LEAVING = false
 const siteRevision: HudHost['siteRevision'] = () => null
 /** The benchmark autopilot (?autopilot, where lib/bootMode.ts honours it): it signs in with the
  *  machine's local guest and nothing else, lands at Genesis 0,0, and a sign-in that fails ends the
@@ -46,7 +54,7 @@ const BUILD_VERSION: string | null = (typeof __HUD_BUILD__ !== 'undefined' && __
 const exitUrl = (): string => 'https://decentraland.org'
 
 
-export { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, donations, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+export { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, CAN_ASK_BEFORE_LEAVING, donations, gifting, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, checkoutSiteUrl, unattendedRun }
 
-const host: HudHost = { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, donations, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+const host: HudHost = { acceptedEntryParams, BUILD_VERSION, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, CAN_ASK_BEFORE_LEAVING, donations, gifting, siteRevision, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, checkoutSiteUrl, unattendedRun }
 void host

@@ -17,6 +17,9 @@ engine pin). Sites runs the same shared HUD as the Explorer, so it has no separa
 - `/play/engine/`, `/play/bridge-scene/`, `/play/service_worker.js`, `/play/preview_realm.js`: the
   web artifact imported by `tooling/fetch-play.py` into `.cache/play/<manifest-hash>` (production:
   `build/client/play`, described by `/play/sites-play.json`).
+- `/avatar-preview/` and `/assets/avatar-preview/`: the avatar preview (`rendering/avatar-preview`),
+  compiled from this workspace's crates in the same artifact; its page revalidates and its
+  content-hashed files are immutable ([publication](../avatar-preview/README.md#publication)).
 - `library/explorer-core/engine/generated`: bindings from `crates/system_api_types`, which both HUD
   hosts compile; regenerate with `source/scripts/gen-ts-bindings.sh` and commit the result.
 
@@ -73,13 +76,13 @@ serve; guest sessions work.
 
 ## Forks and drift
 
-Bevy and 17 forked sources are tracked as an upstream commit and a patch series under
+Bevy and 18 forked sources are tracked as an upstream commit and a patch series under
 `patches/<name>/` ([ADR](../../docs/adr/2026-11-14-explorer-sources-as-patches.md)). Cargo takes
 each one as a commit of this repository, pinned by `rev`
 ([ADR](../../docs/adr/2026-11-15-explorer-patched-sources-as-git-commits.md)): no step runs
 before `cargo`. [The bevy fork](docs/guidelines/bevy-fork.md#changing-bevy) has `edit`, `export`,
-`publish` and the checks. `bevy_dui`, `boimp` and `rpc-rust` (package `dcl-rpc`) are exact
-upstream bytes under `vendor/`.
+`publish` and the checks. `bevy_dui` and `rpc-rust` (package `dcl-rpc`) are exact upstream
+bytes under `vendor/`.
 
 Licences: each `patches/<name>/source.toml` records the licence of its source in `license`, and
 each crate under `vendor/` records its own in its `Cargo.toml`.

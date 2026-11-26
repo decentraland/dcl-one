@@ -1,0 +1,191 @@
+From 0000000000000000000000000000000000000000
+Subject: fix(bevy_gltf): bound morph target reads by the mesh's vertex count
+Date: 2026-11-18T17:39:57+00:00
+
+---
+diff --git a/crates/bevy_gltf/src/loader/mod.rs b/crates/bevy_gltf/src/loader/mod.rs
+index b6de4ecd2b49abe6c2ea3dff88bae90932d54402..8f1b75d5a9d8b44ab1beb7569a6592bd93f55bd9 100644
+--- a/crates/bevy_gltf/src/loader/mod.rs
++++ b/crates/bevy_gltf/src/loader/mod.rs
+@@ -886,7 +886,7 @@ async fn load_gltf<'a, 'b, 'c>(
+             };
+ 
+             if primitive.morph_targets().len() != 0 {
+-                match morph_targets(&primitive, &buffer_data) {
++                match morph_targets(&primitive, &buffer_data, mesh.count_vertices()) {
+                     Ok(targets) => {
+                         let morph_targets_label = GltfAssetLabel::MorphTarget {
+                             mesh: gltf_mesh.index(),
+diff --git a/crates/bevy_gltf/src/vertex_attributes.rs b/crates/bevy_gltf/src/vertex_attributes.rs
+index efdede891aab9b01702fda4816f8231ebc5b77c7..62a9df9e057c64ada801d6277cb9a7e19104b783 100644
+--- a/crates/bevy_gltf/src/vertex_attributes.rs
++++ b/crates/bevy_gltf/src/vertex_attributes.rs
+@@ -198,23 +198,23 @@ impl<'a> VertexAttributeIter<'a> {
+         }
+     }
+ 
+-    /// Materializes morph target position displacements, converting signed formats to floats
+-    fn into_displacements(self) -> Result<Vec<[f32; 3]>, AccessFailed> {
++    /// Materializes at most `limit` morph target position displacements, converting signed formats to floats
++    fn into_displacements(self, limit: usize) -> Result<Vec<[f32; 3]>, AccessFailed> {
+         Ok(match self {
+-            Self::F32x3(it) => it.collect(),
+-            Self::S8x3(it, n) => dequantize(it, n).collect(),
+-            Self::S16x3(it, n) => dequantize(it, n).collect(),
++            Self::F32x3(it) => it.take(limit).collect(),
++            Self::S8x3(it, n) => dequantize(it, n).take(limit).collect(),
++            Self::S16x3(it, n) => dequantize(it, n).take(limit).collect(),
+             _ => return Err(AccessFailed::UnsupportedFormat),
+         })
+     }
+ 
+-    /// Materializes morph target normal or tangent displacements, converting signed normalized formats to floats
+-    fn into_direction_displacements(self) -> Result<Vec<[f32; 3]>, AccessFailed> {
++    /// Materializes at most `limit` morph target normal or tangent displacements, converting signed normalized formats to floats
++    fn into_direction_displacements(self, limit: usize) -> Result<Vec<[f32; 3]>, AccessFailed> {
+         match self {
+             Self::S8x3(_, Normalization(false)) | Self::S16x3(_, Normalization(false)) => {
+                 Err(AccessFailed::UnsupportedFormat)
+             }
+-            s => s.into_displacements(),
++            s => s.into_displacements(limit),
+         }
+     }
+ 
+@@ -398,25 +398,30 @@ pub(crate) fn position_bounds(primitive: &gltf::Primitive) -> (Vec3, Vec3) {
+ }
+ 
+ /// The per-vertex displacements of each of the primitive's morph targets, one list per target.
++///
++/// Each list holds at most `vertex_count` entries: an accessor's `count` comes from the file, so
++/// reads stop at the mesh's vertex count instead of allocating what the file declares.
+ pub(crate) fn morph_targets(
+     primitive: &gltf::Primitive,
+     buffer_data: &Vec<Vec<u8>>,
++    vertex_count: usize,
+ ) -> Result<Vec<Vec<MorphAttributes>>, ConvertAttributeError> {
+     fn read<'a>(
+         accessor: Option<gltf::Accessor<'a>>,
+         buffer_data: &'a Vec<Vec<u8>>,
+-        into: impl FnOnce(VertexAttributeIter<'a>) -> Result<Vec<[f32; 3]>, AccessFailed>,
++        vertex_count: usize,
++        into: impl FnOnce(VertexAttributeIter<'a>, usize) -> Result<Vec<[f32; 3]>, AccessFailed>,
+     ) -> Result<Vec<[f32; 3]>, ConvertAttributeError> {
+         let Some(accessor) = accessor else {
+             return Ok(Vec::new());
+         };
+         // An accessor without a buffer view or sparse values is all zeros.
+         if accessor.view().is_none() && accessor.sparse().is_none() {
+-            return Ok(vec![[0.0; 3]; accessor.count()]);
++            return Ok(vec![[0.0; 3]; accessor.count().min(vertex_count)]);
+         }
+         let index = accessor.index();
+         VertexAttributeIter::from_accessor(accessor, buffer_data)
+-            .and_then(into)
++            .and_then(|iter| into(iter, vertex_count))
+             .map_err(|err| ConvertAttributeError::AccessFailed(err, index))
+     }
+ 
+@@ -425,16 +430,19 @@ pub(crate) fn morph_targets(
+         let positions = read(
+             target.positions(),
+             buffer_data,
++            vertex_count,
+             VertexAttributeIter::into_displacements,
+         )?;
+         let normals = read(
+             target.normals(),
+             buffer_data,
++            vertex_count,
+             VertexAttributeIter::into_direction_displacements,
+         )?;
+         let tangents = read(
+             target.tangents(),
+             buffer_data,
++            vertex_count,
+             VertexAttributeIter::into_direction_displacements,
+         )?;
+ 
+@@ -459,9 +467,14 @@ mod tests {
+         gltf::Gltf::from_slice_without_validation(json).unwrap()
+     }
+ 
+-    /// Each target's displacements as position, normal and tangent.
+-    fn displacements(primitive: &gltf::Primitive, buffer: Vec<u8>) -> Vec<Vec<[Vec3; 3]>> {
+-        morph_targets(primitive, &vec![buffer])
++    /// Each target's displacements as position, normal and tangent, for a mesh of
++    /// `vertex_count` vertices.
++    fn displacements(
++        primitive: &gltf::Primitive,
++        buffer: Vec<u8>,
++        vertex_count: usize,
++    ) -> Vec<Vec<[Vec3; 3]>> {
++        morph_targets(primitive, &vec![buffer], vertex_count)
+             .unwrap()
+             .into_iter()
+             .map(|target| {
+@@ -538,7 +551,7 @@ mod tests {
+         let buffer = [1.0f32, 2.0, 3.0].map(f32::to_le_bytes).concat();
+         let primitive = gltf.meshes().next().unwrap().primitives().next().unwrap();
+         assert_eq!(
+-            displacements(&primitive, buffer),
++            displacements(&primitive, buffer, 1),
+             vec![
+                 vec![[Vec3::new(1.0, 2.0, 3.0), Vec3::ZERO, Vec3::ZERO]],
+                 vec![[Vec3::ZERO; 3]],
+@@ -576,8 +589,54 @@ mod tests {
+         buffer.extend([0, (-127i8) as u8, 0, 0]);
+         let primitive = gltf.meshes().next().unwrap().primitives().next().unwrap();
+         assert_eq!(
+-            displacements(&primitive, buffer),
++            displacements(&primitive, buffer, 1),
+             vec![vec![[Vec3::new(1.0, -2.0, 3.0), Vec3::NEG_Y, Vec3::ZERO]]]
+         );
+     }
++
++    /// A target's declared `count` comes from the file: reads stop at the mesh's vertex count
++    /// instead of allocating what the file declares.
++    #[test]
++    fn morph_target_reads_stop_at_the_vertex_count() {
++        let gltf = parse(
++            br#"
++{
++    "asset": { "version": "2.0" },
++    "buffers": [{ "byteLength": 16 }],
++    "bufferViews": [
++        { "buffer": 0, "byteLength": 4 },
++        { "buffer": 0, "byteOffset": 4, "byteLength": 12 }
++    ],
++    "accessors": [
++        { "componentType": 5126, "count": 4611686018427387904, "type": "VEC3" },
++        {
++            "componentType": 5126, "count": 4611686018427387904, "type": "VEC3",
++            "sparse": {
++                "count": 1,
++                "indices": { "bufferView": 0, "componentType": 5125 },
++                "values": { "bufferView": 1 }
++            }
++        }
++    ],
++    "meshes": [{ "primitives": [{
++        "attributes": {},
++        "targets": [{ "POSITION": 0 }, { "POSITION": 1, "NORMAL": 0 }]
++    }] }]
++}
++"#,
++        );
++        let mut buffer = 0u32.to_le_bytes().to_vec();
++        buffer.extend([1.0f32, 2.0, 3.0].map(f32::to_le_bytes).concat());
++        let primitive = gltf.meshes().next().unwrap().primitives().next().unwrap();
++        assert_eq!(
++            displacements(&primitive, buffer, 2),
++            vec![
++                vec![[Vec3::ZERO; 3]; 2],
++                vec![
++                    [Vec3::new(1.0, 2.0, 3.0), Vec3::ZERO, Vec3::ZERO],
++                    [Vec3::ZERO; 3]
++                ],
++            ]
++        );
++    }
+ }

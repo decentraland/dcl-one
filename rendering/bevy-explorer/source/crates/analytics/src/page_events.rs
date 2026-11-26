@@ -10,8 +10,10 @@ use console::DoAddConsoleCommand;
 use serde::Deserialize;
 use uuid::Uuid;
 
+use wallet::Wallet;
+
 use crate::{
-    data_definition::SegmentEvent,
+    data_definition::{is_client_event, SegmentEvent},
     segment_system::{SegmentConfig, SegmentMetricsEvents},
 };
 
@@ -47,19 +49,29 @@ fn track_cmd(
     mut input: ConsoleCommand<TrackCommand>,
     mut metrics: ResMut<SegmentMetricsEvents>,
     config: Res<SegmentConfig>,
+    wallet: Option<Res<Wallet>>,
 ) {
     if let Some(Ok(command)) = input.take() {
         match decode(&command.payload) {
             Ok(items) => {
                 let count = items.len();
                 for item in items {
+                    // a client event goes with the chain of now, or not at all
+                    let common = if is_client_event(&item.event) {
+                        match wallet.as_ref().and_then(|w| config.client_event_common(w)) {
+                            Some(common) => common,
+                            None => continue,
+                        }
+                    } else {
+                        config.common().clone()
+                    };
                     metrics.add_event_with_id(
                         SegmentEvent::Page {
                             name: item.event,
                             properties: item.properties,
                             timestamp: item.timestamp,
                         },
-                        config.common(),
+                        &common,
                         item.message_id
                             .unwrap_or_else(|| Uuid::new_v4().to_string()),
                     );

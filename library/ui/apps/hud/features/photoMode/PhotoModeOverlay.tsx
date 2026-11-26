@@ -4,7 +4,7 @@
 // into the Gallery button). The engine owns the camera and the capture; this reads its stream
 // and sends it the buttons. Sizes are reference pixels (1080p canvas) scaled by --ui-scale.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Close, ControlButton, MaskIcon, MouseIcon, ScrollIcon } from '../../design'
+import { Close, ControlButton, MouseIcon, ScrollIcon } from '../../design'
 import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '../../lib/bindingLabels'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import type { ActionWire } from '@explorer-core/engine/protocol'
@@ -14,6 +14,7 @@ import shootArt from '../../assets/photo-mode/shoot.png'
 import keyboardArt from '../../assets/photo-mode/keyboard.png'
 import galleryArt from '../../assets/photo-mode/gallery.png'
 import styles from './PhotoModeOverlay.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 const NO_STORAGE_TEXT =
   "You can't take more photos because you have reached the Camera Reel storage limit. To make room we recommend you to download and then delete some items."
@@ -143,10 +144,13 @@ export function PhotoModeOverlay({ photoMode, onOpenGallery }: Props): React.JSX
             <div className={styles.gridV} style={{ left: '66.667%' }} />
             <div className={styles.gridH} style={{ top: '33.333%' }} />
             <div className={styles.gridH} style={{ top: '66.667%' }} />
+            {(['tl', 'tr', 'bl', 'br'] as const).map((c) => (
+              <div key={c} className={styles.corner} data-corner={c} />
+            ))}
           </div>
 
           <ControlButton variant="dark" className={styles.close} aria-label="Close camera" onClick={close}>
-            <Close size={12 * s} strokeWidth={2} />
+            <Close size={18 * s} strokeWidth={3} />
           </ControlButton>
 
           <div className={styles.row} style={{ left: frameRect.left, width: frameRect.width, top: bottom }}>

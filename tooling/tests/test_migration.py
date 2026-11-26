@@ -815,6 +815,18 @@ class FakeResponse(io.BytesIO):
     pass
 
 
+class ShortResponse(io.BytesIO):
+    """An HTTP body whose connection dropped: `length` still counts what its Content-Length promised."""
+
+    def __init__(self, sent, promised):
+        super().__init__(sent)
+        self.promised = promised
+
+    @property
+    def length(self):
+        return self.promised - self.tell()
+
+
 class BadgeArt(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -870,6 +882,137 @@ class BadgeArt(unittest.TestCase):
         self.answers['https://cdn.example/a/2d/normal.png'] = [b'<html>']
         self.assertEqual(blobs.copy_art(self.source, self.art, 'a/2d/normal.png').status, 'corrupt')
         self.assertFalse((self.tmp / 'art/a').exists())
+
+
+class CommunityThumbnails(unittest.TestCase):
+    ID = '0b0e2c3a-1111-4222-8333-444455556666'
+    URL = f'https://cdn.example/social/communities/{ID}/raw-thumbnail.png'
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.store = blobs.Store(self.tmp / 'node')
+        self.answers = {}
+        self.source = blobs.HttpArtSource('https://cdn.example/', opener=self.open)
+
+    def open(self, request, timeout):
+        answer = self.answers[request.full_url].pop(0)
+        if isinstance(answer, int):
+            raise urllib.error.HTTPError(request.full_url, answer, 'x', {}, None)
+        return answer if isinstance(answer, ShortResponse) else FakeResponse(answer)
+
+    def copy(self):
+        return blobs.copy_community_thumbnail(self.source, self.store, self.ID)
+
+    def test_when_hashing_a_thumbnail_it_should_mint_the_nodes_key(self):
+        # hash.rs::hash_bytes, which the node's thumbnail upload keys the blob by
+        self.assertEqual(blobs.hash_bytes_v0(b'hello world'), 'QmaozNR7DZHQK1ZcU9p7QdrshMvXqWK6gpu5rmrkPdT3L4')
+
+    def test_when_upstream_has_a_thumbnail_it_should_store_it_under_its_hash(self):
+        image = blobs.PNG_MAGIC + b'x' * 2000
+        self.answers[self.URL] = [image]
+        outcome = self.copy()
+        cid = blobs.hash_bytes_v0(image)
+        self.assertEqual((outcome.status, outcome.cid, outcome.size), ('copied', cid, len(image)))
+        self.assertEqual(self.store.path(cid).read_bytes(), image)
+        self.assertEqual(list(self.store.contents.rglob('*.tmp')), [])
+        self.answers[self.URL] = [image]
+        self.assertEqual(self.copy().status, 'present')
+
+    def test_when_upstream_has_none_it_should_say_so_and_store_nothing(self):
+        self.answers[self.URL] = [404]
+        self.assertEqual(self.copy().status, 'missing')
+        self.assertFalse(self.store.contents.exists())
+
+    def test_when_upstream_answers_something_else_than_an_image_it_should_store_nothing(self):
+        self.answers[self.URL] = [b'<html>not found</html>']
+        self.assertEqual(self.copy().status, 'corrupt')
+        self.assertFalse(self.store.contents.exists())
+
+    def test_when_upstream_fails_once_it_should_retry(self):
+        self.answers[self.URL] = [503, b'\xff\xd8\xff' + b'j' * 10]
+        with unittest.mock.patch.object(blobs, 'RETRY_DELAY', 0):
+            self.assertEqual(self.copy().status, 'copied')
+
+    def test_when_the_body_is_cut_short_it_should_retry_and_never_store_the_part(self):
+        image = blobs.PNG_MAGIC + b'x' * 2000
+        self.answers[self.URL] = [ShortResponse(image[:100], len(image)), ShortResponse(image[:100], len(image)),
+                                  ShortResponse(image[:100], len(image))]
+        with unittest.mock.patch.object(blobs, 'RETRY_DELAY', 0):
+            outcome = self.copy()
+        self.assertEqual(outcome.status, 'failed', outcome.reason)
+        self.assertIn('cut short', outcome.reason)
+        self.assertFalse(self.store.contents.exists())
+        self.answers[self.URL] = [ShortResponse(image[:100], len(image)), ShortResponse(image, len(image))]
+        with unittest.mock.patch.object(blobs, 'RETRY_DELAY', 0):
+            self.assertEqual(self.copy().status, 'copied')
+
+    def test_when_the_id_is_not_a_community_id_it_should_read_nothing(self):
+        self.assertEqual(blobs.copy_community_thumbnail(self.source, self.store, '../x').status, 'invalid')
+
+
+class EventPosters(unittest.TestCase):
+    KEY = 'poster/1ad0d5dd6a03ac29.png'
+    URL = f'https://bucket.example/{KEY}'
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.store = blobs.Store(self.tmp / 'node')
+        self.answers = {}
+        self.source = blobs.HttpArtSource('https://bucket.example', opener=self.open)
+
+    def open(self, request, timeout):
+        answer = self.answers[request.full_url].pop(0)
+        if isinstance(answer, int):
+            raise urllib.error.HTTPError(request.full_url, answer, 'x', {}, None)
+        return FakeResponse(answer)
+
+    def copy(self, key=KEY):
+        return blobs.copy_event_poster(self.source, self.store, key)
+
+    @staticmethod
+    def avif(major=b'avif', compatible=(b'mif1',), size=None):
+        payload = major + b'\0\0\0\0' + b''.join(compatible)
+        return (size if size is not None else 8 + len(payload)).to_bytes(4, 'big') + b'ftyp' + payload
+
+    def test_when_upstream_has_the_poster_it_should_store_it_under_the_read_throughs_key(self):
+        image = blobs.PNG_MAGIC + b'x' * 2000
+        self.answers[self.URL] = [image]
+        outcome = self.copy()
+        cid = blobs.hash_bytes_v1(image)
+        self.assertEqual((outcome.status, outcome.cid, outcome.size, outcome.content_type),
+                         ('copied', cid, len(image), 'image/png'))
+        self.assertEqual(self.store.path(cid).read_bytes(), image)
+        self.answers[self.URL] = [image]
+        self.assertEqual(self.copy().status, 'present')
+
+    def test_when_the_poster_is_avif_it_should_record_its_media_type(self):
+        image = self.avif(major=b'mif1', compatible=(b'avif',)) + b'data'
+        self.answers[self.URL] = [image]
+        self.assertEqual(self.copy().content_type, 'image/avif')
+
+    def test_when_checking_avif_it_should_require_a_complete_file_type_box(self):
+        self.assertTrue(blobs.avif_file_type(self.avif()))
+        self.assertTrue(blobs.avif_file_type(self.avif(major=b'mif1', compatible=(b'avis',))))
+        self.assertFalse(blobs.avif_file_type(self.avif(major=b'mif1')))
+        self.assertFalse(blobs.avif_file_type(self.avif()[:-1]))
+        self.assertFalse(blobs.avif_file_type(self.avif(compatible=(b'mif',))))
+        self.assertFalse(blobs.avif_file_type(self.avif(size=0)))
+
+    def test_when_upstream_has_none_it_should_say_so_and_store_nothing(self):
+        self.answers[self.URL] = [404]
+        self.assertEqual(self.copy().status, 'missing')
+        self.assertFalse(self.store.contents.exists())
+
+    def test_when_upstream_answers_something_else_than_an_image_it_should_store_nothing(self):
+        self.answers[self.URL] = [b'<html>not found</html>']
+        self.assertEqual(self.copy().status, 'corrupt')
+        self.assertFalse(self.store.contents.exists())
+
+    def test_when_the_path_is_not_a_poster_it_should_read_nothing(self):
+        for key in ('poster/../x', 'other/a.png', 'poster/_a.png', 'poster/'):
+            self.assertEqual(self.copy(key).status, 'invalid', key)
 
 
 class MissingThreshold(unittest.TestCase):
@@ -1348,7 +1491,23 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
         thumbs = self.sql(tgt, 'SELECT name, thumbnail_hash FROM worlds.worlds ORDER BY 1;\n').splitlines()
         self.assertEqual(thumbs, [f'alpha.dcl.eth\t{blobs.hash_bytes_v1(upload)}', f'beta.dcl.eth\t{picture}',
                                   'gamma.dcl.eth\t'])
+        aliases = self.sql(tgt, 'SELECT legacy_sha256, blob_cid FROM worlds.thumbnail_aliases;\n').splitlines()
+        self.assertEqual(aliases, [f'{upload_key}\t{blobs.hash_bytes_v1(upload)}'])
         self.assertEqual(self.count(tgt, 'worlds.world_scenes'), 2)
+
+        # A verified import pins an existing mirror alias, even over newer local settings.
+        self.sql(tgt, "UPDATE worlds.thumbnail_aliases SET mirror_expires_at = now() - interval '1 day';\n"
+                      "UPDATE worlds.worlds SET title = 'local edit', settings_version = settings_version + 1, "
+                      "updated_at = updated_at + interval '1 day' WHERE name = 'alpha.dcl.eth';\n")
+        code, out = self.migrate('run', 'worlds-content-server', '--step', 'world',
+                                 '--since', '2000-01-01T00:00:00Z', '--storage-root', str(node),
+                                 sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.sql(tgt, 'SELECT legacy_sha256, blob_cid FROM worlds.thumbnail_aliases '
+                                       'WHERE mirror_expires_at IS NULL;\n').splitlines(), aliases)
+        self.assertEqual(self.sql(tgt, "SELECT title FROM worlds.worlds WHERE name = 'alpha.dcl.eth';\n").strip(),
+                         'local edit')
+
         code, out = self.migrate('blobs', 'worlds-content-server', '--verify', '--to', str(node),
                                  sources_dir=migrate.SOURCES)
         self.assertEqual(code, 1, out)
@@ -1716,7 +1875,7 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
         # The stale place's active scene moved west; it declares the same (outside) base.
         content = ("INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata,"
                    " entity_timestamp, entity_pointers, local_timestamp, auth_chain) VALUES ('0x0', 'v3', 'scene', 'bafy1',"
-                   " '{\"scene\": {\"base\": \"30,30\"}}', now(), ARRAY['19,20', '20,20'], now(), '[]');\n"
+                   " '{\"v\": {\"scene\": {\"base\": \"30,30\"}}}', now(), ARRAY['19,20', '20,20'], now(), '[]');\n"
                    "INSERT INTO content.active_pointers (pointer, entity_id) VALUES ('19,20', 'bafy1'), ('20,20', 'bafy1');\n")
         self.sql(tgt, place.format(self.OUTSIDE, self.INSIDE, self.STALE, self.DISABLED) + content)
         env = {'WORLD_STORAGE_DATABASE_URL': self.url(src), 'TARGET_DATABASE_URL': self.url(tgt)}

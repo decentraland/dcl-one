@@ -112,6 +112,7 @@ CREATE TABLE content.failed_deployments (
 CREATE TABLE content.processed_snapshots (
     hash text NOT NULL,
     process_time timestamp without time zone NOT NULL,
+    entity_types text[] DEFAULT '{}',
     CONSTRAINT processed_snapshots_pkey PRIMARY KEY (hash)
 );
 
@@ -317,7 +318,8 @@ CREATE INDEX pending_deployment_files_hash_idx ON content.pending_deployment_fil
 
 -- ── content: cache invalidation ────────────────────────────────────────────
 
--- Every new deployment row wakes the in-process entity cache listener.
+-- Every new deployment row is announced as `<entity type>:<entity id>`; the
+-- comms gatekeeper listens for the scenes (DATABASE.md "Stream key notifications").
 CREATE FUNCTION content.notify_new_deployment() RETURNS trigger AS $$
 BEGIN
     PERFORM pg_notify('new_deployment', NEW.entity_type || ':' || NEW.entity_id);
@@ -343,7 +345,7 @@ CREATE TRIGGER deployment_notify_trigger
 -- database takes the new functions from `catalyst schema functions` (the
 -- CREATE OR REPLACE form) run through psql as the administrative role.
 
-CREATE FUNCTION content.deploy_entity_218dd4c4d67c(text, text, text, text, json, double precision, text[], json, text[], text[], text) RETURNS TABLE (dep_id integer, newer boolean, overwrote integer, cleared integer) LANGUAGE plpgsql AS $deploy$ #variable_conflict use_column
+CREATE FUNCTION content.deploy_entity_c7a20122dffd(text, text, text, text, json, double precision, text[], json, text[], text[], text) RETURNS TABLE (dep_id integer, newer boolean, overwrote integer, cleared integer) LANGUAGE plpgsql AS $deploy$ #variable_conflict use_column
 BEGIN
 PERFORM pg_advisory_xact_lock(hashtext(k)) FROM (SELECT k FROM (SELECT DISTINCT unnest($7) AS k) d ORDER BY k COLLATE "C") locks;
 RETURN QUERY
@@ -356,7 +358,7 @@ RETURN QUERY
             LIMIT 1
         ),
         overwrote AS (
-            SELECT dep1.id, dep1.entity_pointers
+            SELECT dep1.id, dep1.entity_id, dep1.entity_pointers
             FROM content.deployments AS dep1
             LEFT JOIN content.deployments AS dep2 ON dep1.deleter_deployment = dep2.id
             WHERE dep1.entity_type = $3
@@ -398,6 +400,7 @@ RETURN QUERY
             DELETE FROM content.active_pointers
             WHERE EXISTS (SELECT 1 FROM ins)
               AND pointer IN (SELECT unnest(entity_pointers) FROM overwrote)
+              AND entity_id IN (SELECT entity_id FROM overwrote)
               AND NOT (pointer = ANY($7))
             RETURNING pointer
         ),
@@ -414,7 +417,7 @@ RETURN QUERY
         ;
 END $deploy$;
 
-CREATE FUNCTION content.deploy_entity_66918b614b85(text, text, text, text, json, double precision, text[], json, text[], text[], text) RETURNS TABLE (dep_id integer, newer boolean, overwrote integer, cleared integer) LANGUAGE plpgsql AS $deploy$ #variable_conflict use_column
+CREATE FUNCTION content.deploy_entity_8cafd1edb9f1(text, text, text, text, json, double precision, text[], json, text[], text[], text) RETURNS TABLE (dep_id integer, newer boolean, overwrote integer, cleared integer) LANGUAGE plpgsql AS $deploy$ #variable_conflict use_column
 BEGIN
 PERFORM pg_advisory_xact_lock(hashtext(k)) FROM (SELECT k FROM (SELECT DISTINCT unnest($7) AS k) d ORDER BY k COLLATE "C") locks;
 RETURN QUERY
@@ -427,7 +430,7 @@ RETURN QUERY
             LIMIT 1
         ),
         overwrote AS (
-            SELECT dep1.id, dep1.entity_pointers
+            SELECT dep1.id, dep1.entity_id, dep1.entity_pointers
             FROM content.deployments AS dep1
             LEFT JOIN content.deployments AS dep2 ON dep1.deleter_deployment = dep2.id
             WHERE dep1.entity_type = $3
@@ -474,6 +477,7 @@ RETURN QUERY
             DELETE FROM content.active_pointers
             WHERE EXISTS (SELECT 1 FROM ins)
               AND pointer IN (SELECT unnest(entity_pointers) FROM overwrote)
+              AND entity_id IN (SELECT entity_id FROM overwrote)
               AND NOT (pointer = ANY($7))
             RETURNING pointer
         ),

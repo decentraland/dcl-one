@@ -4,15 +4,23 @@
 //! (`gatekeeper::streaming`), then the live presence and the room event sink.
 //! The room event store receives every verified participant event.
 
+// Decodes untrusted input: malformed bytes must not panic.
+#![deny(clippy::indexing_slicing, clippy::expect_used)]
+
+use crate::metrics::declarations;
+
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
+use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
-use std::sync::Mutex;
 
+use crate::protocol::bus::room_events::MAX_PARTICIPANT_SID_BYTES;
+
+use super::bus::PublishOutcome;
 use super::errors::{ApiError, unauthorized};
 use super::livekit::{address_from_identity, verify_webhook_token};
 use super::voice::{
@@ -121,6 +129,8 @@ struct ParticipantEvent {
     room: String,
     current_key: String,
     voice_address: String,
+    /// A Cast watcher's wallet, from the attribute its token set.
+    watcher: Option<crate::Address>,
 }
 
 #[derive(Debug)]
@@ -147,13 +157,14 @@ struct ValidatedEvent {
 
 impl ValidatedEvent {
     fn parse(event: &Value) -> Result<Self, ApiError> {
-        let id = event_id(event);
-        let at = event_time_ms(event);
-        if id.is_none_or(|id| id.len() > 128) || at.is_none() {
+        let (Some(id), Some(at)) = (
+            event_id(event).filter(|id| id.len() <= 128),
+            event_time_ms(event),
+        ) else {
             return Err(ApiError::bad_request(
                 "missing livekit webhook id or createdAt",
             ));
-        }
+        };
         let name = event
             .get("event")
             .and_then(Value::as_str)
@@ -162,22 +173,27 @@ impl ValidatedEvent {
         let room_sid = room_sid(event).map(str::to_owned);
         let kind = match name {
             "participant_joined" | "participant_left" => {
-                let sid = participant_sid(event);
-                let identity = participant_identity(event);
-                if sid.as_ref().is_none_or(|sid| sid.len() > 128)
-                    || room.as_ref().is_none_or(|room| room.len() > 512)
-                    || identity
-                        .as_ref()
-                        .is_none_or(|identity| identity.len() > 512)
-                {
+                let (Some(sid), Some(room), Some(identity)) = (
+                    participant_sid(event).filter(|sid| sid.len() <= MAX_PARTICIPANT_SID_BYTES),
+                    room.clone().filter(|room| room.len() <= 512),
+                    participant_identity(event).filter(|identity| identity.len() <= 512),
+                ) else {
                     return Err(ApiError::bad_request(
                         "missing livekit participant event fields",
                     ));
-                }
-                let identity = identity.unwrap();
-                let room = room.clone().unwrap();
+                };
                 let participant = ParticipantEvent {
-                    sid: sid.unwrap(),
+                    watcher: identity
+                        .starts_with("watch:")
+                        .then(|| {
+                            event
+                                .get("participant")?
+                                .get("attributes")?
+                                .get(super::streaming::cast::WATCHER_WALLET_ATTRIBUTE)
+                        })
+                        .flatten()
+                        .and_then(|wallet| crate::Address::parse(wallet.as_str()?).ok()),
+                    sid,
                     current_key: identity_key(&room, &identity),
                     room,
                     voice_address: address_from_identity(&identity)
@@ -213,8 +229,8 @@ impl ValidatedEvent {
             _ => EventKind::Ignored,
         };
         Ok(Self {
-            id: id.unwrap().to_owned(),
-            at: at.unwrap(),
+            id: id.to_owned(),
+            at,
             name: name.to_owned(),
             kind,
             room,
@@ -371,10 +387,16 @@ pub async fn livekit_webhook(
         .or(event.ingress_id.as_deref())
         .unwrap_or_default();
     let id = &event.id;
-    let (a, b) = (stripe(id), stripe(&resource));
-    let _first = state.webhooks.locks[a.min(b)].lock().await;
+    let (a, b) = (stripe(id), stripe(resource));
+    let (Some(first), Some(second)) = (
+        state.webhooks.locks.get(a.min(b)),
+        state.webhooks.locks.get(a.max(b)),
+    ) else {
+        return Err(ApiError::internal("webhook lock stripe out of range"));
+    };
+    let _first = first.lock().await;
     let _second = if a != b {
-        Some(state.webhooks.locks[a.max(b)].lock().await)
+        Some(second.lock().await)
     } else {
         None
     };
@@ -382,24 +404,39 @@ pub async fn livekit_webhook(
     if now > deadline {
         return Err(unauthorized("expired livekit webhook signature"));
     }
-    let prepared = state
-        .webhooks
-        .state
-        .lock()
-        .unwrap()
-        .prepare(&event, deadline, now);
+    let prepared = state.webhooks.state.lock().prepare(&event, deadline, now);
     if prepared != Prepared::Apply {
-        // The store orders sessions itself: a superseded event still counts there.
+        // Equal-second sessions are ordered by id, not by which one LiveKit
+        // kept: a superseded join still passes the Cast join guard.
         if prepared == Prepared::Superseded
-            && state.room_event_store.is_some()
-            && let Some(room_event) = room_event(&state, &event).await?
+            && let EventKind::ParticipantJoined(p) = &event.kind
         {
-            store_room_event(&state, &room_event).await?;
+            let watcher = p.watcher.as_ref();
+            super::streaming::cast::refuse_on_join(&state, &p.room, &p.identity, watcher).await?;
+        }
+        if prepared != Prepared::Superseded {
+            return Ok(axum::http::StatusCode::OK.into_response());
+        }
+        // The store and World presence order sessions themselves: a superseded
+        // event (an old session's late leave) still counts there.
+        let room_event = match room_event(&state, &event).await {
+            Ok(room_event) => room_event,
+            Err(error) if state.room_event_store.is_some() => return Err(error),
+            Err(_) => None,
+        };
+        if let Some((room_event, _)) = &room_event
+            && state.room_event_store.is_some()
+        {
+            store_room_event(&state, room_event).await?;
             // A failed store's redelivery can be superseded by then; the sink still gets it once.
-            let owed = state.webhooks.state.lock().unwrap().unobserved.remove(id);
+            let owed = state.webhooks.state.lock().unobserved.remove(id);
             if owed && let Some(sink) = state.room_events.as_ref() {
-                sink.observe_room_event(&room_event);
+                sink.observe_room_event(room_event);
             }
+        }
+        drop((_first, _second));
+        if let Some((room_event, true)) = &room_event {
+            share_room_event(&state, room_event).await;
         }
         return Ok(axum::http::StatusCode::OK.into_response());
     }
@@ -412,66 +449,61 @@ pub async fn livekit_webhook(
         && let Some(room) = &event.room
     {
         let sid = event.room_sid.as_deref().filter(|sid| sid.len() <= 128);
-        let due = state
-            .webhooks
-            .state
-            .lock()
-            .unwrap()
-            .metadata_due(&room, sid);
+        let due = state.webhooks.state.lock().metadata_due(room, sid);
         if due {
             // Already serialized by this room's webhook stripe. Record only a
             // confirmed same-incarnation write; failures remain retryable.
             let updated =
-                super::moderation::maintenance::initialize_room(state.as_ref(), &room, sid).await?;
+                super::moderation::maintenance::initialize_room(state.as_ref(), room, sid).await?;
             if let Some(updated) = updated.filter(|updated| sid == Some(updated.as_str())) {
                 state
                     .webhooks
                     .state
                     .lock()
-                    .unwrap()
                     .metadata
                     .insert(room.clone(), (updated, tokio::time::Instant::now()));
             }
         }
     }
     dispatch(&state, &event).await?;
-    if let Some(room_event) = room_event(&state, &event).await? {
-        if let Err(error) = store_room_event(&state, &room_event).await {
+    let room_event = room_event(&state, &event).await?;
+    if let Some((room_event, _)) = &room_event {
+        if let Err(error) = store_room_event(&state, room_event).await {
             state
                 .webhooks
                 .state
                 .lock()
-                .unwrap()
                 .unobserved
                 .insert(id.to_owned(), ());
             return Err(error);
         }
         if let Some(sink) = state.room_events.as_ref() {
-            sink.observe_room_event(&room_event);
+            sink.observe_room_event(room_event);
         }
     }
-    state
-        .webhooks
-        .state
-        .lock()
-        .unwrap()
-        .applied(&event, deadline);
+    state.webhooks.state.lock().applied(&event, deadline);
+    // Applied and unlocked first: a slow publish cannot get the event redelivered.
+    drop((_first, _second));
+    if let Some((room_event, true)) = &room_event {
+        share_room_event(&state, room_event).await;
+    }
     Ok(axum::http::StatusCode::OK.into_response())
 }
 
 /// The participant event the store and the sink consume, with one resolved
-/// identity. A world scene's complete name is resolved without guessing a
-/// hyphen boundary; a failed resolution leaves the webhook unapplied for retry.
+/// identity, and whether the room carries its canonical name (the only rooms
+/// occupancy reads count). A world scene's complete name is resolved without
+/// guessing a hyphen boundary; a failed resolution leaves the webhook unapplied for retry.
 async fn room_event(
     state: &CommsState,
     event: &ValidatedEvent,
-) -> Result<Option<crate::protocol::bus::room_events::RoomEvent>, ApiError> {
+) -> Result<Option<(crate::protocol::bus::room_events::RoomEvent, bool)>, ApiError> {
     use crate::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType};
     let Some(participant) = event.participant() else {
         return Ok(None);
     };
     let room = &participant.room;
-    let Some(parsed) = crate::rooms::resolve_room_name(state.scenes.as_ref(), &room)
+    let Some(parsed) = crate::rooms::resolve_room_name(state.scenes.as_ref(), room)
         .await
         .map_err(|error| {
             tracing::warn!(%error, room, "canonical room identity unavailable");
@@ -480,35 +512,72 @@ async fn room_event(
     else {
         return Ok(None);
     };
-    Ok(Some(RoomEvent {
-        kind: if event.joined() {
-            RoomEventKind::Joined
-        } else {
-            RoomEventKind::Left
-        } as i32,
-        room: room.clone(),
-        room_type: if parsed.realm.is_world() {
-            RoomType::World
-        } else {
-            RoomType::Scene
-        } as i32,
-        realm_name: parsed
-            .realm
-            .world()
-            .map(|w| w.key())
-            .unwrap_or_else(|| parsed.realm.as_str())
-            .to_owned(),
-        scene_id: parsed
-            .scene_id
-            .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("")
-            .to_owned(),
-        identity: participant.identity.clone(),
-        participant_sid: participant.sid.clone(),
-        event_time_ms: event.at as u64,
-        event_id: event.id.clone(),
-    }))
+    let canonical = parsed.room == *room;
+    Ok(Some((
+        RoomEvent {
+            kind: if event.joined() {
+                RoomEventKind::Joined
+            } else {
+                RoomEventKind::Left
+            } as i32,
+            room: room.clone(),
+            room_type: if parsed.realm.is_world() {
+                RoomType::World
+            } else {
+                RoomType::Scene
+            } as i32,
+            realm_name: parsed
+                .realm
+                .world()
+                .map(|w| w.key())
+                .unwrap_or_else(|| parsed.realm.as_str())
+                .to_owned(),
+            scene_id: parsed
+                .scene_id
+                .as_ref()
+                .map(|s| s.as_str())
+                .unwrap_or("")
+                .to_owned(),
+            identity: participant.identity.clone(),
+            participant_sid: participant.sid.clone(),
+            event_time_ms: event.at as u64,
+            event_id: event.id.clone(),
+        },
+        canonical,
+    )))
+}
+
+/// Applies the event to this replica's World presence, then publishes it for every
+/// other replica (and `multiplayer-hosting`). Never fails the webhook: each replica's
+/// periodic LiveKit read corrects a lost one.
+async fn share_room_event(
+    state: &CommsState,
+    event: &crate::protocol::bus::room_events::RoomEvent,
+) {
+    state.presence.apply_room_event(event);
+    let Ok(payload) = event.encode() else {
+        return;
+    };
+    let outcome = state
+        .bus
+        .publish(crate::protocol::bus::room_events::SUBJECT, payload)
+        .await;
+    let reason = match outcome {
+        PublishOutcome::Submitted => return,
+        PublishOutcome::NoConnection => "no_connection",
+        PublishOutcome::Failed => "failed",
+        PublishOutcome::Unconfirmed => "unconfirmed",
+    };
+    if state.bus.is_enabled() {
+        declarations::ROOM_EVENT_PUBLISH_FAILED
+            .handle([reason])
+            .increment(1);
+        tracing::debug!(
+            ?outcome,
+            event_id = event.event_id,
+            "room event not published"
+        );
+    }
 }
 
 /// Stores the event before the webhook is acknowledged; a failure is a 503.
@@ -523,6 +592,12 @@ async fn store_room_event(
         tracing::warn!(%error, event_id = event.event_id, "room event not stored");
         ApiError::http(503, "Room event not stored")
     })
+}
+
+/// `dispatch` of an already authenticated webhook body, for tests.
+#[cfg(test)]
+pub(crate) async fn dispatch_for_tests(state: &CommsState, event: &Value) -> Result<(), ApiError> {
+    dispatch(state, &ValidatedEvent::parse(event)?).await
 }
 
 async fn dispatch(state: &CommsState, event: &ValidatedEvent) -> Result<(), ApiError> {
@@ -540,6 +615,16 @@ async fn dispatch(state: &CommsState, event: &ValidatedEvent) -> Result<(), ApiE
             .await?;
         }
         EventKind::ParticipantJoined(participant) => {
+            // A revoked Cast key's publisher token stays valid for its TTL:
+            // refuse it on join. A failed guard fails the webhook, so LiveKit
+            // delivers the join again.
+            super::streaming::cast::on_publisher_joined(
+                state,
+                &participant.room,
+                &participant.identity,
+                participant.watcher.as_ref(),
+            )
+            .await?;
             if let Some(call_id) = private_call_id_from_room_name(&participant.room) {
                 handle_private_participant_joined(state, &participant.voice_address, call_id)
                     .await?;
@@ -554,6 +639,19 @@ async fn dispatch(state: &CommsState, event: &ValidatedEvent) -> Result<(), ApiE
             }
         }
         EventKind::ParticipantLeft(participant, reason) => {
+            // A Cast streamer that left drops out of the room's presenters,
+            // unless this is the old session of a full reconnect (the same
+            // identity joined again). Logged, never a webhook failure.
+            if !matches!(reason, DisconnectReason::DuplicateIdentity)
+                && let Err(error) = super::streaming::cast::forget_departed_streamer(
+                    state,
+                    &participant.room,
+                    &participant.identity,
+                )
+                .await
+            {
+                tracing::warn!(room = %participant.room, ?error, "cast presenter cleanup failed");
+            }
             if let Some(call_id) = private_call_id_from_room_name(&participant.room) {
                 handle_private_participant_left(
                     state,
@@ -651,6 +749,7 @@ fn leave_event_time_ms(event: &Value) -> i64 {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support {
     use base64::Engine;
     use base64::engine::general_purpose::{STANDARD as B64_STANDARD, URL_SAFE_NO_PAD};
@@ -673,9 +772,11 @@ pub mod test_support {
     }
 }
 
+#[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
 mod initial_metadata_tests;
 
+#[allow(clippy::indexing_slicing, clippy::expect_used, reason = "test support")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -734,6 +835,18 @@ mod tests {
         );
         assert_eq!(reason, DisconnectReason::ClientInitiated);
         assert_eq!(participant.room, "");
+    }
+
+    #[test]
+    fn participant_event_enforces_the_sid_byte_limit() {
+        let mut sid = "a".repeat(MAX_PARTICIPANT_SID_BYTES);
+        let event = participant_event("join", "participant_joined", &sid, 100);
+        let parsed = ValidatedEvent::parse(&event).unwrap();
+        assert_eq!(parsed.participant().unwrap().sid, sid);
+
+        sid.push('a');
+        let event = participant_event("join", "participant_joined", &sid, 100);
+        assert_eq!(ValidatedEvent::parse(&event).unwrap_err().code, 400);
     }
 
     #[test]

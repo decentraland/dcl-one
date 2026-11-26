@@ -1,7 +1,8 @@
 use futures::FutureExt as _;
+use parking_lot::{Mutex, MutexGuard};
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 use tokio::time::Instant;
@@ -172,9 +173,7 @@ impl Default for WalletQueue {
 
 impl WalletQueue {
     fn state(&self) -> MutexGuard<'_, State> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.state.lock()
     }
 
     /// Rejects new work at either cap. Rejection drops its captured state and runs
@@ -296,24 +295,24 @@ impl WalletQueue {
             return false;
         };
         owner.outstanding.fetch_add(1, Ordering::SeqCst);
-        let mut work = Some(Work {
+        let work = Work {
             future: Some(work),
             _completed: Completed(Some(done)),
             owner: Ownership(owner.clone()),
             expires: Instant::now() + WORK_DEADLINE,
             credit,
             maintenance,
-        });
+        };
         let scheduled = {
             let mut state = self.state();
             if owner.cancelled.is_cancelled() {
-                Err("retired")
+                Err(("retired", work))
             } else if state.total >= MAX_TOTAL_WORK {
-                Err("global_full")
+                Err(("global_full", work))
             } else if state.lanes.get(wallet).is_some_and(|lane| {
                 lane.pending.len() + usize::from(lane.running) >= MAX_WALLET_WORK
             }) {
-                Err("wallet_full")
+                Err(("wallet_full", work))
             } else {
                 if !state.lanes.contains_key(wallet) {
                     state.ready.push_back(wallet.to_owned());
@@ -323,7 +322,7 @@ impl WalletQueue {
                     .entry(wallet.to_owned())
                     .or_default()
                     .pending
-                    .push_back(work.take().unwrap());
+                    .push_back(work);
                 state.total += 1;
                 Ok(Self::take_ready(&mut state))
             }
@@ -333,7 +332,7 @@ impl WalletQueue {
                 self.start_ready(ready);
                 true
             }
-            Err(reason) => {
+            Err((reason, work)) => {
                 crate::gatekeeper::admission::cluster::metrics::cluster_work_rejected(reason);
                 drop(work);
                 false
@@ -407,7 +406,7 @@ impl WalletQueue {
     fn start_ready(self: &Arc<Self>, ready: Vec<(String, Work)>) {
         for (wallet, work) in ready {
             let queue = self.clone();
-            tokio::spawn(async move { queue.run(wallet, work).await });
+            crate::shared::task::spawn(async move { queue.run(wallet, work).await });
         }
     }
 
@@ -416,8 +415,7 @@ impl WalletQueue {
             crate::gatekeeper::admission::cluster::metrics::cluster_work_cancelled();
         } else if Instant::now() >= work.expires {
             crate::gatekeeper::admission::cluster::metrics::cluster_work_expired();
-        } else {
-            let future = work.future.take().unwrap();
+        } else if let Some(future) = work.future.take() {
             CURRENT_CREDIT.scope(work.credit.clone(), async { tokio::select! {
                 biased;
                 _ = work.owner.0.cancelled.cancelled() => crate::gatekeeper::admission::cluster::metrics::cluster_work_cancelled(),
@@ -428,6 +426,8 @@ impl WalletQueue {
                     }
                 }
             }}).await;
+        } else {
+            tracing::error!(%wallet, "cluster work started without a future");
         }
         let ready = {
             let mut state = self.state();
@@ -501,10 +501,10 @@ impl WalletQueue {
     }
 
     #[cfg(test)]
-    pub(super) fn poison_for_test(&self) {
+    pub(super) fn panic_while_locked_for_test(&self) {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = self.state.lock().unwrap();
-            panic!("poison registry");
+            let _guard = self.state.lock();
+            panic!("panic while holding the registry");
         }));
     }
 }

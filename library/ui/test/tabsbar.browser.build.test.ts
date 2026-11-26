@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { productionBrowser } from './production-browser.helpers'
 const browser = productionBrowser('test/consumer/tabsbar-browser.tsx')
 async function navigate(
@@ -397,12 +397,17 @@ describe('when tablet widths give routes less room than their labels', () => {
     expect([tray.fadeStart, tray.fadeEnd]).toEqual([true, true])
     expectFadedOverflow(tray)
   })
-  it('should leave no fade when every route fits', async () => {
-    await navigate('shop', 1440)
-    await paint()
-    const tray = await routeTray()
-    expect(tray.hidden).toBeLessThanOrEqual(1)
-    expect(tray.mask).toBe('none')
+  describe('and every route fits', () => {
+    beforeEach(async () => {
+      await navigate('shop', 1440)
+      await paint()
+    })
+
+    it('should leave no fade', async () => {
+      const tray = await routeTray()
+      expect(tray.hidden).toBeLessThanOrEqual(1)
+      expect(tray.mask).toBe('none')
+    })
   })
   for (const width of [768, 1024])
     for (const page of ['shop', 'learn'])
@@ -442,5 +447,43 @@ describe('when tablet widths give routes less room than their labels', () => {
     expectFadedOverflow(tray)
     expect(tray.current[0]).toBeGreaterThanOrEqual(-1)
     expect(tray.current[1]).toBeLessThanOrEqual(tray.width - FADE + 1)
+  })
+})
+
+describe('when ShopChrome supplies its own controls', () => {
+  it.each([
+    [390, true],
+    [768, true],
+    [769, false],
+    [1440, false]
+  ] as const)(
+    'should show the Activity shortcut according to the viewport at %i',
+    async (width, visible) => {
+      await navigate('shop-links', width)
+      expect(
+        await browser.evaluate(
+          'document.querySelector(\'a[href="#activity"]\').getClientRects().length > 0'
+        )
+      ).toBe(visible)
+      expect(await browser.evaluate('document.documentElement.scrollWidth <= innerWidth')).toBe(
+        true
+      )
+    }
+  )
+
+  it('should render the campaign without animation when reduced motion is requested', async () => {
+    await browser.session.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'reduce' }]
+    })
+    try {
+      await navigate('shop-links', 390)
+      expect(
+        await browser.evaluate(
+          "getComputedStyle(document.querySelector('[aria-current] span')).animationName"
+        )
+      ).toBe('none')
+    } finally {
+      await browser.session.send('Emulation.setEmulatedMedia', { features: [] })
+    }
   })
 })

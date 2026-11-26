@@ -9,7 +9,7 @@ import { fakeSession } from '../harness'
 function renderSidebar(over: { enabled?: boolean; available?: boolean; sceneBlocked?: boolean } = {}) {
   const s = fakeSession()
   s.mic = { ...s.mic, available: true, enabled: false, toggle: vi.fn(), ...over }
-  s.settings = { ...s.settings, list: [{ name: 'Voice Volume', category: 'audio', description: '', minValue: 0, maxValue: 100, namedVariants: [], value: 70, default: 100, stepSize: 1 }], set: vi.fn(), load: vi.fn() }
+  s.settings = { ...s.settings, list: [{ name: 'Voice Volume', category: 'audio', description: '', minValue: 0, maxValue: 100, namedVariants: [], value: 70, default: 100, stepSize: 1, disabled: false }], set: vi.fn(), load: vi.fn() }
   const view = render(<><Sidebar session={s} /><ToastHost /></>)
   return Object.assign(s, { rerender: (mic: Partial<typeof s.mic>) => view.rerender(<><Sidebar session={{ ...s, mic: { ...s.mic, ...mic } }} /><ToastHost /></>) })
 }
@@ -23,6 +23,15 @@ describe('nearby voice', () => {
     expect(screen.getByRole('dialog', { name: 'Nearby voice' })).toBeInTheDocument()
     expect(vi.mocked(s.mic.toggle)).not.toHaveBeenCalled()
     expect(vi.mocked(s.settings.load)).toHaveBeenCalled()
+  })
+
+  it('a press on the popover keeps it open, a press outside closes it', async () => {
+    renderSidebar()
+    await userEvent.click(screen.getByRole('button', { name: 'Nearby Voice' }))
+    fireEvent.pointerDown(screen.getByRole('dialog', { name: 'Nearby voice' }))
+    expect(screen.getByRole('dialog', { name: 'Nearby voice' })).toBeInTheDocument()
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('dialog', { name: 'Nearby voice' })).toBeNull()
   })
 
   it('Speak opens the mic, and the hint follows it', async () => {

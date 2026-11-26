@@ -1,11 +1,15 @@
-import { blogHref } from "@dcl/one-ui/apps/sites/blog/blogLinks";
-import { blogPostHref, type BlogArticle, type BlogCard, type BlogRichTextNode } from "@dcl/one-ui/apps/sites/blog/blogModel";
+import {
+  blogHref,
+  blogPostHref,
+  type BlogArticle,
+  type SitesBlogCard as BlogCard,
+  type BlogRichTextNode,
+} from "@dcl/one-ui";
 import type { Place } from "../catalyst/schema";
 import { playUrl } from "../catalyst/bases";
 import { eventOccurrence, eventCoords, formatEventWhen, type Event } from "../catalyst/places/events";
 import type { ShopPageData } from "../shop/pages";
 import type { ProfileVM } from "../catalyst/social/profile";
-import type { CommunityDetail } from "../catalyst/social/communities";
 import { heroEventCards, hotspotCards, ritualCards, type HomeContent } from "../catalyst/landings/home";
 
 export function wantsMarkdown(request: Request): boolean {
@@ -52,11 +56,12 @@ function heading(level: number, text: string): string {
   return `${prefix}${clean(text)}`;
 }
 
-function bulletList(items: string[]): string {
+function bulletList(items: string[], ordered = false): string {
+  // An ordered item keeps its position as its number, so the numbers match the rendered list.
   return items
-    .map((i) => clean(i))
-    .filter((i) => i.length > 0)
-    .map((i) => `- ${i}`)
+    .map((i, n) => [clean(i), ordered ? `${n + 1}.` : "-"] as const)
+    .filter(([i]) => i.length > 0)
+    .map(([i, marker]) => `${marker} ${i}`)
     .join("\n");
 }
 
@@ -225,8 +230,8 @@ function legalBlockToMarkdown(block: AgentLegalBlock): string {
   const type = block.type;
   if (type === "h3") return heading(3, reactNodeToMarkdown(block.content ?? block.heading));
   if (type === "h4") return heading(4, reactNodeToMarkdown(block.content ?? block.heading));
-  if (type === "ul") {
-    return bulletList((block.items ?? []).map(reactNodeToMarkdown));
+  if (type === "ul" || type === "ol") {
+    return bulletList((block.items ?? []).map(reactNodeToMarkdown), type === "ol");
   }
   const text = clean(reactNodeToMarkdown(block.content ?? block.heading ?? ""));
   return text;
@@ -338,14 +343,6 @@ function eventLine(e: Event): string {
 }
 
 export function whatsOnToMarkdown(data: AgentWhatsOnData): string {
-  if (data.tab === "my") {
-    return joinBlocks([
-      heading(1, "My Hangouts"),
-      "Open My Hangouts in a browser and sign in to load your private hangout catalogue and manage authorized approvals.",
-      "[Open My Hangouts](/events?tab=my)",
-      "[Browse public hangouts](/events)",
-    ]);
-  }
   const live = data.live ?? [];
   const upcoming = data.upcoming ?? [];
   const blocks: string[] = [
@@ -355,6 +352,12 @@ export function whatsOnToMarkdown(data: AgentWhatsOnData): string {
   if (live.length) blocks.push(heading(2, "Live now"), live.map(eventLine).join("\n"));
   if (upcoming.length) blocks.push(heading(2, "Upcoming"), upcoming.map(eventLine).join("\n"));
   if (!live.length && !upcoming.length) blocks.push("_No events right now. Check back soon._");
+  if (data.tab === "my") {
+    blocks.push(
+      heading(2, "My Events"),
+      "Sign in in a browser to see the events you created, including those pending review: [Open My Events](/events?tab=my)",
+    );
+  }
 
   return joinBlocks(blocks);
 }
@@ -504,47 +507,6 @@ export function shopPageToMarkdown(data: ShopPageData): string {
   ]);
 }
 
-export function communityToMarkdown(detail: CommunityDetail): string {
-  const c = detail.community;
-  const facts: Array<[string, string | number | null | undefined]> = [
-    ["Owner", c.ownerName || c.ownerAddress],
-    ["Privacy", c.privacy],
-    ["Members", c.membersCount],
-  ];
-  const bullets = facts
-    .filter(([, v]) => v !== null && v !== undefined && v !== "")
-    .map(([k, v]) => `- ${k}: ${clean(String(v))}`)
-    .join("\n");
-
-  const members = detail.members ?? [];
-  const membersBlock = members.length
-    ? joinBlocks([
-        heading(2, "Members"),
-        members
-          .slice(0, 50)
-          .map((m) => `- ${clean(m.name || m.memberAddress)}${m.role && m.role !== "none" ? ` (${m.role})` : ""}`)
-          .join("\n"),
-      ])
-    : "";
-  const events = detail.events ?? [];
-  const eventsBlock = events.length
-    ? joinBlocks([
-        heading(2, "Events"),
-        events
-          .map((e) => `- ${inlineParts([clean(e.name), e.timeLabel, e.creatorName ? `by ${e.creatorName}` : null])}`)
-          .join("\n"),
-      ])
-    : "";
-
-  return joinBlocks([
-    heading(1, c.name || "Community"),
-    c.description ? clean(c.description) : "",
-    bullets,
-    membersBlock,
-    eventsBlock,
-  ]);
-}
-
 export type AgentMarkdownKey =
   | "blogIndex"
   | "blogPost"
@@ -555,7 +517,6 @@ export type AgentMarkdownKey =
   | "eventDetail"
   | "shopPage"
   | "profileDetail"
-  | "discover"
-  | "communityDetail";
+  | "discover";
 
 export type AgentMarkdownHandle = { agentMarkdown: AgentMarkdownKey };

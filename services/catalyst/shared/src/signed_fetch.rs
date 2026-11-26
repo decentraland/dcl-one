@@ -6,10 +6,10 @@
 //! `dcl_auth::signed_fetch`'s; this module is the node's posture over
 //! them and its wire answers.
 //!
-//! There is no nonce and no replay cache on this path: the +/- 5 minute window
-//! is the only bound on how long a captured request stays usable, so it is a
-//! replay-tolerance budget, not a clock-skew allowance. The payload shapes a
-//! surface accepts are its [`PayloadPolicy`]: the crypto-middleware 6.x one
+//! There is no nonce and no replay cache on this path: the 60-second window
+//! ([`SIGNED_FETCH_WINDOW_SECS`]) is the only bound on how long a captured
+//! request stays usable, so it is a replay-tolerance budget, not a clock-skew
+//! allowance. The payload shapes a surface accepts are its [`PayloadPolicy`]: the crypto-middleware 6.x one
 //! (method and path folded, the metadata bytes bound to the signature) always,
 //! then the legacy one (everything lowercased) only where the old service
 //! declared that fallback and only when the metadata spells its `signer` key
@@ -49,8 +49,8 @@ use crate::auth::signed_fetch::{
 use crate::auth::{AuthChain, AuthError, MAX_AUTH_CHAIN_LINKS};
 
 pub use crate::auth::signed_fetch::{
-    AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, FIVE_MINUTES,
-    ORIGINAL_PATH_HEADER, SCENE_SIGNER, SignedPath, build_legacy_payload, build_payload_v6,
+    AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, ORIGINAL_PATH_HEADER,
+    SCENE_SIGNER, SIGNED_FETCH_WINDOW_SECS, SignedPath, build_legacy_payload, build_payload_v6,
     candidate_paths, field_is_canonical, header_str, is_refused_signer, names_scene_signer,
 };
 
@@ -80,11 +80,16 @@ pub enum SignedFetchError {
     EipNotImplemented,
     #[error("Catalyst unavailable: {0}")]
     CatalystUnavailable(String),
+    /// The client source spent its budget of contract-wallet checks
+    /// (`eip1654_budget`): refused before the RPC, a 429.
+    #[error("Too many contract-wallet signature checks; retry later")]
+    RateLimited,
 }
 
 impl SignedFetchError {
     /// A malformed request answers 400 with its detail; every other refusal is
-    /// 401 Unauthenticated, as upstream answers them.
+    /// 401 Unauthenticated, as upstream answers them, except a contract-wallet
+    /// check that could not run (503) or that the client's budget refused (429).
     pub fn http_status_and_message(&self) -> (u16, String) {
         match self {
             Self::MalformedChain { detail } => (400, format!("Invalid Auth Chain: {detail}")),
@@ -95,6 +100,7 @@ impl SignedFetchError {
                 (401, "Unauthenticated: Invalid signature".to_string())
             }
             Self::CatalystUnavailable(d) => (503, format!("Catalyst unavailable: {d}")),
+            Self::RateLimited => (429, self.to_string()),
         }
     }
 
@@ -226,6 +232,7 @@ pub fn map_auth_error(err: AuthError) -> SignedFetchError {
         AuthError::Eip1654NotImplemented => SignedFetchError::EipNotImplemented,
         AuthError::Eip1654Rejected { .. } => SignedFetchError::InvalidSignature(err.to_string()),
         AuthError::Eip1654ValidationFailed(d) => SignedFetchError::CatalystUnavailable(d),
+        AuthError::Eip1654RateLimited => SignedFetchError::RateLimited,
     }
 }
 
@@ -306,13 +313,15 @@ pub struct VerificationProfile {
 }
 
 impl VerificationProfile {
-    /// @dcl/platform-crypto-middleware as the Node services use it: +/- 5
-    /// minutes, optional object metadata, the scene signer gated, and the
-    /// legacy payload as `policy` declares it behind the canonical-`signer`
-    /// guard. What [`require_signer_at`] runs.
+    /// @dcl/platform-crypto-middleware as the Node services use it: at most
+    /// [`SIGNED_FETCH_WINDOW_SECS`] old and ahead, optional object metadata,
+    /// the scene signer gated, and the legacy payload as `policy` declares it
+    /// behind the canonical-`signer` guard. What [`require_signer_at`] runs.
     pub const fn node(policy: PayloadPolicy) -> Self {
         Self {
-            window: TimestampWindow::AroundNow { secs: FIVE_MINUTES },
+            window: TimestampWindow::AroundNow {
+                secs: SIGNED_FETCH_WINDOW_SECS,
+            },
             metadata: MetadataHeader::OptionalJsonObject,
             scene_signer: SceneSignerRule::Gated,
             legacy: match policy {
@@ -497,6 +506,7 @@ pub async fn optional_signer_at(
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_support {
     use super::*;
     use crate::auth::{AuthLink, AuthLinkType};
@@ -553,7 +563,8 @@ pub mod test_support {
             AuthLink {
                 link_type: AuthLinkType::SIGNER,
                 payload: format!("{:#x}", wallet.address()),
-                signature: None,
+                // Clients send the SIGNER link with an empty signature.
+                signature: Some(String::new()),
             },
             AuthLink {
                 link_type: AuthLinkType::EcdsaSignedEntity,
@@ -899,14 +910,18 @@ mod tests {
                 require_signer(&headers, "get", PATH, PayloadPolicy::V6ThenLegacy, None).await,
             )
         };
-        let (reel, _) = at(-55_000).await;
+        let (reel, node) = at(-55_000).await;
         assert!(reel.is_ok(), "{reel:?}");
+        assert!(node.is_ok(), "{node:?}");
         let (reel, node) = at(-65_000).await;
         assert!(
             matches!(reel, Err(SignedFetchError::Expired { .. })),
             "{reel:?}"
         );
-        assert!(node.is_ok(), "the node window is still five minutes");
+        assert!(
+            matches!(node, Err(SignedFetchError::Expired { .. })),
+            "the node window is 60 seconds too: {node:?}"
+        );
         let (reel, _) = at(30_000).await;
         assert!(reel.is_ok(), "within the future skew: {reel:?}");
         let (reel, node) = at(3_600_000).await;
@@ -1048,7 +1063,9 @@ mod tests {
             assert_eq!(
                 VerificationProfile::node(policy),
                 VerificationProfile {
-                    window: TimestampWindow::AroundNow { secs: FIVE_MINUTES },
+                    window: TimestampWindow::AroundNow {
+                        secs: SIGNED_FETCH_WINDOW_SECS
+                    },
                     metadata: MetadataHeader::OptionalJsonObject,
                     scene_signer: SceneSignerRule::Gated,
                     legacy,

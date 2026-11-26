@@ -1,7 +1,7 @@
 //! The GPU time of each frame, measured with timestamp queries on every backend, published as
 //! [`GPU_FRAME_TIME`].
 //!
-//! Two empty compute passes bracket the frame's work inside its submission: the first node of
+//! Two compute passes bracket the frame's work inside its submission: the first node of
 //! the render graph records a pass that writes a timestamp as it begins, the last node one that
 //! writes a timestamp as it ends, then the resolve of the two and their copy to a readback buffer.
 //! Every other node of the render graph, camera sub-graphs included, records its passes between
@@ -9,9 +9,10 @@
 //! is the GPU time of the frame's passes. Not counted: the render world's preparation of the
 //! frame (the first timestamp is written only once the frame is submitted), the uploads queued
 //! while it was prepared (they run just ahead of the submission's command buffers) and work
-//! submitted outside the render graph. The brackets are empty passes, the cheapest that write a
-//! timestamp; `tests/gpu_timestamps.rs` checks that an empty pass writes its timestamps on an
-//! adapter.
+//! submitted outside the render graph. Each bracket pass dispatches one 1x1x1 workgroup of a
+//! shader that does nothing: in Chrome on macOS (Metal) a pass that holds no work does not write
+//! its end timestamp, which then reads back as 0. `tests/gpu_timestamps.rs` checks that bracket
+//! passes like these write their timestamps on an adapter.
 //!
 //! After the submission the readback buffer is mapped without waiting. A later frame reads it,
 //! converts the ticks with the queue's timestamp period and hands the milliseconds to the main
@@ -27,6 +28,11 @@
 //! resolving, since resolving an unwritten timestamp stalls the queue on Vulkan. A readback that
 //! fails to map leaves its buffer unable to map again, so its slot is retired for good, with one
 //! warning under target `gpu_time`; once every slot is retired nothing more is measured.
+//!
+//! A reading whose end is before its begin is no duration and is dropped, with one warning under
+//! `gpu_time` that gives the first such pair: in Chrome on macOS (Metal) some frames read back an
+//! end timestamp earlier than their begin, and the cause is not known. Equal timestamps, which
+//! Chrome's quantisation gives, are dropped without a warning.
 //!
 //! The brackets enclose the render-graph nodes that exist when the plugin finishes. On the first
 //! render frame the plugin checks that every node of the graph runs between them and names, in
@@ -57,13 +63,14 @@ use bevy::{
 use common::gpu_time::GPU_FRAME_TIME;
 use wgpu::{
     Buffer, BufferDescriptor, BufferUsages, CommandEncoder, ComputePassDescriptor,
-    ComputePassTimestampWrites, Features, Maintain, MapMode, QuerySet, QuerySetDescriptor,
-    QueryType,
+    ComputePassTimestampWrites, ComputePipeline, ComputePipelineDescriptor, Features, Maintain,
+    MapMode, QuerySet, QuerySetDescriptor, QueryType, ShaderModuleDescriptor, ShaderSource,
 };
 
 /// Frames that can be measured at once: a frame holds its slot from the start of its render
-/// schedule until its readback has been read.
-const RING: usize = 4;
+/// schedule until its readback has been read. Also the most frames a measurement is behind the
+/// frame it belongs to while every frame gets a slot.
+pub const RING: usize = 4;
 
 /// The two timestamps of a slot, in bytes.
 const SLOT_BYTES: u64 = 2 * 8;
@@ -145,6 +152,8 @@ struct Measurement {
     queries: QuerySet,
     /// Where a slot's two timestamps are resolved before they are copied to its readback.
     resolve: Buffer,
+    /// A shader that does nothing, dispatched once in each bracket pass so the pass holds work.
+    noop: ComputePipeline,
     readbacks: [Readback; RING],
     ring: Ring,
     /// `RECORDED_NONE`, `RECORDED_BEGIN` or `RECORDED_BOTH`, set by the graph's nodes, which see
@@ -152,6 +161,8 @@ struct Measurement {
     recorded: AtomicU8,
     /// Whether a retired slot was reported.
     warned_retired: bool,
+    /// Whether a reading whose end is before its begin was reported.
+    warned_reversed: bool,
 }
 
 struct Readback {
@@ -163,7 +174,19 @@ struct Readback {
 impl GpuTimer {
     fn new(device: &RenderDevice) -> Self {
         let device = device.wgpu_device();
+        let shader = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("gpu frame time bracket"),
+            source: ShaderSource::Wgsl("@compute @workgroup_size(1) fn main() {}".into()),
+        });
         Self(WgpuWrapper::new(Measurement {
+            noop: device.create_compute_pipeline(&ComputePipelineDescriptor {
+                label: Some("gpu frame time bracket"),
+                layout: None,
+                module: &shader,
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
+                cache: None,
+            }),
             queries: device.create_query_set(&QuerySetDescriptor {
                 label: Some("gpu frame time"),
                 ty: QueryType::Timestamp,
@@ -187,6 +210,7 @@ impl GpuTimer {
             ring: Ring::default(),
             recorded: AtomicU8::new(RECORDED_NONE),
             warned_retired: false,
+            warned_reversed: false,
         }))
     }
 }
@@ -215,21 +239,25 @@ fn first_query(slot: usize) -> u32 {
     2 * slot as u32
 }
 
-/// Records one empty compute pass that writes the given timestamps of `queries`.
+/// Records one compute pass that dispatches `noop` once and writes the given timestamps of
+/// `queries`.
 fn bracket(
     encoder: &mut CommandEncoder,
+    noop: &ComputePipeline,
     queries: &QuerySet,
     beginning_of_pass_write_index: Option<u32>,
     end_of_pass_write_index: Option<u32>,
 ) {
-    drop(encoder.begin_compute_pass(&ComputePassDescriptor {
+    let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
         label: Some("gpu frame time bracket"),
         timestamp_writes: Some(ComputePassTimestampWrites {
             query_set: queries,
             beginning_of_pass_write_index,
             end_of_pass_write_index,
         }),
-    }));
+    });
+    pass.set_pipeline(noop);
+    pass.dispatch_workgroups(1, 1, 1);
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
@@ -253,6 +281,7 @@ impl Node for BeginNode {
             let first = first_query(slot);
             bracket(
                 render_context.command_encoder(),
+                &measurement.noop,
                 &measurement.queries,
                 Some(first),
                 None,
@@ -285,7 +314,13 @@ impl Node for EndNode {
         }
         let first = first_query(slot);
         let encoder = render_context.command_encoder();
-        bracket(encoder, &measurement.queries, None, Some(first + 1));
+        bracket(
+            encoder,
+            &measurement.noop,
+            &measurement.queries,
+            None,
+            Some(first + 1),
+        );
         encoder.resolve_query_set(
             &measurement.queries,
             first..first + 2,
@@ -409,7 +444,8 @@ fn end_frame(mut timer: ResMut<GpuTimer>) {
 }
 
 /// End of the render schedule: publishes the samples whose readback has arrived and frees their
-/// slots; retires the slots whose readback failed, warning the first time.
+/// slots; retires the slots whose readback failed, warning the first time, and warns the first
+/// time a reading ends before it begins.
 fn collect(
     mut timer: ResMut<GpuTimer>,
     device: Res<RenderDevice>,
@@ -422,9 +458,10 @@ fn collect(
         readbacks,
         ring,
         warned_retired,
+        warned_reversed,
         ..
     } = &mut *timer.0;
-    let retired = collect_ready(
+    let Collected { retired, reversed } = collect_ready(
         ring,
         |slot| readbacks[slot].map_state(),
         |slot| readbacks[slot].read(),
@@ -438,6 +475,16 @@ fn collect(
             "a GPU frame time readback failed to map: its slot is retired, and measuring stops \
              once all {RING} are"
         );
+    }
+    if let Some((begin, end)) = reversed {
+        if !*warned_reversed {
+            *warned_reversed = true;
+            warn!(
+                target: "gpu_time",
+                "a GPU frame time reading ends before it begins (begin {begin}, end {end} ticks): \
+                 such readings are dropped"
+            );
+        }
     }
 }
 
@@ -586,18 +633,28 @@ impl GpuTimeShared {
     }
 }
 
+/// What one [`collect_ready`] found besides the samples it published.
+#[derive(Debug, PartialEq, Eq)]
+struct Collected {
+    /// How many slots it retired.
+    retired: usize,
+    /// The first reading whose end is before its begin, as `(begin, end)`.
+    reversed: Option<(u64, u64)>,
+}
+
 /// Moves each pending slot whose readback has finished mapping: a mapped one becomes ready, a
 /// failed one is retired. Then publishes the ready slots' samples, oldest first, and frees them.
 /// `read` returns a mapped slot's two timestamps and unmaps it; it is never called for a slot
-/// whose map failed. Returns how many slots it retired.
+/// whose map failed.
 fn collect_ready(
     ring: &mut Ring,
     map_state: impl Fn(usize) -> MapState,
     mut read: impl FnMut(usize) -> Option<(u64, u64)>,
     period_ns: f32,
     shared: &GpuTimeShared,
-) -> usize {
+) -> Collected {
     let mut retired = 0;
+    let mut reversed = None;
     for slot in 0..RING {
         if ring.slots[slot] != SlotState::Pending {
             continue;
@@ -612,11 +669,17 @@ fn collect_ready(
         }
     }
     for slot in ring.take_ready() {
-        if let Some(ms) = read(slot).and_then(|(begin, end)| sample_ms(begin, end, period_ns)) {
+        let Some((begin, end)) = read(slot) else {
+            continue;
+        };
+        if end < begin {
+            reversed.get_or_insert((begin, end));
+        }
+        if let Some(ms) = sample_ms(begin, end, period_ns) {
             shared.publish(ms);
         }
     }
-    retired
+    Collected { retired, reversed }
 }
 
 /// Main world: registers [`GPU_FRAME_TIME`] and records each new sample in `PreUpdate`.
@@ -888,8 +951,8 @@ mod tests {
         let failed = ring.begin().unwrap();
         ring.end(failed);
         let never_read = |_: usize| -> Option<(u64, u64)> { panic!("a failed readback is read") };
-        let retired = collect_ready(&mut ring, |_| MapState::Failed, never_read, 1.0, &shared);
-        assert_eq!(retired, 1);
+        let collected = collect_ready(&mut ring, |_| MapState::Failed, never_read, 1.0, &shared);
+        assert_eq!(collected.retired, 1);
         assert_eq!(ring.slots[failed], SlotState::Retired);
         assert_eq!(shared.latest(), (0, 0.0));
 
@@ -900,7 +963,7 @@ mod tests {
             assert_ne!(slot, failed);
             ring.end(slot);
             assert_eq!(
-                collect_ready(&mut ring, |_| MapState::Mapped, ticks, 1.0, &shared),
+                collect_ready(&mut ring, |_| MapState::Mapped, ticks, 1.0, &shared).retired,
                 0
             );
         }
@@ -915,7 +978,8 @@ mod tests {
         let mut retired = 0;
         while let Some(slot) = ring.begin() {
             ring.end(slot);
-            retired += collect_ready(&mut ring, |_| MapState::Failed, |_| None, 1.0, &shared);
+            retired +=
+                collect_ready(&mut ring, |_| MapState::Failed, |_| None, 1.0, &shared).retired;
         }
         assert_eq!(retired, RING);
         assert_eq!(ring.slots, [SlotState::Retired; RING]);
@@ -925,7 +989,7 @@ mod tests {
             assert_eq!(ring.open(), None);
             let never_read = |_: usize| -> Option<(u64, u64)> { panic!("a retired slot is read") };
             assert_eq!(
-                collect_ready(&mut ring, |_| MapState::Mapped, never_read, 1.0, &shared),
+                collect_ready(&mut ring, |_| MapState::Mapped, never_read, 1.0, &shared).retired,
                 0
             );
         }
@@ -938,15 +1002,54 @@ mod tests {
         let mut ring = Ring::default();
         let slot = ring.begin().unwrap();
         ring.end(slot);
-        collect_ready(
+        let collected = collect_ready(
             &mut ring,
             |_| MapState::Mapped,
             |_| Some((9, 3)),
             1.0,
             &shared,
         );
+        assert_eq!(collected.reversed, Some((9, 3)));
         assert_eq!(ring.slots[slot], SlotState::Free);
         assert_eq!(shared.latest(), (0, 0.0));
+    }
+
+    #[test]
+    fn only_an_end_before_its_begin_is_reported_and_the_first_one_wins() {
+        let shared = GpuTimeShared::default();
+        let mut ring = Ring::default();
+        let readings = [(5, 5), (9, 0), (8, 2)];
+        for _ in readings {
+            let slot = ring.begin().unwrap();
+            ring.end(slot);
+        }
+        let collected = collect_ready(
+            &mut ring,
+            |_| MapState::Mapped,
+            |slot| Some(readings[slot]),
+            1.0,
+            &shared,
+        );
+        assert_eq!(
+            collected,
+            Collected {
+                retired: 0,
+                reversed: Some((9, 0)),
+            }
+        );
+        assert_eq!(shared.latest(), (0, 0.0));
+
+        // equal ticks, which Chrome's quantisation gives, are dropped without a report
+        let slot = ring.begin().unwrap();
+        ring.end(slot);
+        let collected = collect_ready(
+            &mut ring,
+            |_| MapState::Mapped,
+            |_| Some((5, 5)),
+            1.0,
+            &shared,
+        );
+        assert_eq!(collected.reversed, None);
     }
 
     #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]

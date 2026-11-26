@@ -2,8 +2,9 @@ use super::*;
 use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
 use crate::rooms::{ActiveDeployment, ResolvedRoom};
 use crate::world_identity::{Parcel, RealmId, SceneId, SceneNamespace};
+use parking_lot::Mutex;
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicBool, Ordering},
 };
 
@@ -86,16 +87,7 @@ async fn initial_metadata_room_start_retries_when_current_authority_is_unavailab
             "a room start must await current metadata and retain the same event for retry"
         );
     }
-    assert!(
-        state
-            .webhooks
-            .state
-            .lock()
-            .unwrap()
-            .applied
-            .get("start")
-            .is_none()
-    );
+    assert!(state.webhooks.state.lock().applied.get("start").is_none());
 }
 
 #[tokio::test]
@@ -115,16 +107,7 @@ async fn initial_metadata_first_join_retries_without_waiting_for_periodic_scan()
             "first join must reach exact-scene metadata even before any periodic pass"
         );
     }
-    assert!(
-        state
-            .webhooks
-            .state
-            .lock()
-            .unwrap()
-            .applied
-            .get("join")
-            .is_none()
-    );
+    assert!(state.webhooks.state.lock().applied.get("join").is_none());
 }
 
 #[tokio::test]
@@ -211,7 +194,7 @@ impl crate::interfaces::SceneIdentity for ResolvingScenes {
             panic!("test scene must be resolved by its complete shared identity");
         };
         let room = crate::rooms::gatekeeper_scene_room(realm.as_str(), scene.as_str());
-        self.calls.lock().unwrap().push(room.clone());
+        self.calls.lock().push(room.clone());
         if self.fail.load(Ordering::SeqCst) {
             return Err(crate::rooms::ResolveError::Db(sqlx::Error::PoolClosed));
         }
@@ -236,6 +219,12 @@ impl crate::interfaces::SceneIdentity for ResolvingScenes {
     ) -> Result<Option<ActiveDeployment>, crate::rooms::ResolveError> {
         Ok(None)
     }
+    async fn world_scene_count(
+        &self,
+        world: &crate::world_identity::WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(usize::from(self.world_active_scene(world).await?.is_some()))
+    }
 }
 
 async fn resolving_state() -> (SharedState, Arc<ResolvingScenes>) {
@@ -258,7 +247,7 @@ async fn initial_metadata_unresolved_deployment_never_installs_success_cooldown(
     deliver(state.clone(), &started, "secret").await.unwrap();
     deliver(state.clone(), &started, "secret").await.unwrap();
     assert_eq!(
-        *scenes.calls.lock().unwrap(),
+        *scenes.calls.lock(),
         [room, room],
         "an unresolved deployment is not a successful initialization"
     );
@@ -270,7 +259,7 @@ async fn initial_metadata_unresolved_deployment_never_installs_success_cooldown(
     .await
     .unwrap();
     assert_eq!(
-        scenes.calls.lock().unwrap().len(),
+        scenes.calls.lock().len(),
         3,
         "recreation cannot inherit the old room's cooldown"
     );
@@ -282,7 +271,7 @@ async fn initial_metadata_unresolved_deployment_never_installs_success_cooldown(
     )
     .await
     .unwrap();
-    assert_eq!(scenes.calls.lock().unwrap().len(), 4);
+    assert_eq!(scenes.calls.lock().len(), 4);
 }
 
 #[tokio::test]
@@ -303,7 +292,7 @@ async fn initial_metadata_concurrent_unresolved_room_events_keep_exact_identity(
     });
     futures::future::join_all(burst).await;
     assert_eq!(
-        *scenes.calls.lock().unwrap(),
+        *scenes.calls.lock(),
         vec![room; 128],
         "unresolved rooms cannot claim successful refreshes"
     );
@@ -325,7 +314,7 @@ async fn initial_metadata_failed_refresh_does_not_cache_or_consume_signed_retry(
     scenes.fail.store(false, Ordering::SeqCst);
     deliver(state.clone(), &started, "secret").await.unwrap();
     deliver(state.clone(), &started, "secret").await.unwrap();
-    assert_eq!(*scenes.calls.lock().unwrap(), [room, room]);
+    assert_eq!(*scenes.calls.lock(), [room, room]);
 }
 
 #[tokio::test]
@@ -337,7 +326,7 @@ async fn initial_metadata_rejected_session_order_cannot_trigger_a_refresh() {
     let join = event("stale-join", "participant_joined", room, "RM_order");
     deliver(state.clone(), &join, "secret").await.unwrap();
     assert!(
-        scenes.calls.lock().unwrap().is_empty(),
+        scenes.calls.lock().is_empty(),
         "equal-second leave precedence must hold before metadata effects"
     );
 }
@@ -384,19 +373,14 @@ struct RoomApi {
 
 impl RoomApi {
     fn put(&self, room: &str, sid: &str, metadata: &str) {
-        self.rooms.lock().unwrap().insert(
+        self.rooms.lock().insert(
             room.into(),
             serde_json::json!({"name":room,"sid":sid,"metadata":metadata}),
         );
     }
 
     fn metadata(&self, room: &str) -> Value {
-        serde_json::from_str(
-            self.rooms.lock().unwrap()[room]["metadata"]
-                .as_str()
-                .unwrap(),
-        )
-        .unwrap()
+        serde_json::from_str(self.rooms.lock()[room]["metadata"].as_str().unwrap()).unwrap()
     }
 }
 
@@ -409,12 +393,9 @@ async fn room_api() -> (Arc<RoomApi>, String, tokio::task::JoinHandle<()>) {
         post(move |Path(method): Path<String>, Json(body): Json<Value>| {
             let api = captured.clone();
             async move {
-                api.requests
-                    .lock()
-                    .unwrap()
-                    .push((method.clone(), body.clone()));
+                api.requests.lock().push((method.clone(), body.clone()));
                 if method == "ListRooms" {
-                    let rooms = api.rooms.lock().unwrap();
+                    let rooms = api.rooms.lock();
                     let selected: Vec<Value> = body["names"]
                         .as_array()
                         .unwrap()
@@ -446,7 +427,7 @@ async fn room_api() -> (Arc<RoomApi>, String, tokio::task::JoinHandle<()>) {
                     }
                     _ => {}
                 }
-                let mut rooms = api.rooms.lock().unwrap();
+                let mut rooms = api.rooms.lock();
                 let room = rooms.get_mut(body["room"].as_str().unwrap()).unwrap();
                 room["metadata"] = body["metadata"].clone();
                 (StatusCode::OK, Json(room.clone()))
@@ -500,7 +481,6 @@ async fn initial_metadata_incarnation_merge_requires_a_confirmed_write_and_prese
     assert!(
         !api.requests
             .lock()
-            .unwrap()
             .iter()
             .any(|(method, _)| method == "UpdateRoomMetadata")
     );
@@ -512,7 +492,7 @@ async fn initial_metadata_incarnation_merge_requires_a_confirmed_write_and_prese
                 .await
                 .is_err()
         );
-        assert_eq!(api.rooms.lock().unwrap()[room]["metadata"], invalid);
+        assert_eq!(api.rooms.lock()[room]["metadata"], invalid);
     }
     for failure in 1..=4 {
         api.put(room, "RM_2", r#"{"presenters":["retained"],"other":42}"#);
@@ -685,11 +665,21 @@ async fn initial_metadata_scratch_first_join_recreation_burst_and_scene_authorit
         state.livekit.api_key = "key".into();
         state.livekit.api_secret = "secret".into();
         state.settings.lease_authorizations_url = Some(format!("{url}/leases"));
+        // Admins are granted on the place: a Genesis scene's base parcel.
+        let granted = if case == "genesis" {
+            "5,6"
+        } else {
+            scene.as_str()
+        };
         for (place, address) in [(scene.as_str(), admin), (realm.as_str(), unrelated)] {
             state
                 .moderation
                 .add_admin(
-                    place,
+                    if place == scene.as_str() {
+                        granted
+                    } else {
+                        place
+                    },
                     &crate::Address::parse(address).unwrap(),
                     &crate::Address::parse(owner).unwrap(),
                 )
@@ -736,7 +726,7 @@ async fn initial_metadata_scratch_first_join_recreation_burst_and_scene_authorit
             api.metadata(&room),
             serde_json::json!({"sceneAdmins":admins,"bannedAddresses":[banned],"presenters":["kept"],"other":42})
         );
-        let before = api.requests.lock().unwrap().len();
+        let before = api.requests.lock().len();
         let burst = (0..128).map(|n| {
             let state = state.clone();
             let room = room.clone();
@@ -753,7 +743,7 @@ async fn initial_metadata_scratch_first_join_recreation_burst_and_scene_authorit
         });
         futures::future::join_all(burst).await;
         assert_eq!(
-            api.requests.lock().unwrap().len(),
+            api.requests.lock().len(),
             before,
             "same-incarnation burst must share its confirmed initialization"
         );
@@ -776,7 +766,7 @@ async fn initial_metadata_scratch_first_join_recreation_burst_and_scene_authorit
         assert_eq!(
             state
                 .moderation
-                .remove_admin(scene.as_str(), &crate::Address::parse(admin).unwrap())
+                .remove_admin(granted, &crate::Address::parse(admin).unwrap())
                 .await
                 .unwrap(),
             1
@@ -847,7 +837,7 @@ async fn initial_metadata_scratch_first_join_recreation_burst_and_scene_authorit
                 &room,
                 "RM_lease_retry",
             );
-            let before = api.requests.lock().unwrap().len();
+            let before = api.requests.lock().len();
             assert_eq!(
                 deliver(state.clone(), &lease_retry, "secret")
                     .await
@@ -861,20 +851,12 @@ async fn initial_metadata_scratch_first_join_recreation_burst_and_scene_authorit
                 "configured lease outage must retain the last known lease-derived admin"
             );
             assert_eq!(
-                api.requests.lock().unwrap().len(),
+                api.requests.lock().len(),
                 before,
                 "lease failure must precede SFU writes"
             );
             assert_ne!(
-                state
-                    .webhooks
-                    .state
-                    .lock()
-                    .unwrap()
-                    .metadata
-                    .get(&room)
-                    .unwrap()
-                    .0,
+                state.webhooks.state.lock().metadata.get(&room).unwrap().0,
                 "RM_lease_retry"
             );
             api.lease_failure.store(0, Ordering::SeqCst);
@@ -883,22 +865,13 @@ async fn initial_metadata_scratch_first_join_recreation_burst_and_scene_authorit
                 .unwrap();
             assert_eq!(api.metadata(&room), last_good);
             assert_eq!(
-                state
-                    .webhooks
-                    .state
-                    .lock()
-                    .unwrap()
-                    .metadata
-                    .get(&room)
-                    .unwrap()
-                    .0,
+                state.webhooks.state.lock().metadata.get(&room).unwrap().0,
                 "RM_lease_retry"
             );
         }
         assert!(
             api.requests
                 .lock()
-                .unwrap()
                 .iter()
                 .all(|(method, body)| method != "ListRooms"
                     || body["names"]

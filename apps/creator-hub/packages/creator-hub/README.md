@@ -123,7 +123,9 @@ On Windows you can also create a shortcut to the app with the parameter added au
 open /Applications/Decentraland\ Creator\ Hub.app --args --env=dev
 ```
 
-The app will use the specified environment APIs. If no `--env` argument is provided, the app will use the default environment (prod). Valid values for `--env` are `dev` and `prod`.
+The app will use the specified environment APIs. If no `--env` argument is provided, the app will use the default environment (prod). Valid values for `--env` are `dev`, `dcl-one` and `prod`.
+
+`--env=dcl-one` behaves like production (Ethereum mainnet, production contracts and subgraphs) but points the Decentraland services at the `dcl.dev` gateway (`https://dcl.dev/<service>`). Its config lives in `renderer/src/config/env/dcl-one.json`.
 
 On development watch mode, you can also pass the `--env` argument when starting the app. In this case, the default environment is `dev`, but you can override it to `prod` if needed:
 

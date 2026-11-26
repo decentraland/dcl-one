@@ -31,6 +31,20 @@ source in this repository.
   it alone still carried went with #123).
 - The protocol's wire-compatibility check (`buf breaking`) compares against this
   repository's `main`, so every change to `proto/` is additive or explicitly reserved.
+- One change is not additive: `PBAvatarEquippedData` field 3 is `wearables`, as
+  `decentraland/protocol`'s `main` defined it after this snapshot and published in
+  `@dcl/protocol@next`, and `force_render`, which held 3 here and in `experimental-bevy`, is field
+  4, a renumbering the wire-compatibility check was exempted for, in that file only, until it
+  merged. With the new numbers, every definition in `@dcl/protocol@next` exists
+  here under the same number, name and type. The `experimental-bevy`
+  protocol and SDK took the same numbering (decentraland/protocol#510,
+  decentraland/js-sdk-toolchain#1675), and the bridge scene pins that SDK, which moves it 31
+  commits forward on that branch (AvatarNametag, `getPlayerLanguage`, input and pointer fixes,
+  `sdk-commands` bundle and deploy changes), not only to the new field number. The inspector's
+  Bevy agent (`apps/creator-hub/packages/inspector/agents/bevy`) still pins an SDK that reads
+  `force_render` at 3; it only checks the player for null. The engine sets no
+  `wearables[].visible` yet. Field 4 is not
+  reserved on `decentraland/protocol`'s `main`, so the same collision can recur until it is.
 - `tooling/proto-source-check.py` (run by `structure.yml`) fails on a `decentraland.*`
   proto anywhere else. Every Rust consumer (`dcl_component`, `comms`, `social`,
   `dcl-scene-authoring`, `dcl-scene-cli`) compiles from `library/protocol/proto` at build

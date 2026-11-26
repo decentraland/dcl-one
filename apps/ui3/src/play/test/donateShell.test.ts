@@ -14,8 +14,9 @@ import type { StoredLogin } from '@explorer-core/features/auth/sso'
 import { CatalystError } from '../../data/catalyst/client'
 import { isShellError } from '@explorer-core/lib/shellReply'
 import { DONATE_BUSY, DONATE_EVENT, DONATE_UNAVAILABLE } from '../lib/donateProtocol'
-import { createShellDonate, parsePresets, safeCreator, placeTitle, resolvePlace, weiToMana, type DonateHandlers, type DonateView, type ShellDonateServices } from '../shell/donate/donation'
+import { createShellDonate, parsePresets, placeTitle, resolvePlace, weiToMana, type DonateHandlers, type DonateView, type ShellDonateServices } from '../shell/donate/donation'
 import type { ShellShopWallet } from '../shell/shop/purchase'
+import { safeCreator } from '../shell/safeDisplay'
 
 const TIPPER = '0x' + 'aa'.repeat(20)
 const CREATOR = '0x' + 'bb'.repeat(20)
@@ -644,21 +645,37 @@ describe('sending a tip', () => {
     expect(s.last()).toMatchObject({ step: 'processing', amount: '166' })
   })
 
-  it('forwards with retries on a 5xx, never on the catalyst’s refusal', async () => {
-    const retried = vi.fn().mockRejectedValueOnce(new CatalystError('busy', 'u', 503)).mockResolvedValue(undefined)
+  it('forwards with retries on a 5xx, never on the catalyst’s refusal or its missing tip index', async () => {
+    const retried = vi.fn().mockRejectedValueOnce(new CatalystError('busy', 'u', 502)).mockResolvedValue(undefined)
     const s = setup({ forward: retried, now: () => 0 })
     await open(s.donate)
     s.handlers().onSend?.('166')
     await flush()
     await flush()
     expect(retried).toHaveBeenCalledTimes(2)
-    const refused = vi.fn().mockRejectedValue(new CatalystError('no', 'u', 400))
-    const r = setup({ forward: refused, now: () => 0 })
-    await open(r.donate)
-    r.handlers().onSend?.('166')
-    await flush()
-    await flush()
-    expect(refused).toHaveBeenCalledOnce()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const noIndex = Object.assign(new CatalystError('no index', 'u', 503), { code: 'tip-index-unavailable' })
+      for (const [err, outcome] of [
+        [new CatalystError('no', 'u', 400), 'refused'],
+        [noIndex, 'unavailable']
+      ] as const) {
+        // A clock that advances with every wait: a regression that retried ends at the deadline, not in a hang.
+        let t = 0
+        const sleep = vi.fn(async (ms: number) => void (t += ms))
+        const stopped = vi.fn().mockRejectedValue(err)
+        const shell = setup({ forward: stopped, sleep, now: () => t })
+        await open(shell.donate)
+        shell.handlers().onSend?.('166')
+        await flush()
+        await flush()
+        expect(stopped).toHaveBeenCalledOnce()
+        expect(sleep).not.toHaveBeenCalled()
+        expect(warn).toHaveBeenCalledWith('[donate] tip forward', outcome)
+      }
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('asks the places service on every donate.target: nothing is kept', async () => {

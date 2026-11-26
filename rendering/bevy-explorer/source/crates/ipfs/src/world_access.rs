@@ -20,21 +20,37 @@ use wallet::{sign_service_request, SignedLoginMeta, Wallet};
 
 pub const SUPERSEDED: &str = "superseded by a later realm change";
 
-/// Whether a later realm change has been issued since the one this belongs to, which then stands
-/// down rather than finish behind it.
+/// The latest issued realm change id, and the answer of every earlier change that stands down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Issued {
+    pub id: u64,
+    pub refusal: &'static str,
+}
+
+/// Whether a later id has been issued since the change this belongs to.
 pub struct Superseded {
-    pub latest: watch::Receiver<u64>,
+    pub latest: watch::Receiver<Issued>,
     pub id: u64,
 }
 
 impl Superseded {
     pub fn is_superseded(&self) -> bool {
-        *self.latest.borrow() != self.id
+        self.latest.borrow().id != self.id
     }
 
-    /// Resolves once superseded (or once nothing issues changes any more)
-    pub async fn wait(&mut self) {
-        let _ = self.latest.wait_for(|latest| *latest != self.id).await;
+    /// What this change answers once superseded.
+    pub fn refusal(&self) -> String {
+        self.latest.borrow().refusal.to_owned()
+    }
+
+    /// Resolves once superseded (or once nothing issues changes any more), with the refusal of
+    /// the id that superseded it.
+    pub async fn wait(&mut self) -> String {
+        let id = self.id;
+        match self.latest.wait_for(|latest| latest.id != id).await {
+            Ok(latest) => latest.refusal.to_owned(),
+            Err(_) => SUPERSEDED.to_owned(),
+        }
     }
 }
 
@@ -97,18 +113,60 @@ struct ErrorBody {
     error: String,
 }
 
-/// Whether the local user may enter `world`, and with what password. `known_secret` is a password
-/// that got them in before, tried before asking. `Err` is the reason they may not, in words for
-/// the player.
-pub async fn check_world_access(
-    realm: &str,
+/// What a world's rule says about the local user, before any password is asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorldEntry {
+    /// No rule, or the user owns the name.
+    Open,
+    /// On the allow-list, by wallet or by a community.
+    Listed,
+    NotListed,
+    /// A shared secret, and the user is not the owner.
+    Password,
+}
+
+/// The rule's answer, or the communities that still have to be asked.
+#[derive(Debug, PartialEq)]
+enum Judged {
+    Entry(WorldEntry),
+    Communities(Vec<String>),
+}
+
+fn judge(permissions: WorldPermissions, address: &str) -> Result<Judged, String> {
+    // the name's owner is let in whatever the rule, as the worlds server does
+    if permissions
+        .owner
+        .as_deref()
+        .is_some_and(|owner| owner.eq_ignore_ascii_case(address))
+    {
+        return Ok(Judged::Entry(WorldEntry::Open));
+    }
+    let access = permissions.permissions.access.unwrap_or_default();
+    match access.ty.to_ascii_lowercase().as_str() {
+        "" | "unrestricted" => Ok(Judged::Entry(WorldEntry::Open)),
+        "allow-list" => {
+            if access
+                .wallets
+                .iter()
+                .flatten()
+                .any(|wallet| wallet.eq_ignore_ascii_case(address))
+            {
+                return Ok(Judged::Entry(WorldEntry::Listed));
+            }
+            Ok(Judged::Communities(access.communities.unwrap_or_default()))
+        }
+        "shared-secret" => Ok(Judged::Entry(WorldEntry::Password)),
+        other => Err(format!("unsupported world access type `{other}`")),
+    }
+}
+
+/// What `world`'s rule says about the local user. `Err` is why it could not be told, in words
+/// for the player.
+pub async fn world_entry(
     world: &str,
     wallet: &Wallet,
-    known_secret: Option<String>,
     client: &reqwest::Client,
-    prompter: Option<&WorldPasswordPrompter>,
-    superseded: &mut Superseded,
-) -> Result<Option<String>, String> {
+) -> Result<WorldEntry, String> {
     let worlds = base_domain::service(Service::WorldsServer);
     let permissions = client
         .get(format!("{worlds}/world/{world}/permissions"))
@@ -125,35 +183,35 @@ pub async fn check_world_access(
         .address()
         .map(|address| format!("{address:#x}"))
         .unwrap_or_default();
-    // the name's owner is let in whatever the rule, as the worlds server does
-    if permissions
-        .owner
-        .as_deref()
-        .is_some_and(|owner| owner.eq_ignore_ascii_case(&address))
-    {
-        return Ok(None);
-    }
-    let access = permissions.permissions.access.unwrap_or_default();
-
-    match access.ty.to_ascii_lowercase().as_str() {
-        "" | "unrestricted" => Ok(None),
-        "allow-list" => {
-            if access
-                .wallets
-                .iter()
-                .flatten()
-                .any(|wallet| wallet.eq_ignore_ascii_case(&address))
-            {
-                return Ok(None);
-            }
-            for community in access.communities.iter().flatten() {
+    match judge(permissions, &address)? {
+        Judged::Entry(entry) => Ok(entry),
+        Judged::Communities(communities) => {
+            for community in &communities {
                 if is_community_member(community, wallet, client).await {
-                    return Ok(None);
+                    return Ok(WorldEntry::Listed);
                 }
             }
-            Err("you are not on this world's access list".to_owned())
+            Ok(WorldEntry::NotListed)
         }
-        "shared-secret" => {
+    }
+}
+
+/// Whether the local user may enter `world`, and with what password. `known_secret` is a password
+/// that got them in before, tried before asking. `Err` is the reason they may not, in words for
+/// the player.
+pub async fn check_world_access(
+    realm: &str,
+    world: &str,
+    wallet: &Wallet,
+    known_secret: Option<String>,
+    client: &reqwest::Client,
+    prompter: Option<&WorldPasswordPrompter>,
+    superseded: &mut Superseded,
+) -> Result<Option<String>, String> {
+    match world_entry(world, wallet, client).await? {
+        WorldEntry::Open | WorldEntry::Listed => Ok(None),
+        WorldEntry::NotListed => Err("you are not on this world's access list".to_owned()),
+        WorldEntry::Password => {
             if let Some(password) = known_secret {
                 if validate_password(realm, world, &password, wallet, client)
                     .await
@@ -179,7 +237,7 @@ pub async fn check_world_access(
                     Ok(()) => tokio::select! {
                         answer = answered => answer.ok().flatten(),
                         // drops the prompt unanswered, which withdraws it from the HUD
-                        _ = superseded.wait() => return Err(SUPERSEDED.to_owned()),
+                        refusal = superseded.wait() => return Err(refusal),
                     },
                     Err(_) => None,
                 };
@@ -192,7 +250,6 @@ pub async fn check_world_access(
                 }
             }
         }
-        other => Err(format!("unsupported world access type `{other}`")),
     }
 }
 
@@ -243,7 +300,7 @@ async fn validate_password(
         .map_err(|e| format!("bad comms address: {e}"))?;
     let origin = Uri::try_from(realm).map_err(|e| format!("bad realm address: {e}"))?;
     let meta =
-        SignedLoginMeta::new(wallet.is_guest(), origin).with_secret(Some(password.to_owned()));
+        SignedLoginMeta::new(wallet.is_any_guest(), origin).with_secret(Some(password.to_owned()));
     let meta = serde_json::to_string(&meta).map_err(|e| e.to_string())?;
     let headers = sign_service_request("post", &uri.to_string(), wallet, meta)
         .await
@@ -279,7 +336,55 @@ async fn validate_password(
 
 #[cfg(test)]
 mod tests {
-    use super::{community_membership_uri, world_name, WorldPermissions};
+    use super::{
+        community_membership_uri, judge, world_name, Judged, WorldEntry, WorldPermissions,
+    };
+
+    fn judged(record: &str, address: &str) -> Result<Judged, String> {
+        judge(
+            serde_json::from_str::<WorldPermissions>(record).unwrap(),
+            address,
+        )
+    }
+
+    #[test]
+    fn the_owner_enters_under_any_rule() {
+        for ty in [
+            "unrestricted",
+            "allow-list",
+            "shared-secret",
+            "something-new",
+        ] {
+            let record =
+                format!(r#"{{"owner":"0xAB","permissions":{{"access":{{"type":"{ty}"}}}}}}"#);
+            assert_eq!(
+                judged(&record, "0xab"),
+                Ok(Judged::Entry(WorldEntry::Open)),
+                "{ty}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rule_answers_or_names_the_communities_to_ask() {
+        assert_eq!(judged("{}", "0xab"), Ok(Judged::Entry(WorldEntry::Open)));
+        let listed = r#"{"permissions":{"access":{"type":"Allow-List","wallets":["0xAB"],"communities":["c1"]}}}"#;
+        assert_eq!(
+            judged(listed, "0xab"),
+            Ok(Judged::Entry(WorldEntry::Listed))
+        );
+        assert_eq!(
+            judged(listed, "0xcd"),
+            Ok(Judged::Communities(vec!["c1".to_owned()]))
+        );
+        let secret = r#"{"owner":"0xab","permissions":{"access":{"type":"shared-secret"}}}"#;
+        assert_eq!(
+            judged(secret, "0xcd"),
+            Ok(Judged::Entry(WorldEntry::Password))
+        );
+        let unknown = r#"{"permissions":{"access":{"type":"nft-ownership"}}}"#;
+        assert!(judged(unknown, "0xab").is_err());
+    }
 
     #[test]
     fn a_world_community_is_one_social_api_path_segment() {

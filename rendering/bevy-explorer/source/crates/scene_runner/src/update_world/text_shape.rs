@@ -52,7 +52,7 @@ bevy: not implemented
 
     lineCount?: number | undefined;
 foundation: when textWrapping is true, works. causes some strange re-interpretation of paddingTop/paddingBottom.
-bevy: acts like height
+bevy: limits visible layout lines; unset or zero is unlimited, negative values display one line
 
     textWrapping?: boolean | undefined;
 foundation + bevy: works
@@ -326,8 +326,10 @@ impl ImposterBakeMaterialExtension for TextSdf {
 }
 
 mod decl {
-    // temporary for ShaderType macro, remove in future
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::{math::Vec4, render::render_resource::ShaderType};
 
@@ -538,6 +540,15 @@ pub struct GlyphAtlases(HashMap<AtlasKey, GlyphAtlas>);
 impl GlyphAtlases {
     pub fn get_or_create(&mut self, key: AtlasKey, images: &mut Assets<Image>) -> &mut GlyphAtlas {
         self.0.entry(key).or_insert_with(|| GlyphAtlas::new(images))
+    }
+
+    /// The atlas of `key`, if anything has drawn from it yet.
+    pub fn get(&self, key: &AtlasKey) -> Option<&GlyphAtlas> {
+        self.0.get(key)
+    }
+
+    pub fn get_mut(&mut self, key: &AtlasKey) -> Option<&mut GlyphAtlas> {
+        self.0.get_mut(key)
     }
 }
 
@@ -972,9 +983,26 @@ impl GlyphAtlas {
         self.generation
     }
 
+    /// Have the atlas rebuilt at its next upkeep, as a glyph with no room left does: its
+    /// textures are replaced and the glyphs nothing draws are freed. With none to free, the
+    /// atlas is left as it is.
+    pub fn request_rebuild(&mut self) {
+        self.rebuild_requested = true;
+    }
+
     /// A page's texture and its size in pixels; `None` for a page not made yet.
     pub fn page_image(&self, page: Page) -> Option<(&Handle<Image>, u32)> {
         self.page(page).map(|page| (&page.image, page.size))
+    }
+
+    /// Whether a glyph of `text` found no room in the atlas: it draws nothing until a rebuild
+    /// makes room for it.
+    pub fn has_dropped(&self, text: &LaidOutText) -> bool {
+        !self.dropped.is_empty()
+            && text
+                .glyphs
+                .iter()
+                .any(|glyph| self.dropped.contains(&glyph.key))
     }
 
     /// The uv of the white block's centre, in pixels.
@@ -1305,13 +1333,13 @@ struct LaidOutGlyph {
 /// Lay the spans out: a glyph per glyph and a quad per extra. `width` wraps (if `linebreak`
 /// allows it) and is the width lines are justified within; unbounded text is justified within
 /// its widest line.
-#[allow(clippy::too_many_arguments)]
 pub fn layout_text(
     entity: Entity,
     spans: &[TextSpanData],
     justify: JustifyText,
     linebreak: LineBreak,
     width: Option<f32>,
+    line_count: Option<i32>,
     effective_pt: f32,
     opaque: bool,
     text_pipeline: &mut TextPipeline,
@@ -1361,7 +1389,13 @@ pub fn layout_text(
         opaque,
     };
 
-    for run in computed.buffer().layout_runs() {
+    // Limit visual lines after wrapping, including empty lines. Keep the complete
+    // block's alignment and sizing; only glyphs and decorations beyond the cap hide.
+    let visible_lines = match line_count {
+        None | Some(0) => usize::MAX,
+        Some(count) => count.max(1) as usize,
+    };
+    for run in computed.buffer().layout_runs().take(visible_lines) {
         // extras cover the run's glyphs of each span, as one segment per span
         let mut segment: Option<(usize, f32, f32)> = None;
         let flush = |segment: Option<(usize, f32, f32)>, quads: &mut Vec<TextQuad>| {
@@ -1540,7 +1574,6 @@ fn quad_mesh(quads: &[TextQuad], offset: Vec2, to_world: impl Fn(Vec2) -> Vec2) 
     (mesh, aabb)
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_text_shapes(
     mut commands: Commands,
     query: Query<
@@ -1802,6 +1835,7 @@ fn update_text_shapes(
                         LineBreak::NoWrap
                     },
                     wrap_width,
+                    text_shape.0.line_count,
                     effective_pt,
                     opaque,
                     &mut text_pipeline,
@@ -1980,9 +2014,12 @@ pub fn add_glyph_atlas_maintenance(app: &mut App) {
         );
 }
 
+#[cfg(test)]
+#[path = "text_shape_line_tests.rs"]
+mod line_tests;
+
 /// After the frame's builds have been applied: rebuild the atlases that ran out of room from
 /// the glyphs every shape (including this frame's) draws, and tidy up.
-#[allow(clippy::too_many_arguments)]
 fn maintain_glyph_atlases(
     mut commands: Commands,
     shapes: Query<(Entity, &TextShapeMesh, Has<RetryTextShape>)>,

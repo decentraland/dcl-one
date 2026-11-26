@@ -22,6 +22,21 @@ import { isEmptyDiff } from './sync.js'
 import { writeReviewManifest } from './review-manifest.js'
 import { portPrepare, portVerify } from './port.js'
 import { fetchFdsSource } from './sources/fds-source.js'
+import {
+  loadMappingManifest,
+  manifestPath,
+  writeMappingManifest
+} from './contract/mapping-manifest.js'
+import {
+  mappingsUnder,
+  mergeRefreshed,
+  readLiveNodes,
+  requireLiveSets,
+  selectNodeIds,
+  verifyReport
+} from './contract/manifest-refresh.js'
+import { LIBRARY_MAPPING_ROOT } from './runtime.js'
+import { existsSync } from 'node:fs'
 
 const USAGE = `Usage:
   dcl-figma fetch-source [--seal]
@@ -29,13 +44,14 @@ const USAGE = `Usage:
   dcl-figma key-guard [--range <base>..<head> | --no-range] [--no-worktree] [--path <dir>]...
   dcl-figma probe
   dcl-figma install foundations|components [--source snapshot] [--out <private-stage>]
-  dcl-figma sync [--out <dir>] [--developer [--apply-retirements]]
+  dcl-figma sync [--out <dir>] [--developer [--apply-retirements | --prune-preview]]
   dcl-figma diff [--source snapshot|rest] [--out <dir>]
   dcl-figma retire --page-id <id> [--component-id <id>] --reason <text> [--name <text>]
   dcl-figma guard --base <dir> [--staged <dir>] [--captured <id,...>] [--run-kind automated|developer] [--library-only]
   dcl-figma resolve (--node-id <id> | --name <name>) [--variant 'Prop=Value']... [--boolean 'Prop=true|false']... [--text 'Layer=Value']... [--mapping-only] [--mapping-root <dir>] [--config <file>]
   dcl-figma resolve --batch <file|-> [--mapping-only] [--mapping-root <dir>] [--config <file>]
   dcl-figma check-mappings [--mapping-only] [--mapping-root <dir>] [--config <file>]
+  dcl-figma manifest refresh [--only <mapping name|node id>...] | manifest verify
   dcl-figma review-manifest [--out <review-root>] [--config <file>]
 `
 
@@ -92,6 +108,43 @@ async function main(argv: string[]): Promise<number> {
     print(result)
     return result.ok ? 0 : 1
   }
+  // The mapping manifest against the live file (FIGMA_TOKEN and FIGMA_FILE_KEY from the environment): refresh
+  // rewrites it from the nodes the mappings name (with --only, just the entries of those mappings or nodes),
+  // verify reports each mapped node's class and writes nothing. A node that cannot be read fails a refresh, which
+  // then leaves the tracked file as it was.
+  if (argv[0] === 'manifest') {
+    const [, action, ...rest] = argv
+    if (action !== 'refresh' && action !== 'verify')
+      throw new Error('manifest takes refresh or verify')
+    const only = rest[0] === '--only'
+    if (rest.length > 0 && (action !== 'refresh' || !only))
+      throw new Error(
+        'manifest refresh takes only --only <mapping name or node id>...; verify takes nothing'
+      )
+    const fileKey = requireFileKey()
+    const file = manifestPath(LIBRARY_MAPPING_ROOT)
+    const mappings = await mappingsUnder(LIBRARY_MAPPING_ROOT)
+    const mappedIds = [...new Set(mappings.map((mapping) => mapping.nodeId))]
+    // A partial refresh merges into the tracked file, so it must parse before anything is read.
+    const tracked = only || action === 'verify' ? await loadMappingManifest(file) : []
+    const nodeIds = only ? selectNodeIds(mappings, rest.slice(1)) : mappedIds
+    const read = await readLiveNodes(new FigmaClient(new EnvTokenProvider()), fileKey, nodeIds)
+    if (action === 'verify') {
+      const report = verifyReport(tracked, read, mappings)
+      print(report)
+      return report.ok ? 0 : 1
+    }
+    const live = requireLiveSets(read)
+    if (!only) {
+      await writeMappingManifest(file, live)
+      print({ ok: true, sets: live.length })
+      return 0
+    }
+    const { sets, dropped } = mergeRefreshed(tracked, live, mappedIds)
+    await writeMappingManifest(file, sets)
+    print({ ok: true, refreshed: nodeIds, dropped, sets: sets.length })
+    return 0
+  }
   // Materializes the figma-design-system capture pinned in upstream.lock.json; maintainers only, never CI.
   if (argv[0] === 'fetch-source') {
     const rest = argv.slice(1)
@@ -117,6 +170,7 @@ async function main(argv: string[]): Promise<number> {
       'library-only': { type: 'boolean' },
       'foundations-captured': { type: 'boolean' },
       'apply-retirements': { type: 'boolean' },
+      'prune-preview': { type: 'boolean' },
       'node-id': { type: 'string' },
       name: { type: 'string' },
       variant: { type: 'string', multiple: true },
@@ -130,6 +184,8 @@ async function main(argv: string[]): Promise<number> {
     }
   })
   const [command] = positionals
+  if (values['prune-preview'] && command !== 'sync')
+    throw new Error('--prune-preview applies only to sync')
   if (values['mapping-only'] && command !== 'resolve' && command !== 'check-mappings')
     throw new Error('--mapping-only applies only to resolve and check-mappings')
   if (values.text && command !== 'resolve') throw new Error('--text applies only to resolve')
@@ -231,7 +287,21 @@ async function main(argv: string[]): Promise<number> {
     })
     const context = await runtime.resolveContext()
     if (command === 'check-mappings') {
-      const report = await checkMappingsReport(context)
+      // The library's own mappings are checked against its tracked manifest, which must exist. Another mapping
+      // root is checked against its manifest when it has one, and as before when it has none.
+      const manifest = context.mappingRoot ? manifestPath(context.mappingRoot) : undefined
+      const own = context.mappingRoot
+        ? path.resolve(context.mappingRoot) === path.resolve(LIBRARY_MAPPING_ROOT)
+        : false
+      const checked =
+        manifest && (own || existsSync(manifest))
+          ? {
+              ...context,
+              figmaSets: await loadMappingManifest(manifest),
+              identitySource: 'manifest' as const
+            }
+          : context
+      const report = await checkMappingsReport(checked)
       print(report)
       return report.ok ? 0 : 1
     }
@@ -337,7 +407,8 @@ async function main(argv: string[]): Promise<number> {
       source: sourceKind(values.source),
       outDir: values.out,
       developer: values.developer,
-      applyRetirements: values['apply-retirements']
+      applyRetirements: values['apply-retirements'],
+      prunePreview: values['prune-preview']
     }
     const report = await (command === 'sync' ? runSync : runDiff)(app, options)
     print(report)

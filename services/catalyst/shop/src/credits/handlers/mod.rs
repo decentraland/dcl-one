@@ -12,11 +12,15 @@ pub mod admin;
 pub mod authorize;
 pub mod captcha;
 pub mod cart;
+pub mod charge;
 pub mod history;
 pub mod orders;
 pub mod packs;
 pub mod prices;
+pub mod reports;
 pub mod stripe;
+pub mod studio_operators;
+pub mod studios;
 pub mod topup;
 pub mod users;
 

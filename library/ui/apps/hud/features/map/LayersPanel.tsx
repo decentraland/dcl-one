@@ -1,8 +1,8 @@
 // The Layers panel: which pins and details the map shows, and its map type.
 
+import { Switch } from '@dcl/one-ui'
 import { useSyncExternalStore } from 'react'
 import { mapLayers, type MapLayer } from '@explorer-core/features/map/mapLayersStore'
-import { Toggle } from '../../design'
 import { MAP_ICONS } from './mapArt'
 import styles from './MapChrome.module.css'
 
@@ -11,7 +11,7 @@ function Row({ layer, label, icon, layers }: { layer: MapLayer; label: string; i
     <div className={styles.layerRow}>
       {icon != null && <img className={styles.layerIcon} src={icon} alt="" />}
       <span className={styles.layerLabel}>{label}</span>
-      <Toggle size="sm" surface="light" aria-label={label} checked={layers.has(layer)} onChange={(on) => mapLayers.set(layer, on)} />
+      <Switch appearance="hud" size="sm" surface="light" label={label} labelHidden checked={layers.has(layer)} onCheckedChange={(on) => mapLayers.set(layer, on)} />
     </div>
   )
 }
@@ -37,6 +37,7 @@ export function LayersPanel(): React.JSX.Element {
         <h3 className={styles.layersHeading}>PINS</h3>
         <Row layer="liveEvents" label="Live Events" icon={MAP_ICONS.layerLive} layers={layers} />
         <Row layer="pois" label="Points of interest" icon={MAP_ICONS.layerPoi} layers={layers} />
+        <Row layer="pins" label="Quest Mini-Games" icon={MAP_ICONS.layerQuest} layers={layers} />
       </div>
       <hr className={styles.layersRule} />
       <div className={styles.layersSection}>

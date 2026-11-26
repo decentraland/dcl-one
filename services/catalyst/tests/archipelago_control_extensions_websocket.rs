@@ -9,18 +9,10 @@ use futures::{SinkExt, StreamExt};
 use prost::Message as _;
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
-#[path = "support/archipelago.rs"]
-mod archipelago;
-#[path = "support/db.rs"]
-mod db;
-#[path = "support/fence.rs"]
-mod fence;
-// `fence` loads `gate` for itself; this binary needs it at the top as well.
-#[allow(clippy::duplicate_mod)]
-#[path = "support/gate.rs"]
-mod gate;
-#[path = "support/nats_broker.rs"]
-mod nats_broker;
+use crate::archipelago;
+use crate::fence;
+use crate::gate;
+use crate::nats_broker;
 use fence::Fixture;
 
 type Socket =
@@ -161,7 +153,6 @@ impl Server {
             state.clone(),
             true,
             Default::default(),
-            catalyst::comms::stats::http::test_support::matcher(),
             std::sync::Arc::new(catalyst::content::Denylist::default()),
         )
         .stats;
@@ -749,13 +740,12 @@ async fn configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats() {
             tracker.run_pass(&grids, &board, &identity);
             if let Ok(Some(Ok(Message::Binary(bytes)))) =
                 tokio::time::timeout(Duration::from_millis(100), other.next()).await
-            {
-                if matches!(
+                && matches!(
                     pb::ServerPacket::decode(bytes).unwrap().message,
                     Some(pb::server_packet::Message::IslandChanged(_))
-                ) {
-                    break;
-                }
+                )
+            {
+                break;
             }
         }
     })
@@ -803,13 +793,12 @@ async fn configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats() {
             tracker.run_pass(&grids, &board, &identity);
             if let Ok(Some(Ok(Message::Binary(bytes)))) =
                 tokio::time::timeout(Duration::from_millis(100), other.next()).await
-            {
-                if matches!(
+                && matches!(
                     pb::ServerPacket::decode(bytes).unwrap().message,
                     Some(pb::server_packet::Message::IslandChanged(_))
-                ) {
-                    break;
-                }
+                )
+            {
+                break;
             }
         }
     })
@@ -828,13 +817,12 @@ async fn configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats() {
             tracker.run_pass(&grids, &board, &identity);
             if let Ok(Some(Ok(Message::Binary(bytes)))) =
                 tokio::time::timeout(Duration::from_millis(100), socket.next()).await
-            {
-                if matches!(
+                && matches!(
                     pb::ServerPacket::decode(bytes).unwrap().message,
                     Some(pb::server_packet::Message::IslandChanged(_))
-                ) {
-                    break;
-                }
+                )
+            {
+                break;
             }
         }
     })
@@ -850,6 +838,64 @@ async fn configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats() {
         "promotion allocates a new candidate epoch"
     );
     socket.close(None).await.unwrap();
+    // The unchanged clients stop after 30 seconds with no island. A wallet that signs in again
+    // inside its last room lease, after its slot retired, gets its island at once.
+    let again = PrivateKeySigner::random();
+    let lookup = format!("peer.{:#x}.cluster_lookup", again.address());
+    let session = format!("{:#x}", again.address()).into_bytes();
+    for retires in [false, true] {
+        (socket, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/ws"))
+            .await
+            .unwrap();
+        admit_legacy(&mut socket, &again).await;
+        if retires {
+            // The welcome's lookup finds no selection, so the closed session's slot retires.
+            let mut retirement = client
+                .subscribe(lookup.replace("cluster_lookup", "selection_retirement"))
+                .await
+                .unwrap();
+            let _ = tokio::time::timeout(Duration::from_secs(5), async {
+                while tokio::time::timeout(Duration::from_millis(50), retirement.next())
+                    .await
+                    .is_err()
+                {
+                    tracker.run_pass(&grids, &board, &identity);
+                }
+            })
+            .await;
+            let subscriber = state.gatekeeper.island_subscriber().upgrade().unwrap();
+            subscriber.settle().await;
+        }
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                send(&mut socket, &heartbeat).await;
+                tracker.run_pass(&grids, &board, &identity);
+                if let Ok(Some(Ok(Message::Binary(bytes)))) =
+                    tokio::time::timeout(Duration::from_millis(100), socket.next()).await
+                    && matches!(
+                        pb::ServerPacket::decode(bytes).unwrap().message,
+                        Some(pb::server_packet::Message::IslandChanged(_))
+                    )
+                {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("a sign-in inside the wallet's last room lease gets an island in 10 seconds");
+        socket.close(None).await.unwrap();
+        // Pulse drops the closed session in its next passes, as it does in service.
+        while let Ok(Ok(reply)) = tokio::time::timeout(
+            Duration::from_millis(200),
+            client.request(lookup.clone(), session.clone().into()),
+        )
+        .await
+            && let Ok(selected) = PeerClusterSnapshot::decode(reply.payload)
+            && selected.assignment_state == 1
+        {
+            tracker.run_pass(&grids, &board, &identity);
+        }
+    }
     catalyst::comms::archipelago::shutdown(&state).await;
     media_task.abort();
     drop((socket, other, state, tracker, feed, client, jobs));
@@ -1635,7 +1681,7 @@ async fn common_endpoint_keeps_legacy_bytes_heartbeats_and_invalid_input_bounds(
                 catalyst::comms::protocol::bus::control_position::LegacyRoomIntent::decode(bytes)
             })
             .filter_map(|record| record.position)
-            .last()
+            .next_back()
     };
     let wallet = PrivateKeySigner::random();
     let legacy_wallet = PrivateKeySigner::random();
@@ -1997,9 +2043,9 @@ async fn historical_contract_authentication_keeps_verified_principal_and_configu
         async fn verification_time_block(
             &self,
             started: i64,
-        ) -> Result<u64, catalyst::auth::AuthError> {
+        ) -> Result<Option<u64>, catalyst::auth::AuthError> {
             self.starts.lock().unwrap().push(started);
-            Ok(4)
+            Ok(Some(4))
         }
         async fn validate_signature_at_block(
             &self,

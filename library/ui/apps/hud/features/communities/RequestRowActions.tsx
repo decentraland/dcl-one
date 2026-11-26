@@ -2,8 +2,8 @@
 // sections and the Communities page's Requests Received: ACCEPT and REJECT on a join request, CANCEL
 // on an invite sent, UNBAN on a banned member. Disabled while the row's own answer runs.
 
-import { Button } from '../../design'
 import type { CommunityMemberSection } from '@explorer-core/engine/protocol'
+import { Button } from '@dcl/one-ui'
 
 export type RequestAnswer = 'accepted' | 'rejected' | 'cancelled'
 
@@ -21,13 +21,13 @@ export function RequestRowActions({
   if (section === 'requests') {
     return (
       <>
-        <Button size="sm" disabled={busy} onClick={() => onAnswer('accepted')}>ACCEPT</Button>
-        <Button size="sm" variant="secondary" disabled={busy} onClick={() => onAnswer('rejected')}>REJECT</Button>
+        <Button appearance="hud" size="sm" disabled={busy} onClick={() => onAnswer('accepted')}>ACCEPT</Button>
+        <Button appearance="hud" size="sm" variant="secondary" disabled={busy} onClick={() => onAnswer('rejected')}>REJECT</Button>
       </>
     )
   }
   if (section === 'invites') {
-    return <Button size="sm" variant="secondary" disabled={busy} onClick={() => onAnswer('cancelled')}>CANCEL</Button>
+    return <Button appearance="hud" size="sm" variant="secondary" disabled={busy} onClick={() => onAnswer('cancelled')}>CANCEL</Button>
   }
-  return <Button size="sm" variant="secondary" disabled={busy} onClick={onUnban}>UNBAN</Button>
+  return <Button appearance="hud" size="sm" variant="secondary" disabled={busy} onClick={onUnban}>UNBAN</Button>
 }

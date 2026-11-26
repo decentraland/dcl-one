@@ -29,7 +29,8 @@ var<uniform> material: GhostMaterial;
 const FRESNEL_POWER: f32 = 1.0;
 // coarse bands of rim brightness up the body, per metre
 const FRESNEL_BAND_DENSITY: f32 = 4.0;
-// the glow, relative to the brightness avatars are lit at (toon.wgsl)
+// the glow: a gain on the rim colour, and the level before exposure it is drawn at. Together
+// about six light units, so the ghost reads as a light and not as a lit surface
 const EMISSION_INTENSITY: f32 = 3.0;
 const BRIGHTNESS: f32 = 2000.0;
 // scanlines per metre, and how fast they scroll (negative: downwards)
@@ -96,7 +97,7 @@ fn fragment(
 
     var faded = 0.0;
     if material.reveal.z != 0.0 {
-        let dither = discard_dither(in.position.xy, in.world_position.xyz, view.user_value, false, DITHER_BASE_OPACITY, origin, true);
+        let dither = discard_dither(in.position.xy, in.world_position.xyz, view.user_value, DITHER_BASE_OPACITY, origin, true);
         faded = dither.transparency;
     }
 

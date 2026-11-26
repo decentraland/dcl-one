@@ -23,6 +23,20 @@ use {
 use crate::livekit::web::{Participant, RemoteTrackPublication};
 use crate::make_hooks;
 
+/// A scene-set transmitter volume as a playback gain: unset is full, non-finite is silent.
+pub(crate) fn transmitter_volume(multiplier: Option<f32>) -> f32 {
+    finite_gain(multiplier.unwrap_or(1.0))
+}
+
+/// Non-finite is silent, the rest is clamped to 0..=1.
+pub(crate) fn finite_gain(volume: f32) -> f32 {
+    if volume.is_finite() {
+        volume.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
 #[derive(Clone, Component, Deref, DerefMut)]
 pub struct LivekitTrack {
     track: RemoteTrackPublication,
@@ -129,6 +143,14 @@ struct HtmlMediaEntity {
     video: tokio::sync::mpsc::Receiver<VideoData>,
     image: Handle<Image>,
 }
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Component, Deref, DerefMut)]
+struct SelectedHtmlMediaEntity(HtmlMediaEntity);
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Event)]
+struct StartVideoOutputs;
 
 #[derive(Component)]
 pub struct Audio;

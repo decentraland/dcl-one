@@ -5,10 +5,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import Icon from "../discovery/components/Icon";
 import Rail from "../discovery/components/Rail";
-import SuggestedForYouRow, { useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
+import SuggestedForYouRow, { RAIL_SIZE as CART_RAIL_SIZE, useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
 import { fetchCatalogByIds, fetchListings } from "@shop/discovery/api";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { suggestedHiddenReason } from "../discovery/lib/suggestionEvents";
@@ -31,6 +31,7 @@ import PaymentCtas from "./components/PaymentCtas";
 import { cartRails } from "./lib/cart-rails";
 import { EnsureQueryClient, useShopServices } from "./services";
 import { useMarketplace } from "../market/access";
+import { PRIORITY_LINE_COUNT } from "../cart/pictures";
 import { CREDITS_SHORT, useCheckout, type CheckoutView } from "./useCheckout";
 import { useRailCheckout } from "./useRailCheckout";
 import cartEmptyIllustration from "./assets/cart-empty.svg?url";
@@ -54,8 +55,6 @@ function guidanceRevalidation(co: CheckoutView): GuidanceRevalidation | null {
       return null;
   }
 }
-
-const CART_RAIL_SIZE = 12;
 
 function lineItemKey(line: { asset: { contract: string; token: { kind: string; itemId?: string } } }): string | null {
   return line.asset.token.kind === "item" && line.asset.token.itemId ? `${line.asset.contract.toLowerCase()}-${line.asset.token.itemId}` : null;
@@ -300,11 +299,11 @@ function CartScreen() {
                 title={broadcasting ? "A purchase from this cart is still being confirmed" : "A purchase from this cart didn't finish"}
                 action={
                   <span className="shop-cart__actions">
-                    <Button size="sm" onClick={() => void co.resume()} disabled={!co.account || (!broadcasting && !co.canResume)} data-testid="resume-checkout">
+                    <Button size="sm" onClick={() => void (broadcasting ? co.checkAgain() : co.resume())} disabled={!co.account || (!broadcasting && !co.canResume)} data-testid="resume-checkout">
                       {broadcasting ? "Check again" : "Resume"}
                     </Button>
                     {!broadcasting ? (
-                      <Button size="sm" variant="ghost" onClick={() => void co.discardCheckout()}>
+                      <Button size="sm" variant="outline" onClick={() => void co.discardCheckout()}>
                         Start over
                       </Button>
                     ) : null}
@@ -342,10 +341,11 @@ function CartScreen() {
                 </div>
 
                 <div className="shop-cart__lines" aria-label="Items in your cart">
-                  {co.lines.map((line) => (
+                  {co.lines.map((line, i) => (
                     <CartLineRow
                       key={line.id}
                       line={line}
+                      priority={i < PRIORITY_LINE_COUNT}
                       offer={co.offers[line.id] ?? null}
                       view={co.views[line.id] ?? null}
                       changes={co.changesByLine[line.id] ?? []}

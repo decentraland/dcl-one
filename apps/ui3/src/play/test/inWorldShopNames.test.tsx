@@ -6,11 +6,11 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { keccak256, stringToHex } from 'viem'
-import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
-import { webNameTokenUrl, webNameUrl } from '../features/shop/itemLinks'
-import { NAMETAG_PLACEHOLDER } from '../features/shop/ui'
+import InWorldShop, { type InWorldShopProps } from '@dcl/one-ui/apps/shop/InWorldShop'
+import { webNameTokenUrl, webNameUrl } from '@dcl/one-ui/apps/shop/itemLinks'
+import { NAMETAG_PLACEHOLDER } from '@dcl/one-ui/apps/shop/ui'
 import { userNameColor } from '@explorer-core/engine/nameColor'
-import { NAME_RESALES_KEY, nameQueries } from '../features/shop/namesQuery'
+import { NAME_RESALES_KEY, nameQueries } from '@dcl/one-ui/apps/shop/namesQuery'
 import { NAME_CHECK_DEBOUNCE_MS } from '@shop/names/name'
 import { CHAIN } from '@shop/model/chain'
 import { PopupHost, resetPopups } from '@hud/design'
@@ -142,6 +142,21 @@ afterEach(() => {
 })
 
 describe('the in-world Shop’s Names', () => {
+  it('has the engine draw the avatar as Names does (smaller and lower), the stage staying up, and as before once left', async () => {
+    serve()
+    const { props } = renderShop()
+    const stage = vi.mocked(props.stage)
+    // jsdom lays nothing out: the stage image's 1920×1080 at scale 1, its top 70px above the page.
+    const rect = { x: 0, y: -70, width: 1920, height: 1080 }
+    expect(stage).toHaveBeenLastCalledWith(rect, 'catalog')
+    stage.mockClear()
+    await openNames()
+    expect(stage.mock.calls).toEqual([[rect, 'names']])
+    stage.mockClear()
+    await userEvent.click(screen.getByRole('tab', { name: 'Wearables' }))
+    expect(stage.mock.calls).toEqual([[rect, 'catalog']])
+  })
+
   it('opens on UNIQUE NAME, the nametag over the avatar reading the placeholder until a NAME is typed', async () => {
     serve()
     renderShop()

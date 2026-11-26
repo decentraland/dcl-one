@@ -1,38 +1,102 @@
-/* Beside the Skybox button, clear of the collapsed chat input below it. */
+/* The NIGHT/DAY panel: 306x180 beside the rail, above the night/day button. */
 .root {
   position: fixed;
-  left: 58px;
-  bottom: 96px;
+  left: calc(57px * var(--ui-scale));
+  bottom: calc(195px * var(--ui-scale));
   z-index: var(--z-hud);
-  width: 260px;
-  padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  box-shadow: var(--shadow-panel);
+  box-sizing: border-box;
+  width: 306px;
+  padding: 0;
+  border: 0;
+  border-radius: 11px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--type-14);
+  font-weight: 700;
+  line-height: 17px;
+  box-shadow: none;
   transform: scale(var(--ui-scale));
   transform-origin: bottom left;
 }
-.head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+.title {
+  padding: 16px;
 }
-.heading {
-  font-size: var(--fs-md);
-  font-weight: 600;
-  color: var(--text);
-}
-.time {
-  font-size: var(--fs-lg);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
+.divider {
+  height: 1px;
+  background: var(--voice-divider);
 }
 .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: var(--fs-sm);
+  height: 50px;
+  padding: 0 20px 0 16px;
+}
+/* a 32x18 switch with a 16px knob (the shared Switch reads these) */
+.row {
+  --toggle-w: 32px;
+  --toggle-h: 18px;
+  --toggle-pad: 1px;
+}
+/* While Auto runs the sky, the slider's handle and its arrows are grey. */
+.custom[data-locked='true'] button {
+  color: #7d7d7d;
+}
+.custom[data-locked='true'] input[type='range']::-webkit-slider-thumb {
+  background: #6e6e6e;
+}
+.custom[data-locked='true'] input[type='range']::-moz-range-thumb {
+  background: #6e6e6e;
+}
+.custom button:disabled {
+  opacity: 1;
+}
+.custom {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 15px 16px 21px;
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 4px;
+}
+.time {
+  font-variant-numeric: tabular-nums;
+}
+.custom[data-locked='true'] .head {
+  color: var(--ink-muted);
+}
+/* The day's sky along the track, in place of the shared slider's fill. */
+.custom input[type='range'] {
+  height: 18px;
+  border-radius: 6px;
+  background: linear-gradient(to right, #1c1438 0%, #3b2a5c 22%, #8a6f8f 34%, #2f8fa3 50%, #5d7fa0 62%, #7a5a8c 74%, #3a2658 88%, #1c1438 100%);
+  opacity: 1;
+}
+.custom button {
+  /* a 14px arrow in a 16px target */
+  width: 16px;
+  margin: 0 -1px;
+  height: 22px;
+  border-radius: 4px;
+  background: transparent;
   color: var(--text);
+  font-size: 24px;
+}
+.custom > div:last-child {
+  gap: 4px;
+}
+/* Why the controls are off where the scene holds the time of day. */
+.locked {
+  margin: 0;
+  padding: 0 16px 16px;
+  color: var(--ink-muted);
+  font-size: var(--type-12);
+  font-weight: 400;
+  line-height: 15px;
 }

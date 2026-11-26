@@ -23,6 +23,16 @@
 //! closes it, is a row of [`paths::CREDIT_PATHS`]; [`paths::ALIASES`] pairs
 //! each renamed route with its legacy paths.
 
+// Production routes go through `shared::routing` (shop/clippy.toml); test routers may use axum's.
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "test routers may use axum's routing"
+    )
+)]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
 #[cfg(test)]
@@ -59,6 +69,7 @@ pub mod stores;
 pub mod subscriptions;
 pub mod treasury;
 pub mod types;
+mod worker_progress;
 
 #[cfg(test)]
 mod parity_tests;
@@ -67,8 +78,9 @@ mod test_db;
 
 use std::sync::Arc;
 
+use crate::shared::routing::any;
 use axum::Router;
-use axum::routing::{MethodRouter, any};
+use axum::routing::MethodRouter;
 
 pub use policy::{
     Authoritative, CartLine, Eligibility, Facts, GroupTotal, Quote, Reason, Refusal,
@@ -148,17 +160,12 @@ fn pending(source: &'static str) -> MethodRouter {
 }
 
 /// The canonical paths the Shop UI codes against whose handlers are still
-/// to be written, one source label per feature: the credits-server user histories, pack order
+/// to be written, one source label per feature: pack order
 /// resume/cancel, batch authorization and submission reporting, the NAME
-/// credit route, IAP and the card
-/// on-ramps. Mounted after the served routes, so a path a handler owns is
-/// never shadowed.
+/// credit route and IAP. Mounted after the served routes, so a path a
+/// handler owns is never shadowed.
 pub fn pending_router() -> Router {
     Router::new()
-        .route(
-            "/v1/users/{address}/credits/stream",
-            pending("shop-credits-users"),
-        )
         .route(
             "/v2/credit-program/seasons",
             pending("shop-credits-program"),
@@ -170,9 +177,6 @@ pub fn pending_router() -> Router {
         .route("/v1/iap/quote", pending("shop-credits-iap"))
         .route("/v1/iap/register", pending("shop-credits-iap"))
         .route("/v1/iap/verify", pending("shop-credits-iap"))
-        .route("/v1/transak/widget-url", pending("shop-onramp"))
-        .route("/v1/transak/orders/{id}", pending("shop-onramp"))
-        .route("/v1/wert/sign", pending("shop-onramp"))
 }
 
 #[cfg(test)]
@@ -209,4 +213,16 @@ mod router_tests {
             "nothing to configure: it is unwritten"
         );
     }
+}
+
+/// Production routes stay on `shared::routing` (see `shared::routing::guard`).
+#[cfg(test)]
+#[test]
+fn production_routes_use_shared_routing() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let found = crate::shared::routing::guard::direct_axum_routes(&src);
+    assert!(
+        found.is_empty(),
+        "use crate::shared::routing instead of axum's method routers at {found:?}"
+    );
 }

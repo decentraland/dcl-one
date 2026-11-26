@@ -2,7 +2,7 @@
 //! on-sale / for-rent tint and the selection layers, and the two 512x512
 //! minimaps the explorer's map reads flags from.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use tiny_skia::{Color, Paint, Pixmap, Rect, Transform};
 
@@ -327,21 +327,35 @@ pub fn render_minimap(grid: &Grid) -> Result<Vec<u8>, String> {
     minimap_pixmap(&rgba)
 }
 
-/// One pixel per parcel carrying its estate's ordinal in RGB.
+/// Token ids by numeric value, any other id after them in string order.
+fn compare_estate_ids(a: &str, b: &str) -> std::cmp::Ordering {
+    let token = |id: &str| !id.is_empty() && id.bytes().all(|c| c.is_ascii_digit());
+    match (token(a), token(b)) {
+        (true, true) => a.len().cmp(&b.len()).then_with(|| a.cmp(b)),
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        (false, false) => a.cmp(b),
+    }
+}
+
+/// One pixel per parcel carrying its estate's 1-based ordinal in id order.
+// from: atlas-server@6dfd733fc0a225f5a46eb67f978dbe3825a171a9:src/adapters/mini-map-renderer.ts (getEstateIndexes)
 pub fn render_estate_minimap(grid: &Grid) -> Result<Vec<u8>, String> {
     let mut rgba = vec![0u8; MINIMAP_DIM * MINIMAP_DIM * 4];
-    let mut order: Vec<String> = Vec::new();
+    let mut ids: Vec<&str> = grid
+        .estates_all
+        .keys()
+        .map(String::as_str)
+        .filter(|id| !id.is_empty())
+        .collect();
+    ids.sort_unstable_by(|a, b| compare_estate_ids(a, b));
+    let order: HashMap<&str, u32> = ids.into_iter().zip(1..).collect();
     for tile in grid.tiles.values() {
-        let mut index: u32 = 0;
-        if let Some(estate_id) = &tile.estate_id {
-            index = match order.iter().position(|e| e == estate_id) {
-                Some(pos) => pos as u32,
-                None => {
-                    order.push(estate_id.clone());
-                    order.len() as u32
-                }
-            };
-        }
+        let index = tile
+            .estate_id
+            .as_deref()
+            .and_then(|id| order.get(id).copied())
+            .unwrap_or(0);
         let Some(pointer) = minimap_pointer(tile.x, tile.y) else {
             continue;
         };
@@ -356,7 +370,6 @@ pub fn render_estate_minimap(grid: &Grid) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     fn grid() -> Grid {
         let mut tiles = HashMap::new();
@@ -365,7 +378,7 @@ mod tests {
         }))
         .unwrap();
         tiles.insert("0,0".to_string(), tile);
-        Grid::from_tiles(tiles, 1, None, chrono::Utc::now().naive_utc())
+        Grid::from_tiles(tiles, 1, chrono::Utc::now().naive_utc())
     }
 
     #[test]
@@ -401,6 +414,47 @@ mod tests {
         )
         .unwrap();
         assert_ne!(png, selected);
+    }
+
+    /// Every parcel of an estate carries one ordinal, numbered from 1 in id order.
+    #[test]
+    fn estate_minimap_numbers_each_estate_once_in_id_order() {
+        let parcels = [
+            (0, 0, Some("10")),
+            (1, 0, Some("10")),
+            (2, 0, Some("10")),
+            (0, 1, Some("9")),
+            (1, 1, Some("9")),
+            (5, 5, Some("abc")),
+            (4, 4, Some("")),
+            (3, 3, None),
+        ];
+        let mut tiles = HashMap::new();
+        for (x, y, estate) in parcels {
+            let id = format!("{x},{y}");
+            let tile: Tile = serde_json::from_value(serde_json::json!({
+                "id": id, "x": x, "y": y, "type": "owned", "top": false, "left": false, "topLeft": false, "estateId": estate
+            }))
+            .unwrap();
+            tiles.insert(id, tile);
+        }
+        let grid = Grid::from_tiles(tiles, 1, chrono::Utc::now().naive_utc());
+        let png = render_estate_minimap(&grid).unwrap();
+        let pixmap = Pixmap::decode_png(&png).unwrap();
+        let ordinal = |x: i32, y: i32| {
+            let p = minimap_pointer(x, y).unwrap();
+            let d = pixmap.data();
+            (u32::from(d[p]) << 16) | (u32::from(d[p + 1]) << 8) | u32::from(d[p + 2])
+        };
+        for (x, y, estate) in parcels {
+            let expected = match estate {
+                Some("9") => 1,
+                Some("10") => 2,
+                Some("abc") => 3,
+                _ => 0,
+            };
+            assert_eq!(ordinal(x, y), expected, "{x},{y}");
+        }
     }
 
     #[test]

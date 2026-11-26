@@ -55,7 +55,7 @@ fn mesh_split_matches_unity() {
         let Some(Indices::U32(indices)) = mesh.indices() else {
             panic!("indices");
         };
-        for triangle in indices.chunks_exact(3) {
+        for triangle in indices.as_chunks::<3>().0 {
             let corners: [Vec3; 3] =
                 std::array::from_fn(|i| Vec3::from(positions[triangle[i] as usize]));
             // front faces point up
@@ -136,44 +136,6 @@ fn collider_follows_the_height_function_at_grid_points() {
 }
 
 #[test]
-fn easing_rises_one_step_per_second_and_settles_on_the_targets() {
-    let (targets, mut surface) = surface(12);
-    // a new realm snaps; clear it to watch a reveal ease in
-    let mut revealed = TerrainSurface {
-        epoch: surface.epoch,
-        enabled: true,
-        ..Default::default()
-    };
-    revealed.apply(&targets, Some(TerrainChange::Full), true);
-    let parcel = IVec2::new(6, 6);
-    let x = parcel.x as f32 * 16.0 + 8.0;
-    let z = parcel.y as f32 * 16.0 + 8.0;
-    let final_height = surface.height(x, z);
-    assert!(final_height > 5.0);
-    assert_eq!(revealed.height(x, z), 0.0);
-
-    let mut previous = 0.0;
-    for _ in 0..(f32::from(MAX_STEPS) / 0.1) as usize + 2 {
-        revealed.ease(0.1);
-        let height = revealed.height(x, z);
-        assert!(height >= previous - 1e-4);
-        // one step is 1.8 m; the noise weight (up to ~4.4 m) also ramps in over the first
-        // 0.4 steps
-        assert!(
-            height - previous <= 0.1 * 1.8 + 0.25 * 4.5,
-            "{previous} -> {height}"
-        );
-        previous = height;
-    }
-    assert!((previous - final_height).abs() < 1e-4);
-    assert!(revealed.active.is_empty());
-    // a snapped surface has nothing to ease
-    surface.changes = SurfaceChanges::default();
-    surface.ease(1.0);
-    assert!(surface.changes.eased.is_none());
-}
-
-#[test]
 fn scene_casts_hit_the_heightfield() {
     use bevy::math::DVec3;
     use dcl_component::proto_components::sdk::components::ColliderLayer;
@@ -229,6 +191,104 @@ fn scene_casts_hit_the_heightfield() {
         );
         assert_eq!(all.len(), 1, "avatar all, skip_inside {skip_inside}");
     }
+}
+
+/// Heights that resolve after the loading screen lifts (the rest of the realm's pointers arrive
+/// in batches) take their value in the frame they arrive, with nothing left to rise.
+#[test]
+fn a_late_reveal_takes_its_heights_at_once() {
+    let (targets, settled) = surface(12);
+    // the same realm, its targets not applied yet
+    let mut revealed = TerrainSurface {
+        epoch: settled.epoch,
+        enabled: true,
+        ..Default::default()
+    };
+    revealed.apply(&targets, Some(TerrainChange::Full), true);
+    let (x, z) = (6.0 * 16.0 + 8.0, 6.0 * 16.0 + 8.0);
+    assert!(settled.height(x, z) > 5.0);
+    assert_eq!(revealed.height(x, z), settled.height(x, z));
+    assert_eq!(revealed.changes.targets, revealed.bounds);
+}
+
+/// A parcel that resolves as empty inside the current bounds raises its neighbourhood at once.
+#[test]
+fn a_late_parcel_takes_its_heights_at_once() {
+    let mut targets = TerrainTargets::default();
+    targets.reset(false);
+    let corners = [IVec2::splat(-12), IVec2::splat(12)];
+    let unknown = IVec2::new(6, 6);
+    let occupancy = |resolved: bool| {
+        move |parcel: IVec2| {
+            if parcel == IVec2::ZERO || corners.contains(&parcel) {
+                Occupancy::Occupied
+            } else if parcel == unknown && !resolved {
+                Occupancy::Unknown
+            } else {
+                Occupancy::Empty
+            }
+        }
+    };
+    let occupied = [IVec2::ZERO, corners[0], corners[1]];
+    let change = targets.resolve(occupancy(false), occupied.into_iter());
+    let mut terrain = TerrainSurface::default();
+    terrain.apply(&targets, change, true);
+    let (x, z) = (6.0 * 16.0 + 8.0, 6.0 * 16.0 + 8.0);
+    let before = terrain.height(x, z);
+
+    targets.mark(unknown, false);
+    let change = targets.resolve(occupancy(true), occupied.into_iter());
+    assert!(matches!(change, Some(TerrainChange::Rect(..))));
+    terrain.changes = SurfaceChanges::default();
+    terrain.apply(&targets, change, true);
+    let (_, settled) = surface(12);
+    assert!(terrain.height(x, z) > before + 1.0);
+    assert_eq!(terrain.height(x, z), settled.height(x, z));
+    assert!(terrain.changes.targets.is_some());
+}
+
+/// Ground that rises under the player is floored before collisions resolve. Pushing the player
+/// out of it instead would reach the movement scene as a launch velocity.
+#[test]
+fn rising_ground_lifts_the_player_before_collisions_resolve() {
+    #[derive(Resource, Default)]
+    struct SeenByCollisions(Option<f32>);
+
+    let (_, surface) = surface(12);
+    let (x, z) = (6.0 * 16.0 + 8.0, -(6.0 * 16.0 + 8.0));
+    let ground = surface.cell_height_at(Vec3::new(x, 0.0, z));
+    assert!(ground > 1.0);
+    let mut pointers = ScenePointers::default();
+    // a one-parcel realm: the player's parcel lies outside it, so it is empty
+    pointers.set_realm(IVec2::ZERO, IVec2::ZERO);
+
+    let mut app = App::new();
+    app.insert_resource(surface)
+        .insert_resource(pointers)
+        .init_resource::<EngineMovementControl>()
+        .init_resource::<SeenByCollisions>()
+        .configure_sets(
+            PostUpdate,
+            (
+                PostUpdateSets::ColliderUpdate,
+                PostUpdateSets::PlayerUpdate,
+                PostUpdateSets::CameraUpdate,
+            )
+                .chain(),
+        )
+        .add_systems(
+            PostUpdate,
+            (|player: Single<&Transform, With<PrimaryUser>>,
+              mut seen: ResMut<SeenByCollisions>| {
+                seen.0 = Some(player.translation.y);
+            })
+            .in_set(PostUpdateSets::PlayerUpdate),
+        );
+    add_player_floor(&mut app);
+    app.world_mut()
+        .spawn((PrimaryUser::default(), Transform::from_xyz(x, 0.0, z)));
+    app.update();
+    assert_eq!(app.world().resource::<SeenByCollisions>().0, Some(ground));
 }
 
 /// The shortest Landscape Distance still displaces the hills across the `RING_CELL` rings.
@@ -326,11 +386,22 @@ fn terrain_vertex_compiles() {
     world.spawn((
         Camera3d::default(),
         Camera {
-            target: RenderTarget::Image(target.into()),
+            target: RenderTarget::Image(target.clone().into()),
             ..default()
         },
         DepthPrepass,
         NormalPrepass,
+        Transform::from_xyz(0.0, 50.0, 100.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    // the avatar outline off: a depth prepass that writes no normals, so it has no fragment output
+    world.spawn((
+        Camera3d::default(),
+        Camera {
+            target: RenderTarget::Image(target.into()),
+            order: 1,
+            ..default()
+        },
+        DepthPrepass,
         Transform::from_xyz(0.0, 50.0, 100.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     world.spawn((
@@ -346,7 +417,10 @@ fn terrain_vertex_compiles() {
     let flat = world
         .resource_mut::<Assets<TerrainFlatMaterial>>()
         .add(TerrainFlatMaterial {
-            base: StandardMaterial::default(),
+            base: StandardMaterial {
+                alpha_mode: AlphaMode::Mask(0.5),
+                ..default()
+            },
             extension: TerrainExtension::default(),
         });
     let shells = world

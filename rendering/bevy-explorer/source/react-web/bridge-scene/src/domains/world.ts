@@ -10,6 +10,7 @@ import { teleportTo } from '~system/RestrictedActions'
 import { getRealm } from '~system/Runtime'
 import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
+import { createSceneLookup } from '../sceneLookup'
 import { throttleByDt, singleFlight } from '../system-helpers'
 import { setNearbyVoiceBlocked } from './voice'
 
@@ -21,17 +22,19 @@ const POSE_INTERVAL = 0.05
 const POSE_EPSILON_M = 0.05
 const POSE_EPSILON_DEG = 0.5
 
-// Scene lookup for the minimap header. The RPC only fires on a parcel change, so an idle tick
-// costs one coordinate compare. Attempts are spaced by the poll interval, giving a retry budget
-// of INTERVAL × ATTEMPTS for a scene that hasn't registered yet after entering or teleporting.
+// Scene lookup for the minimap header; `sceneLookup.ts` decides which polls call the RPC.
 const SCENE_POLL_INTERVAL = 0.3
-const SCENE_LOOKUP_ATTEMPTS = 3
 
 // Echo a "DCL System" line into the React chat (empty sender → system member). Used to relay
 // slash-command feedback (/commands output, /reload status) that isn't broadcast to other players.
 function pushSystem(ctx: Ctx, message: string): void {
   ctx.send({ kind: 'chat', chat: { sender: '', message, channel: 'Nearby', messageId: '' } })
 }
+
+// The engine's teleportTo also reads `spawnPoint`, the name (compared in lowercase) of the spawn
+// point of the scene landed in to use; the SDK's request type does not carry it yet.
+type TeleportRequest = Parameters<typeof teleportTo>[0] & { spawnPoint?: string }
+const teleport = (request: TeleportRequest): Promise<unknown> => teleportTo(request)
 
 export function registerWorld(ctx: Ctx): void {
   ctx.on('getHomeScene', async () => {
@@ -41,6 +44,11 @@ export function registerWorld(ctx: Ctx): void {
 
   ctx.on('setHomeScene', async (msg) => {
     await BevyApi.setHomeScene({ realm: msg.realm, parcel: msg.parcel })
+    ctx.send({ kind: 'homeScene', ...(await BevyApi.getHomeScene()) })
+  })
+
+  ctx.on('clearHomeScene', async () => {
+    await BevyApi.clearHomeScene()
     ctx.send({ kind: 'homeScene', ...(await BevyApi.getHomeScene()) })
   })
 
@@ -57,34 +65,32 @@ export function registerWorld(ctx: Ctx): void {
         if (travelId != null) ctx.send({ kind: 'travelResult', travelId, realm, ok: true })
       },
       (e: unknown) => {
-        console.error('[world] realm change failed', e)
+        console.error('[world] travel failed', e)
         const message = e instanceof Error ? e.message : String(e)
         if (travelId != null) ctx.send({ kind: 'travelResult', travelId, realm, ok: false, message })
       }
     )
   }
 
+  // A teleport inside the realm answers too when the page gave it an id (chat's /goto does).
   ctx.on('teleport', (msg) => {
-    const request = teleportTo({ worldCoordinates: { x: msg.x, y: msg.y }, realm: msg.realm })
-    if (msg.realm != null) {
-      travel(msg.realm, msg.travelId, request)
-      return
-    }
-    request.catch((e: unknown) => {
-      console.error('[world] teleport failed', e)
-    })
+    const request = teleport({ worldCoordinates: { x: msg.x, y: msg.y }, realm: msg.realm, spawnPoint: msg.spawnPoint })
+    travel(msg.realm ?? '', msg.travelId, request)
   })
 
   // Travel to a world/realm (e.g. boedo.dcl.eth), landing on its default spawn: a teleport with a
   // realm and no parcel (changeRealm is deprecated). The engine auto-grants ChangeRealm for our
   // super-user scene, so the React HUD owns the confirmation prompt.
   ctx.on('changeRealm', (msg) => {
-    travel(msg.realm, msg.travelId, teleportTo({ realm: msg.realm }))
+    travel(msg.realm, msg.travelId, teleport({ realm: msg.realm, spawnPoint: msg.spawnPoint }))
   })
 
-  // `/reload` — reload the scene the player is standing in, resolved by parcel from liveSceneInfo.
-  // Never the super-user bridge (isSuper filtered out) and never reload-all, so the HUD survives.
-  ctx.on('reloadScene', () => {
+  // `/reload` — reload the scene the player is standing in, resolved by parcel from liveSceneInfo;
+  // with `scene` (a preview's scene id: the texture optimization toast's Reload) that scene,
+  // wherever the player is. Either way the engine's `reload <hash>`, which drops the live scene
+  // as a preview file save does. Never the super-user bridge (isSuper filtered out) and never
+  // reload-all, so the HUD survives.
+  ctx.on('reloadScene', (msg) => {
     const op = BevyApi.consoleCommand
     if (op == null) {
       pushSystem(ctx, 'Reload is not available.')
@@ -95,9 +101,10 @@ export function registerWorld(ctx: Ctx): void {
     const py = Math.floor((pos?.z ?? 0) / 16)
     BevyApi.liveSceneInfo()
       .then(async (scenes) => {
-        const current = scenes.find((s) => !s.isSuper && !s.isPortable && (s.parcels ?? []).some((p) => p.x === px && p.y === py))
+        const here = (s: (typeof scenes)[number]): boolean => (s.parcels ?? []).some((p) => p.x === px && p.y === py)
+        const current = scenes.find((s) => !s.isSuper && !s.isPortable && (msg.scene != null ? s.hash === msg.scene : here(s)))
         if (current == null) {
-          pushSystem(ctx, 'Could not find the current scene to reload.')
+          pushSystem(ctx, msg.scene != null ? 'Could not find the scene to reload.' : 'Could not find the current scene to reload.')
           return
         }
         await op('reload', [current.hash]).then(() => { pushSystem(ctx, `Reloading ${current.title || current.hash}…`); });
@@ -163,9 +170,7 @@ export function registerWorld(ctx: Ctx): void {
   // Scene-title lookup state, shared with the realm poll below: crossing into another realm
   // replaces every scene without necessarily moving the player off the parcel (a World spawns
   // at 0,0), so the realm poll invalidates this to force a re-resolve.
-  let publishedParcel = ''
-  let pendingParcel = ''
-  let attempts = 0
+  const sceneLookup = createSceneLookup()
 
   // Realm → the minimap, with the satellite map it advertises: only Genesis City has one, so
   // anywhere else (a World, a local scene) the minimap falls back to the engine-rendered Camera
@@ -197,11 +202,24 @@ export function registerWorld(ctx: Ctx): void {
         ctx.send({ kind: 'realmInfo', realm: realmName || baseUrl, satelliteView })
         // Every scene is replaced, but the player can land on the parcel they were already on
         // (a World spawns at 0,0), so the parcel guard alone would keep the old title forever.
-        publishedParcel = ''
-        pendingParcel = ''
-        attempts = 0
+        sceneLookup.reset()
       })
       .catch(() => undefined)
+  })
+
+  // Deep-zoom satellite detail tiles for the full-screen map: the engine decodes the KTX2 file to
+  // a JPEG. Every outcome answers the request, so the page never waits on a failure.
+  ctx.on('getSatelliteTile', async (msg) => {
+    if (BevyApi.getSatelliteTile == null) {
+      ctx.send({ kind: 'satelliteTile', requestId: msg.requestId, ok: false, error: 'unsupported' })
+      return
+    }
+    try {
+      const data = await BevyApi.getSatelliteTile(msg.path)
+      ctx.send({ kind: 'satelliteTile', requestId: msg.requestId, ok: true, data })
+    } catch (e) {
+      ctx.send({ kind: 'satelliteTile', requestId: msg.requestId, ok: false, error: String(e) })
+    }
   })
 
   // Current scene title → the minimap header. Resolved by parcel from liveSceneInfo (the same
@@ -217,22 +235,12 @@ export function registerWorld(ctx: Ctx): void {
         const px = Math.floor(pos.x / 16)
         const py = Math.floor(pos.z / 16)
         const key = `${px},${py}`
-        if (key === publishedParcel) return
-        if (key !== pendingParcel) {
-          pendingParcel = key
-          attempts = 0
-        }
-        attempts++
+        if (!sceneLookup.poll(key)) return
         const scenes = await BevyApi.liveSceneInfo().catch(() => null)
         if (scenes == null) return // transient RPC failure — the next tick retries
         const current = scenes.find((s) => !s.isSuper && !s.isPortable && s.parcels.some((p) => p.x === px && p.y === py))
-        // A scene the player just walked (or teleported) into isn't in the live list until it
-        // registers, so an immediate miss means "not yet", not "nothing here" — keep trying for
-        // ~1s before settling on empty. bevy-ui-scene's widget did the same (20 tries × 100 ms).
-        // While retrying the header keeps the previous title, so this budget is also how long a
-        // stale name can survive after stepping onto an undeployed parcel.
-        if (current == null && attempts < SCENE_LOOKUP_ATTEMPTS) return
-        publishedParcel = key
+        // A miss the lookup does not publish yet leaves the header's title as it is.
+        if (!sceneLookup.settle(key, current != null)) return
         // read with the scene, so a visit is never paired with the realm the player just left
         const [{ realmInfo }, satelliteView] = await Promise.all([getRealm({}), BevyApi.getSatelliteView()]).catch(() => [{ realmInfo: undefined }, null] as const)
         ctx.send({

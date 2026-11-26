@@ -13,6 +13,7 @@ pub(crate) mod hooks;
 mod metadata;
 pub mod mirror;
 pub mod moderation;
+pub mod moderators;
 pub mod notifications;
 pub mod posters;
 pub mod profiles;
@@ -231,7 +232,8 @@ pub struct NextEvent {
 
 pub struct EventsComponent {
     pool: PgPool,
-    rewrite_domain: Option<String>,
+    rewrite_base: Option<String>,
+    configured_public_base: Option<String>,
     events_asset_base_url: String,
     pub foundation: Arc<foundation::Foundation>,
 }
@@ -321,16 +323,17 @@ struct EventRow {
 }
 
 impl EventsComponent {
-    /// `rewrite_domain`: the deployment's own domain, swapped into mirrored
-    /// `events-assets-*.decentraland.org` poster URLs (`None` keeps them).
+    /// `rewrite_base`: the public base for node-local asset paths in event records.
     pub fn new(
         pool: PgPool,
-        rewrite_domain: Option<String>,
+        rewrite_base: Option<String>,
+        configured_public_base: Option<String>,
         events_asset_base_url: String,
     ) -> Self {
         Self {
             pool,
-            rewrite_domain,
+            rewrite_base,
+            configured_public_base,
             events_asset_base_url,
             foundation: Arc::new(foundation::Foundation::default()),
         }
@@ -341,7 +344,8 @@ impl EventsComponent {
     async fn view(&self, max_dates: usize) -> RecordView<'_> {
         self.foundation.refresh_if_stale(&self.pool).await;
         RecordView {
-            rewrite_domain: self.rewrite_domain.as_deref(),
+            rewrite_base: self.rewrite_base.as_deref(),
+            configured_public_base: self.configured_public_base.as_deref(),
             events_asset_base_url: &self.events_asset_base_url,
             max_dates,
             foundation: self.foundation.snapshot(),
@@ -717,24 +721,111 @@ impl EventsComponent {
         keys: &[String],
         list: EventListType,
     ) -> Result<Vec<EventAt>, ApiError> {
-        let f = EventListFilters {
-            list,
-            destination_ids: keys.to_vec(),
-            ..Default::default()
-        };
-        let mut binds: Vec<EventBind> = Vec::new();
-        let where_sql = Self::build_where(&f, &mut binds);
-        let sql = format!(
-            "SELECT id, name, raw->>'place_id' AS place_id, raw->>'server' AS server, world, \
-                    {EFF_NEXT_START_SQL} AS next_start_at \
-             FROM explore.event{where_sql} \
-             ORDER BY {EFF_NEXT_START_SQL} ASC NULLS LAST, id ASC LIMIT 2500"
+        let live = matches!(list, EventListType::Live);
+        let mut binds = Vec::new();
+        let where_sql = Self::build_where(
+            &EventListFilters {
+                list,
+                ..Default::default()
+            },
+            &mut binds,
         );
-        let mut q = sqlx::query_as::<_, EventAt>(sqlx::AssertSqlSafe(sql));
-        for b in &binds {
-            q = bind_one(q, b);
+        let asked = AskedKeys::new(keys);
+        let requested: Vec<_> = asked.0.keys().cloned().collect();
+        let mut pending = requested.clone();
+        let mut selected = Vec::new();
+        let mut after_start = vec![None::<chrono::NaiveDateTime>; pending.len()];
+        let mut after_id = vec![String::new(); pending.len()];
+        let mut limit = 1_i64;
+        let n = binds.len();
+        // Keep place-before-world precedence relative to the full request even
+        // when only the destinations with unusable names need another page.
+        let sql = format!(
+            "SELECT page.* FROM unnest(${}::text[], ${}::timestamp[], ${}::text[]) AS wanted(key, after_start, after_id)
+             CROSS JOIN LATERAL (
+               SELECT id, name, raw->>'place_id' AS place_id, raw->>'server' AS server,
+                      world, {EFF_NEXT_START_SQL} AS next_start_at
+               FROM explore.event{where_sql}
+                 AND (place_id_lower = wanted.key OR
+                     (world IS TRUE AND server_lower = wanted.key
+                      AND (place_id_lower = ANY(${}::text[])) IS NOT TRUE))
+                 AND name IS NOT NULL {}
+                 AND (wanted.after_start IS NULL OR
+                      ({EFF_NEXT_START_SQL}, id) > (wanted.after_start, wanted.after_id))
+               ORDER BY next_start_at ASC, id ASC LIMIT ${}
+             ) page ORDER BY wanted.key, page.next_start_at ASC, page.id ASC",
+            n + 1,
+            n + 2,
+            n + 3,
+            n + 4,
+            if live { "AND name <> ''" } else { "" },
+            n + 5
+        );
+        let mut snapshot = if live {
+            let mut tx = self.pool.begin().await?;
+            sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                .execute(&mut *tx)
+                .await?;
+            Some(tx)
+        } else {
+            None
+        };
+        loop {
+            let mut q = sqlx::query_as::<_, EventAt>(sqlx::AssertSqlSafe(sql.as_str()));
+            for bind in &binds {
+                q = bind_one(q, bind);
+            }
+            let q = q
+                .bind(&pending)
+                .bind(&after_start)
+                .bind(&after_id)
+                .bind(&requested)
+                .bind(limit);
+            let Some(tx) = snapshot.as_mut() else {
+                return Ok(q.fetch_all(&self.pool).await?);
+            };
+            let rows = q.fetch_all(&mut **tx).await?;
+            let mut seen = HashMap::new();
+            for row in rows {
+                let Some(key) = asked.resolve(&row) else {
+                    continue;
+                };
+                let (count, found, cursor) = seen.entry(key).or_insert((0_i64, false, None));
+                *count += 1;
+                *cursor = row.next_start_at.map(|start| (start, row.id.clone()));
+                if !*found
+                    && row
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| !strip_all_markup(name).is_empty())
+                {
+                    selected.push(row);
+                    *found = true;
+                }
+            }
+            pending.clear();
+            after_start.clear();
+            after_id.clear();
+            for (key, (count, found, cursor)) in seen {
+                if !found
+                    && count == limit
+                    && let Some((start, id)) = cursor
+                {
+                    pending.push(key.to_lowercase());
+                    after_start.push(Some(start));
+                    after_id.push(id);
+                }
+            }
+            if pending.is_empty() {
+                break;
+            }
+            // Markup-only rows are unusual. Read further candidates only where needed.
+            limit = 32;
         }
-        Ok(q.fetch_all(&self.pool).await?)
+        if let Some(tx) = snapshot {
+            tx.commit().await?;
+        }
+        Ok(selected)
     }
 }
 
@@ -1005,31 +1096,40 @@ fn bind_one_scalar<'q>(
     }
 }
 
-fn rewrite_asset_host(url: &str, domain: &str) -> Option<String> {
-    let rest = url.strip_prefix("https://")?;
-    let (host, path) = rest.split_once('/')?;
-    let bucket = host.strip_suffix(".decentraland.org")?;
-    bucket
-        .starts_with("events-assets-")
-        .then(|| format!("https://{bucket}.{domain}/{path}"))
-}
-
-fn rewrite_asset_url(url: &str, domain: Option<&str>) -> String {
-    domain
-        .and_then(|d| rewrite_asset_host(url, d))
-        .unwrap_or_else(|| url.to_string())
-}
-
 /// `with_recurrent_dates` on `/v1/events`: the stored window instead of
 /// upstream's ten.
 pub const FULL_RECURRENCE_WINDOW: usize = 1000;
 
 /// What a read projects a row with.
 struct RecordView<'a> {
-    rewrite_domain: Option<&'a str>,
+    rewrite_base: Option<&'a str>,
+    configured_public_base: Option<&'a str>,
     events_asset_base_url: &'a str,
     max_dates: usize,
     foundation: foundation::Names,
+}
+
+pub(crate) fn project_event_image(
+    image: &str,
+    rewrite_base: Option<&str>,
+    configured_public_base: Option<&str>,
+    events_asset_base_url: &str,
+) -> Option<String> {
+    let image = sanitize_asset_url(image).ok()?;
+    Some(crate::node_assets::event_image_url(
+        &image,
+        rewrite_base,
+        configured_public_base,
+        events_asset_base_url,
+    ))
+}
+
+fn project_event_url(url: &str, base: Option<&str>) -> Option<String> {
+    let url = validate_event_url(url).ok()?;
+    Some(
+        base.and_then(|base| crate::node_assets::node_page_url(&url, base))
+            .unwrap_or(url),
+    )
 }
 
 fn event_row_to_record(
@@ -1037,8 +1137,15 @@ fn event_row_to_record(
     verified_viewer: Option<&str>,
     view: &RecordView<'_>,
 ) -> EventRecord {
-    let rewrite_domain = view.rewrite_domain;
-    let events_asset_base_url = view.events_asset_base_url;
+    let rewrite_base = view.rewrite_base;
+    let project_image = |image: &str| {
+        project_event_image(
+            image,
+            rewrite_base,
+            view.configured_public_base,
+            view.events_asset_base_url,
+        )
+    };
     let raw = &r.raw;
     let start_at = r.start_at.map(|n| n.and_utc());
     let finish_at = r.finish_at.map(|n| n.and_utc());
@@ -1046,28 +1153,17 @@ fn event_row_to_record(
     let y = r.coordinates_y.unwrap_or(0);
     let image = raw
         .get("image")
-        .and_then(|v| v.as_str())
-        .and_then(|s| sanitize_asset_url(s).ok())
-        .map(|s| {
-            rewrite_asset_url(
-                &posters::absolute_default_image(&s, events_asset_base_url),
-                rewrite_domain,
-            )
-        });
+        .and_then(Value::as_str)
+        .and_then(project_image);
     let image_vertical = raw.get("image_vertical").cloned().and_then(|v| match v {
-        Value::String(s) => sanitize_asset_url(&s).ok().map(|safe| {
-            Value::String(rewrite_asset_url(
-                &posters::absolute_default_image(&safe, events_asset_base_url),
-                rewrite_domain,
-            ))
-        }),
+        Value::String(s) => project_image(&s).map(Value::String),
         other => Some(other),
     });
     let server = raw_str(raw, "server");
     let url = raw
         .get("url")
-        .and_then(|v| v.as_str())
-        .and_then(|s| validate_event_url(s).ok());
+        .and_then(Value::as_str)
+        .and_then(|s| project_event_url(s, rewrite_base));
     let user = raw_str(raw, "user").or_else(|| r.user_creator.clone());
     let owner_view = matches!((verified_viewer,user.as_deref()),(Some(viewer),Some(owner)) if viewer.eq_ignore_ascii_case(owner));
     let scene_name = strip_all_markup_opt(raw_str(raw, "scene_name"));
@@ -1287,18 +1383,170 @@ fn parse_dt(v: Option<&Value>) -> Option<DateTime<Utc>> {
 }
 
 #[cfg(test)]
+const POSTER_PUBLIC_URLS: [Option<&str>; 5] = [
+    None,
+    Some("http://localhost:8080"),
+    Some("http://192.0.2.10:8181/prefix"),
+    Some("https://events.decentraland.org"),
+    Some("https://node.example:8443/prefix"),
+];
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    fn test_view(rewrite_domain: Option<&'static str>) -> RecordView<'static> {
+    fn test_view(rewrite_base: Option<&str>) -> RecordView<'_> {
         RecordView {
-            rewrite_domain,
+            rewrite_base,
+            configured_public_base: rewrite_base,
             events_asset_base_url: "https://events.decentraland.org",
             max_dates: MAX_EVENT_RECURRENT,
             foundation: Arc::new(std::collections::HashSet::new()),
         }
     }
     use serde_json::json;
+
+    #[tokio::test]
+    async fn destination_selection_survives_more_than_2500_earlier_events() {
+        use crate::db::scratch::{OwnedDatabase, Schema};
+        let Some(db) = OwnedDatabase::new("destination_selection", Schema::Full, 2).await else {
+            return;
+        };
+        let pool = db.pool.clone();
+        let run = uuid::Uuid::new_v4().simple().to_string();
+        let busy = format!("busy-{run}");
+        let quiet = format!("quiet-{run}");
+        let component = EventsComponent::new(
+            pool.clone(),
+            None,
+            None,
+            "https://events.decentraland.org".into(),
+        );
+        for (phase, hours) in [("live", -1_i32), ("next", 3)] {
+            sqlx::query(
+                "INSERT INTO explore.event (id,name,start_at,next_start_at,duration_ms,approved,raw)
+                 SELECT $1 || '-' || n, 'busy', timezone('UTC',now()) + $3 * interval '1 hour',
+                        timezone('UTC',now()) + $3 * interval '1 hour',7200000,true,
+                        jsonb_build_object('approved',true,'place_id',$2::text)
+                 FROM generate_series(1,2501) n"
+            ).bind(format!("{run}-{phase}")).bind(&busy).bind(hours).execute(&pool).await.unwrap();
+            sqlx::query(
+                "INSERT INTO explore.event (id,name,start_at,next_start_at,duration_ms,approved,raw)
+                 VALUES ($1,'quiet',timezone('UTC',now()) + $3 * interval '1 hour' + interval '1 minute',
+                         timezone('UTC',now()) + $3 * interval '1 hour' + interval '1 minute',7200000,true,
+                         jsonb_build_object('approved',true,'place_id',$2::text))"
+            ).bind(format!("{run}-{phase}-quiet")).bind(quiet.to_uppercase()).bind(hours).execute(&pool).await.unwrap();
+        }
+        // Two pages of markup-only names precede the first usable name.
+        sqlx::query(
+            "INSERT INTO explore.event (id,name,start_at,next_start_at,duration_ms,approved,raw)
+             SELECT $1 || '-' || n,'<b></b>',timezone('UTC',now()) - interval '61 minutes',
+                     timezone('UTC',now()) - interval '61 minutes',7200000,true,
+                     jsonb_build_object('approved',true,'place_id',$2::text) FROM generate_series(1,34) n",
+        )
+        .bind(format!("{run}-markup"))
+        .bind(&quiet)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let keys = vec![busy.clone(), quiet.clone()];
+        let live = component.live_event_names(&keys).await.unwrap();
+        assert_eq!(live[&quiet].as_deref(), Some("quiet"));
+        assert_eq!(live[&busy].as_deref(), Some("busy"));
+        let next = component.next_events(&keys).await.unwrap();
+        assert_eq!(next[&quiet].name, "quiet");
+        assert_eq!(next[&busy].name, "busy");
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn destination_selection_matches_places_before_world_servers() {
+        use crate::db::scratch::{OwnedDatabase, Schema};
+        let Some(db) = OwnedDatabase::new("destination_priority", Schema::Full, 2).await else {
+            return;
+        };
+        let events = EventsComponent::new(db.pool.clone(), None, None, String::new());
+        // Both requests see the same ordering. If a world matching a requested place
+        // also consumes its server's one-row budget, the server-only event disappears.
+        for (phase, hours) in [("live", -1_i32), ("next", 3)] {
+            sqlx::query(
+                "INSERT INTO explore.event (id,name,start_at,next_start_at,duration_ms,approved,raw)
+                 SELECT $1 || id,id,timezone('UTC',now()) + $2 * interval '1 hour',
+                        timezone('UTC',now()) + $2 * interval '1 hour',7200000,true,
+                        jsonb_build_object('approved',true,'place_id',place,'server',server,'world',world)
+                 FROM (VALUES ('a-both',true,'place','server'),('b-scene',false,'other','server'),
+                              ('c-world',true,'other','server')) rows(id,world,place,server)"
+            ).bind(phase).bind(hours).execute(&db.pool).await.unwrap();
+        }
+        let keys = ["Place".into(), "Server".into()];
+        let live = events.live_event_names(&keys).await.unwrap();
+        let next = events.next_events(&keys).await.unwrap();
+        for (key, expected) in [("Place", "a-both"), ("Server", "c-world")] {
+            assert_eq!(live[key].as_deref(), Some(expected));
+            assert_eq!(next[key].name, expected);
+        }
+        db.drop().await;
+    }
+
+    #[test]
+    fn event_poster_reads_use_the_configured_public_base_only_for_local_keys() {
+        let hash = "a".repeat(64);
+        for public_url in POSTER_PUBLIC_URLS {
+            let rewrite_base = crate::Settings::asset_rewrite_base_for(public_url);
+            let configured_public_base = crate::Settings::configured_public_base_for(public_url);
+            let view = RecordView {
+                configured_public_base: configured_public_base.as_deref(),
+                ..test_view(rewrite_base.as_deref())
+            };
+            let base = public_url.unwrap_or("");
+            for (stored_base, output_base, filename) in [
+                (
+                    "",
+                    format!("{base}/events-assets-099ac00"),
+                    format!("{hash}.png"),
+                ),
+                (
+                    "",
+                    format!("{base}/events-assets-099ac00"),
+                    "copied.png".into(),
+                ),
+                (
+                    "https://events-assets-099ac00.decentraland.org",
+                    rewrite_base.as_ref().map_or_else(
+                        || "https://events-assets-099ac00.decentraland.org".into(),
+                        |base| format!("{base}/events-assets-099ac00"),
+                    ),
+                    "upstream.png".into(),
+                ),
+                (
+                    "https://images.example",
+                    "https://images.example".into(),
+                    "custom.png".into(),
+                ),
+            ] {
+                let record = event_row_to_record(
+                    row_with(
+                        json!({
+                            "image": format!("{stored_base}/poster/{filename}"),
+                            "image_vertical": format!("{stored_base}/poster-vertical/{filename}"),
+                        }),
+                        None,
+                        None,
+                    ),
+                    None,
+                    &view,
+                );
+                assert_eq!(
+                    record.image,
+                    Some(format!("{output_base}/poster/{filename}"))
+                );
+                assert_eq!(
+                    record.image_vertical,
+                    Some(json!(format!("{output_base}/poster-vertical/{filename}")))
+                );
+            }
+        }
+    }
 
     /// The feed's live and next lookups decode the effective next start, a
     /// `timestamp without time zone` like the columns it derives from.
@@ -1327,8 +1575,12 @@ mod tests {
             .await
             .unwrap();
         }
-        let component =
-            EventsComponent::new(pool.clone(), None, "https://events.decentraland.org".into());
+        let component = EventsComponent::new(
+            pool.clone(),
+            None,
+            None,
+            "https://events.decentraland.org".into(),
+        );
         let live = component
             .live_event_names(std::slice::from_ref(&place))
             .await
@@ -1485,27 +1737,7 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_asset_host_swaps_only_the_upstream_poster_bucket() {
-        assert_eq!(
-            rewrite_asset_host(
-                "https://events-assets-099ac00.decentraland.org/poster/abc.webp",
-                "interconnected.online"
-            )
-            .as_deref(),
-            Some("https://events-assets-099ac00.interconnected.online/poster/abc.webp")
-        );
-        for untouched in [
-            "https://peer.decentraland.org/content/contents/x",
-            "https://example.com/poster/abc.webp",
-            "http://events-assets-099ac00.decentraland.org/poster/abc.webp",
-            "/poster/abc.webp",
-        ] {
-            assert_eq!(
-                rewrite_asset_host(untouched, "interconnected.online"),
-                None,
-                "{untouched}"
-            );
-        }
+    fn event_posters_point_at_the_node_path() {
         let raw = json!({
             "image": "https://events-assets-099ac00.decentraland.org/poster/d2dfb36b6a012314.jpg",
             "image_vertical": "https://events-assets-099ac00.decentraland.org/poster/v.webp",
@@ -1513,16 +1745,16 @@ mod tests {
         let rec = event_row_to_record(
             row_with(raw.clone(), None, None),
             None,
-            &test_view(Some("interconnected.online")),
+            &test_view(Some("https://node.example")),
         );
         assert_eq!(
             rec.image.as_deref(),
-            Some("https://events-assets-099ac00.interconnected.online/poster/d2dfb36b6a012314.jpg")
+            Some("https://node.example/events-assets-099ac00/poster/d2dfb36b6a012314.jpg")
         );
         assert_eq!(
             rec.image_vertical,
             Some(Value::String(
-                "https://events-assets-099ac00.interconnected.online/poster/v.webp".into()
+                "https://node.example/events-assets-099ac00/poster/v.webp".into()
             ))
         );
         let rec = event_row_to_record(row_with(raw, None, None), None, &test_view(None));
@@ -1530,6 +1762,33 @@ mod tests {
             rec.image.as_deref(),
             Some("https://events-assets-099ac00.decentraland.org/poster/d2dfb36b6a012314.jpg")
         );
+        assert_eq!(
+            rec.image_vertical,
+            Some(Value::String(
+                "https://events-assets-099ac00.decentraland.org/poster/v.webp".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn event_jump_urls_name_the_node_when_configured() {
+        let upstream = "https://decentraland.org/jump/events?position=0%2C0&realm=x.dcl.eth";
+        let local = "https://node.example/jump/events?position=0%2C0&realm=x.dcl.eth";
+        let organiser = "https://example.com/party";
+
+        for (asset_base, stored, expected) in [
+            (Some("https://node.example"), upstream, local),
+            (None, upstream, upstream),
+            (Some("https://node.example"), organiser, organiser),
+            (None, organiser, organiser),
+        ] {
+            let record = event_row_to_record(
+                row_with(json!({ "url": stored }), None, None),
+                None,
+                &test_view(asset_base),
+            );
+            assert_eq!(record.url.as_deref(), Some(expected), "{stored}");
+        }
     }
 
     #[test]
@@ -2077,7 +2336,9 @@ mod tests {
         );
         assert_eq!(
             rec.image_vertical,
-            Some(Value::String("/poster/bafabc123".into()))
+            Some(Value::String(
+                "/events-assets-099ac00/poster/bafabc123".into()
+            ))
         );
     }
 

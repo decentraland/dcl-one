@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Switch } from 'decentraland-ui2';
+import { useNavigate } from 'react-router';
+import Toggle from '@ui/atoms/Toggle';
 
 import { useSelector } from '#store';
 import { toMB } from '/@/modules/file';
@@ -8,7 +8,7 @@ import { getCurrentLocale, t } from '/@/modules/store/translation/utils';
 import { getWorldDimensions } from '/@/modules/world';
 import { WorldAtlas } from '/@/components/WorldAtlas';
 
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 import { LayersIcon, LayoutOutlineIcon } from '../../Icons';
 import type { RowMode } from '../../LandDetailPage/ScenesTab/SceneRow';
 import { ScenesView } from '../../LandDetailPage/ScenesTab/ScenesView';
@@ -17,23 +17,34 @@ import { Loader } from '../../Loader';
 import { EmptyState } from '../../ManagePage/EmptyState';
 import { InfoTip } from '../../ManagePage/InfoTip';
 import { WorldsYourStorageModal } from '../../Modals/WorldsYourStorageModal';
-import { MultiScene, StorageLink } from './ScenesTab.styled';
 import { useWorldScenes } from './useWorldScenes';
 import { usedBytes } from './worldScenes';
+
+import styles from './ScenesTab.module.css';
 
 type Props = { worldName: string; mode: RowMode };
 
 /** The World's scenes: the owner manages all of them, a deploy collaborator sees the ones on their parcels. */
 export function ScenesTab({ worldName, mode }: Props) {
   const navigate = useNavigate();
-  const { all, scenes, deployers, ready, failed, unpublishScene } = useWorldScenes(worldName, mode);
+  const { all, scenes, deployers, ready, failed, retry, unpublishScene } = useWorldScenes(
+    worldName,
+    mode,
+  );
   const storageStats = useSelector(state => state.management.storageStats);
   const accountHoldings = useSelector(state => state.management.accountHoldings);
   const [map, setMap] = useState(false);
   const [storageOpen, setStorageOpen] = useState(false);
 
   if (!ready) return <Loader size={70} />;
-  if (failed) return <EmptyState title={t('install.errors.unknown')} />;
+  if (failed)
+    return (
+      <EmptyState
+        title={t('manage.errors.fetch.title')}
+        description={t('manage.errors.fetch.description')}
+        action={{ label: t('manage.errors.fetch.retry'), variant: 'tertiary', onClick: retry }}
+      />
+    );
 
   const isOwner = mode === 'manage';
   const { width, height } = getWorldDimensions(all);
@@ -71,12 +82,13 @@ export function ScenesTab({ worldName, mode }: Props) {
             {isOwner && (
               <Meta>
                 {t('world_detail.scenes.used', { size: `${used} MB` })}
-                <StorageLink
+                <button
                   type="button"
+                  className={styles.storageLink}
                   onClick={() => setStorageOpen(true)}
                 >
                   {t('world_detail.scenes.manage_storage')}
-                </StorageLink>
+                </button>
               </Meta>
             )}
           </>
@@ -84,22 +96,22 @@ export function ScenesTab({ worldName, mode }: Props) {
         controls={
           <>
             {isOwner && (
-              <MultiScene>
-                <Switch
+              <span className={styles.multiScene}>
+                <Toggle
+                  className={styles.switch}
                   checked={all.length > 1}
                   disabled
-                  inputProps={{ 'aria-label': t('world_detail.scenes.multi_scene_title') }}
+                  ariaLabel={t('world_detail.scenes.multi_scene_title')}
                 />
                 {t('world_detail.scenes.multi_scene_title')}
                 <InfoTip label={t('world_detail.scenes.multi_scene_info')}>
                   {t('world_detail.scenes.multi_scene_description')}
                 </InfoTip>
-              </MultiScene>
+              </span>
             )}
             <Button
-              variant="contained"
-              color="secondary"
-              size="small"
+              size="sm"
+              className="hub-button hub-button--secondary"
               startIcon={<LayoutOutlineIcon />}
               aria-pressed={map}
               onClick={() => setMap(open => !open)}

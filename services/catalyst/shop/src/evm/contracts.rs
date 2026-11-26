@@ -6,7 +6,10 @@
 //! the `collections-mirror` job keeps per network). The mirror replaces the
 //! crate's one `squid.collection` probe; while it has no complete pass on
 //! the relay's network the answer is [`Membership::MirrorUnavailable`], never
-//! "not a collection" out of an empty table.
+//! "not a collection" out of an empty table. On a network the collections
+//! index owns, the rows are the index's projection, read in the statement
+//! that reads its authorizing verdict ([`Membership::IndexUnavailable`]
+//! while it refuses one).
 //!
 //! Collections are the one source that enrols a target without review, and a
 //! relayable target reports the domain separator and nonce its own signature
@@ -17,11 +20,12 @@
 //! signature itself (the relay routes that would fail closed) and the mirror
 //! decides as before.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
+use chrono::Utc;
 use serde_json::Value;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 
 use alloy_primitives::Address;
 
@@ -29,12 +33,26 @@ use super::chain::ChainComponent;
 use super::contracts_addrs::mirror_network;
 use super::errors::ApiError;
 use crate::http::{Outbound, read_body_capped};
+use crate::market::catalogue::{self, NetworkState, Purpose};
 use crate::shared::cache::TtlMap;
 
 const WHITELIST_BODY_CAP: usize = 4 * 1024 * 1024;
 
 /// The contract map the old main vhost served at `= /contracts/addresses.json`
-/// (`catalyrst/nixos/contracts/addresses.json`, a copy).
+/// (`catalyrst/nixos/contracts/addresses.json`, a copy), with dcl-one's own
+/// `CreditsManager_DCL_ONE` under `matic` and `amoy`. Those two entries are
+/// otherwise contracts.decentraland.org's as published, `matic` on 2026-11-19 and
+/// `amoy` on 2026-11-18 (MarketplaceV5, the current CouponManager and
+/// CollectionDiscountCoupon): a node with `CONTRACT_ADDRESSES_URL` unset relays to
+/// the `matic` entry's contracts on Polygon, and the testnet development profile
+/// relays through `amoy` when it signs with a relayer key of its own. The other
+/// entries are the old copy as it was.
+///
+/// Both are snapshots. A node that reads the published list live (the same profile
+/// without a key does) admits whatever contracts.decentraland.org lists, so once it
+/// changes `matic` or `amoy` (a new CouponManager, say) the two admit different
+/// contracts until the snapshot is refreshed: replace the entry with the published
+/// one, keep `CreditsManager_DCL_ONE`, and update its date above.
 pub const ADDRESSES_JSON: &[u8] = include_bytes!("addresses.json");
 const WHITELIST_TIMEOUT: Duration = Duration::from_secs(20);
 /// Anchors are stable by construction (a beacon upgrade repoints the beacon,
@@ -79,7 +97,7 @@ pub fn trusted_collection_anchor_label(chain_id: u64, anchor: Address) -> Option
         .map(|(_, label)| *label)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Membership {
     /// Whitelisted or a mirrored collection.
     Allowed,
@@ -88,13 +106,44 @@ pub enum Membership {
     /// Not whitelisted and the collections mirror has no complete pass yet
     /// (or the relay's chain is not one the mirror covers).
     MirrorUnavailable,
+    /// Not whitelisted, and the collections index owns the relay's network
+    /// and cannot authorize a read of it: why.
+    IndexUnavailable(String),
 }
+
+/// What the catalogue of the relay's network says about one address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Catalogued {
+    /// After a complete pass of the collections mirror, or under the
+    /// collections index's authorizing publication: whether it is a
+    /// collection.
+    Known(bool),
+    /// Before the mirror's first complete pass, or on a chain it does not
+    /// cover.
+    MirrorUnready,
+    /// The collections index owns the network and refuses: why.
+    IndexRefused(String),
+}
+
+/// One statement, so one snapshot decides and reads: the relay network's
+/// state as the catalogue gate reads it, and whether the address is one of
+/// its collections (primary keys only).
+static MEMBERSHIP_SQL: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "SELECT {columns}, \
+         EXISTS (SELECT 1 FROM shop.collections WHERE network = n.network AND contract_address = $2) AS found \
+         FROM (SELECT $1::text AS network) AS n {joins}",
+        columns = catalogue::STATE_COLUMNS,
+        joins = *catalogue::STATE_JOINS,
+    )
+});
 
 pub struct ContractsComponent {
     pool: PgPool,
     http: Outbound,
     addresses_url: Option<String>,
     chain_key: String,
+    chain_id: u64,
     network: Option<&'static str>,
     ttl: Duration,
     cache: TtlMap<(), Arc<Vec<String>>>,
@@ -122,6 +171,7 @@ impl ContractsComponent {
                 .map(|u| u.trim().to_string())
                 .filter(|u| !u.is_empty()),
             chain_key,
+            chain_id,
             network: mirror_network(chain_id),
             ttl,
             cache: TtlMap::new(ttl),
@@ -150,10 +200,12 @@ impl ContractsComponent {
             return Ok(Membership::Allowed);
         }
         match self.mirror_membership(&addr).await? {
-            Some(true) if self.runs_collection_code(&addr).await? => Ok(Membership::Allowed),
-            Some(true) => whitelisted.map(|_| Membership::Unknown),
-            Some(false) => whitelisted.map(|_| Membership::Unknown),
-            None => whitelisted.map(|_| Membership::MirrorUnavailable),
+            Catalogued::Known(true) if self.runs_collection_code(&addr).await? => {
+                Ok(Membership::Allowed)
+            }
+            Catalogued::Known(_) => whitelisted.map(|_| Membership::Unknown),
+            Catalogued::MirrorUnready => whitelisted.map(|_| Membership::MirrorUnavailable),
+            Catalogued::IndexRefused(why) => whitelisted.map(|_| Membership::IndexUnavailable(why)),
         }
     }
 
@@ -168,33 +220,37 @@ impl ContractsComponent {
                  later (MARKETPLACE_MIRRORS_ENABLED)"
                     .into(),
             )),
+            Membership::IndexUnavailable(why) => Err(ApiError::RelayerUnavailable(format!(
+                "{why}, so contract membership cannot be decided; retry later"
+            ))),
         }
     }
 
-    /// `Some(found)` after a complete pass of the collections mirror on the
-    /// relay's network, `None` before one.
-    pub async fn mirror_membership(&self, address: &str) -> Result<Option<bool>, ApiError> {
+    /// Whether `address` is a collection on the relay's network, by the
+    /// source that owns it: the collections mirror after a complete pass,
+    /// or the collections index under an authorizing publication (the
+    /// relay enrols a target on it).
+    pub async fn mirror_membership(&self, address: &str) -> Result<Catalogued, ApiError> {
         let Some(network) = self.network else {
-            return Ok(None);
+            return Ok(Catalogued::MirrorUnready);
         };
-        let ready: Option<bool> = sqlx::query_scalar(
-            "SELECT last_complete_pass_at IS NOT NULL FROM shop.mirror_state \
-             WHERE mirror = 'collections' AND network = $1",
-        )
-        .bind(network)
-        .fetch_optional(&self.pool)
-        .await?;
-        if ready != Some(true) {
-            return Ok(None);
+        let row = sqlx::query(sqlx::AssertSqlSafe(MEMBERSHIP_SQL.as_str()))
+            .bind(network)
+            .bind(address.to_lowercase())
+            .fetch_one(&self.pool)
+            .await?;
+        let state = NetworkState::from_row(&row)?;
+        match state.owned_verdict(
+            crate::types::chain_id_column(self.chain_id)?,
+            Purpose::Authorize,
+            Utc::now(),
+        ) {
+            Some(Err(why)) => return Ok(Catalogued::IndexRefused(why)),
+            Some(Ok(_)) => {}
+            None if state.collections_pass.is_none() => return Ok(Catalogued::MirrorUnready),
+            None => {}
         }
-        let found: Option<i32> = sqlx::query_scalar(
-            "SELECT 1 FROM shop.collections WHERE network = $1 AND contract_address = $2 LIMIT 1",
-        )
-        .bind(network)
-        .bind(address.to_lowercase())
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(Some(found.is_some()))
+        Ok(Catalogued::Known(row.get("found")))
     }
 
     /// Whether a mirrored collection is a factory proxy over recorded
@@ -301,12 +357,18 @@ pub async fn addresses_document() -> impl axum::response::IntoResponse {
     )
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "test support"
+)]
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn the_served_contract_map_is_the_old_one_and_feeds_the_default_whitelist() {
+    fn the_served_contract_map_covers_every_network_and_feeds_the_default_whitelist() {
         let json: Value = serde_json::from_slice(ADDRESSES_JSON).unwrap();
         let keys: Vec<&str> = json
             .as_object()
@@ -320,7 +382,7 @@ mod tests {
             assert!(keys.contains(&key), "{key}");
         }
         let matic = chain_addresses(&json, "MATIC");
-        assert_eq!(matic.len(), 35);
+        assert_eq!(matic.len(), 41);
         assert!(
             matic
                 .iter()
@@ -340,18 +402,20 @@ mod tests {
     /// A `CreditsManager_DCL_ONE` this map admits to the relay is, on that chain, a
     /// CreditsManager the guard judges and a contract with an audited domain, so the
     /// map never widens the relay to a manager the policy doesn't decode. On Polygon
-    /// it is `DCL_ONE_POLYGON_MANAGER`.
+    /// it is `DCL_ONE_POLYGON_MANAGER`, on Amoy `DCL_ONE_AMOY_MANAGER`.
     #[test]
     fn dcl_ones_managers_in_the_map_are_guarded_and_audited_on_their_chain() {
-        use crate::policy_entry::{DCL_ONE_POLYGON_MANAGER, is_credits_manager};
+        use crate::policy_entry::{
+            DCL_ONE_AMOY_MANAGER, DCL_ONE_POLYGON_MANAGER, is_credits_manager,
+        };
         use crate::types::ChainId;
         let json: Value = serde_json::from_slice(ADDRESSES_JSON).unwrap();
-        let mut found = 0;
-        for (key, chain) in [("matic", ChainId::POLYGON), ("amoy", ChainId::AMOY)] {
-            let Some(listed) = json[key]["CreditsManager_DCL_ONE"].as_str() else {
-                continue;
-            };
-            found += 1;
+        for (key, chain, ours) in [
+            ("matic", ChainId::POLYGON, DCL_ONE_POLYGON_MANAGER),
+            ("amoy", ChainId::AMOY, DCL_ONE_AMOY_MANAGER),
+        ] {
+            let listed = json[key]["CreditsManager_DCL_ONE"].as_str().unwrap();
+            assert_eq!(listed, format!("{ours:#x}"), "{key}");
             let manager: Address = listed.parse().unwrap();
             assert!(is_credits_manager(chain, manager), "{key}: {listed}");
             assert_eq!(
@@ -360,15 +424,59 @@ mod tests {
                 "{key}: {listed}"
             );
         }
-        assert!(found >= 1);
-        assert_eq!(
-            json["matic"]["CreditsManager_DCL_ONE"].as_str(),
-            Some(format!("{DCL_ONE_POLYGON_MANAGER:#x}").as_str())
-        );
         for chain in ["mainnet", "sepolia", "arbitrum", "goerli", "mumbai"] {
             assert!(
                 json[chain].get("CreditsManager_DCL_ONE").is_none(),
                 "{chain}"
+            );
+        }
+    }
+
+    /// With `CONTRACT_ADDRESSES_URL` unset the relay admits the `matic` entry on
+    /// Polygon, and the testnet development profile, with a relayer key, the `amoy`
+    /// one. Each admits dcl-one's manager on its chain, which the published list
+    /// never carries, and that chain's MarketplaceV5, whose `cancelSignature` the
+    /// Shop relays, under the domain the relay audits it with. Its coupon contracts
+    /// are the ones the Shop's coupons sign against, the newest marketplace's first.
+    #[test]
+    fn the_polygon_whitelists_admit_dcl_ones_manager_and_marketplace_v5() {
+        use crate::types::ChainId;
+        let json: Value = serde_json::from_slice(ADDRESSES_JSON).unwrap();
+        for (key, chain, ours, v5) in [
+            (
+                "matic",
+                ChainId::POLYGON,
+                crate::policy_entry::DCL_ONE_POLYGON_MANAGER,
+                "0xe38ef22abe871513555cba89adfe45ab4f548ada",
+            ),
+            (
+                "amoy",
+                ChainId::AMOY,
+                crate::policy_entry::DCL_ONE_AMOY_MANAGER,
+                "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c",
+            ),
+        ] {
+            let admitted = chain_addresses(&json, key);
+            assert!(admitted.contains(&format!("{ours:#x}")), "{key}: {ours:#x}");
+            assert!(admitted.contains(&v5.to_string()), "{key}: {v5}");
+            let listed = |name: &str| json[key][name].as_str().map(str::to_lowercase);
+            assert_eq!(listed("MarketplaceV5").as_deref(), Some(v5), "{key}");
+            assert_eq!(
+                super::super::meta_tx::audited_domain_for(chain.0, v5.parse().unwrap())
+                    .map(|d| d.label),
+                Some("MarketplaceV5"),
+                "{key}"
+            );
+            let newest = crate::coupons::contracts::coupon_contracts(chain.0 as i64)[0];
+            assert_eq!(
+                listed("CouponManager").as_deref(),
+                Some(newest.coupon_manager.address),
+                "{key}"
+            );
+            assert_eq!(
+                listed("CollectionDiscountCoupon").as_deref(),
+                Some(newest.collection_discount_coupon),
+                "{key}"
             );
         }
     }

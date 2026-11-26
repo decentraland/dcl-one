@@ -35,13 +35,13 @@ mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get};
 use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{OriginalUri, Query, State as Extract};
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::PgPool;
@@ -164,10 +164,12 @@ pub fn shop_router(state: SharedState) -> Router {
     let api = Router::new()
         .route(
             "/v1/notify-requests",
-            get(read).post(create).delete(unsubscribe),
+            get(read).post(erase(create)).delete(erase(unsubscribe)),
         )
         .with_state(state);
-    DataWrites::guard(api, enabled)
+    DataWrites::guard(api, enabled).layer(axum::middleware::from_fn(
+        crate::shared::cors::decentraland_cors,
+    ))
 }
 
 #[derive(Debug)]
@@ -211,6 +213,10 @@ fn signed_fetch_error(e: SignedFetchError) -> ApiError {
     match e {
         SignedFetchError::MalformedChain { ref detail } if e.is_metadata_refusal() => {
             ApiError::bad_request(format!("Invalid signer: {detail}"))
+        }
+        // The client source spent its contract-wallet checks: retry later.
+        SignedFetchError::RateLimited => {
+            ApiError::Status(StatusCode::TOO_MANY_REQUESTS, e.to_string())
         }
         other => {
             tracing::debug!(error = %other, "signed-fetch verification failed for /notify-requests");

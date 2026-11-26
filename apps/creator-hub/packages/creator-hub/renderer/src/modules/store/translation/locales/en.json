@@ -52,10 +52,13 @@
         "retry": "Retry",
         "outdated_deps": "This scene's dependencies are out of date and don't support the Bevy renderer. Update them to continue.",
         "update_deps": "Update dependencies",
-        "data_layer_crashed": "The scene keeps stopping unexpectedly. Go back and reopen it, or check the logs."
+        "data_layer_crashed": "The scene keeps stopping unexpectedly. Retry, go back and reopen it, or check the logs."
       }
     },
+    "realm_server_restarting": "The Multiplayer Server stopped unexpectedly. Restarting it, which reloads the editor.",
+    "realm_server_unavailable": "The Multiplayer Server cannot run on this computer, so the scene runs without it.",
     "realm_restarted": "The scene stopped unexpectedly and was reloaded. Changes from the last few seconds may not have been saved.",
+    "realm_restart_failed": "Restarting the scene failed. Trying again.",
     "header": {
       "actions": {
         "code": "Code",
@@ -127,6 +130,7 @@
         "title": "Chat history",
         "empty": "No saved chats yet.",
         "delete": "Delete chat",
+        "shared_stays": "Deleting a chat here doesn't erase what you've shared. Do that in Settings → AI.",
         "now": "just now",
         "minutes": "{n}m ago",
         "hours": "{n}h ago",
@@ -177,10 +181,84 @@
         "needs_login_help": "Its saved sign-in may have expired, even if it showed as connected. Sign out and back in: run these in a terminal, one at a time, and finish in your browser. Then send your message again:",
         "needs_login_managed_help": "Its saved sign-in may have expired, even if it showed as connected. In Settings → AI, click Sign out, then Sign in, then send your message again.",
         "api_key_alternative": "Or use an API key: set {envVar} and turn on \"{setting}\" in Settings → AI."
+      },
+      "recording": {
+        "chip": "Session recording · {duration} · {actions} {actions, plural, one {action} other {actions}}",
+        "chip_no_speech": "Session recording · {duration} · {actions} {actions, plural, one {action} other {actions}} (no speech)",
+        "remove": "Discard recording",
+        "attachment": "Session recording {duration}",
+        "chip_many": "{count} {count, plural, one {recording} other {recordings}} · {duration} · {actions} {actions, plural, one {action} other {actions}}",
+        "chip_many_no_speech": "{count} {count, plural, one {recording} other {recordings}} · {duration} · {actions} {actions, plural, one {action} other {actions}} (no speech)",
+        "attachment_many": "{count} {count, plural, one {recording} other {recordings}} {duration}"
+      },
+      "sharing": {
+        "card_title": "Help improve the AI assistant",
+        "card_body": "Share your conversations with Decentraland to help improve the assistant. An AI model reads them to find what works and what doesn't. Before anything is sent, your computer removes keys, seed phrases, emails and other common personal details.",
+        "signin_body": "Sign in to share your conversations and help improve the assistant.",
+        "details_toggle": "What's shared and what isn't",
+        "details_shared": "Shared: what you type, the assistant's replies, the tools it used with their file names and commands, the agent and model, how long each reply took, your ratings, and your Creator Hub version and operating system.",
+        "details_not_shared": "Not shared: images, file contents, your scene's name, or conversations you mark as not shared.",
+        "details_analysis": "How they're used: an AI model from a provider working for Decentraland summarises each conversation, under an agreement that the provider keeps no copy and doesn't train on it. We keep the patterns we see across many creators to improve the assistant.",
+        "details_publish": "The team discusses those patterns. Changes made from them may be published in the assistant's public instructions, skills and docs, and in the descriptions of those changes. Once published, they stay public even if you delete what you shared.",
+        "details_control": "Stop sharing or delete everything you've shared at any time in Settings. Stopping ends the analysis and deletes the summaries, but keeps what you already shared until it expires; deleting removes that too. Shared conversations are kept for up to 180 days, and deleted data can remain in encrypted backups for up to 35 days.",
+        "accept": "Share to help improve",
+        "decline": "No thanks",
+        "not_now": "Not now",
+        "chip": "Sharing",
+        "chip_excluded": "Not Sharing",
+        "chip_menu": "sharing options",
+        "rate_up": "Good reply",
+        "rate_down": "Bad reply",
+        "menu_share_chat": "Share this chat",
+        "menu_share_all": "Share all chats",
+        "menu_chat_erased": "What this chat shared was deleted.",
+        "menu_chat_confirm": "Stop sharing this chat? What it already shared will be deleted.",
+        "menu_chat_confirm_yes": "Stop and delete",
+        "menu_chat_confirm_no": "Keep sharing"
       }
     },
     "publish": {
       "save_failed": "Couldn't save your scene before publishing, so publishing was stopped to avoid deploying older content. {reason}"
+    },
+    "recording": {
+      "record": "Record",
+      "record_panel": "Record voice and actions",
+      "stop": "Stop recording",
+      "stop_with_time": "Stop · {time} / {limit}",
+      "live": "Recording",
+      "discard": "Discard recording",
+      "discard_confirm": {
+        "title": "Discard this recording?",
+        "body": "The recording stops and what it captured so far is deleted. This can't be undone.",
+        "cancel": "Keep recording",
+        "confirm": "Discard"
+      },
+      "starting": "Starting…",
+      "transcribing": "Transcribing…",
+      "downloading": "Downloading speech model… {percent}%",
+      "default_mic": "your system's default microphone",
+      "tooltip_idle": "Record what you say and do for the AI assistant, up to {minutes} minutes. Uses your system's default microphone; change the input device in your system's sound settings to use another one.",
+      "tooltip_live": "Recording from {mic}; stops by itself after {minutes} minutes. To use a different microphone, change the input device in your system's sound settings and record again.",
+      "error": "Couldn't record: {message}",
+      "no_transcript": "Your speech couldn't be transcribed. The recording still lists everything you did.",
+      "limit_reached": "The recording stopped at the {minutes} minute limit. It's sent as soon as it's transcribed.",
+      "consent": {
+        "title": "Record a session for the AI assistant",
+        "intro": "Talk while you work. Creator Hub records your voice and editor actions together, helping the AI assistant understand your instructions in context. For example, saying \"delete this one\" while pointing at an entity tells the assistant exactly what you mean.",
+        "what_title": "What gets recorded?",
+        "what": "Your voice, mouse movements, clicks, selections, hovers, menus, searches, edits, and other actions in the editor.",
+        "local_title": "Your data stays on your computer",
+        "local": "Recording only happens while the <b>Record</b> button is on. Closing the project or Creator Hub stops it immediately.",
+        "stored": "Your audio, action log, and speech transcription stay on your computer. When a recording is sent, only the transcript and action log are shared with your AI provider—not the audio.",
+        "first_title": "Before your first recording",
+        "download": "Creator Hub downloads a speech-to-text model (about {size} MB).",
+        "microphone": "Recording uses your system's default microphone. You can change it in your system's sound settings.",
+        "cancel": "Cancel",
+        "accept": "Got it"
+      },
+      "microphone_lost": "The recording stopped because your microphone was disconnected. It's sent as soon as it's transcribed.",
+      "record_tooltip": "Record voice & actions",
+      "send": "Stop and send"
     }
   },
   "scene_list": {
@@ -320,6 +398,7 @@
       "more": "More"
     },
     "earn_not_joined": "EARN, not joined yet",
+    "earn_payout_pending": "EARN, payout setup not finished",
     "feedback": "Submit feedback",
     "user_menu": {
       "sign_in": "Sign In",
@@ -383,6 +462,8 @@
         "select_world": {
           "title": "Publish to your World",
           "description": "Choose the domain where your world will be published.",
+          "domain_type_label": "Domain type",
+          "world_name_label": "World name",
           "world_name": "WORLD (NAME)",
           "placeholder": "Select a Name",
           "claim_new_name": "Claim a new NAME",
@@ -616,12 +697,16 @@
         "code_editor": {
           "label": "Code editor of choice",
           "choose_device": "Choose from your device...",
+          "placeholder": "Add or select a default editor",
+          "list": "Added code editors",
+          "remove": "Remove {name}",
           "errors": {
             "load": "Failed to load code editors",
             "set": "Failed to set default editor",
             "invalid_app_extension": "Invalid application selected. Please select a valid .app bundle",
             "invalid_app_bundle": "Invalid application bundle structure",
             "invalid_exe_file": "Invalid application selected. Please select a valid .exe file",
+            "invalid_executable": "Invalid application selected. Please select a file that you can run",
             "unknown": "Failed to set default editor"
           }
         },
@@ -668,6 +753,55 @@
           "install": "Install",
           "sign_in_label": "Sign In",
           "copy": "Copy"
+        },
+        "ai_sharing": {
+          "label": "Share conversations to improve Creator Hub",
+          "description": "Sends what you ask the assistant and its replies to Decentraland, after removing keys and common personal details on your computer. An AI model summarises them to find ways to improve the assistant. Kept for up to 180 days.",
+          "signin": "Sign in to share conversations.",
+          "queued_title": "Waiting to upload ({count})",
+          "queued_empty": "Nothing is waiting to upload.",
+          "delete": "Delete everything I've shared",
+          "deleting": "Deleting…",
+          "deleted": "{count, plural, one {Deleted # shared turn.} other {Deleted # shared turns.}}",
+          "delete_failed": "Couldn't delete your shared conversations. Check your connection and try again.",
+          "viewer_show": "Show what I've shared",
+          "viewer_hide": "Hide what I've shared",
+          "viewer_empty": "Nothing shared yet.",
+          "viewer_failed": "Couldn't load what you've shared. Check your connection and try again.",
+          "viewer_delete": "Delete this turn",
+          "viewer_more": "Show more",
+          "delete_confirm": "Are you sure you want to delete everything you've shared? This action can't be undone.",
+          "delete_confirm_yes": "Delete everything",
+          "delete_cancel": "Cancel",
+          "digests_show": "Show summaries made from your conversations",
+          "digests_hide": "Hide summaries",
+          "digests_empty": "No summaries yet. A conversation is summarised a few hours after it ends.",
+          "digests_failed": "Couldn't load the summaries. Check your connection and try again.",
+          "digests_more": "Show more",
+          "digests_problems": "Problems: {kinds}",
+          "digest_outcome": {
+            "achieved": "Achieved",
+            "partial": "Partly achieved",
+            "not_achieved": "Not achieved",
+            "abandoned": "Abandoned",
+            "unclear": "Unclear"
+          },
+          "digest_friction": {
+            "misunderstood_request": "misunderstood request",
+            "wrong_sdk_knowledge": "wrong SDK knowledge",
+            "tool_failed": "a tool failed",
+            "tool_missing": "missing tool",
+            "skill_missing": "missing skill",
+            "skill_ignored": "skill not used",
+            "asset_not_found": "asset not found",
+            "scene_broke": "scene broke",
+            "slow_or_stuck": "slow or stuck",
+            "creator_corrected_agent": "you corrected the assistant",
+            "creator_stopped_reply": "you stopped a reply",
+            "setup_or_sign_in": "setup or sign-in",
+            "other": "other"
+          },
+          "signin_link": "Sign in"
         }
       },
       "actions": {
@@ -729,7 +863,6 @@
     },
     "install_client": {
       "title": "To jump in, you'll need to install Decentraland first",
-      "download": "Download",
       "download_macos": "DOWNLOAD FOR MACOS",
       "download_win": "DOWNLOAD FOR WINDOWS",
       "cancel": "NOT NOW"
@@ -777,8 +910,8 @@
       "sent": "Thanks for helping us improve the Creator Hub! We've received your report and our team will investigate the issue and work on a fix.",
       "queued_title": "Issue Report Saved",
       "queued": "We saved your report and will send it as soon as you're back online.",
-      "unknown_title": "Couldn't Confirm Your Report",
-      "unknown": "We sent your report but couldn't confirm it arrived. If the problem continues, report it again.",
+      "unknown_title": "Issue Report Sent",
+      "unknown": "We sent your report but couldn't confirm it arrived yet. You don't need to send it again.",
       "failed_title": "Something went wrong",
       "failed": "We couldn't send your report. Check your connection and try again."
     }
@@ -790,14 +923,13 @@
     "generic": {
       "import_scene": "Importing scene...",
       "import_scene_failed": "Failed importing scene",
+      "watchlist_not_saved": "Couldn't save your Watchlist. This change will be lost when you close the app.",
       "import_scene_already_imported": "Scene already imported",
       "duplicate_scene": "Duplicating scene...",
       "duplicate_scene_failed": "Failed duplicating scene",
       "delete_scene": "Deleting scene...",
       "delete_scene_failed": "Failed deleting scene",
       "dependencies_updated": "Scene dependencies were updated",
-      "multiplayer_sdk_installed": "Multiplayer Server SDK installed.",
-      "multiplayer_sdk_uninstalled": "Multiplayer Server SDK removed. Latest SDK release installed.",
       "updating_sdk_skills": "Installing the latest AI skills...",
       "sdk_skills_updated": "AI skills are up to date",
       "sdk_skills_update_failed": "Could not install the AI skills",
@@ -830,6 +962,13 @@
       "actions": {
         "view": "View",
         "discard_all": "Discard all"
+      }
+    },
+    "realm_server_stopped": {
+      "title": "The Multiplayer Server keeps stopping, so the scene runs without it. Retry restarts it and reloads the editor.",
+      "actions": {
+        "dismiss": "Dismiss",
+        "retry": "Retry"
       }
     },
     "external_agent_access": {
@@ -1473,7 +1612,6 @@
         "title": "Engagement",
         "description": "Understand how users engage with your place.",
         "minutes": "min",
-        "delta": "{value} min",
         "vs_last_week": "{value} vs. last week",
         "daily": {
           "title": "Average Daily Playtime",
@@ -1569,6 +1707,10 @@
       "day_7_retention": {
         "label": "Day 7 Retention",
         "tooltip": "The percentage of new users who returned to your place within 7 days of their first visit."
+      },
+      "total_playtime": {
+        "label": "Total Playtime",
+        "tooltip": "All the time users spent in your place, summed over every visit."
       },
       "median_playtime": {
         "label": "Median Playtime",
@@ -1729,7 +1871,8 @@
         "my_places": "My Places",
         "leaderboard": "Leaderboard",
         "payouts": "Payouts",
-        "home": "Home"
+        "home": "Home",
+        "payouts_pending": "PAYOUTS, setup not finished"
       },
       "title_prefix": "Earn",
       "title": "Creator Fund",
@@ -1742,6 +1885,12 @@
       "contact_support": "Contact Support",
       "banner": {
         "region": "Announcement"
+      },
+      "setup_banner": {
+        "wallet": {
+          "title": "Set up your payout wallet",
+          "description": "Add a wallet to receive your Creator Fund payouts in USDC."
+        }
       },
       "filter": {
         "cycle": "Cycle",
@@ -1811,9 +1960,9 @@
           "d3_retention": "D3 Retention",
           "d3_retention_info_label": "About D3 Retention",
           "playtime": "Total Playtime",
-          "playtime_info": "Average time each player spent in your place over the last 30 days.",
+          "playtime_info": "Total time players spent in your place over the last 30 days.",
           "playtime_info_label": "About Total Playtime",
-          "minutes": "{value} min",
+          "minutes": "{value} {minutes, plural, one {minute} other {minutes}}",
           "no_data": "No data"
         },
         "empty_body": "Once you publish a scene, it shows up here with its performance for the current cycle.",
@@ -1836,17 +1985,22 @@
           "title": "Payout Wallet",
           "info_label": "About payout wallets",
           "info": "A digital wallet is where you store and manage your digital assets. You can use it to send, receive, and keep track of your funds securely, including your Creator Fund USDC rewards.",
+          "payout_info": "Your payout wallet is where the Creator Fund sends your rewards, in USDC on Ethereum (ERC-20), within 14 days after each cycle ends. It can be any wallet or exchange account you control.",
           "learn_more": "Learn More",
           "copy": "Copy wallet address",
           "edit": "Edit",
-          "add": "Add wallet"
+          "add": "Add wallet",
+          "unavailable": "Verify your email to set up your wallet.",
+          "no_active_place": "You need to have a published scene to set up your wallet.",
+          "notify_failed": "We couldn't email you about this change, so your wallet wasn't saved. Please try again."
         },
         "contact": {
           "title": "Contact Information",
           "full_name": "Full Name",
           "email": "Email",
           "unverified": "Unverified",
-          "verify": "Verify email"
+          "verify": "Verify email",
+          "unavailable": "You need to have a published scene to verify your email"
         },
         "table": {
           "label": "Payouts",
@@ -1883,13 +2037,20 @@
         },
         "erc20": "Make sure this wallet can receive USDC on Ethereum (ERC-20). Funds sent to a wallet that doesn't support it can't be recovered.",
         "verify": {
-          "title": "Verify your email",
+          "confirm_title": "1. Confirm your email",
+          "confirm_body": "Make sure your email is correct. We’ll send a verification code to this address.",
+          "edit_email": "Edit email",
+          "daily_limit": "You've requested too many codes today. Try again tomorrow.",
+          "send_soon": "You can send a code to this address in a moment.",
+          "continue": "Continue",
+          "title": "2. Enter the verification code",
           "body_sent": "6-digit code sent to <b>{email}</b>.",
           "body_instruction": "Please enter the code below to complete verification.",
           "digit": "Digit {n} of 6",
-          "resend": "Resend Code",
-          "incorrect": "Incorrect Code. Check the email and try again.",
+          "resend": "Resend code",
+          "incorrect": "Incorrect code. Check the email and try again.",
           "expired": "This code has expired. Resend a new one.",
+          "back": "Back",
           "submit": "Verify"
         },
         "snackbar": {

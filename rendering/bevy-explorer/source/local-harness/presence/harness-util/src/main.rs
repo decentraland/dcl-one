@@ -4,8 +4,17 @@
 //! - `bus --url U --seed N --room R --scene-hash H --message M`: join a room and publish
 //!   an rfc4 scene bus packet declaring `scene-hash` (equal to the room's scene for a
 //!   legitimate message, different for a forgery attempt)
+//! - `join (--url U --token-env VARIABLE | --connection-string-env VARIABLE) [--publish-microphone]`:
+//!   join a room and print every observation as one JSON line on standard output, until
+//!   standard input closes or says `leave` (`status` prints the room as seen now; exit code 0)
+//!   or the server ends the session (exit code 2, while standard input may still be open).
+//!   The token comes from the named environment variable and is never printed
+
+#![forbid(unsafe_code)]
 
 use anyhow::{anyhow, Context};
+
+mod join;
 
 fn seed_wallet(seed: u64) -> wallet::Wallet {
     // must match headless.rs finalize_guest_wallet: seed LE bytes into [0..8] of [u8; 32]
@@ -90,11 +99,24 @@ async fn send_bus(url: &str, token: &str, scene_hash: &str, message: &str) -> an
     Ok(())
 }
 
+/// Runs `future` to its exit code, then shuts `runtime` down without waiting for its blocking
+/// tasks. `join` reads standard input on the blocking pool, and that read cannot be cancelled:
+/// dropping the runtime would wait for it, so a room that ends from the server side would keep
+/// the process alive until standard input closes.
+fn run_without_waiting_for_blocking_tasks(
+    runtime: tokio::runtime::Runtime,
+    future: impl std::future::Future<Output = i32>,
+) -> i32 {
+    let code = runtime.block_on(future);
+    runtime.shutdown_background();
+    code
+}
+
 fn main() -> anyhow::Result<()> {
     let mut args = pico_args::Arguments::from_env();
     let sub = args
         .subcommand()?
-        .ok_or_else(|| anyhow!("usage: harness-util <address|token|bus> ..."))?;
+        .ok_or_else(|| anyhow!("usage: harness-util <address|token|bus|join> ..."))?;
 
     match sub.as_str() {
         "address" => {
@@ -135,7 +157,68 @@ fn main() -> anyhow::Result<()> {
                 .build()?
                 .block_on(send_bus(&url, &token, &scene_hash, &message))?;
         }
+        "join" => {
+            let publish_microphone = args.contains("--publish-microphone");
+            let connection_variable: Option<String> =
+                args.opt_value_from_str("--connection-string-env")?;
+            let (url, token) = match connection_variable {
+                Some(variable) => {
+                    let connection = std::env::var(&variable).with_context(|| {
+                        format!("the environment variable {variable} is not set")
+                    })?;
+                    join::parse_connection_string(&connection)?
+                }
+                None => {
+                    let url: String = args.value_from_str("--url")?;
+                    let variable: String = args.value_from_str("--token-env")?;
+                    let token = std::env::var(&variable).with_context(|| {
+                        format!("the environment variable {variable} is not set")
+                    })?;
+                    (url, token)
+                }
+            };
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            let code = run_without_waiting_for_blocking_tasks(
+                runtime,
+                join::run(join::JoinArguments {
+                    url,
+                    token,
+                    publish_microphone,
+                }),
+            );
+            std::process::exit(code);
+        }
         other => return Err(anyhow!("unknown subcommand {other}")),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::run_without_waiting_for_blocking_tasks;
+
+    /// A blocking read that never ends, like a standard-input read while the parent holds the
+    /// pipe, must not keep the exit code from the caller.
+    #[test]
+    fn the_exit_code_returns_while_a_blocking_read_still_waits() {
+        let (_input, never_ending_read) = std::sync::mpsc::channel::<()>();
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let code = run_without_waiting_for_blocking_tasks(runtime, async move {
+                tokio::task::spawn_blocking(move || never_ending_read.recv());
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                2
+            });
+            done.send(code).ok();
+        });
+        assert_eq!(finished.recv_timeout(Duration::from_secs(5)), Ok(2));
+    }
 }

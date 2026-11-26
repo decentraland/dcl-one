@@ -155,11 +155,18 @@ fn login_identity_cmd(
 
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/logout")]
-struct LogoutCommand;
+struct LogoutCommand {
+    /// also drop the stored login, so the next start opens on sign-in (a person signing out)
+    #[arg(long)]
+    forget: bool,
+}
 
 fn logout_cmd(mut input: ConsoleCommand<LogoutCommand>, mut events: EventWriter<SystemApi>) {
-    if let Some(Ok(_)) = input.take() {
+    if let Some(Ok(command)) = input.take() {
         events.write(SystemApi::Logout);
+        if command.forget {
+            events.write(SystemApi::ForgetLogin);
+        }
         input.reply_ok("");
     }
 }

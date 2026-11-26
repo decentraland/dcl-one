@@ -6,5 +6,5 @@ import { AuthServerProvider } from '/@/lib/auth';
 export const accountChanged = createAction('account/changed');
 
 /** `createAsyncThunk` condition: a wallet-scoped thunk runs only for the signed-in account. */
-export const isSignedInAccount = ({ address }: { address: string }) =>
+export const isSignedInAccount = <Arg extends { address: string }>({ address }: Arg) =>
   AuthServerProvider.getAccount()?.toLowerCase() === address.toLowerCase();

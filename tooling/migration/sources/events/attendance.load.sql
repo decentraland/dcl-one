@@ -1,4 +1,5 @@
 -- An RSVP or cancellation this node recorded after the upstream one wins.
+WITH imported AS (
 INSERT INTO explore.event_attendance_local AS t (event_id, signer, signed_payload, action, signed_at)
 SELECT s.event_id, s.signer, jsonb_build_object('user_name', s.user_name), 'going',
        s.signed_at AT TIME ZONE 'UTC'
@@ -8,4 +9,10 @@ ON CONFLICT (event_id, signer) DO UPDATE SET
     signed_payload = EXCLUDED.signed_payload,
     action = 'going',
     signed_at = EXCLUDED.signed_at
-WHERE t.signed_at <= EXCLUDED.signed_at;
+WHERE t.signed_at <= EXCLUDED.signed_at
+RETURNING event_id, signer, signed_at, signed_payload
+)
+INSERT INTO dcl_migration.event_attendance_loaded (event_id, signer, signed_at, signed_payload)
+SELECT event_id, signer, signed_at, signed_payload FROM imported
+ON CONFLICT (event_id, signer) DO UPDATE
+SET signed_at = EXCLUDED.signed_at, signed_payload = EXCLUDED.signed_payload;

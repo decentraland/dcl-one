@@ -1,0 +1,271 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+/* Figma `checkbox` (style, checked, state, size, viewport). The Style Guide names two values the
+ * foundations have no token for: radius/xxs (4px, the small box) and color/border-control (white at
+ * 40%, the same value as --dcl-transparencies-white-40). */
+@layer dcl.components {
+  .root {
+    --checkbox-target: 32px;
+    --checkbox-halo-size: 32px;
+    --checkbox-box: 20px;
+    --checkbox-glyph: 16px;
+    --checkbox-radius: var(--dcl-radius-xs);
+    --checkbox-fill: transparent;
+    --checkbox-border: var(--dcl-transparencies-white-40);
+    --checkbox-mark: var(--dcl-icon-default);
+    --checkbox-halo: transparent;
+    position: relative;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--checkbox-target);
+    height: var(--checkbox-target);
+    vertical-align: middle;
+  }
+
+  .root[data-size='sm'] {
+    --checkbox-target: 28px;
+    --checkbox-halo-size: 28px;
+    --checkbox-box: 16px;
+    --checkbox-glyph: 12px;
+    --checkbox-radius: 4px;
+  }
+
+  .root[data-size='lg'] {
+    --checkbox-target: 36px;
+    --checkbox-halo-size: 36px;
+    --checkbox-box: 24px;
+    --checkbox-glyph: 20px;
+  }
+
+  /* Figma viewport=mobile: the same box and halo inside a 44px target, and no hover state. `[data-size]`
+   * outranks the size rules above. */
+  @media (pointer: coarse) {
+    .root[data-size] {
+      --checkbox-target: 44px;
+    }
+  }
+
+  /* The native input covers the whole target, so a click, a tap and a screen reader all reach it. */
+  .input {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .input:disabled {
+    cursor: not-allowed;
+  }
+
+  /* The halo keeps the desktop target size and stays centred in the wider coarse target. */
+  .halo {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: var(--checkbox-halo-size);
+    height: var(--checkbox-halo-size);
+    transform: translate(-50%, -50%);
+    border-radius: var(--dcl-radius-full);
+    background: var(--checkbox-halo);
+    transition: background-color 150ms ease;
+  }
+
+  .box {
+    position: relative;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--checkbox-box);
+    height: var(--checkbox-box);
+    border-radius: var(--checkbox-radius);
+    /* The design's 1.5px inside stroke. A border would be snapped to whole pixels. */
+    box-shadow: inset 0 0 0 1.5px var(--checkbox-border);
+    background: var(--checkbox-fill);
+    color: var(--checkbox-mark);
+    transition:
+      background-color 150ms ease,
+      box-shadow 150ms ease;
+  }
+
+  .check,
+  .dash {
+    display: none;
+    flex: none;
+    width: var(--checkbox-glyph);
+    height: var(--checkbox-glyph);
+  }
+
+  .input:checked:not(:indeterminate) ~ .box .check,
+  .input:indeterminate ~ .box .dash {
+    display: block;
+  }
+
+  /* style=outline */
+  .input:is(:checked, :indeterminate) ~ .box {
+    --checkbox-fill: var(--dcl-action-primary);
+    --checkbox-border: var(--dcl-action-primary);
+  }
+
+  /* style=filled */
+  .root[data-variant='filled'] {
+    --checkbox-fill: var(--dcl-neutrals-snow);
+    --checkbox-border: var(--dcl-neutrals-gray);
+    --checkbox-mark: var(--dcl-action-primary);
+  }
+
+  .root[data-variant='filled'] .input:is(:checked, :indeterminate) ~ .box {
+    --checkbox-fill: var(--dcl-neutrals-snow);
+    --checkbox-border: var(--dcl-neutrals-gray);
+  }
+
+  /* state=hover: desktop only. */
+  @media (hover: hover) {
+    .root:hover .input:not(:disabled) ~ .halo {
+      --checkbox-halo: var(--dcl-bg-hover);
+    }
+
+    .root:hover .input:not(:disabled, :checked, :indeterminate) ~ .box {
+      --checkbox-border: var(--dcl-transparencies-white-60);
+    }
+
+    .root:hover .input:is(:checked, :indeterminate):not(:disabled) ~ .halo {
+      --checkbox-halo: var(--dcl-action-primary-subtle);
+    }
+
+    .root:hover .input:is(:checked, :indeterminate):not(:disabled) ~ .box {
+      --checkbox-fill: var(--dcl-action-primary-hover);
+      --checkbox-border: var(--dcl-action-primary-hover);
+    }
+
+    .root[data-variant='filled']:hover .input:not(:disabled) ~ .box {
+      --checkbox-fill: var(--dcl-neutrals-snow);
+      --checkbox-border: var(--dcl-neutrals-gray);
+    }
+  }
+
+  /* state=pressed: `.root` keeps these as specific as the hover rules they follow. */
+  .root .input:active:not(:disabled) ~ .halo {
+    --checkbox-halo: var(--dcl-bg-hover);
+  }
+
+  .root .input:active:not(:disabled, :checked, :indeterminate) ~ .box {
+    --checkbox-border: var(--dcl-neutrals-snow);
+  }
+
+  .root .input:active:is(:checked, :indeterminate):not(:disabled) ~ .halo {
+    --checkbox-halo: var(--dcl-action-primary-subtle);
+  }
+
+  .root .input:active:is(:checked, :indeterminate):not(:disabled) ~ .box {
+    --checkbox-fill: var(--dcl-action-primary-pressed);
+    --checkbox-border: var(--dcl-action-primary-pressed);
+  }
+
+  .root[data-variant='filled'] .input:active:not(:disabled) ~ .box {
+    --checkbox-fill: var(--dcl-neutrals-gray);
+    --checkbox-border: var(--dcl-neutrals-gray);
+  }
+
+  /* state=disabled */
+  .input:disabled ~ .box {
+    --checkbox-border: var(--dcl-action-disabled);
+    --checkbox-mark: var(--dcl-text-disabled);
+  }
+
+  .input:disabled:is(:checked, :indeterminate) ~ .box {
+    --checkbox-fill: var(--dcl-action-disabled);
+  }
+
+  /* As drawn: a disabled dash keeps the snow glyph, while a disabled check is greyed. */
+  .input:disabled:indeterminate ~ .box {
+    --checkbox-mark: var(--dcl-icon-default);
+  }
+
+  .root[data-variant='filled'] .input:disabled ~ .box {
+    --checkbox-fill: var(--dcl-action-disabled);
+    --checkbox-border: var(--dcl-neutrals-gray);
+  }
+
+  /* Not in Figma: the Explorer HUD's box on its sign-in screens. It is always white, in every state; the tick is
+     the only change. Its target is the box, on a coarse pointer too: the screens size the row around it. Its
+     4.8px radius and its 50 % white focus ring have no token. `[data-size]` and the state selectors below match
+     the specificity of the rules they replace. */
+  .root[data-appearance='hud'][data-size] {
+    --checkbox-target: 20px;
+    --checkbox-halo-size: 20px;
+    --checkbox-box: 20px;
+    --checkbox-glyph: 12px;
+    --checkbox-radius: 4.8px;
+    --checkbox-mark: var(--dcl-brand-orange);
+  }
+
+  .root[data-appearance='hud'] .halo {
+    display: none;
+  }
+
+  .root[data-appearance='hud'] .input ~ .box,
+  .root[data-appearance='hud']:hover .input ~ .box,
+  .root[data-appearance='hud']:hover .input:is(:checked, :indeterminate):not(:disabled) ~ .box,
+  .root[data-appearance='hud'] .input:active ~ .box,
+  .root[data-appearance='hud'] .input:active:is(:checked, :indeterminate):not(:disabled) ~ .box,
+  .root[data-appearance='hud'] .input:disabled ~ .box {
+    --checkbox-fill: var(--dcl-neutrals-white);
+    --checkbox-border: transparent;
+  }
+
+  .root[data-appearance='hud'] .input:focus-visible ~ .box {
+    outline-color: rgba(255, 255, 255, 0.5);
+  }
+
+  /* Not in the design: a keyboard focus ring, the same as Switch's. */
+  .input:focus-visible ~ .box {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+
+  @media (forced-colors: active) {
+    .halo {
+      display: none;
+    }
+
+    /* Forced colours drop box shadows, so the stroke becomes a real border. The box opts out of
+     * the forced palette so a checked box can use the selection colours. */
+    .box {
+      forced-color-adjust: none;
+      border: 1.5px solid CanvasText;
+      background: Canvas;
+      color: CanvasText;
+    }
+
+    .input:is(:checked, :indeterminate) ~ .box {
+      border-color: Highlight;
+      background: Highlight;
+      color: HighlightText;
+    }
+
+    .input:disabled ~ .box,
+    .input:disabled:is(:checked, :indeterminate) ~ .box {
+      border-color: GrayText;
+      background: Canvas;
+      color: GrayText;
+    }
+
+    .input:focus-visible ~ .box,
+    .root[data-appearance='hud'] .input:focus-visible ~ .box {
+      outline-color: Highlight;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .halo,
+    .box {
+      transition: none;
+    }
+  }
+}

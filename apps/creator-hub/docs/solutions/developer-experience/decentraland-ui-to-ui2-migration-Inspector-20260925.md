@@ -1,179 +1,46 @@
-# Migrating the Inspector from decentraland-ui to decentraland-ui2
+# Removing decentraland-ui from the Inspector
 
-The Inspector still renders through `decentraland-ui` v6, which is built on
-Semantic UI. The Creator Hub renderer already uses `decentraland-ui2`, which
-is built on MUI. This document is the handoff plan for moving the Inspector
-onto `decentraland-ui2` so both packages share one design system.
+The Inspector no longer depends on `decentraland-ui` v6 (the Semantic UI library) and imports nothing from `decentraland-ui2`. This document started as a plan to move the Inspector onto `decentraland-ui2`. That plan was dropped: the Creator Hub UI is moving to the plain-CSS components of `apps/ui3`, so the Inspector uses those components directly. The record below says what replaced each use and what to check when you touch the same area.
 
-The surface is much smaller than it looks: 11 files import from
-`decentraland-ui`, and between them they use six components. The work is
-mostly mechanical, with one genuine blocker.
+## What replaced what
 
-## Why this is worth doing
-
-Three reasons, in order of how much they matter.
-
-- **One design system.** The Creator Hub embeds the Inspector in an iframe, so
-  today a user sees Semantic UI and MUI side by side in the same window.
-- **Test stability.** Semantic UI's `Popup` positions itself after mount, which
-  makes it measure-then-move. The inspector e2e suite has a tooltip placement
-  test (`Assets.spec.ts`, "Name tooltip sits right above the tile") that flakes
-  roughly one run in six because of it. MUI's `Popper` uses Popper.js, which
-  reports a settled position.
-- **Bundle size.** `src/index.tsx` imports `decentraland-ui/lib/styles.css`
-  globally. That file is 824 KB of Semantic UI CSS covering every Semantic
-  component, not just the six in use.
-
-<!-- prettier-ignore -->
-> [!NOTE]
-> Removing the global stylesheet is the single highest-value step, and it is
-> also the one most likely to cause visual regressions, because unrelated
-> elements may be inheriting Semantic's base styles without importing a
-> Semantic component.
-
-## What the Inspector actually uses
-
-Every import of `decentraland-ui` in `packages/inspector/src`, as of
-September 25, 2026:
-
-| File | Imports |
+| Before (`decentraland-ui`) | Now |
 | --- | --- |
-| `index.tsx` | `lib/styles.css`, `lib/dark-theme.css` |
-| `components/ui/InfoTooltip/InfoTooltip.tsx` | `Popup` |
-| `components/ui/InfoTooltip/types.ts` | `PopupProps` (type) |
-| `components/Loading/Loading.tsx` | `Loader`, `Dimmer` |
-| `components/Loading/types.ts` | `SemanticSIZES` (type) |
-| `components/CreateCustomAsset/CreateCustomAsset.tsx` | `Loader` |
-| `components/AssetsCatalog/Asset/AssetContainer.tsx` | `Popup`, `PopupContent` |
-| `components/ProjectAssetExplorer/Tile/Tile.tsx` | `Loader` |
-| `components/AssetPreview/AssetPreview.tsx` | `WearablePreview` |
-| `components/AssetPreview/AssetPreview.spec.tsx` | `vi.mock('decentraland-ui')` |
+| `Loader`, `Dimmer` | The ui3 `Spinner` (`@ui/atoms/Spinner`), wrapped by `components/Loading`. |
+| `Popup`, `PopupContent` | The shared `Tooltip` (`@dcl/one-ui`). |
+| `WearablePreview` | `components/WearablePreview`, a local component. |
+| `lib/styles.css`, `lib/dark-theme.css` | `theme/base.css` and seven custom properties in `theme/vars.css`. |
+| `AlertColor` (type, from `decentraland-ui2`) | A local union in `hooks/useSnackbar.ts`. |
 
-One more file is already on the new library: `hooks/useSnackbar.ts` imports
-`AlertColor` from `decentraland-ui2`.
+The `@ui` alias points at `apps/ui3/src`. `build.js` bundles those files from source, and `tsconfig.ui3.json` type-checks them.
 
-## Component mapping
+## WearablePreview
 
-`decentraland-ui2` re-exports all of `@mui/material` (see
-`export * from "@mui/material"` in its `dist/index.d.ts`), so every MUI
-component below is available directly from `decentraland-ui2` without adding
-`@mui/material` as a dependency.
+`components/WearablePreview` renders the hosted wearable preview in an iframe and talks to it with `postMessage`.
 
-| Semantic (current) | MUI replacement | Notes |
-| --- | --- | --- |
-| `Loader` | `CircularProgress` | Three call sites, all decorative spinners. |
-| `Dimmer` | `Backdrop` | One call site, wraps the loader in `Loading.tsx`. |
-| `Popup` | `Tooltip` or `Popper` | Use `Tooltip` for hover labels; use `Popper` where the content is interactive. |
-| `PopupContent` | Children of `Tooltip`'s `title` | No direct equivalent; MUI takes content as a prop. |
-| `SemanticSIZES` | `'small' \| 'medium' \| 'large'` | MUI sizes are a narrower union than Semantic's. Audit the call sites. |
-| `WearablePreview` | **None** | See the blocker below. |
+- `protocol.ts` picks the preview origin. The `env` (or `ENV`) query parameter of the page chooses first (`dev`, `stg`, `prod`), then the top-level domain of the host, and any other page gets production. All three origins must stay in the embed list of `packages/creator-hub/main/src/security-restrictions.ts`, or the frame does not load inside Creator Hub.
+- The frame URL carries the preview options and ends with `unity=false`.
+- The component sends its options once, when the preview reports that it is ready, and again when an option changes.
+- `controller.ts` sends requests to the preview (screenshot, metrics, emote playback) and matches each reply to its request. A request fails after 30 seconds without a reply.
+- Messages are accepted only from the preview origin and from the window of the frame. Messages are posted to the preview origin only.
 
-## The one blocker: WearablePreview
+## Base styles
 
-`WearablePreview` is a Decentraland-specific component, not a Semantic UI
-primitive, and `decentraland-ui2` does not export it. It renders the wearable
-preview iframe in `components/AssetPreview/AssetPreview.tsx`.
+The library stylesheet also styled plain elements, and the Inspector's own styles were written on top of those rules. `theme/base.css` keeps the rules the Inspector relies on: border-box sizing, the 14px root size, and the text, heading, link, form control, selection and scrollbar defaults. `index.tsx` imports it before the other stylesheets.
 
-You have three options, and the choice needs a decision from whoever owns
-`decentraland-ui2`:
+`theme/vars.css` now defines the custom properties that came from the library theme and that Inspector styles still read: `--background`, `--modal`, `--text`, `--secondary-text`, `--text-on-primary`, `--primary` and `--danger`.
 
-1. **Port `WearablePreview` into `decentraland-ui2`.** The cleanest outcome,
-   and it unblocks any other consumer with the same problem. It is also the
-   slowest, because it needs a release of that library.
-2. **Keep `decentraland-ui` as a dependency solely for this component.** The
-   Inspector keeps one Semantic import but drops the global stylesheet. You
-   must verify that `WearablePreview` renders acceptably without
-   `decentraland-ui/lib/styles.css`; if it does not, import only the CSS it
-   needs.
-3. **Inline the component.** `WearablePreview` is largely an iframe wrapper
-   around the wearable preview service. Copying it into the Inspector removes
-   the dependency entirely but forks the implementation.
+Not carried over: the Lato web font request, the Semantic icon fonts, every `.ui` class rule, and rules for elements the Inspector does not render. A bare `legend` element now gets the browser default style.
 
-<!-- prettier-ignore -->
-> [!IMPORTANT]
-> Do not start the migration by deleting the `decentraland-ui` dependency.
-> Decide the `WearablePreview` strategy first, because option 2 keeps the
-> dependency and changes the shape of every later step.
+## When you change this area
 
-## Fix this first: the phantom dependency
+- Add a page-wide element default to `theme/base.css`, not to a component stylesheet.
+- Add a new preview environment in `protocol.ts` and in the embed list of `security-restrictions.ts` together.
+- `pnpm run format` does not check CSS. Check new stylesheets against `.prettierrc` by hand (double quotes).
 
-`packages/inspector/src/hooks/useSnackbar.ts` imports from
-`decentraland-ui2`, but `packages/inspector/package.json` does not declare
-`decentraland-ui2` as a dependency. It resolves today only because npm
-workspaces hoist it from `creator-hub` into the root `node_modules`.
+## Still in the Inspector
 
-This is a latent break: if `creator-hub` drops or renames that dependency, the
-Inspector stops compiling for a reason that has nothing to do with the
-Inspector. Declare it explicitly before you add more imports:
+Two other UI libraries stay and are separate work:
 
-```bash
-cd packages/inspector
-npm i --save-exact decentraland-ui2@0.23.1
-```
-
-Match the version `creator-hub` pins, so the workspace resolves a single copy.
-
-## Suggested sequence
-
-Each step is independently shippable and independently revertible. Ship them as
-separate pull requests.
-
-1. **Declare `decentraland-ui2` in the Inspector.** One line in
-   `package.json`, no source changes. This is the phantom dependency fix above.
-2. **Replace `Loader` and `Dimmer`.** Four call sites across three files, all
-   decorative. `SemanticSIZES` disappears with `Loading/types.ts`. This is the
-   lowest-risk step and proves the theme integrates.
-3. **Replace `Popup` and `PopupContent`.** Two files. Update
-   `Assets.getNameTooltipPlacement` in the e2e page object at the same time:
-   its `.ui.popup.InfoTooltip` selector is Semantic-specific and will stop
-   matching. This step should fix the tooltip flake.
-4. **Resolve `WearablePreview`** using whichever option you chose above.
-   Update the `vi.mock('decentraland-ui')` factory in `AssetPreview.spec.tsx`
-   to match.
-5. **Remove the global stylesheet.** Delete the two CSS imports from
-   `index.tsx` and verify the Inspector visually. Expect to re-add styles that
-   were silently inherited. Do this last, and on its own, so a visual
-   regression is easy to bisect.
-
-## Verification
-
-Run these from the repository root after each step:
-
-```bash
-make typecheck
-make test
-pnpm exec eslint "packages/inspector/src/**/*.tsx"
-```
-
-The last command matters because `make lint` runs
-`eslint . --ext js,cjs,ts` and does not cover `.tsx` files, which is where
-nearly all of this work lands.
-
-For steps 3 and 5, also run the Inspector e2e suite, which needs a dev server:
-
-```bash
-cd packages/inspector
-node ./build.js
-pnpm exec http-server public -p 8000 --cors -a localhost &
-pnpm run test:e2e
-```
-
-The suite takes about 85 seconds and must stay at 56 passing. Run it at least
-twice after step 3 to confirm the tooltip test no longer flakes.
-
-## What this does not cover
-
-Two other UI libraries live in the Inspector and are out of scope here:
-
-- `react-contexify` provides the right-click menus (`.contexify_item`). MUI's
-  `Menu` is a plausible replacement, but the menus are used heavily in the
-  hierarchy tree and deserve their own assessment.
-- `react-dnd` handles drag and drop across 17 files. It has no MUI equivalent
-  and should stay.
-
-## Next steps
-
-Decide the `WearablePreview` strategy, then open the step 1 pull request. The
-theme wiring in step 2 is the real proof point: if `decentraland-ui2`'s
-`DclThemeProvider` composes cleanly with the Inspector's existing
-`theme/vars.css`, the rest of the migration is mechanical.
+- `react-contexify` provides the right-click menus.
+- `react-dnd` handles drag and drop.

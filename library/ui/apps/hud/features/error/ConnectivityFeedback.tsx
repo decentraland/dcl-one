@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, ModalShell, Panel, openPopup } from '../../design'
+import { ModalShell, openPopup } from '../../design'
 import type { ConnectivityState } from '../session/useConnectivity'
 import connectionLostIcon from './connection-lost.png'
 import floorLight from './modal-light.png'
 import styles from './ConnectivityFeedback.module.css'
+import { Button, Panel } from '@dcl/one-ui'
 
 const SCOPES: Record<string, string> = { realm: 'Realm room', scene: 'Scene room', private_chat: 'Private chat' }
 const STATES: Record<string, string> = {
@@ -11,10 +12,12 @@ const STATES: Record<string, string> = {
   invalid: 'connection settings are invalid', credentials_required: 'new credentials are required',
   reconnecting: 'reconnecting', failed: 'connection failed', disconnected: 'disconnected', paused: 'paused'
 }
+/** The engine retries the scene room by itself and play goes on without it, so its drops sit in a corner. */
+const QUIET_SCENE = new Set(['reconnecting', 'failed', 'disconnected'])
 
 function RetryButton({ retry }: { retry: () => void | Promise<void> }) {
   const [pending, setPending] = useState(false)
-  return <Button className={styles.retry} disabled={pending} aria-busy={pending} onClick={async () => {
+  return <Button appearance="hud" className={styles.retry} disabled={pending} aria-busy={pending} onClick={async () => {
     if (pending) return
     setPending(true)
     try { await retry() }
@@ -40,7 +43,7 @@ export function ConnectivityFeedback({ state, retry, exit }: { state: Connectivi
           <h2 className={styles.title}>Connection Lost</h2>
           <p className={styles.description}>You appear to be offline. Please check your internet connection and retry.</p>
           <div className={styles.actions}>
-            <Button variant="secondary" className={styles.exit} onClick={() => { dismiss(); actions.current.exit() }}>Exit Application</Button>
+            <Button appearance="hud" variant="secondary" className={styles.exit} onClick={() => { dismiss(); actions.current.exit() }}>Exit Application</Button>
             <RetryButton retry={() => actions.current.retry()} />
           </div>
         </div>
@@ -54,5 +57,6 @@ export function ConnectivityFeedback({ state, retry, exit }: { state: Connectivi
     return scope && reason ? [`${scope}: ${reason}`] : []
   }) ?? [])]
   if (lost || messages.length === 0) return null
-  return <Panel role="status" aria-label="Multiplayer status" className={styles.status}>{messages.map(message => <div key={message}>{message}</div>)}</Panel>
+  const quiet = state!.rooms.every(room => !STATES[room.state] || (room.scope === 'scene' && QUIET_SCENE.has(room.state)))
+  return <Panel role="status" aria-label="Multiplayer status" className={quiet ? styles.quiet : styles.status}>{messages.map(message => <div key={message}>{message}</div>)}</Panel>
 }

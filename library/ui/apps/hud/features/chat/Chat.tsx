@@ -7,20 +7,24 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChatLine, ChatState, Conversation } from '../session/useEngineSession'
 import type { DmUserState, MessageReaction, NearbyMember } from '@explorer-core/engine/protocol'
-import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
-import { EmojiPicker } from './EmojiPicker'
+import { Avatar, ControlButton, Translate, VerifiedBadge } from '../../design'
+import { EmojiPicker, useCloseEmojiPanelOnOutsidePress } from './EmojiPicker'
 import { EmojiButton } from './EmojiButton'
+import { ReactionLane } from './ReactionLane'
 import { EmojiSuggestList, emojiSuggestionAt, moveSelection, tokenAtCaret } from './EmojiSuggestList'
-import { AutoTranslateButton } from './AutoTranslateButton'
-import { ConversationMenu } from './ConversationMenu'
+import { ConversationMenu, MENU_LAYER } from './ConversationMenu'
+import { HeartIcon } from './ChatIcons'
 import { ConversationRail } from './ConversationRail'
 import { CommunityHeader } from './CommunityHeader'
 import { clearPingMode } from './ping'
+import { buttonSoundHandlers } from './buttonSounds'
 import { roleLabel } from '@explorer-core/features/communities/roles'
 import { displaySender, isSystem, memberLabel, senderColor, shortAddr, splitName, usePartner } from './chatIdentity'
 import { EMOJI_BY_CODE, EMOJI_BY_GLYPH, QUICK_REACTIONS, loadRecents, type Emoji } from './emojiData'
 import { MessageText } from './chatText'
 import { mentionsMe } from '@explorer-core/features/chat/chatParse'
+import { CHAT_REACTIONS_SETTING } from '@explorer-core/features/chat/reactions'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { autoTranslates, clearAutoTranslate, getTranslation, hasTranslatableText, languageName, requestTranslation, showOriginal, type Translation } from '@explorer-core/features/chat/translation'
 import { useTranslationPrefs, useTranslations } from './useTranslation'
 import { type ChatUser } from './ProfileCardPresentation'
@@ -40,6 +44,7 @@ import { useOptionalSession } from '../session/SessionContext'
 import { CommunityStreamBanner } from './CommunityStreamBanner'
 import styles from './Chat.module.css'
 import { dmRefusal } from './dmStateCopy'
+import { DclLogo, MaskIcon, Switch, Tooltip, VoiceBars } from '@dcl/one-ui'
 
 const MAX_LEN = 500
 
@@ -50,6 +55,9 @@ function lineKey(line: ChatLine): string {
 
 /** The newest lines of a conversation translated when it auto-translates (older ones by hand). */
 const AUTO_TRANSLATE_RECENT = 20
+// How long after the reactions picker closes on its own cancel key a Cancel from the engine is
+// taken to be that same press.
+const PICKER_CANCEL_PRESS_MS = 300
 
 /** The icon by a message's time saying where its translation stands; its tooltip says what a click does. */
 function TranslationMark({ line, translation, onTranslate, onShowOriginal, onHover }: {
@@ -178,7 +186,7 @@ function NewSeparator(): React.JSX.Element {
   )
 }
 
-const MSG_STYLES = { url: styles.url, mention: styles.mention, location: styles.location, world: styles.world }
+const MSG_STYLES = { url: styles.url, mention: styles.mention, location: styles.location, world: styles.world, bold: styles.bold, italic: styles.italic }
 
 /** "Ana, Bo and you reacted with :fire:" — who reacted with one emoji, for its pill's tooltip. */
 export function reactionLabel(reaction: MessageReaction, me?: string): string {
@@ -258,6 +266,7 @@ export const ChatBubble = memo(function ChatBubble({
   onOpenProfile,
   onLocation,
   onVisitWorld,
+  onOpenUrl,
   onReact,
   onToggleReaction,
   onReactionHover,
@@ -294,6 +303,8 @@ export const ChatBubble = memo(function ChatBubble({
   onLocation?: (x: number, y: number) => void
   /** A world name (e.g. boedo.dcl.eth) in the message was clicked → prompt to jump there. */
   onVisitWorld?: (name: string) => void
+  /** A URL in the message was clicked. */
+  onOpenUrl?: (url: string) => void
 }): React.JSX.Element {
   // Resolved from the profile store for as long as the line is on screen: a sender who has since
   // left keeps their name and face, and a name change reaches every line they sent.
@@ -338,7 +349,7 @@ export const ChatBubble = memo(function ChatBubble({
   return (
     <div className={`${styles.entry} ${own ? styles.own : ''} ${arrive ? styles.arrive : ''}`.trim()}>
       {clickable ? (
-        <button type="button" className={styles.avatarBtn} aria-label={`View ${base}`} onClick={openSender} onContextMenu={openSender}>
+        <button type="button" className={styles.avatarBtn} aria-label={`View ${base}`} data-ui-sound="press" onClick={openSender} onContextMenu={openSender}>
           {avatar}
         </button>
       ) : (
@@ -347,7 +358,7 @@ export const ChatBubble = memo(function ChatBubble({
       <div className={`${styles.bubble} ${highlight ? styles.mentionMe : ''}`.trim()}>
         <div className={styles.content}>
           {clickable ? (
-            <button type="button" className={styles.name} style={{ color }} onClick={openSender} onContextMenu={openSender}>
+            <button type="button" className={styles.name} style={{ color }} data-ui-sound="press" onClick={openSender} onContextMenu={openSender}>
               {nameRow}
             </button>
           ) : (
@@ -356,7 +367,7 @@ export const ChatBubble = memo(function ChatBubble({
             </span>
           )}
           <span className={styles.text}>
-            <MessageText text={text} members={members} styles={MSG_STYLES} onMention={onMention} onLocation={(x, y) => onLocation?.(x, y)} onWorld={onVisitWorld} />
+            <MessageText text={text} members={members} styles={MSG_STYLES} onMention={onMention} onLocation={(x, y) => onLocation?.(x, y)} onWorld={onVisitWorld} onUrl={onOpenUrl} />
           </span>
           <span className={styles.time}>
             {formatTime(line.ts)}
@@ -369,7 +380,7 @@ export const ChatBubble = memo(function ChatBubble({
         <span className={styles.spacer} aria-hidden="true" />
       </div>
       {translatable && onTranslate != null && (translation == null || translation.status === 'failed') && (
-        <button type="button" className={styles.translateBtn} aria-label="Translate" title="Translate" onClick={() => onTranslate(line)}>
+        <button type="button" className={styles.translateBtn} aria-label="Translate" title="Translate" data-ui-sound="press" onClick={() => onTranslate(line)}>
           <Translate size={16} />
         </button>
       )}
@@ -379,6 +390,7 @@ export const ChatBubble = memo(function ChatBubble({
           className={`${styles.reactBtn} ${reacting ? styles.reactBtnOn : ''}`.trim()}
           aria-label="React"
           aria-pressed={reacting}
+          data-ui-sound="soft"
           onClick={(e) => onReact(line, e.currentTarget)}
         />
       )}
@@ -386,20 +398,28 @@ export const ChatBubble = memo(function ChatBubble({
   )
 })
 
-/** The reaction bar: Unity's fixed emoji, the most recent others from the picker, and "+" for the
- *  full picker. Picking toggles the local user's reaction. */
+/** The reaction bar: the fixed emoji, the most recent others from the picker, and "+" for the
+ *  full picker. Over a message (`line`), the emoji the local user reacted to it with are marked. */
 function ReactionBar({
   line,
   me,
+  label = 'React',
+  className = '',
   style,
   onPick,
-  onMore
+  onMore,
+  children
 }: {
-  line: ChatLine
+  line?: ChatLine
   me?: string
-  style: React.CSSProperties
+  /** The bar's accessible name. */
+  label?: string
+  className?: string
+  style?: React.CSSProperties
   onPick: (emoji: string) => void
   onMore: () => void
+  /** Shown above the emoji. */
+  children?: React.ReactNode
 }): React.JSX.Element {
   const MAX_RECENT = 3
   const recent = useMemo(
@@ -411,26 +431,54 @@ function ReactionBar({
     []
   )
   const mine = me?.toLowerCase()
-  const isMine = (emoji: string): boolean => mine != null && (line.reactions?.find((r) => r.emoji === emoji)?.from.includes(mine) ?? false)
+  const isMine = (emoji: string): boolean => mine != null && (line?.reactions?.find((r) => r.emoji === emoji)?.from.includes(mine) ?? false)
   const item = (emoji: string): React.JSX.Element => (
     <button
       key={emoji}
       type="button"
       className={`${styles.barEmoji} ${isMine(emoji) ? styles.barEmojiOn : ''}`.trim()}
       title={EMOJI_BY_GLYPH.get(emoji)?.expression}
+      data-ui-sound="press"
       onClick={() => onPick(emoji)}
     >
       {emoji}
     </button>
   )
   return (
-    <div className={styles.reactionBar} style={style} role="dialog" aria-label="React">
-      {QUICK_REACTIONS.map(item)}
-      {recent.length > 0 && <span className={styles.barDivider} aria-hidden="true" />}
-      {recent.map(item)}
-      <button type="button" className={styles.barMore} aria-label="More emoji" onClick={onMore}>
-        +
-      </button>
+    <div className={`${styles.reactionBar} ${className}`.trim()} style={style} role="dialog" aria-label={label}>
+      {children}
+      <div className={styles.barRow}>
+        {QUICK_REACTIONS.map(item)}
+        {recent.length > 0 && <span className={styles.barDivider} aria-hidden="true" />}
+        {recent.map(item)}
+        <button type="button" className={styles.barMore} aria-label="More emoji" onClick={onMore}>
+          +
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** The "Chat Reactions" setting's switch, in the reactions button's bar: whether reactions show
+ *  on screen too. Nothing where the engine lists no such setting. */
+function ScreenReactionsSwitch(): React.JSX.Element | null {
+  const settings = useOptionalSession()?.settings
+  const load = settings?.load
+  useEffect(() => load?.(), [load])
+  const setting = settings?.list.find((s) => s.name === CHAT_REACTIONS_SETTING)
+  if (settings == null || setting == null) return null
+  return (
+    <div className={styles.barOptions}>
+      <span aria-hidden="true">Chat Reactions</span>
+      <Switch
+        appearance="hud"
+        size="sm"
+        checked={setting.value >= 1}
+        disabled={setting.value < 0 || setting.disabled}
+        label="Chat Reactions"
+        labelHidden
+        onCheckedChange={(on) => settings.set(CHAT_REACTIONS_SETTING, on ? 1 : 0)}
+      />
     </div>
   )
 }
@@ -499,7 +547,7 @@ type MemberEntry = NearbyMember & { role?: string }
 
 function MembersOverlay({
   title = 'Nearby',
-  empty = 'No one nearby',
+  empty,
   members,
   speaking,
   onOpen,
@@ -517,7 +565,7 @@ function MembersOverlay({
   return (
     <div className={styles.membersPanel}>
       <header className={`${styles.nav} ${styles.membersHeader}`}>
-        <ControlButton variant="dark" aria-label="Back" onClick={onBack}>
+        <ControlButton variant="dark" aria-label="Back" autoFocus onClick={onBack}>
           <MaskIcon src={arrowLeftIcon} size={12} className={styles.backIcon} />
         </ControlButton>
         <span className={styles.navTitle} title={title}>{title}&nbsp; -</span>
@@ -525,13 +573,14 @@ function MembersOverlay({
           <MaskIcon src={playersIcon} size={16} />
           <span className={styles.countNum}>{members.length}</span> Online
         </span>
-        <ControlButton variant="dark" className={styles.close} aria-label="Close chat" onClick={onClose}>
+        <ControlButton variant="dark" className={styles.close} aria-label="Close chat" onClick={onClose} data-ui-sound="soft">
           <MaskIcon src={closeIcon} size={10} />
         </ControlButton>
       </header>
       <div className={styles.membersList}>
         {members.length === 0 ? (
-          <div className={styles.empty}>{empty}</div>
+          // alone in Nearby the list is bare: the words are for screen readers
+          <div className={empty != null ? styles.empty : styles.srOnly}>{empty ?? 'No one nearby'}</div>
         ) : (
           members.map((m) => <MemberRow key={m.address} member={m} role={m.role} speaking={speaking.has(m.address.toLowerCase())} onOpen={onOpen} />)
         )}
@@ -599,7 +648,7 @@ function DmHeader({ conversation, onClose, onDelete, onOpenProfile }: {
       </button>
       <div className={styles.navRight}>
         {session != null && gate != null && (
-          <Tooltip label={gate.allowed ? 'Call' : gate.reason} side="bottom" multiline={!gate.allowed}>
+          <Tooltip appearance="hud" label={gate.allowed ? 'Call' : gate.reason} side="bottom" multiline={!gate.allowed}>
             <ControlButton
               variant="faint"
               aria-label="Call"
@@ -612,11 +661,10 @@ function DmHeader({ conversation, onClose, onDelete, onOpenProfile }: {
             </ControlButton>
           </Tooltip>
         )}
-        <AutoTranslateButton channel={conversation.address} />
         <ConversationMenu
           channel={conversation.address}
           entries={[
-            { label: 'Delete chat history', danger: true, onClick: onDelete },
+            { label: 'Delete Chat History', danger: true, onClick: onDelete },
             { label: 'Close conversation', onClick: onClose }
           ]}
         />
@@ -631,6 +679,7 @@ export function Chat({
   me,
   onTeleport,
   onVisitWorld,
+  onOpenUrl,
   onOpenSettings
 }: {
   chat: ChatState
@@ -641,6 +690,8 @@ export function Chat({
   onTeleport?: (x: number, y: number) => void
   /** A world name (e.g. boedo.dcl.eth) in a message was clicked → prompt to jump there. */
   onVisitWorld?: (name: string) => void
+  /** A URL in a message was clicked; unset, the link is a plain anchor. */
+  onOpenUrl?: (url: string) => void
   /** The blocked-input "DM settings" link. */
   onOpenSettings?: () => void
 }): React.JSX.Element | null {
@@ -650,7 +701,9 @@ export function Chat({
   const [sug, setSug] = useState<Suggestions | null>(null)
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
-  const [dim, setDim] = useState(false)
+  // Focus anywhere in the panel (a title bar button, the members list, the options menu) keeps the
+  // chat active, as the input's does: only a click outside lets go of it.
+  const [within, setWithin] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
@@ -659,11 +712,16 @@ export function Chat({
     rootRef.current = el
     return hudInsetRef(el)
   }, [])
-  // The line whose reaction bar is open (how far down the panel, in its own px), and whether the
-  // full picker is choosing its reaction instead.
-  const [reacting, setReacting] = useState<{ line: ChatLine; top: number } | null>(null)
+  // The reaction bar open: a line's (how far down the panel, in its own px) or the reactions
+  // button's, and whether the full picker is choosing the reaction instead.
+  const [reacting, setReacting] = useState<{ kind: 'line'; line: ChatLine; top: number } | { kind: 'situational' } | null>(null)
   const [reactPicker, setReactPicker] = useState(false)
+  const reactPickerRef = useRef(reactPicker)
+  reactPickerRef.current = reactPicker
+  // When the reactions button's picker last closed itself on its own cancel key.
+  const pickerCancelledAt = useRef(-Infinity)
   const reactRef = useRef<HTMLDivElement>(null)
+  const heartRef = useRef<HTMLSpanElement>(null)
   // The hovered reaction pill's tooltip (where its pill's top and centre are, in the panel's px).
   const [pillTip, setPillTip] = useState<{ label: string; top: number; center: number } | null>(null)
   const pillTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -672,13 +730,41 @@ export function Chat({
   // "active" = the user is interacting → show the full solid panel + chrome.
   // A profile card opened from the chat keeps it active, so the view under the card stays put.
   const [cardOpen, setCardOpen] = useState(false)
-  const active = open && (hovered || focused || picker || cardOpen || reacting != null)
+  const active = open && (hovered || focused || within || picker || cardOpen || reacting != null)
   const bare = !active // collapsed or idle-open → borderless translucent input only
+  // `within` is where the focus is, read from the document, not kept from focus and blur events: a
+  // focused control that unmounts (the members list's Back, a menu entry that closes its menu, a
+  // rail tab's close, the panel itself going away) fires no blur. Read again whenever the focus or
+  // the pointer does something, once more after the handlers of a click or a key have changed the
+  // tree, and when the view under the focus changes.
+  const syncWithin = useCallback(() => {
+    const at = document.activeElement
+    const root = rootRef.current
+    setWithin(at != null && at !== document.body && ((root?.contains(at) ?? false) || at.closest(`[${MENU_LAYER}]`) != null))
+  }, [])
+  useEffect(() => {
+    let later: ReturnType<typeof setTimeout> | null = null
+    const check = (): void => {
+      syncWithin()
+      if (later != null) clearTimeout(later)
+      later = setTimeout(() => {
+        later = null
+        syncWithin()
+      }, 0)
+    }
+    const events = ['focusin', 'pointerdown', 'click', 'keyup'] as const
+    for (const name of events) document.addEventListener(name, check)
+    return () => {
+      for (const name of events) document.removeEventListener(name, check)
+      if (later != null) clearTimeout(later)
+    }
+  }, [syncWithin])
+  useEffect(syncWithin, [syncWithin, open, hidden, chat.channel, showMembers, picker, cardOpen, reacting])
   useEffect(() => chat.setActive(active), [active, chat.setActive])
   // The DM or community shown, if the channel is one; the rail appears once any tab exists.
   const conversation = chat.channel === 'Nearby' ? null : (chat.conversations.find((c) => c.address === chat.channel) ?? null)
   const community = chat.channel === 'Nearby' ? null : (chat.communities.find((c) => c.key === chat.channel) ?? null)
-  const hasRail = open && (chat.conversations.length > 0 || chat.communities.length > 0)
+  const hasRail = open // Nearby's tab is on the rail even with no other conversation
   // A community's online members as people: its members list, and who @-mentions can name.
   const communityMembers = community?.members
   const communityPeople = useMemo(
@@ -697,15 +783,6 @@ export function Chat({
     if (open) liveFrom.current = lastId + 1
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
-
-  // Idle and unhovered, the messages dim after 10s; a new message or any interaction restores them.
-  const IDLE_DIM_MS = 10_000
-  useEffect(() => {
-    setDim(false)
-    if (!open || active) return
-    const t = setTimeout(() => setDim(true), IDLE_DIM_MS)
-    return () => clearTimeout(t)
-  }, [open, active, lastId])
 
   const rows = useMemo(() => {
     const out: ({ kind: 'day'; ts: number; id: string } | { kind: 'msg'; line: ChatLine })[] = []
@@ -834,13 +911,15 @@ export function Chat({
     openProfileCard(user.address, x, y, { onClose: () => setCardOpen(false) })
   }, [])
   // The HUD passes fresh arrows each render; read them through refs so bubbles stay memoized.
-  const handlers = useRef({ onTeleport, onVisitWorld })
+  const handlers = useRef({ onTeleport, onVisitWorld, onOpenUrl })
   useEffect(() => {
-    handlers.current = { onTeleport, onVisitWorld }
+    handlers.current = { onTeleport, onVisitWorld, onOpenUrl }
   })
   const teleport = useCallback((x: number, y: number) => handlers.current.onTeleport?.(x, y), [])
   const visitWorld = useCallback((name: string) => handlers.current.onVisitWorld?.(name), [])
   const hasVisitWorld = onVisitWorld != null
+  const openUrl = useCallback((url: string) => handlers.current.onOpenUrl?.(url), [])
+  const hasOpenUrl = onOpenUrl != null
 
   // Reactions: picking an emoji the local user already reacted with takes it back.
   const chatRef = useRef(chat)
@@ -910,14 +989,14 @@ export function Chat({
     setPicker(false)
     setReactPicker(false)
     setReacting((current) => {
-      if (current?.line.id === line.id) return null
+      if (current?.kind === 'line' && current.line.id === line.id) return null
       // the panel is scaled: client px back into its own
       const box = root.getBoundingClientRect()
       const scale = root.offsetWidth > 0 ? box.width / root.offsetWidth : 1
       const at = anchor.getBoundingClientRect()
       const above = (at.top - box.top) / scale - BAR_HEIGHT - BAR_GAP
       const top = above >= 0 ? above : (at.bottom - box.top) / scale + BAR_GAP
-      return { line, top }
+      return { kind: 'line', line, top }
     })
   }, [])
   // Unity's: a short hover delay, so scrolling past pills doesn't flicker tooltips.
@@ -946,17 +1025,31 @@ export function Chat({
     setReactPicker(false)
   }
   // The bar follows its line's reactions as they change while it is open.
-  const reactingLine = reacting != null ? (chat.messages.find((l) => l.id === reacting.line.id) ?? reacting.line) : null
+  const reactingLine = reacting?.kind === 'line' ? (chat.messages.find((l) => l.id === reacting.line.id) ?? reacting.line) : null
+  const situational = reacting?.kind === 'situational'
   const pickReaction = (emoji: string): void => {
+    // the reactions button's bar, and its picker, stay for the next one
+    if (situational) {
+      chat.sendReaction(emoji)
+      return
+    }
     if (reactingLine != null) toggleReaction(reactingLine, emoji)
     closeReactions()
   }
-  // A press outside the bar (or its picker) closes it; so does switching channel.
+  // The reactions button: over a message's bar a press only closes that.
+  const toggleReactions = (): void => {
+    inputRef.current?.blur()
+    setPicker(false)
+    setReactPicker(false)
+    setReacting((current) => (current == null ? { kind: 'situational' } : null))
+  }
+  // A press outside the bar (or its picker) closes it; so does switching channel, or the chat
+  // closing, going away or showing its members instead.
   useEffect(() => {
     if (reacting == null) return
     const onDown = (e: PointerEvent): void => {
       const t = e.target as HTMLElement
-      if (reactRef.current?.contains(t) || pickerRef.current?.contains(t) || t.closest('[aria-label="React"]')) return
+      if (reactRef.current?.contains(t) || pickerRef.current?.contains(t) || heartRef.current?.contains(t) || t.closest('[aria-label="React"]')) return
       closeReactions()
     }
     document.addEventListener('pointerdown', onDown, true)
@@ -964,7 +1057,19 @@ export function Chat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reacting])
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => closeReactions(), [chat.channel, open])
+  useEffect(() => closeReactions(), [chat.channel, open, hidden, showMembers])
+  // Cancel closes the reactions button's picker, then its bar. The layer is registered once for
+  // the bar, so it keeps its place among the layers and popups opened after it. With the focus
+  // inside the picker the key is the picker's, which closes itself (below); an engine that saw
+  // that press too sends its Cancel here, and it must not take the bar as well.
+  useEffect(() => {
+    if (!situational) return
+    return registerCancelLayer(() => {
+      if (reactPickerRef.current) setReactPicker(false)
+      else if (performance.now() - pickerCancelledAt.current > PICKER_CANCEL_PRESS_MS) closeReactions()
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [situational])
   // "Mention" from the viewer drops @name into the draft, ready to send.
   const insertMention = (name: string): void => {
     setDraft((d) => `${d.replace(/\s*$/, '')} @${name} `.trimStart())
@@ -1011,6 +1116,7 @@ export function Chat({
     })
   }
   const accept = (s: Suggestions, i: number): void => {
+    chat.playSound('chatEmoji')
     if (s.kind === 'emoji') replaceRange(s.start, s.end, s.items[i].emoji)
     else {
       const m = s.items[i]
@@ -1023,6 +1129,13 @@ export function Chat({
     const end = el?.selectionEnd ?? draft.length
     replaceRange(start, end, glyph)
   }
+
+  // The emoji panel opening sounds; its closing does not.
+  useEffect(() => {
+    if (picker) chat.playSound('chatEmoji')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picker])
+  const buttonSounds = useMemo(() => buttonSoundHandlers(chat.playSound), [chat.playSound])
 
   const send = (): void => {
     if (!draft.trim()) return
@@ -1052,17 +1165,8 @@ export function Chat({
     }
   }
 
-  // The emoji panel closes on a press outside it (the emoji button toggles it itself).
-  useEffect(() => {
-    if (!picker) return
-    const onDown = (e: PointerEvent): void => {
-      const t = e.target as HTMLElement
-      if (pickerRef.current?.contains(t) || t.closest('[aria-label="Emoji"]')) return
-      setPicker(false)
-    }
-    document.addEventListener('pointerdown', onDown, true)
-    return () => document.removeEventListener('pointerdown', onDown, true)
-  }, [picker])
+  const emojiRef = useRef<HTMLButtonElement>(null)
+  useCloseEmojiPanelOnOutsidePress(picker, pickerRef, emojiRef, () => setPicker(false))
 
   // A click anywhere in the panel that isn't a control focuses the input — unless it selected text to copy.
   const focusFromPanel = (e: React.MouseEvent): void => {
@@ -1082,12 +1186,20 @@ export function Chat({
   if (hidden) return null
 
   return (
+    <>
     <div
       ref={setRoot}
       className={`${styles.root} ${open ? styles.open : ''} ${active ? styles.active : ''} ${focused ? styles.focused : ''} ${active && showMembers ? styles.membersOpen : ''} ${hasRail ? styles.withRail : ''}`.trim()}
       onClick={focusFromPanel}
+      {...buttonSounds}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onFocus={syncWithin}
+      onBlur={(e) => {
+        const to = e.relatedTarget as Element | null
+        if (to != null && (e.currentTarget.contains(to) || to.closest(`[${MENU_LAYER}]`) != null)) return
+        setWithin(false)
+      }}
     >
       <div className={styles.main}>
       {open && conversation != null && (
@@ -1123,7 +1235,6 @@ export function Chat({
             <span className={styles.navTitle}>Nearby</span>
           </div>
           <div className={styles.navRight}>
-            <AutoTranslateButton channel="Nearby" />
             <ControlButton
               variant="faint"
               shape="pill"
@@ -1135,21 +1246,24 @@ export function Chat({
               <MaskIcon src={playersIcon} size={18} />
               {chat.members.length}
             </ControlButton>
-            <ConversationMenu channel="Nearby" />
-            {!hasRail && (
-              <>
-                <span className={styles.navDivider} aria-hidden="true" />
-                <ControlButton variant="dark" aria-label="Close chat" onClick={chat.toggle}>
-                  <MaskIcon src={closeIcon} size={10} />
-                </ControlButton>
-              </>
-            )}
+            <ConversationMenu
+              channel="Nearby"
+              entries={[{
+                label: 'Delete Chat History',
+                danger: true,
+                onClick: () => {
+                  chat.deleteHistory('Nearby')
+                  clearAutoTranslate('Nearby')
+                  clearPingMode('Nearby')
+                }
+              }]}
+            />
           </div>
         </header>
       )}
 
       {open && (
-        <div ref={listRef} className={`${styles.messages} ${dim ? styles.dim : ''}`.trim()} onScroll={() => hoverReaction(null)}>
+        <div ref={listRef} className={styles.messages} onScroll={() => hoverReaction(null)}>
           {rows.map((r) =>
             r.kind === 'day' ? (
               <DaySeparator key={r.id} ts={r.ts} />
@@ -1164,11 +1278,12 @@ export function Chat({
                   onOpenProfile={openProfile}
                   onLocation={teleport}
                   onVisitWorld={hasVisitWorld ? visitWorld : undefined}
+                  onOpenUrl={hasOpenUrl ? openUrl : undefined}
                   onReact={openReactionBar}
                   onToggleReaction={toggleReaction}
                   onReactionHover={hoverReaction}
                   onTranslationHover={hoverReaction}
-                  reacting={reacting?.line.id === r.line.id}
+                  reacting={reactingLine?.id === r.line.id}
                   translation={getTranslation(lineKey(r.line), target)}
                   onTranslate={translateLine}
                   onShowOriginal={showLineOriginal}
@@ -1182,7 +1297,10 @@ export function Chat({
       {active && picker && (
         <div ref={pickerRef} className={styles.pickerWrap}>
           <EmojiPicker
-            onPick={insertAtCaret}
+            onPick={(glyph) => {
+              chat.playSound('chatEmoji')
+              insertAtCaret(glyph)
+            }}
             onClose={() => {
               setPicker(false)
               inputRef.current?.focus()
@@ -1193,7 +1311,17 @@ export function Chat({
 
       {active && reactPicker && reacting != null && (
         <div ref={pickerRef} className={styles.pickerWrap}>
-          <EmojiPicker onPick={pickReaction} onClose={closeReactions} />
+          <EmojiPicker
+            onPick={pickReaction}
+            onClose={
+              situational
+                ? () => {
+                    pickerCancelledAt.current = performance.now()
+                    setReactPicker(false)
+                  }
+                : closeReactions
+            }
+          />
         </div>
       )}
 
@@ -1246,7 +1374,12 @@ export function Chat({
           rows={1}
           className={styles.input}
           value={draft}
-          onChange={(e) => updateDraft(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+          onChange={(e) => {
+            // the user's own edits sound (typing, a paste, a cut); a text change the chat makes
+            // (a send's clearing, an emoji or suggestion dropped in) has that action's sound
+            chat.playSound('chatInput')
+            updateDraft(e.target.value, e.target.selectionStart ?? e.target.value.length)
+          }}
           onSelect={(e) => {
             const el = e.currentTarget
             if (el.selectionStart === el.selectionEnd && sug?.end !== el.selectionStart) suggestAt(el.value, el.selectionStart ?? el.value.length)
@@ -1263,7 +1396,7 @@ export function Chat({
         )}
         {focused && draft.length > 0 && <CharRing len={draft.length} />}
         {!bare && blockedState == null && (
-          <EmojiButton className={styles.emojiBtn} open={picker} onToggle={toggleEmoji} />
+          <EmojiButton ref={emojiRef} className={styles.emojiBtn} open={picker} onToggle={toggleEmoji} />
         )}
       </form>
 
@@ -1283,8 +1416,23 @@ export function Chat({
       )}
       </div>
       {hasRail && <ConversationRail chat={chat} onClose={chat.toggle} />}
+      <span ref={heartRef} className={styles.heart}>
+        {open && (
+          <ControlButton
+            variant="faint"
+            shape="circle"
+            className={styles.heartBtn}
+            active={situational}
+            aria-label="Reactions"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={toggleReactions}
+          >
+            <HeartIcon />
+          </ControlButton>
+        )}
+      </span>
       {open && pillTip != null && <PillTip label={pillTip.label} top={pillTip.top} center={pillTip.center} />}
-      {open && reactingLine != null && reacting != null && !reactPicker && (
+      {open && reactingLine != null && reacting?.kind === 'line' && !reactPicker && (
         <div ref={reactRef} className={styles.reactionLayer}>
           <ReactionBar
             line={reactingLine}
@@ -1295,6 +1443,18 @@ export function Chat({
           />
         </div>
       )}
+      {open && situational && !reactPicker && (
+        // a press here takes no focus: a key meant for the world would press the emoji again
+        <div ref={reactRef} className={styles.reactionLayer} onMouseDown={(e) => e.preventDefault()}>
+          <ReactionBar label="Reactions" className={styles.reactionBarAnchored} onPick={pickReaction} onMore={() => setReactPicker(true)}>
+            <ScreenReactionsSwitch />
+          </ReactionBar>
+        </div>
+      )}
     </div>
+    {/* beside the panel, not in it: the panel clips what it paints, and reactions rise out of it.
+        Next after it, so a panel opened over the chat is over its reactions too. */}
+    <ReactionLane subscribe={chat.onReaction} anchor={heartRef} />
+    </>
   )
 }

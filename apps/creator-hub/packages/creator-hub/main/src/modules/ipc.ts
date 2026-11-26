@@ -1,5 +1,12 @@
+import { ipcMain } from 'electron';
+
 import { AI_STREAM_EVENT } from '/shared/types/ipc';
 import { SCENE_EXPORT_PROGRESS_EVENT } from '/shared/types/scene-export';
+import {
+  RECORDING_AUDIO_CHANNEL,
+  RECORDING_EVENTS_CHANNEL,
+  RECORDING_TOOLS_PROGRESS_EVENT,
+} from '/shared/types/recording';
 import { handle, handleSync } from './handle';
 import * as electron from './electron';
 import * as updater from './updater';
@@ -18,6 +25,7 @@ import * as mobileDebug from './mobile-debug-server';
 import * as oxc from './oxc';
 import * as metrics from './metrics';
 import * as ai from './ai';
+import * as aiSharing from './ai-sharing';
 import * as aiCli from './ai-cli';
 import * as aiWindow from './ai-window';
 import * as consoleWindow from './console-window';
@@ -31,6 +39,8 @@ import {
   revertTurn,
 } from './scene-mcp';
 import * as optimizer from './optimizer';
+import * as recording from './recording';
+import * as recordingTools from './recording/tools';
 import * as sceneExport from './scene-export';
 import * as landUnpublish from './land-unpublish';
 
@@ -43,13 +53,21 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
   handleSync('electron.getEnvOverride', () => electron.getEnvOverride());
   handle('electron.getAppVersion', () => electron.getAppVersion());
   handle('electron.getUserDataPath', () => electron.getUserDataPath());
+  handle('electron.getDefaultScenesPath', () => electron.getDefaultScenesPathForUser());
   handle('electron.getWorkspaceConfigPath', (_event, path) =>
     electron.getWorkspaceConfigPath(path),
   );
   handle('electron.showOpenDialog', (_event, opts) => electron.showOpenDialog(opts));
   handle('electron.showSaveDialog', (_event, opts) => electron.showSaveDialog(opts));
   handle('electron.openExternal', (_event, url) => electron.openExternal(url));
+  handle('electron.fetchAuthIdentity', (_event, url, id, verifier) =>
+    electron.fetchAuthIdentity(url, id, verifier),
+  );
+  handle('electron.openDeepLink', (_event, url) => electron.openDeepLink(url));
+  handle('electron.logDeployment', (_event, entry) => electron.logDeployment(entry));
+  handle('electron.logRendererError', (_event, entry) => electron.logRendererError(entry));
   handle('electron.copyToClipboard', (_event, text) => electron.copyToClipboard(text));
+  handle('electron.focusWindow', event => electron.focusWindow(event.sender));
 
   // analytics API (fetched here because the renderer's `Origin: null` fails CORS)
   handle('metrics.request', (_event, request) => metrics.request(request));
@@ -77,6 +95,7 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
   // bevy realm (headless sdk-commands server feeding the embedded Bevy editor engine)
   handle('bevyRealm.start', (_event, path) => bevyRealm.start(path));
   handle('bevyRealm.kill', (_event, path) => bevyRealm.kill(path));
+  handle('bevyRealm.ensure', (_event, path) => bevyRealm.ensure(path));
 
   // project asset watcher (auto-refresh the inspector catalog on out-of-editor file drops)
   handle('projectWatcher.start', async (_event, path) => projectWatcher.startProjectWatcher(path));
@@ -170,6 +189,20 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
     );
   });
   handle('ai.stop', async () => ai.aiStop());
+  handle('aiSharing.peek', async (_event, address, limit) =>
+    aiSharing
+      .getOutbox()
+      .peek(address, Math.min(Math.max(1, limit), 50), record =>
+        aiSharing.isConversationExcluded(record.conversationId),
+      ),
+  );
+  handle('aiSharing.ack', async (_event, ids) => aiSharing.getOutbox().ack(ids));
+  handle('aiSharing.list', async (_event, address) => aiSharing.getOutbox().list(address));
+  handle('aiSharing.purge', async (_event, address) => aiSharing.getOutbox().purge(address));
+  handle('aiSharing.setWallet', async (_event, address) => aiSharing.setSignedInWallet(address));
+  handle('aiSharing.setConversationShared', async (_event, conversationId, shared) =>
+    aiSharing.setConversationShared(conversationId, shared),
+  );
   handle('ai.reset', async (_event, path) => ai.aiReset(path));
   handle('ai.deleteSession', async (_event, path, sessionId) =>
     ai.aiDeleteSession(path, sessionId),
@@ -216,6 +249,35 @@ export function initIpc({ beforeQuitCleanup }: InitIpcOptions) {
   handle('optimizer.revert', (_event, path) => optimizer.revert(path));
   handle('optimizer.tools', () => optimizer.tools());
   handle('optimizer.installTools', (_event, path) => optimizer.installTools(path));
+  // session recorder (Record button: speech + editor actions for the AI assistant)
+  handle('recording.start', (event, path, title, language) =>
+    recording.start(event.sender, path, title, language),
+  );
+  handle('recording.stop', (event, sessionId) => recording.stop(event.sender.id, sessionId));
+  handle('recording.abort', async (event, sessionId) =>
+    recording.abortIfOwner(event.sender.id, sessionId),
+  );
+  handle('recording.cancel', (event, sessionId) => recording.cancel(event.sender.id, sessionId));
+  handle('recording.skipTranscription', (event, sessionId) =>
+    recording.skipTranscription(event.sender.id, sessionId),
+  );
+  handle('recording.toolsStatus', (_event, language) =>
+    recordingTools.getStatus(recordingTools.modelFor(language)),
+  );
+  handle('recording.discard', (_event, dir) => recording.discard(dir));
+  handle('recording.combinedContext', (_event, dirs) => recording.combinedContext(dirs));
+  handle('recording.installTools', (event, language) =>
+    recordingTools.install(recordingTools.modelFor(language), status => {
+      if (!event.sender.isDestroyed()) event.sender.send(RECORDING_TOOLS_PROGRESS_EVENT, status);
+    }),
+  );
+  // Unlogged on purpose (see RECORDING_AUDIO_CHANNEL): raw audio and the user's actions.
+  ipcMain.on(RECORDING_AUDIO_CHANNEL, (event, sessionId, pcm, firstSampleAt) =>
+    recording.appendAudio(event.sender.id, sessionId, pcm, firstSampleAt),
+  );
+  ipcMain.on(RECORDING_EVENTS_CHANNEL, (event, sessionId, events) =>
+    recording.appendEvents(event.sender.id, sessionId, events),
+  );
 
   handle('sceneExport.export', (event, entityId, title, source) =>
     sceneExport.saveScene(entityId, title, source, progress => {

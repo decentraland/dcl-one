@@ -1,0 +1,18 @@
+# The workspace clippy.toml plus the comms-only rules below; clippy reads only the nearest file.
+large-error-threshold = 256
+allow-unwrap-in-tests = true
+allow-print-in-tests = true
+
+# Production routes go through `catalyst_shared::routing` so axum proves one handler stack per state.
+disallowed-methods = [
+  { path = "axum::routing::get", reason = "use crate::shared::routing::get" },
+  { path = "axum::routing::post", reason = "use crate::shared::routing::post" },
+  { path = "axum::routing::put", reason = "use crate::shared::routing::put" },
+  { path = "axum::routing::patch", reason = "use crate::shared::routing::patch" },
+  { path = "axum::routing::delete", reason = "use crate::shared::routing::delete" },
+  { path = "axum::routing::any", reason = "use crate::shared::routing::any" },
+  # Spawns box their future so tokio's task harness compiles once in shared.
+  { path = "tokio::spawn", reason = "use crate::shared::task::spawn or spawn_with" },
+  { path = "tokio::task::spawn", reason = "use crate::shared::task::spawn or spawn_with" },
+  { path = "tokio::runtime::Handle::spawn", reason = "use crate::shared::task::spawn_on" },
+]

@@ -206,7 +206,6 @@ pub fn capture_blocker(
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn start_capture(
     mut commands: Commands,
     mut requests: EventReader<TakePhotoRequest>,
@@ -311,11 +310,7 @@ fn start_capture(
         .realm_name
         .clone()
         .unwrap_or_else(|| realm.address.clone());
-    let is_world = realm
-        .config
-        .scenes_urn
-        .as_ref()
-        .is_some_and(|urns| !urns.is_empty());
+    let is_world = realm.config.lists_scenes();
     let user_name = current_profile
         .profile
         .as_ref()
@@ -441,7 +436,6 @@ pub fn encode_photo(screen: &DynamicImage, frame: Vec2) -> Result<EncodedPhoto, 
     Ok(EncodedPhoto { jpeg, preview_jpeg })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn finish_encode(
     mut commands: Commands,
     mut camera: Query<(Entity, &mut EncodingPhoto), With<PrimaryCamera>>,
@@ -515,7 +509,6 @@ fn finish_encode(
     });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn finish_upload(
     mut commands: Commands,
     mut camera: Query<(Entity, &mut UploadingPhoto, Option<&PhotoCamera>), With<PrimaryCamera>>,

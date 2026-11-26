@@ -65,7 +65,7 @@ pub struct WebParam {
 }
 
 /// The portable scene set that runs when `--portables` / `?portables=` is absent.
-pub const DEFAULT_PORTABLES: &str = "basiccontroller.dcl.eth";
+pub const DEFAULT_PORTABLES: &str = "movecontroller.dcl.eth";
 
 /// The web-only half of a parameter's declaration, keyed by the [`LaunchOptions`] field.
 fn delivery(field: &str) -> Delivery {
@@ -84,7 +84,8 @@ fn delivery(field: &str) -> Delivery {
         | "log_fps"
         | "gpu_bytes_per_frame"
         | "compute_threads"
-        | "autopilot" => Launch,
+        | "autopilot"
+        | "ff" => Launch,
         "editor" | "hold_world" | "session_id" | "campaign_anon_user_id" => Host,
         "base_domain" => Resolved,
         other => {

@@ -13,10 +13,9 @@
 //! as an uncorrelated subquery; only a page past the end (or `limit` 0) falls
 //! back to a bare count.
 //!
-//! World galleries: the old service paged `PLACES_API_URL/api/places?names=`
-//! with a 5-minute memo; here it is a read of `explore.place_indexed` with
-//! the places listing's default predicates (`disabled IS FALSE` and the
-//! `show_in_places` clause of `explore::places::query`), memoised the same.
+//! World galleries resolve enabled scenes through `explore.place_indexed`,
+//! including scenes hidden from listings. The configured cache bounds and
+//! expiry apply to these world-name lookups.
 
 use std::time::Duration;
 
@@ -27,7 +26,7 @@ use sqlx::{FromRow, PgPool, Postgres, QueryBuilder, Row};
 use uuid::Uuid;
 
 use super::dto::{Image, Metadata};
-use crate::shared::cache::{TtlCache, cache_get, cache_put};
+use crate::shared::cache::{TtlCache, cache_get, cache_put, cache_remove};
 
 const SERVABLE_TTL: Duration = Duration::from_secs(60);
 
@@ -140,9 +139,9 @@ fn hashes_of(image_hash: &str, thumbnail_hash: &str) -> Vec<String> {
 }
 
 /// Inside the write's transaction, after the row is rejected or gone:
-/// records `hashes` as withheld unless a non-rejected row, a content file
-/// or a builder upload still names them.
-/// Returns the hashes it recorded. A qualifying rejection promotes an older
+/// records `hashes` as withheld. A rejection withholds whatever else names
+/// them; a deletion skips those a non-rejected row, a content file or a
+/// builder upload still names. Returns the hashes it recorded. A qualifying rejection promotes an older
 /// deletion record; deletion can never downgrade a durable rejection.
 async fn withhold(
     tx: &mut sqlx::Transaction<'_, Postgres>,
@@ -154,10 +153,11 @@ async fn withhold(
     sqlx::query_scalar::<_, String>(
         "INSERT INTO camera_reel.withheld_blobs (hash, image_id, reason, withheld_at) \
          SELECT h.hash, $2, $3, $4 FROM unnest($1::text[]) AS h(hash) \
-         WHERE NOT EXISTS (SELECT 1 FROM camera_reel.images i \
+         WHERE $3 = 'rejected' OR ( \
+               NOT EXISTS (SELECT 1 FROM camera_reel.images i \
                            WHERE (i.image_hash = h.hash OR i.thumbnail_hash = h.hash) AND i.review_status <> 'rejected') \
            AND NOT EXISTS (SELECT 1 FROM content.content_files f WHERE f.content_hash = h.hash) \
-           AND NOT EXISTS (SELECT 1 FROM builder.uploaded_contents u WHERE u.hash = h.hash) \
+           AND NOT EXISTS (SELECT 1 FROM builder.uploaded_contents u WHERE u.hash = h.hash)) \
          ON CONFLICT (hash) DO UPDATE \
              SET reason=EXCLUDED.reason, image_id=EXCLUDED.image_id, withheld_at=EXCLUDED.withheld_at \
              WHERE camera_reel.withheld_blobs.reason = 'deleted' AND EXCLUDED.reason = 'rejected' \
@@ -757,7 +757,7 @@ impl Database {
     }
 
     fn forget_servable(&self, hash: &str) {
-        self.servable.lock().unwrap().remove(hash);
+        cache_remove(&self.servable, hash);
     }
 
     /// `None`: no such image. `Some(false)`: not the owner's, unchanged.
@@ -803,8 +803,8 @@ impl Database {
     }
 
     /// One transaction: the moderator's verdict on the row, then its blobs'
-    /// (`withheld_blobs`): `rejected` withholds the hashes nothing else
-    /// names, any other status releases them. `None` is "no such image".
+    /// (`withheld_blobs`): `rejected` withholds them whatever else names
+    /// them, any other status releases them. `None` is "no such image".
     pub async fn update_image_review_status(
         &self,
         id: &str,
@@ -850,10 +850,11 @@ impl Database {
             .await
     }
 
-    /// The place ids of a world name (`name.dcl.eth`), the places listing's
-    /// `?names=` answer as a local read, memoised with the configured TTL:
-    /// the world's scenes, not its catalogue row (`id = lower(world_name)`),
-    /// which the places API leaves out of that answer too.
+    /// The enabled scene ids of a world name (`name.dcl.eth`), irrespective
+    /// of listing visibility, memoised with the configured TTL. Durable scene
+    /// identities govern eligibility through their live deployment binding;
+    /// eligible catalogue aliases retain their original spelling. The world's
+    /// aggregate catalogue row is not a scene.
     pub async fn world_place_ids(&self, world_name: &str) -> Result<Vec<String>, sqlx::Error> {
         // Cache identity follows the exact request, independently of the
         // case-insensitive catalogue lookup.
@@ -862,11 +863,42 @@ impl Database {
             return Ok(ids);
         }
         let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM explore.place_indexed \
-             WHERE disabled IS FALSE AND world IS TRUE AND lower(world_name) = $1 \
-               AND id <> lower(world_name) \
-               AND (world IS FALSE OR COALESCE(NULLIF(raw->'show_in_places', 'null'::jsonb) = 'true'::jsonb, true) IS TRUE) \
-             ORDER BY id",
+            r#"WITH catalogue AS (
+                SELECT c.id,
+                       c.disabled OR COALESCE(m.disabled, false) AS disabled,
+                       CASE WHEN pg_input_is_valid(regexp_replace(c.id, '^urn:uuid:', '', 'i'), 'uuid')
+                            THEN regexp_replace(c.id, '^urn:uuid:', '', 'i')::uuid END AS identity
+                FROM explore.place_indexed c
+                LEFT JOIN explore.place_moderation m ON m.place_id = c.id
+                WHERE c.world IS TRUE AND lower(c.world_name) = $1
+            ), eligible_scenes AS (
+                SELECT p.identity
+                FROM explore.world_scene_place p
+                JOIN worlds.world_scenes s
+                  ON s.world_name = p.world_name AND s.entity_id = p.entity_id
+                JOIN worlds.worlds w ON w.name = p.world_name
+                LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text
+                LEFT JOIN explore.place_moderation wm ON wm.place_id = w.name
+                WHERE p.world_name = $1 AND p.active AND w.blocked_since IS NULL
+                  AND NOT COALESCE(m.disabled, false) AND NOT COALESCE(wm.disabled, false)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM catalogue c
+                      WHERE c.disabled AND (c.id = $1 OR c.identity = p.identity)
+                  )
+            )
+            SELECT c.id FROM catalogue c
+            WHERE NOT c.disabled AND c.id <> $1
+              AND (
+                  NOT EXISTS (
+                      SELECT 1 FROM explore.world_scene_place p WHERE p.identity = c.identity
+                  )
+                  OR EXISTS (
+                      SELECT 1 FROM eligible_scenes e WHERE e.identity = c.identity
+                  )
+              )
+            UNION
+            SELECT identity::text AS id FROM eligible_scenes
+            ORDER BY id"#,
         )
         .bind(world_name.to_lowercase())
         .fetch_all(&self.pool)
@@ -883,6 +915,7 @@ mod tests {
     #[tokio::test]
     async fn world_lookup_cache_obeys_configured_capacity_after_maintenance() {
         let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(500))
             .connect_lazy("postgres://localhost/camera_cache_test")
             .unwrap();
         let db = Database::new(pool, "https://camera.example", 300, 2);

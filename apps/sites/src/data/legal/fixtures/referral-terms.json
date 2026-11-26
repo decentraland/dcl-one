@@ -49,6 +49,15 @@
     },
     {
       "tag": "a",
+      "href": "/creator-fund-terms",
+      "children": [
+        {
+          "text": "Creator Fund"
+        }
+      ]
+    },
+    {
+      "tag": "a",
       "href": "/credits-terms",
       "children": [
         {
@@ -575,5 +584,6 @@
         }
       ]
     }
-  ]
+  ],
+  "sidebarSource": "decentraland/sites@dd905b2a98d3450d73c8f8c562881ad45ff3c83c src/components/LegalPage/LegalPageLayout.tsx (adds Creator Fund after Rewards Program)"
 }

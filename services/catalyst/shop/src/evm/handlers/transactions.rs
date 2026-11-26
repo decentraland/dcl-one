@@ -14,18 +14,43 @@ use crate::evm::transaction::{
 };
 use crate::evm::upstream::UpstreamForwarder;
 
+/// `POST /transactions`. An error answered before anything was sent, or after a send attempt
+/// that proves nothing went out, carries `"not_sent": true`: the only evidence a client takes
+/// that it may release the buyer's credit and sign again. Every other failure, and every answer
+/// forwarded from an upstream relay, is answered without it.
 pub async fn send_transaction(
     State(state): State<SharedState>,
     headers: HeaderMap,
     body: Result<Bytes, BytesRejection>,
-) -> Result<Response, ApiError> {
-    let body = body.map_err(|e| ApiError::MalformedBody(e.body_text()))?;
-    let tx = parse_send_transaction_request(&body)?;
+) -> Response {
+    match relay(&state, &headers, body).await {
+        Ok(response) => response,
+        Err(Failure::NotSent(err)) => err.into_not_sent_response(),
+        Err(Failure::MaybeSent(err)) => err.into_response(),
+    }
+}
+
+enum Failure {
+    /// Nothing was sent: no send was attempted, or the attempt proves nothing went out.
+    NotSent(ApiError),
+    /// The transaction may be out.
+    MaybeSent(ApiError),
+}
+
+async fn relay(
+    state: &SharedState,
+    headers: &HeaderMap,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<Response, Failure> {
+    use Failure::NotSent;
+    let body = body.map_err(|e| NotSent(ApiError::MalformedBody(e.body_text())))?;
+    let tx = parse_send_transaction_request(&body).map_err(NotSent)?;
 
     let sender = state
         .transaction
         .check_data(&state.settings, &state.contracts, &tx)
-        .await?;
+        .await
+        .map_err(NotSent)?;
 
     crate::guards::relay::guard_meta_transaction(
         &state.pool,
@@ -34,7 +59,8 @@ pub async fn send_transaction(
         &tx.params[0],
         &tx.params[1],
     )
-    .await?;
+    .await
+    .map_err(NotSent)?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
 
@@ -50,7 +76,8 @@ pub async fn send_transaction(
                 &tx.params[0],
                 crate::evm::now(),
             )
-            .await?;
+            .await
+            .map_err(NotSent)?;
     } else {
         state
             .transaction
@@ -63,34 +90,63 @@ pub async fn send_transaction(
                 &tx.params[0],
                 crate::evm::now(),
             )
-            .await?;
+            .await
+            .map_err(NotSent)?;
     }
 
     if let Some(upstream) = state.transaction.upstream_route() {
-        return forward_upstream(&state, upstream, &headers, &body, &sender, &session_id).await;
+        return forward_upstream(state, upstream, headers, &body, &sender, &session_id).await;
     }
 
     let tx_hash = match state.transaction.send_meta_transaction(&tx).await {
         Ok(hash) => hash,
-        Err(err) => {
-            if matches!(
-                reservation_disposition(&err),
-                ReservationDisposition::Release
-            ) {
-                release_quota_slot(&state, &session_id, &sender).await;
-            }
-            return Err(err);
-        }
+        Err(err) => return Err(failed_send(state, &session_id, &sender, err).await),
     };
 
-    state
-        .transaction
-        .confirm_reservation(&session_id, &tx_hash)
-        .await?;
-
+    record_relay_hash(state, &session_id, &tx_hash).await;
     Ok(Json(json!({ "ok": true, "txHash": tx_hash })).into_response())
 }
 
+/// The reservation still counts toward the buyer's quota if recording the hash fails.
+/// Preserve the observed relayer outcome because the signed transaction can still land.
+async fn record_relay_hash(state: &SharedState, session_id: &str, tx_hash: &str) {
+    if let Err(err) = state
+        .transaction
+        .confirm_reservation(session_id, tx_hash)
+        .await
+    {
+        tracing::error!(
+            %tx_hash,
+            error = %err,
+            "economy: could not record the relayed transaction hash on the quota reservation"
+        );
+    }
+}
+
+/// A failed send or forward: the slot is released, and the answer says nothing was sent, only
+/// for an error that proves it (`reservation_disposition`).
+async fn failed_send(
+    state: &SharedState,
+    session_id: &str,
+    sender: &MetaTxSender,
+    err: ApiError,
+) -> Failure {
+    if let ApiError::BroadcastFailed { tx_hash, .. } = &err {
+        record_relay_hash(state, session_id, tx_hash).await;
+        return Failure::MaybeSent(err);
+    }
+    match reservation_disposition(&err) {
+        ReservationDisposition::Release => {
+            release_quota_slot(state, session_id, sender).await;
+            Failure::NotSent(err)
+        }
+        ReservationDisposition::Keep => Failure::MaybeSent(err),
+    }
+}
+
+/// Forwards to the upstream relay. Its answer passes through as it is: whatever its status, it is
+/// never evidence from this relay that nothing was sent. Only a forward that never reached the
+/// upstream (`RelayerUnavailable`) is answered as not sent.
 async fn forward_upstream(
     state: &SharedState,
     upstream: &UpstreamForwarder,
@@ -98,22 +154,14 @@ async fn forward_upstream(
     body: &[u8],
     sender: &MetaTxSender,
     session_id: &str,
-) -> Result<Response, ApiError> {
+) -> Result<Response, Failure> {
     let content_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok());
 
     let forwarded = match upstream.forward(body, content_type).await {
         Ok(f) => f,
-        Err(err) => {
-            if matches!(
-                reservation_disposition(&err),
-                ReservationDisposition::Release
-            ) {
-                release_quota_slot(state, session_id, sender).await;
-            }
-            return Err(err);
-        }
+        Err(err) => return Err(failed_send(state, session_id, sender, err).await),
     };
 
     if forwarded.is_success() {
@@ -146,15 +194,27 @@ async fn forward_upstream(
 }
 
 /// Whether a non-2xx upstream status proves the transaction was never
-/// broadcast, so the quota slot can be refunded. A 4xx is a validation or
-/// rate-limit rejection issued before any broadcast. Every 5xx is
+/// broadcast, so the quota slot can be refunded. This is the relay's own
+/// quota decision; the answer passes through unchanged and is never marked
+/// `not_sent` for a client. The evidence for a 4xx is
+/// the transactions-server's own code, as inspected at
+/// `decentraland/transactions-server@8b9549bbe51a8bf14da5efbe0847da18e9b208bd`
+/// (`sendTransaction` in `src/controllers/handlers.ts`, the OpenZeppelin port
+/// in `src/ports/openzeppelin/components.ts`): it answers a 4xx only for
+/// validation, quota and rate limits, and for a relayer that created no
+/// transaction (a 400/422 to the submission, or a terminal status whose
+/// `hash` is `null`). It reports a failure after a submission (a terminal
+/// status with a hash, a timeout) as a 5xx. That covers the transactions-server
+/// itself, not a 4xx from an intermediary in front of it. Every 5xx is
 /// indeterminate: the upstream sits behind Cloudflare, so 502/504 and
 /// Cloudflare's own 522/524 arrive after the request reached the intermediary,
 /// and even a 500/503 can be emitted by the origin after it already submitted
 /// the transaction. A kept slot merely ages out of the 24h quota window; a
 /// false refund breaks the daily-quota invariant, so every 5xx keeps the slot.
+/// So do a 408 and a 499 (`a_hop_gave_up`): a proxy can answer either after it
+/// forwarded the request, and the status does not say who answered.
 fn refunds_quota_slot(status: u16) -> bool {
-    (400..500).contains(&status)
+    (400..500).contains(&status) && !crate::evm::relayer::a_hop_gave_up(status)
 }
 
 async fn release_quota_slot(state: &SharedState, session_id: &str, sender: &MetaTxSender) {
@@ -184,14 +244,14 @@ mod tests {
     use super::refunds_quota_slot;
 
     #[test]
-    fn only_4xx_upstream_statuses_refund_the_quota_slot() {
-        for status in [400u16, 404, 422, 429, 499] {
+    fn a_4xx_upstream_status_refunds_the_quota_slot_except_a_timeout_or_a_dropped_request() {
+        for status in [400u16, 404, 422, 429] {
             assert!(
                 refunds_quota_slot(status),
                 "{status} is a pre-broadcast rejection and refunds the slot"
             );
         }
-        for status in [500u16, 501, 502, 503, 504, 520, 522, 524] {
+        for status in [408u16, 499, 500, 501, 502, 503, 504, 520, 522, 524] {
             assert!(
                 !refunds_quota_slot(status),
                 "{status} is broadcast-indeterminate and keeps the slot"

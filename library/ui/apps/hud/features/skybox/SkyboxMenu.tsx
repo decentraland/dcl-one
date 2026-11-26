@@ -1,8 +1,10 @@
-// Skybox menu — Unity's sidebar SkyboxMenu (DCL/UI/Skybox): a time-of-day slider, locked while
-// "Time progression" lets the engine's day cycle run.
+// Skybox menu — the sidebar's NIGHT/DAY panel: "Auto" lets the engine's day cycle
+// run; the "Custom" time-of-day slider is locked meanwhile. Where the scene sets the time of day
+// both are off and a line says which setting gives them back.
 
-import { useEffect } from 'react'
-import { Panel, Slider, Toggle, hasOpenPopup } from '../../design'
+import { Panel, Slider, Switch } from '@dcl/one-ui'
+import { useEffect, useId } from 'react'
+import { hasOpenPopup } from '../../design'
 import type { SkyboxState } from '../session/useEngineSession'
 import styles from './SkyboxMenu.module.css'
 
@@ -14,6 +16,8 @@ export function formatHours(hours: number): string {
 export function SkyboxMenu({ skybox }: { skybox: SkyboxState }): React.JSX.Element | null {
   // Clicking anywhere outside (except the rail, whose Skybox button toggles it) closes it.
   const { open, toggle } = skybox
+  const noteId = useId()
+  const describedBy = skybox.sceneLocked ? noteId : undefined
   useEffect(() => {
     if (!open) return
     const onDown = (e: PointerEvent): void => {
@@ -27,15 +31,31 @@ export function SkyboxMenu({ skybox }: { skybox: SkyboxState }): React.JSX.Eleme
   if (!open) return null
   return (
     <Panel className={styles.root} role="dialog" aria-label="Skybox">
-      <div className={styles.head}>
-        <span className={styles.heading}>Skybox</span>
-        <span className={styles.time}>{formatHours(skybox.hours)}</span>
+      <div className={styles.title}>NIGHT/DAY</div>
+      <div className={styles.divider} />
+      <Switch
+        appearance="hud"
+        size="sm"
+        label="Auto"
+        className={styles.row}
+        checked={skybox.progressing}
+        onCheckedChange={skybox.setProgressing}
+        disabled={skybox.sceneLocked}
+        aria-describedby={describedBy}
+      />
+      <div className={styles.divider} />
+      <div className={styles.custom} data-locked={skybox.progressing || skybox.sceneLocked}>
+        <div className={styles.head}>
+          <span>Custom</span>
+          <span className={styles.time}>{formatHours(skybox.hours)}</span>
+        </div>
+        <Slider variant="thick" arrows value={skybox.hours} min={0} max={24} step={0.25} onChange={skybox.setHours} disabled={skybox.progressing || skybox.sceneLocked} aria-describedby={describedBy} />
       </div>
-      <Slider value={skybox.hours} min={0} max={24} step={0.25} onChange={skybox.setHours} disabled={skybox.progressing} />
-      <label className={styles.row}>
-        <span>Time progression</span>
-        <Toggle checked={skybox.progressing} onChange={skybox.setProgressing} />
-      </label>
+      {skybox.sceneLocked && (
+        <p id={noteId} className={styles.locked} role="note">
+          This scene sets the time of day. To change it, turn on “Allow overriding scene controls” in Settings.
+        </p>
+      )}
     </Panel>
   )
 }

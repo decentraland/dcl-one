@@ -15,7 +15,7 @@ SPEC.loader.exec_module(mtimes)
 
 SECOND = 10**9
 VENDOR = 'rendering/bevy-explorer/vendor'
-BOIMP, DUI = VENDOR + '/boimp/src/lib.rs', VENDOR + '/bevy_dui/src/lib.rs'
+RPC, DUI = VENDOR + '/rpc-rust/rpc/src/lib.rs', VENDOR + '/bevy_dui/src/lib.rs'
 
 
 class BevyMtimesTest(unittest.TestCase):
@@ -27,7 +27,7 @@ class BevyMtimesTest(unittest.TestCase):
         self.git('config', 'maintenance.auto', 'false')
         self.git('config', 'gc.auto', '0')
         self.write('.gitignore', 'target/\n/rendering/bevy-explorer/bevy/\n')
-        self.write(BOIMP, 'pub fn import() {}\n')
+        self.write(RPC, 'pub fn import() {}\n')
         self.write(DUI, 'pub fn layout() {}\n')
         self.write('rendering/bevy-explorer/source/src/lib.rs', 'fn main() {}\n')
         self.write('library/vendor/rusty_enet/src/lib.rs', 'pub fn host() {}\n')
@@ -38,7 +38,7 @@ class BevyMtimesTest(unittest.TestCase):
             (profile / '.fingerprint').mkdir(parents=True)
 
     def git(self, *args):
-        return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', *args],
+        return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', '-c', 'commit.gpgsign=false', *args],
                                        cwd=self.root, text=True).strip()
 
     def write(self, name, value):
@@ -66,30 +66,74 @@ class BevyMtimesTest(unittest.TestCase):
         return now
 
     def test_unchanged_files_get_their_recorded_time_back(self):
-        self.set_mtime(BOIMP, 1_700_000_000 * SECOND + 750_000_000)
+        self.set_mtime(RPC, 1_700_000_000 * SECOND + 750_000_000)
         mtimes.record(self.root, self.target)
         self.checkout_now()
         self.assertEqual(mtimes.restore(self.root, self.target), (4, 0))
-        self.assertEqual(self.mtime(BOIMP), 1_700_000_000 * SECOND)
+        self.assertEqual(self.mtime(RPC), 1_700_000_000 * SECOND + 750_000_000)
 
     def test_changed_files_keep_their_checkout_time(self):
         # Path dependencies tracked as exact bytes: Cargo judges them by file times.
         self.set_mtime(DUI, 1_700_000_000 * SECOND)
         mtimes.record(self.root, self.target)
-        self.write(BOIMP, 'pub fn import_changed() {}\n')
+        self.write(RPC, 'pub fn import_changed() {}\n')
         self.commit()
         now = self.checkout_now()
         self.assertEqual(mtimes.restore(self.root, self.target), (3, 1))
-        self.assertEqual(self.mtime(BOIMP), now)
+        self.assertEqual(self.mtime(RPC), now)
         self.assertEqual(self.mtime(DUI), 1_700_000_000 * SECOND)
 
-    def test_recorded_times_are_whole_seconds(self):
-        # A cache archive may keep whole seconds only; a source a fraction newer than its
-        # truncated build stamp would make Cargo rebuild it.
+    def test_recorded_times_keep_their_nanoseconds(self):
+        # Cargo stores the newest file time of a package to the nanosecond: a rounded time is a change to it.
         self.set_mtime(DUI, 1_700_000_000 * SECOND + 1)
         mtimes.record(self.root, self.target)
         manifest = json.loads((self.profiles[0] / '.fingerprint' / mtimes.MANIFEST).read_text())
-        self.assertTrue(all(ns % SECOND == 0 for _, ns in manifest['files'].values()))
+        self.assertEqual(manifest['files'][DUI][1], 1_700_000_000 * SECOND + 1)
+
+    def test_a_directory_keeps_its_cached_time_while_it_holds_the_same_names(self):
+        # A build script may name a directory; Cargo then reads the time of every directory below it.
+        proto = 'library/protocol/proto'
+        kept, grown, shrunk = (f'{proto}/decentraland/{name}' for name in ('common', 'kernel', 'sdk'))
+        for directory in (kept, grown, shrunk):
+            self.write(directory + '/first.proto', 'message First {}\n')
+        self.write(shrunk + '/second.proto', 'message Second {}\n')
+        self.commit()
+        for name in (proto, proto + '/decentraland', kept, grown, shrunk):
+            self.set_mtime(name, 1_700_000_000 * SECOND + 7)
+        mtimes.record(self.root, self.target)
+        self.write(kept + '/first.proto', 'message Changed {}\n')
+        self.write(grown + '/second.proto', 'message Second {}\n')
+        self.git('rm', '-q', shrunk + '/second.proto')
+        self.commit()
+        now = self.checkout_now()
+        for name in (grown, shrunk):
+            self.set_mtime(name, now)
+        mtimes.restore(self.root, self.target)
+        for name in (proto, proto + '/decentraland', kept):
+            self.assertEqual(self.mtime(name), 1_700_000_000 * SECOND + 7)
+        for name in (grown, shrunk, kept + '/first.proto'):
+            self.assertEqual(self.mtime(name), now)
+
+    def test_directories_above_the_trees_are_left_alone(self):
+        self.set_mtime('rendering/bevy-explorer', 1_700_000_000 * SECOND)
+        mtimes.record(self.root, self.target)
+        now = self.checkout_now()
+        mtimes.restore(self.root, self.target)
+        self.assertEqual(self.mtime('rendering/bevy-explorer'), now)
+
+    def test_a_manifest_without_directories_restores_the_files(self):
+        source = 'rendering/bevy-explorer/source/src/lib.rs'
+        self.set_mtime(source, 1_700_000_000 * SECOND)
+        mtimes.record(self.root, self.target)
+        for profile in self.profiles:
+            manifest = profile / '.fingerprint' / mtimes.MANIFEST
+            recorded = json.loads(manifest.read_text())
+            del recorded['directories']
+            manifest.write_text(json.dumps(recorded))
+        now = self.checkout_now()
+        self.assertEqual(mtimes.restore(self.root, self.target), (4, 0))
+        self.assertEqual(self.mtime(source), 1_700_000_000 * SECOND)
+        self.assertEqual(self.mtime('rendering/bevy-explorer/source/src'), now)
 
     def test_every_profile_gets_the_manifest(self):
         self.assertEqual(mtimes.record(self.root, self.target), 2)
@@ -147,11 +191,11 @@ class BevyMtimesTest(unittest.TestCase):
         mtimes.record(self.root, self.target)
         manifest = json.loads((self.profiles[0] / '.fingerprint' / mtimes.MANIFEST).read_text())
         source = written[0]
-        self.assertEqual(manifest['files'][source], [self.git('hash-object', '--no-filters', source), 1_700_000_000 * SECOND])
+        self.assertEqual(manifest['files'][source], [self.git('hash-object', '--no-filters', source), 1_700_000_000 * SECOND + 5])
         self.rewrite(written)
         self.assertEqual(mtimes.restore(self.root, self.target), (6, 0))
         for name in written:
-            self.assertEqual(self.mtime(name), 1_700_000_000 * SECOND)
+            self.assertEqual(self.mtime(name), 1_700_000_000 * SECOND + 5)
 
     def test_changed_rebuilt_files_keep_the_time_they_were_written(self):
         written = self.materialise()
@@ -177,15 +221,68 @@ class BevyMtimesTest(unittest.TestCase):
         mtimes.restore(self.root, self.target)
         self.assertEqual(self.mtime(source), 1_700_000_000 * SECOND)
 
+    def test_a_tracked_link_is_no_input(self):
+        # The id of a link is its text, and its time would be the one of the file it names: a changed
+        # file behind an unchanged link must not get an old time back through the link.
+        link = self.root / VENDOR / 'rpc-rust/rpc/src/alias.rs'
+        link.symlink_to('lib.rs')
+        self.commit()
+        self.assertNotIn(VENDOR + '/rpc-rust/rpc/src/alias.rs', mtimes.blobs(self.root))
+        self.set_mtime(RPC, 1_700_000_000 * SECOND)
+        mtimes.record(self.root, self.target)
+        manifest = json.loads((self.profiles[0] / '.fingerprint' / mtimes.MANIFEST).read_text())
+        self.assertNotIn(VENDOR + '/rpc-rust/rpc/src/alias.rs', manifest['files'])
+        now = self.checkout_now()
+        self.write(RPC, 'pub fn import() { /* changed */ }\n')
+        self.set_mtime(RPC, now)
+        self.git('add', '.')
+        mtimes.restore(self.root, self.target)
+        self.assertEqual(self.mtime(RPC), now)
+
+    def test_a_path_of_the_index_that_is_not_on_disk_is_left_out(self):
+        self.set_mtime(DUI, 1_700_000_000 * SECOND)
+        (self.root / RPC).unlink()
+        mtimes.record(self.root, self.target)
+        manifest = json.loads((self.profiles[0] / '.fingerprint' / mtimes.MANIFEST).read_text())
+        self.assertNotIn(RPC, manifest['files'])
+        self.assertIn(DUI, manifest['files'])
+        self.git('checkout', '-q', '--', RPC)
+        mtimes.record(self.root, self.target)
+        self.checkout_now()
+        shutil.rmtree(self.root / VENDOR / 'rpc-rust')
+        restored, _ = mtimes.restore(self.root, self.target)
+        self.assertEqual(restored, 3)
+        self.assertEqual(self.mtime(DUI), 1_700_000_000 * SECOND)
+
+    def test_a_directory_of_the_rebuilt_tree_keeps_its_cached_time(self):
+        # The rebuilt tree is not tracked: its directories are named by the files on disk.
+        self.write(mtimes.TREE + '/crates/bevy_ecs/src/lib.rs', 'pub struct World;\n')
+        folder = mtimes.TREE + '/crates/bevy_ecs/src'
+        self.set_mtime(folder, 1_700_000_000 * SECOND + 250_000_000)
+        mtimes.record(self.root, self.target)
+        now = time.time_ns()
+        self.set_mtime(folder, now)
+        mtimes.restore(self.root, self.target)
+        self.assertEqual(self.mtime(folder), 1_700_000_000 * SECOND + 250_000_000)
+        self.write(mtimes.TREE + '/crates/bevy_ecs/src/world.rs', 'pub fn spawn() {}\n')
+        after = self.mtime(folder)
+        mtimes.restore(self.root, self.target)
+        self.assertEqual(self.mtime(folder), after)
+
     def test_the_manifest_survives_the_native_cache_pruning(self):
-        # tooling/bevy-target-cache.py prunes the .fingerprint entries of workspace crates, <crate>-<hash>.
+        # tooling/bevy-target-cache.py removes only units' hashed entries from a profile's .fingerprint directory.
         spec = importlib.util.spec_from_file_location('bevy_target_cache', Path(__file__).parents[1] / 'bevy-target-cache.py')
         cache = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cache)
-        if shutil.which('cargo') is None:
-            self.skipTest('cargo reads the workspace members')
-        names, _ = cache.workspace()
-        self.assertFalse(cache.owned(mtimes.MANIFEST, names))
+        manifest = self.target / 'release/.fingerprint' / mtimes.MANIFEST
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text('{}')
+        (self.target / 'release/deps').mkdir(parents=True, exist_ok=True)
+        (self.target / 'release/decentra-bevy').write_text('binary')
+        cache.prune_target(self.target, [])
+        cache.prune_generations(self.target, set(), [])
+        self.assertTrue(manifest.is_file())
+        self.assertFalse((self.target / 'release/decentra-bevy').exists())
 
 
 if __name__ == '__main__':

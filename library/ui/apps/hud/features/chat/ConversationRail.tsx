@@ -4,7 +4,7 @@
 
 import { useId } from 'react'
 import type { ChatState, CommunityConversation, Conversation } from '../session/useEngineSession'
-import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip } from '../../design'
+import { Avatar, ControlButton } from '../../design'
 import { useOptionalSession } from '../session/SessionContext'
 import { inCommunityStream } from '../voiceChat/callGate'
 import { splitName, usePartner } from './chatIdentity'
@@ -12,6 +12,7 @@ import closeIcon from '../../assets/chat/close-thin.png'
 import streamActiveIcon from '../../assets/voice/stream-active.png'
 import streamListeningIcon from '../../assets/voice/stream-listening.png'
 import styles from './Chat.module.css'
+import { DclLogo, MaskIcon, Tooltip } from '@dcl/one-ui'
 
 function badge(count: number): React.JSX.Element | null {
   return count > 0 ? <span className={styles.railBadge}>{count > 9 ? '9+' : count}</span> : null
@@ -22,7 +23,7 @@ function RailTab({ conversation, active, onSelect, onClose }: { conversation: Co
   const { name, picture, color } = usePartner(conversation.address)
   const { base } = splitName(name)
   return (
-    <Tooltip label={base} side="left" variant="rail">
+    <Tooltip appearance="hud" label={base} side="left" variant="rail">
       <div className={`${styles.railTab} ${active ? styles.railActive : ''} ${conversation.online ? '' : styles.railOff}`.trim()}>
         <button type="button" className={styles.railBtn} aria-label={`Chat with ${base}`} aria-pressed={active} onClick={onSelect}>
           <Avatar src={picture} name={name} color={color} size={32} status={conversation.online ? 'online' : 'offline'} dotPosition="top" />
@@ -44,7 +45,7 @@ function CommunityRailTab({ community, active, stream, onSelect, onClose }: { co
   // the button's label hides what is inside it: the stream mark is its description instead
   const streamMark = useId()
   return (
-    <Tooltip label={community.name} side="left" variant="rail">
+    <Tooltip appearance="hud" label={community.name} side="left" variant="rail">
       <div className={`${styles.railTab} ${active ? styles.railActive : ''}`.trim()}>
         <button type="button" className={styles.railBtn} aria-label={`Chat in ${community.name}`} aria-describedby={stream != null ? streamMark : undefined} aria-pressed={active} onClick={onSelect}>
           <Avatar src={community.thumbnail || undefined} name={community.name} size={32} />
@@ -80,11 +81,11 @@ export function ConversationRail({ chat, onClose }: { chat: ChatState; onClose: 
   return (
     <nav className={styles.rail} aria-label="Conversations">
       <div className={styles.railHead}>
-        <ControlButton variant="dark" aria-label="Close chat" onClick={onClose}>
+        <ControlButton variant="dark" aria-label="Close chat" onClick={onClose} data-ui-sound="soft">
           <MaskIcon src={closeIcon} size={10} />
         </ControlButton>
       </div>
-      <Tooltip label="Nearby" side="left" variant="rail">
+      <Tooltip appearance="hud" label="Nearby" side="left" variant="rail">
         <button
           type="button"
           className={`${styles.railBtn} ${styles.railNearby} ${chat.channel === 'Nearby' ? styles.railActive : ''}`.trim()}
@@ -92,7 +93,7 @@ export function ConversationRail({ chat, onClose }: { chat: ChatState; onClose: 
           aria-pressed={chat.channel === 'Nearby'}
           onClick={() => chat.select('Nearby')}
         >
-          <DclLogo size={28} />
+          <DclLogo size={32} />
           {badge(chat.nearbyUnread)}
         </button>
       </Tooltip>

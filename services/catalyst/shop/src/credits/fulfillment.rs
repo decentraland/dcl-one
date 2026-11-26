@@ -11,6 +11,10 @@
 //! buy to settle and refunds the line only when no MANA left the treasury. A
 //! claim with no transaction recorded (`pending`, `error`) is attempted,
 //! counted and refunded as if absent.
+//!
+//! Once a checkout is frozen (`reversing`, or `failed` by a manual refund),
+//! [`fence_unsent_lines`] marks its lines' unrecorded claims `error`
+//! (`checkout::claims::fence_unrecorded`), and the claim refuses its lines.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,6 +24,7 @@ use sqlx::Row;
 
 use super::errors::ApiError;
 use super::escrow::{Broker, BrokerError, BuyRequest};
+use super::metrics::{self, Pledge};
 use super::pricing::{
     Pricing, TradeLookup, charge_is_positive, payment_is_positive, split_validated_decimal,
 };
@@ -73,18 +78,21 @@ pub const CAPTCHA_PURGE_BATCH: i64 = 5_000;
 
 /// One tick's bookkeeping: expire stale authorizations (bounded by the
 /// CreditUsed index's folded chain time when one is configured, `$5` its
-/// chain: `usage::expiry_bound_sql`), purge one batch of old captcha
-/// challenges (`expires_at < $3`, the `captcha_challenges_expires_idx`
-/// statement), list the checkouts awaiting compensation and the outbox lines
-/// awaiting a broker attempt (a frozen checkout's lines only while their buy
-/// is unsettled), all in one statement; the clock is a bind.
-pub(crate) const OUTBOX_TICK_SQL: &str = "WITH expired AS ( \
-         UPDATE credits.authorizations SET status = CASE status WHEN 'retired' THEN 'released' ELSE 'expired' END \
-         WHERE status IN ('authorized', 'retired') AND expires_at <= LEAST($2, CASE WHEN $5::bigint IS NULL THEN $2 ELSE \
-         COALESCE((SELECT c.folded_block_time FROM credits.usage_index_cursor c WHERE c.chain_id = $5::bigint \
-                   AND (credits.authorizations.contract IS NULL OR c.contract = credits.authorizations.contract)), \
-                  '-infinity'::timestamp) END) RETURNING 1 \
-     ), purged AS ( \
+/// chain: `usage::expiry_bound_sql`) and queue the alerts the expiry shows
+/// (`alerts::expiry_ctes`), purge one batch of old captcha challenges
+/// (`expires_at < $3`, the `captcha_challenges_expires_idx` statement), list
+/// the checkouts awaiting compensation and the outbox lines awaiting a broker
+/// attempt (a frozen checkout's lines only while their buy is unsettled), all
+/// in one statement; the clock is a bind.
+pub(crate) static OUTBOX_TICK_SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "WITH {}, {OUTBOX_TICK_REST}",
+        super::alerts::expiry_ctes("$2", "$5")
+    )
+});
+
+/// [`OUTBOX_TICK_SQL`] after its expiry CTEs.
+const OUTBOX_TICK_REST: &str = "purged AS ( \
          DELETE FROM credits.captcha_challenges WHERE ctid = ANY (ARRAY( \
              SELECT ctid FROM credits.captcha_challenges WHERE expires_at < $3 ORDER BY expires_at LIMIT $4)) \
          RETURNING 1 \
@@ -101,7 +109,9 @@ pub(crate) const OUTBOX_TICK_SQL: &str = "WITH expired AS ( \
                  AND b.status IN ('sent', 'bought', 'forwarding', 'confirmed')))) \
          ORDER BY o.id LIMIT 50 \
      ) \
-     SELECT 'expired' AS kind, count(*)::bigint AS id, NULL::text AS address FROM expired \
+     SELECT 'expired' AS kind, count(*) FILTER (WHERE status = 'expired')::bigint AS id, NULL::text AS address FROM expired \
+     UNION ALL SELECT 'released', count(*) FILTER (WHERE status = 'released')::bigint, NULL FROM expired \
+     UNION ALL SELECT 'alerted', (SELECT count(*) FROM submitted_unconsumed) + (SELECT count(*) FROM repeated_expiry), NULL \
      UNION ALL SELECT 'captcha_purged', count(*)::bigint, NULL FROM purged \
      UNION ALL SELECT 'reversing', id, address FROM reversing \
      UNION ALL SELECT 'pending', id, NULL FROM pending";
@@ -154,7 +164,7 @@ impl OutboxWorker {
 
     pub async fn run_once(&self) -> Result<usize, ApiError> {
         let now = now();
-        let rows = sqlx::query(OUTBOX_TICK_SQL)
+        let rows = sqlx::query(OUTBOX_TICK_SQL.as_str())
             .bind(self.max_attempts)
             .bind(now)
             .bind(now - CAPTCHA_PURGE_AFTER)
@@ -163,19 +173,32 @@ impl OutboxWorker {
             .fetch_all(&self.credits.pool)
             .await?;
         let mut expired = 0i64;
+        let mut alerted = 0i64;
+        let mut released = 0i64;
         let mut captcha_purged = 0i64;
         let mut reversing: Vec<(i64, String)> = Vec::new();
         let mut candidates: Vec<i64> = Vec::new();
         for r in rows {
             match r.get::<String, _>("kind").as_str() {
                 "expired" => expired = r.get("id"),
+                "alerted" => alerted = r.get("id"),
+                "released" => released = r.get("id"),
                 "captcha_purged" => captcha_purged = r.get("id"),
                 "reversing" => reversing.push((r.get("id"), r.get("address"))),
                 _ => candidates.push(r.get("id")),
             }
         }
-        if expired > 0 {
-            tracing::info!(expired, "swept stale credit authorizations to 'expired'");
+        metrics::pledges(Pledge::Expired, expired.max(0) as u64);
+        metrics::pledges(Pledge::Released, released.max(0) as u64);
+        if expired > 0 || released > 0 {
+            tracing::info!(
+                expired,
+                released,
+                "swept stale credit authorizations to 'expired' and 'released'"
+            );
+        }
+        if alerted > 0 {
+            tracing::warn!(alerted, "the expiry sweep queued credits alerts");
         }
         if captcha_purged > 0 {
             tracing::info!(captcha_purged, "purged expired captcha challenges");
@@ -379,12 +402,41 @@ impl OutboxWorker {
     /// Refunds the undelivered portion of a frozen checkout (one idempotent
     /// refund per checkout) and resolves it to `reversed` (nothing delivered)
     /// or `failed` (partial). A line is refunded only when its buy spent no
-    /// MANA: never claimed, no transaction recorded (`pending`, `error`), or
-    /// reverted on the buy leg. While a pending line's buy is unsettled the checkout stays
+    /// MANA: never claimed, no transaction recorded (`pending`, `error`) under
+    /// a claim that records its transaction before broadcasting it
+    /// (`write_ahead`), or reverted on the buy leg. A `pending` or `error`
+    /// claim kept from before that rule may have broadcast, so it is held, as
+    /// is one whose transaction released as dead turns out to have mined.
+    /// While a pending line's buy is unsettled the checkout stays
     /// `reversing` (the tick resumes that line); a line whose buy spent MANA
     /// without reaching escrow is held out of the refund for reconciliation.
+    /// Unrecorded `pending` claims are first marked `error`, and the claim
+    /// refuses to claim or re-arm a frozen checkout's line, so nothing counted
+    /// refundable can be sent afterwards.
     #[tracing::instrument(skip(self, buyer))]
     pub async fn compensate(&self, checkout_id: i64, buyer: &str) -> Result<(), ApiError> {
+        // a buy still being signed can no longer record (so broadcast) once refundable
+        fence_unsent_lines(&mut *self.credits.pool.acquire().await?, checkout_id).await?;
+        // A line whose unsent claim released a buy as dead is refunded only
+        // once a later look finds none of those buys mined; one that did
+        // spent MANA and is held. A failed look leaves the checkout
+        // `reversing` for the next tick.
+        let released: Vec<String> = sqlx::query_scalar(
+            "SELECT b.idempotency_key FROM credits.fulfillment_outbox o \
+             JOIN shop.broker_purchases b \
+               ON b.idempotency_key = 'checkout:' || o.checkout_id || ':' || o.id \
+             WHERE o.checkout_id = $1 AND o.status <> 'confirmed' \
+               AND b.status IN ('pending', 'error') AND cardinality(b.released_tx_hashes) > 0",
+        )
+        .bind(checkout_id)
+        .fetch_all(&self.credits.pool)
+        .await?;
+        let mut mined: Vec<String> = Vec::new();
+        for key in released {
+            if self.broker.released_buy_mined(&key).await? {
+                mined.push(key);
+            }
+        }
         let agg = sqlx::query(
             "SELECT COALESCE(SUM(unit_price_credits) FILTER (WHERE refundable), 0)::text AS refund_amt, \
                     COALESCE(SUM(unit_price_credits) FILTER (WHERE refundable), 0) > 0 AS has_refund, \
@@ -393,7 +445,9 @@ impl OutboxWorker {
                     count(*) FILTER (WHERE status <> 'confirmed' AND NOT refundable AND NOT awaiting) AS held \
              FROM ( \
                  SELECT o.status, o.unit_price_credits, \
-                        o.status <> 'confirmed' AND (b.status IS NULL OR b.status IN ('pending', 'error') \
+                        o.status <> 'confirmed' AND (b.status IS NULL \
+                            OR (b.status IN ('pending', 'error') AND b.write_ahead \
+                                AND NOT b.idempotency_key = ANY($2)) \
                             OR (b.status = 'reverted' AND b.forward_tx_hash IS NULL)) AS refundable, \
                         o.status = 'pending' AND COALESCE(b.status IN \
                             ('sent', 'bought', 'forwarding', 'confirmed'), false) AS awaiting \
@@ -403,6 +457,7 @@ impl OutboxWorker {
                  WHERE o.checkout_id = $1) lines",
         )
         .bind(checkout_id)
+        .bind(&mined)
         .fetch_one(&self.credits.pool)
         .await?;
         let awaiting: i64 = agg.get("awaiting");
@@ -771,6 +826,25 @@ fn truncate(s: &str, max: usize) -> &str {
         end -= 1;
     }
     &s[..end]
+}
+
+/// Fences the unrecorded broker claims of frozen checkout `checkout_id`'s
+/// unconfirmed lines; a checkout that is not frozen is left alone.
+pub(super) async fn fence_unsent_lines(
+    conn: &mut sqlx::PgConnection,
+    checkout_id: i64,
+) -> Result<(), sqlx::Error> {
+    let keys: Vec<String> = sqlx::query_scalar(
+        "SELECT 'checkout:' || o.checkout_id || ':' || o.id FROM credits.fulfillment_outbox o \
+         JOIN credits.checkouts c ON c.id = o.checkout_id \
+         WHERE o.checkout_id = $1 AND o.status <> 'confirmed' \
+           AND c.status IN ('reversing', 'reversed', 'failed')",
+    )
+    .bind(checkout_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    crate::checkout::claims::fence_unrecorded(conn, &keys).await?;
+    Ok(())
 }
 
 #[cfg(test)]

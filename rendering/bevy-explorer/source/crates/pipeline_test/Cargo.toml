@@ -3,8 +3,13 @@ name = "pipeline_test"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [lib]
 
 [dependencies]
 bevy = { workspace = true }
 assets = { workspace = true }
+# the error type of the device's uncaptured-error callback
+wgpu = { workspace = true }

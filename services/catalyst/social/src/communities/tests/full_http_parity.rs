@@ -341,7 +341,7 @@ async fn self_authored_claimed_name_is_not_name_ownership() {
     };
     let (owner, target) = (wallet(), wallet());
     rig.profile(&target, "Claimed but not owned", true).await;
-    rig.state.chain_index.get().unwrap().graph.names.clear();
+    rig.names.clear();
     let (bytes, content_type) =
         multipart(&[("name", b"Claim spoof"), ("description", b"description")]);
     let (status, _) = hit(
@@ -366,6 +366,62 @@ async fn self_authored_claimed_name_is_not_name_ownership() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     rig.name_owner(&target, "Owned despite unclaimed profile");
+    let (status, value) = hit(
+        &rig.app,
+        Case::new("patch", &path)
+            .signed(&owner)
+            .await
+            .json(&json!({"role":"owner"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{value}");
+    rig.finish();
+}
+
+/// A NAME source that cannot establish ownership (the index catching up, an
+/// unfolded transfer) refuses creation and ownership transfer with a 503: it
+/// never reads as "holds no NAME" (401/400), nor as holding one.
+#[tokio::test]
+async fn unestablished_name_ownership_refuses_creation_and_transfer() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let (owner, target) = (wallet(), wallet());
+    let community = rig.community(&owner, false).await;
+    rig.member(community, &target, "member").await;
+    rig.profile(&target, "Named target", true).await;
+    rig.name_owner(&target, "Named target");
+    rig.names.set_unavailable(true);
+    let (bytes, content_type) = multipart(&[("name", b"Not yet"), ("description", b"description")]);
+    let (status, value) = hit(
+        &rig.app,
+        Case::new("post", "/v1/communities")
+            .signed(&target)
+            .await
+            .body(bytes, &content_type),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{value}");
+    let path = format!("/v1/communities/{community}/members/{}", target.address);
+    let (status, value) = hit(
+        &rig.app,
+        Case::new("patch", &path)
+            .signed(&owner)
+            .await
+            .json(&json!({"role":"owner"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{value}");
+    let owners: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.community_members WHERE community_id = $1 AND role = 'owner' AND member_address = $2",
+    )
+    .bind(community)
+    .bind(target.address.as_str())
+    .fetch_one(&rig.pool)
+    .await
+    .unwrap();
+    assert_eq!(owners, 0, "an unestablished NAME transferred nothing");
+    rig.names.set_unavailable(false);
     let (status, value) = hit(
         &rig.app,
         Case::new("patch", &path)

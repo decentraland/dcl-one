@@ -1,10 +1,10 @@
 import { Component, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { ModalShell } from './Modal'
-import { Button } from './Button'
 import { useFocusTrap } from '../lib/useFocusTrap'
 import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
 import { nextLayerOrder } from '@explorer-core/lib/cancelLayers'
 import styles from './popups.module.css'
+import { Button } from '@dcl/one-ui'
 
 /** A popup is a render function given its own `close` callback; it returns the overlay to render. */
 type PopupRender = (close: () => void) => ReactNode
@@ -259,12 +259,13 @@ export function showDialog(opts: DialogOptions): Promise<string | null> {
       (close) => (
         <ModalShell
           title={opts.title}
+          ariaLabel={opts.title}
           onClose={close}
           closeButton={opts.dismissible ?? true}
           width={opts.width ?? 420}
           actionsEqual={opts.actionsEqual ?? opts.actions.length === 2}
           actions={opts.actions.map((a) => (
-            <Button
+            <Button appearance="hud"
               key={a.id}
               variant={a.variant ?? 'primary'}
               onClick={() => {

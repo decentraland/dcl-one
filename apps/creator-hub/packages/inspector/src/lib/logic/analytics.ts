@@ -1,5 +1,5 @@
-import { v4 as uuidv4 } from 'uuid';
 import { Analytics as SegmentAnalytics } from '@segment/analytics-node';
+import { randomUuid } from '../utils/uuid';
 import { getConfig } from './config';
 
 export enum Event {
@@ -26,7 +26,16 @@ export enum Event {
   CREATE_UI = 'Create UI',
   NEST_UI_COMPONENT = 'Nest UI Component',
   EDIT_UI_PROPERTY = 'Edit UI Property',
+  UNDO = 'Undo',
+  REDO = 'Redo',
+  DUPLICATE_ENTITY = 'Duplicate Entity',
+  DELETE_ENTITY = 'Delete Entity',
+  ADD_SMART_ITEM_ACTION = 'Add Smart Item Action',
+  ADD_SMART_ITEM_TRIGGER = 'Add Smart Item Trigger',
 }
+
+export type HistorySource = 'shortcut' | 'toolbar';
+export type EntityActionSource = 'shortcut' | 'context_menu';
 
 export type Events = {
   [Event.ADD_ITEM]: {
@@ -116,6 +125,28 @@ export type Events = {
     property: string;
     interactionLayer?: 'base' | 'hover' | 'press' | 'active';
   };
+  [Event.UNDO]: {
+    source: HistorySource;
+  };
+  [Event.REDO]: {
+    source: HistorySource;
+  };
+  [Event.DUPLICATE_ENTITY]: {
+    entitiesCount: number;
+    source: EntityActionSource;
+  };
+  [Event.DELETE_ENTITY]: {
+    entitiesCount: number;
+    source: EntityActionSource;
+  };
+  [Event.ADD_SMART_ITEM_ACTION]: {
+    actionType: string;
+    itemPath?: string;
+  };
+  [Event.ADD_SMART_ITEM_TRIGGER]: {
+    triggersCount: number;
+    itemPath?: string;
+  };
 };
 
 const noopAnalytics = {
@@ -125,7 +156,7 @@ const noopAnalytics = {
 class Analytics {
   private static instance: Analytics | null = null;
   private analytics: SegmentAnalytics | { track(): void } = noopAnalytics;
-  private userId: string = uuidv4();
+  private userId: string = randomUuid();
   private appId: string | undefined = undefined;
 
   constructor() {

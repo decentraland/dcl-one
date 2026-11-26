@@ -1,4 +1,4 @@
-import { getAvatarBackgroundColor, getDisplayName } from "@ui/shop/discovery/lib/avatarColor";
+import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 
 import { profileFaceUrl, profileSnapshotUrl } from "../../auth/profile-face-url";
 import { siteUrl } from "../bases";
@@ -97,7 +97,26 @@ export type ProfileVM = {
   info: ProfileInfoField[];
   links: ProfileLink[];
   equipped: unknown[];
+  /** The on-chain items the avatar wears, as item URNs (no token id), in the order worn. */
+  wornCollectibles: string[];
 };
+
+/**
+ * The worn wearables that are collectibles: an on-chain collection item, without the token id a
+ * worn copy carries, once each. The base avatar's own parts are not collectibles.
+ */
+export function wornCollectibleUrns(wearables: readonly string[] | undefined): string[] {
+  const urns = new Set<string>();
+  for (const worn of wearables ?? []) {
+    const parts = worn.trim().toLowerCase().split(":");
+    if (parts[0] !== "urn" || parts[1] !== "decentraland") continue;
+    if (parts[2] !== "matic" && parts[2] !== "ethereum") continue;
+    // Third-party collections are not in the marketplace catalogue.
+    if ((parts[3] !== "collections-v1" && parts[3] !== "collections-v2") || !parts[4] || !parts[5]) continue;
+    urns.add(parts.slice(0, 6).join(":"));
+  }
+  return [...urns];
+}
 
 
 const INFO_FIELDS: { src: keyof Avatar; key: string; label: string; icon: string }[] = [
@@ -126,6 +145,7 @@ export function emptyProfile(address: string): ProfileVM {
     info: [],
     links: [],
     equipped: [],
+    wornCollectibles: [],
   };
 }
 
@@ -182,5 +202,6 @@ export function mapProfile(avatar: Avatar, address: string): ProfileVM {
     info,
     links,
     equipped: [],
+    wornCollectibles: wornCollectibleUrns(avatar.avatar?.wearables),
   };
 }

@@ -1,7 +1,7 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { VscEllipsis as EllipsisIcon } from 'react-icons/vsc';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 import { Button } from '../../Button';
 import { Option } from '../../ui/Dropdown/Option';
 import type { Props as OptionProp } from '../../ui/Dropdown/Option/types';
@@ -61,6 +61,8 @@ export const MoreOptionsMenu = ({
       ref={anchorRef}
     >
       <Button
+        variant="secondary"
+        size="sm"
         className="MoreOptionsButton"
         onClick={handleShowMoreOptions}
       >

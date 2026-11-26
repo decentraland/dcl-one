@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../../lib/utils/cx';
 import Pill from '../../Pill/Pill';
 import type { Props as Option } from '../Option/types';
 import type { Props } from './types';

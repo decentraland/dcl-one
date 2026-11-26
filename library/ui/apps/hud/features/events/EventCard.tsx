@@ -1,8 +1,9 @@
 // The cards an event shows as: small and big in a calendar column, big in a day's grid, the
 // banner in the highlighted carousel, and the empty slot that offers to create one.
 
+import { Button, MaskIcon, Skeleton, Tooltip } from '@dcl/one-ui'
 import { useState, type CSSProperties } from 'react'
-import { Button, Avatar, ContextMenu, MaskIcon, Skeleton, Tooltip, openPopup } from '../../design'
+import { Avatar, ContextMenu, openPopup } from '../../design'
 import type { EventData, Friend } from '@explorer-core/engine/protocol'
 import type { EventCommunity } from '../session/useEngineSession'
 import addGradientIcon from '../../assets/events/add-icn-gradient.png'
@@ -19,13 +20,13 @@ import reminderOnIcon from '../../assets/events/reminder-on.png'
 import shareIcon from '../../assets/events/share-icn.png'
 import timeIcon from '../../assets/events/time-icn.png'
 import xIcon from '../../assets/events/x-icn.png'
-import { eventDayText, eventTimeText } from './eventFormat'
+import { eventDayText, eventTimeText, type EventLinkSource } from './eventFormat'
 import type { EventActions } from './useEventActions'
 import styles from './EventCard.module.css'
 
 const FRIEND_FACES = 3
 
-export function friendsAtEvent(event: EventData, friends: Friend[]): Friend[] {
+export function friendsAtEvent(event: Pick<EventData, 'connected_addresses'>, friends: Friend[]): Friend[] {
   if (event.connected_addresses.length === 0 || friends.length === 0) return []
   const here = new Set(event.connected_addresses.map((a) => a.toLowerCase()))
   return friends.filter((f) => here.has(f.address.toLowerCase()))
@@ -76,18 +77,22 @@ function OnlineCounter({ event }: { event: EventData }): React.JSX.Element | nul
   )
 }
 
-function FriendsHere({ event, friends }: { event: EventData; friends: Friend[] }): React.JSX.Element | null {
-  if (!event.live || friends.length === 0) return null
+/** Friends' faces, overlapped: the first three, then how many more. `tip` is the side a face's name shows on. */
+export function FriendFaces({ friends, tip = 'top' }: { friends: Friend[]; tip?: 'top' | 'bottom' }): React.JSX.Element {
   return (
     <span className={styles.friends}>
       {friends.slice(0, FRIEND_FACES).map((f) => (
-        <Tooltip key={f.address} label={f.name} side="top" className={styles.friend}>
+        <Tooltip appearance="hud" key={f.address} label={f.name} side={tip} className={styles.friend}>
           <Avatar src={f.picture} name={f.name} size={26} />
         </Tooltip>
       ))}
       {friends.length > FRIEND_FACES && <span className={styles.friendsMore}>+{friends.length - FRIEND_FACES}</span>}
     </span>
   )
+}
+
+function FriendsHere({ event, friends }: { event: EventData; friends: Friend[] }): React.JSX.Element | null {
+  return event.live && friends.length > 0 ? <FriendFaces friends={friends} /> : null
 }
 
 function SocialInfo({ event, friends }: { event: EventData; friends: Friend[] }): React.JSX.Element {
@@ -114,7 +119,8 @@ function TimePill({ event }: { event: EventData }): React.JSX.Element {
   )
 }
 
-function openShareMenu(anchor: HTMLElement, event: EventData, actions: EventActions): void {
+/** The Share button's menu, beside `anchor`. The card (an `article`) it is in keeps its hovered look while the menu is open. */
+export function openShareMenu(anchor: HTMLElement, event: EventLinkSource, actions: Pick<EventActions, 'shareOnX' | 'copyLink'>): void {
   const rect = anchor.getBoundingClientRect()
   // the menu's layer takes the pointer from the card: the card keeps its hovered look meanwhile
   const card = anchor.closest('article')
@@ -174,7 +180,7 @@ export function EventActionButtons({
   return (
     <span className={`${styles.actions} ${size === 'small' ? styles.actionsSmall : styles.actionsLarge} ${className}`.trim()}>
       {!event.live && (
-        <Button size="bare"
+        <Button appearance="hud" size="bare"
           radius={radius}
           variant={tone}
           className={`${remind} ${styles.remind}`}
@@ -189,17 +195,17 @@ export function EventActionButtons({
         </Button>
       )}
       {!event.live && (
-        <Button size="bare" radius={radius} variant={tone} className={box} aria-label="Add to calendar" onClick={() => actions.addToCalendar(event)}>
+        <Button appearance="hud" size="bare" radius={radius} variant={tone} className={box} aria-label="Add to calendar" onClick={() => actions.addToCalendar(event)}>
           <MaskIcon src={calendarAddIcon} size={icon} />
         </Button>
       )}
       {event.live && (
-        <Button size="bare" radius={radius} variant="primary" className={variant === 'detail' ? styles.jumpInDetail : styles.jumpIn} onClick={() => actions.jumpIn(event)}>
+        <Button appearance="hud" size="bare" radius={radius} variant="primary" className={variant === 'detail' ? styles.jumpInDetail : styles.jumpIn} onClick={() => actions.jumpIn(event)}>
           <span>JUMP IN</span>
           <MaskIcon src={jumpInIcon} size={24} />
         </Button>
       )}
-      <Button size="bare" radius={radius} variant={tone} className={box} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, event, actions)}>
+      <Button appearance="hud" size="bare" radius={radius} variant={tone} className={box} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, event, actions)}>
         <MaskIcon src={shareIcon} size={icon} />
       </Button>
     </span>
@@ -217,6 +223,12 @@ function OpenButton({ event, onOpen }: { event: EventData; onOpen: () => void })
   return <button type="button" className={styles.open} aria-label={`Event: ${event.name}`} onClick={onOpen} />
 }
 
+
+// A small card's title is sized to its width: 20px while it fits, down to 16px
+// before it is cut. Without measuring: by its length.
+function fitName(name: string): number {
+  return name.length <= 16 ? 20 : name.length === 17 ? 18 : 16
+}
 
 export function EventCardSmall({ event, actions, onOpen }: EventCardProps): React.JSX.Element {
   return (
@@ -236,7 +248,7 @@ export function EventCardSmall({ event, actions, onOpen }: EventCardProps): Reac
         </span>
       )}
       <span className={styles.smallTitle}>
-        <span className={styles.name}>{event.name}</span>
+        <span className={styles.name} style={{ fontSize: fitName(event.name) }}>{event.name}</span>
         <span className={styles.host}>
           By <b>{event.user_name}</b>
         </span>
@@ -263,7 +275,7 @@ export function EventCardBig({ event, friends, community, actions, onOpen, wide 
         <SocialInfo event={event} friends={friends} />
       </span>
       {community != null && (
-        <Tooltip label={community.name} side="top" className={styles.community}>
+        <Tooltip appearance="hud" label={community.name} side="top" className={styles.community}>
           <CommunityThumb src={community.thumbnail} />
         </Tooltip>
       )}

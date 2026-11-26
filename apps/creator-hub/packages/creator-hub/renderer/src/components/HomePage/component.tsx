@@ -1,15 +1,18 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useDispatch, useSelector } from 'react-redux';
-import cx from 'classnames';
-import ChevronRightIcon from '@mui/icons-material/ChevronRight';
-import MovieOutlinedIcon from '@mui/icons-material/MovieOutlined';
-import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
-import RocketLaunchOutlinedIcon from '@mui/icons-material/RocketLaunchOutlined';
-import CodeIcon from '@mui/icons-material/Code';
-import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
-import WidgetsOutlinedIcon from '@mui/icons-material/WidgetsOutlined';
-import { CircularProgress as Loader, Typography } from 'decentraland-ui2';
+import { cx } from '/@/lib/cx';
+import {
+  ChevronRightIcon,
+  MovieOutlinedIcon,
+  MenuBookOutlinedIcon,
+  RocketLaunchOutlinedIcon,
+  CodeIcon,
+  AccountTreeOutlinedIcon,
+  WidgetsOutlinedIcon,
+} from '@ui/atoms/icons-material';
+import Spinner from '@ui/atoms/Spinner';
+import Text from '@ui/atoms/Text';
 
 import { misc } from '#preload';
 
@@ -41,12 +44,12 @@ const Row: React.FC<RowProps> = React.memo(({ title, description, children, onCl
       className={cx('HomeRowHeader', { Clickable: !!onClickTitle })}
       onClick={onClickTitle}
     >
-      <Typography
+      <Text
         variant="h5"
         className="HomeRowTitle"
       >
         {title}
-      </Typography>
+      </Text>
       <ChevronRightIcon className="HomeRowChevron" />
     </div>
     {description && <p className="HomeRowDescription">{description}</p>}
@@ -77,12 +80,13 @@ const HomeCard: React.FC<HomeCardProps> = React.memo(
         />
       )}
       <div className="HomeCardInfo">
-        <Typography
+        <Text
           variant="subtitle2"
+          as="h6"
           className="HomeCardTitle"
         >
           {title}
-        </Typography>
+        </Text>
         {description && <p className="HomeCardDescription">{description}</p>}
         {meta && <div className="HomeCardMeta">{meta}</div>}
       </div>
@@ -106,7 +110,15 @@ const MyScenesRow: React.FC = React.memo(() => {
     [runProject],
   );
 
-  if (isLoading) return <Loader />;
+  if (isLoading)
+    return (
+      <Spinner
+        ring="wide"
+        role="progressbar"
+        size={40}
+        color="primary"
+      />
+    );
   if (recentProjects.length === 0) return null;
 
   return (
@@ -286,12 +298,12 @@ export function HomePage() {
       >
         <Navbar active={NavbarItem.HOME} />
         <div className="HomeContent">
-          <Typography
+          <Text
             variant="h3"
             className="HomeTitle"
           >
             {t('home.header.title')}
-          </Typography>
+          </Text>
           <CreatorFundBanner />
           <MyScenesRow />
           <TemplatesRow />

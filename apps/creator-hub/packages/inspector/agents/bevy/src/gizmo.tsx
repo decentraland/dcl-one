@@ -21,12 +21,20 @@ import type { Entity } from '@dcl/sdk/ecs';
 // ReactEcs is the JSX pragma (used as a value by the JSX transform for the
 // gizmoOverlay UI), so it must be a runtime default import — the
 // consistent-type-imports rule mis-flags it because it sees no explicit usage.
-// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+// oxlint-disable-next-line typescript/consistent-type-imports
 import ReactEcs, { ReactEcsRenderer, UiEntity } from '@dcl/sdk/react-ecs';
 import { Vector3, Quaternion, Color4, Color3 } from '@dcl/sdk/math';
 import type { GizmoMode } from '@dcl/inspector-bevy-protocol';
 
+import {
+  isActivityReporting,
+  isActivitySceneRunning,
+  reportPointerTarget,
+  reportSceneClick,
+} from './activity';
+import type { ActivityHit } from './activity';
 import { bus } from './bus';
+import { isGizmoActive } from './gizmo-visibility';
 import { getSpawnMarkerTarget } from './spawn-markers';
 
 /**
@@ -364,14 +372,26 @@ let sceneOffset: Vector3 = Vector3.Zero();
 let picker: Entity | null = null;
 let rayTs = 0;
 
-// Hover-hint raycast (#1476): a dedicated picker + timestamp so a per-frame hover
-// probe never clobbers the click-pick raycast above. Throttled by frame count.
+// Hover raycast: a dedicated picker + timestamp so a per-frame hover probe never
+// clobbers the click-pick raycast above. Throttled by frame count. Feeds the hover
+// hint (#1476) while editing is off and the session recorder's pointer target while
+// activity reporting is on.
 let hoverPicker: Entity | null = null;
 let hoverTs = 0;
 let hoverPending = false;
+let hoverRay: PointerRay | null = null;
 let lastHoverEntity = 0;
 let hoverThrottle = 0;
 const HOVER_RAYCAST_EVERY = 5;
+
+// Session-recorder click raycast (editing off, scene running). Its own picker: the
+// hover result can be HOVER_RAYCAST_EVERY frames stale, and in the player camera the
+// view turns under a still pointer, so only a ray cast at the click reliably names
+// what the scene's own pointer event hit.
+let clickPicker: Entity | null = null;
+let clickTs = 0;
+let clickPending = false;
+let clickRay: PointerRay | null = null;
 
 interface DragState {
   mode: 'translate' | 'rotate' | 'scale';
@@ -406,13 +426,31 @@ let drag: DragState | null = null;
 let grabPending = false;
 let pendingModifiers = { shift: false, ctrl: false };
 // Viewport EDITING: when false, a pointer-down does NOT pick or grab, so the click
-// reaches the running scene instead (test a mechanic, e.g. a button — #1458). The
-// inspector's "Interact" toggle drives this via set-editing-enabled.
+// reaches the running scene instead (test a mechanic, e.g. a button — #1458), and
+// the gizmo (entity or spawn-point handle) is not drawn. The inspector's
+// "Interact" toggle drives this via set-editing-enabled.
 let editingEnabled = true;
 
-/** Enable/disable viewport editing (click-to-pick + gizmo grab). See #1458. */
+/**
+ * Enable/disable viewport editing (click-to-pick + gizmo grab + gizmo drawing).
+ * Selection and spawn-handle updates keep landing while it is off; the per-frame
+ * anchor in gizmoSystemInner draws the latest of them once it is back on.
+ */
 export function setEditingEnabled(enabled: boolean): void {
   editingEnabled = enabled;
+  if (!enabled) {
+    hideGizmo();
+    setHover(null);
+  }
+}
+
+/** Whether the gizmo is anchored, drawn and hover-highlighted this frame. */
+function gizmoActive(): boolean {
+  return isGizmoActive({
+    editingEnabled,
+    hasTarget: selected !== null && selectedPos !== null,
+    modeDrawsHandles: isSupportedMode(gizmoMode),
+  });
 }
 // The entity's live position during a drag (committed on release).
 let dragPos: Vector3 | null = null;
@@ -644,6 +682,8 @@ export function setupGizmo(): void {
   Transform.create(picker);
   hoverPicker = engine.addEntity();
   Transform.create(hoverPicker);
+  clickPicker = engine.addEntity();
+  Transform.create(clickPicker);
   buildGizmo();
   // Initialize per-mode handle visibility: buildGizmo creates EVERY handle group
   // visible (scale One), so without this the first anchored frame would show all
@@ -721,11 +761,12 @@ function recreateGizmoCamera(): void {
 
 function gizmoOverlay(): ReactEcs.JSX.Element | null {
   // Show the composite while a gizmo is up — an entity selection OR a spawn point
-  // (driven via the SPAWN_SENTINEL, so `selected`/`selectedPos` are set for it too).
+  // (driven via the SPAWN_SENTINEL, so `selected`/`selectedPos` are set for it too) —
+  // and editing is on: with Interact on, the handles would be drawn but dead.
   // Hidden while a resize is in flight (resizeSettle > 0): the in-place-resized target is
   // skewed until the camera recreates, so hiding it avoids showing a wrong-aspect gizmo and
   // the "snap" back into place — it reappears already-correct once the size settles (#1529).
-  const gizmoUp = selected !== null && selectedPos !== null && resizeSettle === 0;
+  const gizmoUp = gizmoActive() && resizeSettle === 0;
   if (gizmoCamera === null || !gizmoUp) return null;
   return (
     <UiEntity
@@ -991,7 +1032,9 @@ function cameraDistanceScale(pos: Vector3): number {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, depth * SCALE_FACTOR));
 }
 
-function pointerRay(): { origin: Vector3; dir: Vector3 } | null {
+type PointerRay = { origin: Vector3; dir: Vector3 };
+
+function pointerRay(): PointerRay | null {
   const p = PrimaryPointerInfo.getOrNull(engine.RootEntity);
   const camT = Transform.getOrNull(engine.CameraEntity);
   const dir = p?.worldRayDirection;
@@ -1262,10 +1305,10 @@ function gizmoSystemInner(): void {
   }
 
   // Position + scale the gizmo on the selected entity each frame (the inspector
-  // supplied selectedPos; during a drag we update it locally below). Only for
-  // modes that draw handles: re-anchoring in `free` mode would undo hideGizmo's
-  // park and show whatever groups happen to be visible.
-  if (selected !== null && selectedPos !== null && drag === null && isSupportedMode(gizmoMode)) {
+  // supplied selectedPos; during a drag we update it locally below). Only while
+  // the gizmo is active (see gizmoActive): anchoring otherwise would undo
+  // hideGizmo's park.
+  if (selectedPos !== null && drag === null && gizmoActive()) {
     const t = Transform.getMutable(gizmoRoot);
     t.position = { ...selectedPos };
     // Orient the handles to the entity's rotation when locally aligned (scale
@@ -1281,7 +1324,7 @@ function gizmoSystemInner(): void {
   // on a change, so this is cheap per frame.
   if (drag !== null) {
     setHover(drag.axis);
-  } else if (selected !== null && selectedPos !== null && isSupportedMode(gizmoMode)) {
+  } else if (gizmoActive()) {
     const ray = pointerRay();
     setHover(ray !== null ? pickHandleAtRay(ray) : null);
   } else {
@@ -1344,22 +1387,16 @@ function gizmoSystemInner(): void {
   // Hover hint (#1476): with editing OFF (Interact toggled ON), report the scene
   // entity under the pointer so the host can surface its PointerEvents hoverText
   // (e.g. "Press E"). The engine's own hover-hint HUD isn't mounted in the editor.
-  // Throttled, on a dedicated picker so it never clobbers the click-pick raycast.
-  if (!editingEnabled) {
+  // The same raycast reports the session recorder's pointer target, in any mode,
+  // while activity reporting is on.
+  const reportingActivity = isActivityReporting();
+  if (!editingEnabled || reportingActivity) {
     hoverThrottle = (hoverThrottle + 1) % HOVER_RAYCAST_EVERY;
     if (!hoverPending && hoverPicker !== null && hoverThrottle === 0) {
       const ray = pointerRay();
       if (ray !== null) {
-        Transform.createOrReplace(hoverPicker, { position: { ...ray.origin } });
-        hoverTs += 1;
-        Raycast.createOrReplace(hoverPicker, {
-          timestamp: hoverTs,
-          maxDistance: 1000,
-          queryType: RaycastQueryType.RQT_QUERY_ALL,
-          continuous: false,
-          collisionMask: PICK_OR_HANDLE_MASK,
-          direction: { $case: 'globalDirection', globalDirection: { ...ray.dir } },
-        });
+        castRay(hoverPicker, ray, ++hoverTs);
+        hoverRay = ray;
         hoverPending = true;
       }
     }
@@ -1367,13 +1404,40 @@ function gizmoSystemInner(): void {
       const result = RaycastResult.getOrNull(hoverPicker);
       if (result !== null && result.timestamp === hoverTs) {
         hoverPending = false;
-        emitHover(result);
+        if (!editingEnabled) emitHover(result);
+        if (reportingActivity) reportPointerTarget(activityHit(result, hoverRay));
       }
     }
-  } else if (lastHoverEntity !== 0) {
+  }
+  if (editingEnabled && lastHoverEntity !== 0) {
     // Editing re-enabled → clear any hint the host is still showing.
     lastHoverEntity = 0;
     bus.postToPage({ kind: 'hover', entity: 0 });
+  }
+
+  // Session recorder: a click that reaches the running scene (editing off). Editor
+  // picks need no report — they surface as selection changes.
+  if (
+    !editingEnabled &&
+    down &&
+    !clickPending &&
+    clickPicker !== null &&
+    reportingActivity &&
+    isActivitySceneRunning()
+  ) {
+    const ray = pointerRay();
+    if (ray !== null) {
+      castRay(clickPicker, ray, ++clickTs);
+      clickRay = ray;
+      clickPending = true;
+    }
+  }
+  if (clickPending && clickPicker !== null) {
+    const result = RaycastResult.getOrNull(clickPicker);
+    if (result !== null && result.timestamp === clickTs) {
+      clickPending = false;
+      reportSceneClick(activityHit(result, clickRay));
+    }
   }
 
   // Drive / finish an active drag.
@@ -1393,22 +1457,68 @@ function readModifiers(): { shift: boolean; ctrl: boolean } {
  * are CL_POINTER hits but not scene entities). Spawn markers stay in — callers treat
  * them differently (pick selects the spawn; hover skips it). Shared by emitPick +
  * emitHover so both run the same hit pipeline. */
-function sceneHitIds(result: {
-  hits: readonly { readonly entityId?: number; readonly length?: number }[];
-}): number[] {
+function sceneHitIds(result: { hits: readonly SceneHit[] }): number[] {
+  return sceneHits(result).map(h => Number(h.entityId));
+}
+
+type SceneHit = {
+  readonly entityId?: number;
+  readonly length?: number;
+  readonly meshName?: string;
+};
+
+/** The hits behind {@link sceneHitIds}, nearest first, kept whole for their
+ * distance + mesh name. */
+function sceneHits(result: { hits: readonly SceneHit[] }): SceneHit[] {
   return [...result.hits]
     .filter(h => h.entityId !== undefined)
     .sort((a, b) => (a.length ?? 0) - (b.length ?? 0))
-    .map(h => Number(h.entityId))
-    .filter(id => id >= 512 && !isGizmoHandle(id));
+    .filter(h => {
+      const id = Number(h.entityId);
+      return id >= 512 && !isGizmoHandle(id);
+    });
+}
+
+/** Cast a one-shot raycast from `picker` along `ray` (resolved a frame or more later
+ * into the picker's RaycastResult, matched by `timestamp`). */
+function castRay(picker: Entity, ray: PointerRay, timestamp: number): void {
+  Transform.createOrReplace(picker, { position: { ...ray.origin } });
+  Raycast.createOrReplace(picker, {
+    timestamp,
+    maxDistance: 1000,
+    queryType: RaycastQueryType.RQT_QUERY_ALL,
+    continuous: false,
+    collisionMask: PICK_OR_HANDLE_MASK,
+    direction: { $case: 'globalDirection', globalDirection: { ...ray.dir } },
+  });
+}
+
+/** The session-recorder view of a raycast: the nearest scene entity (spawn markers
+ * skipped, as for the hover hint), its hit point in scene-local metres and its glTF
+ * mesh name. The point is rebuilt from the cast ray + hit distance rather than read
+ * from `RaycastHit.position`, whose "relative to the scene" is ambiguous for a
+ * super-user ray into another scene; the cast ray is in the agent's world frame, the
+ * one `sceneOffset` converts from. */
+function activityHit(result: { hits: readonly SceneHit[] }, ray: PointerRay | null): ActivityHit {
+  for (const hit of sceneHits(result)) {
+    const entity = Number(hit.entityId);
+    if (getSpawnMarkerTarget(entity) !== null) continue;
+    const activity: ActivityHit = { entity };
+    if (ray !== null && hit.length !== undefined) {
+      const world = Vector3.add(ray.origin, Vector3.scale(Vector3.normalize(ray.dir), hit.length));
+      const local = Vector3.subtract(world, sceneOffset);
+      activity.point = { x: local.x, y: local.y, z: local.z };
+    }
+    if (hit.meshName) activity.meshName = hit.meshName;
+    return activity;
+  }
+  return { entity: 0 };
 }
 
 // Report the nearest scene entity under the pointer for the hover hint (#1476).
 // Deduped: only posts when the hovered entity changes. 0 = pointer over nothing
 // (or over a spawn marker, which isn't a hoverable item).
-function emitHover(result: {
-  hits: readonly { readonly entityId?: number; readonly length?: number }[];
-}): void {
+function emitHover(result: { hits: readonly SceneHit[] }): void {
   let hovered = 0;
   for (const id of sceneHitIds(result)) {
     if (getSpawnMarkerTarget(id) !== null) continue;
@@ -1423,7 +1533,7 @@ function emitHover(result: {
 
 /** Emit a pick from a raycast result (nearest authored hit, id ≥ 512). */
 function emitPick(
-  result: { hits: readonly { readonly entityId?: number; readonly length?: number }[] },
+  result: { hits: readonly SceneHit[] },
   mods: { shift: boolean; ctrl: boolean },
 ): void {
   for (const id of sceneHitIds(result)) {

@@ -1,0 +1,46 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--editor-line);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--editor-surface);
+  color: var(--dcl-neutrals-white);
+  font: inherit;
+  font-size: 13px;
+
+  &:hover:not(:disabled) {
+    background: var(--editor-surface-hover);
+  }
+
+  &:disabled {
+    cursor: default;
+  }
+
+  &[data-status="pass"] svg {
+    color: var(--color-ok);
+  }
+  &[data-status="warnings"] svg {
+    color: var(--color-amber);
+  }
+  &[data-status="errors"] svg {
+    color: var(--dcl-system-red);
+  }
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: var(--dcl-neutrals-white);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

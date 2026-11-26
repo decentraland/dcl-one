@@ -180,6 +180,9 @@ impl AccessToken {
     }
 }
 
+/// The twirp RoomService admin token for `room`, 60 s: `roomAdmin` over it,
+/// `roomList`, and `roomCreate`, which LiveKit requires of `CreateRoom` (the
+/// room service's `ensure_room` creates a missing room through this token).
 pub fn room_admin_token(
     api_key: &str,
     api_secret: &str,
@@ -191,7 +194,7 @@ pub fn room_admin_token(
         "iss": api_key,
         "sub": api_key,
         "nbf": now,
-        "video": { "roomList": true, "roomAdmin": true, "room": room },
+        "video": { "roomList": true, "roomAdmin": true, "roomCreate": true, "room": room },
     });
     sign_hs256(
         api_secret,
@@ -363,12 +366,14 @@ mod tests {
     }
 
     #[test]
-    fn room_admin_token_grants_room_admin_and_list() {
+    fn room_admin_token_grants_room_admin_list_and_create() {
         let p = decode_jwt_payload(&room_admin_token("devkey", "devsecret", "some-room").unwrap());
         assert_eq!(p["iss"], "devkey");
         assert_eq!(p["sub"], "devkey");
         assert_eq!(p["video"]["roomAdmin"], true);
         assert_eq!(p["video"]["roomList"], true);
+        // LiveKit refuses `CreateRoom` (401) without it.
+        assert_eq!(p["video"]["roomCreate"], true);
         assert_eq!(p["video"]["room"], "some-room");
         assert_eq!(p["exp"].as_i64().unwrap() - p["nbf"].as_i64().unwrap(), 60);
     }

@@ -15,29 +15,50 @@ has() { grep -qF -- "$2" <<< "$1"; }
 RUN='<sub>Run summary: [7](https://github.com/example/repo/actions/runs/7)'
 FILES=https://bucket.example/creator-hub/branch/feat/x/Decentraland%20Creator%20Hub-1.2.3-42-abcdef1
 
-# --- desktop: both platforms in one section ---------------------------------------------------
-OUT=$(SECTION=desktop VERSION=1.2.3 BRANCH=feat/x MACOS=uploaded WINDOWS=uploaded MACOS_SECONDS=278.412 WINDOWS_SECONDS=626.090 bash "$SECTION_SH")
+# --- desktop: every platform in one section  ---------------------------------------------------
+OUT=$(SECTION=desktop VERSION=1.2.3 BRANCH=feat/x MACOS=uploaded WINDOWS=uploaded LINUX=uploaded MACOS_SECONDS=278.412 WINDOWS_SECONDS=626.090 LINUX_SECONDS=301.500 bash "$SECTION_SH")
 [ "$(head -n 1 <<< "$OUT")" = '[![Desktop app](https://img.shields.io/badge/Desktop%20app-Success!-3fb950?logo=electron&logoColor=white&style=for-the-badge)](https://github.com/example/repo/actions/runs/7)' ] \
   || fail "desktop: badge line"
 has "$OUT" "| macOS (Apple silicon) | ✅ Built in 278.412 seconds | [mac-arm64.zip]($FILES-mac-arm64.zip) |" || fail "desktop: Apple silicon row"
 has "$OUT" "| macOS (Intel) | ✅ Built in 278.412 seconds | [mac-x64.zip]($FILES-mac-x64.zip) |" || fail "desktop: Intel row"
 has "$OUT" "| Windows | ✅ Built in 626.090 seconds | [win-x64.exe]($FILES-win-x64.exe) |" || fail "desktop: Windows row"
+has "$OUT" "| Linux (AppImage) | ✅ Built in 301.500 seconds | [linux-x86_64.AppImage]($FILES-linux-x86_64.AppImage) |" || fail "desktop: AppImage row"
+has "$OUT" "| Linux (deb) | ✅ Built in 301.500 seconds | [linux-amd64.deb]($FILES-linux-amd64.deb) |" || fail "desktop: deb row"
+has "$OUT" 'chmod +x "Decentraland Creator Hub-1.2.3-42-abcdef1-linux-x86_64.AppImage"' || fail "desktop: AppImage steps"
+has "$OUT" 'sudo apt install "./Decentraland Creator Hub-1.2.3-42-abcdef1-linux-amd64.deb"' || fail "desktop: deb steps"
 has "$OUT" '<details><summary>How to open the macOS app</summary>' || fail "desktop: macOS steps are not collapsed"
 has "$OUT" 'xattr -c "Decentraland Creator Hub.app"' || fail "desktop: macOS steps"
 [ "$(tail -n 1 <<< "$OUT")" = "$RUN"' · Version: `1.2.3-42-abcdef1`</sub>' ] || fail "desktop: footer"
 pass "desktop section joins the platforms"
 
 # --- desktop: one platform failed -------------------------------------------------------------
-OUT=$(SECTION=desktop VERSION=1.2.3 BRANCH=feat/x MACOS='' WINDOWS=uploaded bash "$SECTION_SH")
+OUT=$(SECTION=desktop VERSION=1.2.3 BRANCH=feat/x MACOS='' WINDOWS=uploaded LINUX=uploaded bash "$SECTION_SH")
 has "$OUT" "| Windows | ✅ Built | [win-x64.exe]($FILES-win-x64.exe) |" || fail "desktop failed: a build with no time"
 has "$OUT" 'Desktop%20app-Failed!-ff0000' || fail "desktop failed: badge"
 has "$OUT" '| macOS (Apple silicon) | ❌ Failed | — |' || fail "desktop failed: Apple silicon row"
 has "$OUT" '| macOS (Intel) | ❌ Failed | — |' || fail "desktop failed: Intel row"
 has "$OUT" "[win-x64.exe]($FILES-win-x64.exe)" || fail "desktop failed: the Windows link is lost"
 has "$OUT" 'xattr' && fail "desktop failed: macOS steps without a macOS build"
+OUT=$(SECTION=desktop VERSION=1.2.3 BRANCH=feat/x MACOS=uploaded WINDOWS=uploaded bash "$SECTION_SH")
+has "$OUT" 'Desktop%20app-Failed!-ff0000' || fail "desktop failed: badge without a Linux build"
+[ "$(grep -c '❌ Failed' <<< "$OUT")" = 2 ] || fail "desktop failed: the Linux rows"
+has "$OUT" 'chmod' && fail "desktop failed: Linux steps without a Linux build"
 OUT=$(SECTION=desktop VERSION=1.2.3 BRANCH=feat/x bash "$SECTION_SH")
-[ "$(grep -c '❌ Failed' <<< "$OUT")" = 3 ] || fail "desktop failed: no result must read as failed"
+[ "$(grep -c '❌ Failed' <<< "$OUT")" = 5 ] || fail "desktop failed: no result must read as failed"
 pass "desktop section shows the platform that failed"
+
+# --- desktop: a platform the run did not build ------------------------------------------------
+OUT=$(SECTION=desktop VERSION=1.2.3 BRANCH=feat/x MACOS=uploaded WINDOWS=uploaded LINUX=skipped bash "$SECTION_SH")
+has "$OUT" 'Desktop%20app-Success!-3fb950' || fail "desktop skipped: badge without Linux"
+has "$OUT" 'Linux' && fail "desktop skipped: Linux rows"
+OUT=$(SECTION=desktop VERSION=1.2.3 BRANCH=feat/x MACOS=skipped WINDOWS=skipped LINUX=uploaded bash "$SECTION_SH")
+has "$OUT" 'Desktop%20app-Success!-3fb950' || fail "desktop skipped: badge with Linux only"
+has "$OUT" 'macOS' && fail "desktop skipped: macOS rows"
+has "$OUT" 'Windows' && fail "desktop skipped: Windows rows"
+has "$OUT" "[linux-x86_64.AppImage]($FILES-linux-x86_64.AppImage)" || fail "desktop skipped: AppImage row"
+OUT=$(SECTION=desktop VERSION=1.2.3 BRANCH=feat/x MACOS=skipped WINDOWS=skipped bash "$SECTION_SH")
+has "$OUT" 'Desktop%20app-Failed!-ff0000' || fail "desktop skipped: a failed Linux build"
+pass "desktop section leaves out the platforms the run did not build"
 
 # --- inspector --------------------------------------------------------------------------------
 OUT=$(SECTION=inspector VERSION=1.0.0 PACKAGE_KEY=creator-hub/branch/x/dcl-inspector-1.0.0.tgz PREVIEW_PATH=creator-hub/branch/x/inspector/index.html bash "$SECTION_SH")
@@ -67,5 +88,60 @@ for bad in "SECTION=build VERSION=1.2.3" "SECTION=desktop VERSION=1.2.3" "SECTIO
   [ "$RC" != 0 ] || fail "bad input: '$bad' passed"
 done
 pass "an unknown section or a missing value stops"
+
+# --- status.sh: the state of the run ----------------------------------------------------------
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+cat > "$WORK/upsert.sh" <<'SH'
+printf '%s|%s|%s\n' "$COMMENT/$SECTION" "$IF_SECTION_HAS" "$(tr '\n' ' ' <<< "$SECTION_BODY")" >> "$LOG"
+SH
+export UPSERT="$WORK/upsert.sh" LOG="$WORK/log"
+STATUS_SH="$(dirname "$SECTION_SH")/status.sh"
+IN_PROGRESS='<sub>Run summary: [7](https://github.com/example/repo/actions/runs/7) · Commit: `abcdef1` · In progress</sub>'
+line() { sed -n "${1}p" "$LOG"; }
+
+STATE=pending DESKTOP=true bash "$STATUS_SH"
+has "$(line 1)" 'creator-hub/desktop||[![Desktop app](https://img.shields.io/badge/Desktop%20app-Pending!-yellow?logo=electron' || fail "pending: desktop is not written in any case"
+has "$(line 1)" "$IN_PROGRESS" || fail "pending: desktop footer"
+has "$(line 2)" 'creator-hub/inspector|<sub>Run summary: [|' || fail "pending: inspector is not only over a result"
+has "$(line 2)" 'Inspector-Pending!-yellow' || fail "pending: inspector badge"
+has "$(line 3)" 'creator-hub/asset-packs|<sub>Run summary: [|' || fail "pending: asset packs is not only over a result"
+has "$(line 3)" "$IN_PROGRESS" || fail "pending: asset packs footer"
+rm "$LOG"
+STATE=pending bash "$STATUS_SH"
+has "$(line 1)" 'creator-hub/desktop|<sub>Run summary: [|' || fail "pending without the label: desktop is not only over a result"
+has "$(line 1)" 'Desktop%20app-Not%20built-lightgrey' || fail "pending without the label: desktop badge"
+has "$(line 1)" 'add the `ci:desktop` label' || fail "pending without the label: desktop hint"
+pass "pending shows the run as in progress"
+
+# status.sh tells a result by its footer, so every result that section.sh writes must end with a
+# line that starts with status.sh's ANY_RUN, or pending stops replacing an earlier commit's builds.
+ANY_RUN=$(sed -n "s/^ANY_RUN='\(.*\)'\$/\1/p" "$STATUS_SH")
+[ -n "$ANY_RUN" ] || fail "footer: no ANY_RUN in status.sh"
+for spec in 'SECTION=desktop VERSION=1.2.3 BRANCH=feat/x MACOS=uploaded WINDOWS=uploaded LINUX=uploaded' \
+    'SECTION=desktop VERSION=1.2.3 BRANCH=feat/x' 'SECTION=inspector VERSION=1.0.0 PACKAGE_KEY=k.tgz' \
+    'SECTION=asset-packs VERSION=2.0.0 PACKAGE_KEY=k.tgz'; do
+  OUT=$(env $spec bash "$SECTION_SH")
+  [[ "$(tail -n 1 <<< "$OUT")" == "$ANY_RUN"* ]] || fail "footer: '$spec' does not end with the ANY_RUN footer"
+done
+pass "every result of section.sh has the footer that status.sh writes over"
+
+rm "$LOG"
+STATE=ended INSPECTOR_CHANGED=false ASSET_PACKS_CHANGED='' bash "$STATUS_SH"
+[ "$(wc -l < "$LOG")" = 3 ] || fail "ended: not all sections"
+for n in 1 2 3; do
+  has "$(line "$n")" "|$IN_PROGRESS|" || fail "ended: line $n is not only over this run in progress"
+  has "$(line "$n")" 'Not%20built-lightgrey' || fail "ended: line $n badge"
+done
+has "$(line 1)" 'This run stopped before it published the desktop app.' || fail "ended: desktop text"
+has "$(line 2)" '`@dcl/inspector` did not change since its last release.' || fail "ended: unchanged package text"
+has "$(line 3)" 'This run stopped before it published `@dcl/asset-packs`.' || fail "ended: package text"
+has "$(line 3 | cut -d '|' -f 3-)" 'In progress' && fail "ended: still in progress"
+set +e
+STATE=started bash "$STATUS_SH" >/dev/null 2>&1
+RC=$?
+set -e
+[ "$RC" != 0 ] || fail "status: an unknown state passed"
+pass "ended shows the builds that the run did not make"
 
 [ "$FAILED" = 0 ] && echo "ALL PASS" || { echo "FAILURES PRESENT"; exit 1; }

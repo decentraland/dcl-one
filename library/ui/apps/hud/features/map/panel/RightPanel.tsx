@@ -2,26 +2,29 @@
 // show search results, a place or an event.
 
 import type { NavmapSnapshot } from '@explorer-core/features/map/navmap'
-import { MaskIcon } from '../../../design/MaskIcon'
 import { PANEL_ART } from '../mapArt'
 import styles from './MapPanel.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 export function RightPanel({
   snapshot,
   searchBar,
   children,
+  compact = false,
   onExpand,
   onCollapse
 }: {
   snapshot: NavmapSnapshot
   searchBar: React.ReactNode
   children: React.ReactNode
+  /** Hosted in the lobby's section modal. */
+  compact?: boolean
   onExpand: () => void
   onCollapse: () => void
 }): React.JSX.Element {
   const { expanded, handle } = snapshot
   return (
-    <aside className={styles.panel} aria-label="Places and events">
+    <aside className={compact ? `${styles.panel} ${styles.compact}` : styles.panel} aria-label="Places and events">
       {handle != null && (
         <div className={`${styles.slide} ${styles.handleRail} ${expanded ? '' : styles.slideOut}`.trim()}>
           <button

@@ -19,7 +19,7 @@ import * as nodeModule from 'node:module';
 import path from 'node:path';
 import { after, before, beforeEach, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { acceptsBinding, findChrome, launch, redact, secretsOf } from './driver.mjs';
+import { APP_GONE, acceptsBinding, findChrome, launch, redact, secretsOf } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(HERE, 'fixture');
@@ -409,6 +409,45 @@ for (const isolated of [true, false]) {
   });
 }
 
+// The start screen: the page's commands are there before the engine's console.
+describe('a page whose engine has not started', { skip: noChrome || noStrip }, () => {
+  const page = {};
+  before(
+    async () => {
+      page.server = await serve({ isolated: true });
+      page.driver = await launch({ url: `${page.server.url}/?mode=hud&engine=off`, chrome });
+    },
+    { timeout: 120_000 }
+  );
+  after(async () => {
+    await page.driver?.close();
+    await page.server?.close();
+  });
+
+  test('is not ready for a caller that needs the engine', async () => {
+    await assert.rejects(page.driver.ready({ timeout: 5_000 }), /did not get window\.engine_console_command and window\.__dclTrustedInput/);
+  });
+
+  test('is ready on its start screen for a caller that asks for it', async () => {
+    await page.driver.ready({ timeout: 60_000, startScreen: true });
+  });
+
+  test('runs the page\'s own commands on its start screen', async () => {
+    assert.equal(JSON.parse(await page.driver.console('/fixture_state', { startScreen: true })).value, 'old');
+  });
+
+  test('clicks a control with real input on its start screen', async () => {
+    assert.equal(JSON.parse(await page.driver.console('/hud_click Save', { startScreen: true })).input, 'trusted');
+  });
+
+  test('says an engine command has nowhere to go yet', async () => {
+    await assert.rejects(
+      page.driver.console('/teleport 0 0', { startScreen: true }),
+      /^Error: the engine has not started, and \/teleport is not a page command$/
+    );
+  });
+});
+
 // A frame of another origin has the binding too, and must get nothing from it.
 describe('a frame of another origin', { skip: noChrome }, () => {
   const page = {};
@@ -498,6 +537,22 @@ describe('the command line', () => {
   });
 });
 
+for (const isolated of [true, false]) {
+  const kind = isolated ? 'app frame out of process (Document-Isolation-Policy)' : 'app frame in process';
+
+  describe(`a command whose document is replaced, ${kind}`, { skip: noChrome }, () => {
+    const page = openPage({ isolated, mode: 'protocol' });
+
+    test('fails at once with APP_GONE, and the next command runs in the new document', async () => {
+      const started = Date.now();
+      await assert.rejects(page.driver.console('/fixture_reload', { timeout: 30_000 }), { message: APP_GONE });
+      assert.ok(Date.now() - started < 15_000, `it waited ${Date.now() - started} ms`);
+      const state = await json(page.driver, '/fixture_state');
+      assert.equal(state.crossOriginIsolated, isolated);
+    });
+  });
+}
+
 describe('console and screenshot', { skip: noChrome }, () => {
   const page = openPage({ isolated: true, mode: 'hud' });
 
@@ -510,3 +565,32 @@ describe('console and screenshot', { skip: noChrome }, () => {
     assert.deepEqual([...shot.subarray(0, 2)], [0xff, 0xd8]);
   });
 });
+
+// The width and height a baseline or progressive JPEG's frame header gives.
+function jpegSize(jpeg) {
+  for (let at = 2; at + 9 < jpeg.length; ) {
+    const marker = jpeg.readUInt16BE(at);
+    if (marker === 0xffc0 || marker === 0xffc2) return [jpeg.readUInt16BE(at + 7), jpeg.readUInt16BE(at + 5)];
+    at += 2 + jpeg.readUInt16BE(at + 2);
+  }
+  throw new Error('no JPEG frame header');
+}
+
+for (const isolated of [true, false]) {
+  describe(`resizeView, app frame ${isolated ? 'out of process' : 'in process'}`, { skip: noChrome }, () => {
+    // the app frame fills the page
+    const page = openPage({ isolated, mode: 'hud', query: '&fill=1' });
+    const frameSize = async () => (await json(page.driver, '/fixture_state')).size;
+
+    test('resolves once the page and its app frame are at the size given, and null returns them to the window', async () => {
+      const windowSize = jpegSize(await page.driver.screenshot());
+      assert.deepEqual(await frameSize(), windowSize);
+      await page.driver.resizeView([640, 480]);
+      assert.deepEqual(await frameSize(), [640, 480]);
+      assert.deepEqual(jpegSize(await page.driver.screenshot()), [640, 480]);
+      await page.driver.resizeView(null);
+      assert.deepEqual(await frameSize(), windowSize);
+      assert.deepEqual(jpegSize(await page.driver.screenshot()), windowSize);
+    });
+  });
+}

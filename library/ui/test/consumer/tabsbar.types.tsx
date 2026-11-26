@@ -47,6 +47,12 @@ export const fixtures = {
   invalidSelection
 }
 export const rendered = <TabsBar {...complete} />
+export const panelWithCurrent = (
+  // @ts-expect-error Only route links accept a current marker.
+  <TabsBar label="Sections" current="true">
+    {null}
+  </TabsBar>
+)
 const shop: TabsBarNavigationProps = {
   mode: 'navigation',
   page: 'shop',

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { BackpackPage } from '../../features/backpack/BackpackPage'
 import type { Outfit, OutfitSlot, Wearable } from '@explorer-core/engine/protocol'
 import type { BackpackState } from '../../features/session/useEngineSession'
+import { SessionProvider } from '../../features/session/SessionContext'
 import { fakeProfileState, fakeSession } from '../harness'
 
 const wearable = (over: Partial<Wearable> = {}): Wearable => ({
@@ -16,22 +17,25 @@ const wearable = (over: Partial<Wearable> = {}): Wearable => ({
 })
 
 const outfitSlot = (slot: number, wearables: string[]): OutfitSlot => {
-  const grey = { r: 0.5, g: 0.5, b: 0.5 }
+  const grey = { r: 0.5, g: 0.5, b: 0.5, a: 1 }
   const outfit: Outfit = { bodyShape: '', eyes: { color: grey }, hair: { color: grey }, skin: { color: grey }, wearables, forceRender: [] }
   return { slot, outfit }
 }
 
-function renderBackpack(over: Partial<BackpackState> = {}): BackpackState {
+function renderBackpack(over: Partial<BackpackState> = {}, modal = false): BackpackState {
   const backpack: BackpackState = { ...fakeSession().backpack, open: true, list: [wearable()], equip: vi.fn(), preview: vi.fn(), ...over }
   const emotes = { ...fakeSession().emotes, list: [{ slot: 1, urn: 'urn:wave', name: 'Wave' }] }
   render(
-    <BackpackPage
-      backpack={backpack}
-      emotes={emotes}
-      profile={fakeProfileState()}
-      onNavigate={vi.fn()}
-      setEngineViewport={vi.fn()}
-    />
+    <SessionProvider value={fakeSession()}>
+      <BackpackPage
+        backpack={backpack}
+        emotes={emotes}
+        profile={fakeProfileState()}
+        onNavigate={vi.fn()}
+        setEngineViewport={vi.fn()}
+        modal={modal}
+      />
+    </SessionProvider>
   )
   return backpack
 }
@@ -46,6 +50,19 @@ describe('backpack page clicks', () => {
     expect(screen.getByText('Cool Hat')).toBeInTheDocument()
     expect(vi.mocked(backpack.preview)).not.toHaveBeenCalled()
     expect(vi.mocked(backpack.equip)).not.toHaveBeenCalled()
+  })
+
+  it('in the modal (the lobby) a click shows no detail panel, and a double-click still equips', async () => {
+    const backpack = renderBackpack({}, true)
+    expect(screen.queryByText('No item selected')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Cool Hat' }))
+    expect(screen.queryByRole('complementary')).toBeNull()
+    expect(screen.queryByText('No item selected')).toBeNull()
+    expect(screen.queryByText('Cool Hat')).toBeNull()
+    expect(vi.mocked(backpack.preview)).not.toHaveBeenCalled()
+    expect(vi.mocked(backpack.equip)).not.toHaveBeenCalled()
+    await userEvent.dblClick(screen.getByRole('button', { name: 'Cool Hat' }))
+    expect(vi.mocked(backpack.equip)).toHaveBeenCalledWith(['urn:hat'])
   })
 
   it('double-clicking a wearable card equips it', async () => {

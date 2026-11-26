@@ -30,8 +30,10 @@ pub fn validate(doc: &Value) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The held document and whether it came from the flags service (fetched or
+/// stored) rather than a bundled or empty placeholder, swapped together.
 pub struct Snapshot {
-    doc: RwLock<Arc<Value>>,
+    held: RwLock<(Arc<Value>, bool)>,
 }
 
 impl Snapshot {
@@ -39,24 +41,34 @@ impl Snapshot {
     /// Explorer's bundled defaults must never enable another application's flags.
     pub fn empty() -> Self {
         Self {
-            doc: RwLock::new(Arc::new(json!({"flags": {}, "variants": {}}))),
+            held: RwLock::new((Arc::new(json!({"flags": {}, "variants": {}})), false)),
         }
     }
 
-    /// A snapshot holding `doc` as received: a node's other reader of one application's flags, and tests.
-    pub fn from_document(doc: Value) -> Self {
+    /// A snapshot holding `doc`; `sourced` says whether it came from the flags service.
+    pub fn from_document(doc: Value, sourced: bool) -> Self {
         Self {
-            doc: RwLock::new(Arc::new(doc)),
+            held: RwLock::new((Arc::new(doc), sourced)),
         }
     }
 
-    /// Replaces the held document: a reader that keeps its own copy of an application's flags.
-    pub fn replace(&self, doc: Value) {
-        *self.doc.write() = Arc::new(doc);
+    /// Replaces the held document and whether it came from the flags service, together.
+    pub fn replace_sourced(&self, doc: Value, sourced: bool) {
+        *self.held.write() = (Arc::new(doc), sourced);
+    }
+
+    /// The held document and whether it came from the flags service, read together.
+    pub fn held(&self) -> (Arc<Value>, bool) {
+        self.held.read().clone()
+    }
+
+    /// False until a document from the flags service is held: readers with a local fallback use it.
+    pub fn is_sourced(&self) -> bool {
+        self.held.read().1
     }
 
     pub fn document(&self) -> Arc<Value> {
-        self.doc.read().clone()
+        self.held.read().0.clone()
     }
 
     /// `@dcl/features-component` 1.0.2 addresses flags by `<app>-<feature>`.
@@ -70,39 +82,68 @@ impl Snapshot {
     /// Its payload is a comma-separated string; CRLF/LF is stripped before
     /// splitting, and even empty list entries are retained by the adapter.
     pub fn variant_values(&self, app: &str, feature: &str) -> Option<Vec<String>> {
-        let doc = self.document();
-        let key = format!("{app}-{feature}");
-        if doc["flags"][&key].as_bool() != Some(true) {
-            return None;
-        }
-        let value = doc["variants"][&key]["payload"]["value"].as_str()?;
-        if value.is_empty() {
-            return None;
-        }
-        Some(
-            value
-                .replace("\r\n", "")
-                .replace('\n', "")
-                .split(',')
-                .map(|value| {
-                    value
-                        .to_lowercase()
-                        .trim_matches(is_js_whitespace)
-                        .to_string()
-                })
-                .collect(),
-        )
+        variant_values_in(&self.document(), app, feature, false)
     }
 }
 
+/// [`Snapshot::variant_values`] of `doc`, also requiring the variant's own `enabled`
+/// to be true, as `@dcl/features-component` callers that check `variant.enabled` do.
+pub fn enabled_variant_values(doc: &Value, app: &str, feature: &str) -> Option<Vec<String>> {
+    variant_values_in(doc, app, feature, true)
+}
+
+fn variant_values_in(
+    doc: &Value,
+    app: &str,
+    feature: &str,
+    variant_enabled: bool,
+) -> Option<Vec<String>> {
+    let key = format!("{app}-{feature}");
+    if doc["flags"][&key].as_bool() != Some(true) {
+        return None;
+    }
+    if variant_enabled && doc["variants"][&key]["enabled"].as_bool() != Some(true) {
+        return None;
+    }
+    let value = doc["variants"][&key]["payload"]["value"].as_str()?;
+    if value.is_empty() {
+        return None;
+    }
+    Some(
+        value
+            .replace("\r\n", "")
+            .replace('\n', "")
+            .split(',')
+            .map(|value| {
+                value
+                    .to_lowercase()
+                    .trim_matches(is_js_whitespace)
+                    .to_string()
+            })
+            .collect(),
+    )
+}
+
 /// `doc` with every `feature_flags_local` override of `app` applied to its `flags`.
-pub async fn with_local_overrides(pool: &PgPool, app: &str, mut doc: Value) -> sqlx::Result<Value> {
-    let overrides: Vec<(String, bool)> = sqlx::query_as(
+pub async fn with_local_overrides(pool: &PgPool, app: &str, doc: Value) -> sqlx::Result<Value> {
+    Ok(apply_local_overrides(
+        doc,
+        &local_overrides(pool, app).await?,
+    ))
+}
+
+/// The `feature_flags_local` overrides of `app`, by name.
+pub async fn local_overrides(pool: &PgPool, app: &str) -> sqlx::Result<Vec<(String, bool)>> {
+    sqlx::query_as(
         "SELECT name, value FROM explore_api.feature_flags_local WHERE app = $1 ORDER BY name",
     )
     .bind(app)
     .fetch_all(pool)
-    .await?;
+    .await
+}
+
+/// `doc` with `overrides` applied to its `flags`.
+pub fn apply_local_overrides(mut doc: Value, overrides: &[(String, bool)]) -> Value {
     if !overrides.is_empty() {
         let flags = doc
             .as_object_mut()
@@ -110,11 +151,11 @@ pub async fn with_local_overrides(pool: &PgPool, app: &str, mut doc: Value) -> s
             .and_then(Value::as_object_mut);
         if let Some(flags) = flags {
             for (name, value) in overrides {
-                flags.insert(name, Value::Bool(value));
+                flags.insert(name.clone(), Value::Bool(*value));
             }
         }
     }
-    Ok(doc)
+    doc
 }
 
 pub async fn set_local_flag(pool: &PgPool, app: &str, name: &str, value: bool) -> sqlx::Result<()> {
@@ -149,10 +190,21 @@ pub async fn fetch_document(
     referer: &str,
     timeout: std::time::Duration,
 ) -> anyhow::Result<Value> {
-    let response = http
-        .get(target)
-        .header("referer", referer)
-        .timeout(timeout)
+    fetch_document_with(http, target, &[("referer", referer)], timeout).await
+}
+
+/// [`fetch_document`] sending exactly `headers`.
+pub async fn fetch_document_with(
+    http: &crate::http::Outbound,
+    target: reqwest::Url,
+    headers: &[(&str, &str)],
+    timeout: std::time::Duration,
+) -> anyhow::Result<Value> {
+    let mut request = http.get(target).timeout(timeout);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let response = request
         .send()
         .await
         .context("fetching application feature flags")?;
@@ -175,30 +227,48 @@ mod application_tests {
     fn sdk_app_keys_and_enabled_variants_are_independent() {
         let snapshot = Snapshot::empty();
         assert!(!snapshot.enabled("dapps", "communities_ai_compliance"));
-        *snapshot.doc.write() = Arc::new(json!({
-            "flags": {
-                "communities_ai_compliance": true,
-                "explorer-communities_ai_compliance": true,
-                "dapps-communities_ai_compliance": false,
-                "dapps-communities_global_moderators": true
-            },
-            "variants": {"dapps-communities_global_moderators": {
-                "payload": {"value": " 0xAbC,\r\n0xDeF, ,"}
-            }}
-        }));
+        snapshot.replace_sourced(
+            json!({
+                "flags": {
+                    "communities_ai_compliance": true,
+                    "explorer-communities_ai_compliance": true,
+                    "dapps-communities_ai_compliance": false,
+                    "dapps-communities_global_moderators": true
+                },
+                "variants": {"dapps-communities_global_moderators": {
+                    "payload": {"value": " 0xAbC,\r\n0xDeF, ,"}
+                }}
+            }),
+            false,
+        );
         assert!(!snapshot.enabled("dapps", "communities_ai_compliance"));
         assert_eq!(
             snapshot.variant_values("dapps", "communities_global_moderators"),
             Some(vec!["0xabc".into(), "0xdef".into(), "".into(), "".into()])
         );
         assert!(
+            enabled_variant_values(
+                &snapshot.document(),
+                "dapps",
+                "communities_global_moderators"
+            )
+            .is_none(),
+            "a variant without `enabled: true` lists nothing"
+        );
+        assert!(!snapshot.is_sourced());
+        snapshot.replace_sourced((*snapshot.document()).clone(), true);
+        assert!(snapshot.is_sourced());
+        assert!(
             snapshot
                 .variant_values("explorer", "communities_global_moderators")
                 .is_none()
         );
-        *snapshot.doc.write() = Arc::new(json!({"flags": {}, "variants": {
-            "dapps-communities_global_moderators": {"payload": {"value": "0xabc"}}
-        }}));
+        snapshot.replace_sourced(
+            json!({"flags": {}, "variants": {
+                "dapps-communities_global_moderators": {"payload": {"value": "0xabc"}}
+            }}),
+            false,
+        );
         assert!(
             snapshot
                 .variant_values("dapps", "communities_global_moderators")

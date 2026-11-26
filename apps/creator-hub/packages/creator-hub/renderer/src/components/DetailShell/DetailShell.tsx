@@ -1,12 +1,13 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { AvatarFace, type AvatarFaceProps, Tab } from 'decentraland-ui2';
+import { useNavigate } from 'react-router';
+import AvatarFace from '@ui/atoms/AvatarFace';
+import { Tab, Tabs } from '@ui/atoms/Tabs';
 
 import { useProfile } from '/@/hooks/useProfile';
 import { t } from '/@/modules/store/translation/utils';
 
 import { AvatarWithInfo } from '../AvatarWithInfo';
-import { Button } from '../Button';
+import Button from '@ui/atoms/Button';
 import { Container } from '../Container';
 import { useDisplayName } from '../LandDetailPage/access/useDisplayName';
 import { EmptyState } from '../ManagePage/EmptyState';
@@ -15,17 +16,7 @@ import { DefaultModal } from '../Modals/DefaultModal';
 import { Navbar, NavbarItem } from '../Navbar';
 import { Title } from '../Title';
 import { DraftContext, type Draft } from './draft';
-import {
-  Content,
-  Header,
-  HeaderActions,
-  OwnerName,
-  Page,
-  RoleRow,
-  SelfOwner,
-  TabBar,
-  TitleBlock,
-} from './DetailShell.styled';
+import styles from './DetailShell.module.css';
 
 const PANEL_ID = 'detail-panel';
 const MANAGE = '/manage';
@@ -47,12 +38,12 @@ type Props = {
 /** The Manage detail page frame: navbar, container and content column. */
 export function DetailPage({ children }: { children: ReactNode }) {
   return (
-    <Page>
+    <main className={styles.page}>
       <Navbar active={NavbarItem.MANAGE} />
       <Container>
-        <Content>{children}</Content>
+        <div className={styles.content}>{children}</div>
       </Container>
-    </Page>
+    </main>
   );
 }
 
@@ -76,20 +67,22 @@ function SelfOwnerValue({ address }: { address: string }) {
   const { avatar } = useProfile(address);
   const displayName = useDisplayName();
   return (
-    <SelfOwner>
+    <span className={styles.selfOwner}>
       <AvatarFace
-        avatar={avatar as AvatarFaceProps['avatar']}
+        avatar={avatar}
         size="tiny"
         inline
       />
-      <OwnerName>{t('world_detail.owner_you', { name: displayName(address) })}</OwnerName>
-    </SelfOwner>
+      <span className={styles.ownerName}>
+        {t('world_detail.owner_you', { name: displayName(address) })}
+      </span>
+    </span>
   );
 }
 
 function PeopleRow({ people }: { people: HeaderPeople }) {
   return (
-    <RoleRow>
+    <dl className={styles.roleRow}>
       {people.kind === 'other' && (
         <div>
           <dt>{t('land_detail.role')}</dt>
@@ -109,7 +102,7 @@ function PeopleRow({ people }: { people: HeaderPeople }) {
           )}
         </dd>
       </div>
-    </RoleRow>
+    </dl>
   );
 }
 
@@ -168,28 +161,26 @@ export function DetailShell({ title, basePath, people, menu, tabs, activeTab, ch
 
   return (
     <DraftContext.Provider value={setDraft}>
-      <Header>
-        <TitleBlock>
+      <div className={styles.header}>
+        <div className={styles.titleBlock}>
           <Title
             id={titleId}
             value={title}
             onBack={() => leave(MANAGE, false)}
           />
           {people && <PeopleRow people={people} />}
-        </TitleBlock>
-        <HeaderActions>
+        </div>
+        <div className={styles.headerActions}>
           {draft?.dirty && (
             <>
               <Button
-                variant="contained"
-                color="secondary"
+                className="hub-button hub-button--secondary"
                 onClick={draft.onCancel}
               >
                 {t('modal.cancel')}
               </Button>
               <Button
-                variant="contained"
-                color="primary"
+                className="hub-button hub-button--primary"
                 disabled={!draft.valid}
                 onClick={draft.onSave}
               >
@@ -198,22 +189,24 @@ export function DetailShell({ title, basePath, people, menu, tabs, activeTab, ch
             </>
           )}
           {menu}
-        </HeaderActions>
-      </Header>
-      <TabBar
+        </div>
+      </div>
+      <Tabs
+        className={styles.tabBar}
         value={activeTab}
         aria-labelledby={titleId}
-        onChange={(_, next: string) => leave(`${basePath}/${next}`, true)}
+        onChange={next => leave(`${basePath}/${next}`, true)}
       >
         {tabs.map(tab => (
           <Tab
             key={tab.value}
+            className={styles.tab}
             value={tab.value}
             label={tab.label}
             aria-controls={PANEL_ID}
           />
         ))}
-      </TabBar>
+      </Tabs>
       <div
         role="tabpanel"
         id={PANEL_ID}

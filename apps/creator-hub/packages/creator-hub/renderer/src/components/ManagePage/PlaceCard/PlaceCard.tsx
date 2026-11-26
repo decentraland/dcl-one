@@ -1,29 +1,21 @@
 import { useId } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 import { coordsToId } from '/@/lib/land';
 import { t } from '/@/modules/store/translation/utils';
 import FallbackThumbnail from '/assets/images/scene-thumbnail-fallback.png';
 import type { LandPlace } from '/shared/types/manage';
 
-import { Button } from '../../Button';
+import Button from '@ui/atoms/Button';
 import { Dropdown } from '../../Dropdown';
 import type { Option } from '../../Dropdown';
 import { MapPinIcon, ScenesIcon } from '../../Icons';
 import { Image } from '../../Image';
-import { PlaceGlyph } from '../cardMenuGlyphs.styled';
+import { PlaceGlyph } from '../cardMenuGlyphs';
 import { RoleTag } from '../RoleTag';
 import type { RoleTagVariant } from '../RoleTag';
-import {
-  Card,
-  EmptyThumbnail,
-  Kebab,
-  Name,
-  PlaceRow,
-  Stats,
-  TextBlock,
-  Thumbnail,
-} from './PlaceCard.styled';
+
+import styles from './PlaceCard.module.css';
 
 export type PlaceCardStatus = 'published' | 'unpublished';
 
@@ -56,27 +48,31 @@ export function PlaceCard(props: Props) {
   const linkTo = (label: string) => (props.to ? <Link to={props.to}>{label}</Link> : label);
 
   return (
-    <Card {...(isNameHidden ? { 'aria-label': domain } : { 'aria-labelledby': nameId })}>
-      <TextBlock>
-        <PlaceRow>
+    <article
+      className={styles.card}
+      {...(isNameHidden ? { 'aria-label': domain } : { 'aria-labelledby': nameId })}
+    >
+      <div className={styles.textBlock}>
+        <div className={styles.placeRow}>
           {domain ? <PlaceGlyph /> : <MapPinIcon />}
           <span>{isNameHidden ? linkTo(placeText(props.place)) : placeText(props.place)}</span>
           {props.role && <RoleTag variant={props.role} />}
-        </PlaceRow>
-        <Name
+        </div>
+        <h2
           id={nameId}
+          className={styles.name}
           aria-hidden={isNameHidden || undefined}
         >
           {isNameHidden ? props.name : linkTo(props.name)}
-        </Name>
-      </TextBlock>
-      <Kebab>
+        </h2>
+      </div>
+      <div className={styles.kebab}>
         <Dropdown
           label={t('menu.options_for', { name: domain ?? props.name })}
           options={props.menuOptions}
         />
-      </Kebab>
-      <Thumbnail>
+      </div>
+      <div className={styles.thumbnail}>
         {props.status === 'published' ? (
           <>
             <Image
@@ -84,25 +80,24 @@ export function PlaceCard(props: Props) {
               alt=""
               fallbackSrc={FallbackThumbnail}
             />
-            <Stats>
+            <span className={styles.stats}>
               <ScenesIcon />
               {t('manage.cards.scenes_count', { count: props.scenesCount })}
-            </Stats>
+            </span>
           </>
         ) : (
-          <EmptyThumbnail>
+          <div className={styles.emptyThumbnail}>
             {t('manage.cards.no_scene.title')}
             <Button
-              variant="contained"
-              color="secondary"
-              size="large"
+              size="lg"
+              className="hub-button hub-button--secondary"
               onClick={props.onViewScenes}
             >
               {t('manage.cards.no_scene.view_scenes')}
             </Button>
-          </EmptyThumbnail>
+          </div>
         )}
-      </Thumbnail>
-    </Card>
+      </div>
+    </article>
   );
 }

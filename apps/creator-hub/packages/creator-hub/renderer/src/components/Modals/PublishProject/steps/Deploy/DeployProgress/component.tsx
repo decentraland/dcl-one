@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LinearProgress } from 'decentraland-ui2';
+import ProgressBar from '@ui/atoms/ProgressBar';
 
 import type { DeployUpload } from '/@/lib/deploy';
 import type { CancelRejection } from '/@/modules/store/deployment/deploy-api';
@@ -7,7 +7,7 @@ import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
 import { formatSize } from '/@/modules/file';
 
-import { Button } from '/@/components/Button';
+import Button from '@ui/atoms/Button';
 
 import './styles.css';
 
@@ -81,9 +81,9 @@ export function DeployProgress({ upload, cancel }: Props) {
     <div className="DeployProgress">
       {upload && (
         <div className="upload">
-          <LinearProgress
+          <ProgressBar
             aria-label={t('modal.publish_project.deploy.deploying.step.uploading')}
-            variant={determinate ? 'determinate' : 'indeterminate'}
+            indeterminate={!determinate}
             value={determinate ? getPercent(upload) : undefined}
           />
           <div className="details">
@@ -110,9 +110,8 @@ export function DeployProgress({ upload, cancel }: Props) {
             </span>
           )}
           <Button
-            size="medium"
-            variant="outlined"
-            color="secondary"
+            variant="outline"
+            className="hub-button hub-button--secondary hub-button--outlined"
             disabled={cancelling || cancel.kind === 'unsupported'}
             onClick={handleCancel}
           >

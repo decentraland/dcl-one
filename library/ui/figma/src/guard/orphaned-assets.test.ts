@@ -66,8 +66,12 @@ afterEach(async () => {
 })
 
 describe('when a sync other than live capture stops generating an asset', () => {
-  it('should not ledger it, leaving it removed so cli diff fails', async () => {
-    const { root: base } = await lifecycleFixture()
+  let base: string
+  let app: App
+  let report: Awaited<ReturnType<typeof runSync>>
+
+  beforeEach(async () => {
+    ;({ root: base } = await lifecycleFixture())
     temps.push(base)
     const page = await json(base, `${SNAP}/components/Page.json`)
     for (const component of page.components)
@@ -76,8 +80,11 @@ describe('when a sync other than live capture stops generating an asset', () => 
         '<path d="M3 3h14v14H3z"/>'
       )
     await put(base, `${SNAP}/components/Page.json`, page)
-    const app = await createApp(path.join(base, 'figma'), undefined, { unverifiedSnapshot: true })
-    const report = await runSync(app, { source: 'snapshot', capturedPageIds: ['1:1'] })
+    app = await createApp(path.join(base, 'figma'), undefined, { unverifiedSnapshot: true })
+    report = await runSync(app, { source: 'snapshot', capturedPageIds: ['1:1'] })
+  })
+
+  it('should not ledger it, leaving it removed so cli diff fails', async () => {
     expect(report.orphaned).toBeUndefined()
     await expect(readFile(path.join(base, LEDGER))).rejects.toMatchObject({ code: 'ENOENT' })
     expect((await runDiff(app, { source: 'snapshot' })).diff.removed.length).toBeGreaterThan(0)
@@ -113,15 +120,20 @@ describe('when a recapture stops generating an asset', () => {
     expect(report.ledgerIssues).toEqual([])
   })
 
-  it('should report diff drift when the ledgered asset is used again', async () => {
-    await put(
-      head,
-      'figma/review/src/Hero.tsx',
-      `import a from './generated/components/assets/${path.basename(orphan)}'`
-    )
-    expect((await runDiff(app, { source: 'snapshot' })).ledgerIssues).toEqual([
-      `${orphan}: ledgered asset is used again, reactivate it`
-    ])
+  describe('and the ledgered asset is used again', () => {
+    beforeEach(async () => {
+      await put(
+        head,
+        'figma/review/src/Hero.tsx',
+        `import a from './generated/components/assets/${path.basename(orphan)}'`
+      )
+    })
+
+    it('should report diff drift asking to reactivate it', async () => {
+      expect((await runDiff(app, { source: 'snapshot' })).ledgerIssues).toEqual([
+        `${orphan}: ledgered asset is used again, reactivate it`
+      ])
+    })
   })
 
   it('should pass the complete automated guard with the ledgered orphan present', async () => {
@@ -168,10 +180,15 @@ describe('when a recapture stops generating an asset', () => {
       expect((await causes(base, head)).join('\n')).toContain('the asset is still used by')
     })
 
-    it('should fail closed on an unreadable text file', async () => {
-      await mkdir(path.join(head, 'docs'), { recursive: true })
-      await writeFile(path.join(head, 'docs/bad.md'), Buffer.from([0xff, 0xfe, 0x00]))
-      expect((await causes(base, head)).join('\n')).toContain('consumers could not be checked')
+    describe('and a text file cannot be read', () => {
+      beforeEach(async () => {
+        await mkdir(path.join(head, 'docs'), { recursive: true })
+        await writeFile(path.join(head, 'docs/bad.md'), Buffer.from([0xff, 0xfe, 0x00]))
+      })
+
+      it('should fail closed', async () => {
+        expect((await causes(base, head)).join('\n')).toContain('consumers could not be checked')
+      })
     })
   })
 
@@ -187,22 +204,33 @@ describe('when a recapture stops generating an asset', () => {
       expect(await causes(base, staged, false, true)).toEqual([])
     })
 
-    it('should reject it when a newly generated file uses it', async () => {
-      await put(
-        staged,
-        `${GEN}/page/New.module.css`,
-        `a { background: url(../assets/${path.basename(orphan)}) }`
-      )
-      expect((await causes(base, staged, false, true)).join('\n')).toContain(
-        `${GEN}/page/New.module.css`
-      )
+    describe('and a newly generated file uses the orphan', () => {
+      beforeEach(async () => {
+        await put(
+          staged,
+          `${GEN}/page/New.module.css`,
+          `a { background: url(../assets/${path.basename(orphan)}) }`
+        )
+      })
+
+      it('should reject the orphan and name the new user', async () => {
+        expect((await causes(base, staged, false, true)).join('\n')).toContain(
+          `${GEN}/page/New.module.css`
+        )
+      })
     })
   })
 
   describe('and a second recapture orphans another asset over a non-empty ledger', () => {
+    let next: string
+    let report: Awaited<ReturnType<typeof recapture>>['report']
+
+    beforeEach(async () => {
+      next = await copyTree(head, 'orphan-next-')
+      ;({ report } = await recapture(next, 'M2 2h16v16H2z'))
+    })
+
     it('should admit the new entry and keep the first one', async () => {
-      const next = await copyTree(head, 'orphan-next-')
-      const { report } = await recapture(next, 'M2 2h16v16H2z')
       expect(report.orphaned).toHaveLength(1)
       expect((await loadLedger(next)).orphaned.map((entry) => entry.path)).toEqual(
         [orphan, report.orphaned![0]!].sort()
@@ -434,33 +462,43 @@ describe('when a developer reactivates or drains a ledgered asset', () => {
     return runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
   }
 
-  it('should accept a reactivation that keeps the bytes and has a consumer', async () => {
-    await put(
-      head,
-      'figma/review/src/Hero.tsx',
-      `import a from './generated/components/assets/${path.basename(orphan)}'`
-    )
-    await put(head, LEDGER, serializeLedger([]))
-    expect(await causes(committed, head, true)).toEqual([])
+  describe('and the asset is used again', () => {
+    beforeEach(async () => {
+      await put(
+        head,
+        'figma/review/src/Hero.tsx',
+        `import a from './generated/components/assets/${path.basename(orphan)}'`
+      )
+    })
+
+    describe('and its ledger entry is removed', () => {
+      beforeEach(async () => {
+        await put(head, LEDGER, serializeLedger([]))
+      })
+
+      it('should accept a reactivation that keeps the bytes and has a consumer', async () => {
+        expect(await causes(committed, head, true)).toEqual([])
+      })
+    })
+
+    it('should reactivate it through the developer command', async () => {
+      const report = (await drain(head)) as { reactivated?: string[] }
+      expect(report.reactivated).toEqual([orphan])
+      expect((await loadLedger(head)).orphaned).toEqual([])
+      await expect(readFile(path.join(head, orphan))).resolves.toBeDefined()
+    })
   })
 
-  it('should reject a reactivation without a consumer', async () => {
-    await put(head, LEDGER, serializeLedger([]))
-    expect(await causes(committed, head, true)).toEqual([
-      'a reactivation needs the ledgered bytes and at least one consumer'
-    ])
-  })
+  describe('and its ledger entry is removed without a consumer', () => {
+    beforeEach(async () => {
+      await put(head, LEDGER, serializeLedger([]))
+    })
 
-  it('should reactivate through the developer command when the asset is used again', async () => {
-    await put(
-      head,
-      'figma/review/src/Hero.tsx',
-      `import a from './generated/components/assets/${path.basename(orphan)}'`
-    )
-    const report = (await drain(head)) as { reactivated?: string[] }
-    expect(report.reactivated).toEqual([orphan])
-    expect((await loadLedger(head)).orphaned).toEqual([])
-    await expect(readFile(path.join(head, orphan))).resolves.toBeDefined()
+    it('should reject the reactivation', async () => {
+      expect(await causes(committed, head, true)).toEqual([
+        'a reactivation needs the ledgered bytes and at least one consumer'
+      ])
+    })
   })
 
   it.each([
@@ -519,7 +557,7 @@ describe('when a developer reactivates or drains a ledgered asset', () => {
     expect(await causes(committed, head, true)).toEqual([])
   })
 
-  it('should be a no-op when repeated', async () => {
+  it('should be a no-op on a repeated drain', async () => {
     await drain(head)
     const before = await fixtureBytes(head)
     await drain(head)
@@ -581,14 +619,20 @@ describe('when cli diff checks a tree with ledgered orphans', () => {
 })
 
 describe('when a sync ledgers an orphan', () => {
-  it("should write the committed figma/ledger copy and leave the cache's pinned copy untouched", async () => {
-    const { root: base } = await lifecycleFixture()
-    temps.push(base)
-    const cached = `${SNAP}/orphaned-assets.json`
-    await put(base, cached, { schema: 1, orphaned: [] })
-    const before = await readFile(path.join(base, cached))
-    const { report } = await recapture(base, 'M1 1h18v18H1z')
+  const cached = `${SNAP}/orphaned-assets.json`
+  let base: string
+  let before: Buffer
+  let report: Awaited<ReturnType<typeof recapture>>['report']
 
+  beforeEach(async () => {
+    ;({ root: base } = await lifecycleFixture())
+    temps.push(base)
+    await put(base, cached, { schema: 1, orphaned: [] })
+    before = await readFile(path.join(base, cached))
+    ;({ report } = await recapture(base, 'M1 1h18v18H1z'))
+  })
+
+  it("should write the committed figma/ledger copy and leave the cache's pinned copy untouched", async () => {
     expect(LEDGER).toBe('figma/ledger/orphaned-assets.json')
     expect((await loadLedger(base)).orphaned.map((entry) => entry.path)).toEqual(report.orphaned)
     expect(await readFile(path.join(base, cached))).toEqual(before)

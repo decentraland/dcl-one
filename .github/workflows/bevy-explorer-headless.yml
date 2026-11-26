@@ -99,7 +99,7 @@ jobs:
           for tgz in deploy/headless/artifacts/*.tgz; do
             spec=$(tar -xOf "$tgz" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); `${p.name}@${p.version}`')
             integrity="sha512-$(openssl dgst -sha512 -binary "$tgz" | base64 | tr -d '\n')"
-            published=$(npm view "$spec" dist.integrity 2>/dev/null || true)
+            published=$(corepack pnpm@12.21.0 view "$spec" dist.integrity 2>/dev/null || true)
             if [ -z "$published" ]; then
               pending+=("$tgz")
             elif [ "$published" = "$integrity" ]; then
@@ -110,7 +110,7 @@ jobs:
             fi
           done
           for tgz in "${pending[@]+"${pending[@]}"}"; do
-            npm publish "$tgz" --access public --tag "$DIST_TAG"
+            corepack pnpm@12.21.0 publish "$tgz" --access public --tag "$DIST_TAG" --no-git-checks
           done
       - name: Publish the matching launcher
         if: steps.current.outputs.publish == 'true'
@@ -118,12 +118,13 @@ jobs:
           DIST_TAG: ${{ github.event_name == 'workflow_dispatch' && 'latest' || 'next' }}
         run: |
           cd deploy/headless/launcher
-          tgz=$(npm pack --silent)
+          # pnpm prints the file name only in its JSON summary.
+          tgz=$(corepack pnpm@12.21.0 pack --json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).filename')
           spec=$(node -p 'const p = require("./package.json"); `${p.name}@${p.version}`')
           integrity="sha512-$(openssl dgst -sha512 -binary "$tgz" | base64 | tr -d '\n')"
-          published=$(npm view "$spec" dist.integrity 2>/dev/null || true)
+          published=$(corepack pnpm@12.21.0 view "$spec" dist.integrity 2>/dev/null || true)
           if [ -z "$published" ]; then
-            npm publish "$tgz" --access public --tag "$DIST_TAG"
+            corepack pnpm@12.21.0 publish "$tgz" --access public --tag "$DIST_TAG" --no-git-checks
           elif [ "$published" != "$integrity" ]; then
             echo "$spec is already published with different bytes" >&2
             exit 1

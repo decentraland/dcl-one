@@ -1,4 +1,4 @@
-// The web shell's side of BUY NAME (lib/shopProtocol shop.buyName). The HUD names the NAME; the shell reads
+// The web shell's side of BUY NAME (library/ui/apps/shop/shopProtocol shop.buyName). The HUD names the NAME; the shell reads
 // everything that decides the purchase itself (the NAME's price in Credits, the buyer's balance, whether
 // the NAME is free), shows the design's Buy Name dialog in the one dialog the item purchases use too
 // (./purchase's DialogSlot), and on BUY NAME runs it. Its operation moves as the item purchases' do
@@ -28,7 +28,7 @@ import {
   type ShopNamesMode,
   type ShopOperationEvent,
   type ShopOperationState
-} from '../../lib/shopProtocol'
+} from '@dcl/one-ui/apps/shop/shopProtocol'
 import type { DialogSlot, ShellPurchaseHandlers, ShellPurchaseItem, ShellPurchaseView } from './purchase'
 
 /** How long the simulation's Processing shows, as a purchase's would. */
@@ -58,10 +58,12 @@ export function namesModeFor(build: NameBuild, chains: NameChains): ShopNamesMod
 
 /** This build's NameBuild: VITE_SHOP_NAME_SIMULATION set to `true`, and VITE_SHOP_CHAIN_ID as given (never a default). */
 export function nameBuild(): NameBuild {
-  const env = typeof import.meta !== 'undefined' ? import.meta.env : undefined
-  const raw = (env?.VITE_SHOP_CHAIN_ID as string | undefined)?.trim()
+  // Each key read on its own: a whole `import.meta.env` puts every build-time `VITE_*` value in the bundle.
+  const meta = typeof import.meta !== 'undefined'
+  const raw = (meta ? (import.meta.env?.VITE_SHOP_CHAIN_ID as string | undefined) : undefined)?.trim()
+  const simulation = meta ? (import.meta.env?.VITE_SHOP_NAME_SIMULATION as string | undefined) : undefined
   const chainId = raw && /^[1-9][0-9]*$/.test(raw) ? Number(raw) : null
-  return { simulation: (env?.VITE_SHOP_NAME_SIMULATION as string | undefined)?.trim() === 'true', chainId: Number.isSafeInteger(chainId) ? chainId : null }
+  return { simulation: simulation?.trim() === 'true', chainId: Number.isSafeInteger(chainId) ? chainId : null }
 }
 
 /** Whether a NAME can be registered: free, taken, or on the banned list. */

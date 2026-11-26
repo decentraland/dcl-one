@@ -26,6 +26,13 @@ to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` 
 `source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs; there
 `CEF_PATH` takes a Windows path, and `just` runs from Git Bash (see [Platforms](platforms.md#native)).
 
+For an isolated native session, set `DCL_PROFILE_DIR` to an absolute directory before launching.
+Config, logs and content cache use that directory instead of the OS profile. Temporary
+embedded-browser data continues to use the process's temporary directory. Relative or empty
+values fail before opening the profile. With the variable unset,
+the client uses its normal OS profile. Automation runs should place the directory beneath
+their temporary workspace; this does not redirect explicit scene exports to local projects.
+
 With Nix, `nix develop .#explorer` from the repository root has the tools and libraries of this
 loop on Linux and macOS, and one Cargo build directory for every worktree (see `source/readme.md`).
 
@@ -55,8 +62,13 @@ integrated web client, Sites supplies its origin's service URLs at boot.
 On desktop, native HTTP Fetch from the bundled bridge or an operator-selected
 `--system-scene` can reach loopback and LAN services outside preview, including through
 an explicit HTTP service override. The HTTP client blocks link-local and metadata addresses.
-Ordinary and authoritative hosted scenes use their own address policies. For native scene
-WebSockets, access to private resolved addresses is preview-only.
+Ordinary and authoritative hosted scenes use their own address policies. Native scene
+WebSockets follow the same rule as native Fetch: preview (on desktop or on an authoritative
+server launched in preview), the bundled bridge and an operator-selected `--system-scene` on
+desktop may use `ws://` and reach loopback and LAN addresses; every other scene, including
+every non-preview scene on the authoritative server, needs `wss://` to a public address.
+Link-local and metadata addresses stay blocked in every mode. TLS
+certificates are checked against the operating system's trust store.
 
 Use HTTPS for remote deployments. Plain HTTP sends signed headers and any request
 credentials in cleartext.
@@ -172,7 +184,8 @@ not the shell page: pick the app frame in the DevTools context selector first.
 
 ## Runtime debug panel
 
-In a development engine build, click the bug button in the lower-right corner of the in-world HUD to toggle the panel.
+Launch the desktop client with `--debug-panel` or open the web page with `?debugPanel=1`
+to show the lower-right bug button. Click it to toggle the panel.
 In any build, open **Sidebar settings (•••) → Debug panel** or enter `/debug` in chat.
 Use `/debug help` to list the sections available in this client and `/debug <section>`
 to open one directly. Search matches both section titles and controls. Expand the
@@ -191,7 +204,10 @@ World and Scene Loading show where the player is and which load stage is active.
 Deployment shows the Sites build serving `/play` and the commit the page's `catalyst` service reports, which is
 this deployment's APIs only behind its own gateway; it reads once each time it is expanded. The Explorer's own build
 is Performance's client version.
-Performance and Memory and limits expose the engine's measurements and budgets.
+Performance and Memory and limits expose the engine's measurements and budgets: the sampled
+frame-time snapshots, the frame-time breakdown and the memory tiers; a `performance-profiler`
+build adds Render and Profiler, Bevy's per-pass render timings and the scope profiler
+([profiling](profiling.md)).
 The room, voice, rendering, media and avatar sections appear with the plugins that
 supply them. When several readings need the same scene, peer or sample, the panel
 shows the cause once. Expand the reading count to see which fields it affects.
@@ -221,25 +237,76 @@ State, in every build:
   scene's) holds the keyboard: while it is true keys are typed and resolve no action, so a test
   waits for it to turn true after filling a field and false after leaving one (null where the
   client takes no input).
+- `/teleport_state`: the landings on a named spawn point as JSON, the Teleport debug section's
+  readout: `pending`, the name the landing under way looks for (or the realm change that has yet
+  to start one), and `last`, the `name` the player's last such landing looked for with `found`,
+  whether its scene had a spawn point of that name. `/teleport <x> <y> [realm] --spawn <name>`
+  asks for such a landing.
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
-  slots), as rendered (built or not, wearables by category, hidden categories) and the emote
+  slots), as rendered (built or not, wearables by category, hidden categories), the files it
+  could not be built from (`loadFailures`: bodies and wearables its builds leave out, `noBody`
+  when neither its body nor the default body could be built) and the emote
   each plays (with `idle`: whether a triggered emote may take over, which a scene's non-idle
   movement animation does not let it), as a JSON array; the player's by default. The HUD's preview avatars are tagged
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.
+- `/avatar_demo [spawn <n>|clear|cap [n|all]|layout <grid|around>|seed [n]|catalog [urns]|emote <name>|...]` (scene preview
+  only): local demo avatars with random base wearables, up to 1024. `catalog <urn,urn,...>`
+  adds wearable URNs to a catalog the random looks (`spawn`, `randomize`) draw from instead;
+  `catalog` alone empties it. `layout grid` (the default)
+  stands new ones in a 32-wide grid in front of the player, each row filled from straight ahead
+  outwards; `layout around` fills a disc centred
+  on the player, nearest first, so part of the crowd is behind the camera.
+  `seed <n>` gives the avatar at each position the same look in every session of one build, so
+  two runs compare the same crowd; `seed` alone goes back to a new crowd each time.
+  `cap <n>` sets Max Avatars for the session only (1 to 1025), past the setting's range (1 to 100), and
+  `cap all` sets no cap, as the player's Unlimited Avatars setting does, so real players and scene avatars hide no demo avatar: either wins
+  over the Max Avatars and Unlimited Avatars settings, which it neither changes nor saves, until `cap` alone goes back
+  to the setting. The reply is JSON: `count`, `built` (demo avatars whose build finished), `shown` (not
+  hidden) and `drawn` (a mesh in some view this frame), `cap` (the one in force, `"all"` for none), `sessionCap`
+  (what `cap` set, else `null`),
+  `layout`, `seed`, `maleOnly`, `wearables`, `catalog` (its size), `emote`; the avatars a `clear` or `remove-random`
+  removes are not counted in its own reply. The Avatar debug section of the debug panel shows
+  the counts and sets the cap, layout and seed. The E2E package's `avatar-sweep` drives it.
+- `/spring_bones [true|false]`: spring bones, the swing of a wearable's own bones (hair, tails,
+  capes): `enabled` (the Jiggle Bones setting, which an argument sets and saves),
+  `simulated_avatars` of at most `max_simulated_avatars`, `simulated_chains`, and for the player's
+  built avatar `player_simulated`, `chains`, `joints` (spring bones in them) and `longest_chain`,
+  each `null` with a reason in `unavailable` until the avatar is built. The player is simulated
+  first, then the avatars nearest the camera and in front of it. The Spring bones debug section
+  reads it.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
+- `/time [hours] [speed] [--force] [--resume]`: the time of day. Bare, it reports
+  `time H:M -> H:M, speed S (elapsed: <seconds since midnight>)`: the time the sky shows. While
+  the scene the player stands in holds it (`/sky_state` `sceneLocked`), the Skybox menu is off
+  and a `/time` without `--force` moves the clock, not the sky. With the "Allow overriding
+  scene controls" setting on nothing is locked and a time the clock is stopped at here wins
+  until a scene's time arrives again or the clock runs again. `--force` (with a time) beats a scene's time whatever the setting, until the next
+  `/time` that sets a time or a speed; `--resume` runs the clock again and hands the sky back.
+  `/sky_state` adds `timeSource` (`skybox`, `scene` or `clock`), `sceneLocked` and
+  `overrideAllowed`, the Skybox debug section's readings.
+- `/permissions_in_force`: the permissions whose effect acts on the player now, as JSON:
+  `inForce`, a list of `scene` (the hash of the scene that causes it, a portable's or a
+  neighbour's included) and `type` (`ForceCamera` while the scene holds the camera,
+  `HideAvatarsNametags` while it hides the player's avatar, passport or nametag,
+  `SetLocomotion` while it changes or blocks the player's movement). The HUD's permissions
+  popover lists the ones of the scene the player stands in under "In force now".
 - `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
-  stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
+  stands in turns nearby voice off or its room refuses the player) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
 - `/nametag_state`: the nametags, as JSON: `visible` (the `/nametags [bool]` toggle), `shown`,
-  `sceneAvatars` (of those shown, the tags over a scene's avatars) and `hidden` (the tags that
+  `sceneAvatars` (of those shown, the tags over a scene's avatars), `plates` (of those shown, the
+  tags with a scene's `AvatarNametag` plate) and `hidden` (the tags that
   don't show), `atlas` (the glyph atlas' distance-field and colour page sizes, in
   pixels), `bubbles` (the chat bubble setting) and `tags`, one per shown tag: `player` (an
   address, `local`, or null for an avatar with no wallet), `sceneAvatar` (the tag is over an
-  avatar a scene made with `AvatarShape`), `name`, `suffix`, `verified`,
+  avatar a scene made with `AvatarShape`), `nameShown` (false for a tag that is its plate alone:
+  the avatar has no name, or a scene's area hides it), `plate` (null, or the plate's `label` and
+  its `labelColor`, `backgroundColor` and `borderColor` as `#RRGGBB`), `name` and `suffix` (empty
+  for an avatar with no name), `verified`,
   `official`, `voice` (`off`, `idle`, `speaking`, `hushed`), `distance` from the camera in metres,
   `opacity`, `scale` (metres per tag unit), `position` (all four as the shader works them out), `headOffset` (metres over the head bone for
   an avatar at a scale of one; null until the avatar is built) and `bubble` (null, or its `kind`,
@@ -249,6 +316,32 @@ State, in every build:
   replaces the text of the bubble showing that message, for tests (the HUD's translations come
   through `SystemApi::SetChatBubbleText`); `/nametag_official <address> [bool]`
   reads or sets, for the session, whether a wallet's nametag carries the official badge.
+- `/reaction_state`: the situational reactions, as JSON: `world` (the Chat bubbles and
+  reactions setting lets them show over avatars), `screenLane` (the Chat Reactions setting
+  passes them to the HUD), `picked` (the local user's picks that played, which no peer's
+  reaction moves), `outbox` (the local user's picks not yet sent), `refusedPicks`, `sent`
+  (messages put on a room's transport, one per emoji per send: none with no room to carry it),
+  `received` (peers' messages), `queued` (the reactions waiting to play, and the senders with any
+  waiting or inside the gap after their last), `played`, `particles` (alive, drawn as of the last
+  frame, and waiting for their emoji's glyphs: to be rastered, or for room in a full atlas),
+  `atlas` (the size in pixels of the glyph atlas page the emoji are drawn from), `streamed` (the
+  reactions passed to the HUD) to `subscribers` streams, and `dropped` by cause: `blocked`,
+  `duplicate`, `unknownEmoji`, `rateLimited`, `queueFull`, `particleCap`, `notShown` (reactions
+  that played with no particle, nothing being drawn over their player: no avatar or a hidden
+  one, far from the camera, or the local user in first person) and `noGlyphs` (reactions that
+  played with no particle, their emoji not laid out or with no glyph in colour). The counts are
+  of the session.
+  `/reaction_send <emoji>` reacts as the local user, the way the HUD's Reactions button does: the
+  reaction is sent to the players nearby and reported to analytics, and an emoji the wire has no
+  index for does nothing. The debug panel's "React with a heart" runs it.
+  `/reaction_simulate <local|nearest|address> <emoji> [count]` takes a message as if that player
+  had sent it, through the checks a peer's message passes, and sends nothing to anyone; it
+  replies with the `target` taken and the emoji's wire `index`.
+  `/reaction_atlas_rebuild` has the reactions' glyph atlas rebuilt at its next upkeep, as a
+  glyph that finds no room in it does: its textures are replaced, the glyphs no particle shows
+  are freed and every particle alive gets a mesh for the new page; an atlas with no glyph to
+  free is left as it is. It replies with nothing. The debug panel's "Rebuild the glyph atlas"
+  runs it.
 - `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
   `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,
   `loaded`, `failed`). `/nearby_mute on|off <address>` mutes or unmutes one, as the profile
@@ -273,12 +366,40 @@ State, in every build:
   (the same per format: `ktx2-bc`, `glb`, and `glb-br` on web), `fallbacks` (files that loaded
   their original instead), `fallbacksByFormat` (those whose chosen variant failed, per format)
   and `recentFallbacks` (the last 20, with the file, its entity and the reason).
+- `/scene_topics`: the **Scene messages** debug section's routing, topic-traffic and policy
+  readings. `sceneRooms`, `room`, `running`, `isolated` and `subscribedScenes` describe routing.
+  `published`, `publishDropped`, `received` and `receiveDropped` count topic packets, including
+  rejected banned senders in both received and dropped. `bannedSenderDrops`, `filteredInboundCrdt`,
+  `filteredOutboundCrdt` and `invalidMessages` cover the engine's message policy across channels;
+  `binaryPayloadLimit` is 13,269 bytes on egress. Counters are cumulative since startup, and
+  filtering counts packets whose CRDT records changed.
+- `/item_purchase_state`: the scene item purchase (`openExplorerUi` with `EU_ITEM_PURCHASE`) as
+  JSON, the Scene item purchase debug section's source: `hudListeners` (HUDs subscribed to
+  requests; with none, a request is answered `REJECTED_FEATURE_DISABLED`), `active` (the request
+  in flight: `state` waiting for the HUD or confirmation open, `scene`, `item` as the parsed
+  `contract:id` or "not a collection item", `requestId`), `last` (the same for the last request
+  that ended, with its `outcome`) and `closedOwed` (the scenes whose verdict is written and whose
+  `closed` event is still to come; such a scene's next request is `WAS_ALREADY_OPEN`). No price,
+  balance, wallet or scene-written text appears. `/item_purchase_cancel` drops the request in flight: an open one reports
+  `Dismissed` to its scene, and the HUD's confirmation stays up with its later reports ignored.
+- `/home_state`: the home as JSON, the Home debug section's source: `account` (the signed-in
+  wallet address, the key of its home; `null` before sign-in and for a guest with no account),
+  `pinned` (that account's home as
+  `<realm> x,y`; `null` when it has none), `startup` (the home the engine starts in: the stored
+  sign-in's account's, else the last account's), `lastAccount` (the account a home was last read
+  for) and `unadopted` (true while the config still holds a home kept for no account, which the
+  first account to sign in takes). Reading it writes nothing. `/home_clear` takes the signed-in
+  account's home back, and refuses when no account is signed in or the account has no home. The
+  HUD is not told: its home pin and Set as Home stay on until it reads the home again (the lobby
+  opening, a Set as Home press, a reload).
 - `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
   social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
   `matchedOn` for a record the gatekeeper withheld, `customMessage`, `expiresAt`,
   `checkedAgoSecs`, `error`), the local user's scene admission
-  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`),
+  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`,
+  `retainedRefusals`: scene id, scope and `retryDue` in elapsed engine seconds, from the active
+  room or its saved deadline while away),
   the scene room's lists (`state`, `sceneId`, `bannedAddresses`, `sceneAdmins`, while the room is
   connected) and, with an address, its `lookup` (`isBlockedEitherWay`, `direction`,
   `bannedInScene`, `adminPermissions`). Every `null` reading has its reason in `unavailable`,
@@ -286,7 +407,9 @@ State, in every build:
   through the social service and answer once it has; `/ban_block_refresh` re-checks the
   platform ban now.
 - `/entity_screen_position <entity> [--bounds]`: where a scene entity is on screen, in the
-  coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`
+  coordinates `/click_at` takes, `null` behind the camera, with the same point `normalized` (0 to
+  1 of the window, as `/click_at --normalized` takes it) and the window's `screen` (`width`,
+  `height` in logical pixels, `scale`). The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
   centre of its visible meshes instead of its origin.
 - `/photo_mode [on|off] [button|shortcut|console]`: the camera reel's in-world camera as JSON:
@@ -312,6 +435,45 @@ State, in every build:
 - `/tree_wind [true|false]`: whether the landscape's trees and bushes sway in the wind. Still,
   they stand in their rest pose, so two frames of them agree whenever they were taken; the visual
   scenarios hold them still for their frames.
+- `/media_state`: the loaded video players and audio streams as JSON, the Media player debug
+  section's reading. On the web each row also carries the source's reopen state:
+  `retryAttempt` (reopens since its last 5 s of playback), `retryFailures` (failures since the
+  source was created), `retryDelaySeconds` (the wait before the scheduled one, else null),
+  `retryGaveUp` and `lastError`.
+
+On the web only:
+
+- `/media_retry_delay [ms]`: the wait before a failed media source's first reopen
+  (2000 by default; later waits double from it, 5 reopens at most) as `firstDelayMs` and
+  `maxReopens`; with `ms`, sets it first for every source failing from then on. For tests that
+  would otherwise wait the full 62 s schedule.
+- `/scene_loop_state`: the scene loop's scheduling as JSON, the Scene Loop debug section's
+  reading ([scheduling](scheduling.md)): `mode`; for the last loop, `deadline` (where its
+  deadline came from) and `budget` (ms from its start to its deadline); `handoffGap` (ms from
+  the last handoff to the render worker to the next frame's start); `tail` (the frame tail's
+  90th percentile and the reserve with its margin, ms) and `tailFrames` (frames measured, of
+  32); `lateness` (the 90th percentile of the last second's timed waits for replies, ms); and
+  `woken` (`count` and `scenes`, the titles of the scenes whose relays wake on the engine's send;
+  null in a mode that does not wake the relays). `unavailable` says why a reading is null.
+- `/scene_loop_mode <both|relay|deadline|legacy>`: switches the scheduling mode without a
+  reload, as `?sceneLoop=` sets it at load; the engine's loop takes it at its next frame and
+  each relay at its next step. The reply names the mode; an unknown name fails with the list.
+
+Movement:
+
+- `/movement_state`: the active locomotion settings, the last completed movement step's
+  `requested`, `actual` and `external` velocities in SDK axes, whether the player is on the ground
+  and its height over it (the debug panel's Locomotion section).
+
+Scene animations:
+
+- `/scene_animations` (JSON: the `models` that animate and how many are `withAnimator`; the
+  clips `playing`, `stopped` by their scene and `finished`; `finishReports`, the ended clips
+  reported to their scenes; and up to 32 `clips`, each with its `scene`, `entity`, `clip`,
+  `state`, `weight`, `speed`, `seekSeconds`, `durationSeconds` and `looping`). The debug panel's
+  Scene animations section shows the counts. A clip that ended reads `finished` until its
+  scene writes the Animator again: `stopped` after a write that keeps its state stopped, and
+  `playing` after one that plays it again.
 
 The HUD and input:
 
@@ -341,11 +503,15 @@ The HUD and input:
 - `/hud_logout` (web, under a test runner as `/hud_login` is): sign out through the HUD's own
   flow, the engine included, back to the HUD's start page, where `/hud_login` takes a sign-in
   again; a `/hud_login` still waiting for its answer fails with `signed out`. The engine's
-  `/logout` never reaches the HUD, which stays signed in and refuses a new `/hud_login`. A sign-in
+  `/logout` never reaches the HUD, which stays signed in and refuses a new `/hud_login`.
+  `/logout --forget` also drops the sign-in the engine keeps, so the next start opens on sign-in;
+  the HUD's Sign Out sends it, and a cancelled sign-in sends `/logout` alone. A sign-in
   the engine still holds keeps the next one waiting (`a sign-in is still finishing`) until the
   engine answers it; one it never answers needs a page reload.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
-  `/click_at <x> <y> [--button left|right|middle]`.
+  `/click_at <x> <y> [--button left|right|middle] [--normalized]`: logical pixels from the top
+  left, or 0 to 1 of the window with `--normalized`. It replies JSON: `x` and `y` in pixels,
+  `normalized`, `button`, `screen` and, on the web, `input` (`trusted` or `synthetic`).
 - `/hover_entity <entity> [--bounds] [--frames N] [--timeout-frames N]`, `/hover_entity --clear`
   and `/click_entity <entity> [--bounds] [--button pointer|primary|secondary] [--event
   click|down|up] [--timeout-frames N]`: hover or click a scene entity of the active scene by id
@@ -373,8 +539,12 @@ always `trusted`, and `/press_key` and `/click_at` feed the engine the window's 
 they get real input when a DevTools client has installed `window.__dclTrustedInput` (the web driver
 does, see below); elsewhere (the DevTools console, a page script) they fall back to DOM events,
 which prove the HUD's handlers but not the browser's input path, and give a page script nothing it
-lacks. `/hud_click` and `/hud_fill` say which in `"input"`: `trusted` or `synthetic`. Arguments
-are split on whitespace, so runs of spaces in a name or a text collapse to one. The preview-only
+lacks. `/hud_click`, `/hud_fill` and `/click_at` say which in `"input"`: `trusted` or `synthetic`.
+Arguments are split on whitespace, and a double-quoted run is one argument, with `\"` and `\\`
+escaping inside it (`/chat nearby "two  words"`); a command typed in the chat input splits the
+same way. A command that takes JSON (the HUD commands, `/set_component`) takes the rest of the
+line split on whitespace alone, so runs of spaces inside the JSON collapse to one. The [conventions ADR](../../../../docs/adr/2026-11-17-console-command-conventions.md)
+has the rules every automation command follows. The preview-only
 commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 On the web, `/hover_entity`, `/click_entity`, `/raycast_stats` and `/raycast_budget` go to the engine
@@ -436,13 +606,18 @@ of the contract.
   output the way the real shader does, or it shows artifacts the render never produces.
 - `/player_position` reports z, and parcel y is `floor(z / 16)`, not `floor(-z / 16)`. That
   sign slip has looked like a hung console RPC before.
-- The `tracy` cargo feature enables bevy's Tracy tracing for native profiling.
+- The `tracy` cargo feature adds Tracy's wire layer for native profiling; the in-app readings and the capture steps are on the [profiling](profiling.md) page.
 
 ## Testing gotchas
 
 - **Out-of-bounds culling can't be tested against localhost.** A loopback realm forces
   show-out-of-bounds on regardless of `--preview`. Point the client at the same preview server
-  by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`.
+  by LAN address, `--realm http://$(ipconfig getifaddr en0):<port>`. Colliders follow the same
+  switch: a run that shows out-of-bounds geometry keeps its colliders on, and any other run turns
+  off a collider that leaves the bounds and counts it in the debug panel's Scene Content section,
+  and cuts collider queries to the space each scene is drawn in.
+  A local scene server is always a preview run, so it keeps those colliders on while a client
+  pointed at the LAN address does not.
 - **The bridge scene's build output is not what the engine loads.** After any bridge-scene
   source change run `pnpm run export-native` (native) or `pnpm run bundle` (web) from
   `react-web/bridge-scene/`, or the client runs the stale scene from the exported folder.

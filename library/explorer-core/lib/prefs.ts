@@ -18,22 +18,24 @@ export const PREF = {
   chatClosedCommunities: 'chat.communities.closed',
   chatKnownCommunities: 'chat.communities.known',
   lobbyRecents: 'lobby.recentPlaces',
-  minimapPlaces: 'dcl-minimap-places',
+  lobbyLayout: 'lobby.layout',
+  lobbyStagePreset: 'lobby.stagePreset',
   minimapStyle: 'dcl-minimap-style',
   minimapRotation: 'dcl-minimap-rotation',
   minimapZoom: 'dcl-minimap-zoom',
-  minimapMarkers: 'dcl-minimap-markers',
   minimapOpen: 'dcl-minimap-open',
   minimapWorldOpen: 'dcl-minimap-open-world',
   loadingLastTip: 'loadingLastTip',
   sidebarAutoHide: 'hud.sidebarAutoHide',
+  sidebarMap: 'hud.sidebarMap',
   analyticsQueue: 'dcl-analytics-queue',
   voiceDisabled: 'nearbyVoiceDisabled',
   voiceVolume: 'nearbyVoiceVolume',
   voiceUsed: 'nearbyVoiceUsed',
   launchCount: 'launchCount',
   gpuGuideSeen: 'hud.gpuGuideSeen',
-  loginMusicMuted: 'hud.loginMusicMuted'
+  loginMusicMuted: 'hud.loginMusicMuted',
+  askBeforeLeaving: 'hud.askBeforeLeaving'
 } as const
 
 const DB = 'hud-prefs'

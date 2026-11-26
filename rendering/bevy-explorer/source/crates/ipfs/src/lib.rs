@@ -1,9 +1,15 @@
+#![forbid(unsafe_code)]
+
 mod batch_sizes;
 pub mod bevy_variants;
+pub mod cache_heal;
 pub mod content_hash;
 mod debug_panel;
 mod download;
 mod failed_remotes;
+use common::sync::MutexExt;
+#[cfg(not(target_arch = "wasm32"))]
+use common::sync::RwLockExt;
 use download::{InFlightDownloads, RequestMetrics};
 use failed_remotes::{FailedRemotes, Repeat};
 mod priority_gate;
@@ -11,6 +17,7 @@ pub use priority_gate::{PriorityGate, Ticket};
 #[cfg(feature = "ipfs_debug")]
 mod ipfs_debug;
 pub mod ipfs_path;
+pub mod partition;
 mod request_metrics;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod web_cache;
@@ -67,6 +74,7 @@ use bevy::asset::io::wasm::HttpWasmAssetReader;
 
 use bevy_console::{ConsoleCommand, PrintConsoleLine};
 use common::{
+    platform_ban::{PlatformBanStatus, REALM_CHANGE_BANNED},
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::RealmLifecycle,
     structs::{
@@ -400,6 +408,24 @@ impl IpfsAssetServer<'_, '_> {
             .load_with_settings(PathBuf::from(&ipfs_path), settings))
     }
 
+    /// A content file loaded for its colliders only ([`ipfs_path::COLLIDERS_PART`]): the same
+    /// file, downloaded and cached once with the whole file's loads, under an asset path of its
+    /// own, so these settings never reach the whole file's asset.
+    pub fn load_content_file_colliders<T: Asset, S: Settings>(
+        &self,
+        file_path: &str,
+        content_hash: &str,
+        settings: impl Fn(&mut S) + Send + Sync + 'static,
+    ) -> Handle<T> {
+        let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
+            content_hash.to_owned(),
+            file_path.to_owned(),
+        ))
+        .with_keyvalue(IpfsKey::Part, ipfs_path::COLLIDERS_PART.to_owned());
+        self.server
+            .load_with_settings(PathBuf::from(&ipfs_path), settings)
+    }
+
     pub fn load_urn<T: IpfsAsset>(&self, urn: &str) -> Result<Handle<T>, anyhow::Error> {
         let ext = T::ext();
         let ipfs_path = IpfsPath::new_from_urn::<T>(urn)?;
@@ -541,14 +567,9 @@ pub struct ServerScenes {
     total: usize,
 }
 
-// This replicates the structure of a `scene.json`, maybe extend if needed, but
-// for multi-scene worlds, only `entity_id` is needed
-#[expect(dead_code)]
+// A world's scene entry: for multi-scene worlds, only `entity_id` is needed
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerScene {
-    #[serde(rename = "worldName")]
-    world_name: String,
-    deployer: String,
     #[serde(rename = "entityId")]
     entity_id: String,
 }
@@ -642,7 +663,7 @@ impl Plugin for IpfsIoPlugin {
             app.register_diagnostic(Diagnostic::new(path));
         }
         app.insert_resource(IpfsResource { inner: ipfs_io });
-        app.insert_resource(RealmInitialLocation::Base);
+        app.insert_resource(RealmInitialLocation::BASE);
 
         #[cfg(feature = "hot_reload")]
         app.register_asset_source(
@@ -671,6 +692,7 @@ impl Plugin for IpfsIoPlugin {
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
         app.add_plugins(debug_panel::WebRequestsDebugPanelPlugin);
         app.add_plugins(bevy_variants::BevyVariantsPlugin);
+        app.add_plugins(cache_heal::CacheHealPlugin);
         #[cfg(target_arch = "wasm32")]
         app.add_plugins(web_cache_plugin::WebCachePlugin {
             preview: self.preview,
@@ -709,12 +731,24 @@ impl Plugin for IpfsIoPlugin {
     }
 }
 
+/// Where the player lands in a realm being changed to. `spawn_point` is the name of the spawn
+/// point to be placed on there, which the landing hands to `OutOfWorld`.
 #[derive(Resource, PartialEq, Debug)]
 pub enum RealmInitialLocation {
     None,
-    Base,
+    Base {
+        spawn_point: Option<String>,
+    },
     /// Land on this parcel of the new realm (a teleport that named its realm).
-    Parcel(IVec2),
+    Parcel {
+        parcel: IVec2,
+        spawn_point: Option<String>,
+    },
+}
+
+impl RealmInitialLocation {
+    /// The realm's own spawn, on its default spawn points.
+    pub const BASE: Self = Self::Base { spawn_point: None };
 }
 
 /// Switch to a new realm
@@ -732,7 +766,7 @@ fn change_realm_command(
     mut pending: ResMut<PendingConsoleResponses>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        *target = RealmInitialLocation::Base;
+        *target = RealmInitialLocation::BASE;
         debug!("change realm command -> base");
         let (response, rx) = RpcResultSender::channel();
         let realm = command.new_realm.clone();
@@ -762,6 +796,15 @@ pub struct ChangeRealmEvent {
     pub report: bool,
 }
 
+/// The ids [`change_realm`] issues, and whether a platform ban was known on its last run.
+#[derive(Default)]
+pub struct RealmChangeIds {
+    issued: u64,
+    /// The latest request's id; a stand-down issues an id of its own.
+    latest_request: u64,
+    was_banned: bool,
+}
+
 /// A realm change being attempted, see [`change_realm`].
 pub struct InFlightRealmChange {
     id: u64,
@@ -770,7 +813,6 @@ pub struct InFlightRealmChange {
     result: RpcResultReceiver<Result<(), String>>,
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn change_realm(
     mut change_realm_requests: EventReader<ChangeRealmEvent>,
     ipfs: Res<IpfsResource>,
@@ -780,19 +822,20 @@ pub fn change_realm(
     preview_mode: Res<PreviewMode>,
     mut target: ResMut<RealmInitialLocation>,
     mut in_flight: Local<Vec<InFlightRealmChange>>,
-    mut issued: Local<u64>,
-    // the latest issued change's id, watched by the earlier ones so they stand down
-    mut latest_issued: Local<Option<tokio::sync::watch::Sender<u64>>>,
+    mut ids: Local<RealmChangeIds>,
+    // the latest issued id and the refusal it carries
+    mut latest_issued: Local<Option<tokio::sync::watch::Sender<world_access::Issued>>>,
     world_hold: Option<Res<WorldHold>>,
     wallet: Option<Res<Wallet>>,
     prompter: Option<Res<WorldPasswordPrompter>>,
     mut world_secret: ResMut<WorldCommsSecret>,
+    platform_ban: Option<Res<PlatformBanStatus>>,
     mut commands: Commands,
 ) {
     // Polled before the realm watch: a change's result is sent after its realm config, so a
     // success seen here is applied below in this same run.
     let mut released = false;
-    let latest = *issued;
+    let latest = ids.latest_request;
     in_flight.retain_mut(|change| {
         let result = match change.result.poll_once() {
             Ok(None) => return true,
@@ -863,6 +906,20 @@ pub fn change_realm(
         commands.remove_resource::<WorldHold>();
     }
 
+    let platform_ban = platform_ban.filter(|status| status.ban().is_some());
+    let newly_banned = platform_ban.is_some() && !ids.was_banned;
+    ids.was_banned = platform_ban.is_some();
+    // a platform ban learnt while changes are in flight issues an id carrying the ban's refusal
+    if newly_banned && !in_flight.is_empty() {
+        ids.issued += 1;
+        if let Some(latest_issued) = latest_issued.as_ref() {
+            latest_issued.send_replace(world_access::Issued {
+                id: ids.issued,
+                refusal: REALM_CHANGE_BANNED,
+            });
+        }
+    }
+
     if !change_realm_requests.is_empty() {
         if preview_mode.is_preview {
             const DISABLED: &str = "Changing realm is disabled in preview mode.";
@@ -872,6 +929,8 @@ pub fn change_realm(
             for request in change_realm_requests.read() {
                 request.response.send(Err(DISABLED.to_owned()));
             }
+            // as for a change that failed: the landing asked for is not kept for a later change
+            *target = RealmInitialLocation::None;
         } else {
             let mut requests = change_realm_requests.read().collect::<Vec<_>>();
             let request = requests.pop().unwrap();
@@ -886,16 +945,30 @@ pub fn change_realm(
             let content_server_override = request.content_server_override.to_owned();
             let response = request.response.clone();
             let (sx, rx) = RpcResultSender::channel();
-            *issued += 1;
-            let latest_issued =
-                latest_issued.get_or_insert_with(|| tokio::sync::watch::channel(0).0);
-            latest_issued.send_replace(*issued);
+            ids.issued += 1;
+            ids.latest_request = ids.issued;
+            let latest_issued = latest_issued.get_or_insert_with(|| {
+                tokio::sync::watch::channel(world_access::Issued {
+                    id: 0,
+                    refusal: world_access::SUPERSEDED,
+                })
+                .0
+            });
+            // while banned, an earlier change this one supersedes still answers the ban
+            latest_issued.send_replace(world_access::Issued {
+                id: ids.issued,
+                refusal: if platform_ban.is_some() {
+                    REALM_CHANGE_BANNED
+                } else {
+                    world_access::SUPERSEDED
+                },
+            });
             let superseded = world_access::Superseded {
                 latest: latest_issued.subscribe(),
-                id: *issued,
+                id: ids.issued,
             };
             in_flight.push(InFlightRealmChange {
-                id: *issued,
+                id: ids.issued,
                 realm: request.new_realm.clone(),
                 report: request.report,
                 result: rx,
@@ -915,10 +988,15 @@ pub fn change_realm(
                 .and_then(|_| world_secret.0.clone());
             let prompter = prompter.as_deref().cloned();
             let client = ipfs.client();
+            let banned = platform_ban.is_some();
             IoTaskPool::get()
                 .spawn_compat(async move {
                     let mut superseded = superseded;
                     let result = async {
+                        // a known platform ban refuses the change before world access
+                        if banned {
+                            return Err(REALM_CHANGE_BANNED.to_owned());
+                        }
                         let secret = match &world {
                             Some((world, wallet)) => {
                                 world_access::check_world_access(
@@ -935,7 +1013,7 @@ pub fn change_realm(
                             None => None,
                         };
                         if superseded.is_superseded() {
-                            return Err(world_access::SUPERSEDED.to_owned());
+                            return Err(superseded.refusal());
                         }
                         ipfs.set_realm(new_realm, content_server_override, secret)
                             .await
@@ -1077,6 +1155,8 @@ pub struct IpfsIo {
     // urls that failed, answered from memory on a repeat request (`failed_remotes`)
     failed_remotes: std::sync::Mutex<FailedRemotes>,
     pub(crate) bevy_variants: bevy_variants::BevyVariants,
+    // cached entries checked after a failed load (`cache_heal`)
+    pub(crate) cache_heals: cache_heal::CacheHeals,
     #[cfg(feature = "ipfs_debug")]
     debug_overlay_sender: tokio::sync::mpsc::UnboundedSender<IpfsDebug>,
 }
@@ -1121,6 +1201,7 @@ impl IpfsIo {
             in_flight: Default::default(),
             failed_remotes: Default::default(),
             bevy_variants: Default::default(),
+            cache_heals: Default::default(),
             #[cfg(feature = "ipfs_debug")]
             debug_overlay_sender,
         }
@@ -1137,7 +1218,7 @@ impl IpfsIo {
     /// Allow `file://` reads under `root` (canonical). See `allowed_file_roots`.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn add_allowed_file_root(&self, root: PathBuf) {
-        let mut roots = self.allowed_file_roots.write().unwrap();
+        let mut roots = self.allowed_file_roots.write_ignore_poison();
         if !roots.contains(&root) {
             roots.push(root);
         }
@@ -1483,8 +1564,7 @@ impl IpfsIo {
         self.default_fs_path.as_deref()
     }
 
-    /// The cached bytes under `key` (native only: on web the worker's cache is read through
-    /// `web_cache`).
+    /// The cached bytes under `key` on native. Web reads go through `web_cache`.
     async fn read_disk_cache(&self, key: &CacheKey) -> Result<Option<Vec<u8>>, std::io::Error> {
         let Some(cached) = self
             .cache_path()
@@ -1500,19 +1580,20 @@ impl IpfsIo {
         Ok(Some(buffer))
     }
 
-    /// Drops the cached bytes under `key`, if there are any (native only: on web the worker's
-    /// cache entry goes through `web_cache`).
+    /// Drops the native cache entry under `key` and returns whether it existed. Web eviction
+    /// goes through `web_cache`.
     #[cfg(not(target_arch = "wasm32"))]
-    async fn forget_disk_cache(&self, key: &CacheKey) -> Result<(), std::io::Error> {
+    async fn forget_disk_cache(&self, key: &CacheKey) -> Result<bool, std::io::Error> {
         let Some(cached) = self
             .cache_path()
             .and_then(|root| root.join_relative(key.name()))
         else {
-            return Ok(());
+            return Ok(false);
         };
         match async_fs::remove_file(&cached).await {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
         }
     }
 
@@ -1654,8 +1735,7 @@ impl IpfsIo {
     /// Poll the scene's content server until each of `file_paths` (resolved via the scene
     /// collection) is fetchable, sharing one `timeout` budget; returns whether all became available.
     /// Used after writing imported files to wait for the dev server to index them before the
-    /// renderer first tries to load them — otherwise that first load 404s and is never retried. On
-    /// web the successful GETs also warm the service-worker cache for the exact URLs the loader uses.
+    /// renderer first tries to load them.
     pub async fn await_contents_available(
         &self,
         file_paths: &[String],
@@ -1914,12 +1994,10 @@ impl IpfsIo {
         about: &ServerAbout,
         new_realm: &str,
     ) -> Result<Option<IVec2>, anyhow::Error> {
-        let has_scene_urns = about.configurations.as_ref().is_some_and(|config| {
-            config
-                .scenes_urn
-                .as_ref()
-                .is_some_and(|urns| !urns.is_empty())
-        });
+        let has_scene_urns = about
+            .configurations
+            .as_ref()
+            .is_some_and(ServerConfiguration::lists_scenes);
         if !has_scene_urns {
             return Ok(None);
         }
@@ -2009,6 +2087,13 @@ impl IpfsIo {
                 }
             };
 
+            // an image a colliders-part glTF references is never sampled: no request
+            if ipfs_path.is_collider_texture() {
+                return Ok(Box::new(VecReader::new(
+                    ipfs_path::COLLIDER_TEXTURE_PNG.to_vec(),
+                )));
+            }
+
             #[cfg(target_arch = "wasm32")]
             if let Some(indexdb_path) = ipfs_path.to_indexdb() {
                 use futures_lite::io::AsyncReadExt;
@@ -2088,8 +2173,7 @@ impl IpfsIo {
                     .ok()
                     .filter(|canonical| {
                         self.allowed_file_roots
-                            .read()
-                            .unwrap()
+                            .read_ignore_poison()
                             .iter()
                             .any(|root| canonical.starts_with(root))
                     })
@@ -2116,14 +2200,10 @@ impl IpfsIo {
             let cache_key =
                 cache_key.filter(|_| !url::Url::parse(&remote).is_ok_and(|url| url.is_loopback()));
 
-            // on web the service worker's cache (`web_cache`) is the content cache: anything with
-            // a cache key (content by hash, and urls by their digest) is looked up there once,
-            // here; the download that follows a miss does not ask the worker again
             #[cfg(target_arch = "wasm32")]
             let sw_caches = cache_key.is_some();
 
-            // the worker's cache is the disk cache here: read it directly, so a cached file
-            // doesn't wait on a request slot behind every download in the queue
+            // Read the web cache before acquiring a request slot so cache hits skip the download queue.
             #[cfg(target_arch = "wasm32")]
             if sw_caches {
                 if let Some(cached) = web_cache::read(&remote).await {
@@ -2132,13 +2212,28 @@ impl IpfsIo {
                 }
             }
 
+            // `data:` and `blob:` urls (files of an entity registered inline, such as an unpublished
+            // item a page supplies) are the page's own: the http client refuses their schemes, the
+            // browser serves them without a request slot. The avatar preview only (`avatar-preview`)
+            #[cfg(all(target_arch = "wasm32", feature = "avatar-preview"))]
+            if remote.starts_with("data:") || remote.starts_with("blob:") {
+                return match web_cache::fetch_local(&remote).await {
+                    Ok(bytes) => {
+                        ipfs_io_read_state.send_cached(bytes.len());
+                        Ok(Box::new(VecReader::new(bytes)))
+                    }
+                    Err(e) => ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
+                        std::io::Error::other(format!("failed to read `{remote}`: {e}")),
+                    )))),
+                };
+            }
+
             // a failure is answered from memory for the retry window, or for the session when the
             // server said a content hash's url is wrong; preview always asks again
             let repeat = {
                 let mut failed = self
                     .failed_remotes
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    .lock_ignore_poison();
                 if self.is_preview {
                     failed.forget(&remote);
                     None
@@ -2175,8 +2270,9 @@ impl IpfsIo {
             };
             // one download per url: a second read of a url already in flight (the same file
             // under another asset path, say) takes the first's bytes instead of queueing a
-            // download of its own behind everything requested since. By url, not by hash: the
-            // bytes are shared before the hash check, and a scene names its own server
+            // download of its own behind everything requested since. By url, not by hash: a
+            // name the hash check can't verify is shared unchecked, and a scene names its own
+            // server
             let (download, task) = self.share_download(key, token, path.to_owned(), remote, scene);
             let joined = task.is_none();
             if let Some(task) = task {
@@ -2235,9 +2331,7 @@ where
         cx: &mut std::task::Context<'_>,
         offset: u64,
     ) -> std::task::Poll<std::io::Result<u64>> {
-        let mut pinned = unsafe { self.map_unchecked_mut(|slf| &mut slf.0) };
-        pinned
-            .as_mut()
+        std::pin::Pin::new(&mut self.get_mut().0)
             .poll_seek(cx, std::io::SeekFrom::Current(offset as i64))
     }
 }
@@ -2251,8 +2345,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        let mut pinned = unsafe { self.map_unchecked_mut(|slf| &mut slf.0) };
-        pinned.as_mut().poll_read(cx, buf)
+        std::pin::Pin::new(&mut self.get_mut().0).poll_read(cx, buf)
     }
 }
 
@@ -2428,6 +2521,13 @@ fn b64_split_at_key<'a>(decoded: &'a str, key: &str) -> Option<(&'a str, &'a str
     let marker = format!("/{key}-");
     let idx = normalized.rfind(&marker)?;
     Some((&decoded[..idx], &decoded[idx + marker.len()..]))
+}
+
+/// Follows the max downloads setting
+fn apply_max_downloads(config: Option<Res<common::structs::AppConfig>>, ipfs: Res<IpfsResource>) {
+    if let Some(config) = config.filter(|config| config.is_changed()) {
+        ipfs.set_concurrent_remote_count(config.max_concurrent_remotes);
+    }
 }
 
 #[cfg(test)]
@@ -2790,12 +2890,5 @@ mod tests {
         ] {
             assert_eq!(map.hash(src).as_deref(), Some(expected), "{src}");
         }
-    }
-}
-
-/// Follows the max downloads setting
-fn apply_max_downloads(config: Option<Res<common::structs::AppConfig>>, ipfs: Res<IpfsResource>) {
-    if let Some(config) = config.filter(|config| config.is_changed()) {
-        ipfs.set_concurrent_remote_count(config.max_concurrent_remotes);
     }
 }

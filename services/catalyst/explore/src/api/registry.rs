@@ -36,18 +36,27 @@
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get, post};
 use axum::extract::{DefaultBodyLimit, OriginalUri, State};
 use axum::http::{HeaderMap, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
+use dcl_metrics::{CounterFamily, Descriptor};
 use serde::de::{DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 
 use super::{Settings, Shared};
+
+const BACKEND_REQUESTS: CounterFamily<2> = CounterFamily::new(
+    "dcl_registry_backend_requests_total",
+    "Registry gateway reads by backend and outcome.",
+    None,
+    &["backend", "outcome"],
+);
+pub const FAMILIES: &[Descriptor] = &[BACKEND_REQUESTS.descriptor];
 
 /// Largest backend response buffered for one request. Registry answers are
 /// far smaller; this bounds the worst case at `IN_FLIGHT * BODY_CAP` (512 MiB).
@@ -91,7 +100,7 @@ pub fn routes(state: Shared) -> Router {
         .merge(crate::shared::health::status_checks_router_with(
             crate::shared::health::SERVER_PASS,
         ))
-        .fallback(not_found)
+        .fallback(erase(not_found))
         .layer(axum::middleware::from_fn(cors))
 }
 
@@ -620,7 +629,9 @@ async fn forward(
         return Err(message(StatusCode::BAD_REQUEST, "Invalid Registry path"));
     }
     url.set_query(uri.query());
+    let backend = if native { "native" } else { "upstream" };
     let Some(_permit) = slot(&PERMITS, SLOT_WAIT).await else {
+        BACKEND_REQUESTS.handle([backend, "busy"]).increment(1);
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
             [("retry-after", "1")],
@@ -680,6 +691,16 @@ async fn forward(
         Ok::<_, anyhow::Error>((status, out_headers, bytes))
     }
     .await;
+    let outcome = match &result {
+        Ok((status, _, _)) if status.is_success() || *status == StatusCode::NOT_MODIFIED => {
+            "success"
+        }
+        Ok((status, _, _)) if status.is_client_error() => "client_error",
+        Ok((status, _, _)) if status.is_server_error() => "server_error",
+        Ok(_) => "other_response",
+        Err(_) => "request_error",
+    };
+    BACKEND_REQUESTS.handle([backend, outcome]).increment(1);
     result.map_err(|error| {
         tracing::warn!(error = %format!("{error:#}"), "Registry request failed");
         message(StatusCode::BAD_GATEWAY, "Registry service unavailable")

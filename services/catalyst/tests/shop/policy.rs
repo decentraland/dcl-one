@@ -7,8 +7,8 @@ use alloy_primitives::{U256, keccak256};
 use catalyst::shop::policy::{
     Authoritative, CartLine, Facts, GroupTotal, LineRefusal, MAX_CREDIT_LINES_PER_GROUP,
     MissingFact, PartitionError, Quote, Reason, Refusal, SettlementGroup, WalletGuidance,
-    credit_cap, eligibility, guard_credit_spend, guard_group_credit_spend, guard_method, partition,
-    quote,
+    credit_cap, eligibility, guard_credit_spend, guard_group_credit_spend, guard_method,
+    offered_splittable, partial_credit_cap, partition, quote, split_price,
 };
 use catalyst::shop::types::{
     AssetId, AssetKind, ChainId, ContractRef, ContractRole, CreditSizing, CustomEffect, EvmAddress,
@@ -535,6 +535,7 @@ fn authorize(chain_id: ChainId) -> SettlementOperation {
         chain_id,
         value: ManaWei::ZERO,
         sizing: sizing(100),
+        leg: None,
     }
 }
 
@@ -1413,6 +1414,7 @@ fn a_credit_is_bounded_by_its_groups_quoted_need() {
         chain_id: ChainId::POLYGON,
         value,
         sizing: sizing(headroom),
+        leg: None,
     };
     let need = ManaWei::new(n(6_446_400) * n(10).pow(n(12)));
     assert_eq!(
@@ -1451,6 +1453,414 @@ fn a_credit_is_bounded_by_its_groups_quoted_need() {
         "never below the need"
     );
     assert_eq!(CreditSizing::new(rate(), 1_001, 100), None);
+}
+
+/// A credit for the Credits part of one line (the rest paid in MANA in the
+/// same call) is that part's share of the MANA the sale moves, with no buffer:
+/// with the buyer's gap it adds up to exactly the price, and the guard refuses
+/// one wei more even though the whole-price cap is far above it.
+#[test]
+fn a_partial_credit_is_its_parts_share_of_the_lines_mana_price() {
+    let b = book();
+    let hat = [derive(store_mint_facts(&b, web3(&b), ItemKind::Wearable))];
+    let Ok(Quote::Credits { quoted }) = quote(&hat[0], Credits, Some(&rate())) else {
+        panic!("a store mint has a credits quote");
+    };
+    let Ok(Quote::Mana { amount: price }) = quote(&hat[0], Mana, Some(&rate())) else {
+        panic!("a store mint has a MANA quote");
+    };
+    let (p, q) = (price.get(), U256::from(quoted.get() as u64));
+    // Every part of the price in whole credits, and one that is not a multiple of ten.
+    let legs: Vec<i64> = (1..=quoted.get() / 10)
+        .map(|c| c * 10)
+        .filter(|&c| c < quoted.get())
+        .chain([quoted.get() / 2])
+        .collect();
+    assert!(legs.len() > 3, "{quoted} leaves several parts to check");
+    for leg in legs {
+        let l = U256::from(leg as u64);
+        let value = partial_credit_cap(&hat, &sizing(100), UsdCents::new(leg)).unwrap();
+        let gap = (p * (q - l)).div_ceil(q);
+        assert_eq!(value.get(), p * l / q, "floor(price * {leg} / {quoted})");
+        assert!(value.get() * q <= p * l, "never above the part's share");
+        assert_eq!(value.get() + gap, p, "credit and gap are the price, {leg}");
+    }
+
+    let leg = UsdCents::new(quoted.get() / 2);
+    let share = partial_credit_cap(&hat, &sizing(100), leg).unwrap();
+    let signed = |value, leg| SettlementOperation::AuthorizeCredit {
+        chain_id: ChainId::POLYGON,
+        value,
+        sizing: sizing(100),
+        leg,
+    };
+    assert_eq!(
+        guard_group_credit_spend(&hat, &signed(share, Some(leg))),
+        Ok(())
+    );
+    let over = share.checked_add(ManaWei::new(n(1))).unwrap();
+    let whole = credit_cap(&hat, &sizing(100)).unwrap();
+    assert!(
+        over < whole,
+        "one wei over the share is still under the whole cap"
+    );
+    assert_eq!(
+        guard_group_credit_spend(&hat, &signed(over, Some(leg))),
+        Err(Refusal::CreditValueTooLarge {
+            value: over,
+            cap: share
+        }),
+        "the guard bounds a partial credit by its part, not the line"
+    );
+    assert_eq!(
+        guard_group_credit_spend(&hat, &signed(over, None)),
+        Ok(()),
+        "the same value is inside a whole-price credit's bound"
+    );
+    for other in [
+        sizing(150),
+        CreditSizing::new(rate(), 0, 100).unwrap(),
+        CreditSizing::new(rate(), 1_000, 150).unwrap(),
+    ] {
+        assert_eq!(
+            partial_credit_cap(&hat, &other, leg),
+            Ok(share),
+            "neither the buffer nor the headroom adds to a part"
+        );
+    }
+
+    let asset = hat[0].asset();
+    for bad in [0, -10, quoted.get(), quoted.get() + 10] {
+        let bad = UsdCents::new(bad);
+        let out_of_range = Refusal::PartialCreditOutOfRange {
+            asset,
+            leg: bad,
+            quoted,
+        };
+        assert_eq!(
+            partial_credit_cap(&hat, &sizing(100), bad),
+            Err(out_of_range.clone()),
+            "{bad}"
+        );
+        assert_eq!(
+            guard_group_credit_spend(&hat, &signed(ManaWei::ZERO, Some(bad))),
+            Err(out_of_range),
+            "{bad}"
+        );
+    }
+    let two = [
+        hat[0].clone(),
+        derive(store_mint_facts(&b, web3(&b), ItemKind::Emote)),
+    ];
+    assert_eq!(
+        guard_group_credit_spend(&two, &signed(ManaWei::ZERO, Some(leg))),
+        Err(Refusal::GroupTooLarge { lines: 2, max: 1 }),
+        "a Credits part pays one line alone"
+    );
+    let web2_hat = [derive(store_mint_facts(&b, web2(&b), ItemKind::Wearable))];
+    assert_eq!(
+        partial_credit_cap(&web2_hat, &sizing(100), leg),
+        Err(Refusal::ManaRemainderNotAllowed { asset }),
+        "the rest is MANA, which a web2 session cannot pay"
+    );
+
+    // A mint priced at `wei` MANA wei, with its own asset.
+    let priced = |wei: U256| {
+        [derive(Facts {
+            offer: Offer::StoreMint {
+                venue: b.store,
+                collection: b.collection,
+                item_id: n(ITEM),
+                price: ManaWei::new(wei),
+            },
+            ..store_mint_facts(&b, web3(&b), ItemKind::Wearable)
+        })]
+    };
+    // A share that floors to zero is refused: at 1e20 USD per MANA one wei is
+    // a $100 quote, and ten cents of it is no wei at all.
+    let dear = CreditSizing::new(ManaUsdRate::new(n(10).pow(n(20)), 0).unwrap(), 200, 100).unwrap();
+    let wei = priced(n(1));
+    assert_eq!(
+        quote(&wei[0], Credits, Some(&dear.rate())),
+        Ok(Quote::Credits {
+            quoted: UsdCents::new(10_000)
+        })
+    );
+    assert_eq!(
+        partial_credit_cap(&wei, &dear, UsdCents::new(10)),
+        Err(Refusal::NonPositiveQuote {
+            asset: wei[0].asset()
+        })
+    );
+    // An overflow is refused, not wrapped: at the widest rate the type takes
+    // (36 decimals) the largest quote's price times its part is past U256.
+    let cheap = CreditSizing::new(ManaUsdRate::new(n(1), 36).unwrap(), 200, 100).unwrap();
+    let fortune = priced(n(9) * n(10).pow(n(70)));
+    let Ok(Quote::Credits { quoted: huge }) = quote(&fortune[0], Credits, Some(&cheap.rate()))
+    else {
+        panic!("the fortune is quoted");
+    };
+    assert_eq!(
+        partial_credit_cap(&fortune, &cheap, UsdCents::new(huge.get() - 10)),
+        Err(Refusal::AmountOverflow {
+            asset: fortune[0].asset()
+        })
+    );
+}
+
+/// A listing priced in MANA with a creator coupon: the part's share is of the
+/// MANA the coupon leaves, as the contract computes it.
+#[test]
+fn a_partial_credit_for_a_couponed_listing_is_its_share_of_the_discounted_mana() {
+    let b = book();
+    // 2.5 MANA, signed in MANA (ERC-20), with the creator's 30% coupon.
+    let signed = n(25) * n(10).pow(n(17));
+    let order = [derive(Facts {
+        offer: Offer::Trade {
+            trade: SignedTrade {
+                received: vec![TradeAsset {
+                    asset_type: TradeAssetType::Erc20,
+                    contract: b.mana,
+                    value: signed,
+                }],
+                ..creator_order_trade(&b)
+            },
+            coupon: Some(coupon()),
+        },
+        ..creator_order_facts(&b, web3(&b), ItemKind::Wearable)
+    })];
+    let ppm = n(u64::from(coupon().discount_ppm));
+    let kept = signed - signed * ppm / n(1_000_000);
+    let Ok(Quote::Mana { amount }) = quote(&order[0], Mana, Some(&rate())) else {
+        panic!("a MANA listing has a MANA quote");
+    };
+    assert_eq!(amount.get(), kept, "price - floor(price * ppm / 1e6)");
+    let Ok(Quote::Credits { quoted }) = quote(&order[0], Credits, Some(&rate())) else {
+        panic!("and a credits quote");
+    };
+    let leg = UsdCents::new((quoted.get() / 2) / 10 * 10);
+    let q = U256::from(quoted.get() as u64);
+    let l = U256::from(leg.get() as u64);
+    let value = partial_credit_cap(&order, &sizing(100), leg).unwrap();
+    assert_eq!(value.get(), kept * l / q);
+    assert_eq!(value.get() + (kept * (q - l)).div_ceil(q), kept);
+}
+
+/// The split vector: a listing of 101 MANA wei with a 10% coupon moves
+/// P = 101 - floor(101 * 10%) = 91 MANA wei; quoted 30 cents, a 10-cent part.
+/// The credit is C = floor(91 * 10 / 30) = 30 and the buyer's MANA
+/// G = 91 - 30 = 61 = ceil(91 * 20 / 30), whatever buffer or headroom the node
+/// runs with; the guard takes C and refuses C + 1.
+#[test]
+fn the_split_vector_is_one_credit_and_gap_whatever_the_buffer_and_headroom() {
+    let b = book();
+    let order = [derive(Facts {
+        offer: Offer::Trade {
+            trade: SignedTrade {
+                received: vec![TradeAsset {
+                    asset_type: TradeAssetType::Erc20,
+                    contract: b.mana,
+                    value: n(101),
+                }],
+                ..creator_order_trade(&b)
+            },
+            coupon: Some(TradeCoupon {
+                discount_ppm: 100_000,
+                ..coupon()
+            }),
+        },
+        ..creator_order_facts(&b, web3(&b), ItemKind::Wearable)
+    })];
+    // 3.2e15 USD a MANA: 101 wei is $0.3232, 33 cents rounded up, 30 after the coupon.
+    let rate = ManaUsdRate::new(n(3_200_000_000_000_000), 0).unwrap();
+    assert_eq!(split_price(&order[0]), Ok(ManaWei::new(n(91))));
+    // A line the rule splits is offered `splittable` only while the node's rollout is on.
+    assert!(offered_splittable(true, &order[0]));
+    assert!(!offered_splittable(false, &order[0]));
+    assert_eq!(
+        quote(&order[0], Credits, Some(&rate)),
+        Ok(Quote::Credits {
+            quoted: UsdCents::new(30)
+        })
+    );
+    let part = UsdCents::new(10);
+    for headroom in [100, 150] {
+        for buffer in [0, 200, 1_000] {
+            let sizing = CreditSizing::new(rate, buffer, headroom).unwrap();
+            let credit = partial_credit_cap(&order, &sizing, part).unwrap();
+            assert_eq!(credit, ManaWei::new(n(30)), "{buffer} bps, {headroom}%");
+            let gap = n(91) - credit.get();
+            assert_eq!(gap, n(61));
+            assert_eq!(gap, (n(91) * n(20)).div_ceil(n(30)), "the UI's gap");
+            assert!(
+                credit <= credit_cap(&order, &sizing).unwrap(),
+                "under the whole cap"
+            );
+            let signed = |value| SettlementOperation::AuthorizeCredit {
+                chain_id: ChainId::POLYGON,
+                value,
+                sizing,
+                leg: Some(part),
+            };
+            assert_eq!(guard_group_credit_spend(&order, &signed(credit)), Ok(()));
+            assert_eq!(
+                guard_group_credit_spend(&order, &signed(ManaWei::new(n(31)))),
+                Err(Refusal::CreditValueTooLarge {
+                    value: ManaWei::new(n(31)),
+                    cap: credit
+                })
+            );
+        }
+    }
+}
+
+/// Only terms that fix the MANA the sale moves have a Credits part: a listing
+/// paid in another ERC-20 than the chain's MANA, a NAME and a bundle have
+/// none, refused by the same function the issuance and the guard call.
+#[test]
+fn a_credits_part_needs_a_line_paid_in_the_chains_mana() {
+    let b = book();
+    let paid_in = |token: EvmAddress| {
+        [derive(Facts {
+            offer: Offer::Trade {
+                trade: SignedTrade {
+                    received: vec![TradeAsset {
+                        asset_type: TradeAssetType::Erc20,
+                        contract: token,
+                        value: n(25) * n(10).pow(n(17)),
+                    }],
+                    ..creator_order_trade(&b)
+                },
+                coupon: None,
+            },
+            ..creator_order_facts(&b, web3(&b), ItemKind::Wearable)
+        })]
+    };
+    let mana = paid_in(b.mana);
+    assert_eq!(
+        split_price(&mana[0]),
+        Ok(ManaWei::new(n(25) * n(10).pow(n(17))))
+    );
+    assert!(partial_credit_cap(&mana, &sizing(100), UsdCents::new(50)).is_ok());
+    let other = paid_in(synthetic(0xe2c0));
+    let not_mana = Refusal::PartialCreditUnavailable {
+        asset: other[0].asset(),
+        detail: "its listing is not paid in the chain's MANA",
+    };
+    assert_eq!(split_price(&other[0]), Err(not_mana.clone()));
+    assert_eq!(
+        partial_credit_cap(&other, &sizing(100), UsdCents::new(50)),
+        Err(not_mana.clone())
+    );
+    assert_eq!(
+        guard_group_credit_spend(
+            &other,
+            &SettlementOperation::AuthorizeCredit {
+                chain_id: ChainId::POLYGON,
+                value: ManaWei::ZERO,
+                sizing: sizing(100),
+                leg: Some(UsdCents::new(50)),
+            }
+        ),
+        Err(not_mana)
+    );
+    let name = derive(name_facts(
+        &b,
+        web3(&b),
+        NameLabel::parse("alice").unwrap(),
+        Lookup::Absent,
+    ));
+    assert_eq!(
+        split_price(&name),
+        Err(Refusal::PartialCreditUnavailable {
+            asset: name.asset(),
+            detail: "a NAME registration is paid whole",
+        })
+    );
+    let bundle = derive(Facts {
+        session: web3(&b),
+        offer: Offer::Trade {
+            trade: SignedTrade {
+                received: vec![TradeAsset {
+                    asset_type: TradeAssetType::Erc20,
+                    contract: b.mana,
+                    value: n(10).pow(n(18)),
+                }],
+                ..trade(
+                    &b,
+                    b.marketplace,
+                    b.creator,
+                    vec![collection_item(&b), collection_item(&b)],
+                )
+            },
+            coupon: None,
+        },
+        contract: Lookup::Found(ContractRole::Collection),
+        item: Lookup::Found(item_record(&b, ChainId::POLYGON, ItemKind::Wearable)),
+        token: Lookup::Absent,
+    });
+    assert_eq!(
+        split_price(&bundle),
+        Err(Refusal::PartialCreditUnavailable {
+            asset: bundle.asset(),
+            detail: "a bundle is paid whole",
+        })
+    );
+    let mint = derive(store_mint_facts(&b, web3(&b), ItemKind::Wearable));
+    assert!(
+        split_price(&mint).is_ok(),
+        "a store mint is paid in MANA by its store"
+    );
+}
+
+/// A USD-pegged line has no Credits part: its MANA is only fixed when the
+/// marketplace reads its feed at settlement, so no share can be signed now.
+#[test]
+fn a_usd_pegged_line_is_refused_a_credits_part() {
+    let b = book();
+    let pegged = [derive(Facts {
+        offer: Offer::Trade {
+            trade: SignedTrade {
+                received: vec![TradeAsset {
+                    asset_type: TradeAssetType::UsdPeggedMana,
+                    contract: b.mana,
+                    value: n(100) * n(10).pow(n(16)),
+                }],
+                ..creator_order_trade(&b)
+            },
+            coupon: None,
+        },
+        ..creator_order_facts(&b, web3(&b), ItemKind::Wearable)
+    })];
+    let refused = Refusal::PartialCreditUnavailable {
+        asset: pegged[0].asset(),
+        detail: "its price is set in USD, so its MANA is only known at settlement",
+    };
+    assert_eq!(split_price(&pegged[0]), Err(refused.clone()));
+    let at_feed =
+        sizing(100).with_settlement_rate(ManaUsdRate::parse_usd_per_mana("0.55").unwrap());
+    for sizing in [sizing(100), at_feed] {
+        assert_eq!(
+            partial_credit_cap(&pegged, &sizing, UsdCents::new(40)),
+            Err(refused.clone())
+        );
+        assert_eq!(
+            guard_group_credit_spend(
+                &pegged,
+                &SettlementOperation::AuthorizeCredit {
+                    chain_id: ChainId::POLYGON,
+                    value: ManaWei::ZERO,
+                    sizing,
+                    leg: Some(UsdCents::new(40)),
+                }
+            ),
+            Err(refused.clone())
+        );
+    }
+    assert!(
+        credit_cap(&pegged, &sizing(100)).is_ok(),
+        "its whole price still has a credit"
+    );
 }
 
 #[test]
@@ -1535,6 +1945,7 @@ fn the_partition_and_the_use_credits_guard_agree_for_every_group_shape() {
             chain_id: group.key.chain_id,
             value: sizing(100).cap(quoted).unwrap(),
             sizing: sizing(100),
+            leg: None,
         };
         assert_eq!(
             guard_group_credit_spend(&group_lines, &exact),
@@ -1632,6 +2043,7 @@ fn a_usd_pegged_line_is_sized_at_the_settlement_feed_within_the_reference_cap() 
         chain_id: ChainId::POLYGON,
         value,
         sizing,
+        leg: None,
     };
     assert_eq!(
         guard_group_credit_spend(&mixed, &signed(wei(11_220), at(100, "1"))),

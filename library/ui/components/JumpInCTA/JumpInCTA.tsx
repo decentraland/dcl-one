@@ -7,6 +7,13 @@ type OwnProps = {
   /** Shows the spinner in place of the icon and stops activation. */
   loading?: boolean
   label?: ReactNode
+  /**
+   * `hud` is the Explorer HUD's button on its cards: a 6px radius, bold text and its own hover and pressed reds,
+   * in the `xl` (46px) and `md` (40px) sizes.
+   */
+  appearance?: 'default' | 'hud'
+  /** Replaces the default icon, for a surface that draws its own. Decorative: hide it from assistive technology. */
+  icon?: ReactNode
   className?: string
 }
 
@@ -22,7 +29,7 @@ export type JumpInCTAProps = OwnProps & (NativeButton | NativeLink)
 const block = (event: MouseEvent<HTMLElement>) => event.preventDefault()
 
 /** decentraland-ui2 JumpInIcon, as decentraland.org draws it inside the CTA. */
-function JumpInIcon() {
+export function JumpInIcon() {
   return (
     <svg
       className={styles.icon}
@@ -41,10 +48,19 @@ function JumpInIcon() {
 }
 
 export function JumpInCTA(props: JumpInCTAProps) {
-  const { size = 'xl', disabled = false, loading = false, label = 'Jump in', className, ...rest } = props
+  const {
+    size = 'xl',
+    disabled = false,
+    loading = false,
+    label = 'Jump in',
+    appearance = 'default',
+    icon,
+    className,
+    ...rest
+  } = props
   const inert = disabled || loading
   const shared = {
-    className: [styles.root, styles[size], className].filter(Boolean).join(' '),
+    className: [styles.root, styles[size], appearance === 'hud' && styles.hud, className].filter(Boolean).join(' '),
     'aria-busy': loading || undefined,
     'data-disabled': disabled || undefined,
     'data-loading': loading || undefined
@@ -52,7 +68,7 @@ export function JumpInCTA(props: JumpInCTAProps) {
   const content = (
     <>
       <span>{label}</span>
-      {loading ? <span className={styles.spinner} aria-hidden="true" /> : <JumpInIcon />}
+      {loading ? <span className={styles.spinner} aria-hidden="true" /> : (icon ?? <JumpInIcon />)}
     </>
   )
 

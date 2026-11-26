@@ -25,9 +25,8 @@ use crate::worlds_envelope::ApiError;
 
 /// Upstream's `setupRouter` passes no `expiration` to `wellKnownComponents`, so every
 /// route on this surface runs on crypto-middleware's `DEFAULT_EXPIRATION` of `1000 * 60`
-/// (core-libs/libs/crypto-middleware/src/types.ts). The world-storage surface already
-/// reads the same default.
-pub const SIGNED_FETCH_EXPIRATION_SECS: i64 = 60;
+/// (core-libs/libs/crypto-middleware/src/types.ts), the window every signed route shares.
+pub const SIGNED_FETCH_EXPIRATION_SECS: i64 = crate::auth::signed_fetch::SIGNED_FETCH_WINDOW_SECS;
 
 /// The explorer comms handshakes. The js explorers still sign the folded payload with
 /// camelCase metadata while bevy-explorer mints the 6.x payload, so the fallback stays
@@ -138,7 +137,8 @@ fn chain_refusal(headers: &HeaderMap, e: ChainShapeError) -> SignedFetchRefusal 
 }
 
 /// `verifySign`'s refusals: `Invalid signature: <reason>` for a personal-sign
-/// chain, the bare `Invalid signature` and the catalyst 503 for EIP-1654.
+/// chain, the bare `Invalid signature` and the catalyst 503 for EIP-1654, and
+/// the 429 of a client source that spent its contract-wallet checks.
 fn signature_refusal(e: AuthError) -> SignedFetchRefusal {
     let message = match &e {
         AuthError::Eip1654Rejected { .. } | AuthError::Eip1654NotImplemented => {
@@ -147,6 +147,8 @@ fn signature_refusal(e: AuthError) -> SignedFetchRefusal {
         AuthError::Eip1654ValidationFailed(detail) => {
             format!("Error connecting to catalyst: {detail}")
         }
+        // The client source spent its contract-wallet checks: the 429, before any RPC call.
+        AuthError::Eip1654RateLimited => e.to_string(),
         other => format!("Invalid signature: {other}"),
     };
     SignedFetchRefusal::new(map_auth_error(e), message)
@@ -248,7 +250,7 @@ async fn validate_over_paths(
 ) -> Result<Address, SignedFetchRefusal> {
     let mut verdict = None;
     for payload in payloads {
-        match crate::auth::verify_auth_chain_async(chain, payload, Some(now * 1000), validator)
+        match crate::auth::verify_login_chain_async(chain, payload, Some(now * 1000), validator)
             .await
         {
             Ok(()) => {
@@ -452,6 +454,59 @@ mod tests {
         assert_eq!(
             first_respelled_key(&metadata, EXPLORER_METADATA_KEYS).as_deref(),
             Some(r#"Invalid chain metadata: "intent" delivered under 2 spellings"#)
+        );
+    }
+
+    /// A chain whose delegation starts with `first_line`, its ephemeral key
+    /// signing `payload`.
+    fn chain_delegating(first_line: &str, payload: &str) -> AuthChain {
+        use crate::auth::{AuthLink, AuthLinkType, Wallet};
+
+        let owner = Wallet::random().unwrap();
+        let ephemeral = Wallet::random().unwrap();
+        let delegation = format!(
+            "{first_line}\nEphemeral address: {}\nExpiration: 2099-01-01T00:00:00.000Z",
+            ephemeral.address()
+        );
+        vec![
+            AuthLink {
+                link_type: AuthLinkType::SIGNER,
+                payload: owner.address(),
+                signature: None,
+            },
+            AuthLink {
+                link_type: AuthLinkType::EcdsaEphemeral,
+                signature: Some(owner.sign_message(delegation.as_bytes()).unwrap()),
+                payload: delegation,
+            },
+            AuthLink {
+                link_type: AuthLinkType::EcdsaSignedEntity,
+                signature: Some(ephemeral.sign_message(payload.as_bytes()).unwrap()),
+                payload: payload.into(),
+            },
+        ]
+    }
+
+    #[tokio::test]
+    async fn another_delegation_purpose_is_settled_before_the_next_payload() {
+        let payloads = ["get:/other:1:{}".to_string(), "get:/:1:{}".to_string()];
+        let now = 1_700_000_000;
+
+        let login = chain_delegating("Decentraland Login", &payloads[1]);
+        assert!(
+            validate_over_paths(&login, &payloads, now, None)
+                .await
+                .is_ok()
+        );
+
+        let other = chain_delegating("Decentraland Storage Delegation", &payloads[1]);
+        let refusal = validate_over_paths(&other, &payloads, now, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(refusal.cause, SignedFetchError::MalformedChain { .. }),
+            "{:?}",
+            refusal.cause
         );
     }
 }

@@ -117,7 +117,6 @@ fn read_photo_mode_keys(
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn apply_photo_mode_requests(
     mut commands: Commands,
     mut requests: EventReader<PhotoModeRequest>,
@@ -218,7 +217,6 @@ pub(crate) fn apply_photo_mode_requests(
 
 /// Scene UI is hidden for the whole of photo mode; roots that appear, or are restyled for a new
 /// HUD inset, meanwhile are hidden too.
-#[allow(clippy::type_complexity)]
 fn hide_scene_ui_in_photo_mode(
     mut commands: Commands,
     photo: Query<(), (With<PhotoMode>, With<PrimaryCamera>)>,
@@ -254,7 +252,6 @@ fn hide_scene_ui_in_photo_mode(
 
 /// Reads this frame's input into the photo camera and writes the rendered camera. Waits for the
 /// opening transition to land before the follow target takes over.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn move_photo_camera(
     time: Res<Time>,
     settings: Res<PhotoCameraSettings>,

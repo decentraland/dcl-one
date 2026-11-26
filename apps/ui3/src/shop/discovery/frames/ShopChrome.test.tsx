@@ -1,8 +1,9 @@
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useLocation } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
+import { NavBar } from "@dcl/one-ui";
 import { createShopClient, type ShopClient } from "@shop/api/shop";
 import { shopCartDrawer } from "../../cart/drawer";
 import { shopCart } from "../../cart/store";
@@ -11,7 +12,8 @@ import { evmAddress } from "@shop/model/address";
 import { marketplaceOn } from "../../market/testing-flags";
 import { catalogTransport, ShopHarness, type SessionKind } from "../fixtures";
 import ShopChrome, { shopTabs } from "./ShopChrome";
-import { formatCreditsBalance } from "./ShopCreditsChip";
+import ShopCreditsChip from "./ShopCreditsChip";
+import { formatCreditsBalance } from "@shop/credits/balance-query";
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
@@ -25,13 +27,25 @@ afterEach(() => {
 
 function Where() {
   const { pathname } = useLocation();
-  return <output data-testid="where">{pathname}</output>;
+  const navigate = useNavigate();
+  return <>
+    <output data-testid="where">{pathname}</output>
+    <button onClick={() => navigate(-1)}>Browser Back</button>
+    <button onClick={() => navigate(1)}>Browser Forward</button>
+  </>;
 }
 
-async function chrome(entry: string, session: SessionKind = "signedOut", client?: ShopClient) {
+async function chrome(entry: string, session: SessionKind = "signedOut", client?: ShopClient, withHeader = false) {
   render(
     <ShopHarness path="/shop/*" entry={entry} session={session} client={client}>
-      <ShopChrome footer={false}>
+      <ShopChrome footer={false} topbar={withHeader ? (
+        <NavBar
+          sections={[]}
+          account={{ name: "Bob", address: "0x0000000000000000000000000000000000000b0b" }}
+          balanceAction={<ShopCreditsChip />}
+          notifications={{ onSelect() {} }}
+        />
+      ) : undefined}>
         <Where />
       </ShopChrome>
     </ShopHarness>,
@@ -45,6 +59,14 @@ describe("the Shop frame", () => {
     expect(shopTabs({ iap: true, eventLabel: "Halloween" }).map((t) => t.id)).toEqual(["overview", "event", "collectibles"]);
   });
 
+  it("omits an event section when the event label contains only whitespace", () => {
+    expect(shopTabs({ iap: false, eventLabel: "   " }).map((tab) => tab.id)).not.toContain("event");
+  });
+
+  it("keeps the accessible campaign label trimmed", () => {
+    expect(shopTabs({ iap: false, eventLabel: "  Autumn  " }).find((tab) => tab.id === "event")?.label).toBe("Autumn");
+  });
+
   it("renders the subnav; the cart shows its count and activity needs a session", async () => {
     shopCart.add({ asset: itemAsset(137, evmAddress("0x000000000000000000000000000000000000c011"), 7), display: { name: "Nacho Hat" }, quantity: 2 });
     await chrome("/shop/items/creator/0xabc", "web2");
@@ -55,15 +77,36 @@ describe("the Shop frame", () => {
     expect(within(subnav).getByTestId("search")).toBeTruthy();
   });
 
+  it("keeps the Shop tools and skip target when the host supplies its own header", async () => {
+    await chrome("/shop/overview");
+
+    const skip = screen.getByRole("link", { name: "Skip to content" });
+    expect(skip.getAttribute("href")).toBe(`#${screen.getByRole("main").id}`);
+    expect(screen.getByTestId("subnav-tabs")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Go to Decentraland home" })).toBeNull();
+  });
+
   it("navigates between sections through the host's router", async () => {
     await chrome("/shop/overview");
     fireEvent.click(screen.getAllByRole("link", { name: "Collectibles" })[0]!);
     await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/shop/items"));
   });
 
+  it("marks the active route when browser history moves back and forward", async () => {
+    await chrome("/shop/overview");
+    const tabs = within(screen.getByRole("navigation", { name: "Shop sections" }));
+    fireEvent.click(tabs.getByRole("link", { name: "Collectibles" }));
+    await tabs.findByRole("link", { name: "Collectibles", current: "page" });
+    fireEvent.click(screen.getByRole("button", { name: "Browser Back" }));
+    await tabs.findByRole("link", { name: "Overview", current: "page" });
+    fireEvent.click(screen.getByRole("button", { name: "Browser Forward" }));
+    await tabs.findByRole("link", { name: "Collectibles", current: "page" });
+  });
+
   it("marks the cart page only through the cart button", async () => {
     await chrome("/shop/cart");
     expect(within(screen.getByTestId("subnav-tabs")).queryByRole("link", { name: "Cart" })).toBeNull();
+    expect(within(screen.getByRole("navigation", { name: "Shop sections" })).queryByRole("link", { current: "page" })).toBeNull();
     expect(screen.getByTestId("subnav-cart")).toBeTruthy();
   });
 
@@ -71,7 +114,7 @@ describe("the Shop frame", () => {
     const balance = { credits: [], totalCredits: 0, totals: { expiring: 0, nonExpiring: 0 }, usd: { balanceCents: 123_450, credits: 12_345 } };
     const transport = catalogTransport("ok", { "/v1/users/0x0000000000000000000000000000000000000b0b/credits": balance });
     const signer = { address: "0x0000000000000000000000000000000000000001", sign: async () => ({}) };
-    await chrome("/shop/items", "web2", createShopClient({ base: "http://shop.test", mode: "canonical", transport, signer: async () => signer }));
+    await chrome("/shop/items", "web2", createShopClient({ base: "http://shop.test", mode: "canonical", transport, signer: async () => signer }), true);
     const chip = await screen.findByTestId("navbar-credits");
     expect(chip).toHaveTextContent("12,345");
     expect(chip.getAttribute("aria-label")).toBe("12,345 shop credits");
@@ -130,5 +173,31 @@ describe("the Shop frame", () => {
     document.body.innerHTML = "";
     await chrome("/shop/settings", "web3");
     expect(screen.getAllByTestId("subnav")[0]!).toHaveAttribute("data-set", "shop");
+  });
+
+  it("marks a scrolled page in the scroll event itself, with hysteresis, and clears the mark on unmount", async () => {
+    const scrollY = vi.spyOn(window, "scrollY", "get").mockReturnValue(0);
+    onTestFinished(() => scrollY.mockRestore());
+    const scrollTo = (y: number) => {
+      scrollY.mockReturnValue(y);
+      window.dispatchEvent(new Event("scroll"));
+    };
+    const { unmount } = render(
+      <ShopHarness path="/shop/*" entry="/shop/overview" session="signedOut">
+        <ShopChrome footer={false} />
+      </ShopHarness>,
+    );
+    await act(async () => {});
+    const subnav = screen.getAllByTestId("subnav")[0]!;
+    const marks = () => [subnav.hasAttribute("data-scrolled"), document.body.hasAttribute("data-shop-scrolled")];
+    expect(marks()).toEqual([false, false]);
+    scrollTo(100);
+    expect(marks()).toEqual([true, true]);
+    scrollTo(10);
+    expect(marks()).toEqual([true, true]);
+    scrollTo(0);
+    expect(marks()).toEqual([false, false]);
+    unmount();
+    expect(document.body.hasAttribute("data-shop-scrolled")).toBe(false);
   });
 });

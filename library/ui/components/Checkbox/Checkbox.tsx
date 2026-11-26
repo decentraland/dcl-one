@@ -1,0 +1,103 @@
+import { useImperativeHandle, useLayoutEffect, useRef } from 'react'
+import type { ChangeEvent, InputHTMLAttributes, Ref } from 'react'
+import { GeneralCheck, GeneralRemove } from '../../foundations/icons/general'
+import styles from './Checkbox.module.css'
+
+export type CheckboxSize = 'sm' | 'md' | 'lg'
+export type CheckboxVariant = 'outline' | 'filled'
+
+type NativeCheckboxProps = Omit<
+  InputHTMLAttributes<HTMLInputElement>,
+  'type' | 'role' | 'size' | 'children' | 'dangerouslySetInnerHTML' | 'aria-checked'
+>
+
+export type CheckboxControlProps = NativeCheckboxProps & {
+  /**
+   * Box size: 16, 20 or 24px. The target is 28, 32 or 36px, and 44px on a coarse pointer. Does not apply to
+   * `appearance="hud"`, whose box and target are 20px.
+   */
+  size?: CheckboxSize
+  /** `outline`: a bordered box that fills with the primary action colour. `filled`: a snow box. */
+  variant?: CheckboxVariant
+  /**
+   * `hud` is the Explorer HUD's box on its sign-in screens: a 20px white square with an orange tick and no
+   * halo, whatever the `variant` and `size`.
+   */
+  appearance?: 'default' | 'hud'
+  /** Shows a dash and reports the mixed state. Clicking it hands the next state to the caller. */
+  indeterminate?: boolean
+  ref?: Ref<HTMLInputElement>
+  /** Called with the next checked state after the native `onChange`. */
+  onCheckedChange?: (checked: boolean) => void
+}
+
+/** A checkbox needs a name: `aria-label`, or `aria-labelledby` naming visible text. */
+export type CheckboxProps = CheckboxControlProps &
+  (
+    | { 'aria-label': string; 'aria-labelledby'?: string }
+    | { 'aria-label'?: string; 'aria-labelledby': string }
+  )
+
+/**
+ * The box shared by Checkbox and CheckboxLabel. It is a native checkbox, so Space toggles it, a
+ * form submits it, a disabled box is really disabled and `indeterminate` is the native mixed state.
+ */
+export function CheckboxControl({
+  size = 'md',
+  variant = 'outline',
+  appearance = 'default',
+  indeterminate = false,
+  className,
+  ref: forwardedRef,
+  onChange,
+  onCheckedChange,
+  ...input
+}: CheckboxControlProps) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  useImperativeHandle(forwardedRef, () => inputRef.current!, [])
+  // `indeterminate` exists only as a DOM property, so it is applied after every render.
+  useLayoutEffect(() => {
+    if (inputRef.current) inputRef.current.indeterminate = indeterminate
+  })
+  const change = (event: ChangeEvent<HTMLInputElement>) => {
+    const target = event.currentTarget
+    // A click clears the DOM's mixed state. Restore the caller's before its callbacks run, so a
+    // render they commit, even synchronously, has the last word.
+    target.indeterminate = indeterminate
+    onChange?.(event)
+    onCheckedChange?.(target.checked)
+  }
+  return (
+    <span
+      className={[styles.root, className].filter(Boolean).join(' ')}
+      data-size={size}
+      data-variant={variant}
+      data-appearance={appearance === 'hud' ? 'hud' : undefined}
+    >
+      <input
+        {...input}
+        ref={inputRef}
+        type="checkbox"
+        className={styles.input}
+        // Without a handler React keeps warning about a `checked` box that cannot change.
+        onChange={onChange || onCheckedChange || indeterminate ? change : undefined}
+      />
+      <span className={styles.halo} aria-hidden="true" />
+      <span className={styles.box} aria-hidden="true">
+        {appearance === 'hud' ? (
+          <svg className={styles.check} viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : (
+          <GeneralCheck className={styles.check} />
+        )}
+        <GeneralRemove className={styles.dash} />
+      </span>
+    </span>
+  )
+}
+
+/** A standalone checkbox with no visible label of its own. Use CheckboxLabel for one with text. */
+export function Checkbox(props: CheckboxProps) {
+  return <CheckboxControl {...props} />
+}

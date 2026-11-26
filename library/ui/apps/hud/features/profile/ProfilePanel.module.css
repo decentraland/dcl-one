@@ -1,13 +1,13 @@
 /* Profile passport — left-docked, scaled with the HUD. Token-driven. */
 .root {
   position: fixed;
-  left: 58px;
-  top: 16px;
+  left: calc(58px * var(--ui-scale));
+  top: calc(16px * var(--ui-scale));
   z-index: var(--z-hud);
   display: flex;
   flex-direction: column;
-  width: min(340px, calc(100vw - 80px));
-  max-height: calc(100vh - 32px);
+  width: min(340px, calc(100vw / var(--ui-scale) - 80px));
+  max-height: calc(100vh / var(--ui-scale) - 32px);
   background: rgba(12, 11, 14, 0.95);
   border-radius: 14px;
   box-shadow: var(--shadow-panel);

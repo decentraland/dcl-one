@@ -265,7 +265,7 @@ impl Node {
             ReadThrough::new(
                 pool.clone(),
                 storage.clone(),
-                reqwest::Client::new(),
+                crate::sync::test_sync_client(reqwest::Client::new()),
                 vec![fake.source.clone()],
                 entity_types.map(|types| types.iter().map(|t| t.to_string()).collect()),
                 Fills::with_negative_ttl(4, wait, TEST_NEGATIVE_TTL),
@@ -1001,7 +1001,7 @@ async fn read_through_is_off_by_default_and_needs_a_source() {
             &["https://this.node.example".to_string()],
             pool.clone(),
             storage.clone(),
-            reqwest::Client::new(),
+            crate::sync::test_sync_client(reqwest::Client::new()),
             Arc::new(crate::validator::Sources::new(
                 pool.clone(),
                 storage.clone(),
@@ -1074,4 +1074,98 @@ fn a_long_key_enters_the_negative_cache_as_its_digest() {
     assert!(key.starts_with("sha256:") && key.len() == 71, "{key}");
     assert_eq!(key, negative_key(&long));
     assert_ne!(key, negative_key(&"b".repeat(10_000)));
+}
+
+#[tokio::test]
+async fn upstream_json_reads_refuse_a_redirect() {
+    let (storage, tmp) = temp_storage("redirect").await;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgres://nobody@127.0.0.1:1/nowhere")
+        .unwrap();
+    for path in ["/entities/active", "/audit/scene/{id}"] {
+        // A same-origin target on a configured source: only the refusal stops it.
+        let (port, hits) = crate::sync_test_support::redirecting_peer(path, |port| {
+            format!("http://localhost:{port}/target")
+        })
+        .await;
+        let server = format!("http://localhost:{port}");
+        let config = crate::config::Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--sync-source",
+            &server,
+        ])
+        .unwrap();
+        let read_through = ReadThrough::new(
+            pool.clone(),
+            storage.clone(),
+            crate::sync::sync_http_client(&config).unwrap(),
+            vec![server.clone()],
+            None,
+            Fills::new(1, Duration::from_secs(1)),
+            SyncValidation::AuthChainOnly,
+        );
+        let upstream = &read_through.upstream;
+        let err = if path == "/entities/active" {
+            upstream
+                .active_upstream(&server, true, &["bafy".to_string()])
+                .await
+                .unwrap_err()
+        } else {
+            upstream
+                .audit_chain(std::slice::from_ref(&server), "scene", "bafy")
+                .await
+                .unwrap_err()
+        };
+        assert!(
+            matches!(&err, SyncError::Other(e) if e.contains("refusing to follow")),
+            "{path}: {err:?}"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0, "{path}");
+    }
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+/// [`active_entity_docs`]: local or read through, each with and without the caller's denylist.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn active_entity_docs_reads_local_or_through_without_the_callers_denylist() {
+    let fake = start_fake().await;
+    require_test_db!(Some(node) = Node::new("shared-lookup", &fake, HANG_GUARD, false).await);
+    for (through, denied) in [(false, false), (false, true), (true, false), (true, true)] {
+        let case = format!("through={through} denied={denied}");
+        let fx = Fixture::new("wearable", &pointer(), now_ms());
+        fake.publish(&fx, &signed_chain(&fx.id).await);
+        let pointers = [fx.pointer.clone()];
+        let held = active_entity_docs(&node.pool, None, false, &pointers, None)
+            .await
+            .unwrap();
+        assert!(held.is_empty(), "{case}: not held yet");
+        if !through {
+            node.read_through
+                .active_docs(false, &pointers)
+                .await
+                .unwrap();
+        }
+        let denylist = Denylist::default();
+        if denied {
+            denylist.add(&fx.id);
+        }
+        let calls = fake.active_calls();
+        for (use_ids, value) in [(false, &fx.pointer), (true, &fx.id)] {
+            let docs = active_entity_docs(
+                &node.pool,
+                through.then_some(node.read_through.as_ref()),
+                use_ids,
+                std::slice::from_ref(value),
+                denied.then_some(&denylist),
+            )
+            .await
+            .unwrap();
+            let ids: Vec<&str> = docs.iter().map(|d| d.id.as_str()).collect();
+            let want: Vec<&str> = if denied { vec![] } else { vec![&fx.id] };
+            assert_eq!(ids, want, "{case} use_ids={use_ids}");
+        }
+        assert_eq!(fake.active_calls() - calls, usize::from(through), "{case}");
+    }
 }

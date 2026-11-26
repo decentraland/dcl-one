@@ -61,7 +61,7 @@ pub struct LaunchOptions {
     #[arg(long, value_name = "true|false", help_heading = SETTINGS)]
     pub log_fps: Option<bool>,
 
-    /// `;`-separated portable/startup scene sources; absent = `basiccontroller.dcl.eth`
+    /// `;`-separated portable/startup scene sources; absent = `movecontroller.dcl.eth`
     /// (DEFAULT_PORTABLES)
     #[arg(long, value_name = "a;b", help_heading = SYSTEM_SCENES)]
     pub portables: Option<String>,
@@ -149,6 +149,13 @@ pub struct ClientOptions {
     #[arg(long, value_name = "uuid", help_heading = HOST)]
     pub campaign_anon_user_id: Option<String>,
 
+    /// Override the remote feature flags, a comma list: `name` forces a flag on, `name:variant`
+    /// on with that variant, `-name` off; `-*` ignores the service entirely (nothing is fetched
+    /// and every flag not forced on is off). Names the client does not read are dropped. A link
+    /// may set it: a flag only hides or shows a feature, never a permission
+    #[arg(long, value_name = "list", help_heading = DEBUG)]
+    pub ff: Option<String>,
+
     /// A `decentraland://` link as the scheme handler or the launcher passes it: `realm`,
     /// `position` and `dclenv` fill the matching launch options (main.rs)
     #[arg(hide = true, value_name = "decentraland://…")]
@@ -203,6 +210,7 @@ impl EngineRunOptions {
             &mut self.client.bevy_variants,
             &mut self.client.session_id,
             &mut self.client.campaign_anon_user_id,
+            &mut self.client.ff,
         ] {
             if value.as_deref() == Some("") {
                 *value = None;

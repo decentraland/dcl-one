@@ -168,7 +168,7 @@ pub async fn drain(
         >= settings.event_batch
     {}
     retries.waits.retain(|seq, _| pass.seen.contains(seq));
-    metrics::gauge!("badges_presence_waiting_events").set(retries.waits.len() as f64);
+    dcl_metrics::gauge!("badges_presence_waiting_events").set(retries.waits.len() as f64);
     Ok(())
 }
 
@@ -239,9 +239,15 @@ async fn apply_from(
     .fetch_all(pool)
     .await?;
     if pass.after == 0 {
-        let oldest = oldest_not_waiting_ms(pool, retries).await?;
-        metrics::gauge!("badges_presence_queue_oldest_seconds")
-            .set(oldest.unwrap_or(0).max(0) as f64 / 1000.0);
+        match oldest_not_waiting_ms(pool, retries).await {
+            Ok(oldest) => dcl_metrics::gauge!("badges_presence_queue_oldest_seconds")
+                .set(oldest.unwrap_or(0).max(0) as f64 / 1000.0),
+            // keep the last reading; 0 would report an empty queue
+            Err(error) => {
+                dcl_metrics::counter!("badges_presence_queue_age_read_failures").increment(1);
+                tracing::warn!(%error, "presence queue age read failed");
+            }
+        }
     }
     let read = queued.len();
     for (seq, queued_ms, wallet) in queued {
@@ -274,13 +280,14 @@ async fn apply_from(
                 retries.waits.remove(&seq);
                 pass.applied += usize::from(outcome.is_some());
                 for o in outcome.into_iter().flat_map(|o| o.outcomes) {
-                    metrics::counter!("badges_presence_events_total", "outcome" => o).increment(1);
+                    dcl_metrics::counter!("badges_presence_events_total", "outcome" => o)
+                        .increment(1);
                 }
             }
             Err(error) if engine::is_scene_not_synced(&error) => {
                 let wait = retries.waits.entry(seq).or_insert_with(|| {
                     tracing::debug!(seq, %error, "presence event waits for its scene");
-                    metrics::counter!("badges_presence_events_total", "outcome" => "scene_not_synced")
+                    dcl_metrics::counter!("badges_presence_events_total", "outcome" => "scene_not_synced")
                         .increment(1);
                     Wait {
                         wallet: wallet.clone(),
@@ -298,7 +305,7 @@ async fn apply_from(
                     return Err(error.into());
                 }
                 retries.waits.remove(&seq);
-                metrics::counter!("badges_presence_events_total", "outcome" => "failed")
+                dcl_metrics::counter!("badges_presence_events_total", "outcome" => "failed")
                     .increment(1);
                 tracing::error!(seq, %error, "presence event dropped after failing {MAX_ATTEMPTS} passes");
                 sqlx::query("DELETE FROM social.presence_events WHERE seq = $1")

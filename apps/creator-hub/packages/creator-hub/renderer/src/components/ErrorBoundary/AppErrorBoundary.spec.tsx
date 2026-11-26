@@ -1,9 +1,10 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { captureException } from '@sentry/electron/renderer';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
-import { AppErrorBoundary, Description } from '.';
+import { mountThemeStyles } from '../../../tests/utils/themeStyles';
+
+import { AppErrorBoundary } from '.';
 
 vi.mock('@sentry/electron/renderer', () => ({ captureException: vi.fn() }));
 
@@ -19,7 +20,10 @@ function Crashing() {
 // Rendered with no store, router, theme or translation provider, and no locale loaded:
 // the app-level boundary sits outside all of them.
 describe('AppErrorBoundary', () => {
+  let unmountThemeStyles: () => void;
+
   beforeEach(() => {
+    unmountThemeStyles = mountThemeStyles();
     crash.enabled = true;
     vi.mocked(captureException).mockClear();
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -32,6 +36,7 @@ describe('AppErrorBoundary', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    unmountThemeStyles();
   });
 
   describe('when something outside every provider throws', () => {
@@ -42,13 +47,9 @@ describe('AppErrorBoundary', () => {
     });
 
     it('should style the fallback with the dark theme', () => {
-      render(
-        <ThemeProvider theme={dark}>
-          <Description>Reference</Description>
-        </ThemeProvider>,
-      );
+      // No provider gives the colour: the theme stylesheets of the app set the token on the page root.
       expect(getComputedStyle(screen.getByText(/reload the window/)).color).toBe(
-        getComputedStyle(screen.getByText('Reference')).color,
+        'rgba(240, 240, 240, 0.7)',
       );
     });
 

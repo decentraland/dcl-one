@@ -71,14 +71,14 @@ WHERE r.set_by = 'migration:places' AND r.overlay IS DISTINCT FROM EXCLUDED.over
 INSERT INTO explore.place AS p
     (id, base_position, title, description, creator_address, content_rating,
      categories, likes, dislikes, favorites, deployed_at, disabled, highlighted,
-     raw, fetched_at, origin)
+     raw, fetched_at, origin, removal_admin_keys)
 SELECT s.id, s.base_position, s.title, s.description, s.creator_address,
        COALESCE(m.content_rating, s.content_rating),
        COALESCE(s.categories, '{}'), 0, 0, 0,
        s.deployed_at AT TIME ZONE 'UTC',
        COALESCE(m.disabled, s.disabled), COALESCE(m.highlighted, s.highlighted),
        s.raw || COALESCE(r.overlay, '{}'::jsonb),
-       timezone('UTC', now()), 'local'
+       timezone('UTC', now()), 'local', '{}'::text[]
 FROM stage s
 LEFT JOIN explore.place_moderation m ON m.place_id = s.id
 LEFT JOIN explore.place_ranking r ON r.place_id = s.id

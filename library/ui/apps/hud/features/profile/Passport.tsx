@@ -8,22 +8,31 @@ import { openPopup, showConfirm } from '../../design'
 import { useSession } from '../session/SessionContext'
 import { requestPassport, useProfile } from '../session/profileStore'
 import { relationshipOf } from '@explorer-core/lib/relationship'
+import { track } from '@explorer-core/lib/analytics'
 import { openNameEdit } from './NameEditModal'
-import { ProfilePassport } from './ProfilePassport'
+import { ProfilePassport, type PassportTab } from './ProfilePassport'
+import styles from './ProfilePassport.module.css'
 import type { Profile } from '@explorer-core/engine/protocol'
 import { splitName, userColor } from '@explorer-core/lib/identity'
 import { hexToColor3 } from '@explorer-core/lib/color'
 import { confirmBlock, confirmUnblock, confirmUnfriend, reportUser } from '../friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
 import { startCallWith } from '../voiceChat/callGate'
+import { openGiftPicker } from '../gifting/GiftPicker'
+import { useGiftingAvailable } from '../gifting/useGifting'
+import { canJumpToFriend, jumpToFriend } from '../friends/jumpToFriend'
+import { travelToPhoto } from '../gallery/reelActions'
 
 export function Passport({
   userId,
   onClose,
   onDirtyChange,
-  discarded
+  discarded,
+  initialTab
 }: {
   userId: string
+  /** The tab the passport opens on; Overview without it. */
+  initialTab?: PassportTab
   onClose: () => void
   onDirtyChange?: (dirty: boolean) => void
   /** Set when the player closed with "Discard": the name colour is dropped with the form edits. */
@@ -39,6 +48,7 @@ export function Passport({
   const a = userId.toLowerCase()
   const isSelf = !!session.profile.data && session.profile.data.address.toLowerCase() === a
   const known = useProfile(userId)
+  const canGift = useGiftingAvailable() && !isSelf
   const stored: Profile =
     known ??
     (isSelf && session.profile.data
@@ -61,6 +71,15 @@ export function Passport({
   // Still this account's own passport: a colour picked before an account switch is not the next one's.
   const ownRef = useRef(isSelf)
   ownRef.current = isSelf
+  // Social butterfly counts other players' passports; one's own is `profile_opened`. Reported
+  // once your profile is known, so your own passport is never taken for someone else's.
+  const meKnown = session.profile.data != null
+  const reported = useRef<string | null>(null)
+  useEffect(() => {
+    if (!meKnown || reported.current === a) return
+    reported.current = a
+    track(isSelf ? 'profile_opened' : 'passport_opened', { receiver_id: userId })
+  }, [a, userId, isSelf, meKnown])
   useEffect(
     () => () => {
       const picked = pickedRef.current
@@ -83,6 +102,7 @@ export function Passport({
     <ProfilePassport
       profile={profile}
       isSelf={isSelf}
+      initialTab={initialTab}
       onDirtyChange={onDirtyChange}
       editing={
         isSelf && session.profile.data != null
@@ -113,6 +133,20 @@ export function Passport({
       onUnblock={() => void confirmUnblock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('unblock', userId))}
       onBlock={() => void confirmBlock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('block', userId))}
       onReport={() => void reportUser(session.profile.data?.address, userId)}
+      onJump={
+        !isSelf && canJumpToFriend(session.friends, userId)
+          ? (a) => void jumpToFriend(session.map, a).then((to) => to != null && onClose())
+          : undefined
+      }
+      onGift={
+        canGift
+          ? (a) => {
+              // the picker replaces the passport
+              onClose()
+              openGiftPicker({ address: a, name: friendUser.name })
+            }
+          : undefined
+      }
       inviteItems={inviteItems}
       onClose={onClose}
       photoActions={{
@@ -120,9 +154,12 @@ export function Passport({
         remove: session.gallery.remove,
         metas: session.gallery.metas,
         loadPhoto: session.gallery.loadPhoto,
-        onTeleport: (x, y) => {
+        loadWearables: session.gallery.loadWearables,
+        onJumpIn: (place) => {
+          // A refused Jump In leaves the passport and its photo open.
+          if (travelToPhoto(place, session.map) === 'refused') return false
           onClose()
-          session.map.teleport(x, y)
+          return true
         },
         onViewPerson: (u) => openPassport(u.address)
       }}
@@ -130,8 +167,8 @@ export function Passport({
   )
 }
 
-/** Open a user's full-screen passport as a popup. */
-export function openPassport(userId: string): () => void {
+/** Open a user's full-screen passport as a popup, on `tab` when given. */
+export function openPassport(userId: string, tab?: PassportTab): () => void {
   // Unsaved edits, kept current by the passport. A stray click on the scrim is refused outright;
   // a deliberate close — the ×, or the Escape/Cancel action, which the popup layer routes through
   // the same guard — asks first.
@@ -142,6 +179,7 @@ export function openPassport(userId: string): () => void {
     (close) => (
       <Passport
         userId={userId}
+        initialTab={tab}
         onClose={close}
         discarded={discarded}
         onDirtyChange={(d) => {
@@ -150,6 +188,7 @@ export function openPassport(userId: string): () => void {
       />
     ),
     {
+      className: styles.scrim,
       backdropClickCloses: () => !dirty.current,
       // Sync `true` when there is nothing to lose, so an ordinary close stays as immediate as it
       // was; only an edit in progress opens the dialog.

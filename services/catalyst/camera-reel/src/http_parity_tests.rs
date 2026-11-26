@@ -12,22 +12,18 @@ use crate::http::{JsonBody, Query};
 use crate::{Settings, State, router};
 
 async fn app() -> (Router, std::path::PathBuf) {
-    app_with_token(None).await
+    app_at_mount("/camera-reel-service").await
 }
 
-async fn app_with_token(token: Option<&str>) -> (Router, std::path::PathBuf) {
-    app_at_mount(token, "/camera-reel-service").await
-}
-
-async fn app_at_mount(token: Option<&str>, prefix: &str) -> (Router, std::path::PathBuf) {
+async fn app_at_mount(prefix: &str) -> (Router, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!("camera-http-{}", uuid::Uuid::new_v4()));
     let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(500))
         .connect_lazy("postgres://localhost/camera_http_unused")
         .unwrap();
     let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
     let mut settings = Settings::new("https://camera.example");
     settings.writes_enabled = true;
-    settings.metrics_bearer_token = token.map(str::to_owned);
     let state = Arc::new(State::new(pool, storage, settings, None));
     let app = router(state);
     (
@@ -332,132 +328,45 @@ async fn openapi_describes_visible_person_screen_rect() {
 }
 
 #[tokio::test]
-async fn metrics_enforces_bearer_before_recording_and_preserves_service_series() {
-    let (unconfigured, dir) = app().await;
-    let response = unconfigured
-        .oneshot(
-            Request::builder()
-                .uri("/camera-reel-service/metrics")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(
-        to_bytes(response.into_body(), 4096)
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    std::fs::remove_dir_all(dir).unwrap();
+async fn camera_requests_use_process_metrics_and_the_former_scrape_url_returns_404() {
+    let recorder = dcl_metrics::PrometheusBuilder::new().build_recorder();
+    let _local = dcl_metrics::set_default_local_recorder(&recorder);
+    let (app, dir) = app().await;
+    let app = dcl_metrics::http::instrument(app, "catalyst");
 
-    let (app, dir) = app_with_token(Some("camera-token")).await;
-    for (token, message) in [
-        (None, "Token not present"),
-        (Some("Basic wrong"), "Wrong schema"),
-        (Some("Bearer wrong"), "Invalid token"),
+    for (path, status) in [
+        ("/health/live", StatusCode::OK),
+        ("/metrics", StatusCode::NOT_FOUND),
     ] {
-        let mut request = Request::builder().uri("/camera-reel-service/metrics");
-        if let Some(token) = token {
-            request = request.header(header::AUTHORIZATION, token);
-        }
-        let response = app
-            .clone()
-            .oneshot(request.body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        assert_eq!(to_bytes(response.into_body(), 4096).await.unwrap(), message);
-    }
-    let scrape = || {
-        Request::builder()
-            .uri("/camera-reel-service/metrics")
-            .header(header::AUTHORIZATION, "Bearer camera-token")
-            .body(Body::empty())
-            .unwrap()
-    };
-    let response = app.clone().oneshot(scrape()).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        response.headers()[header::CONTENT_TYPE],
-        "text/plain; charset=utf-8"
-    );
-    assert!(
-        to_bytes(response.into_body(), 4096)
-            .await
-            .unwrap()
-            .is_empty(),
-        "denied scrapes are not observations"
-    );
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/camera-reel-service/health/live")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/camera-reel-service/api/missing")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    let response = app.clone().oneshot(scrape()).await.unwrap();
-    let body = String::from_utf8(
-        to_bytes(response.into_body(), 100_000)
-            .await
-            .unwrap()
-            .to_vec(),
-    )
-    .unwrap();
-    assert!(
-        body.contains(
-            "http_requests_total{code=\"200\",handler=\"/health/live\",method=\"GET\"} 1"
-        ),
-        "{body}"
-    );
-    assert!(
-        body.contains("http_requests_total{code=\"404\",handler=\"*\",method=\"GET\"} 1"),
-        "{body}"
-    );
-    assert!(
-        body.contains("http_requests_total{code=\"200\",handler=\"*\",method=\"GET\"} 1"),
-        "previous successful scrape counted"
-    );
-    assert!(!body.contains("401"));
-    for bucket in [
-        "0.005", "0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1", "2.5", "5", "10", "20", "30",
-        "60", "+Inf",
-    ] {
-        assert!(
-            body.contains(&format!("le=\"{bucket}\"")),
-            "missing {bucket}"
-        );
-    }
-    for method in ["POST", "OPTIONS", "HEAD"] {
         let response = app
             .clone()
             .oneshot(
                 Request::builder()
-                    .method(method)
-                    .uri("/camera-reel-service/metrics")
-                    .header(header::AUTHORIZATION, "Bearer camera-token")
+                    .uri(format!("/camera-reel-service{path}"))
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method}");
+        assert_eq!(response.status(), status, "{path}");
+    }
+
+    let canonical = recorder.handle().render();
+    let counts: Vec<_> = canonical
+        .lines()
+        .filter(|line| line.starts_with("dcl_http_requests_total{"))
+        .collect();
+    assert_eq!(counts.len(), 2, "{canonical}");
+    for (route, status) in [("/health/live", "200"), ("unmatched", "404")] {
+        assert!(
+            counts
+                .iter()
+                .any(|line| line.contains("component=\"camera-reel\"")
+                    && line.contains(&format!("route=\"{route}\""))
+                    && line.contains(&format!("status_code=\"{status}\""))
+                    && line.ends_with(" 1")),
+            "{canonical}"
+        );
     }
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -769,7 +678,7 @@ async fn static_route_decoding_preserves_raw_signed_paths_and_decodes_parameters
 #[tokio::test]
 async fn swagger_document_url_keeps_api_nesting_for_canonical_and_encoded_routes() {
     for prefix in ["", "/camera-reel-service", "/custom/camera"] {
-        let (app, dir) = app_at_mount(None, prefix).await;
+        let (app, dir) = app_at_mount(prefix).await;
         for path in [
             "/api/docs/ui/swagger-initializer.js",
             "/%61pi/%64ocs/%75i/%73wagger-initializer.js",
@@ -801,7 +710,7 @@ async fn swagger_document_url_keeps_api_nesting_for_canonical_and_encoded_routes
 #[tokio::test]
 async fn lossy_path_decoding_keeps_authorization_bound_to_the_raw_request() {
     for prefix in ["", "/camera-reel-service"] {
-        let (app, dir) = app_at_mount(None, prefix).await;
+        let (app, dir) = app_at_mount(prefix).await;
         let original = format!("{prefix}/%61pi/images/%FF");
         let mut headers = crate::shared::signed_fetch::test_support::signed_headers(
             "DELETE", &original, "{}", true,
@@ -855,7 +764,7 @@ mod main_extractor_contracts {
     #[derive(Deserialize)]
     struct Page {
         #[serde(default)]
-        #[allow(dead_code)]
+        #[allow(dead_code, reason = "parsed only so a bad limit is refused")]
         limit: u64,
     }
 
@@ -1003,7 +912,7 @@ async fn camera_requires_a_string_signature_field_on_the_signer_link() {
 #[tokio::test]
 async fn preflight_responses_do_not_leak_method_router_allow_headers() {
     for prefix in ["", "/camera-reel-service"] {
-        let (app, dir) = app_at_mount(None, prefix).await;
+        let (app, dir) = app_at_mount(prefix).await;
         for method in ["GET", "POST", "PUT", "get"] {
             let response = app
                 .clone()

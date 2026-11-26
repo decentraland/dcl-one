@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-13
+- Updated: 2026-11-21
 
 ## Context
 
@@ -47,35 +48,46 @@ decisions; the rest of both stands.
 - Script arguments follow the script name with no separator (`pnpm run e2e --inworld`). pnpm
   hands a `--` to the script as an argument, where npm removes it.
 - Published `@dcl/*` packages carry no pnpm-specific field or configuration, so their users
-  install with npm, yarn or pnpm. Publishing keeps `npm pack` and `npm publish`.
+  install with npm, yarn or pnpm. They are versioned, packed and published with pnpm: the
+  Creator Hub's through `.github/actions/creator-hub-npm-publish`, the Explorer's through
+  oddish's `package-manager` input. pnpm records no `gitHead`, so the Creator Hub action sets it.
 - `tooling/package-manager-check.py` fails on an npm or yarn lockfile, on a project or workflow
   off the pinned pnpm (`PNPM_VERSION`), on a pin carrying another release's integrity
-  (`PNPM_SHA512`), on an `.npmrc` key pnpm does not read, and on a workflow that installs or runs
-  with npm or yarn, or runs anything through `npx`. A newer npm fetched to publish (`npx --yes npm@…`) is checked like npm.
+  (`PNPM_SHA512`), on an `.npmrc` key pnpm does not read, and on a workflow or a project script
+  that runs any npm command, packing, publishing and registry queries included, yarn, or
+  anything through `npx`.
+- A script that starts another script of its own project uses `pnpm run` where its project's
+  `make` already calls `pnpm` by name (`apps/creator-hub`). The SDK starts pnpm through corepack,
+  which leaves it off its scripts' `PATH`, so its scripts run the other script's command directly.
 
 Where the layout differs from pnpm's default:
 
 - `library/js-sdk-toolchain`, `library/protocol`, the scenes built with the SDK
-  (`apps/ui3/editor-scene`, the Explorer's bridge scene, the Creator Hub's Bevy agent) and
+  (`apps/ui3/editor-scene`, the Explorer's bridge and movement scenes, the Creator Hub's Bevy
+  agent) and
   `apps/creator-hub` set `nodeLinker: hoisted`. The SDK's published type declarations reach a
   sibling package by relative path, and the Creator Hub's packaging and tests read one flat
   `node_modules`. In these projects an import of an undeclared package is not caught at install.
 - `library/js-sdk-toolchain` is one pnpm workspace with a single lockfile, `library/hashing`
   included, and keeps its workspace packages out of the root `node_modules`
-  (`hoistWorkspacePackages: false`), where 11.28 started placing them. It drops the published SDK
-  `@dcl/quests-client` asks for, which `sdk-commands` never loads and pnpm 12 places in the root.
+  (`hoistWorkspacePackages: false`), where 11.28 started placing them.
 - `apps/creator-hub` holds, through overrides, the versions its packaged app shipped under npm
   where pnpm would deduplicate them to another locked version, each until its dependent's next
-  upgrade, and keeps `@dcl/quests-client`'s
-  request for the `latest` `@dcl/sdk` on the SDK it pins. Its `electron-builder.cjs` makes
-  electron-builder collect dependencies by walking `node_modules`, since the pnpm collector picks
-  registry copies of workspace packages.
+  upgrade. Its `electron-builder.cjs` makes electron-builder collect dependencies by walking
+  `node_modules`, since the pnpm collector picks registry copies of workspace packages.
+- `apps/creator-hub`, the Creator Hub's Bevy agent and `apps/ui3/editor-scene` install a published
+  `@dcl/sdk-commands` that depends on `@dcl/quests-client`, and an override keeps that package's
+  request for the `latest` `@dcl/sdk` on the SDK each project pins.
 
 What stays on npm:
 
 - What the products run for a creator, and the test scenes that stand in for a creator's project:
   the SDK's `npm install` in a scene, `library/js-sdk-toolchain/test/snapshots`,
-  `test/build-ecs/fixtures` and `init-test-scene`, and the npm the Creator Hub bundles.
+  `test/build-ecs/fixtures`, `library/dcl-scene-build/testdata` and `init-test-scene`, and the
+  npm the Creator Hub bundles.
+- Instructions written for creators or for users of a published package: the packages' READMEs,
+  the creator docs in `apps/sites` and `apps/dcl-scene-cli`, and the steps of the Creator Hub's
+  `local-package-chain` runbook that act on a scene.
 - `react-web`'s `bundle:native` starts the bridge scene's export with `npm --prefix`, since pnpm
   started through corepack is not on the `PATH` of the scripts it runs.
 

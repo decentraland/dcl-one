@@ -3,8 +3,14 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 
 import DclTopBar from "./DclTopBar";
 import ChromeShell from "../../components/ChromeShell";
-import { ChromeNavContext, chromeLinkProps, isSameDocumentHref, type ChromeNavigate } from "./chrome-nav";
-import { ChromeAuthContext, type ChromeAuth } from "./chrome-auth";
+import {
+  ChromeNavContext,
+  chromeLinkProps,
+  isSameDocumentHref,
+  type ChromeNavigate,
+  ChromeAuthContext,
+  type ChromeAuth,
+} from "@dcl/one-ui";
 import { getJSON } from "../../data/catalyst/client";
 
 vi.mock("../../data/catalyst/client", async importOriginal => ({
@@ -30,7 +36,8 @@ describe("top bar links hand same-document hrefs to the chrome navigator", () =>
     expect(connect).toHaveBeenCalledOnce();
     expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Notifications" })).toBeNull();
-    expect(document.querySelector('.dtb__links [aria-current="page"]')).toHaveTextContent("Social");
+    // Social is not a navigation section, so its page selects none.
+    expect(document.querySelector('.dtb__links [aria-current="page"]')).toBeNull();
   });
   test("notifications are only available while signed in, and late responses cannot reopen a signed-out inbox", async () => {
     let resolveNotifications!: (value: unknown) => void;
@@ -77,10 +84,10 @@ describe("top bar links hand same-document hrefs to the chrome navigator", () =>
     const navigate = vi.fn<ChromeNavigate>(() => true);
     mountBar(navigate);
     const shop = screen.getAllByRole("link", { name: "Shop" })[0]!;
-    expect(shop).toHaveAttribute("href", "/shop");
+    expect(shop).toHaveAttribute("href", "/shop/overview");
     expect(shop).toHaveAttribute("data-discover", "true");
     const notPrevented = fireEvent.click(shop);
-    expect(navigate).toHaveBeenCalledWith("/shop");
+    expect(navigate).toHaveBeenCalledWith("/shop/overview");
     expect(notPrevented).toBe(false);
   });
 
@@ -95,14 +102,14 @@ describe("top bar links hand same-document hrefs to the chrome navigator", () =>
   });
 
   test("when the navigator declines an href the anchor falls back to a document load", () => {
-    const navigate = vi.fn<ChromeNavigate>((href) => href !== "/docs/");
+    const navigate = vi.fn<ChromeNavigate>((href) => href !== "/places");
     mountBar(navigate);
-    fireEvent.mouseEnter(document.querySelectorAll(".dtb__dd")[1]!);
-    const docs = document.querySelector<HTMLAnchorElement>(".dtb__dditem[href=\"/docs/\"]")!;
-    expect(fireEvent.click(docs)).toBe(true);
-    expect(navigate).toHaveBeenCalledWith("/docs/");
-    const blog = document.querySelector<HTMLAnchorElement>(".dtb__dditem[href=\"/blog\"]")!;
-    expect(fireEvent.click(blog)).toBe(false);
+    fireEvent.mouseEnter(document.querySelectorAll(".dtb__dd")[0]!);
+    const places = document.querySelector<HTMLAnchorElement>("[role=\"menuitem\"][href=\"/places\"]")!;
+    expect(fireEvent.click(places)).toBe(true);
+    expect(navigate).toHaveBeenCalledWith("/places");
+    const events = document.querySelector<HTMLAnchorElement>("[role=\"menuitem\"][href=\"/events\"]")!;
+    expect(fireEvent.click(events)).toBe(false);
   });
 
   test("without a navigator the links are plain anchors", () => {
@@ -110,6 +117,16 @@ describe("top bar links hand same-document hrefs to the chrome navigator", () =>
     const shop = screen.getAllByRole("link", { name: "Shop" })[0]!;
     expect(shop).not.toHaveAttribute("data-discover");
     expect(fireEvent.click(shop)).toBe(true);
+  });
+
+  test("a chrome that names this bar as its own renderer keeps the standalone bar instead of recursing", () => {
+    render(
+      <ChromeNavContext.Provider value={{ TopBar: DclTopBar }}>
+        <DclTopBar />
+      </ChromeNavContext.Provider>,
+    );
+    expect(screen.getByRole("banner")).toBeTruthy();
+    expect(screen.getByLabelText("Toggle navigation menu")).toBeTruthy();
   });
 
   test("ChromeShell tabs read the same navigator", () => {
