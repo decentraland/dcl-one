@@ -1211,6 +1211,19 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         outfits.eip1654.clone(),
     ));
     subscriptions.spawn_jobs(&jobs);
+    stage5_ops.credits.start_receipts(
+        shop::credits::receipts::Sender {
+            mailer: Arc::new(adapters::ShopMailer(social.notifications.email.clone())),
+            names: Some(market.clone()),
+            links: shop::credits::receipts::Links::new(
+                &config.shop.shop_base_url,
+                Some(&config.shop.shop_email_assets_url),
+                &config.social.account_base_url,
+            ),
+        },
+        Duration::from_secs(config.shop.shop_notify_delivery_interval_secs),
+        &jobs,
+    );
     shop::coupons::favorites::spawn_job(&market, config.shop.shop_base_url.clone(), &jobs);
     explore
         .live

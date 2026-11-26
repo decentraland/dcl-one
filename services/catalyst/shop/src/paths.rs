@@ -92,6 +92,7 @@ pub const ALIASES: &[&str] = &[
     "POST /shop-api/admin/grants/{escrow_ref}/reclaim /credits/admin/grants/{escrow_ref}/reclaim",
     "POST /shop-api/admin/grants/{escrow_ref}/release /credits/admin/grants/{escrow_ref}/release",
     "GET /shop-api/admin/credits/reconcile /credits/admin/reconcile",
+    "POST /shop-api/admin/credits/test-purchase-email /credits/admin/test-purchase-email",
     "POST /shop-api/admin/broker/approve-mana /v1/admin/collections/approve-mana /transactions-api/v1/admin/collections/approve-mana",
     "POST /shop-api/admin/names/approve-mana /v1/admin/names/approve-mana /transactions-api/v1/admin/names/approve-mana",
     "GET /shop-api/admin/moderation/flags /marketplace-api/v1/admin/moderation/flags",
