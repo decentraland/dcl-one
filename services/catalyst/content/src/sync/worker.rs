@@ -621,6 +621,10 @@ impl Leader {
             return;
         }
         let Some(pid) = leases.backend_pid().await else {
+            tracing::warn!(
+                "item-history-replay not started: the sync lease session's pid could not be read, \
+                 so item coverage stays unknown until this process leads sync again"
+            );
             return;
         };
         let replay = ItemHistoryReplay {
