@@ -38,6 +38,7 @@
 - [Community chat message router](adr/2026-11-18-community-chat-message-router.md)
 - [World presence counts as online](adr/2026-11-21-world-presence-counts-as-online.md)
 - [Explorer avatar spring bones (proposed)](adr/2026-11-16-explorer-avatar-spring-bones.md)
+- [Native scene runtime on upstream deno_core](adr/2026-11-09-native-scene-runtime-on-upstream-deno.md)
 - [Dormant schema release definitions (proposed)](adr/2026-11-04-dormant-schema-release-definitions.md)
 - [Referral trusted proxy ingress (proposed)](adr/2026-11-04-referral-trusted-proxy-ingress.md)
 - [Referral Slack effect budget (proposed)](adr/2026-11-04-referral-slack-effect-budget.md)

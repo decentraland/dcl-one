@@ -19,7 +19,7 @@
 //! open-listing reads leave it out.
 //!
 //! The verdicts close a trade only while the network's cursor is published
-//! (`chain_walk::published_sql_on`: a fold published within 30 minutes; a
+//! (`crate::chain_index::catalogue::published_sql_on`: a fold published within 30 minutes; a
 //! pass in progress keeps the previous publish): an index still catching up
 //! could show a stale signature index as a cancellation, and would miss the
 //! latest executions.
@@ -1012,7 +1012,7 @@ fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
 }
 
 /// The readiness rule of the trade-events cursor as the verdict SQL reads
-/// it: the publish marker ([`chain_walk::published_sql_on`]: a fold
+/// it: the publish marker ([`crate::chain_index::catalogue::published_sql_on`]: a fold
 /// published within 30 minutes, not `folded_block = last_block`, which every
 /// pass breaks while it walks and folds), with the chains this process serves
 /// ([`super::catalog::served_chains`], the trade-events walk's
@@ -1020,7 +1020,7 @@ fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
 /// lends its verdicts.
 pub(crate) fn verdicts_ready_sql(alias: &str, now_p: &str) -> String {
     let (ethereum, matic) = super::catalog::served_chains();
-    chain_walk::published_sql_on(alias, now_p, ethereum, matic)
+    crate::chain_index::catalogue::published_sql_on(alias, now_p, ethereum, matic)
 }
 
 /// The chain verdict of trade `t` (`sold` | `cancelled`), NULL when open or
