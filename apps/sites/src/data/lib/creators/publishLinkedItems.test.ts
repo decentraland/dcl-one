@@ -490,7 +490,7 @@ describe('publishLinkedItems', () => {
     const publish = vi
       .fn<PublishLinkedDeps['publishLinkedItems']>()
       .mockRejectedValueOnce(INSUFFICIENT_SLOTS)
-      .mockRejectedValueOnce(serverError(401, 'Unauthorized'))
+      .mockRejectedValueOnce(serverError(403, 'Unauthorized'))
       .mockResolvedValueOnce(publishedResult)
     const deps = makeDeps({ publishLinkedItems: publish })
 
