@@ -523,7 +523,6 @@ async fn drain(
     loop {
         let mut txn = pool.begin().await?;
         let (_, since_block, since_log) = notice_cursor::lock(&mut txn, producer).await?;
-        notice_cursor::report_lag(producer, published, since_block);
         let rows: Vec<LogRow> = sqlx::query_as(sqlx::AssertSqlSafe(source.rows_sql()))
             .bind(net.db_name())
             .bind(since_block)
@@ -534,6 +533,8 @@ async fn drain(
             .await?;
         if rows.is_empty() {
             txn.rollback().await?;
+            // Nothing left up to `published`.
+            notice_cursor::report_lag(producer, published, published);
             break;
         }
         // The assets' descriptions and the item wait from one snapshot, so a
@@ -600,11 +601,19 @@ async fn drain(
         }
         let Some((done_block, done_log)) = done else {
             txn.rollback().await?;
+            notice_cursor::report_lag(producer, published, since_block);
             break;
         };
         emitted += insert_notifications(&mut *txn, &batch).await?;
         notice_cursor::advance(&mut txn, producer, None, done_block, done_log).await?;
         txn.commit().await?;
+        // A page short of full read everything up to `published`.
+        let drained = !held && rows.len() < PAGE_SIZE as usize;
+        notice_cursor::report_lag(
+            producer,
+            published,
+            if drained { published } else { done_block },
+        );
         if held || rows.len() < PAGE_SIZE as usize {
             break;
         }

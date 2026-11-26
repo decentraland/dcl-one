@@ -20,9 +20,9 @@ const chain: AuthLink[] = [
 ];
 
 describe("buildRequestPayload", () => {
-  it("joins method, path, timestamp and metadata with colons, lower-cased", () => {
+  it("joins method, path, timestamp and metadata with colons, lower-casing only the method and path", () => {
     expect(buildRequestPayload("POST", "/Shop-API/V1/Cart", "1700000000000", '{"Signer":"X"}')).toBe(
-      'post:/shop-api/v1/cart:1700000000000:{"signer":"x"}',
+      'post:/shop-api/v1/cart:1700000000000:{"Signer":"X"}',
     );
   });
 });

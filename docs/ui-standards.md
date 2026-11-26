@@ -19,6 +19,7 @@ guessing. The first standard defined here is styling.
   - [Accessibility](#accessibility)
   - [Migrating existing styles](#migrating-existing-styles)
   - [Verification](#verification)
+  - [Review checklist](#review-checklist)
 - [App-specific UI](#app-specific-ui)
 - [Shared UI: `library/ui`](#shared-ui-libraryui)
   - [Structure](#structure)
@@ -139,10 +140,18 @@ values to pass arbitrary colours or palette values from props.
 ### Composition
 
 - Build components from custom browser primitives (native elements, ARIA attributes and DOM events). Do not introduce Base UI or another component kit, headless or styled, as the base of a component.
-- Once `library/ui` is implemented and adopted by a surface, reuse its shared
-  components before creating a new one, and put components shared by multiple
-  apps or the Bevy HUD there. Until then, reuse the surface's existing
-  components.
+- Look in the shared library before building or importing a component: `@dcl/one-ui` exports the shared components, and [`docs/ui-components.md`](ui-components.md) lists them with their consumers. Use the shared component when one covers the need; when it needs another look, add or extend a variant on it.
+- When no shared component covers a need that more than one surface has:
+  - if the component is in the Figma library, build it in `library/ui/components` from the template and export it from `library/ui/index.ts`;
+  - if it is not in the Figma library, ask design for it with an issue in this repository before building it: search the open issues first and add to the one that already asks for it, or open one and list it in [the shared UI backlog](https://github.com/decentraland/dcl-one/issues/644). A change that cannot wait says in its PR which component is missing and links the issue.
+- A component one app uses is [app-specific UI](#app-specific-ui), which says where it lives; it needs no request.
+- `apps/ui3` receives no new shared UI, apart from the atoms Creator Hub and the inspector need (below). Do not add a component file to either kit that may only shrink, `apps/ui3/src/components` and `library/ui/apps/sites/shared` (the `--kit-ceiling` kits). In the paths that follow the library-first rule (below), added code does not import an `apps/ui3` atom or component, through the `@ui/…` alias or through a relative path into `apps/ui3/src/atoms` or `apps/ui3/src/components`; code that already imports one keeps it until that component migrates.
+- Which rule a path follows. A file that fits two groups follows the later one:
+  - **Library first** (every rule of this section): `apps/sites`, `library/ui/components`, `library/ui/apps/sites`, the web Shop (`apps/ui3/src/shop` and `library/ui/apps/shop` outside the in-world Shop's files), and the rest of `apps/ui3/src` but for `play`, `atoms`, `components` and the files Creator Hub compiles.
+  - **Explorer HUD kit, for now**: `library/ui/apps/hud`, `rendering/bevy-explorer/source/react-web`, its `/play` host `apps/ui3/src/play`, and the in-world Shop (`library/ui/apps/shop/ui`, `InWorldShop.tsx`, `ShopItems.tsx` and the modules only they and `/play` import). They build from `library/ui/apps/hud/design` and the HUD's tokens, under `rendering/bevy-explorer/source/react-web/AGENTS.md` and its `review.md`. The Explorer's own build cannot resolve the `@dcl/one-ui` entry yet; the `/play` host can, and the same HUD code runs in both.
+  - **`apps/ui3` atoms, for now**: Creator Hub and the inspector (`apps/creator-hub`), and the `apps/ui3/src` files Creator Hub compiles (those `apps/creator-hub/packages/creator-hub/renderer/tsconfig.ui3.json` includes, such as `apps/ui3/src/shop/land`). They run React 18, which the `@dcl/one-ui` entry does not support, and build from the `apps/ui3` atoms and the inspector's own `components/ui`, which keep receiving the components those two need. Their `@dcl/one-ui` imports reach `Tooltip` alone, through an alias, so they do not make them library-first paths.
+  - The [single-source ADR](adr/2026-11-24-library-ui-single-source.md) records what keeps the last two groups on their kits, and each joins the first group in the change that makes the entry importable there. Until then, a component added to one of those kits for a need a shared component already covers says why in its PR.
+- Put components shared by multiple apps or the Bevy HUD in `library/ui/components`; the HUD imports them once the Explorer's build resolves the entry.
 - Once `library/ui` is implemented, put components and styles used by one app
   only in `library/ui/apps/<app>/`; until then they stay in the app. See
   [App-specific UI](#app-specific-ui).
@@ -169,6 +178,8 @@ Each exception covers only its stated scope.
 | Exception                    | Measurement                                                                                                                                                                                                                                       | Reason                                                                                                                                           | Scope                                                                                                                                              | Removed by                             |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
 | `titlebar-selected-contrast` | Snow (#fcfcfc, Figma `neutrals/snow`) label and icon on #ff7439 (Figma `color/action-secondary`, `--dcl-primary-alt-primary-alt` here; `--dcl-action-secondary` names the same value): 2.62:1 at 16px/600, below 4.5:1 (AA) and 3:1 (large text). | The design system's Explorer selected-state pair from Figma title bar 16959:168 ("explorer (orange when selected)"), chosen by the design owner. | The selected TitleBar section, Explorer variant only. On web pages, the Figma web variant (white when selected, dark label) is the compliant path. | A Figma palette change for that state. |
+| `chip-selected-contrast` | Snow (#fcfcfc) label on #ff7439 (`--dcl-brand-orange`): 2.62:1 at 16px/600, below 4.5:1 (AA) and 3:1 (large text). | The Explorer HUD's selected filter chip, the same pair as the selected TitleBar section. | The selected Chip, both variants. | A Figma palette change for that state. |
+| `countbadge-contrast` | Snow (#fcfcfc) digits on #ff2d55 (`--dcl-brand-ruby`): 3.6:1 at 11px/700 (`sm`, `xs`) and 11.5px/700 (`md`), below 4.5:1 (AA). | The Explorer HUD's count pill, as its navigation and tabs draw it. | CountBadge, every size. | A Figma palette change for the count, or a larger count. |
 
 ### Migrating existing styles
 
@@ -215,6 +226,17 @@ migration. Do not rewrite unrelated components or tokens in the same change.
 - `make check` and CI also run `tooling/ui_standards.py --kit-ceiling`. For each app-owned component kit whose consumers can already import `library/ui/components` (the `KIT_PATHS` of the script: `apps/ui3/src/components` and `library/ui/apps/sites/shared`) it fails when the number of tracked component files differs from the count in `tooling/ui-kit-ceiling.json`, and when that file records a higher ceiling than the base revision's. A kit may only shrink ([ADR](adr/2026-11-24-library-ui-single-source.md)); after removing a component from one, run `python3 tooling/ui_standards.py --write-kit-ceiling` and commit the file with the change. The writer refuses a count above the recorded or the base ceiling.
 - Report checks that could not run or failed. Documentation-only changes need
   link, structure and content checks, not an application build.
+
+### Review checklist
+
+A review of a change to web UI, by a person or an agent, checks each point and reports a miss as a finding. The points apply to the library-first paths that [Composition](#composition) lists. On the other paths only the first point's ban on new kit files applies, and a review of the Explorer HUD's paths follows `rendering/bevy-explorer/source/react-web/review.md` instead.
+
+- No new component file under `apps/ui3/src/components` or `library/ui/apps/sites/shared` (the `--kit-ceiling` kits), and no new import of an `apps/ui3` atom or component in added code, through the alias (`@ui/atoms/…`, `@ui/components/…`) or through a relative path into those folders, as the web Shop's are. A test, or a file that only moved, is not a new component.
+- No new component that duplicates one `@dcl/one-ui` exports. Compare the added components with [`docs/ui-components.md`](ui-components.md).
+- A new shared component lives in `library/ui/components`, is exported from `library/ui/index.ts`, and has tests, a gallery page and a row in `docs/ui-components.md`.
+- Shared components are imported from `@dcl/one-ui`, not from a path inside it. The exceptions are stylesheets, the `@dcl/one-ui/apps/hud/…` and `@dcl/one-ui/apps/shop/…` subpaths in the Explorer HUD's paths (a web Shop view uses the entry), and the specifiers `SHARED_IMPORT_KEPT` lists in `tooling/ui_standards.py`. The `--shared-imports` check does not scan files inside `library/ui`, where a relative import of a shared component is not a finding.
+- A component more than one surface needs, missing from both the shared library and the Figma library, has a linked issue that asks design for it. App-specific UI in `library/ui/apps/<app>/` needs none.
+- Colours, spacing, radii and type sizes come from `--dcl-*` tokens where one has the value.
 
 ## App-specific UI
 
@@ -263,7 +285,7 @@ dependency. "Bevy HUD" here means the Explorer's React DOM HUD: its source in
 Sharing components with it does not extend to Rust Bevy widgets or SDK scene
 UI.
 
-Use the public `@dcl/one-ui/foundations` entry for foundation-only consumers. The Explorer HUD imports tokens and icons from this entry and keeps generated components outside its compiled source and build fingerprint. The root `@dcl/one-ui` entry remains the public foundation and component surface. Shared foundation CSS continues to use the existing CSS subpaths. Import shared UI from `@dcl/one-ui`, for example `import { Button, NavBar } from "@dcl/one-ui"`. Stylesheets (`foundations.css`, `text-styles.module.css` and the token sheets) keep their paths. Only the Inspector’s [Tooltip module](../apps/creator-hub/packages/inspector/src/components/ui/Tooltip.ts) imports Tooltip from its component subpath. Its browser bundle and declaration project compile the component in isolation. The Creator Hub renderer imports Tooltip from the public root. Its Vite and TypeScript aliases expose only the shared Tooltip module, which both hosts compile against their React 18 runtime.
+Use the public `@dcl/one-ui/foundations` entry for foundation-only consumers. The root `@dcl/one-ui` entry is the public foundation and component surface, and the Explorer HUD imports shared components from it ([ADR](adr/2026-11-24-explorer-hud-shared-entry.md)): everything the entry reaches is part of the HUD's compiled source and build fingerprint. Shared foundation CSS continues to use the existing CSS subpaths. Import shared UI from `@dcl/one-ui`, for example `import { Button, NavBar } from "@dcl/one-ui"`. Stylesheets (`foundations.css`, `text-styles.module.css` and the token sheets) keep their paths. Only the Inspector’s [Tooltip module](../apps/creator-hub/packages/inspector/src/components/ui/Tooltip.ts) imports Tooltip from its component subpath. Its browser bundle and declaration project compile the component in isolation. The Creator Hub renderer imports Tooltip from the public root. Its Vite and TypeScript aliases expose only the shared Tooltip module, which both hosts compile against their React 18 runtime.
 
 The Explorer HUD records its computed shared-library import closure in `rendering/bevy-explorer/source/react-web/shared-inputs.json`. The owned root inventory contains every tracked file under `rendering/bevy-explorer/source/react-web/src` plus `app.html` and `index.html`. Any edit, addition, deletion or rename of those roots, including comment-only edits, requires regenerating this manifest before CI planning or strict artifact acceptance. Other owned files, including bridge-scene and web-engine sources, become controls only when the actual compiler or Vite graph reaches them; changes to those recorded controls, shared imports or resolver configuration also require regeneration. Unreached owned files remain covered by the separate Explorer source fingerprint. From the repository root, run `pnpm --dir rendering/bevy-explorer/source/react-web run gen:shared-inputs` with locked dependencies and canonical Rust-generated bindings available. Local Vite/Vitest configuration still supports ordinary owned-source edits, and native staleness still invokes the existing rebuild without updating the manifest. `pnpm run check:shared-inputs` recomputes the compiler, web/native bundle and CSS-processor graphs in CI. The manifest binds all tracked HUD roots and resolver/font identity controls separately from the actually reached UI, Shop and Catalyst API source files. Selection and artifact checks validate each revision's own hashes, reject stale head metadata and conservatively rebuild when a historical revision has no contract. Vite, native stale checks and the pure Nix fileset read the same checked graph. The engine-generated bindings (`library/explorer-core/engine/generated`) are not in it: the engine build produces them and the Sites import compares the tracked copy with its own.
 
@@ -393,8 +415,7 @@ formatting skip `apps/hud`. Their tests live beside them: `react-web`'s Vitest
 runs all of them against its host, `apps/ui3`'s `play-shared` project runs them
 again against `/play`'s host (`apps/ui3/src/play/host.ts`), and `library/ui`'s `hud` project runs the UI tests that need
 no package only the hosts install (all but `apps/hud/test/hosted/`) against a
-web host (`apps/hud/test/host.ts`). Tests of a host's own files stay in that host. The Sites host does not load the shared
-foundations yet.
+web host (`apps/hud/test/host.ts`). Tests of a host's own files stay in that host. The Sites root (`apps/sites/src/routes/root.tsx`) loads the shared foundations' colours, spacing and layout, so `/play` and its app document resolve the `--dcl-*` tokens shared components read; it does not load `foundations.css` itself, because the Inter faces are the app's own.
 
 ### Integration
 
@@ -420,8 +441,8 @@ include the shared sources so that changes invalidate the affected artifacts.
   to `library/explorer-core` and `@hud-host` to `src/host.ts`; the bridge scene
   (`react-web/bridge-scene/tsconfig.json`) maps `@explorer-core/*` too, for the
   wire protocol;
-- `shared-inputs.json` records the actual compiler/Vite shared dependency closure, across `library/ui`, `library/shop`, `library/catalyst-api` and `library/explorer-core`. `tooling/play-artifact.py` and the CI selector validate its identities, while Vite, native and Nix use the same contract; the HUD imports the public foundation entry, so generated components stay outside that closure.
-- Its builds don't fetch Git LFS. The foundations' Inter faces therefore use
+- `shared-inputs.json` records the actual compiler/Vite shared dependency closure, across `library/ui`, `library/shop`, `library/catalyst-api`, `library/explorer-core` and `library/web-core`. `tooling/play-artifact.py` and the CI selector validate its identities, while Vite, native and Nix use the same contract; the HUD imports the public `@dcl/one-ui` entry, so the shared components, the stylesheets they compose and their assets are in that closure.
+- Its builds fetch only the Git LFS assets under `library/ui/assets` and `library/ui/apps/sites/assets`, which the entry reaches. The foundations' Inter faces use
   `react-web`'s own `@fontsource-variable/inter`, whose bytes match the digests
   `foundations/typography/font-source.json` pins
   (`src/test/sharedUi.test.tsx` checks them).

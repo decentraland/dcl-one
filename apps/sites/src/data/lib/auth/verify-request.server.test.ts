@@ -34,6 +34,48 @@ describe("verifyAuthChainRequest", () => {
     expect(anon.status).toBe(401);
   });
 
+  it("verifies a request whose metadata keeps its case, signed over the 6.x payload", async () => {
+    const identity = await createIdentityFromPrivateKey(generatePrivateKey());
+    const metadata = { realmName: "Boedo.dcl.eth", sceneId: "Bafk" };
+    const s = await signRequest(identity, "PUT", "/v1/Items/One", metadata);
+    expect(s.payload).toBe(`put:/v1/items/one:${s.timestamp}:${JSON.stringify(metadata)}`);
+
+    const res = await verifyAuthChainRequest(
+      new Request("http://localhost/v1/Items/One", { method: "PUT", headers: new Headers(s.headers) }),
+    );
+    expect(res.ok).toBe(true);
+  });
+
+  it("verifies a request signed over the legacy payload, folded entirely to lowercase", async () => {
+    const identity = await createIdentityFromPrivateKey(generatePrivateKey());
+    const metadata = { realmName: "Boedo.dcl.eth" };
+    const s = await signRequest(identity, "PUT", "/v1/Items/One", metadata);
+    const legacy = s.payload.toLowerCase();
+    const headers = new Headers(s.headers);
+    headers.set(
+      `${AUTH_CHAIN_HEADER_PREFIX}2`,
+      JSON.stringify({
+        type: "ECDSA_SIGNED_ENTITY",
+        payload: legacy,
+        signature: await privateKeyToAccount(identity.ephemeral.privateKey).signMessage({ message: legacy }),
+      }),
+    );
+
+    const res = await verifyAuthChainRequest(new Request("http://localhost/v1/Items/One", { method: "PUT", headers }));
+    expect(legacy).not.toBe(s.payload);
+    expect(res.ok).toBe(true);
+  });
+
+  it("rejects a 6.x signature when the metadata's case changes after signing", async () => {
+    const identity = await createIdentityFromPrivateKey(generatePrivateKey());
+    const s = await signRequest(identity, "PUT", "/v1/items/one", { realmName: "Boedo.dcl.eth" });
+    const headers = new Headers(s.headers);
+    headers.set("x-identity-metadata", JSON.stringify({ realmName: "BOEDO.dcl.eth" }));
+
+    const res = await verifyAuthChainRequest(new Request("http://localhost/v1/items/one", { method: "PUT", headers }));
+    expect(res).toEqual({ ok: false, status: 401, error: "request signature does not match request" });
+  });
+
   it("rejects an expired ephemeral identity, a stale timestamp, and a signature replayed across paths with 401", async () => {
     const expired = await signed(generatePrivateKey(), "/v1/collections", { expirationMs: 1_000 });
     const expiredTs = Number(expired.request.headers.get("x-identity-timestamp"));

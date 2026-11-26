@@ -17,9 +17,9 @@ use bevy::{
 };
 use pipeline_test::{compile_pipelines, fragment_pipelines, headless_app, render_target};
 use scene_material::{
-    SceneBound, SceneMaterial, EMPTY_SCENE_CELLS, SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
-    SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG, SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
-    SCENE_MATERIAL_OUTLINE_MESH_TAG, SCENE_MATERIAL_TOON_MESH_TAG,
+    SceneBound, SceneMaterial, EMPTY_SCENE_CELLS, SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG,
+    SCENE_MATERIAL_NO_DITHERING_MESH_TAG, SCENE_MATERIAL_OUTLINE_MESH_TAG,
+    SCENE_MATERIAL_TOON_MESH_TAG,
 };
 
 /// Renders the shield's particle material (toon, undithered, as on the player's avatar) on a 4 mm
@@ -87,9 +87,7 @@ fn outlined_particle_keeps_its_glow() {
     };
     let glowing = mat(emissive);
     let plain = mat(LinearRgba::BLACK);
-    let tag = SCENE_MATERIAL_TOON_MESH_TAG
-        | SCENE_MATERIAL_NO_DITHERING_MESH_TAG
-        | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG;
+    let tag = SCENE_MATERIAL_TOON_MESH_TAG | SCENE_MATERIAL_NO_DITHERING_MESH_TAG;
     // the shield behind, outlined as an avatar mesh
     world.spawn((
         Mesh3d(backdrop),
@@ -235,7 +233,6 @@ fn avatar_material_variants_compile() {
 
     let toon = SCENE_MATERIAL_TOON_MESH_TAG
         | SCENE_MATERIAL_NO_DITHERING_MESH_TAG
-        | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG
         | SCENE_MATERIAL_OUTLINE_MESH_TAG;
     for (i, material) in materials.iter().enumerate() {
         for (j, mesh) in meshes.iter().enumerate() {

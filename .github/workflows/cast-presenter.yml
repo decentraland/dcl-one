@@ -1,7 +1,8 @@
 name: Cast presenter LiveKit tests
 # The Cast presenter (comms::cast_presenter) and its cast-bot against a real livekit-server: the
 # node-to-bot stdio protocol and the bot's track and data channel. A workflow of its own, filtered
-# to their paths, because cast-bot links libwebrtc, which no other Rust job builds.
+# to their paths, because cast-bot links libwebrtc, which no other Rust job builds. It also lints
+# cast-bot, which the Development workflow's workspace clippy does not cover.
 on:
   workflow_dispatch:
   push:
@@ -13,6 +14,7 @@ on:
       - 'infra/packages/patched-source.nix'
       - 'rendering/bevy-explorer/patches/client-sdk-rust/**'
       - 'flake.*'
+      - 'services/catalyst/rust-toolchain.toml'
       - '.github/workflows/cast-presenter.yml'
   pull_request:
     paths:
@@ -22,6 +24,7 @@ on:
       - 'infra/packages/patched-source.nix'
       - 'rendering/bevy-explorer/patches/client-sdk-rust/**'
       - 'flake.*'
+      - 'services/catalyst/rust-toolchain.toml'
       - '.github/workflows/cast-presenter.yml'
 permissions:
   contents: read
@@ -67,6 +70,8 @@ jobs:
           # The package the APIs image carries, its test executables and the flake's livekit-server.
           nix build .#cast-bot -o .cache/cast-bot -L
           nix build .#cast-bot.tests -o .cache/cast-bot-tests -L
+          # cast-bot is a workspace of its own, so the Development workflow's clippy never sees it.
+          nix build .#cast-bot.clippy --no-link -L
           nix build --inputs-from . nixpkgs#livekit -o .cache/livekit
           echo "CAST_BOT_BIN=$PWD/.cache/cast-bot/bin/cast-bot" >> "$GITHUB_ENV"
           echo "LIVEKIT_SERVER_BIN=$PWD/.cache/livekit/bin/livekit-server" >> "$GITHUB_ENV"

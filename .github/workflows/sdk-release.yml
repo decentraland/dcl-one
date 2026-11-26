@@ -1,10 +1,11 @@
 name: SDK / Release
-# next on every push to main, and a versioned release from a manual run. Both publish the @dcl/*
-# names, and only through the npm-release environment (main only, a repository setting) that the
-# npm trusted publishers require: no other branch's run can use it, whatever its workflow says.
+# next on every push to main, auth-server on every push to the auth-server branch, and a versioned
+# release from a manual run on main. All publish the @dcl/* names, and only through the npm-release
+# environment (main and auth-server only, a repository setting) that the npm trusted publishers
+# require: no other branch's run can use it, whatever its workflow says.
 on:
   push:
-    branches: [main]
+    branches: [main, auth-server]
     paths:
       - library/js-sdk-toolchain/**
       - library/protocol/**
@@ -21,9 +22,9 @@ on:
 permissions:
   contents: read
 concurrency:
-  # Pushes publish in order and a waiting one gives way to a newer one, so next ends on the newest
-  # commit; two runs of one release version do not race on its tag.
-  group: sdk-release-${{ github.event_name }}-${{ inputs.version }}
+  # A branch's pushes publish in order and a waiting one gives way to a newer one, so its dist-tag
+  # ends on the newest commit; two runs of one release version do not race on its tag.
+  group: sdk-release-${{ github.event_name }}-${{ github.ref_name }}-${{ inputs.version }}
   cancel-in-progress: false
 env:
   SDK_PACKAGES: ecs js-runtime react-ecs sdk-commands sdk
@@ -66,7 +67,7 @@ jobs:
   publish:
     name: Publish to npm
     needs: [check, build]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || (github.ref == 'refs/heads/auth-server' && github.event_name == 'push')
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     environment: npm-release
@@ -96,8 +97,12 @@ jobs:
             case "$version" in *-*) tag=rc ;; *) tag=latest ;; esac
             [ "$version" = "$RELEASE" ] || { echo "packed $first, expected version $RELEASE" >&2; exit 1; }
           else
-            tag=next
-            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+$ ]] || { echo "next needs a snapshot version, got $first" >&2; exit 1; }
+            case "$GITHUB_REF" in
+              refs/heads/main) tag=next ;;
+              refs/heads/auth-server) tag=auth-server ;;
+              *) echo "no dist-tag for $GITHUB_REF" >&2; exit 1 ;;
+            esac
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+$ ]] || { echo "$tag needs a snapshot version, got $first" >&2; exit 1; }
           fi
           latest=$($PNPM view @dcl/sdk dist-tags.latest 2> /dev/null || true)
           if [ "$tag" = latest ] && [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -1)" != "$version" ]; then

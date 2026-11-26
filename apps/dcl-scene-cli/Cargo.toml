@@ -66,8 +66,8 @@ brotli-decompressor = "6"
 # with `image`, then encoded to UASTC KTX2 by the Basis Universal WASI module
 # pinned in basisu-release.lock, run in-process by wasmtime (WASI preview 1).
 image.workspace = true
-wasmtime = { version = "=50.0.0", default-features = false, features = ["anyhow", "cranelift", "parallel-compilation", "runtime", "std"] }
-wasmtime-wasi = { version = "=50.0.0", default-features = false, features = ["p1"] }
+wasmtime = { version = "=50.0.3", default-features = false, features = ["anyhow", "cranelift", "parallel-compilation", "runtime", "std"] }
+wasmtime-wasi = { version = "=50.0.3", default-features = false, features = ["p1"] }
 # The encoder's per-texture scratch directory: random name, owner-only.
 tempfile = "3"
 

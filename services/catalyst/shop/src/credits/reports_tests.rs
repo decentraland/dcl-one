@@ -1121,3 +1121,104 @@ async fn the_canonical_mount_serves_the_reports() {
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}");
     }
 }
+
+/// A grant is `studio_grant` only on proof a studio paid for it: a studio
+/// budget entry names its ledger row, or its audit is credits-server's own
+/// record of a studio grant (an imported audit, `upstreamCreditId`, carrying
+/// `studioName`). A `studioName` alone, as the admin route once wrote it on a
+/// grant that spent no budget, proves nothing.
+#[tokio::test]
+async fn a_studio_grant_is_reported_on_proof_of_its_budget() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let admin = scratch_wallet();
+    let app = app(reports_state(pool.clone(), &admin.address));
+    let player = scratch_wallet();
+    let operator = "0x00000000000000000000000000000000000000aa";
+    let ids: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "WITH studio AS ( \
+             INSERT INTO credits.studios (name, created_by) VALUES ('Acme ' || gen_random_uuid(), 'test') RETURNING id), \
+         audits AS ( \
+             INSERT INTO ops.admin_audit (actor, domain, action, target, detail) \
+             SELECT v.actor, 'credits', 'grant', '{p}', v.detail::jsonb \
+             FROM (VALUES \
+                 (1, '{operator}', '{{\"reason\": \"operator\", \"studioName\": \"Acme\", \"studioId\": \"s\"}}'), \
+                 (2, '{operator}', '{{\"reason\": \"imported studio\", \"upstreamCreditId\": \"c2\", \"studioName\": null}}'), \
+                 (3, '{operator}', '{{\"reason\": \"imported grant\", \"upstreamCreditId\": \"c3\"}}'), \
+                 (4, 'token:CATALYRST_CREDITS_ADMIN_TOKEN', '{{\"reason\": \"named admin\", \"studioName\": \"Acme\"}}') \
+             ) v(n, actor, detail) \
+             RETURNING id, detail->>'reason' AS reason), \
+         audited AS ( \
+             INSERT INTO credits.ledger (address, kind, amount, bucket, admin_audit_id) \
+             SELECT '{p}', 'grant', 1, 'paid', a.id FROM audits a ORDER BY a.id RETURNING id, admin_audit_id), \
+         unaudited AS ( \
+             INSERT INTO credits.ledger (address, kind, amount, bucket, tx_ref) \
+             VALUES ('{p}', 'grant', 1, 'paid', 'credits-server:credit:c5'), ('{p}', 'grant', 1, 'paid', 'credits-server:credit:c6') \
+             RETURNING id, tx_ref), \
+         entries AS ( \
+             INSERT INTO credits.studio_budget_entries (studio_id, usd_cents, kind, ledger_id, note, created_by) \
+             SELECT (SELECT id FROM studio), -10, 'grant', x.id, 'paid', 'test' FROM ( \
+                 SELECT l.id FROM audited l JOIN audits a ON a.id = l.admin_audit_id WHERE a.reason = 'operator' \
+                 UNION ALL SELECT id FROM unaudited WHERE tx_ref = 'credits-server:credit:c6') x) \
+         SELECT l.id FROM audited l JOIN audits a ON a.id = l.admin_audit_id \
+         UNION ALL SELECT id FROM unaudited ORDER BY 1",
+        p = player.address,
+    )))
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    // In insertion order: the operator's grant, the imported studio grant,
+    // the imported Decentraland grant, the named admin grant, a migrated
+    // credit and a migrated studio grant its budget entry links.
+    let [
+        operator_grant,
+        imported_studio,
+        imported_grant,
+        named_admin,
+        migrated,
+        migrated_studio,
+    ] = ids.as_slice()
+    else {
+        panic!("six rows: {ids:?}");
+    };
+    let listed = |source: &'static str| {
+        let app = app.clone();
+        let player = player.address.clone();
+        async move {
+            let (status, _, v) = send(
+                &app,
+                "GET",
+                &format!("/credits/credits?source={source}&address={player}"),
+                bearer(),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{v}");
+            let mut ids: Vec<String> = v["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["id"].as_str().unwrap().to_string())
+                .collect();
+            ids.sort();
+            ids
+        }
+    };
+    let usd = |ids: &[&i64]| {
+        let mut ids: Vec<String> = ids.iter().map(|id| format!("usd:{id}")).collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(
+        listed("studio_grant").await,
+        usd(&[operator_grant, imported_studio, migrated_studio]),
+        "a budget entry or credits-server's studio record"
+    );
+    assert_eq!(
+        listed("grant").await,
+        usd(&[imported_grant, named_admin]),
+        "an imported Decentraland grant, and a studio name with no budget behind it"
+    );
+    assert_eq!(listed("migrated").await, usd(&[migrated]));
+}

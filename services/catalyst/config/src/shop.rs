@@ -109,6 +109,63 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "HISTORICAL_ADMIN_TOKEN", hide_env_values = true)]
     pub historical_admin_token: Option<String>,
 
+    // The Wert card on-ramp (`POST /v1/wert/sign`): all four, or none (the
+    // route then answers 503 naming them).
+    /// Wert's Ed25519 partner key (32 bytes, hex) for card purchases into a
+    /// contract; read from WERT_PRIVATE_KEY_FILE alone.
+    #[arg(long, env = "WERT_PRIVATE_KEY", hide_env_values = true)]
+    pub wert_private_key: Option<String>,
+
+    /// The key a `publicationFees` signature uses; WERT_PUBLICATION_FEES_PRIVATE_KEY_FILE alone.
+    #[arg(
+        long,
+        env = "WERT_PUBLICATION_FEES_PRIVATE_KEY",
+        hide_env_values = true
+    )]
+    pub wert_publication_fees_private_key: Option<String>,
+
+    /// Wert's partner API, which creates the widget session (`{WERT_API_URL}/create-session`).
+    #[arg(long, env = "WERT_API_URL")]
+    pub wert_api_url: Option<String>,
+
+    /// Wert's partner API key, sent as `x-api-key`.
+    #[arg(long, env = "WERT_API_KEY", hide_env_values = true)]
+    pub wert_api_key: Option<String>,
+
+    // The Transak card on-ramp (`/v1/transak/*`): all six, or none (the routes
+    // then answer 503 naming them).
+    /// Transak's partner API (`/v2/refresh-token`, `/v2/order/{id}`).
+    #[arg(long, env = "TRANSAK_API_URL")]
+    pub transak_api_url: Option<String>,
+
+    /// Transak's API gateway, which creates the widget session (`/v2/auth/session`).
+    #[arg(long, env = "TRANSAK_API_GATEWAY_URL")]
+    pub transak_api_gateway_url: Option<String>,
+
+    /// Transak's partner API key, sent as `x-api-key`. Never the key
+    /// marketplace-server is serving with: each refresh invalidates the
+    /// other's token, and marketplace-server does not recover. Use separate
+    /// partner credentials, or set the six TRANSAK_* only once
+    /// marketplace-server has stopped serving Transak.
+    #[arg(long, env = "TRANSAK_API_KEY", hide_env_values = true)]
+    pub transak_api_key: Option<String>,
+
+    /// Transak's partner API secret, sent only to refresh the access token.
+    #[arg(long, env = "TRANSAK_API_SECRET", hide_env_values = true)]
+    pub transak_api_secret: Option<String>,
+
+    /// Bearer of `PUT /v1/transak/access-token`, which forces a token refresh.
+    #[arg(
+        long,
+        env = "TRANSAK_REFRESH_ACCESS_TOKEN_AUTH",
+        hide_env_values = true
+    )]
+    pub transak_refresh_access_token_auth: Option<String>,
+
+    /// The host Transak has registered for the partner (`referrerDomain` of every widget).
+    #[arg(long, env = "TRANSAK_REFERRER_DOMAIN")]
+    pub transak_referrer_domain: Option<String>,
+
     /// 0 disables the catalog page cache.
     #[arg(long, env = "MARKETPLACE_CATALOG_CACHE_TTL_SECS", default_value_t = 30)]
     pub marketplace_catalog_cache_ttl_secs: u64,
@@ -675,6 +732,15 @@ pub struct ShopConfig {
         allow_negative_numbers = true
     )]
     pub credits_daily_studio_deposit_limit_cents: Option<i64>,
+
+    /// The most one studio grant may give, in USD cents (credits-server's
+    /// `STUDIO_GRANT_MAX_CENTS`). Unset or negative refuses studio grants.
+    #[arg(
+        long,
+        env = "CREDITS_STUDIO_GRANT_MAX_CENTS",
+        allow_negative_numbers = true
+    )]
+    pub credits_studio_grant_max_cents: Option<i64>,
 
     /// Attach the CreditUsed index (credits.usages, over RPC_ENDPOINT_POLYGON
     /// and CREDITS_MANAGER_CONTRACT); POST /credits/authorize mints only while it is ready.
