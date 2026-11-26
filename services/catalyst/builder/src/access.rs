@@ -723,8 +723,9 @@ pub async fn collection_items(
 }
 
 /// `GET /v1/items/:id`: any signer reads a minted item of a published
-/// standard collection and any item of a published third-party collection
-/// (one with an item curation); the collection's owner, the provider's
+/// standard collection and a curated item of a published third-party
+/// collection (one with an item curation), as the collection's listing
+/// shows them ([`collection_items`]); the collection's owner, the provider's
 /// manager (the item's owner for an item with no collection) and the
 /// committee read any. `full` is false for a caller who reads only what
 /// any signer may; for a published item the committee only widens the view,
@@ -753,7 +754,8 @@ pub async fn read_item(
     if owns {
         return Ok(ItemRead { id, full: true });
     }
-    if let Some(c) = parent.filter(|c| c.published && (c.third_party || i.minted)) {
+    if let Some(c) = parent.filter(|c| c.published && (i.minted || (c.third_party && i.published)))
+    {
         let full = c.owner(s)
             || c.manager(s)
             || c.minter(s)
