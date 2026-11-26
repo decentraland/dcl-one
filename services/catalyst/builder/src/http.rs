@@ -454,6 +454,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn each_refusal_answers_upstreams_status_with_its_words() {
+        for (refused, status) in [
+            (ApiError::thrown_without_status("thrown"), 200),
+            (ApiError::bad_request("invalid"), 400),
+            (ApiError::unauthorized("who"), 401),
+            (ApiError::forbidden("denied"), 403),
+            (ApiError::not_found("missing"), 404),
+            (ApiError::timed_out("late"), 408),
+            (ApiError::conflict("conflict"), 409),
+            (ApiError::too_large("large"), 413),
+            (ApiError::refused(Refusal::Locked, "locked"), 423),
+            (ApiError::too_many("many"), 429),
+            (ApiError::failed("failed"), 500),
+            (ApiError::bad_gateway("gateway"), 502),
+            (ApiError::service_unavailable("unavailable"), 503),
+            (ApiError::storage_full("full"), 507),
+        ] {
+            let error = refused.to_string();
+            assert_eq!(
+                wire(refused).await,
+                (
+                    StatusCode::from_u16(status).unwrap(),
+                    json!({ "ok": false, "data": {}, "error": error })
+                ),
+                "{error}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn the_missing_item_contents_answer_ok_false_with_200() {
         assert_eq!(
             wire(ApiError::item_does_not_exist()).await,
