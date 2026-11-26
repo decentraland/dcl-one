@@ -404,17 +404,23 @@ pub enum Outcome {
 
 /// The state transition for one claimed row's send result.
 pub fn outcome_of(claimed: &Claimed, result: Result<Option<String>, SendFailure>) -> Outcome {
+    outcome_after(claimed.attempts, result)
+}
+
+/// The state transition for a send result on the `attempts`-th claim, shared
+/// by the Shop's outboxes (this one and `credits::receipts`).
+pub fn outcome_after(attempts: i32, result: Result<Option<String>, SendFailure>) -> Outcome {
     match result {
         Ok(message_id) => Outcome::Sent(message_id),
         Err(SendFailure::NotConfigured | SendFailure::NoSigningKey) => {
             Outcome::Skipped("email delivery not configured".to_string())
         }
         Err(SendFailure::Permanent(e)) => Outcome::Failed(e),
-        Err(SendFailure::Transient(e)) if claimed.attempts >= MAX_ATTEMPTS => {
-            Outcome::Failed(format!("{e} (after {} attempts)", claimed.attempts))
+        Err(SendFailure::Transient(e)) if attempts >= MAX_ATTEMPTS => {
+            Outcome::Failed(format!("{e} (after {attempts} attempts)"))
         }
         Err(SendFailure::Transient(e)) => Outcome::Retry {
-            after: backoff(claimed.attempts),
+            after: backoff(attempts),
             error: e,
         },
     }

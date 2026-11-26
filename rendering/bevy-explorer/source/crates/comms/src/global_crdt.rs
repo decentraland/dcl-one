@@ -3,7 +3,7 @@ use std::{f32::consts::TAU, sync::Arc};
 use alloy_core::primitives::Address;
 use bevy::{
     app::Propagate,
-    ecs::system::SystemParam,
+    ecs::{component::HookContext, system::SystemParam, world::DeferredWorld},
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::view::RenderLayers,
@@ -13,8 +13,8 @@ use common::{
     rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin, RpcStreamSender},
     structs::{
         AudioDecoderError, EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent, EmoteLifecycleSource,
-        EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerLanguage, PointAtSync,
-        SceneDrivenAnimationRequest,
+        EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerAddress, PlayerLanguage,
+        PointAtSync, SceneDrivenAnimationRequest, TimeOfDay,
     },
     util::{AsH160, ModifyComponentExt},
 };
@@ -148,6 +148,7 @@ impl Plugin for GlobalCrdtPlugin {
         app.add_event::<PlayerSceneAnimEvent>();
         app.add_event::<ProfileEvent>();
         app.add_event::<ChatEvent>();
+        app.add_event::<ReactionEvent>();
     }
 }
 
@@ -512,7 +513,7 @@ impl GlobalCrdtState {
         );
     }
 
-    pub fn update_time(&mut self, time: f32) {
+    pub fn update_time(&mut self, time: TimeOfDay) {
         self.send_update(GlobalCrdtStateUpdate::Time(time), "time");
     }
 
@@ -533,10 +534,12 @@ impl GlobalCrdtState {
 }
 
 /// Requires `ForeignAvatar`: the avatar crate tells remote avatars apart by that marker, as it
-/// does not depend on comms.
+/// does not depend on comms. Inserting it also inserts the entity's `PlayerAddress`.
 #[derive(Component, Debug)]
 #[require(common::structs::ForeignAvatar)]
+#[component(on_insert = Self::on_insert)]
 pub struct ForeignPlayer {
+    /// The same as the entity's `PlayerAddress`; use that for local or foreign players.
     pub address: Address,
     /// the crdt context (player-presence view) this player entity belongs to; the same
     /// wallet connected to several rooms is a separate entity in each room's context
@@ -551,6 +554,19 @@ pub struct ForeignPlayer {
 }
 
 impl ForeignPlayer {
+    fn on_insert(mut world: DeferredWorld, context: HookContext) {
+        let Some(address) = world
+            .get::<Self>(context.entity)
+            .map(|player| player.address)
+        else {
+            return;
+        };
+        world
+            .commands()
+            .entity(context.entity)
+            .try_insert(PlayerAddress(address));
+    }
+
     /// Whether the player belongs to a Pulse transport that still exists.
     pub fn has_pulse_transport(&self, transports: &Query<&Transport>) -> bool {
         self.transports.iter().any(|&entity| {
@@ -659,14 +675,14 @@ pub struct PlayerPositionEvent {
     pub rotation: DclQuat,
     pub velocity: Vec3,
     pub grounded: Option<bool>,
-    /// MoveKind inferred from the packet:
+    /// MoveKind inferred from the packet, first match wins:
+    ///   - `glide_state` is `OPENING_PROP` or `GLIDING`, or `CLOSING_PROP` in the air → `Glide`
     ///   - `jump_count >= 2` → `DoubleJump`
-    ///   - `jump_count == 1` → `Jump`
-    ///   - `glide_state` is `OPENING_PROP` or `GLIDING` → `Glide`
-    ///   - `is_jumping` or `is_long_jump` → `Jump`
+    ///   - `jump_count == 1`, `is_jumping` or `is_long_jump` → `Jump`
     ///
     /// `None` means no movement-state indicator — the velocity fallback picks. Drives `jump_time`
-    /// (Jump) and the matching emote (DoubleJump / Glide) on foreign avatars.
+    /// and the matching emote (DoubleJump / Glide) on foreign avatars; a Jump after DoubleJump or
+    /// Glide continues the fall (see `foreign_dynamics::apply_remote_move_kind`).
     pub remote_move_kind: Option<MoveKind>,
     /// This update is a discontinuous reposition, such as a Pulse `TeleportPerformed` or the
     /// first snapshot for a newly observed join. The avatar snaps to this position.
@@ -717,6 +733,14 @@ pub struct ChatEvent {
     pub sender: Entity,
     pub channel: String,
     pub message: String,
+}
+
+/// An rfc4 `Reaction` as a peer sent it: an emoji to show over their avatar, `count` times.
+/// Nothing in it is checked yet.
+#[derive(Event, Debug, Clone)]
+pub struct ReactionEvent {
+    pub sender: Entity,
+    pub reaction: rfc4::Reaction,
 }
 
 /// The rfc4 chat wire timestamp for now. unity-explorer decodes it with DateTime.FromOADate: days
@@ -770,18 +794,19 @@ fn prune_player_map<V>(
 }
 
 /// The movement state a movement packet announces, `None` when it announces none.
-fn remote_move_kind(
+pub(crate) fn remote_move_kind(
     glide_state: rfc4::movement::GlideState,
     jump_count: i32,
     jumping: bool,
+    grounded: bool,
 ) -> Option<MoveKind> {
-    // Glide is checked before DoubleJump because Unity keeps `jump_count`
-    // at its last value (usually 2) through the whole glide — so the
-    // DoubleJump-first ordering would mask an active glide.
+    use rfc4::movement::GlideState::{ClosingProp, Gliding, OpeningProp};
+    // Glide is checked before DoubleJump because senders keep `jump_count` at its last value
+    // (usually 2) through the whole glide, closing included, so the DoubleJump-first ordering
+    // would mask the glide. A glider closing on the ground is the landing, not a glide.
     match (glide_state, jump_count, jumping) {
-        (rfc4::movement::GlideState::OpeningProp | rfc4::movement::GlideState::Gliding, _, _) => {
-            Some(MoveKind::Glide)
-        }
+        (OpeningProp | Gliding, _, _) => Some(MoveKind::Glide),
+        (ClosingProp, _, _) if !grounded => Some(MoveKind::Glide),
         (_, c, _) if c >= 2 => Some(MoveKind::DoubleJump),
         (_, 1, _) | (_, _, true) => Some(MoveKind::Jump),
         _ => None,
@@ -839,6 +864,7 @@ fn apply_foreign_movement(
         m.glide_state(),
         m.jump_count,
         m.is_jumping || m.is_long_jump,
+        m.is_grounded,
     );
     // Set only by the Pulse delta receiver; absent (→ ZERO, exact) for LiveKit and full-state.
     // A symmetric ± box, so the z-axis negation above doesn't affect it.
@@ -870,9 +896,10 @@ pub fn process_transport_updates(
     mut position_events: EventWriter<PlayerPositionEvent>,
     mut anim_events: EventWriter<PlayerSceneAnimEvent>,
     mut emote_events: EventWriter<EmoteLifecycleEvent>,
-    (mut chat_events, mut reaction_events): (
+    (mut chat_events, mut reaction_events, mut situational_events): (
         EventWriter<ChatEvent>,
         EventWriter<ChatReactionEvent>,
+        EventWriter<ReactionEvent>,
     ),
     mut messagebus: SceneMessageBus,
     mut subscribers: EventReader<RpcCallEvent>,
@@ -1194,7 +1221,11 @@ pub fn process_transport_updates(
                             debug!("look at position: {look_at_position:?}");
                         }
                         PlayerMessage::PlayerData(Message::Reaction(reaction)) => {
-                            debug!("reaction: {reaction:?}");
+                            debug!("reaction from {:#x}: {reaction:?}", update.address);
+                            situational_events.write(ReactionEvent {
+                                sender: entity,
+                                reaction,
+                            });
                         }
                         PlayerMessage::PlayerData(Message::ChatReaction(chat_reaction)) => {
                             debug!(
@@ -1399,6 +1430,7 @@ fn resolve_remote_anim(
         transition_seconds,
         seek: anim.playback_time,
         sounds: anim.sound_content_hashes,
+        movement_scene: false,
     })
 }
 
@@ -1757,23 +1789,22 @@ mod tests {
 
     #[test]
     fn a_packet_names_the_movement_state_it_announces() {
-        use rfc4::movement::GlideState::{Gliding, OpeningProp, PropClosed};
+        use rfc4::movement::GlideState::{ClosingProp, Gliding, OpeningProp, PropClosed};
+        let kind = |glide, count, jumping| remote_move_kind(glide, count, jumping, false);
 
-        assert_eq!(remote_move_kind(PropClosed, 0, false), None);
+        assert_eq!(kind(PropClosed, 0, false), None);
         // Pulse never sets `is_jumping`; a first jump travels as a jump count of 1
-        assert_eq!(remote_move_kind(PropClosed, 1, false), Some(MoveKind::Jump));
-        assert_eq!(remote_move_kind(PropClosed, 0, true), Some(MoveKind::Jump));
-        assert_eq!(
-            remote_move_kind(PropClosed, 2, false),
-            Some(MoveKind::DoubleJump)
-        );
+        assert_eq!(kind(PropClosed, 1, false), Some(MoveKind::Jump));
+        assert_eq!(kind(PropClosed, 0, true), Some(MoveKind::Jump));
+        assert_eq!(kind(PropClosed, 2, false), Some(MoveKind::DoubleJump));
         // the jump count stays at 2 through a glide, which wins
-        assert_eq!(
-            remote_move_kind(OpeningProp, 2, false),
-            Some(MoveKind::Glide)
-        );
-        assert_eq!(remote_move_kind(Gliding, 2, true), Some(MoveKind::Glide));
-        assert_eq!(remote_move_kind(Gliding, 0, false), Some(MoveKind::Glide));
+        assert_eq!(kind(OpeningProp, 2, false), Some(MoveKind::Glide));
+        assert_eq!(kind(Gliding, 2, true), Some(MoveKind::Glide));
+        assert_eq!(kind(Gliding, 0, false), Some(MoveKind::Glide));
+        // closing the glider in the air is still the glide, not a second air jump
+        assert_eq!(kind(ClosingProp, 2, false), Some(MoveKind::Glide));
+        // closing it on landing is the landing
+        assert_eq!(remote_move_kind(ClosingProp, 0, false, true), None);
     }
 
     #[test]
@@ -1894,6 +1925,7 @@ mod tests {
         app.add_event::<EmoteLifecycleEvent>();
         app.add_event::<ChatEvent>();
         app.add_event::<ChatReactionEvent>();
+        app.add_event::<ReactionEvent>();
         crate::scene_rooms::test_support::init_scene_rooms(&mut app);
         app.add_plugins(crate::scene_topics::SceneTopicsRoutingPlugin);
         app.add_systems(
@@ -2544,6 +2576,45 @@ mod tests {
     }
 
     #[test]
+    fn a_peers_reaction_is_raised_for_its_player_as_sent() {
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let transport = spawn_transport(&mut app, context);
+        let reaction = rfc4::Reaction {
+            emoji_index: -7,
+            timestamp: 12.5,
+            count: 900,
+        };
+        app.world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender()
+            .try_send(
+                PlayerUpdate {
+                    transport_id: transport,
+                    message: PlayerMessage::PlayerData(Message::Reaction(reaction.clone())),
+                    address: peer,
+                }
+                .into(),
+            )
+            .unwrap();
+        app.update();
+
+        let mut players = app.world_mut().query::<(Entity, &ForeignPlayer)>();
+        let (player, heard) = players.single(app.world()).unwrap();
+        assert_eq!(heard.address, peer);
+        let raised = app
+            .world()
+            .resource::<Events<ReactionEvent>>()
+            .iter_current_update_events()
+            .collect::<Vec<_>>();
+        assert_eq!(raised.len(), 1);
+        assert_eq!(raised[0].sender, player);
+        // its bounds are the reader's to enforce: the event carries what the peer sent
+        assert_eq!(raised[0].reaction, reaction);
+    }
+
+    #[test]
     fn disconnected_socket_retires_presence_without_removing_other_room_memberships() {
         let (mut app, context) = presence_app();
         let peer = Address::repeat_byte(0xab);
@@ -2620,6 +2691,15 @@ mod tests {
                 ChannelControl::VoiceUnsubscribe(_) => "unsubscribe",
             })
             .collect()
+    }
+
+    #[test]
+    fn a_foreign_player_also_gets_its_player_address() {
+        let (app, player, ..) = voice_app();
+        assert_eq!(
+            app.world().get::<PlayerAddress>(player),
+            Some(&PlayerAddress(Address::repeat_byte(0xab)))
+        );
     }
 
     #[test]
