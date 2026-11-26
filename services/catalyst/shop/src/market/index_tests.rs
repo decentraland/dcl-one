@@ -1980,7 +1980,7 @@ fn estate_document(
 
 #[tokio::test]
 async fn descriptive_mirror_readers_check_the_chain_of_every_recorded_source() {
-    use super::mirrors::{self, Mirror};
+    use super::mirrors::Mirror;
     let Some(db) = ScratchDb::create().await else {
         return;
     };
@@ -1999,18 +1999,22 @@ async fn descriptive_mirror_readers_check_the_chain_of_every_recorded_source() {
             crate::http::Outbound::for_tests(),
             settings,
         );
-        let error = mirrors::require_ready(&state, Mirror::Collections)
-            .await
-            .unwrap_err();
+        let read = || {
+            super::catalogue::begin(
+                &state,
+                super::catalogue::Purpose::Describe,
+                &[Mirror::Collections],
+                None,
+                super::catalogue::Access::ReadOnly,
+            )
+        };
+        let error = read().await.err().unwrap();
         assert_eq!(error.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
         sqlx::query("UPDATE shop.mirror_state SET chain_id=NULL WHERE network='ethereum'")
             .execute(&db.pool)
             .await
             .unwrap();
-        state.mirror_ready.clear();
-        mirrors::require_ready(&state, Mirror::Collections)
-            .await
-            .unwrap();
+        assert!(read().await.is_ok());
         sqlx::query("UPDATE shop.mirror_state SET chain_id=1 WHERE network='ethereum'")
             .execute(&db.pool)
             .await
@@ -2483,7 +2487,18 @@ async fn mainnet_items_retry_then_refresh_prices_during_an_extended_rpc_outage()
     assert_eq!(retried.pass_started_at, pending.pass_started_at);
     assert_eq!(retried.last_complete_pass_at, earlier.last_complete_pass_at);
     assert_eq!(stored_price().await.unwrap(), "100");
-    assert!(mirrors::require_priced(&state).await.is_ok());
+    // The catalogue gate still prices from the last complete pass.
+    assert!(
+        super::catalogue::begin(
+            &state,
+            super::catalogue::Purpose::Priced,
+            &[Mirror::Items],
+            None,
+            super::catalogue::Access::ReadOnly,
+        )
+        .await
+        .is_ok()
+    );
 
     // Advance the persisted RPC outage clock without a wall-clock wait.
     age_proof().await.unwrap();
@@ -8357,7 +8372,7 @@ async fn a_job_that_lost_its_projection_commits_nothing() {
         chain_walk::record_fold(&db.pool, &a, before.0)
             .await
             .unwrap_err(),
-        chain_walk::mark_folded(&db.pool, &a, before.0, chrono::Utc::now())
+        chain_walk::mark_folded(&db.pool, &ix, &a, before.0, chrono::Utc::now())
             .await
             .unwrap_err(),
         chain_walk::unpublish(&db.pool, &a, before.0)
@@ -9077,6 +9092,9 @@ mod supervisor {
                 gate.acquire().await.unwrap().forget();
             }
             self.inner().fold(pool, since, upto, owner).await
+        }
+        async fn publish(&self, conn: &mut sqlx::PgConnection, upto: i64) -> anyhow::Result<()> {
+            self.inner().publish(conn, upto).await
         }
         fn abandon(&self) {
             assert!(!self.abandon_panics, "a hooked index's cleanup panicked");

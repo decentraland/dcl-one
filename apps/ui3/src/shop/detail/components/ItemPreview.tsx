@@ -17,7 +17,7 @@ import { fetchWearableRules, keepEquipped, sharedEntityBase } from "../lib/weara
 import { fetchEmoteClipUrl } from "../lib/emoteBase64";
 import { useShopQuery } from "../../discovery/query";
 import { REMOTE_FLAG, useRemoteFlagState } from "../../discovery/lib/remoteFlags";
-import PreviewFrame, { previewBase, type PreviewFrameOptions, type PreviewRendererName } from "./PreviewFrame";
+import PreviewFrame, { previewBase, UNITY_LOAD_TIMEOUT_MS, type PreviewFrameOptions, type PreviewRendererName } from "./PreviewFrame";
 import "./itempreview.css";
 
 const VIEW_TEXT = { previewMode: "Preview mode", onAvatar: "On avatar", itemView: "Item", playEmote: "Play emote" };
@@ -174,10 +174,6 @@ function ExplorerItemPreview({ item, avatarShape = null, renderer }: ItemPreview
   );
 }
 
-// Unity that has neither drawn nor failed by then gives way to Babylon: when it cannot read its config it shows the error
-// on its own canvas and tells the page nothing. The three.js preview this replaced allowed a load the same 45 seconds.
-const UNITY_LOAD_TIMEOUT_MS = 45_000;
-
 // The web preview, as decentraland.org's Shop draws it (shop@3a322cf9 ItemPreview): the shopper's own avatar when it
 // can wear the item, otherwise a default one of a shape the item fits; the item alone in the item view; an emote on the
 // avatar. The Unity renderer where the `unity-wearable-preview` flag and this device allow it, Babylon otherwise and
@@ -261,6 +257,8 @@ function WebItemPreview({ item, avatarShape = null, renderer }: ItemPreviewProps
           replay={replay}
           loadTimeoutMs={unity ? UNITY_LOAD_TIMEOUT_MS : undefined}
           onLoad={(by) => setDrawn({ scene, by: by ?? (unity ? "unity" : "babylon") })}
+          // A fresh iframe has drawn nothing yet, even for the same scene (Unity booting again).
+          onReplaced={() => setDrawn(null)}
           onError={() => {
             // The item alone failed where the avatar had drawn: back to the avatar, in a fresh frame. Before the
             // renderer: a preview that asked for Unity and drew with Babylon got this far on Babylon.

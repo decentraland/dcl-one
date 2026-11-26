@@ -47,15 +47,14 @@ pub const INDEXER_MANA: &str = "mana_transfers";
 
 pub const INDEXER_COMMITTEE: &str = "committee";
 
-pub const INDEXER_COLLECTIONS: &str = "collections";
+pub use crate::chain_index::catalogue::INDEXER_COLLECTIONS;
 
 pub const INDEXER_NFT: &str = "nft";
 pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
 pub const INDEXER_THIRD_PARTY_REGISTRY: &str = "third_party_registry";
 
-/// How old a publish may be before readers stop trusting it (a stopped job).
-pub const READY_WINDOW: ChronoDuration = ChronoDuration::minutes(30);
+pub use crate::chain_index::catalogue::READY_WINDOW;
 
 /// The two chains the marketplace indexes walk; the `network` column's spelling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -949,9 +948,11 @@ pub async fn record_fold(pool: &PgPool, owner: &Owner, block: i64) -> anyhow::Re
 
 /// Sets `folded_block` to the block a completed fold covered, only on the
 /// row still at that block, with its whole history walked and not in
-/// quarantine.
+/// quarantine; and, in the same transaction, writes what `ix` derives from
+/// the published fold ([`ChainIndex::publish`]).
 pub async fn mark_folded(
     pool: &PgPool,
+    ix: &dyn ChainIndex,
     owner: &Owner,
     block: i64,
     now: DateTime<Utc>,
@@ -968,9 +969,15 @@ pub async fn mark_folded(
     .bind(now.naive_utc())
     .execute(&mut *tx)
     .await?;
+    let published = updated.rows_affected() == 1;
+    if published {
+        ix.publish(&mut tx, block)
+            .await
+            .context("publishing what the fold derived")?;
+    }
     owner.check(&mut tx).await?;
     tx.commit().await?;
-    Ok(updated.rows_affected() == 1)
+    Ok(published)
 }
 
 /// Withdraws the publish of the row still at `block`: a fold that may not
@@ -1071,9 +1078,7 @@ pub fn published_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_cha
     )
 }
 
-/// How far ahead of the caller's clock the database's `updated_at` may be and
-/// still count as advanced.
-pub(crate) const MAX_CLOCK_SKEW: ChronoDuration = ChronoDuration::minutes(10);
+pub(crate) use crate::chain_index::catalogue::MAX_CLOCK_SKEW;
 
 /// A liveness heuristic for whether cursor `c` serves its index at `now`:
 /// ready, or bound to its network's mainnet chain, out of quarantine, not
@@ -1298,6 +1303,15 @@ pub trait ChainIndex: Send + Sync {
         upto: i64,
         owner: &Owner,
     ) -> anyhow::Result<bool>;
+    /// Writes what readers take from the fold at `upto` beside the fold's
+    /// own rows, inside the transaction that publishes it ([`mark_folded`]),
+    /// so a reader's snapshot sees the publication and that state together,
+    /// never one without the other. Runs only when the fold is published.
+    /// Every index but the collections index (its catalogue projection)
+    /// derives nothing here.
+    async fn publish(&self, _conn: &mut PgConnection, _upto: i64) -> anyhow::Result<()> {
+        Ok(())
+    }
     /// Work walked before the main range under the same budget (the nft
     /// backfill lane), read from the pass's source: what it charged the
     /// budget and the requests it sent ([`Spent`]).
@@ -2321,8 +2335,8 @@ async fn walk(
                     out.requests += spent.requests;
                 }
                 Ok(_) => break,
-                Err(e) if e.downcast_ref::<Diverged>().is_some() => {
-                    out.requests += e.downcast_ref::<Diverged>().unwrap().requests;
+                Err(e) if let Some(requests) = e.downcast_ref::<Diverged>().map(|d| d.requests) => {
+                    out.requests += requests;
                     return diverged(
                         pool,
                         source,
@@ -2444,7 +2458,7 @@ pub(crate) async fn close(
         && out.indexed_to as u64 <= latest_safe
         && within_publish_lag(net, latest, out.indexed_to as u64)
     {
-        out.published = mark_folded(pool, owner, out.indexed_to, Utc::now()).await?;
+        out.published = mark_folded(pool, ix, owner, out.indexed_to, Utc::now()).await?;
     } else {
         unpublish(pool, owner, out.indexed_to).await?;
     }

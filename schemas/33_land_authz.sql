@@ -29,6 +29,12 @@ CREATE TABLE land_authz.authz_event (
     account varchar(42),
     operator varchar(42),
     approved boolean,
+    -- A transfer's sender (the zero address for a mint) and transaction, for
+    -- the activity's transfer leg; NULL on every other kind, and on a
+    -- transfer indexed before they were kept until the indexer's repair
+    -- reads them again.
+    from_address varchar(42),
+    tx_hash text,
     PRIMARY KEY (block_number, log_index),
     CONSTRAINT authz_event_kind_known CHECK (kind IN (
         'update_operator', 'approval', 'transfer', 'update_manager', 'approved_for_all', 'add_land', 'remove_land')),
@@ -50,6 +56,18 @@ CREATE INDEX authz_event_ownership_idx ON land_authz.authz_event
 -- (92.880 to 0.075 ms p50 on the same fixture); it empties after repair.
 CREATE INDEX authz_event_missing_time_idx ON land_authz.authz_event (block_number)
     WHERE block_time <= 0;
+-- The activity's transfer leg: one wallet's transfers on each side, newest
+-- first by time then position, as the activity merges them.
+CREATE INDEX authz_event_transfer_to_idx ON land_authz.authz_event
+    (account, block_time DESC, block_number DESC, log_index DESC)
+    WHERE kind = 'transfer';
+CREATE INDEX authz_event_transfer_from_idx ON land_authz.authz_event
+    (from_address, block_time DESC, block_number DESC, log_index DESC)
+    WHERE kind = 'transfer';
+-- The transfers still without their sender or transaction: the repair's due
+-- set and the leg's readiness probe. It empties once the repair is done.
+CREATE INDEX authz_event_transfer_unrepaired_idx ON land_authz.authz_event (block_number)
+    WHERE kind = 'transfer' AND (from_address IS NULL OR tx_hash IS NULL);
 -- The account legs: DISTINCT ON (token_address, account, operator, kind).
 CREATE INDEX authz_event_account_idx ON land_authz.authz_event (token_address, account, operator, kind, block_number, log_index)
     WHERE account IS NOT NULL AND operator IS NOT NULL;

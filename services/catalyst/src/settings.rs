@@ -311,9 +311,7 @@ mod tests {
         let mut config =
             Config::parse_env_for_tests([("DATABASE_URL", "postgres:///catalyst")]).unwrap();
         config.marketplace.marketplace_index_chain_id_ethereum = 999;
-        let error = market_settings(&config, &[])
-            .err()
-            .expect("unsupported chain");
+        let error = market_settings(&config, &[]).expect_err("unsupported chain");
         assert!(
             error
                 .to_string()

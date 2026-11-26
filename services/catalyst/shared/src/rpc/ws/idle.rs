@@ -8,7 +8,7 @@ use tokio::time::Instant;
 pub struct IdleTimer(Arc<Inner>);
 struct Inner {
     timeout: Duration,
-    state: std::sync::Mutex<(Instant, bool)>,
+    state: parking_lot::Mutex<(Instant, bool)>,
     changed: Notify,
 }
 pub enum IdleAction {
@@ -20,12 +20,12 @@ impl IdleTimer {
     pub fn new(seconds: u64) -> Self {
         Self(Arc::new(Inner {
             timeout: Duration::from_secs(seconds),
-            state: std::sync::Mutex::new((Instant::now(), false)),
+            state: parking_lot::Mutex::new((Instant::now(), false)),
             changed: Notify::new(),
         }))
     }
     pub fn activity(&self) {
-        *self.0.state.lock().unwrap() = (Instant::now(), false);
+        *self.0.state.lock() = (Instant::now(), false);
         self.0.changed.notify_waiters();
     }
     /// Observes expiry without consuming the writer's Ping action. Social's
@@ -38,7 +38,7 @@ impl IdleTimer {
             let changed = self.0.changed.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
-            let at = self.0.state.lock().unwrap().0;
+            let at = self.0.state.lock().0;
             let Some(deadline) = at.checked_add(self.0.timeout) else {
                 changed.await;
                 continue;
@@ -46,7 +46,7 @@ impl IdleTimer {
             tokio::select! {
                 _ = changed => continue,
                 _ = tokio::time::sleep_until(deadline) => {
-                    if self.0.state.lock().unwrap().0 == at { return; }
+                    if self.0.state.lock().0 == at { return; }
                 },
             }
         }
@@ -57,7 +57,7 @@ impl IdleTimer {
         }
         loop {
             let changed = self.0.changed.notified();
-            let (at, pinged) = *self.0.state.lock().unwrap();
+            let (at, pinged) = *self.0.state.lock();
             let Some(deadline) = at.checked_add(if pinged {
                 self.0.timeout
             } else {
@@ -69,7 +69,7 @@ impl IdleTimer {
             tokio::select! {
                 _=changed=>continue,
                 _=tokio::time::sleep_until(deadline)=> {
-                    let mut state=self.0.state.lock().unwrap();
+                    let mut state=self.0.state.lock();
                     if *state!=(at,pinged) { continue; }
                     if pinged { return IdleAction::Expired; }
                     state.1=true;return IdleAction::Ping;

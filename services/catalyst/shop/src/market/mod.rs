@@ -66,6 +66,7 @@ pub mod bid_notices;
 pub mod bids;
 mod cancelled_trades;
 pub mod catalog;
+pub mod catalogue;
 pub mod chain_group;
 pub mod chain_jobs;
 pub mod chain_walk;
@@ -77,6 +78,7 @@ pub mod committee_index;
 pub mod compare_sources;
 pub mod contracts;
 pub mod definitions;
+pub mod ethereum_bid_history;
 pub mod ethereum_sales;
 pub mod features;
 pub mod federation;
@@ -105,6 +107,7 @@ pub mod owners;
 pub mod prices;
 pub mod profiles;
 pub mod rankings;
+mod rates;
 pub mod readers;
 pub mod rentals;
 pub mod royalty_notices;
@@ -676,14 +679,12 @@ pub struct MarketplaceState {
     historical_slots: tokio::sync::Semaphore,
     historical_body_slots: tokio::sync::Semaphore,
     pub(crate) sales_pages_slots: tokio::sync::Semaphore,
-    /// `mirror_state.last_complete_pass_at` per mirror, cached 10 s.
-    pub(crate) mirror_ready: TtlMap<mirrors::Mirror, Option<chrono::NaiveDateTime>>,
     /// `trades_mirror.completed_at` for the configured upstream, cached 10 s
     /// (`trades::require_ready`).
     pub(crate) trades_ready: TtlMap<(), Option<chrono::NaiveDateTime>>,
     /// The upstream trades list of the pass in progress, held between ticks
     /// so a pass that spans several ticks downloads it once (`trades::PassList`).
-    pub(crate) trades_list: std::sync::Mutex<Option<Arc<trades::PassList>>>,
+    pub(crate) trades_list: parking_lot::Mutex<Option<Arc<trades::PassList>>>,
     /// Catalog pages and totals (`MARKETPLACE_CATALOG_CACHE_TTL_SECS`).
     pub(crate) catalog_cache: catalog::Cache,
     /// The lambdas catalogue's memo (`lambdas_catalog`).
@@ -778,9 +779,8 @@ impl MarketplaceState {
             historical_slots: tokio::sync::Semaphore::new(2),
             historical_body_slots: tokio::sync::Semaphore::new(2),
             sales_pages_slots: tokio::sync::Semaphore::new(4),
-            mirror_ready: TtlMap::bounded(mirrors::READY_TTL, 8),
             trades_ready: TtlMap::bounded(mirrors::READY_TTL, 1),
-            trades_list: std::sync::Mutex::new(None),
+            trades_list: parking_lot::Mutex::new(None),
             catalog_cache: catalog::Cache::new(settings.market.catalog_cache_ttl),
             lambdas: lambdas_catalog::Caches::default(),
             third_party: third_party::Caches::default(),
@@ -884,6 +884,7 @@ impl MarketplaceState {
         }
         mirrors::spawn_jobs(self, jobs);
         chain_jobs::spawn_jobs(self, jobs, rentals);
+        crate::mana::history::spawn(self, jobs);
         neighbours::spawn_job(self, jobs);
     }
 
@@ -1334,6 +1335,7 @@ pub fn market_router(state: SharedState) -> Router {
         .route("/v1/sales", get(sales::get_sales))
         .route("/v1/cancelled-trades", get(cancelled_trades::get))
         .route("/v1/prices", get(prices::get_prices))
+        .route("/v1/rates/mana-usd", get(rates::get_mana_usd_rates))
         .route("/v1/trendings", get(items::get_trendings))
         .route(
             "/v1/rankings/{entity}/{timeframe}",

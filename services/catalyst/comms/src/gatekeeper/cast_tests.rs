@@ -2,8 +2,8 @@
 //! upstream comms-gatekeeper b42d45c7b `test/integration/cast/*` and
 //! `test/unit/cast/*`, against a local LiveKit Twirp fixture (rooms and
 //! ingresses in memory) and the scratch database.
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::{Value, json};
@@ -44,7 +44,7 @@ struct LiveKitFixture {
 
 impl LiveKitFixture {
     fn metadata(&self, room: &str) -> Value {
-        let rooms = self.rooms.lock().unwrap();
+        let rooms = self.rooms.lock();
         rooms
             .get(room)
             .map(|m| serde_json::from_str(m).unwrap_or(Value::Null))
@@ -54,14 +54,12 @@ impl LiveKitFixture {
     fn set_metadata(&self, room: &str, metadata: Value) {
         self.rooms
             .lock()
-            .unwrap()
             .insert(room.to_owned(), metadata.to_string());
     }
 
     fn join(&self, room: &str, identity: &str, joined_at: i64) {
         self.participants
             .lock()
-            .unwrap()
             .entry(room.to_owned())
             .or_default()
             .push((identity.to_owned(), joined_at));
@@ -70,7 +68,6 @@ impl LiveKitFixture {
     fn connected(&self, room: &str) -> Vec<String> {
         self.participants
             .lock()
-            .unwrap()
             .get(room)
             .map(|p| p.iter().map(|(id, _)| id.clone()).collect())
             .unwrap_or_default()
@@ -113,7 +110,6 @@ impl LiveKitFixture {
                     let items: Vec<Value> = h
                         .ingress_status
                         .lock()
-                        .unwrap()
                         .get(&id)
                         .map(|status| json!({"ingressId": id, "state": {"status": status}}))
                         .into_iter()
@@ -140,7 +136,7 @@ impl LiveKitFixture {
             .route(
                 "/twirp/livekit.RoomService/ListRooms",
                 axum::routing::post(move |Json(body): Json<Value>| {
-                    let rooms = c.rooms.lock().unwrap().clone();
+                    let rooms = c.rooms.lock().clone();
                     async move {
                         let names: Vec<String> = body["names"]
                             .as_array()
@@ -161,7 +157,7 @@ impl LiveKitFixture {
                     let name = body["name"].as_str().unwrap().to_owned();
                     let failing = d.fail_rooms.load(Ordering::SeqCst);
                     if !failing {
-                        d.rooms.lock().unwrap().entry(name.clone()).or_default();
+                        d.rooms.lock().entry(name.clone()).or_default();
                     }
                     async move {
                         if failing {
@@ -178,7 +174,6 @@ impl LiveKitFixture {
                     let metadata = body["metadata"].as_str().unwrap().to_owned();
                     e.rooms
                         .lock()
-                        .unwrap()
                         .insert(name.clone(), metadata.clone());
                     async move { Json(json!({"name": name, "sid": "RM_cast", "metadata": metadata})) }
                 }),
@@ -192,7 +187,6 @@ impl LiveKitFixture {
                     let listed: Vec<Value> = f
                         .participants
                         .lock()
-                        .unwrap()
                         .get(&room)
                         .map(|p| {
                             p.iter()
@@ -214,10 +208,10 @@ impl LiveKitFixture {
                     let room = body["room"].as_str().unwrap().to_owned();
                     let identity = body["identity"].as_str().unwrap().to_owned();
                     let removed = (!g.fail_participants.load(Ordering::SeqCst)).then(|| {
-                        if let Some(p) = g.participants.lock().unwrap().get_mut(&room) {
+                        if let Some(p) = g.participants.lock().get_mut(&room) {
                             p.retain(|(id, _)| *id != identity);
                         }
-                        g.removed.lock().unwrap().push(identity);
+                        g.removed.lock().push(identity);
                         Json(json!({}))
                     });
                     async move { removed.ok_or(StatusCode::INTERNAL_SERVER_ERROR) }
@@ -949,7 +943,6 @@ async fn a_scene_admin_gets_a_stream_link_that_is_reused_until_it_expires() {
     h.livekit
         .ingress_status
         .lock()
-        .unwrap()
         .insert(ingress_id, "ENDPOINT_PUBLISHING".into());
     let (status, body) = h
         .signed(KEY, "GET", path, &scene_metadata(&scene), None)
@@ -998,7 +991,6 @@ async fn a_stale_streaming_flag_does_not_block_a_new_stream_link() {
         h.livekit
             .ingress_status
             .lock()
-            .unwrap()
             .insert(ingress_id.clone(), live.into());
         let (status, body) = h
             .signed(KEY, "GET", path, &scene_metadata(&scene), None)
@@ -1008,7 +1000,7 @@ async fn a_stale_streaming_flag_does_not_block_a_new_stream_link() {
     assert_eq!(h.livekit.ingresses.load(Ordering::SeqCst), 1);
 
     // LiveKit no longer knows the ingress: the flag is stale, the credential replaced.
-    h.livekit.ingress_status.lock().unwrap().remove(&ingress_id);
+    h.livekit.ingress_status.lock().remove(&ingress_id);
     let (status, renewed) = h
         .signed(KEY, "GET", path, &scene_metadata(&scene), None)
         .await;
@@ -1762,7 +1754,6 @@ async fn a_held_key_with_a_lost_start_is_kept_and_raised() {
     h.livekit
         .ingress_status
         .lock()
-        .unwrap()
         .insert(ingress, "ENDPOINT_PUBLISHING".into());
     let (status, body) = h
         .signed(KEY, "GET", "/cast/generate-stream-link", &metadata, None)
@@ -3671,7 +3662,7 @@ async fn removing_a_place_removes_the_publishers_of_its_key() {
 
     assert_revoked(&h, &key, &scene.room, &streamer).await;
     assert_eq!(h.livekit.metadata(&scene.room)["presenters"], json!([]));
-    assert!(h.livekit.removed.lock().unwrap().contains(&bot));
+    assert!(h.livekit.removed.lock().contains(&bot));
     // A later scene on this base parcel starts without the place's admins.
     let active: bool = sqlx::query_scalar(
         "SELECT active FROM social.scene_admins WHERE place_id = $1 AND admin_address = $2",
@@ -3734,7 +3725,7 @@ async fn linked_ingress(h: &Harness, metadata: &Value, status: &str) -> (Uuid, S
 }
 
 fn report_ingress(h: &Harness, ingress: &str, status: &str) {
-    let mut reported = h.livekit.ingress_status.lock().unwrap();
+    let mut reported = h.livekit.ingress_status.lock();
     reported.insert(ingress.to_owned(), status.into());
 }
 
@@ -4226,7 +4217,7 @@ async fn removing_a_scene_admin_revokes_the_key_it_generated() {
 
     scene_admin(&h, KEY, "DELETE", &metadata, &admin).await;
     assert_revoked(&h, &key, &scene.room, &streamer).await;
-    let told = social.streaming_notifications.lock().unwrap();
+    let told = social.streaming_notifications.lock();
     assert!(
         told.iter()
             .all(|notice| notice.kind == StreamingNotificationKind::KeyRevoke)
@@ -4265,7 +4256,7 @@ async fn a_slow_ingress_delete_delays_neither_the_request_nor_the_notice() {
     assert!(!key_is_active(&pool, &key).await);
     settled(&pool, &scene.room).await;
     assert!(h.livekit.connected(&scene.room).is_empty());
-    assert_eq!(social.streaming_notifications.lock().unwrap().len(), 1);
+    assert_eq!(social.streaming_notifications.lock().len(), 1);
     let retry = "SELECT attempts = 1 AND NOT ingress_deleted \
                  FROM social.scene_stream_cleanup WHERE place_id = $1";
     let retry: bool = sqlx::query_scalar(retry)
@@ -4291,7 +4282,7 @@ async fn a_slow_ingress_delete_delays_neither_the_request_nor_the_notice() {
         .await
         .unwrap();
     assert_eq!(pending, 0);
-    assert_eq!(social.streaming_notifications.lock().unwrap().len(), 1);
+    assert_eq!(social.streaming_notifications.lock().len(), 1);
 }
 
 /// A platform ban revokes the keys the banned wallet generated; lifting the
@@ -4441,7 +4432,7 @@ async fn a_key_pass_that_is_cut_goes_on_with_the_next_key() {
         }
         active
     };
-    let cursor = std::sync::Mutex::new(String::new());
+    let cursor = parking_lot::Mutex::new(String::new());
     let pass = || recheck_keys(&h.state, Keys::After(&cursor));
 
     // The row of the second key is locked: its revocation waits.
@@ -4453,13 +4444,13 @@ async fn a_key_pass_that_is_cut_goes_on_with_the_next_key() {
     let cut = tokio::time::timeout(std::time::Duration::from_secs(2), pass()).await;
     assert!(cut.is_err(), "the pass ended");
     assert_eq!(active().await, [false, true, true]);
-    assert_eq!(*cursor.lock().unwrap(), "pass-2");
+    assert_eq!(*cursor.lock(), "pass-2");
     // The statement that waited can still run when the lock ends.
     held.rollback().await.unwrap();
 
     pass().await;
     assert!(!active().await[2], "the pass goes on");
-    assert_eq!(*cursor.lock().unwrap(), "", "the last page");
+    assert_eq!(*cursor.lock(), "", "the last page");
     pass().await;
     assert_eq!(active().await, [false, false, false]);
 }

@@ -70,6 +70,7 @@ impl HeldPulseGeneration {
         }
     }
     #[cfg(any(test, feature = "test-support"))]
+    #[allow(clippy::unwrap_used, reason = "test support")]
     pub async fn end_lease_backend_for_test(&self, admin: &PgPool) {
         let pid = self.leases.backend_pid().await.unwrap();
         sqlx::query("SELECT pg_terminate_backend($1)")

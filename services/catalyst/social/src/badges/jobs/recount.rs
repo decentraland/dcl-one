@@ -13,8 +13,11 @@
 //!   count (upstream's `steps++` per event double counted a redelivery, so
 //!   imported steps above it are kept).
 //!
-//! The mirrors are read once their first complete pass is recorded
-//! (`shop.mirror_state`). Each recount's `badge_cursors.position` counts its
+//! The catalogue is read once its source can describe it: the mirrors after
+//! their first complete pass is recorded (`shop.mirror_state`), or, once the
+//! collections index owns Polygon, while its descriptive verdict holds
+//! (`catalyst_chain_index::catalogue`). The verdict, the candidates and the
+//! creators' items come from one snapshot. Each recount's `badge_cursors.position` counts its
 //! completed passes; the first pass (`0`) brings the stored progress up to
 //! the node's rows without notifying, so a node never announces history. A
 //! pass walks the candidates in address order and records the last one it
@@ -27,6 +30,7 @@ use super::super::progress::Applied;
 use std::collections::HashMap;
 
 use super::{Pass, award};
+use crate::chain_index::catalogue;
 use crate::identity::Address;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,19 +130,6 @@ pub(crate) async fn run_one(pass: &Pass, recount: Recount) -> anyhow::Result<u64
 
 async fn batch(pass: &Pass, recount: Recount) -> Result<(u64, bool), sqlx::Error> {
     let mut tx = pass.pool.begin().await?;
-    if let Some(mirror) = recount.mirror() {
-        let ready: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM shop.mirror_state \
-             WHERE mirror = $1 AND network = 'matic' AND last_complete_pass_at IS NOT NULL)",
-        )
-        .bind(mirror)
-        .fetch_one(&mut *tx)
-        .await?;
-        if !ready {
-            tx.rollback().await?;
-            return Ok((0, false));
-        }
-    }
     let awardable: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM social.badge_definitions \
          WHERE id = $1 AND published_at IS NOT NULL AND archived_at IS NULL)",
@@ -165,20 +156,30 @@ async fn batch(pass: &Pass, recount: Recount) -> Result<(u64, bool), sqlx::Error
     };
     let notify = (passes > 0).then_some(pass.asset_base.as_str());
     let limit = pass.batch();
+    // The catalogue's verdict, the candidates and the creators' items from
+    // one snapshot; the awards re-read each wallet's progress in `tx`.
+    let mut snap = catalogue::read_snapshot(&pass.pool).await?;
+    if let Some(mirror) = recount.mirror()
+        && !catalogue_ready(&mut snap, mirror).await?
+    {
+        tx.rollback().await?;
+        return Ok((0, false));
+    }
     let candidates: Vec<(String, i64)> =
         sqlx::query_as(sqlx::AssertSqlSafe(recount.candidates_sql()))
             .bind(recount.badge())
             .bind(limit)
             .bind(after.as_deref().unwrap_or(""))
-            .fetch_all(&mut *tx)
+            .fetch_all(&mut *snap)
             .await?;
     let items = match recount {
         Recount::EmoteCreator | Recount::WearableDesigner => {
             let wallets: Vec<&str> = candidates.iter().map(|(a, _)| a.as_str()).collect();
-            creators_items(&mut tx, &wallets, recount == Recount::EmoteCreator).await?
+            creators_items(&mut snap, &wallets, recount == Recount::EmoteCreator).await?
         }
         _ => HashMap::new(),
     };
+    drop(snap);
     let mut written = 0;
     for (raw, count) in &candidates {
         let Ok(address) = Address::parse(raw) else {
@@ -231,6 +232,31 @@ async fn batch(pass: &Pass, recount: Recount) -> Result<(u64, bool), sqlx::Error
     .await?;
     tx.commit().await?;
     Ok((written, more))
+}
+
+/// Whether the Polygon catalogue may be recounted from `conn`'s snapshot: on
+/// a network the collections index owns, while its descriptive verdict on
+/// Polygon holds; otherwise once `mirror` recorded a complete pass.
+async fn catalogue_ready(conn: &mut sqlx::PgConnection, mirror: &str) -> Result<bool, sqlx::Error> {
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {} FROM (SELECT 'matic'::text AS network) AS n {}",
+        catalogue::STATE_COLUMNS,
+        *catalogue::STATE_JOINS
+    )))
+    .fetch_one(conn)
+    .await?;
+    let state = catalogue::NetworkState::from_row(&row)?;
+    Ok(
+        match state.owned_verdict(
+            super::POLYGON_CHAIN,
+            catalogue::Purpose::Describe,
+            chrono::Utc::now(),
+        ) {
+            Some(verdict) => verdict.is_ok(),
+            None if mirror == "items" => state.items_pass.is_some(),
+            None => state.collections_pass.is_some(),
+        },
+    )
 }
 
 /// The Polygon items of `wallets` (lowercase), emotes or the rest, each

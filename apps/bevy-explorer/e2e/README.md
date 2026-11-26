@@ -75,6 +75,7 @@ second one on its own realm.
 | `DCL_E2E_TRANSPORT` | `native` drives the standalone through `dcl/console` instead of a browser | `web` |
 | `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
+| `DCL_PROFILE_DIR` | Absolute directory for a spawned native client's config, logs and content cache; use a directory in the test workspace | OS profile when unset |
 | `DCL_E2E_SMART_WEARABLE_URN` | A smart wearable on the configured backend for `specs/smart-wearables.test.ts` to run with no prompt | unset: that scenario is skipped |
 
 A development binary started by `DCL_E2E_NATIVE_BIN` reads its assets next to the executable: set `BEVY_ASSET_ROOT` to `rendering/bevy-explorer/source` so the bundled HUD loads, and pass `DCL_E2E_NATIVE_ARGS=--guest` on a machine whose install never accepted the terms, or the welcome page holds the world and no scenario arrives.
@@ -156,7 +157,7 @@ pnpm run avatar-sweep --profile ~/.cache/dcl-avatar-sweep-profile --port 8765   
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--counts` | `0,10,20,50,100,200,400,800` | Demo avatars per step, up to 1024 |
-| `--caps` | `20,all` | Max Avatars for the session (`/avatar_demo cap`: it wins over the setting and is never saved); `all` is no cap, so real players in the world hide no demo avatar |
+| `--caps` | `20,all` | Max Avatars for the session (`/avatar_demo cap`: it wins over the Max Avatars and Unlimited Avatars settings and is never saved); `all` is no cap, so real players in the world hide no demo avatar |
 | `--emotes` | `none,dance` | What new demo avatars play, looped (`/avatar_demo emote`) |
 | `--nametags` | `on` | `on`, `off`, or `on,off` for both (`/nametags`) |
 | `--layout` | `grid` | `grid` stands the demo avatars in front of the player, each row filled from straight ahead outwards; `around` fills a disc centred on the player, nearest first, so part of the crowd is behind the camera (`/avatar_demo layout`) |
