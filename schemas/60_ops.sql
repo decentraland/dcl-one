@@ -822,7 +822,7 @@ CREATE TRIGGER authorizations_balance_notify
     AFTER INSERT OR UPDATE OF status ON credits.authorizations
     FOR EACH ROW EXECUTE FUNCTION credits.notify_balance();
 CREATE TRIGGER wallet_flags_balance_notify
-    AFTER INSERT OR DELETE ON credits.wallet_flags
+    AFTER INSERT OR UPDATE OR DELETE ON credits.wallet_flags
     FOR EACH ROW EXECUTE FUNCTION credits.notify_balance();
 CREATE TRIGGER goal_grants_balance_notify
     AFTER INSERT OR UPDATE ON credits.goal_grants

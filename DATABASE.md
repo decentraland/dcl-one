@@ -1770,19 +1770,26 @@ channel after any change to what `GET /credits/users/{address}/credits`
 answers from:
 - a row of `credits.wallets` inserted or updated;
 - a row of `credits.authorizations` inserted or changing `status`;
-- a row of `credits.wallet_flags` inserted or deleted;
+- a row of `credits.wallet_flags` inserted, updated (a re-flag is the
+  admin's upsert) or deleted;
 - a row of `credits.goal_grants` inserted or updated (a claim);
 - a row of `credits.usages` inserted, announced by its `sender`.
 
 The reader is the balance stream (`GET /credits/users/{address}/credits/stream`,
 `shop/src/credits/stream.rs`). One `LISTEN` connection per process, opened
 with its first stream from a pool of its own (one connection, outside the
-request pool, so it never takes a slot a request needs), fans the addresses
-out. Each stream re-reads its balance when its wallet is announced, and on
-its own every minute: what only the clock changes, a credit or a pledge
-expiring, reaches it that way. A read that fails is retried with backoff.
-Each read is one REPEATABLE READ, READ ONLY snapshot, so the spendable
-balance and the hold agree.
+request pool, so it never takes a slot a request needs), wakes the streams of
+the announced wallet alone; an idle connection is pinged every minute. Each
+stream re-reads its balance when its wallet is announced, and on its own
+about every minute: what only the clock changes, a credit or a pledge
+expiring, reaches it that way. A read that fails is retried with backoff,
+and announcements meanwhile wait for it. Each read is one REPEATABLE READ,
+READ ONLY snapshot, so the spendable balance and the hold agree.
+
+The streams' reads are bounded so they never crowd the request pool: at most
+four run at once, the unprompted ones are spread by a fifth either way, a
+wallet holds at most 8 streams and a process 4096 (429 past either), and
+every stream ends when the node shuts down.
 
 The cost is one `pg_notify` per affected row, inside the writing
 transaction; Postgres delivers a transaction's notifications at commit, once

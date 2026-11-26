@@ -7,18 +7,26 @@
 //! dapps follow it instead of polling.
 //!
 //! Changes arrive on the `credits_balance` channel: the database announces a
-//! wallet's address whenever its wallet row, the status of its credits'
-//! pledges or its flag changes (`credits.notify_balance`, schemas/60_ops.sql),
-//! whichever node wrote it. One listener per process ([`BalanceChanges`]),
-//! started with the first stream, fans the addresses out. While it is not
-//! listening (connecting, or after a lost connection) changes can be missed,
-//! so on every (re)connect it tells each stream to read its balance again. A
-//! stream that falls behind does the same. A stream sends a balance only when
-//! it differs from the last one it sent.
+//! wallet's address whenever what its balance answers from changes
+//! (`credits.notify_balance`, schemas/60_ops.sql), whichever node wrote it.
+//! One listener per process, started with the first stream on a connection
+//! of its own, wakes the streams of the announced wallet alone
+//! ([`BalanceChanges`]). While it is not listening (connecting, or after a
+//! lost connection) changes can be missed, so every (re)connect wakes every
+//! stream; an idle connection is pinged, so a half-open one is noticed.
+//!
+//! The streams share the request pool, so they are bounded: a wallet holds
+//! at most [`MAX_STREAMS_PER_WALLET`] and the process [`MAX_STREAMS`] (429
+//! past either), at most [`CONCURRENT_READS`] read at once, and their
+//! unprompted reads (every [`REFRESH`], or a retry after a failed read) are
+//! spread with jitter, so a reconnect or a failover never makes them read in
+//! step. A stream sends a balance only when it differs from the last one it
+//! sent, and ends when the node shuts down.
 
+use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::Json;
@@ -27,9 +35,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
-use sqlx::PgPool;
 use sqlx::postgres::PgListener;
-use tokio::sync::broadcast;
+use tokio::sync::{Semaphore, watch};
+use tokio_util::sync::CancellationToken;
 
 use super::SharedState;
 use super::dto::UserCreditsResponse;
@@ -42,99 +50,228 @@ pub const CHANNEL: &str = "credits_balance";
 /// How often an idle stream sends a `: heartbeat` comment (credits-server's
 /// 30 seconds), so proxies keep the connection open.
 pub const HEARTBEAT: Duration = Duration::from_secs(30);
-/// How often a stream reads its balance again with no change announced: what
-/// only the clock changes (a credit or a pledge expiring) reaches it within
-/// this, and so does a read that failed.
+/// About how often a stream reads its balance again with no change announced:
+/// what only the clock changes (a credit or a pledge expiring) reaches it
+/// within this, and so does a read that failed.
 pub const REFRESH: Duration = Duration::from_secs(60);
-/// Changes a slow stream may fall behind by before it reads its balance again.
-const BACKLOG: usize = 1024;
+/// Open streams one wallet may hold (as many sockets as the social socket
+/// allows an address by default).
+pub const MAX_STREAMS_PER_WALLET: usize = 8;
+/// Open streams one process may hold.
+pub const MAX_STREAMS: usize = 4096;
+/// Balance reads the streams run at once: each is a short transaction on the
+/// request pool, so they stay well below its size.
+pub const CONCURRENT_READS: usize = 4;
+/// How long the listener waits for a notification before it pings its
+/// connection.
+const LISTENER_IDLE: Duration = Duration::from_secs(60);
 
-/// A change the streams hear about.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BalanceChange {
-    /// This wallet's balance may have changed.
-    Wallet(Arc<str>),
-    /// Any balance may have changed while nothing was listening.
-    Everyone,
+/// The process's listener on [`CHANNEL`] and the streams it wakes.
+pub struct BalanceChanges {
+    refresh: Duration,
+    max_per_wallet: usize,
+    max_streams: usize,
+    routes: Mutex<Routes>,
+    /// Bumped when any balance may have changed unheard.
+    everyone: watch::Sender<u64>,
+    reads: Arc<Semaphore>,
+    listening: AtomicBool,
+    shutdown: OnceLock<CancellationToken>,
 }
 
-/// The process's listener on [`CHANNEL`] and the streams that follow it.
-pub struct BalanceChanges {
-    sender: broadcast::Sender<BalanceChange>,
-    started: AtomicBool,
-    refresh: Duration,
+/// The wallets with open streams.
+#[derive(Default)]
+struct Routes {
+    wallets: HashMap<Arc<str>, Route>,
+    open: usize,
+}
+
+/// One wallet's streams and the signal that wakes them.
+struct Route {
+    changed: watch::Sender<u64>,
+    streams: usize,
+}
+
+/// A stream past a cap.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Full {
+    Wallet,
+    Process,
 }
 
 impl Default for BalanceChanges {
     fn default() -> Self {
-        Self::with_refresh(REFRESH)
+        Self::with_limits(REFRESH, MAX_STREAMS_PER_WALLET, MAX_STREAMS)
     }
 }
 
 impl BalanceChanges {
-    /// Streams that read their balance again every `refresh` with no change.
-    pub fn with_refresh(refresh: Duration) -> Self {
+    /// Streams that read their balance again about every `refresh` with no
+    /// change, at most `max_per_wallet` for one wallet and `max_streams` in all.
+    pub fn with_limits(refresh: Duration, max_per_wallet: usize, max_streams: usize) -> Self {
         Self {
-            sender: broadcast::channel(BACKLOG).0,
-            started: AtomicBool::new(false),
             refresh,
+            max_per_wallet,
+            max_streams,
+            routes: Mutex::default(),
+            everyone: watch::channel(0).0,
+            reads: Arc::new(Semaphore::new(CONCURRENT_READS)),
+            listening: AtomicBool::new(false),
+            shutdown: OnceLock::new(),
         }
     }
 
-    /// A stream's subscription; the first one starts the listener over `pool`.
-    pub fn subscribe(&self, pool: &PgPool) -> broadcast::Receiver<BalanceChange> {
-        let receiver = self.sender.subscribe();
-        if !self.started.swap(true, Ordering::AcqRel) {
-            crate::shared::task::spawn(listen(pool.clone(), self.sender.clone()));
+    /// Streams that read their balance again about every `refresh`.
+    pub fn with_refresh(refresh: Duration) -> Self {
+        Self::with_limits(refresh, MAX_STREAMS_PER_WALLET, MAX_STREAMS)
+    }
+
+    /// The node's shutdown: open streams and the listener end when it is
+    /// cancelled, so the server's graceful shutdown never waits on them.
+    pub fn end_on(&self, token: CancellationToken) {
+        let _ = self.shutdown.set(token);
+    }
+
+    fn shutdown(&self) -> CancellationToken {
+        self.shutdown.get().cloned().unwrap_or_default()
+    }
+
+    /// Takes a slot for one of `wallet`'s streams, or refuses it past a cap:
+    /// the signal that wakes the wallet's streams, and the one that wakes all.
+    fn register(&self, wallet: &Arc<str>) -> Result<Woken, Full> {
+        let mut routes = self.routes.lock().unwrap_or_else(|e| e.into_inner());
+        if routes.open >= self.max_streams {
+            return Err(Full::Process);
         }
-        receiver
+        let route = routes
+            .wallets
+            .entry(wallet.clone())
+            .or_insert_with(|| Route {
+                changed: watch::channel(0).0,
+                streams: 0,
+            });
+        if route.streams >= self.max_per_wallet {
+            return Err(Full::Wallet);
+        }
+        route.streams += 1;
+        let changed = route.changed.subscribe();
+        routes.open += 1;
+        Ok(Woken {
+            changed,
+            everyone: self.everyone.subscribe(),
+        })
+    }
+
+    /// Gives back one of `wallet`'s slots.
+    fn close(&self, wallet: &str) {
+        let mut routes = self.routes.lock().unwrap_or_else(|e| e.into_inner());
+        routes.open = routes.open.saturating_sub(1);
+        if let Some(route) = routes.wallets.get_mut(wallet) {
+            route.streams = route.streams.saturating_sub(1);
+            if route.streams == 0 {
+                routes.wallets.remove(wallet);
+            }
+        }
+    }
+
+    /// Wakes `wallet`'s streams, if it has any.
+    fn announce(&self, wallet: &str) {
+        let routes = self.routes.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(route) = routes.wallets.get(wallet) {
+            route.changed.send_modify(|n| *n = n.wrapping_add(1));
+        }
+    }
+
+    /// Wakes every stream: changes may have gone unheard.
+    fn announce_everyone(&self) {
+        self.everyone.send_modify(|n| *n = n.wrapping_add(1));
     }
 }
 
+/// What wakes one stream.
+struct Woken {
+    changed: watch::Receiver<u64>,
+    everyone: watch::Receiver<u64>,
+}
+
+/// A stream's slot, given back when the stream ends.
+struct Slot {
+    state: SharedState,
+    wallet: Arc<str>,
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.state.balance_changes.close(&self.wallet);
+    }
+}
+
+/// Starts the process's listener unless it runs.
+fn ensure_listening(state: &SharedState) {
+    if state.balance_changes.listening.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let state = state.clone();
+    crate::shared::task::spawn(async move {
+        let shutdown = state.balance_changes.shutdown();
+        tokio::select! {
+            () = listen(&state) => {}
+            () = shutdown.cancelled() => {}
+        }
+        // Ended: the next stream starts it again.
+        state
+            .balance_changes
+            .listening
+            .store(false, Ordering::Release);
+    });
+}
+
 /// Listens on [`CHANNEL`] for as long as the process runs, reconnecting with
-/// backoff; after every (re)connect every stream reads its balance again. The
-/// listener holds its connection for good, so it gets its own, outside the
-/// request pool: it never takes a slot a request needs.
-async fn listen(requests: PgPool, sender: broadcast::Sender<BalanceChange>) {
+/// backoff; every (re)connect wakes every stream. The listener holds its
+/// connection for good, so it gets its own, outside the request pool: it
+/// never takes a slot a request needs. A connection idle for
+/// [`LISTENER_IDLE`] is pinged, so a half-open one is replaced.
+async fn listen(state: &SharedState) {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .min_connections(0)
-        .connect_lazy_with((*requests.connect_options()).clone());
+        .connect_lazy_with((*state.credits.pool.connect_options()).clone());
+    let changes = &state.balance_changes;
     let mut backoff = Duration::from_secs(1);
     loop {
-        let connected = async {
+        let ended: sqlx::Result<()> = async {
             let mut listener = PgListener::connect_with(&pool).await?;
             listener.listen(CHANNEL).await?;
-            Ok::<_, sqlx::Error>(listener)
+            backoff = Duration::from_secs(1);
+            changes.announce_everyone();
+            loop {
+                match tokio::time::timeout(LISTENER_IDLE, listener.try_recv()).await {
+                    Ok(Ok(Some(notification))) => changes.announce(notification.payload()),
+                    // Reconnected: what was announced meanwhile is lost.
+                    Ok(Ok(None)) => changes.announce_everyone(),
+                    Ok(Err(error)) => return Err(error),
+                    Err(_) => {
+                        let ping = sqlx::query("SELECT 1").execute(&mut listener);
+                        tokio::time::timeout(Duration::from_secs(10), ping)
+                            .await
+                            .map_err(|_| sqlx::Error::PoolTimedOut)??;
+                    }
+                }
+            }
         }
         .await;
-        let mut listener = match connected {
-            Ok(listener) => listener,
-            Err(error) => {
-                tracing::warn!(%error, channel = CHANNEL, "the balance streams' listener could not connect; retrying");
-                tokio::time::sleep(backoff).await;
-                backoff = (backoff * 2).min(Duration::from_secs(30));
-                continue;
-            }
-        };
-        backoff = Duration::from_secs(1);
-        let _ = sender.send(BalanceChange::Everyone);
-        loop {
-            match listener.try_recv().await {
-                Ok(Some(notification)) => {
-                    let _ = sender.send(BalanceChange::Wallet(notification.payload().into()));
-                }
-                // Reconnected: what was announced meanwhile is lost.
-                Ok(None) => {
-                    let _ = sender.send(BalanceChange::Everyone);
-                }
-                Err(error) => {
-                    tracing::warn!(%error, channel = CHANNEL, "the balance streams' listener lost its connection; reconnecting");
-                    break;
-                }
-            }
+        if let Err(error) = ended {
+            tracing::warn!(%error, channel = CHANNEL, "the balance streams' listener lost its connection; reconnecting");
         }
+        tokio::time::sleep(jittered(backoff)).await;
+        backoff = (backoff * 2).min(Duration::from_secs(30));
     }
+}
+
+/// `period` spread by up to a fifth either way, so many streams never act in
+/// step.
+fn jittered(period: Duration) -> Duration {
+    period.mul_f64(rand::random_range(0.8..1.2))
 }
 
 /// credits-server's refusal of a flagged wallet's stream, with the balance
@@ -176,28 +313,49 @@ pub async fn credits_stream(
         )
             .into_response());
     }
-    // Subscribed before the first read, so a change between the two is heard;
+    let wallet: Arc<str> = wallet.into();
+    // Registered before the first read, so a change between the two is heard;
     // the first read's own flag decides the admission.
-    let changes = state.balance_changes.subscribe(&state.credits.pool);
-    let refresh = state.balance_changes.refresh;
+    let woken = match state.balance_changes.register(&wallet) {
+        Ok(woken) => woken,
+        Err(full) => {
+            let error = match full {
+                Full::Wallet => "Too many open balance streams for this wallet",
+                Full::Process => "Too many open balance streams",
+            };
+            return Ok((
+                StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, "30")],
+                Json(json!({ "error": error })),
+            )
+                .into_response());
+        }
+    };
+    let slot = Slot {
+        state: state.clone(),
+        wallet: wallet.clone(),
+    };
+    ensure_listening(&state);
     let first = user_credits_body(&state, &wallet, None).await?;
     if first.is_blocked_for_claiming == Some(true) {
         return Ok(flagged(&first));
     }
     let first = serde_json::to_string(&first).map_err(|e| ApiError::Internal(e.to_string()))?;
-    let wallet: Arc<str> = wallet.into();
+    let changes = &state.balance_changes;
     let follow = Follow {
         reader: Arc::new(WalletBalance {
-            state,
-            wallet: wallet.clone(),
+            state: state.clone(),
+            wallet,
         }),
-        wallet,
-        changes,
+        woken,
+        reads: changes.reads.clone(),
+        shutdown: changes.shutdown(),
         last: None,
         first: Some(first),
-        refresh,
+        refresh: changes.refresh,
         retry: None,
-        read_by: tokio::time::Instant::now() + refresh,
+        read_by: tokio::time::Instant::now() + jittered(changes.refresh),
+        _slot: Some(slot),
     };
     let events = futures::stream::unfold(follow, Follow::next);
     Ok((
@@ -231,48 +389,66 @@ impl ReadBalance for WalletBalance {
     }
 }
 
-/// One stream's state: what it last sent, what it hears and when it reads
+/// One stream's state: what it last sent, what wakes it and when it reads
 /// again unprompted.
 struct Follow {
     reader: Arc<dyn ReadBalance>,
-    wallet: Arc<str>,
-    changes: broadcast::Receiver<BalanceChange>,
+    woken: Woken,
+    reads: Arc<Semaphore>,
+    shutdown: CancellationToken,
     last: Option<String>,
     first: Option<String>,
     refresh: Duration,
     /// The backoff after a failed read, until one succeeds.
     retry: Option<Duration>,
-    /// When the stream reads its balance again if nothing is announced: the
-    /// refresh, or the retry of a failed read. A deadline, not a timer reset
-    /// by every announcement, so other wallets' changes never put it off.
+    /// When the stream reads its balance again if nothing wakes it: the
+    /// jittered refresh, or the retry of a failed read. A deadline, not a
+    /// timer reset by every wake-up.
     read_by: tokio::time::Instant,
+    /// Given back when the stream ends (`None` in a test).
+    _slot: Option<Slot>,
 }
 
 impl Follow {
     /// The next balance to send: the first at once, then whenever a read
     /// (prompted by a change to this wallet, a missed change, the refresh or
-    /// the retry of a failed read) differs from the last one sent.
+    /// the retry of a failed read) differs from the last one sent. After a
+    /// failed read nothing reads before the retry: that read covers whatever
+    /// was announced meanwhile. Ends with the node.
     async fn next(mut self) -> Option<(Result<Event, Infallible>, Self)> {
         if let Some(first) = self.first.take() {
             self.last = Some(first.clone());
             return Some((Ok(Event::default().data(first)), self));
         }
         loop {
+            let retrying = self.retry.is_some();
             tokio::select! {
-                change = self.changes.recv() => match change {
-                    Err(broadcast::error::RecvError::Closed) => return None,
-                    // After a failed read nothing reads before the retry: the
-                    // read then covers whatever was announced meanwhile.
-                    _ if self.retry.is_some() => continue,
-                    Ok(BalanceChange::Wallet(wallet)) if wallet != self.wallet => continue,
-                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
-                },
+                () = self.shutdown.cancelled() => return None,
+                woke = self.woken.changed.changed(), if !retrying => {
+                    if woke.is_err() {
+                        return None;
+                    }
+                }
+                woke = self.woken.everyone.changed(), if !retrying => {
+                    if woke.is_err() {
+                        return None;
+                    }
+                }
                 () = tokio::time::sleep_until(self.read_by) => {}
             }
-            match self.reader.read().await {
+            // What this read covers: a change announced from now wakes it again.
+            self.woken.changed.borrow_and_update();
+            self.woken.everyone.borrow_and_update();
+            let read = {
+                let Ok(_permit) = self.reads.acquire().await else {
+                    return None;
+                };
+                self.reader.read().await
+            };
+            match read {
                 Ok(body) => {
                     self.retry = None;
-                    self.read_by = tokio::time::Instant::now() + self.refresh;
+                    self.read_by = tokio::time::Instant::now() + jittered(self.refresh);
                     if self.last.as_deref() != Some(body.as_str()) {
                         self.last = Some(body.clone());
                         return Some((Ok(Event::default().data(body)), self));
@@ -284,8 +460,8 @@ impl Follow {
                         .map_or(Duration::from_secs(1), |b| b * 2)
                         .min(self.refresh);
                     self.retry = Some(backoff);
-                    self.read_by = tokio::time::Instant::now() + backoff;
-                    tracing::warn!(wallet = %self.wallet, %error, retry_in = ?backoff, "a balance stream could not read the balance; retrying");
+                    self.read_by = tokio::time::Instant::now() + jittered(backoff);
+                    tracing::warn!(%error, retry_in = ?backoff, "a balance stream could not read the balance; retrying");
                 }
             }
         }
@@ -319,45 +495,52 @@ mod tests {
         }
     }
 
-    /// After a failed read, announcements wait for the retry: one read, not
-    /// one per announcement, and the retry sends the current balance with no
-    /// further announcement.
-    #[tokio::test]
-    async fn a_failed_read_waits_for_its_retry_whatever_is_announced() {
-        let (sender, changes) = broadcast::channel(4);
-        let reader = Arc::new(Counting::default());
-        let refresh = Duration::from_millis(400);
-        let wallet: Arc<str> = "0xab".into();
-        let follow = Follow {
-            reader: reader.clone(),
-            wallet: wallet.clone(),
-            changes,
+    /// A stream of `wallet` over `changes`, reading with `reader`, whose
+    /// first balance was already sent.
+    fn follow(changes: &BalanceChanges, wallet: &str, reader: Arc<dyn ReadBalance>) -> Follow {
+        let woken = changes.register(&wallet.into()).unwrap();
+        Follow {
+            reader,
+            woken,
+            reads: changes.reads.clone(),
+            shutdown: changes.shutdown(),
             last: Some("before".into()),
             first: None,
-            refresh,
+            refresh: changes.refresh,
             retry: None,
-            read_by: tokio::time::Instant::now() + Duration::from_secs(60),
-        };
-        sender.send(BalanceChange::Wallet(wallet.clone())).unwrap();
-        let next = tokio::spawn(follow.next());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+            read_by: tokio::time::Instant::now() + Duration::from_secs(3600),
+            _slot: None,
+        }
+    }
+
+    /// After a failed read, wake-ups wait for the retry: one read, not one
+    /// per announcement, and the retry sends the current balance with no
+    /// further announcement. On a paused clock, so no timing can race it.
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_read_waits_for_its_retry_whatever_is_announced() {
+        let changes = BalanceChanges::with_refresh(Duration::from_secs(60));
+        let reader = Arc::new(Counting::default());
+        let next = tokio::spawn(follow(&changes, "0xab", reader.clone()).next());
+        changes.announce("0xab");
+        tokio::time::sleep(Duration::from_millis(10)).await;
         assert_eq!(
             reader.reads.load(Ordering::SeqCst),
             1,
             "the announcement's read fails"
         );
         for _ in 0..10 {
-            let _ = sender.send(BalanceChange::Wallet(wallet.clone()));
-            let _ = sender.send(BalanceChange::Everyone);
+            changes.announce("0xab");
+            changes.announce_everyone();
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // The retry is about a second away (with jitter, at least 0.8 s).
+        tokio::time::sleep(Duration::from_millis(700)).await;
         assert_eq!(
             reader.reads.load(Ordering::SeqCst),
             1,
             "nothing reads again before the retry"
         );
         reader.recovered.store(true, Ordering::SeqCst);
-        let (_, follow) = tokio::time::timeout(Duration::from_secs(2), next)
+        let (_, follow) = tokio::time::timeout(Duration::from_secs(5), next)
             .await
             .expect("the retry sends")
             .unwrap()
@@ -365,5 +548,76 @@ mod tests {
         assert_eq!(reader.reads.load(Ordering::SeqCst), 2);
         assert_eq!(follow.last.as_deref(), Some("current"));
         assert!(follow.retry.is_none());
+    }
+
+    /// An announcement wakes its own wallet's streams alone; a missed change
+    /// wakes them all.
+    #[tokio::test(start_paused = true)]
+    async fn an_announcement_wakes_its_wallets_streams_alone() {
+        let changes = BalanceChanges::with_refresh(Duration::from_secs(60));
+        let (ours, theirs) = (Arc::new(Counting::default()), Arc::new(Counting::default()));
+        ours.recovered.store(true, Ordering::SeqCst);
+        theirs.recovered.store(true, Ordering::SeqCst);
+        let mine = tokio::spawn(follow(&changes, "0xab", ours.clone()).next());
+        let _other = tokio::spawn(follow(&changes, "0xcd", theirs.clone()).next());
+        for _ in 0..100 {
+            changes.announce("0xab");
+        }
+        let _sent = mine.await.unwrap().expect("its balance");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(ours.reads.load(Ordering::SeqCst) >= 1);
+        assert_eq!(
+            theirs.reads.load(Ordering::SeqCst),
+            0,
+            "another wallet's stream sleeps"
+        );
+        changes.announce_everyone();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert_eq!(
+            theirs.reads.load(Ordering::SeqCst),
+            1,
+            "a missed change wakes every stream"
+        );
+    }
+
+    /// The node's shutdown ends an open stream.
+    #[tokio::test(start_paused = true)]
+    async fn the_nodes_shutdown_ends_a_stream() {
+        let changes = BalanceChanges::with_refresh(Duration::from_secs(60));
+        let token = CancellationToken::new();
+        changes.end_on(token.clone());
+        let next = tokio::spawn(follow(&changes, "0xab", Arc::new(Counting::default())).next());
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        token.cancel();
+        assert!(next.await.unwrap().is_none(), "the stream ends");
+    }
+
+    /// A wallet holds at most its share of streams and the process its total;
+    /// a closed stream gives its slot back.
+    #[test]
+    fn streams_are_capped_per_wallet_and_per_process() {
+        let changes = BalanceChanges::with_limits(REFRESH, 2, 3);
+        let (a, b, c): (Arc<str>, Arc<str>, Arc<str>) = ("0xa".into(), "0xb".into(), "0xc".into());
+        assert!(changes.register(&a).is_ok());
+        assert!(changes.register(&a).is_ok());
+        assert_eq!(changes.register(&a).err(), Some(Full::Wallet));
+        assert!(changes.register(&b).is_ok());
+        assert_eq!(changes.register(&c).err(), Some(Full::Process));
+        changes.close(&a);
+        assert!(
+            changes.register(&c).is_ok(),
+            "a closed stream's slot is free again"
+        );
+        assert_eq!(changes.register(&a).err(), Some(Full::Process));
+        changes.close(&a);
+        changes.close(&a);
+        changes.close(&b);
+        changes.close(&c);
+        let routes = changes.routes.lock().unwrap();
+        assert_eq!(
+            (routes.open, routes.wallets.len()),
+            (0, 0),
+            "nothing kept for closed streams"
+        );
     }
 }

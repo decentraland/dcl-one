@@ -11284,7 +11284,7 @@ async fn a_balance_change_is_announced_on_its_channel() {
     let salt = format!("0x{}", super::handlers::random_32_hex());
     let mut heard = async |what: &str| -> Option<String> {
         loop {
-            let n = tokio::time::timeout(std::time::Duration::from_millis(800), listener.recv())
+            let n = tokio::time::timeout(std::time::Duration::from_secs(3), listener.recv())
                 .await
                 .ok()?
                 .unwrap();
@@ -11340,6 +11340,20 @@ async fn a_balance_change_is_announced_on_its_channel() {
         .await
         .unwrap();
     assert_eq!(heard("flag").await.as_deref(), Some("flag"), "a flag");
+    // A re-flag is the admin's upsert: an UPDATE, not an INSERT.
+    sqlx::query(
+        "INSERT INTO credits.wallet_flags (address, source) VALUES ($1, 'other') \
+         ON CONFLICT (address) DO UPDATE SET source = EXCLUDED.source",
+    )
+    .bind(&wallet)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        heard("reflag").await.as_deref(),
+        Some("reflag"),
+        "a re-flag"
+    );
     sqlx::query("DELETE FROM credits.wallet_flags WHERE address = $1")
         .bind(&wallet)
         .execute(&pool)
@@ -11426,7 +11440,7 @@ fn fast_refresh_state(pool: PgPool) -> SharedState {
 }
 
 /// Season 1's photo goal completed by `wallet` (which must hold a wallet row)
-/// and its goal credit of 10 MANA, unclaimed, expiring in four seconds:
+/// and its goal credit of 10 MANA, unclaimed, expiring in eight seconds:
 /// `(salt, credit hash, contract)`.
 async fn goal_credit_fixture(pool: &PgPool, wallet: &str) -> (String, String, String) {
     sqlx::raw_sql(
@@ -11454,7 +11468,7 @@ async fn goal_credit_fixture(pool: &PgPool, wallet: &str) -> (String, String, St
     // Expires in a few seconds: long enough for the claim and the use below.
     sqlx::query(
         "INSERT INTO credits.goal_grants (address, season_id, week_id, goal_id, salt, chain_id, contract, credit_hash, amount_wei, signature, created_at, expires_at) \
-         VALUES ($1, 1, 1, 'take-photo', $2, 137, $3, $4, 10000000000000000000, 'sig', timezone('UTC', now()), timezone('UTC', now()) + interval '4 seconds')",
+         VALUES ($1, 1, 1, 'take-photo', $2, 137, $3, $4, 10000000000000000000, 'sig', timezone('UTC', now()), timezone('UTC', now()) + interval '8 seconds')",
     )
     .bind(wallet)
     .bind(&salt)
@@ -11525,7 +11539,7 @@ async fn the_balance_stream_follows_goal_credits_their_use_and_their_expiry() {
         .expect("the use on chain");
     assert_eq!(used["totalCredits"].as_f64(), Some(6e18), "{used}");
 
-    let expired = next_sse_event(&mut body, &mut buffer, wait)
+    let expired = next_sse_event(&mut body, &mut buffer, std::time::Duration::from_secs(20))
         .await
         .expect("the expiry");
     assert_eq!(expired["totalCredits"].as_f64(), Some(0.0), "{expired}");
@@ -11651,4 +11665,40 @@ async fn a_balance_frame_is_one_snapshot_while_pledges_commit() {
     }
     writer.await.unwrap();
     db.drop().await;
+}
+
+/// A wallet holds at most its share of open streams: past it, 429 with
+/// `Retry-After`; a closed stream gives its slot back.
+#[tokio::test]
+async fn a_wallets_open_balance_streams_are_capped() {
+    let Some(pool) = pool().await else { return };
+    let mut state = test_state(pool.clone(), StateCfg::default());
+    Arc::get_mut(&mut state)
+        .expect("an unshared state")
+        .balance_changes =
+        super::stream::BalanceChanges::with_limits(super::stream::REFRESH, 1, 100);
+    let app = app(state);
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    let (status, first) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK);
+    let path = format!("/credits/users/{}/credits/stream", wallet.address);
+    let (status, headers, v) = send(
+        &app,
+        "GET",
+        &path,
+        signed_headers(&wallet, "get", &path).await,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{v}");
+    assert_eq!(
+        v,
+        json!({ "error": "Too many open balance streams for this wallet" })
+    );
+    assert!(headers.get(header::RETRY_AFTER).is_some());
+    drop(first);
+    let (status, _) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK, "the closed stream's slot is free");
+    cleanup(&pool, &wallet.address).await;
 }

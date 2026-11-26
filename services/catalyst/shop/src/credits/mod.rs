@@ -897,6 +897,9 @@ impl State {
     /// lifecycle. `serve` runs them: the usage index's fold debits the
     /// ledger, so it runs beside the other credits writers.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
+        // The balance streams end with the node, so its graceful shutdown
+        // never waits on them.
+        self.balance_changes.end_on(jobs.root_token().child_token());
         fulfillment::OutboxWorker {
             credits: self.credits.clone(),
             pricing: self.pricing.clone(),
