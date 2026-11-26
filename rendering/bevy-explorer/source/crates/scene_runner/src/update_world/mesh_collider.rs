@@ -234,18 +234,54 @@ struct ColliderState {
 
 #[derive(Component, Default)]
 pub struct SceneColliderData {
+    /// Every change a query can see (a collider added, removed, moved, reshaped, or switched on
+    /// or off) is recorded in `changes`, which both feeds the bvh and stamps the collider's layers
+    /// for [`Self::layers_version`]. A new way of changing a collider goes through
+    /// [`ColliderChanges`]; one that skips it leaves the bvh stale and trigger areas showing old
+    /// overlaps.
     collider_set: ColliderSet,
     scaled_collider: bimap::BiMap<ColliderId, ColliderHandle>,
     collider_state: HashMap<ColliderId, ColliderState>,
     bvh: BroadPhaseBvh,
-    changed_colliders: HashSet<ColliderHandle>,
-    removed_colliders: HashSet<ColliderHandle>,
+    changes: ColliderChanges,
     dummy_rapier_structs: (IslandManager, RigidBodySet),
     disabled: HashSet<ColliderHandle>,
     bounds: ColliderBounds,
     volume: SceneVolume,
+}
+
+/// Collider changes the bvh has not taken in yet, and the stamp of the last change on each
+/// collision layer. Each method records both, so neither can be done without the other.
+#[derive(Default)]
+struct ColliderChanges {
+    changed: HashSet<ColliderHandle>,
+    removed: HashSet<ColliderHandle>,
     /// per collision layer bit, the stamp of the last change to a collider on that layer
     layer_stamps: [u64; 32],
+}
+
+impl ColliderChanges {
+    /// A collider in `groups` was added, moved or reshaped.
+    fn changed(&mut self, handle: ColliderHandle, groups: InteractionGroups) {
+        stamp_layers(&mut self.layer_stamps, groups);
+        self.changed.insert(handle);
+    }
+
+    /// A collider in `groups` was switched back on, so it returns to the bvh.
+    fn enabled(&mut self, handle: ColliderHandle, groups: InteractionGroups) {
+        self.removed.remove(&handle);
+        self.changed(handle, groups);
+    }
+
+    /// A collider in `groups` was removed or switched off, so it leaves the bvh.
+    fn removed(&mut self, handle: ColliderHandle, groups: InteractionGroups) {
+        stamp_layers(&mut self.layer_stamps, groups);
+        self.removed.insert(handle);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.changed.is_empty() && self.removed.is_empty()
+    }
 }
 
 /// Stamps for [`SceneColliderData::layers_version`], shared by every collider set so a stamp is
@@ -292,7 +328,8 @@ impl SceneColliderData {
     /// switched on or off, so a query filtered to `mask` returns what it returned while this
     /// value holds.
     pub(crate) fn layers_version(&self, mask: u32) -> u64 {
-        self.layer_stamps
+        self.changes
+            .layer_stamps
             .iter()
             .enumerate()
             .filter(|(bit, _)| mask & (1 << bit) != 0)
@@ -385,9 +422,9 @@ impl SceneColliderData {
             },
         );
 
-        stamp_layers(&mut self.layer_stamps, new_collider.collision_groups());
+        let groups = new_collider.collision_groups();
         let handle = self.collider_set.insert(new_collider);
-        self.changed_colliders.insert(handle);
+        self.changes.changed(handle, groups);
         self.scaled_collider.insert(id.to_owned(), handle);
         debug!("set {id:?} collider");
     }
@@ -500,8 +537,7 @@ impl SceneColliderData {
                 let initial_transform = if (&req_scale, &req_rotation, &req_translation)
                     != (init_scale, init_rotation, init_translation)
                 {
-                    self.changed_colliders.insert(handle);
-                    stamp_layers(&mut self.layer_stamps, collider.collision_groups());
+                    self.changes.changed(handle, collider.collision_groups());
 
                     let initial_transform = Transform {
                         translation: *init_translation,
@@ -547,13 +583,11 @@ impl SceneColliderData {
                 let enabled = state_mut.large_enough && state_mut.in_bounds;
                 if enabled != collider.is_enabled() {
                     collider.set_enabled(enabled);
-                    stamp_layers(&mut self.layer_stamps, collider.collision_groups());
                     // the bvh skips a collider that is off, so one turned off has to leave it
                     if enabled {
-                        self.removed_colliders.remove(&handle);
-                        self.changed_colliders.insert(handle);
+                        self.changes.enabled(handle, collider.collision_groups());
                     } else {
-                        self.removed_colliders.insert(handle);
+                        self.changes.removed(handle, collider.collision_groups());
                     }
                 }
                 return initial_transform;
@@ -564,9 +598,9 @@ impl SceneColliderData {
     }
 
     pub(crate) fn update_bvh(&mut self) {
-        if !self.changed_colliders.is_empty() || !self.removed_colliders.is_empty() {
-            let changed = self.changed_colliders.drain().collect::<Vec<_>>();
-            let removed = self.removed_colliders.drain().collect::<Vec<_>>();
+        if !self.changes.is_empty() {
+            let changed = self.changes.changed.drain().collect::<Vec<_>>();
+            let removed = self.changes.removed.drain().collect::<Vec<_>>();
             self.bvh.update(
                 &Default::default(),
                 &self.collider_set,
@@ -579,7 +613,7 @@ impl SceneColliderData {
     }
 
     fn query_pipeline<'a>(&'a self, filter: QueryFilter<'a>) -> QueryPipeline<'a> {
-        if !self.changed_colliders.is_empty() || !self.removed_colliders.is_empty() {
+        if !self.changes.is_empty() {
             panic!();
         }
 
@@ -1195,21 +1229,24 @@ impl SceneColliderData {
 
     pub fn remove_collider(&mut self, id: &ColliderId) {
         if let Some(handle) = self.scaled_collider.get_by_left(id) {
-            if let Some(removed) = self.collider_set.remove(
-                *handle,
-                &mut self.dummy_rapier_structs.0,
-                &mut self.dummy_rapier_structs.1,
-                false,
-            ) {
-                stamp_layers(&mut self.layer_stamps, removed.collision_groups());
-            }
-            self.removed_colliders.insert(*handle);
+            let groups = self
+                .collider_set
+                .remove(
+                    *handle,
+                    &mut self.dummy_rapier_structs.0,
+                    &mut self.dummy_rapier_structs.1,
+                    false,
+                )
+                .map_or(InteractionGroups::none(), |removed| {
+                    removed.collision_groups()
+                });
+            self.changes.removed(*handle, groups);
         }
 
         self.scaled_collider.remove_by_left(id);
         self.collider_state.remove(id);
 
-        if self.removed_colliders.len() >= PENDING_REMOVALS_BEFORE_FLUSH {
+        if self.changes.removed.len() >= PENDING_REMOVALS_BEFORE_FLUSH {
             self.update_bvh();
         }
     }
@@ -2067,8 +2104,8 @@ mod tests {
             wall(&mut colliders, index, Vec3::ZERO, Vec3::ONE);
             colliders.remove_collider(&ColliderId::new(SceneEntityId::ROOT, None, index));
         }
-        assert!(colliders.removed_colliders.len() < PENDING_REMOVALS_BEFORE_FLUSH);
-        assert!(colliders.changed_colliders.len() < PENDING_REMOVALS_BEFORE_FLUSH);
+        assert!(colliders.changes.removed.len() < PENDING_REMOVALS_BEFORE_FLUSH);
+        assert!(colliders.changes.changed.len() < PENDING_REMOVALS_BEFORE_FLUSH);
     }
 
     #[test]
