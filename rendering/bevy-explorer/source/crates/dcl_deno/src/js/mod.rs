@@ -32,6 +32,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(not(feature = "inspect"))]
 pub struct InspectorServer;
 
+mod blob_slice;
 mod clock;
 mod errors;
 pub mod fetch;
@@ -124,6 +125,7 @@ pub fn create_runtime(
         .into_iter()
         .chain(structured_clone::override_ops())
         .chain(rejections::override_ops())
+        .chain(blob_slice::override_ops())
     {
         op_map.insert(op.name, op);
     }
