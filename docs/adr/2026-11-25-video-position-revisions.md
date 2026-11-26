@@ -26,17 +26,23 @@ and changes another playback setting retains the revision. This lets scenes use
 `createOrReplace(entity, { ...VideoPlayer.get(entity), playing: false })` for Pause
 without seeking to the retained position. The same rule applies to volume,
 Resume and other playback settings. Comparison excludes the revision itself.
+Two absent revisions also match: positioned components created through the
+generated component or loaded from CRDT keep their absent revision during
+configuration replacements.
 An identical replacement still requests another seek. A replacement containing a
-position without the current carried revision also requests a seek, even when it
-changes a playback setting. For Restart after Pause through replacement, provide
+position without the current carried revision also requests a seek, except for
+the revision-less configuration replacements above. For Restart after Pause
+through replacement of a revisioned component, provide
 the source, position and playing state without carrying the old revision, or
 assign position through a mutable component.
 
 The Explorer seeks when a defined requested position changes or its revision
 changes. Replaying an identical revision does not seek again. For components
-without a revision, the Explorer preserves the legacy rule: a changed position or
-an identical explicit component replacement requests a seek; configuration
-changes retaining a position do not.
+without a revision, only a changed defined position requests a seek. Repeated
+identical component updates and configuration changes retaining a position do
+not. An absent position followed by zero requests a seek, including after the
+position was cleared. The engine cannot distinguish an identical Restart from
+a scene resending the same state every frame.
 
 The SDK owns authoring intent, the protocol carries it, and native and web media
 backends consume the same engine decision. The Admin Toolkit needs no changes.

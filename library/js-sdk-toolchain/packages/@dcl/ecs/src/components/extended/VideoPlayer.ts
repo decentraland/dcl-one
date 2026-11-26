@@ -36,7 +36,6 @@ export function defineVideoPlayerComponent(
     const current = component.getOrNull(entity)
     if (
       current &&
-      value.positionRevision !== undefined &&
       value.positionRevision === current.positionRevision &&
       value.src === current.src &&
       value.position === current.position &&

@@ -140,6 +140,45 @@ describe('VideoPlayer explicit seek intent', () => {
     expect(flush()[0].value.positionRevision).toBe(3)
   })
 
+  it.each([
+    ['generated component', 12],
+    ['generated component', 0],
+    ['CRDT', 12],
+    ['CRDT', 0]
+  ] as const)('preserves revision-less settings loaded through %s before seeking to %s', (source, position) => {
+    const { engine, player, flush } = setup()
+    const entity = engine.addEntity()
+    const initial = { src: 'video.mp4', position: 12, playing: true, volume: 1 }
+    if (source === 'generated component') {
+      const raw = engine.getComponent(player.componentId) as typeof player
+      raw.create(entity, initial)
+    } else {
+      const buffer = new ReadWriteByteBuffer()
+      player.schema.serialize(initial, buffer)
+      const [conflict] = player.updateFromCrdt({
+        type: CrdtMessageType.PUT_COMPONENT,
+        entityId: entity,
+        componentId: player.componentId,
+        timestamp: 1,
+        data: buffer.toBinary()
+      })
+      expect(conflict).toBeNull()
+    }
+    flush()
+    expect(player.get(entity).positionRevision).toBeUndefined()
+
+    for (const settings of [{ playing: false }, { volume: 0.5 }, { playing: true }]) {
+      player.createOrReplace(entity, { ...player.get(entity), ...settings })
+      const updates = flush()
+      expect(updates).toHaveLength(1)
+      expect(updates[0].value).toMatchObject({ ...settings, position: 12 })
+      expect(updates[0].value.positionRevision).toBeUndefined()
+    }
+
+    player.createOrReplace(entity, { ...player.get(entity), position })
+    expect(flush()[0].value).toMatchObject({ position, positionRevision: 1 })
+  })
+
   it.each([{ src: 'other.mp4' }, { position: 5 }, { playing: false, positionRevision: 0 }])(
     'requests a seek when a replacement changes source, position or revision: %j',
     (changes) => {
