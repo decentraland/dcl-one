@@ -1,0 +1,40 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "display": {
+    "title": "Movement Controller",
+    "description": "Movement Controller portable",
+    "navmapThumbnail": "images/scene-thumbnail.png",
+    "favicon": "favicon_asset"
+  },
+  "owner": "",
+  "contact": {
+    "name": "",
+    "email": ""
+  },
+  "main": "bin/game.js",
+  "tags": [],
+  "spawnPoints": [],
+  "requiredPermissions": [],
+  "featureToggles": {
+    "voiceChat": "enabled",
+    "portableExperiences": "enabled"
+  },
+  "scene": {
+    "base": "0,0",
+    "parcels": [
+      "0,0"
+    ]
+  },
+  "name": "Movement Controller",
+  "portableExperiences": "enabled",
+  "worldConfiguration": {
+    "name": "movecontroller.dcl.eth"
+  },
+  "creator": "",
+  "skyboxConfig": {},
+  "source": {
+    "origin": "creator-hub",
+    "projectId": "dc47399d-2f1a-4e82-befc-76ce4300b1ea"
+  }
+}

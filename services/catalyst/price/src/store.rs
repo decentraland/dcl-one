@@ -3,7 +3,8 @@
 //! `schemas/31_economy.sql`. Every clock is a bound parameter; the timestamps
 //! are `timestamp without time zone` holding UTC and come back as `DateTime<Utc>`.
 
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -121,18 +122,14 @@ impl Prices {
     }
 
     pub fn live(&self) -> Option<Arc<PriceSnapshot>> {
-        self.live
-            .read()
-            .unwrap()
-            .as_ref()
-            .map(|l| l.snapshot.clone())
+        self.live.read().as_ref().map(|l| l.snapshot.clone())
     }
 
     pub async fn latest(&self) -> Result<Option<Arc<PriceSnapshot>>, sqlx::Error> {
         let Some(refresh) = self.refresh else {
             return Ok(self.latest_snapshot().await?.map(Arc::new));
         };
-        if let Some(live) = self.live.read().unwrap().clone()
+        if let Some(live) = self.live.read().clone()
             && live.checked.elapsed() < refresh
             && live.snapshot.is_fresh_at(Utc::now())
         {
@@ -148,7 +145,7 @@ impl Prices {
     /// publish racing a re-read), restarts the refresh clock, and returns
     /// what the cell holds.
     fn keep_newer(&self, snapshot: Arc<PriceSnapshot>) -> Arc<PriceSnapshot> {
-        let mut live = self.live.write().unwrap();
+        let mut live = self.live.write();
         let snapshot = match live.as_ref() {
             Some(held) if held.snapshot.taken_at > snapshot.taken_at => held.snapshot.clone(),
             _ => snapshot,
