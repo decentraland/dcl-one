@@ -88,7 +88,7 @@ async fn claim(state: &State, recheck: Recheck<'_>) -> Result<Claim, ApiError> {
         Recheck::Publish(grant, _) => grant.id(),
     };
     let mut tx = state.items.pool().begin().await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     let row: Option<ClaimRow> = sqlx::query_as(
         "SELECT name, third_party_id, forum_link, forum_claimed_at > timezone('UTC', clock_timestamp()) - $2::interval AS fresh \
          FROM builder.collections WHERE id = $1 FOR UPDATE",
@@ -300,7 +300,7 @@ pub async fn publish_topic(state: &State, grant: &ThirdPartyPublish, items: &[Uu
                     &collection,
                     &state.settings.links,
                     &state.settings.builder_server_url,
-                    &(state.now)().format("%-m/%-d/%Y").to_string(),
+                    &state.now().format("%-m/%-d/%Y").to_string(),
                 );
                 forum
                     .update(&state.guarded, post, &raw)

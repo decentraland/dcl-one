@@ -203,6 +203,44 @@ pub async fn virtual_by_id(conn: &mut PgConnection, id: &str) -> Result<Option<V
     )
 }
 
+/// How many of provider `id`'s items were submitted for curation.
+pub async fn submitted_items(conn: &mut PgConnection, id: &str) -> Result<i64, ApiError> {
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT count(DISTINCT i.id) FROM builder.collections c JOIN builder.items i ON i.collection_id = c.id \
+         WHERE c.third_party_id = $1 AND {}",
+        crate::curation::ITEM_CURATED
+    )))
+    .bind(id)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// Removes the virtual third party `id`.
+pub async fn remove_virtual(conn: &mut PgConnection, id: &str) -> Result<(), ApiError> {
+    sqlx::query("DELETE FROM builder.virtual_third_parties WHERE id = $1")
+        .bind(id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// Sets whether the virtual third party `id` is programmatic.
+pub async fn set_programmatic(
+    conn: &mut PgConnection,
+    id: &str,
+    programmatic: bool,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE builder.virtual_third_parties SET is_programmatic = $2, updated_at = timezone('UTC', now()) \
+         WHERE id = $1 AND is_programmatic IS DISTINCT FROM $2",
+    )
+    .bind(id)
+    .bind(programmatic)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 /// The name, description and linked contracts a virtual third party's
 /// `raw_metadata` holds (`tp:1:<name>:<description>[:<network>-<address>;...]`),
 /// read as builder-server reads it.

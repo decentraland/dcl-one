@@ -5,7 +5,8 @@
 //! node's own publication records.
 //!
 //! Every read starts from a view that only this module builds. [`for_read`]
-//! answers 503 while the copy has no complete pass; its [`ReadView`] hands out
+//! answers 503 while the copy has no complete pass, by the node's [`Clock`];
+//! its [`ReadView`] hands out
 //! the SQL that fills listings and response bodies. [`for_decision`] also
 //! answers 503 once that pass is older than [`STALE_AFTER`]; only its
 //! [`DecisionView`] reaches the facts ([`collection`]) and the write guard
@@ -22,7 +23,8 @@
 //!
 //! ```no_run
 //! async fn grant(conn: &mut sqlx::PgConnection) {
-//!     let view = catalyst_builder::chain_state::for_decision(conn).await.unwrap();
+//!     let clock = catalyst_builder::chain_state::Clock::default();
+//!     let view = catalyst_builder::chain_state::for_decision(conn, &clock).await.unwrap();
 //!     let _ = catalyst_builder::chain_state::collection(conn, &view, "0x").await;
 //!     let _ = catalyst_builder::chain_state::published(conn, &view, uuid::Uuid::nil()).await;
 //! }
@@ -30,14 +32,16 @@
 //!
 //! ```compile_fail
 //! async fn grant(conn: &mut sqlx::PgConnection) {
-//!     let view = catalyst_builder::chain_state::for_read(conn).await.unwrap();
+//!     let clock = catalyst_builder::chain_state::Clock::default();
+//!     let view = catalyst_builder::chain_state::for_read(conn, &clock).await.unwrap();
 //!     let _ = catalyst_builder::chain_state::collection(conn, &view, "0x").await;
 //! }
 //! ```
 //!
 //! ```compile_fail
 //! async fn guard(conn: &mut sqlx::PgConnection) {
-//!     let view = catalyst_builder::chain_state::for_read(conn).await.unwrap();
+//!     let clock = catalyst_builder::chain_state::Clock::default();
+//!     let view = catalyst_builder::chain_state::for_read(conn, &clock).await.unwrap();
 //!     let _ = catalyst_builder::chain_state::published(conn, &view, uuid::Uuid::nil()).await;
 //! }
 //! ```
@@ -85,6 +89,7 @@ impl Pass {
 #[derive(Debug, Clone)]
 pub struct ReadView {
     pass: Pass,
+    now: DateTime<Utc>,
 }
 
 /// A [`ReadView`] whose pass is at most [`STALE_AFTER`] old: the only view
@@ -226,10 +231,25 @@ impl ConditionLog {
     }
 }
 
-static CONDITION: ConditionLog = ConditionLog(AtomicU8::new(Condition::Fresh as u8));
+/// The node's clock the copy's age is read by, and the condition of the
+/// copy it last logged.
+pub struct Clock {
+    /// The node's clock.
+    pub now: fn() -> DateTime<Utc>,
+    logged: ConditionLog,
+}
 
-fn note(condition: Condition) {
-    if !CONDITION.changed(condition) {
+impl Default for Clock {
+    fn default() -> Self {
+        Self {
+            now: Utc::now,
+            logged: ConditionLog::default(),
+        }
+    }
+}
+
+fn note(clock: &Clock, condition: Condition) {
+    if !clock.logged.changed(condition) {
         return;
     }
     match condition {
@@ -254,14 +274,14 @@ fn unavailable() -> ApiError {
     ApiError::service_unavailable("Chain state is not available yet. Try again later.")
 }
 
-fn too_old(at: DateTime<Utc>) -> bool {
-    Utc::now() - at > STALE_AFTER
+fn too_old(now: DateTime<Utc>, at: DateTime<Utc>) -> bool {
+    now - at > STALE_AFTER
 }
 
 type PassRow = (Option<NaiveDateTime>, Option<NaiveDateTime>, Option<String>);
 
 /// A view for a read; 503 while the copy has no complete pass.
-pub async fn for_read(conn: &mut PgConnection) -> Result<ReadView, ApiError> {
+pub async fn for_read(conn: &mut PgConnection, clock: &Clock) -> Result<ReadView, ApiError> {
     let row: Option<PassRow> = sqlx::query_as(
         "SELECT last_complete_pass_at, pass_started_at, cursor_id FROM shop.mirror_state \
          WHERE mirror = 'collections' AND network = 'matic'",
@@ -269,7 +289,7 @@ pub async fn for_read(conn: &mut PgConnection) -> Result<ReadView, ApiError> {
     .fetch_optional(conn)
     .await?;
     let Some((Some(completed), started, cursor)) = row else {
-        note(Condition::NoPass);
+        note(clock, Condition::NoPass);
         return Err(unavailable());
     };
     let pass = Pass {
@@ -277,12 +297,16 @@ pub async fn for_read(conn: &mut PgConnection) -> Result<ReadView, ApiError> {
         started_at: started.map(|s| s.and_utc()),
         cursor,
     };
-    note(if too_old(pass.completed_at) {
-        Condition::Stale
-    } else {
-        Condition::Fresh
-    });
-    Ok(ReadView { pass })
+    let now = (clock.now)();
+    note(
+        clock,
+        if too_old(now, pass.completed_at) {
+            Condition::Stale
+        } else {
+            Condition::Fresh
+        },
+    );
+    Ok(ReadView { pass, now })
 }
 
 /// Whether the copy holds `contract` on Polygon, by its last complete pass
@@ -301,9 +325,12 @@ pub async fn holds(
 }
 
 /// A view for a decision; 503 also while the last pass is stale.
-pub async fn for_decision(conn: &mut PgConnection) -> Result<DecisionView, ApiError> {
-    let read = for_read(conn).await?;
-    if too_old(read.pass.completed_at) {
+pub async fn for_decision(
+    conn: &mut PgConnection,
+    clock: &Clock,
+) -> Result<DecisionView, ApiError> {
+    let read = for_read(conn, clock).await?;
+    if too_old(read.now, read.pass.completed_at) {
         return Err(unavailable());
     }
     Ok(DecisionView { read })
@@ -311,7 +338,7 @@ pub async fn for_decision(conn: &mut PgConnection) -> Result<DecisionView, ApiEr
 
 fn absence(view: &DecisionView, contract: &str) -> Result<(), ApiError> {
     match view.pass.absent_since(contract) {
-        Some(since) if !too_old(since) => Ok(()),
+        Some(since) if !too_old(view.now, since) => Ok(()),
         _ => Err(unavailable()),
     }
 }
@@ -353,7 +380,7 @@ pub async fn collection(
         return Ok(None);
     };
     let mirrored_at = r.mirrored_at.and_utc();
-    if too_old(mirrored_at) {
+    if too_old(view.now, mirrored_at) {
         return Err(unavailable());
     }
     Ok(Some(CollectionFacts {

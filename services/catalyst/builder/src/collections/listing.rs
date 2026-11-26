@@ -784,7 +784,7 @@ impl ItemsComponent {
             .execute(&mut *tx)
             .await?;
         sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;
-        let view: ReadView = chain_state::for_read(&mut tx).await?;
+        let view: ReadView = chain_state::for_read(&mut tx, &self.clock).await?;
         let ids: Option<Vec<Uuid>> = match &listing.address {
             Some(address) => Some(
                 sqlx::query_scalar(ADDRESS_IDS)

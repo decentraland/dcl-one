@@ -84,7 +84,7 @@ fn in_progress_refusal(collection: Uuid) -> ApiError {
 }
 
 fn now(state: &State) -> NaiveDateTime {
-    (state.now)().naive_utc()
+    state.now().naive_utc()
 }
 
 fn next_day(at: NaiveDateTime) -> NaiveDateTime {
@@ -200,7 +200,7 @@ pub async fn comment(
     let id = curator.collection();
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, id).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     let curated = access::confirm_reviewer(&mut tx, &view, state, &curator).await?;
     if !curated.published {
         return Err(not_published(id));
@@ -284,7 +284,7 @@ pub async fn appeal(
     let id = curator.collection();
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, id).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     let curated = access::confirm_reviewer(&mut tx, &view, state, &curator).await?;
     let latest: Option<String> = sqlx::query_scalar(
         "SELECT type FROM builder.collection_events WHERE collection_id = $1 AND type <> 'review.comment' \
@@ -457,7 +457,7 @@ pub async fn retry(state: &SharedState, curator: Curator) -> Result<EventOut, Ap
     let id = curator.collection();
     let mut tx = state.items.pool().begin().await?;
     lock(&mut tx, id).await?;
-    let view = chain_state::for_decision(&mut tx).await?;
+    let view = chain_state::for_decision(&mut tx, &state.items.clock).await?;
     let curated = access::confirm_reviewer(&mut tx, &view, state, &curator).await?;
     if !curated.published {
         return Err(not_published(id));
@@ -553,7 +553,7 @@ pub(crate) async fn submit(
     signer: &str,
     note: &str,
 ) -> Result<Submitted, ApiError> {
-    let view = chain_state::for_decision(conn).await?;
+    let view = chain_state::for_decision(conn, &state.items.clock).await?;
     let changed =
         match validator::changed(conn, &view, &state.settings.network, collection, contract).await?
         {

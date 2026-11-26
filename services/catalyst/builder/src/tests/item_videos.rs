@@ -174,8 +174,10 @@ async fn node_on(
         storage.clone(),
         Arc::default(),
         dcl_http::Outbound::for_tests(),
+        dcl_http::Outbound::for_tests(),
         Some(committee_index(&committee).await),
         None,
+        std::sync::Arc::default(),
         crate::Settings {
             writes_enabled: writes,
             ..crate::Settings::default()
@@ -1800,7 +1802,7 @@ async fn uploads_within_the_minute_a_count_answers_still_count_toward_the_bound(
     let Some(node) = node_with(
         |state| {
             state.limits.wallet_bytes = 4_000;
-            state.now = super::validator::clock;
+            state.items.clock.now = super::validator::clock;
         },
         true,
     )
@@ -1854,7 +1856,7 @@ async fn a_wallet_at_its_storage_bound_is_refused_the_next_upload_until_it_delet
     let Some(node) = node_with(
         |state| {
             state.limits.wallet_bytes = 4_000;
-            state.now = super::validator::clock;
+            state.items.clock.now = super::validator::clock;
         },
         true,
     )
@@ -2516,7 +2518,7 @@ async fn records_dropped_within_the_minute_a_count_answers_never_refuse_a_wallet
     let Some(node) = node_with(
         |state| {
             state.limits.wallet_bytes = 10_000;
-            state.now = super::validator::clock;
+            state.items.clock.now = super::validator::clock;
         },
         true,
     )

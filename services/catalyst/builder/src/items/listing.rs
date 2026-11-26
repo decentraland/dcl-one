@@ -90,7 +90,7 @@ pub(crate) async fn item(
     full: bool,
 ) -> Result<FullItemOut, ApiError> {
     let mut conn = store.pool.acquire().await?;
-    let view = chain_state::for_read(&mut conn).await?;
+    let view = chain_state::for_read(&mut conn, &store.clock).await?;
     let row = sqlx::query_as::<_, ItemRow>(sqlx::AssertSqlSafe(format!(
         "SELECT {} FROM {} WHERE i.id = $1",
         by_id_columns(),
@@ -154,7 +154,7 @@ async fn bodies_in(
             .await?;
         listing.admit(ids.len(), bytes)?;
     }
-    let view = chain_state::for_read(conn).await?;
+    let view = chain_state::for_read(conn, &store.clock).await?;
     let rows = sqlx::query_as::<_, ItemRow>(sqlx::AssertSqlSafe(list_statement(&view)))
         .bind(ids)
         .fetch_all(&mut *conn)

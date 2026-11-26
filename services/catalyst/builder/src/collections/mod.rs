@@ -269,7 +269,7 @@ impl ItemsComponent {
     /// caller `read` admits to that only.
     pub async fn collection(&self, read: &CollectionRead) -> Result<Value, ApiError> {
         let mut conn = self.pool.acquire().await?;
-        let view = chain_state::for_read(&mut conn).await?;
+        let view = chain_state::for_read(&mut conn, &self.clock).await?;
         let row = row(&mut conn, &view, read)
             .await?
             .ok_or_else(|| ApiError::not_found("Not found"))?;

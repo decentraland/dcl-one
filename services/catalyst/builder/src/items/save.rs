@@ -315,7 +315,7 @@ impl ItemsComponent {
         input.sanitize();
         let id = save.id();
         let mut tx = self.pool.begin().await?;
-        let view = chain_state::for_decision(&mut tx).await?;
+        let view = chain_state::for_decision(&mut tx, &self.clock).await?;
         lock_item(&mut tx, id, intent.collection).await?;
         if let UrnField::ThirdParty(urn) = &intent.urn {
             sqlx::query(
@@ -579,7 +579,7 @@ impl ItemsComponent {
     pub async fn delete_item(&self, change: &ItemChange) -> Result<(), ApiError> {
         let id = change.id();
         let mut tx = self.pool.begin().await?;
-        let view = chain_state::for_decision(&mut tx).await?;
+        let view = chain_state::for_decision(&mut tx, &self.clock).await?;
         lock_item(&mut tx, id, None).await?;
         let state = access::confirm_item_change(&mut tx, &view, change).await?;
         let third_party = state.third_party && state.urn.is_some();

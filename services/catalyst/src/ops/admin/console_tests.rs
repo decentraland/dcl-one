@@ -1024,8 +1024,10 @@ async fn create_domains(pool: &PgPool, writes: bool, token: Option<&str>) -> Dom
             store,
             denylist,
             Outbound::for_tests(),
+            Outbound::for_tests(),
             None,
             None,
+            std::sync::Arc::default(),
             builder,
         )
         .unwrap(),

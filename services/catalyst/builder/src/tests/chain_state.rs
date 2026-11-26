@@ -102,7 +102,9 @@ async fn the_copy_answers_approval_and_roles_of_a_polygon_collection() {
     .await;
     copy_row(&mut tx, "matic", &unapproved, false, &[]).await;
     copy_row(&mut tx, "ethereum", &ethereum, true, &[]).await;
-    let view = chain_state::for_decision(&mut tx).await.unwrap();
+    let view = chain_state::for_decision(&mut tx, &crate::chain_state::Clock::default())
+        .await
+        .unwrap();
     let facts =
         chain_state::collection(&mut tx, &view, &approved.to_uppercase().replace("0X", "0x"))
             .await
@@ -145,6 +147,34 @@ async fn the_copy_answers_approval_and_roles_of_a_polygon_collection() {
     tx.rollback().await.unwrap();
 }
 
+fn past_the_bound() -> chrono::DateTime<Utc> {
+    Utc::now() + STALE_AFTER + TimeDelta::minutes(1)
+}
+
+/// The copy's age is read by the node's clock, not the wall clock: a pass
+/// that just ended is too old for a decision once the node's clock is past
+/// the bound.
+#[tokio::test]
+async fn a_decision_reads_the_copys_age_by_the_nodes_clock() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let mut tx = pool.begin().await.unwrap();
+    fresh_pass(&mut tx).await;
+    let wall = crate::chain_state::Clock::default();
+    let mut late = crate::chain_state::Clock::default();
+    late.now = past_the_bound;
+    let decided = (
+        chain_state::for_decision(&mut tx, &wall).await.is_ok(),
+        chain_state::for_decision(&mut tx, &late)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.status()),
+    );
+    tx.rollback().await.unwrap();
+    assert_eq!(decided, (true, Err(503)));
+}
+
 #[tokio::test]
 async fn the_copy_cannot_tell_without_a_complete_pass_and_a_decision_needs_a_fresh_one() {
     let Some(pool) = pool().await else {
@@ -153,12 +183,15 @@ async fn the_copy_cannot_tell_without_a_complete_pass_and_a_decision_needs_a_fre
     let mut tx = pool.begin().await.unwrap();
     set_pass(&mut tx, None).await;
     assert_eq!(
-        chain_state::for_read(&mut tx).await.unwrap_err().status(),
+        chain_state::for_read(&mut tx, &crate::chain_state::Clock::default())
+            .await
+            .unwrap_err()
+            .status(),
         503,
         "a pass that never completed"
     );
     assert_eq!(
-        chain_state::for_decision(&mut tx)
+        chain_state::for_decision(&mut tx, &crate::chain_state::Clock::default())
             .await
             .unwrap_err()
             .status(),
@@ -169,7 +202,10 @@ async fn the_copy_cannot_tell_without_a_complete_pass_and_a_decision_needs_a_fre
         .await
         .unwrap();
     assert_eq!(
-        chain_state::for_read(&mut tx).await.unwrap_err().status(),
+        chain_state::for_read(&mut tx, &crate::chain_state::Clock::default())
+            .await
+            .unwrap_err()
+            .status(),
         503,
         "no mirror state at all"
     );
@@ -183,18 +219,21 @@ async fn the_copy_cannot_tell_without_a_complete_pass_and_a_decision_needs_a_fre
     .await
     .unwrap();
     assert_eq!(
-        chain_state::for_read(&mut tx).await.unwrap_err().status(),
+        chain_state::for_read(&mut tx, &crate::chain_state::Clock::default())
+            .await
+            .unwrap_err()
+            .status(),
         503,
         "another mirror's or network's pass says nothing about Polygon collections"
     );
     let stale = (Utc::now().naive_utc() - STALE_AFTER - TimeDelta::minutes(1)).trunc_subsecs(6);
     set_pass(&mut tx, Some(stale)).await;
-    let view = chain_state::for_read(&mut tx)
+    let view = chain_state::for_read(&mut tx, &crate::chain_state::Clock::default())
         .await
         .expect("a stale copy still serves reads");
     assert_eq!(view.as_of().naive_utc(), stale);
     assert_eq!(
-        chain_state::for_decision(&mut tx)
+        chain_state::for_decision(&mut tx, &crate::chain_state::Clock::default())
             .await
             .unwrap_err()
             .status(),
@@ -206,7 +245,7 @@ async fn the_copy_cannot_tell_without_a_complete_pass_and_a_decision_needs_a_fre
         Some(Utc::now().naive_utc() - STALE_AFTER + TimeDelta::minutes(1)),
     )
     .await;
-    chain_state::for_decision(&mut tx)
+    chain_state::for_decision(&mut tx, &crate::chain_state::Clock::default())
         .await
         .expect("a pass inside the bound decides");
     tx.rollback().await.unwrap();
@@ -293,7 +332,9 @@ async fn submitted(conn: &mut PgConnection, c: &Collection) {
 }
 
 async fn derived(conn: &mut PgConnection, id: Uuid) -> (bool, bool) {
-    let view = chain_state::for_read(&mut *conn).await.unwrap();
+    let view = chain_state::for_read(&mut *conn, &crate::chain_state::Clock::default())
+        .await
+        .unwrap();
     let listed: (bool, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {}, {} FROM {} WHERE c.id = $1",
         view.published(),
@@ -304,7 +345,9 @@ async fn derived(conn: &mut PgConnection, id: Uuid) -> (bool, bool) {
     .fetch_one(&mut *conn)
     .await
     .unwrap();
-    let decision = chain_state::for_decision(&mut *conn).await.unwrap();
+    let decision = chain_state::for_decision(&mut *conn, &crate::chain_state::Clock::default())
+        .await
+        .unwrap();
     assert_eq!(
         chain_state::published(&mut *conn, &decision, id)
             .await
@@ -626,7 +669,9 @@ async fn a_decision_needs_the_row_or_the_absence_it_read_to_be_recent() {
     let published_by_old_row = builder_collection(&mut tx, false, Some(&old_row)).await;
 
     set_window(&mut tx, Some(ago(0)), Some(ago(1)), None).await;
-    let view = chain_state::for_decision(&mut tx).await.unwrap();
+    let view = chain_state::for_decision(&mut tx, &crate::chain_state::Clock::default())
+        .await
+        .unwrap();
     assert_eq!(
         chain_state::collection(&mut tx, &view, &old_row)
             .await
@@ -654,7 +699,9 @@ async fn a_decision_needs_the_row_or_the_absence_it_read_to_be_recent() {
     );
 
     set_window(&mut tx, Some(ago(0)), Some(ago(31)), None).await;
-    let view = chain_state::for_decision(&mut tx).await.unwrap();
+    let view = chain_state::for_decision(&mut tx, &crate::chain_state::Clock::default())
+        .await
+        .unwrap();
     assert_eq!(
         chain_state::collection(&mut tx, &view, &absent)
             .await
@@ -685,7 +732,9 @@ async fn a_decision_needs_the_row_or_the_absence_it_read_to_be_recent() {
     );
     let cursor = format!("0x8{}", &absent[3..]);
     set_window(&mut tx, Some(ago(20)), Some(ago(1)), Some(&cursor)).await;
-    let view = chain_state::for_decision(&mut tx).await.unwrap();
+    let view = chain_state::for_decision(&mut tx, &crate::chain_state::Clock::default())
+        .await
+        .unwrap();
     assert_eq!(
         chain_state::collection(&mut tx, &view, &below)
             .await
@@ -703,7 +752,9 @@ async fn a_decision_needs_the_row_or_the_absence_it_read_to_be_recent() {
     );
 
     set_window(&mut tx, Some(ago(0)), None, None).await;
-    let view = chain_state::for_decision(&mut tx).await.unwrap();
+    let view = chain_state::for_decision(&mut tx, &crate::chain_state::Clock::default())
+        .await
+        .unwrap();
     assert_eq!(
         chain_state::collection(&mut tx, &view, &absent)
             .await
@@ -731,7 +782,9 @@ async fn facts_and_guards_need_a_decision_view_and_listings_a_read_view() {
     let collection = builder_collection(&mut tx, false, Some(&contract)).await;
 
     set_pass(&mut tx, Some(ago(0))).await;
-    let decision = chain_state::for_decision(&mut tx).await.unwrap();
+    let decision = chain_state::for_decision(&mut tx, &crate::chain_state::Clock::default())
+        .await
+        .unwrap();
     assert!(
         chain_state::collection(&mut tx, &decision, &contract)
             .await
@@ -746,14 +799,16 @@ async fn facts_and_guards_need_a_decision_view_and_listings_a_read_view() {
 
     set_pass(&mut tx, Some(ago(31))).await;
     assert_eq!(
-        chain_state::for_decision(&mut tx)
+        chain_state::for_decision(&mut tx, &crate::chain_state::Clock::default())
             .await
             .unwrap_err()
             .status(),
         503,
         "no decision view, so neither the facts nor the guard answer"
     );
-    let read = chain_state::for_read(&mut tx).await.unwrap();
+    let read = chain_state::for_read(&mut tx, &crate::chain_state::Clock::default())
+        .await
+        .unwrap();
     let listed: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT {} FROM {} WHERE c.id = $1",
         read.published(),

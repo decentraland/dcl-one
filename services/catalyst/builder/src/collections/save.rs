@@ -345,7 +345,7 @@ impl ItemsComponent {
         let (id, signer) = (edit.id(), edit.signer());
         let provider = save.urn.as_deref().and_then(third_party_urn);
         let mut tx = self.pool.begin().await?;
-        let view = chain_state::for_decision(&mut tx).await?;
+        let view = chain_state::for_decision(&mut tx, &self.clock).await?;
         let stored: Option<(Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT third_party_id, urn_suffix FROM builder.collections WHERE id = $1 FOR UPDATE",
         )

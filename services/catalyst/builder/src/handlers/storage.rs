@@ -1,3 +1,6 @@
+//! `GET`/`HEAD /v1/storage/contents/{hash}` and its `exists` check: an item
+//! file by hash, to anyone once published and to its signers before.
+
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, State};

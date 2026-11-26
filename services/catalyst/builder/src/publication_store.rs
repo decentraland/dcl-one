@@ -20,6 +20,9 @@ use super::publication::{
     PublicationPreparation, SNAPSHOT_QUERY, mark_missing_bytes, prepare, refuse_before_snapshot,
 };
 
+/// A publication attempt: its preparation, `status` (`prepared`, `signing`,
+/// `submitted`, `published` or `reverted`), transaction and deployed
+/// contract.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "builder/"))]
 pub struct PublicationState {
@@ -42,6 +45,7 @@ fn decode(value: Value) -> Result<PublicationState, ApiError> {
 }
 
 impl ItemsComponent {
+    /// The publisher's attempt, `None` without one.
     pub async fn publication_state(
         &self,
         publisher: &Publisher,
@@ -55,6 +59,8 @@ impl ItemsComponent {
         value.map(decode).transpose()
     }
 
+    /// Begins an attempt for `revision`; 409 when the collection changed
+    /// since it was reviewed or another revision is being published.
     pub async fn begin_publication(
         &self,
         publisher: &Publisher,
@@ -62,7 +68,7 @@ impl ItemsComponent {
     ) -> Result<PublicationState, ApiError> {
         let (signer, id) = (publisher.signer(), publisher.id());
         let mut tx = self.pool.begin().await?;
-        let view = chain_state::for_decision(&mut tx).await?;
+        let view = chain_state::for_decision(&mut tx, &self.clock).await?;
         let owned: Option<Uuid> = sqlx::query_scalar(LOCK_OWNED)
             .bind(id)
             .bind(signer)
@@ -122,6 +128,8 @@ impl ItemsComponent {
         })
     }
 
+    /// Claims the prepared attempt of `revision` for one wallet request; 409
+    /// while another one holds it.
     pub async fn claim_publication(
         &self,
         publisher: &Publisher,
@@ -155,6 +163,7 @@ impl ItemsComponent {
         Ok(())
     }
 
+    /// Cancels an attempt that has no transaction yet.
     pub async fn cancel_publication(&self, publisher: &Publisher) -> Result<(), ApiError> {
         let (signer, id) = (publisher.signer(), publisher.id());
         let mut tx = self.pool.begin().await?;

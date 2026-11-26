@@ -246,7 +246,7 @@ impl ItemsComponent {
         wallet: &Wallet,
     ) -> Result<Vec<CollectionListingOut>, ApiError> {
         let mut conn = self.pool.acquire().await?;
-        let view = chain_state::for_read(&mut conn).await?;
+        let view = chain_state::for_read(&mut conn, &self.clock).await?;
         let rows = sqlx::query_as::<_, CollectionListingRow>(sqlx::AssertSqlSafe(format!(
             "{} WHERE ((c.eth_address = $1 AND c.third_party_id IS NULL) OR c.third_party_id = ANY($2)) \
              AND {} ORDER BY c.updated_at DESC LIMIT $3",
@@ -267,7 +267,7 @@ impl ItemsComponent {
     /// manages.
     pub async fn item_drafts(&self, wallet: &Wallet) -> Result<Vec<Value>, ApiError> {
         let mut conn = self.pool.acquire().await?;
-        let view = chain_state::for_read(&mut conn).await?;
+        let view = chain_state::for_read(&mut conn, &self.clock).await?;
         Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "{ITEM_DRAFT_LISTING} WHERE NOT is_published AND {} \
              AND ((collection_id IS NULL AND eth_address = $1) OR collection_id IN (SELECT c.id \
