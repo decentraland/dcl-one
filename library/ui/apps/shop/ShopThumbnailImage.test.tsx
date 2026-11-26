@@ -43,6 +43,36 @@ describe('ShopThumbnailImage', () => {
     })
   })
 
+  describe.each([
+    {
+      src: '/next.webp',
+      srcSet: '/next-large.webp 640w',
+      change: 'both the derivative and original'
+    },
+    { src: '/small.webp', srcSet: '/large.webp 640w', change: 'only the original' }
+  ])('when a reused card changes $change', ({ src, srcSet }) => {
+    it('should restore responsive candidates and use the new fallback on failure', () => {
+      const view = render(
+        <ShopThumbnailImage
+          alt="Jacket"
+          src="/small.webp"
+          srcSet="/large.webp 640w"
+          fallbackSrc="/old.png"
+        />
+      )
+      fireEvent.error(screen.getByRole('img', { name: 'Jacket' }))
+      view.rerender(
+        <ShopThumbnailImage alt="Hat" src={src} srcSet={srcSet} fallbackSrc="/new.png" />
+      )
+      const image = screen.getByRole('img', { name: 'Hat' })
+      expect(image).toHaveAttribute('src', src)
+      expect(image).toHaveAttribute('srcset', srcSet)
+      fireEvent.error(image)
+      expect(image).toHaveAttribute('src', '/new.png')
+      expect(image).not.toHaveAttribute('srcset')
+    })
+  })
+
   describe('when an image failed before hydration', () => {
     beforeEach(() => {
       vi.spyOn(HTMLImageElement.prototype, 'complete', 'get').mockReturnValue(true)

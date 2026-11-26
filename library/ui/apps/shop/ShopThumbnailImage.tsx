@@ -18,5 +18,12 @@ export function ShopThumbnailImage({ fallbackSrc, ...props }: ThumbnailImageProp
     const element = image.current
     if (element?.complete && element.naturalWidth === 0) restoreOriginal(element)
   }, [props.src, props.srcSet, restoreOriginal])
-  return <img {...props} ref={image} onError={(event) => restoreOriginal(event.currentTarget)} />
+  return (
+    <img
+      key={JSON.stringify([props.src, props.srcSet, fallbackSrc])}
+      {...props}
+      ref={image}
+      onError={(event) => restoreOriginal(event.currentTarget)}
+    />
+  )
 }
