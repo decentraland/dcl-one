@@ -23,10 +23,7 @@ impl Hooks for Runtime {
             live: !state.restart.is_cancelled(),
             started: state.started.load(Ordering::Acquire),
             // Original server.startupProbe succeeds after construction; readiness is listening.
-            checks: vec![(
-                "server".into(),
-                startup || (state.started.load(Ordering::Acquire) && !state.restart.is_cancelled()),
-            )],
+            checks: vec![("server".into(), startup || state.listener_ready())],
         }
     }
     async fn diagnostics(&self) -> Result<String, content::Error> {

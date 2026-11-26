@@ -51,6 +51,16 @@ pub struct ExploreConfig {
     #[arg(long, env = "EVENTS_MIRROR_INTERVAL_SECS", default_value_t = 3600)]
     pub events_mirror_interval_secs: u64,
 
+    /// The feature-flags service the Foundation event creators are read from (`<base>/events.json`, every five
+    /// minutes, whatever `EXPLORER_MIRRORS_ENABLED` says); empty reads none and labels no creator.
+    #[arg(long, env = "EVENTS_FEATURE_FLAGS_URL", default_value = "")]
+    pub events_feature_flags_url: String,
+
+    /// Optional `X-Address-Hash` that request adds beside its decentraland.org Referer (the old events service's
+    /// `FEATURE_FLAGS_USER_ID`); labelling works without it. Also accepts EVENTS_FEATURE_FLAGS_USER_ID_FILE.
+    #[arg(long, env = "EVENTS_FEATURE_FLAGS_USER_ID", hide_env_values = true)]
+    pub events_feature_flags_user_id: Option<String>,
+
     /// Adopt the rows the events mirror wrote as this node's own (`origin = 'local'`), once the old service stops and the mirror is off; `explore.mirror_state` records it, so it runs once per database.
     #[arg(long, env = "EVENTS_MIRROR_ADOPT", default_value_t = false, action = clap::ArgAction::Set)]
     pub events_mirror_adopt: bool,

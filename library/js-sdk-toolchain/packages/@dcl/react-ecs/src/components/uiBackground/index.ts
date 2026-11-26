@@ -1,5 +1,5 @@
-import { PBUiBackground } from '@dcl/ecs'
-import { UiBackgroundProps } from './types'
+import type { PBUiBackground } from '@dcl/ecs'
+import type { UiBackgroundProps } from './types'
 import { getTexture, getTextureMode } from './utils'
 
 /**

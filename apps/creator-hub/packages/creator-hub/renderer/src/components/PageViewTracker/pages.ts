@@ -1,4 +1,4 @@
-import { matchPath } from 'react-router-dom';
+import { matchPath } from 'react-router';
 
 // The app's routes (`renderer/src/index.tsx`), most specific first; `pages.spec.ts` checks that
 // the two lists match.

@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 
-import Button from "../../atoms/Button";
+import { Button } from "@dcl/one-ui";
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { ShopClient } from "@shop/api/shop";
 import { chainLabel, gasTokenSymbol } from "@shop/model/chain";
@@ -189,7 +189,7 @@ export default function ManageAsset(props: ManageAssetProps) {
               Deploy scenes, grant operator permissions and point a NAME to this LAND from the Creator Hub.
             </p>
             <div className="shop-land-actions">
-              <Button as="a" href={CREATOR_HUB_HREF} aria-disabled={locked || undefined} onClick={(e) => locked && e.preventDefault()}>
+              <Button size="md" href={CREATOR_HUB_HREF} aria-disabled={locked || undefined} onClick={(e) => locked && e.preventDefault()}>
                 Open in Creator Hub
               </Button>
             </div>
@@ -205,11 +205,11 @@ export default function ManageAsset(props: ManageAssetProps) {
             <div className="shop-land-box__head">
               <h1 id="shop-land-title">{result.nft.name}</h1>
               {locked ? (
-                <Button variant="secondary" disabled title={`Locked until the rent has finished and the ${assetWord.toLowerCase()} has been claimed back.`}>
+                <Button size="md" variant="secondary" disabled title={`Locked until the rent has finished and the ${assetWord.toLowerCase()} has been claimed back.`}>
                   Transfer
                 </Button>
               ) : (
-                <Button as="a" variant="secondary" href={`${tokenHref}/transfer`}>
+                <Button size="md" variant="secondary" href={`${tokenHref}/transfer`}>
                   Transfer
                 </Button>
               )}
@@ -225,7 +225,7 @@ export default function ManageAsset(props: ManageAssetProps) {
                   {order ? "Edit listing" : "List for sale"}
                 </Button>
               ) : (
-                <Button as="a" size="sm" href={`${tokenHref}/sell`}>
+                <Button size="sm" href={`${tokenHref}/sell`}>
                   {order ? "Edit listing" : "List for sale"}
                 </Button>
               )}
@@ -325,7 +325,7 @@ function RentBox({
         <h2 id="shop-land-rent">{title}</h2>
         <div className="shop-land-actions">
           {open ? (
-            <Button as="a" size="sm" variant="ghost" href={tokenHref}>
+            <Button size="sm" variant="outline" href={tokenHref}>
               View listing
             </Button>
           ) : null}
@@ -416,23 +416,23 @@ function NonLandManage({ result, tokenHref }: { result: NftResult; tokenHref: st
               A NAME's World, its scenes and the LAND it points to are managed in the Creator Hub. You can sell or transfer it from the Shop.
             </p>
             <div className="shop-land-actions">
-              <Button as="a" href={CREATOR_HUB_HREF}>
+              <Button size="md" href={CREATOR_HUB_HREF}>
                 Open in Creator Hub
               </Button>
-              <Button as="a" variant="secondary" href={`${tokenHref}/sell`}>
+              <Button size="md" variant="secondary" href={`${tokenHref}/sell`}>
                 Sell
               </Button>
-              <Button as="a" variant="secondary" href={`${tokenHref}/transfer`}>
+              <Button size="md" variant="secondary" href={`${tokenHref}/transfer`}>
                 Transfer
               </Button>
             </div>
           </>
         ) : (
           <div className="shop-land-actions">
-            <Button as="a" href={`${tokenHref}/sell`}>
+            <Button size="md" href={`${tokenHref}/sell`}>
               Sell
             </Button>
-            <Button as="a" variant="secondary" href={`${tokenHref}/transfer`}>
+            <Button size="md" variant="secondary" href={`${tokenHref}/transfer`}>
               Transfer
             </Button>
           </div>

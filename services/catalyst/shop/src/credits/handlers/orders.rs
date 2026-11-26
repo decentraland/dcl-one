@@ -165,13 +165,14 @@ pub async fn create_checkout(
         auth_ts,
     );
 
+    let (success_url, cancel_url) = state.settings.checkout_session_urls(source, &order_id);
     let session = stripe
         .create_checkout_session(
             &order,
             signer.as_str(),
             &order_id,
-            success_url,
-            cancel_url,
+            &success_url,
+            &cancel_url,
             &idempotency_key,
         )
         .await?;
@@ -386,17 +387,31 @@ async fn resume(
 /// the order retired only when Stripe says it is not paid and no longer
 /// open (Stripe leaves a paid or already closed session as it is). An order
 /// that is no longer pending costs no Stripe call. The buyer is then sent
-/// to the Shop's cancel page.
+/// to the cancel page of the surface that opened the checkout with
+/// `order=<id>&canceled=1`, as credits-server sends it; an unknown order to
+/// the Shop's.
 pub async fn cancel_return(
     State(state): State<SharedState>,
     Path(order_id): Path<String>,
 ) -> Response {
-    let cancel_url = state.settings.checkout_cancel_url.clone();
+    let order = state
+        .credits
+        .get_order_with_session_any(&order_id)
+        .await
+        .ok()
+        .flatten();
+    let has_cancel_page = !state
+        .settings
+        .checkout_return_urls(order.as_ref().and_then(|o| o.source.as_deref()))
+        .1
+        .is_empty();
+    let cancel_url = state
+        .settings
+        .checkout_cancel_landing(order.as_ref().and_then(|o| o.source.as_deref()), &order_id);
     if let Some(stripe) = state.stripe.as_ref()
-        && let Ok(Some((status, session))) =
-            state.credits.get_order_with_session_any(&order_id).await
-        && status == "pending"
-        && let Some(session) = session.as_deref()
+        && let Some(order) = order.as_ref()
+        && order.status == "pending"
+        && let Some(session) = order.session.as_deref()
         && let Some(s) = match stripe
             .expire_checkout_session(session, &format!("expire:{session}"))
             .await
@@ -421,7 +436,7 @@ pub async fn cancel_return(
             )
             .await;
     }
-    if cancel_url.is_empty() {
+    if !has_cancel_page {
         return (
             StatusCode::OK,
             Json(json!({ "ok": true, "orderId": order_id })),
@@ -546,6 +561,72 @@ mod tests {
                 "{other:?}"
             );
         }
+    }
+
+    /// Stripe returns the buyer with the order: the surface's success page
+    /// carries `order=<id>` (the app polls the order by it), and `cancel_url`
+    /// is this node's cancel-return for the order, so an abandoned checkout is
+    /// retired before the buyer goes on, as credits-server builds them.
+    /// Without `PUBLIC_URL`, `cancel_url` is the surface's cancel page with
+    /// `order=<id>&canceled=1`, Stripe refusing a relative one. The cancel
+    /// landing is the order's surface with `order=<id>&canceled=1`.
+    #[test]
+    fn a_checkout_returns_the_buyer_with_its_order() {
+        use crate::credits::{RawSettings, Settings};
+        let settings = |public_url: Option<&str>| {
+            Settings::parse(RawSettings {
+                checkout_success_url: "https://shop/credits".into(),
+                checkout_cancel_url: "https://shop/credits?from=stripe".into(),
+                checkout_success_url_builder: Some("https://builder/ok".into()),
+                checkout_cancel_url_builder: Some("https://builder/no".into()),
+                public_url: public_url.map(str::to_string),
+                ..RawSettings::default()
+            })
+            .unwrap()
+        };
+        let node = settings(Some("https://node.example/ "));
+        assert_eq!(
+            node.checkout_session_urls(None, "ord_ab12"),
+            (
+                "https://shop/credits?order=ord_ab12".to_string(),
+                "https://node.example/shop-api/v1/pack-orders/ord_ab12/cancel-return".to_string()
+            )
+        );
+        assert_eq!(
+            node.checkout_session_urls(Some("builder"), "ord_ab12").0,
+            "https://builder/ok?order=ord_ab12"
+        );
+        assert_eq!(
+            settings(None).checkout_session_urls(None, "ord_ab12"),
+            (
+                "https://shop/credits?order=ord_ab12".to_string(),
+                "https://shop/credits?from=stripe&order=ord_ab12&canceled=1".to_string()
+            ),
+            "no PUBLIC_URL: the surface's cancel page"
+        );
+        assert_eq!(
+            node.checkout_cancel_landing(Some("builder"), "ord_ab12"),
+            "https://builder/no?order=ord_ab12&canceled=1"
+        );
+        assert_eq!(
+            node.checkout_cancel_landing(None, "a&b=c"),
+            "https://shop/credits?from=stripe&order=a%26b%3Dc&canceled=1",
+            "an id from the path is encoded, never a parameter of its own"
+        );
+        let hashed = Settings::parse(RawSettings {
+            checkout_success_url: "https://x/#/credits".into(),
+            checkout_cancel_url: "https://x/?tab=packs#/credits".into(),
+            ..RawSettings::default()
+        })
+        .unwrap();
+        assert_eq!(
+            hashed.checkout_session_urls(None, "ord_ab12"),
+            (
+                "https://x/?order=ord_ab12#/credits".to_string(),
+                "https://x/?tab=packs&order=ord_ab12&canceled=1#/credits".to_string()
+            ),
+            "a fragment stays last, so the page's server reads the query"
+        );
     }
 
     #[test]

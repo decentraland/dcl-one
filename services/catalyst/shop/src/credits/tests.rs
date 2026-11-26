@@ -10812,3 +10812,281 @@ async fn the_cancel_return_calls_stripe_only_for_a_pending_order() {
         ("abandoned".to_string(), 0, 0)
     );
 }
+
+/// An authorization of `address` under `salt` with its charged total and state; `lines` line rows, each charged
+/// `cents_per_line` (none: a single-line credit keeps its line on the authorization row).
+async fn authorization_fixture(
+    pool: &PgPool,
+    salt: &str,
+    address: &str,
+    usd_cents: i64,
+    status: &str,
+    lines: i32,
+    cents_per_line: i64,
+) {
+    sqlx::query(
+        "INSERT INTO credits.authorizations (id, address, usd_cents, amount_wei, status, expires_at) \
+         VALUES ($1, $2, $3, 1, $4, $5)",
+    )
+    .bind(salt)
+    .bind(address)
+    .bind(usd_cents)
+    .bind(status)
+    .bind(super::store::now() + chrono::Duration::hours(1))
+    .execute(pool)
+    .await
+    .unwrap();
+    for position in 0..lines {
+        sqlx::query(
+            "INSERT INTO credits.authorization_lines (authorization_id, position, quoted_cents, charged_cents, \
+                 sale_kind, asset_kind, asset_chain_id, asset_contract) \
+             VALUES ($1, $2, $3, $3, 'primary_mint', 'wearable', 137, '0x00000000000000000000000000000000000c0de1')",
+        )
+        .bind(salt)
+        .bind(position)
+        .bind(cents_per_line)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+/// `GET /credits/authorize/{salt}` answers what the signer's credit debits, as credits-server answers it: the
+/// charged total, how many lines settle under it (a single-line credit is one) and its state. Another wallet's
+/// salt is the same 404 as an unknown one; a salt that is not a bytes32 is a 400; the canonical
+/// `/shop-api/v1/credit-authorizations/{salt}` answers the same.
+#[tokio::test]
+async fn the_charge_lookup_answers_what_the_signers_credit_debits() {
+    let Some(pool) = pool().await else { return };
+    let state = test_state(pool.clone(), StateCfg::default());
+    let app = app(state.clone());
+    let canonical = Router::new().nest("/shop-api", super::shop_router(state.clone()));
+    let buyer = scratch_wallet();
+    let other = scratch_wallet();
+    let group = format!("0x{}", super::handlers::random_32_hex());
+    let single = format!("0x{}", super::handlers::random_32_hex());
+    authorization_fixture(&pool, &group, &buyer.address, 2500, "authorized", 2, 1250).await;
+    authorization_fixture(&pool, &single, &buyer.address, 700, "consumed", 0, 0).await;
+
+    let upper = format!("0x{}", group[2..].to_ascii_uppercase());
+    let (status, v) = call(
+        &app,
+        &buyer,
+        "get",
+        &format!("/credits/credits/authorize/{upper}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v,
+        json!({ "salt": group, "usdCents": 2500, "lines": 2, "status": "pending" }),
+        "either case, answered lowercase"
+    );
+    let (status, v) = call(
+        &canonical,
+        &buyer,
+        "get",
+        &format!("/shop-api/v1/credit-authorizations/{single}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v,
+        json!({ "salt": single, "usdCents": 700, "lines": 1, "status": "settled" })
+    );
+    // A buyer's cancel keeps a signed credit spendable until it expires: it still debits.
+    let cancelled = format!("0x{}", super::handlers::random_32_hex());
+    authorization_fixture(&pool, &cancelled, &buyer.address, 500, "retired", 0, 0).await;
+    let (status, v) = call(
+        &app,
+        &buyer,
+        "get",
+        &format!("/credits/credits/authorize/{cancelled}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v,
+        json!({ "salt": cancelled, "usdCents": 500, "lines": 1, "status": "pending" })
+    );
+
+    let (status, v) = call(
+        &app,
+        &other,
+        "get",
+        &format!("/credits/credits/authorize/{group}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "another wallet's credit: {v}"
+    );
+    let unknown = format!("0x{}", super::handlers::random_32_hex());
+    let (status, _) = call(
+        &app,
+        &buyer,
+        "get",
+        &format!("/credits/credits/authorize/{unknown}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, v) = call(
+        &app,
+        &buyer,
+        "get",
+        "/credits/credits/authorize/0x1234",
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+
+    let (status, headers, _) = send(
+        &app,
+        "GET",
+        &format!("/credits/credits/authorize/{group}"),
+        HeaderMap::new(),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "unsigned: the ADR-44 refusal"
+    );
+    assert!(headers.get(axum::http::header::RETRY_AFTER).is_none());
+}
+
+/// A wallet asks the charge of its credits at most `LOOKUPS_PER_MINUTE` times a minute, as credits-server's lookup
+/// limiter allows: past it, credits-server's 429 with `Retry-After` and the seconds in the body. Another wallet
+/// keeps its own budget.
+#[tokio::test]
+async fn the_charge_lookup_is_limited_per_wallet() {
+    let Some(pool) = pool().await else { return };
+    let state = test_state(pool.clone(), StateCfg::default());
+    let app = app(state.clone());
+    let buyer = scratch_wallet();
+    let salt = format!("0x{}", super::handlers::random_32_hex());
+    let path = format!("/credits/credits/authorize/{salt}");
+    let limit = super::handlers::charge::LOOKUPS_PER_MINUTE;
+    let mut answered = 0;
+    let (headers, body) = loop {
+        let (status, headers, body) = send(
+            &app,
+            "GET",
+            &path,
+            signed_headers(&buyer, "get", &path).await,
+            None,
+        )
+        .await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            break (headers, body);
+        }
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        answered += 1;
+        assert!(answered <= 2 * limit, "the wallet's budget trips");
+    };
+    assert!(answered >= limit, "{answered}");
+    assert_eq!(headers[axum::http::header::RETRY_AFTER], "1");
+    assert_eq!(
+        body,
+        json!({ "error": "Too many requests. Slow down and try again shortly.", "retryAfterSeconds": 1 })
+    );
+    let other = scratch_wallet();
+    let (status, _) = call(&app, &other, "get", &path, &[], None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "another wallet's own budget");
+}
+
+/// The cancel landing sends the buyer back to the surface that opened the
+/// checkout, with `order=<id>&canceled=1` (the query the apps read), as
+/// credits-server does: a builder order to the builder's cancel page, any
+/// other or an unknown order to the Shop's.
+#[tokio::test]
+async fn the_cancel_return_sends_the_buyer_back_to_the_order_surface() {
+    let Some(pool) = pool().await else { return };
+    let settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        checkout_success_url: "https://shop/credits".into(),
+        checkout_cancel_url: "https://shop/credits".into(),
+        checkout_success_url_builder: Some("https://builder/ok".into()),
+        checkout_cancel_url_builder: Some("https://builder/no".into()),
+        ..RawSettings::default()
+    })
+    .unwrap();
+    let state: SharedState = Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        None,
+    ));
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let (shop_order, _) = session_order_fixture(&state, &addr).await;
+    let pack = PackRow {
+        sku: "settle-pack".into(),
+        title: "Settle".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let builder_order = unique("ord");
+    state
+        .credits
+        .insert_pending_order(
+            &builder_order,
+            &addr,
+            &pack.order(1).unwrap().from_source(Some("builder")),
+            &unique("cs"),
+        )
+        .await
+        .unwrap();
+    let landing = |order: String| {
+        let app = app.clone();
+        async move {
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/credits/credits/orders/{order}/cancel-return"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert!(resp.status().is_redirection(), "{}", resp.status());
+            resp.headers()[axum::http::header::LOCATION]
+                .to_str()
+                .unwrap()
+                .to_string()
+        }
+    };
+    assert_eq!(
+        landing(builder_order.clone()).await,
+        format!("https://builder/no?order={builder_order}&canceled=1")
+    );
+    assert_eq!(
+        landing(shop_order.clone()).await,
+        format!("https://shop/credits?order={shop_order}&canceled=1")
+    );
+    assert_eq!(
+        landing("ord_unknown".into()).await,
+        "https://shop/credits?order=ord_unknown&canceled=1"
+    );
+}

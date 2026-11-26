@@ -3,7 +3,10 @@
 
 #![forbid(unsafe_code)]
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -15,6 +18,7 @@ use bevy::{
             CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor, TextureDimension,
             TextureFormat, TextureUsages,
         },
+        renderer::RenderDevice,
         RenderApp,
     },
     window::ExitCondition,
@@ -66,6 +70,22 @@ pub fn render_target(app: &mut App) -> Handle<Image> {
     );
     target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
     app.world_mut().resource_mut::<Assets<Image>>().add(target)
+}
+
+/// The errors the GPU device reports outside an error scope, from this call on: a bind group that
+/// does not match its layout, a buffer bound too small, a shader module that fails validation.
+/// Call it on a finished app, before the frames under test, and assert the list is empty after
+/// them. Without it wgpu panics on the thread that reports the error.
+pub fn gpu_errors(app: &App) -> Arc<Mutex<Vec<String>>> {
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let reported = errors.clone();
+    app.world()
+        .resource::<RenderDevice>()
+        .wgpu_device()
+        .on_uncaptured_error(Box::new(move |error: wgpu::Error| {
+            reported.lock().unwrap().push(error.to_string());
+        }));
+    errors
 }
 
 /// Updates the app until every pipeline it queues has compiled, and returns how many did. Panics
