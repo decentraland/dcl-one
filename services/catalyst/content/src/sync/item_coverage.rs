@@ -7,9 +7,10 @@
 //! from the history floor, beside the incremental sync and independently of
 //! its cursors, processed snapshots and sync state. A pass schedules only the
 //! entities the node does not hold, then counts as debt every delta it could
-//! not prove accepted. The pass in progress is `content.item_history_replay`;
-//! the last completed one is `content.item_history_coverage`, stamped with
-//! the lease session that held the `sync` lease. Coverage is an as-observed
+//! not prove accepted. The pass in progress is `content.item_history_replay`,
+//! with one checkpoint per peer in `content.item_history_replay_peers`; the
+//! last completed one is `content.item_history_coverage`, stamped with the
+//! lease session that held the `sync` lease. Coverage is an as-observed
 //! fact about the configured peers, never a global absence proof.
 
 use std::collections::HashSet;
@@ -17,6 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::NaiveDateTime;
+use futures::{StreamExt, TryStreamExt};
 use sqlx::{PgConnection, PgPool, Row};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -226,11 +228,6 @@ struct Checkpoint {
     last_id: Option<String>,
 }
 
-enum Next {
-    At(String, i64, Option<String>),
-    Done,
-}
-
 /// A peer's page: read, or still failing once the retries ran out.
 enum Fetched {
     Page(Vec<serde_json::Value>, bool),
@@ -249,6 +246,8 @@ pub struct ItemHistoryReplay {
     pub owner: LeaseOwner,
     pub control: SyncControl,
     pub pacing: Pacing,
+    /// How many peers a pass reads at once.
+    pub concurrency: usize,
 }
 
 impl ItemHistoryReplay {
@@ -301,8 +300,9 @@ impl ItemHistoryReplay {
     }
 
     /// Resumes the recorded pass of this scope or starts a new one, then
-    /// walks it to its end: `None` when cancelled, when the peer set changed
-    /// or when there is nothing to replay.
+    /// walks every peer to its end, up to [`Self::concurrency`] at once, each
+    /// from its own checkpoint: `None` when cancelled, when the peer set
+    /// changed or when there is nothing to replay.
     pub async fn pass(
         &mut self,
         cancel: &CancellationToken,
@@ -311,56 +311,62 @@ impl ItemHistoryReplay {
         if scope.sources.is_empty() || scope.entity_types.is_empty() {
             return Ok(None);
         }
-        let mut at = self.begin(&scope).await?;
+        let (started_at, pending) = self.begin(&scope).await?;
+        let walked: Vec<bool> = futures::stream::iter(pending)
+            .map(|at| self.walk(&scope, at, cancel))
+            .buffer_unordered(self.concurrency.max(1))
+            .try_collect()
+            .await?;
+        if walked.iter().all(|finished| *finished) {
+            self.complete(&scope, started_at).await.map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Walks one peer from `at` to its end: true once its row is finished,
+    /// false when the walk was held back (cancelled, stopped, paused or the
+    /// peer set changed).
+    async fn walk(
+        &self,
+        scope: &Scope,
+        mut at: Checkpoint,
+        cancel: &CancellationToken,
+    ) -> Result<bool, ReplayError> {
         loop {
             if self.control.wait_while_paused(cancel).await
                 || !self.wait_while_stopped(cancel).await
+                || self.peers.has_changed().unwrap_or(false)
             {
-                return Ok(None);
+                return Ok(false);
             }
-            if self.peers.has_changed().unwrap_or(false) {
-                return Ok(None);
-            }
-            let (items, more) = match self.fetch(&at, &scope, cancel).await {
+            let (items, more) = match self.fetch(&at, &scope.entity_types, cancel).await {
                 Some(Fetched::Page(items, more)) => (items, more),
                 Some(Fetched::Unreachable) => (Vec::new(), true),
-                None => return Ok(None),
+                None => return Ok(false),
             };
             let keyset = more.then(|| keyset(&items)).flatten();
-            let (mut debt, frontier) = self.accept(items, &scope, &at.peer).await?;
-            let next = match keyset {
+            let (mut debt, frontier) = self.accept(items, scope, &at.peer).await?;
+            match keyset {
                 Some((from, last)) if (from, Some(&last)) != (at.from_ms, at.last_id.as_ref()) => {
-                    Next::At(at.peer.clone(), from, Some(last))
+                    let next = Checkpoint {
+                        from_ms: from,
+                        last_id: Some(last),
+                        ..at.clone()
+                    };
+                    self.save(&at, &next, debt, frontier).await?;
+                    at = next;
                 }
                 stuck => {
                     if more || stuck.is_some() {
                         debt += 1;
                     }
-                    match scope.sources.iter().position(|p| *p == at.peer) {
-                        Some(i) if i + 1 < scope.sources.len() => {
-                            Next::At(scope.sources[i + 1].clone(), scope.history_floor_ms, None)
-                        }
-                        _ => Next::Done,
-                    }
-                }
-            };
-            match next {
-                Next::Done => {
-                    return self.complete(&scope, &at, debt, frontier).await.map(Some);
-                }
-                Next::At(peer, from_ms, last_id) => {
-                    let next = Checkpoint {
-                        started_at: at.started_at,
-                        peer,
-                        from_ms,
-                        last_id,
-                    };
-                    self.save(&at, &next, debt, frontier).await?;
-                    at = next;
+                    self.finish(&at, debt, frontier).await?;
+                    return Ok(true);
                 }
             }
             if sleep_or_cancel(cancel, self.pacing.page_pause).await {
-                return Ok(None);
+                return Ok(false);
             }
         }
     }
@@ -387,18 +393,16 @@ impl ItemHistoryReplay {
         }
     }
 
-    async fn begin(&self, scope: &Scope) -> Result<Checkpoint, ReplayError> {
+    /// The pass's start and the checkpoints of its unfinished peers: the
+    /// recorded pass when its scope is this one and it holds a row for each
+    /// of its peers, else a new pass with one row per peer at the floor.
+    async fn begin(&self, scope: &Scope) -> Result<(NaiveDateTime, Vec<Checkpoint>), ReplayError> {
         let recorded = sqlx::query(
-            "SELECT algorithm, source_set, entity_types, history_floor_ms, pass_started_at, peer,
-                    from_ms, last_id
+            "SELECT algorithm, source_set, entity_types, history_floor_ms, pass_started_at
                FROM content.item_history_replay",
         )
         .fetch_optional(&self.pool)
         .await?;
-        let previous_start: Option<NaiveDateTime> = match &recorded {
-            Some(r) => r.try_get("pass_started_at")?,
-            None => None,
-        };
         if let Some(r) = &recorded {
             let same = r.try_get::<Option<i32>, _>("algorithm")? == Some(ALGORITHM)
                 && r.try_get::<Option<Vec<String>>, _>("source_set")?.as_ref()
@@ -407,18 +411,35 @@ impl ItemHistoryReplay {
                     .as_ref()
                     == Some(&scope.entity_types)
                 && r.try_get::<Option<i64>, _>("history_floor_ms")? == Some(scope.history_floor_ms);
-            let peer: Option<String> = r.try_get("peer")?;
-            let from_ms: Option<i64> = r.try_get("from_ms")?;
-            if let (true, Some(started_at), Some(peer), Some(from_ms)) =
-                (same, previous_start, peer, from_ms)
-                && scope.sources.contains(&peer)
-            {
-                return Ok(Checkpoint {
-                    started_at,
-                    peer,
-                    from_ms,
-                    last_id: r.try_get("last_id")?,
-                });
+            if let (true, Some(started_at)) = (
+                same,
+                r.try_get::<Option<NaiveDateTime>, _>("pass_started_at")?,
+            ) {
+                let rows = sqlx::query(
+                    "SELECT peer, from_ms, last_id, done FROM content.item_history_replay_peers
+                      WHERE pass_started_at = $1 ORDER BY peer",
+                )
+                .bind(started_at)
+                .fetch_all(&self.pool)
+                .await?;
+                let peers: Vec<String> = rows
+                    .iter()
+                    .map(|r| r.try_get("peer"))
+                    .collect::<Result<_, _>>()?;
+                if peers == scope.sources {
+                    let mut pending = Vec::new();
+                    for r in &rows {
+                        if !r.try_get::<bool, _>("done")? {
+                            pending.push(Checkpoint {
+                                started_at,
+                                peer: r.try_get("peer")?,
+                                from_ms: r.try_get("from_ms")?,
+                                last_id: r.try_get("last_id")?,
+                            });
+                        }
+                    }
+                    return Ok((started_at, pending));
+                }
             }
         }
         let mut tx = self.pool.begin().await?;
@@ -441,9 +462,8 @@ impl ItemHistoryReplay {
         let started_at: Option<NaiveDateTime> = sqlx::query_scalar(concat!(
             "INSERT INTO content.item_history_replay
                     (id, algorithm, source_set, entity_types, history_floor_ms, pass_started_at,
-                     peer, from_ms, last_id, debt, observed_frontier_ms, updated_at)
-             SELECT true, $1, $2, $3, $4, timezone('UTC', now()), $2[1], $4, NULL, 0, 0,
-                    timezone('UTC', now())
+                     updated_at)
+             SELECT true, $1, $2, $3, $4, timezone('UTC', now()), timezone('UTC', now())
                FROM (",
             sync_lease_holder!("$5"),
             ") h WHERE h.pid = $6
@@ -451,9 +471,7 @@ impl ItemHistoryReplay {
                     algorithm = EXCLUDED.algorithm, source_set = EXCLUDED.source_set,
                     entity_types = EXCLUDED.entity_types,
                     history_floor_ms = EXCLUDED.history_floor_ms,
-                    pass_started_at = EXCLUDED.pass_started_at, peer = EXCLUDED.peer,
-                    from_ms = EXCLUDED.from_ms, last_id = NULL, debt = 0,
-                    observed_frontier_ms = 0, updated_at = EXCLUDED.updated_at
+                    pass_started_at = EXCLUDED.pass_started_at, updated_at = EXCLUDED.updated_at
              RETURNING pass_started_at"
         ))
         .bind(ALGORITHM)
@@ -465,15 +483,34 @@ impl ItemHistoryReplay {
         .fetch_optional(&mut *tx)
         .await?;
         let started_at = started_at.ok_or(ReplayError::Lost)?;
+        sqlx::query("DELETE FROM content.item_history_replay_peers")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO content.item_history_replay_peers (peer, pass_started_at, from_ms)
+             SELECT peer, $2, $3 FROM unnest($1::text[]) AS peer",
+        )
+        .bind(&scope.sources)
+        .bind(started_at)
+        .bind(scope.history_floor_ms)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
-        Ok(Checkpoint {
-            started_at,
-            peer: scope.sources[0].clone(),
-            from_ms: scope.history_floor_ms,
-            last_id: None,
-        })
+        let pending = scope
+            .sources
+            .iter()
+            .map(|peer| Checkpoint {
+                started_at,
+                peer: peer.clone(),
+                from_ms: scope.history_floor_ms,
+                last_id: None,
+            })
+            .collect();
+        Ok((started_at, pending))
     }
 
+    /// Moves `at`'s peer to `next`, adding the page's debt and frontier, only
+    /// over the checkpoint `at` while this session holds the lease.
     async fn save(
         &self,
         at: &Checkpoint,
@@ -481,24 +518,41 @@ impl ItemHistoryReplay {
         debt: i64,
         frontier: i64,
     ) -> Result<(), ReplayError> {
+        self.advance(at, next, false, debt, frontier).await
+    }
+
+    /// Finishes `at`'s peer with the page's debt and frontier, under the
+    /// same conditions as [`Self::save`].
+    async fn finish(&self, at: &Checkpoint, debt: i64, frontier: i64) -> Result<(), ReplayError> {
+        self.advance(at, at, true, debt, frontier).await
+    }
+
+    async fn advance(
+        &self,
+        at: &Checkpoint,
+        next: &Checkpoint,
+        done: bool,
+        debt: i64,
+        frontier: i64,
+    ) -> Result<(), ReplayError> {
         let saved = sqlx::query(concat!(
-            "UPDATE content.item_history_replay
-                SET peer = $1, from_ms = $2, last_id = $3, debt = debt + $4,
+            "UPDATE content.item_history_replay_peers
+                SET from_ms = $1, last_id = $2, done = $3, debt = debt + $4,
                     observed_frontier_ms = GREATEST(observed_frontier_ms, $5),
                     updated_at = timezone('UTC', now())
-              WHERE pass_started_at = $6 AND peer = $7 AND from_ms = $8
-                AND last_id IS NOT DISTINCT FROM $9
+              WHERE peer = $6 AND pass_started_at = $7 AND from_ms = $8
+                AND last_id IS NOT DISTINCT FROM $9 AND NOT done
                 AND EXISTS (",
             sync_lease_holder!("$10"),
             " AND l.pid = $11)"
         ))
-        .bind(&next.peer)
         .bind(next.from_ms)
         .bind(&next.last_id)
+        .bind(done)
         .bind(debt)
         .bind(frontier)
-        .bind(at.started_at)
         .bind(&at.peer)
+        .bind(at.started_at)
         .bind(at.from_ms)
         .bind(&at.last_id)
         .bind(&self.owner.namespace)
@@ -512,37 +566,43 @@ impl ItemHistoryReplay {
         }
     }
 
+    /// Records the pass that started at `started_at` as coverage once every
+    /// one of its peers is finished, and clears it, in one transaction.
     async fn complete(
         &self,
         scope: &Scope,
-        at: &Checkpoint,
-        debt: i64,
-        frontier: i64,
+        started_at: NaiveDateTime,
     ) -> Result<PassReport, ReplayError> {
         let mut tx = self.pool.begin().await?;
-        let pass = sqlx::query(
-            "SELECT debt + $1 AS debt, GREATEST(observed_frontier_ms, $2) AS frontier,
-                    GREATEST(EXTRACT(EPOCH FROM timezone('UTC', now()) - pass_started_at), 0)::float8
-                      AS elapsed_secs
+        let elapsed: f64 = sqlx::query_scalar(
+            "SELECT GREATEST(EXTRACT(EPOCH FROM timezone('UTC', now()) - pass_started_at), 0)::float8
                FROM content.item_history_replay
-              WHERE pass_started_at = $3 AND peer = $4 AND from_ms = $5
-                AND last_id IS NOT DISTINCT FROM $6
+              WHERE pass_started_at = $1
              FOR UPDATE",
         )
-        .bind(debt)
-        .bind(frontier)
-        .bind(at.started_at)
-        .bind(&at.peer)
-        .bind(at.from_ms)
-        .bind(&at.last_id)
+        .bind(started_at)
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(ReplayError::Lost)?;
+        let peers = sqlx::query(
+            "SELECT count(*) AS peers, count(*) FILTER (WHERE done) AS finished,
+                    COALESCE(sum(debt), 0)::bigint AS debt,
+                    COALESCE(max(observed_frontier_ms), 0) AS frontier
+               FROM content.item_history_replay_peers
+              WHERE pass_started_at = $1",
+        )
+        .bind(started_at)
+        .fetch_one(&mut *tx)
+        .await?;
+        let (count, finished): (i64, i64) = (peers.try_get("peers")?, peers.try_get("finished")?);
+        if count != scope.sources.len() as i64 || finished != count {
+            return Err(ReplayError::Lost);
+        }
         let report = PassReport {
-            started_at: at.started_at,
-            debt: pass.try_get("debt")?,
-            observed_frontier_ms: pass.try_get("frontier")?,
-            elapsed: Duration::from_secs_f64(pass.try_get("elapsed_secs")?),
+            started_at,
+            debt: peers.try_get("debt")?,
+            observed_frontier_ms: peers.try_get("frontier")?,
+            elapsed: Duration::from_secs_f64(elapsed),
         };
         let written = sqlx::query(concat!(
             "INSERT INTO content.item_history_coverage AS c
@@ -568,7 +628,7 @@ impl ItemHistoryReplay {
         .bind(&scope.sources)
         .bind(&scope.entity_types)
         .bind(scope.history_floor_ms)
-        .bind(at.started_at)
+        .bind(started_at)
         .bind(report.observed_frontier_ms)
         .bind(report.debt)
         .bind(&self.owner.namespace)
@@ -580,11 +640,13 @@ impl ItemHistoryReplay {
         }
         sqlx::query(
             "UPDATE content.item_history_replay
-                SET pass_started_at = NULL, peer = NULL, from_ms = NULL, last_id = NULL, debt = 0,
-                    observed_frontier_ms = 0, updated_at = timezone('UTC', now())",
+                SET pass_started_at = NULL, updated_at = timezone('UTC', now())",
         )
         .execute(&mut *tx)
         .await?;
+        sqlx::query("DELETE FROM content.item_history_replay_peers")
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(report)
     }
@@ -592,10 +654,10 @@ impl ItemHistoryReplay {
     async fn fetch(
         &self,
         at: &Checkpoint,
-        scope: &Scope,
+        entity_types: &[String],
         cancel: &CancellationToken,
     ) -> Option<Fetched> {
-        let url = page_url(at, &scope.entity_types)?;
+        let url = page_url(at, entity_types)?;
         let mut wait = self.pacing.retry_start;
         loop {
             match fetch_page(&self.client, &url).await {
