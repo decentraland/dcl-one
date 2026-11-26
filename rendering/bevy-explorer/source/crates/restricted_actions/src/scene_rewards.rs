@@ -9,18 +9,19 @@
 //! assigned it. Credits-server decides everything else; this answers with its verdict mapped to the
 //! protocol's `GrantRewardError`.
 
-use std::sync::Arc;
-
 use bevy::{
+    platform::collections::HashMap,
     prelude::*,
     tasks::{IoTaskPool, Task},
 };
 use common::{
     rpc::{
         GrantRewardAnswer, GrantRewardError, GrantRewardRequest, RpcCall, RpcCallEvent, RpcOrigin,
+        RpcResultSender,
     },
+    sets::SceneSets,
     structs::server_mode,
-    util::{TaskCompat, TaskExt},
+    util::{DespawnWith, TaskCompat, TaskExt},
 };
 use comms::{global_crdt::ForeignPlayer, scene_rooms::SceneRooms};
 use wallet::delegation::CreditsDelegations;
@@ -268,11 +269,30 @@ mod remote {
     }
 }
 
-type InFlight = Vec<(
-    Arc<str>,
-    common::rpc::RpcResultSender<GrantRewardAnswer>,
-    Task<GrantRewardAnswer>,
-)>;
+/// `~system/SceneRewards`: sends each scene's `grantReward` to credits-server and answers the scene
+/// with the verdict.
+pub struct SceneRewardsPlugin;
+
+impl Plugin for SceneRewardsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (handle_grant_reward, answer_grant_rewards)
+                .chain()
+                .in_set(SceneSets::RestrictedActions),
+        );
+    }
+}
+
+/// One reward request on its way to credits-server, as an entity of its own that is despawned
+/// with the scene that asked (`DespawnWith`). A scene that goes away cancels its requests and
+/// drops their answer senders, which its module reads as `Unavailable`.
+#[derive(Component)]
+pub(crate) struct PendingGrantReward {
+    scene: Entity,
+    response: RpcResultSender<GrantRewardAnswer>,
+    task: Task<GrantRewardAnswer>,
+}
 
 /// Whether `recipient` is connected to THIS scene's room, in this scene's crdt context: the room
 /// the orchestrator assigned the scene, so a player in a co-tenant scene never counts, even one
@@ -303,13 +323,17 @@ fn recipient_connected(
 }
 
 pub(crate) fn handle_grant_reward(
+    mut commands: Commands,
     mut events: EventReader<RpcCallEvent>,
     delegations: Option<Res<CreditsDelegations>>,
     players: Query<&ForeignPlayer>,
     scene_rooms: SceneRooms,
     presence: ScenePresence,
-    mut in_flight: Local<InFlight>,
+    pending: Query<&PendingGrantReward>,
 ) {
+    // requests this pass starts, which `pending` cannot see yet: spawning is deferred
+    let mut started: HashMap<Entity, usize> = HashMap::default();
+
     let now_millis = web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -344,7 +368,9 @@ pub(crate) fn handle_grant_reward(
             refuse(GrantRewardError::Unavailable);
             continue;
         };
-        if in_flight.iter().filter(|(scene, ..)| scene == hash).count() >= MAX_IN_FLIGHT_PER_SCENE {
+        let in_flight = pending.iter().filter(|p| p.scene == *entity).count()
+            + started.get(entity).copied().unwrap_or(0);
+        if in_flight >= MAX_IN_FLIGHT_PER_SCENE {
             refuse(GrantRewardError::RateLimited);
             continue;
         }
@@ -364,16 +390,115 @@ pub(crate) fn handle_grant_reward(
         );
         let body = remote::request_body(&valid, connected);
         let task = IoTaskPool::get().spawn_compat(remote::send(url, body, delegation.clone()));
-        in_flight.push((hash.clone(), request.response.clone(), task));
+        commands.spawn((
+            PendingGrantReward {
+                scene: *entity,
+                response: request.response.clone(),
+                task,
+            },
+            DespawnWith(*entity),
+        ));
+        *started.entry(*entity).or_default() += 1;
+    }
+}
+
+/// Answers each request credits-server has settled, and despawns it.
+pub(crate) fn answer_grant_rewards(
+    mut commands: Commands,
+    mut pending: Query<(Entity, &mut PendingGrantReward)>,
+) {
+    for (entity, mut request) in &mut pending {
+        if let Some(answer) = request.task.complete() {
+            request.response.send(answer);
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use bevy::{
+        prelude::*,
+        tasks::{IoTaskPool, TaskPool},
+    };
+    use common::{
+        rpc::{GrantRewardAnswer, RpcResultSender},
+        util::{DespawnWith, UtilsPlugin},
+    };
+
+    use super::{answer_grant_rewards, PendingGrantReward};
+
+    fn app() -> App {
+        IoTaskPool::get_or_init(TaskPool::new);
+        let mut app = App::new();
+        app.add_plugins(UtilsPlugin)
+            .add_systems(Update, answer_grant_rewards);
+        app
     }
 
-    in_flight.retain_mut(|(_, response, task)| match task.complete() {
-        Some(answer) => {
-            response.send(answer);
-            false
+    #[test]
+    fn a_settled_request_answers_its_scene_and_goes_away() {
+        let mut app = app();
+        let scene = app.world_mut().spawn_empty().id();
+        let (response, mut answer) = RpcResultSender::channel();
+        let task = IoTaskPool::get()
+            .spawn(async { GrantRewardAnswer::paid(false, "receipt-1".to_owned(), 5) });
+        let request = app
+            .world_mut()
+            .spawn((
+                PendingGrantReward {
+                    scene,
+                    response,
+                    task,
+                },
+                DespawnWith(scene),
+            ))
+            .id();
+
+        for _ in 0..500 {
+            app.update();
+            if app.world().get_entity(request).is_err() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        None => true,
-    });
+
+        assert!(app.world().get_entity(request).is_err());
+        let received = answer.poll_once().expect("answered").expect("answered");
+        assert_eq!(
+            serde_json::to_value(received).unwrap(),
+            serde_json::to_value(GrantRewardAnswer::paid(false, "receipt-1".to_owned(), 5))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn a_scene_that_goes_away_drops_its_requests_and_their_answers() {
+        let mut app = app();
+        let scene = app.world_mut().spawn_empty().id();
+        let (response, mut answer) = RpcResultSender::channel();
+        let task = IoTaskPool::get().spawn(std::future::pending::<GrantRewardAnswer>());
+        let request = app
+            .world_mut()
+            .spawn((
+                PendingGrantReward {
+                    scene,
+                    response,
+                    task,
+                },
+                DespawnWith(scene),
+            ))
+            .id();
+        app.update();
+        assert!(app.world().get_entity(request).is_ok());
+
+        app.world_mut().despawn(scene);
+        app.update();
+
+        assert!(app.world().get_entity(request).is_err());
+        // the scene's module reads a dropped answer as GRE_UNAVAILABLE
+        assert!(answer.poll_once().is_err());
+    }
 }
 
 #[cfg(test)]

@@ -122,7 +122,6 @@ impl Plugin for RestrictedActionsPlugin {
                     handle_spawned_command,
                     handle_copy_to_clipboard,
                     handle_sign_request,
-                    handle_grant_reward,
                     handle_entity_definition,
                     handle_read_file,
                     open_explorer_ui,
@@ -131,6 +130,7 @@ impl Plugin for RestrictedActionsPlugin {
             )
                 .in_set(SceneSets::RestrictedActions),
         );
+        app.add_plugins(SceneRewardsPlugin);
         app.init_resource::<PendingPortableCommands>();
         app.init_resource::<ExplorerUiState>();
         // headless has no InputManagerPlugin; open_explorer_ui still needs the (empty) streams
@@ -1423,11 +1423,25 @@ fn get_user_data(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-use scene_rewards::handle_grant_reward;
+use scene_rewards::SceneRewardsPlugin;
 
-/// The web build never hosts an authoritative server, so it never pays a scene reward.
+/// `~system/SceneRewards` on the web build, which never hosts an authoritative server and so never
+/// pays a scene reward.
 #[cfg(target_arch = "wasm32")]
-fn handle_grant_reward(mut events: EventReader<RpcCallEvent>) {
+struct SceneRewardsPlugin;
+
+#[cfg(target_arch = "wasm32")]
+impl Plugin for SceneRewardsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            refuse_grant_reward.in_set(SceneSets::RestrictedActions),
+        );
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn refuse_grant_reward(mut events: EventReader<RpcCallEvent>) {
     for ev in events.read() {
         if let RpcCall::GrantReward(request) = &ev.call {
             request
