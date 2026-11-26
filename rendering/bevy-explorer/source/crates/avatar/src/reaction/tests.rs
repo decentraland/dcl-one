@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use alloy_core::primitives::Address;
 use bevy::time::TimeUpdateStrategy;
 use common::{rpc::RpcStreamReceiver, structs::PrimaryPlayerRes};
 use comms::{chat_reaction::emoji_to_atlas_index, NetworkMessage, TransportType};
@@ -8,6 +9,8 @@ use tokio::sync::mpsc;
 use super::*;
 
 const FRAME: f32 = 0.05;
+/// The address every stand-in peer reacts under.
+const PEER: Address = Address::repeat_byte(9);
 
 /// The plugin in an app of its own, with a signed-in local player and a stream to the HUD.
 struct Harness {
@@ -53,7 +56,10 @@ fn harness() -> Harness {
         },
     );
     // as the engine spawns them: the outbox is the plugin's to add
-    let local = app.world_mut().spawn(PrimaryUser::default()).id();
+    let local = app
+        .world_mut()
+        .spawn((PrimaryUser::default(), PlayerAddress(me)))
+        .id();
     app.insert_resource(PrimaryPlayerRes(local));
 
     let (sender, hud) = RpcStreamSender::channel();
@@ -77,10 +83,12 @@ impl Harness {
     }
 
     /// A stand-in for a peer: what the comms decode gives every player it hears from, but for
-    /// the `ForeignPlayer` that only comms can make. With none, its reactions play under the
-    /// local user's address.
+    /// the `ForeignPlayer` that only comms can make.
     fn peer(&mut self) -> Entity {
-        self.app.world_mut().spawn(ReactionGuard::default()).id()
+        self.app
+            .world_mut()
+            .spawn((ReactionGuard::default(), PlayerAddress(PEER)))
+            .id()
     }
 
     fn hear(&mut self, sender: Entity, emoji: &str, timestamp: f32, count: i32) {
@@ -264,12 +272,8 @@ fn a_peers_reactions_play_one_at_a_time() {
 
     harness.run(0.5);
     assert_eq!(
-        harness
-            .streamed()
-            .into_iter()
-            .map(|(_, emoji)| emoji)
-            .collect::<Vec<_>>(),
-        ["🔥"; 3]
+        harness.streamed(),
+        vec![(format!("{PEER:#x}"), "🔥".to_owned()); 3]
     );
     assert_eq!(harness.stats().played, 3);
     // nothing is kept on a peer once the gap after their last has run out

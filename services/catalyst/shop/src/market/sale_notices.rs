@@ -16,8 +16,9 @@
 //! so it sells nothing here. A sale of an item the catalogue lacks holds its
 //! cursor until the item appears, or a complete items mirror pass
 //! `ITEM_WAIT_SECS` after the sale (on a network the collections index owns:
-//! its publication covering the sale's block), as the badge processor's do
-//! ([`ItemWait`]). The Ethereum ERC721Bid was never polled.
+//! its publication covering the sale's block, however long that takes), as
+//! the badge processor's do ([`ItemWait`]). A held cursor shows as a growing
+//! `shop_notification_cursor_lag`. The Ethereum ERC721Bid was never polled.
 //!
 //! Each (source, network) reads only up to its index's `folded_block` while
 //! `chain_walk::is_ready`; its first pass starts at that published block, so
@@ -522,6 +523,7 @@ async fn drain(
     loop {
         let mut txn = pool.begin().await?;
         let (_, since_block, since_log) = notice_cursor::lock(&mut txn, producer).await?;
+        notice_cursor::report_lag(producer, published, since_block);
         let rows: Vec<LogRow> = sqlx::query_as(sqlx::AssertSqlSafe(source.rows_sql()))
             .bind(net.db_name())
             .bind(since_block)
@@ -563,17 +565,6 @@ async fn drain(
                     );
                     held = true;
                     break;
-                }
-                Waited::Skip => {
-                    tracing::warn!(
-                        source = source.db_name(),
-                        network = net.db_name(),
-                        block = row.block_number,
-                        log = row.log_index,
-                        "the collections index has not covered this sale for a day: passed without a notification"
-                    );
-                    done = Some((row.block_number, row.log_index));
-                    continue;
                 }
                 Waited::Describe => {}
             }
