@@ -359,6 +359,35 @@ test('the offline guard lets a socket connect to a loopback port with only a cal
   assert.deepEqual(JSON.parse(result.stdout), { connected: true, refused: [] })
 })
 
+test('the offline guard takes localhost only from the system lookup, never from a custom lookup or a nameserver query', async () => {
+  const program = `
+    const net = require('node:net'), dns = require('node:dns')
+    require(${JSON.stringify(guard)})
+    const report = { customLookupRan: false }
+    const outcome = run => new Promise(resolve => run(error => resolve(error ? error.message : 'answered')))
+    ;(async () => {
+      report.lookup = await outcome(done => dns.lookup('localhost', done))
+      report.custom = await outcome(done => net.connect({ host: 'localhost', port: 9, lookup: (host, options, callback) => {
+        report.customLookupRan = true
+        callback(Error('custom lookup ran'))
+      } }).on('error', done))
+      report.resolve = await outcome(done => dns.resolve4('localhost', done))
+      report.resolver = await outcome(done => new dns.Resolver().resolve6('localhost', done))
+      report.promises = await dns.promises.resolve('127.0.0.1').then(() => 'answered', error => error.message)
+      console.log(JSON.stringify(report))
+    })()
+  `
+  const result = spawnSync(process.execPath, ['-e', program], { encoding: 'utf8' })
+  assert.deepEqual(JSON.parse(result.stdout), {
+    lookup: 'answered',
+    custom: 'capture is offline: localhost:9',
+    customLookupRan: false,
+    resolve: 'capture is offline: localhost',
+    resolver: 'capture is offline: localhost',
+    promises: 'capture is offline: 127.0.0.1'
+  })
+})
+
 test('the offline guard refuses to start under a proxy, in any spelling', () => {
   for (const [name, value] of [['HTTPS_PROXY', 'http://127.0.0.1:9'], ['http_proxy', 'http://127.0.0.1:9'], ['NODE_USE_ENV_PROXY', '1']]) {
     const env = { ...process.env, [name]: value, NODE_OPTIONS: `--require=${guard}` }

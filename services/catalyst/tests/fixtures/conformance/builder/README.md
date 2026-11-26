@@ -306,8 +306,11 @@ env, so no `.env` file is read. Then it:
    while `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` or `NODE_USE_ENV_PROXY` is
    set in either spelling, so no proxy configured before it can carry a
    request. It refuses a TCP connection or a UDP datagram to anything but
-   localhost or a loopback address, and a lookup or DNS query (`dns`,
-   `dns.promises` and their resolvers) of any other name. The
+   localhost or a loopback address (one that brings its own lookup function: to
+   anything but a loopback address), a lookup (`dns.lookup` and
+   `dns.promises.lookup`) of any other name, and every nameserver query (the
+   `resolve*` and `reverse` functions of `dns`, `dns.promises` and their
+   resolvers), whatever its name. The
    capture fails if anything was refused, if upstream asked the fake for
    another subgraph field or filtered by a `where` key the fake doesn't
    apply, called another JSON-RPC method, or called a fake route other than the subgraphs, the JSON-RPC, the

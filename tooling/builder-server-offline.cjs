@@ -14,11 +14,18 @@ const refused = []
 const proxied = PROXY_VARIABLES.flatMap(name => [name, name.toLowerCase()]).filter(name => process.env[name] !== undefined)
 if (proxied.length) throw Error(`unset ${proxied.join(', ')} before capturing: a proxy would carry requests past the offline guard`)
 
-function isLoopback(host) {
-  if (host === undefined || host === null || host === '' || host === 'localhost') return true
+function isLoopbackAddress(host) {
   const address = String(host).replace(/^\[|\]$/g, '').replace(/^::ffff:/i, '')
   if (net.isIPv4(address)) return address.startsWith('127.')
   return net.isIPv6(address) && /^(0*:)*:?0*1$/.test(address)
+}
+
+function isLoopback(host) {
+  return host === undefined || host === null || host === '' || host === 'localhost' || isLoopbackAddress(host)
+}
+
+function never() {
+  return false
 }
 
 function refuse(target) {
@@ -26,12 +33,12 @@ function refuse(target) {
   return Object.assign(Error(`capture is offline: ${target}`), { code: 'ECONNREFUSED' })
 }
 
-function guardCallbacks(target, names) {
+function guardCallbacks(target, names, allowed) {
   for (const name of names) {
     const original = target[name]
     if (typeof original !== 'function') continue
     target[name] = function (hostname, ...rest) {
-      if (isLoopback(hostname)) return original.call(this, hostname, ...rest)
+      if (allowed(hostname)) return original.call(this, hostname, ...rest)
       const callback = rest[rest.length - 1]
       const error = refuse(hostname)
       process.nextTick(() => callback(error))
@@ -40,28 +47,31 @@ function guardCallbacks(target, names) {
   }
 }
 
-function guardPromises(target, names) {
+function guardPromises(target, names, allowed) {
   for (const name of names) {
     const original = target[name]
     if (typeof original !== 'function') continue
     target[name] = function (hostname, ...rest) {
-      if (isLoopback(hostname)) return original.call(this, hostname, ...rest)
+      if (allowed(hostname)) return original.call(this, hostname, ...rest)
       return Promise.reject(refuse(hostname))
     }
   }
 }
 
-guardCallbacks(dns, ['lookup', 'lookupService', ...DNS_QUERIES])
-guardCallbacks(dns.Resolver.prototype, DNS_QUERIES)
-guardPromises(dns.promises, ['lookup', 'lookupService', ...DNS_QUERIES])
-guardPromises(dns.promises.Resolver.prototype, DNS_QUERIES)
+guardCallbacks(dns, ['lookup', 'lookupService'], isLoopback)
+guardCallbacks(dns, DNS_QUERIES, never)
+guardCallbacks(dns.Resolver.prototype, DNS_QUERIES, never)
+guardPromises(dns.promises, ['lookup', 'lookupService'], isLoopback)
+guardPromises(dns.promises, DNS_QUERIES, never)
+guardPromises(dns.promises.Resolver.prototype, DNS_QUERIES, never)
 
 const connect = net.Socket.prototype.connect
 net.Socket.prototype.connect = function (...args) {
   const first = Array.isArray(args[0]) ? args[0][0] : args[0]
   const options = first !== null && typeof first === 'object' ? first : { port: first, host: typeof args[1] === 'string' ? args[1] : undefined }
   const local = Boolean(options.path) || (typeof first === 'string' && !(Number(first) >= 0))
-  if (local || isLoopback(options.host)) return connect.apply(this, args)
+  const loopback = typeof options.lookup === 'function' ? isLoopbackAddress(options.host) : isLoopback(options.host)
+  if (local || loopback) return connect.apply(this, args)
   const error = refuse(`${options.host}:${options.port}`)
   process.nextTick(() => this.destroy(error))
   return this
