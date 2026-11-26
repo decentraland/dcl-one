@@ -181,4 +181,50 @@ describe('platform detection', () => {
       consoleError.mockRestore()
     })
   })
+
+  describe('getSystemLanguage()', () => {
+    function mockConfigurations(configurations?: Record<string, string>) {
+      mockGetExplorerInformation.mockResolvedValue({ platform: 'mobile', agent: 'test-agent', configurations })
+    }
+
+    it.each`
+      systemLocale | expected
+      ${'es-AR'}   | ${'es-AR'}
+      ${'pt_BR'}   | ${'pt-BR'}
+      ${' ja '}    | ${'ja'}
+      ${''}        | ${'en'}
+      ${'???'}     | ${'en'}
+    `('returns "$expected" for configurations.systemLocale "$systemLocale"', async ({ systemLocale, expected }) => {
+      mockConfigurations({ systemLocale })
+      const { getSystemLanguage } = await loadPlatformModule()
+      expect(getSystemLanguage()).toBe(expected)
+    })
+
+    it('is independent of the client language', async () => {
+      mockConfigurations({ locale: 'en', systemLocale: 'ja-JP' })
+      const { getPlayerLanguage, getSystemLanguage } = await loadPlatformModule()
+      expect(getPlayerLanguage()).toBe('en')
+      expect(getSystemLanguage()).toBe('ja-JP')
+    })
+
+    it('returns "en" when the client does not report it', async () => {
+      mockConfigurations({ locale: 'es' })
+      const { getSystemLanguage } = await loadPlatformModule()
+      expect(getSystemLanguage()).toBe('en')
+    })
+
+    it('returns "en" before the explorer responds', async () => {
+      mockGetExplorerInformation.mockReturnValue(new Promise(() => {}))
+      const { getSystemLanguage } = await loadPlatformModule()
+      expect(getSystemLanguage()).toBe('en')
+    })
+
+    it('does not change on a mid-session client language change', async () => {
+      mockConfigurations({ locale: 'en', systemLocale: 'fr' })
+      const { getSystemLanguage } = await loadPlatformModule()
+      const { localeChangedEvents } = await import('../../../packages/@dcl/sdk/src/internal/language-events')
+      localeChangedEvents.notifyObservers({ locale: 'es' })
+      expect(getSystemLanguage()).toBe('fr')
+    })
+  })
 })
