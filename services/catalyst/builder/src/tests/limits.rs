@@ -45,7 +45,7 @@ pub(super) async fn node_over(
         },
     )
     .await;
-    state.now = clock;
+    state.items.clock.now = clock;
     tune(&mut state);
     let state = Arc::new(state);
     let app = super::support::mounted(&state);

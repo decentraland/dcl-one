@@ -47,6 +47,9 @@ pub struct ItemsComponent {
     pub documents: crate::limits::Documents,
     /// The Polygon chain its URNs name ([`crate::network`]).
     pub(crate) network: crate::network::Network,
+    /// The node's clock, which a collection's lock and the chain copy's age
+    /// are read by.
+    pub clock: chain_state::Clock,
     released: AtomicBool,
 }
 
@@ -66,6 +69,7 @@ impl ItemsComponent {
             denylist: Arc::default(),
             documents: crate::limits::Documents::default(),
             network: crate::network::Network::default(),
+            clock: chain_state::Clock::default(),
             released: AtomicBool::new(false),
         }
     }
@@ -114,7 +118,7 @@ impl ItemsComponent {
         read: &CollectionRead,
     ) -> Result<Option<CollectionMetaRow>, ApiError> {
         let mut conn = self.pool.acquire().await?;
-        let view = chain_state::for_read(&mut conn).await?;
+        let view = chain_state::for_read(&mut conn, &self.clock).await?;
         collection_meta(&mut conn, &view, read).await
     }
 }

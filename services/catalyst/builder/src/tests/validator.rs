@@ -179,8 +179,10 @@ pub(super) async fn node_over(pool: PgPool, options: Options) -> Node {
         storage.clone(),
         Arc::default(),
         dcl_http::Outbound::for_tests(),
+        dcl_http::Outbound::for_tests(),
         Some(registry_index(&options.committee, &options.registry).await),
         None,
+        std::sync::Arc::default(),
         crate::Settings {
             writes_enabled: options.writes,
             polygon_rpc_url: Some(oracle.url().await),
@@ -198,8 +200,7 @@ pub(super) async fn node_over(pool: PgPool, options: Options) -> Node {
         },
     )
     .unwrap();
-    state.now = clock;
-    state.guarded = dcl_http::Outbound::for_tests();
+    state.items.clock.now = clock;
     if options.unbounded {
         state.limits = crate::limits::Limits::unbounded();
     }
@@ -1405,6 +1406,7 @@ async fn unclaimed_requests_expire_after_seven_days_and_settled_ones_are_deleted
     sweep(&node).await;
     assert_eq!(requests(&node.pool, id).await[0].4, None);
     set_clock(created + Duration::days(7));
+    super::support::copy_pass_at(&node.pool, clock()).await;
     let (second, _) = published(&node, "Raced sweeps", 1).await;
     set_clock(created + Duration::days(7) + Duration::milliseconds(1));
     tokio::join!(sweep(&node), sweep(&node));

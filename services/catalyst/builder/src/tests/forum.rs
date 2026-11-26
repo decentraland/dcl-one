@@ -32,7 +32,7 @@ async fn env_with(pool: PgPool, forum_on: bool) -> Env {
     let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
     let forum = FakeForum::default();
     let origin = forum.start().await;
-    let mut state = super::support::state(
+    let state = super::support::state(
         pool.clone(),
         Some(committee_index(&committee).await),
         crate::Settings {
@@ -47,7 +47,6 @@ async fn env_with(pool: PgPool, forum_on: bool) -> Env {
         },
     )
     .await;
-    state.guarded = dcl_http::Outbound::for_tests();
     let state = Arc::new(state);
     let app = super::support::mounted(&state);
     Env {

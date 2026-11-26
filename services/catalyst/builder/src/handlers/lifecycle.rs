@@ -1,3 +1,7 @@
+//! A collection's lifecycle routes: lock, delete, owner sync, terms
+//! acceptance, the publish that consolidates a published collection, and a
+//! third-party collection's approval data.
+
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;

@@ -1,3 +1,7 @@
+//! `/v1/collections/{id}/publication`: the owner's standard publication
+//! attempt, begun for a reviewed revision, claimed for one wallet request,
+//! recorded with its transaction, read and cancelled.
+
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::Deserialize;
@@ -43,6 +47,7 @@ fn rpc_url(state: &SharedState) -> Result<&str, ApiError> {
     })
 }
 
+/// `POST`: begins the attempt for the body's `revision`.
 pub async fn begin(
     State(state): State<SharedState>,
     Signed(owner): Signed,
@@ -60,6 +65,7 @@ pub async fn begin(
     )))
 }
 
+/// `GET .../status`: the attempt, `null` without one.
 pub async fn status(
     State(state): State<SharedState>,
     Signed(owner): Signed,
@@ -71,6 +77,7 @@ pub async fn status(
     )))
 }
 
+/// `PUT`: records the body's `tx_hash` and verifies it on Polygon.
 pub async fn transaction(
     State(state): State<SharedState>,
     Signed(owner): Signed,
@@ -89,6 +96,7 @@ pub async fn transaction(
     )))
 }
 
+/// `DELETE`: cancels an attempt with no transaction.
 pub async fn cancel(
     State(state): State<SharedState>,
     Signed(owner): Signed,
@@ -99,6 +107,8 @@ pub async fn cancel(
     Ok(Json(ApiData::ok(true)))
 }
 
+/// `PATCH`: claims the attempt of the body's `revision` for one wallet
+/// request.
 pub async fn claim(
     State(state): State<SharedState>,
     Signed(owner): Signed,

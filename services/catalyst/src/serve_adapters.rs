@@ -413,8 +413,10 @@ mod tests {
                 storage.clone(),
                 storage.denylist().clone(),
                 http::Outbound::for_tests(),
+                http::Outbound::for_tests(),
                 None,
                 None,
+                std::sync::Arc::default(),
                 builder::Settings::default(),
             )
             .unwrap(),

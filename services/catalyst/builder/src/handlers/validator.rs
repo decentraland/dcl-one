@@ -97,7 +97,7 @@ async fn authenticate(
         &called.method,
         &candidate_paths(&called.headers, &called.path),
         body,
-        (state.now)().timestamp_millis(),
+        state.now().timestamp_millis(),
     )
     .ok_or_else(unauthorized)?;
     let mut conn = state.items.pool().acquire().await?;

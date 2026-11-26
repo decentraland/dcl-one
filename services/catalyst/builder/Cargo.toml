@@ -12,6 +12,7 @@ catalyst-shared = { path = "../shared" }
 catalyst-storage = { path = "../storage" }
 catalyst-chain-index = { path = "../chain-index" }
 catalyst-content = { path = "../content" }
+catalyst-jobs = { path = "../jobs" }
 tokio.workspace = true
 axum.workspace = true
 tower-http.workspace = true

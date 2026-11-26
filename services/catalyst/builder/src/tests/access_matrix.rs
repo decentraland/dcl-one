@@ -1712,7 +1712,6 @@ async fn matrix_with(committee: &FakeCommittee, connections: u32, rpc: bool) -> 
         },
     )
     .await;
-    state.guarded = dcl_http::Outbound::for_tests();
     state.validator_calls =
         crate::shared::limits::RateLimiter::new(1_000_000, std::time::Duration::from_secs(60));
     state.limits = crate::limits::Limits::unbounded();

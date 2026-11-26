@@ -53,8 +53,10 @@ async fn over(pool: PgPool) -> App {
             storage,
             Arc::default(),
             dcl_http::Outbound::for_tests(),
+            dcl_http::Outbound::for_tests(),
             Some(super::support::committee_index(&super::support::FakeCommittee::with(&[])).await),
             None,
+            std::sync::Arc::default(),
             crate::Settings {
                 writes_enabled: true,
                 ..crate::Settings::default()

@@ -36,7 +36,7 @@ async fn world_with(settings: crate::Settings) -> Option<World> {
     super::support::copy_pass(&pool, 0).await;
     let committee = FakeCommittee::with(&[&address(COMMITTEE_KEY)]);
     let registry = FakeRegistry::up();
-    let mut state = super::support::state(
+    let state = super::support::state(
         pool.clone(),
         Some(registry_index(&committee, &registry).await),
         crate::Settings {
@@ -45,7 +45,6 @@ async fn world_with(settings: crate::Settings) -> Option<World> {
         },
     )
     .await;
-    state.guarded = dcl_http::Outbound::for_tests();
     let state = Arc::new(state);
     let app = super::support::mounted(&state);
     let app = match state.registry_indexed() {

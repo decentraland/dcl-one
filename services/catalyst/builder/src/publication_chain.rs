@@ -39,6 +39,7 @@ fn parse<T: std::str::FromStr>(value: &str) -> Result<T, ApiError> {
         .map_err(|_| invalid("Invalid publication contract parameter"))
 }
 
+/// The `createCollection` calldata of `p`, as the owner's wallet sends it.
 pub fn publication_calldata(p: &PublicationPreparation) -> Result<String, ApiError> {
     let items = p
         .items
@@ -65,8 +66,11 @@ pub fn publication_calldata(p: &PublicationPreparation) -> Result<String, ApiErr
     Ok(hex::encode_prefixed(call.abi_encode()))
 }
 
+/// The Polygon JSON-RPC a submitted publication is verified over.
 pub struct PublicationChain<'a> {
+    /// The client the RPC is asked through.
     pub http: &'a Outbound,
+    /// `BUILDER_POLYGON_RPC_URL`.
     pub url: &'a str,
 }
 impl PublicationChain<'_> {
@@ -83,6 +87,9 @@ impl PublicationChain<'_> {
         })
     }
 
+    /// Records transaction `hash` for the publisher's attempt and, once its
+    /// receipt is final, finishes the attempt as published or reverted; 503
+    /// while the RPC can't tell.
     pub async fn verify(
         &self,
         store: &ItemsComponent,

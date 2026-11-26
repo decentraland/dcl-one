@@ -1135,7 +1135,9 @@ async fn a_list_of_curated_items_reads_each_items_curation_once_and_its_collecti
         .await
         .unwrap();
     let mut conn = pool.acquire().await.unwrap();
-    let view = crate::chain_state::for_read(&mut conn).await.unwrap();
+    let view = crate::chain_state::for_read(&mut conn, &crate::chain_state::Clock::default())
+        .await
+        .unwrap();
     let plan: serde_json::Value = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "EXPLAIN (ANALYZE, FORMAT JSON) {}",
         crate::items::listing::list_statement(&view)
@@ -1186,7 +1188,9 @@ async fn every_read_of_an_items_newest_curation_takes_the_last_created_one() {
         .unwrap()["is_mapping_complete"]
         .clone();
     let mut conn = pool.acquire().await.unwrap();
-    let view = crate::chain_state::for_read(&mut conn).await.unwrap();
+    let view = crate::chain_state::for_read(&mut conn, &crate::chain_state::Clock::default())
+        .await
+        .unwrap();
     let listed: Vec<crate::items::body::ItemRow> = sqlx::query_as(sqlx::AssertSqlSafe(
         crate::items::listing::list_statement(&view),
     ))

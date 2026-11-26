@@ -504,8 +504,10 @@ async fn files(committee: &FakeCommittee) -> Option<Files> {
             store.clone(),
             denylist.clone(),
             dcl_http::Outbound::for_tests(),
+            dcl_http::Outbound::for_tests(),
             Some(committee_index(committee).await),
             None,
+            std::sync::Arc::default(),
             crate::Settings {
                 writes_enabled: true,
                 ..crate::Settings::default()

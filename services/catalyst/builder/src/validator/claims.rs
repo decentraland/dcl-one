@@ -37,7 +37,7 @@ type ClaimableRow = (Uuid, Uuid, Vec<Uuid>, Option<String>);
 
 /// Claims the oldest claimable request; `None` when there is none.
 pub async fn claim(state: &State) -> Result<Option<Claimed>, ApiError> {
-    let now = (state.now)();
+    let now = state.now();
     let mut tx = state.items.pool().begin().await?;
     loop {
         let claimable: Option<ClaimableRow> = sqlx::query_as(
@@ -123,7 +123,7 @@ pub async fn extend(
     validation: Uuid,
     claim: Uuid,
 ) -> Result<Option<DateTime<Utc>>, ApiError> {
-    let now = (state.now)();
+    let now = state.now();
     let until: Option<chrono::NaiveDateTime> = sqlx::query_scalar(
         "UPDATE builder.validation_requests SET lease_until = LEAST($4, claimed_at + $5) \
          WHERE id = $1 AND claim_id = $2 AND settled_at IS NULL AND lease_until >= $3 AND claimed_at + $5 > $3 \
@@ -312,7 +312,7 @@ pub async fn settle(
     let Ok(validation) = Uuid::parse_str(&verdict.validation_id) else {
         return Err(ApiError::bad_request("Invalid request body"));
     };
-    let now = (state.now)();
+    let now = state.now();
     let mut tx = state.items.pool().begin().await?;
     let named: Option<Uuid> =
         sqlx::query_scalar("SELECT collection_id FROM builder.validation_requests WHERE id = $1")

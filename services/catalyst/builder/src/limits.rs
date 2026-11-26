@@ -346,7 +346,7 @@ pub async fn per_source(State(state): State<SharedState>, req: Request, next: Ne
         } else {
             &limits.source_writes
         };
-        if let Err(refused) = limits.take(budget, &source, (state.now)()) {
+        if let Err(refused) = limits.take(budget, &source, state.now()) {
             return refused.into_response();
         }
     }
@@ -361,7 +361,7 @@ pub fn spend_wallet(state: &SharedState, signer: &str, method: &Method) -> Resul
     } else {
         &limits.wallet_writes
     };
-    limits.take(budget, signer, (state.now)())
+    limits.take(budget, signer, state.now())
 }
 
 /// The review routes' own budget for `signer`: its timeline reads or its writes.
@@ -372,7 +372,7 @@ pub fn spend_review(state: &SharedState, signer: &str, read: bool) -> Result<(),
     } else {
         &limits.review_writes
     };
-    limits.take(budget, signer, (state.now)())
+    limits.take(budget, signer, state.now())
 }
 
 /// A save of `bytes` of item or collection documents by `signer`: one more
@@ -402,7 +402,7 @@ pub fn spend_document(
     if let Some(site) = site {
         costs.push((&limits.source_document_kib, site, kib));
     }
-    let now = (state.now)();
+    let now = state.now();
     for (n, (budget, key, cost)) in costs.iter().enumerate() {
         if let Err(refused) = limits.take_cost(budget, key, *cost, now) {
             for (budget, key, cost) in &costs[..n] {
@@ -417,13 +417,13 @@ pub fn spend_document(
 /// A subscription's budget of its source address, before its body is read.
 pub fn spend_newsletter_source(state: &SharedState, source: &str) -> Result<(), ApiError> {
     let limits = &state.limits;
-    limits.take(&limits.newsletter_sources, source, (state.now)())
+    limits.take(&limits.newsletter_sources, source, state.now())
 }
 
 /// A valid subscription's budgets of its email and of the node.
 pub fn spend_newsletter_email(state: &SharedState, email: &str) -> Result<(), ApiError> {
     let limits = &state.limits;
-    let now = (state.now)();
+    let now = state.now();
     limits.take(&limits.newsletter_emails, email, now)?;
     limits.take(&limits.newsletter_node, "node", now)
 }
@@ -481,7 +481,7 @@ impl Upload {
 impl Drop for Upload {
     fn drop(&mut self) {
         let limits = &self.state.limits;
-        let now = limits.instant((self.state.now)());
+        let now = limits.instant(self.state.now());
         limits
             .wallet_upload_files
             .charge_at(&self.wallet, self.files, now);
@@ -538,7 +538,7 @@ pub async fn within_storage(
         1
     };
     let source = upload_source(headers);
-    let now = (state.now)();
+    let now = state.now();
     if let Some(source) = &source {
         limits.probe(&limits.source_upload_mib, source, price, now)?;
         limits.probe(&limits.source_upload_files, source, price, now)?;
@@ -642,7 +642,7 @@ impl Tallies {
         let Some(last) = lock(&self.last).clone() else {
             return self.fresh(state).await;
         };
-        if !state.limits.fresh(&last, (state.now)()) && self.counting.try_lock().is_ok() {
+        if !state.limits.fresh(&last, state.now()) && self.counting.try_lock().is_ok() {
             let state = state.clone();
             tokio::spawn(async move {
                 if let Err(error) = state.limits.tallies.fresh(&state).await {
@@ -658,7 +658,7 @@ impl Tallies {
     async fn fresh(&self, state: &SharedState) -> Result<Arc<Tally>, ApiError> {
         let _counting = self.counting.lock().await;
         if let Some(last) = lock(&self.last).clone()
-            && state.limits.fresh(&last, (state.now)())
+            && state.limits.fresh(&last, state.now())
         {
             return Ok(last);
         }
@@ -682,7 +682,7 @@ impl Tallies {
         let generation = lock(&self.last)
             .as_ref()
             .map_or(0, |last| last.generation + 1);
-        let at = limits.instant((state.now)());
+        let at = limits.instant(state.now());
         let before = *lock(&self.added);
         let near_wallet = Held {
             bytes: limits
@@ -746,7 +746,7 @@ impl Listing<'_> {
         if tokens == 0 {
             return Ok(());
         }
-        let now = (self.state.now)();
+        let now = self.state.now();
         limits.take_cost(&limits.wallet_reads, self.signer, tokens, now)?;
         if let Some(source) = source(self.headers)
             && let Err(refused) = limits.take_cost(&limits.source_reads, &source, tokens, now)
@@ -776,7 +776,7 @@ pub fn charge(state: &SharedState, headers: &HeaderMap, signer: Option<&str>, to
         return;
     }
     let limits = &state.limits;
-    let now = limits.instant((state.now)());
+    let now = limits.instant(state.now());
     if let Some(signer) = signer {
         limits.wallet_reads.charge_at(signer, tokens, now);
     }
@@ -804,8 +804,10 @@ mod tally_tests {
                 crate::tests::support::temp_storage().await,
                 Arc::default(),
                 dcl_http::Outbound::for_tests(),
+                dcl_http::Outbound::for_tests(),
                 None,
                 None,
+                std::sync::Arc::default(),
                 crate::Settings::default(),
             )
             .unwrap(),
