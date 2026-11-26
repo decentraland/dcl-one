@@ -70,9 +70,15 @@ describe('Network Parenting', () => {
     return { data: messages }
   }
 
-  const NetworkUtils = addSyncTransport(engineA, sendBinaryA, async () => ({
-    data: { userId: 'A', version: 1, displayName: '1', hasConnectedWeb3: true, avatar: undefined }
-  }))
+  const NetworkUtils = addSyncTransport(
+    engineA,
+    sendBinaryA,
+    async () => ({
+      data: { userId: 'A', version: 1, displayName: '1', hasConnectedWeb3: true, avatar: undefined }
+    }),
+    async () => ({ isServer: false }),
+    'A'
+  )
 
   const Cube = engineA.defineComponent('cube', {})
   const CUBES_LENGTH = 320
@@ -95,6 +101,7 @@ describe('Network Parenting', () => {
       Components.Transform.getMutable(entity).position.x += 1
     }
     await engineA.update(1)
+
     expect(Math.round(networkmessages[0].byteLength / 1024)).toBe(12)
     expect(interceptedMessages.length).toBe(CUBES_LENGTH)
     expect(networkmessages.length).toBe(2)

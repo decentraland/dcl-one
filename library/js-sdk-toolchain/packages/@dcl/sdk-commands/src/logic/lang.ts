@@ -27,6 +27,6 @@ export function initLanguage(language: Language) {
     },
     backend: {
       loadPath: join(__dirname, '../locales/{{lng}}.json')
-    },
+    }
   })
 }
