@@ -317,6 +317,17 @@ test('the offline guard refuses addresses and names outside loopback', () => {
   assert.match(result.stderr, /offline capture refused: 192\.0\.2\.10:80, resolve\.example\.org, resolver\.example\.org/)
 })
 
+test('the offline guard reads a string first argument as a port wherever Node does', () => {
+  const program = `
+    const net = require('node:net')
+    const { refused } = require(${JSON.stringify(guard)})
+    for (const port of [' 443', '0x50', '8e1']) new net.Socket().on('error', () => {}).connect(port, '192.0.2.10').destroy()
+    console.log(JSON.stringify(refused))
+  `
+  const result = spawnSync(process.execPath, ['-e', program], { encoding: 'utf8' })
+  assert.deepEqual(JSON.parse(result.stdout), ['192.0.2.10: 443', '192.0.2.10:0x50', '192.0.2.10:8e1'])
+})
+
 test('the offline guard refuses to start under a proxy, in any spelling', () => {
   for (const [name, value] of [['HTTPS_PROXY', 'http://127.0.0.1:9'], ['http_proxy', 'http://127.0.0.1:9'], ['NODE_USE_ENV_PROXY', '1']]) {
     const env = { ...process.env, [name]: value, NODE_OPTIONS: `--require=${guard}` }
