@@ -275,6 +275,15 @@ pub struct ChatReactionData {
     pub remove: bool,
 }
 
+/// A situational reaction as it plays: an emoji shown for `from`, the local user or a peer.
+#[derive(Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReactionData {
+    pub from: String,
+    pub emoji: String,
+}
+
 #[derive(Clone, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct VoiceMessage {

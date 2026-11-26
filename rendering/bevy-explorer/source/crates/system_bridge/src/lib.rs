@@ -212,6 +212,10 @@ pub enum SystemApi {
         remove: bool,
     },
     GetChatReactionStream(RpcStreamSender<ChatReactionData>),
+    /// The local user reacts with an emoji, shown over their avatar.
+    SendReaction(String),
+    /// Situational reactions as they play, the local user's included.
+    GetReactionStream(RpcStreamSender<ReactionData>),
     Quit,
     GetPermissionRequestStream(RpcStreamSender<PermissionRequestEvent>),
     SetSinglePermission(SetSinglePermission),

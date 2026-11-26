@@ -12,7 +12,7 @@ mod diagnostics;
 pub mod layout;
 mod material;
 mod plate;
-mod text;
+pub(crate) mod text;
 
 use alloy_core::primitives::Address;
 use bevy::{
@@ -29,8 +29,7 @@ use common::{
     feature_flags::{FeatureFlags, FlagsSource},
     sets::{PostUpdateSets, SceneSets},
     structs::{
-        AppConfig, AttachPoints, CameraView, MicState, PlayerModifiers, PrimaryCamera,
-        PrimaryPlayerRes, PrimaryUser,
+        AppConfig, AttachPoints, CameraView, MicState, PrimaryCamera, PrimaryPlayerRes, PrimaryUser,
     },
     util::AsH160,
 };
@@ -39,7 +38,6 @@ use comms::{
     nearby_mutes::NearbyMutes,
     profile::{name_color::name_color, CurrentUserProfile, UserProfile},
     speaking::Speaking,
-    BlockedOrBanned,
 };
 use console::{AddDebugSection, DoAddConsoleCommand};
 use dcl_component::{
@@ -61,8 +59,8 @@ use scene_runner::{
 use system_bridge::{AvatarShapeNametag, SystemApi};
 
 use crate::{
-    dynamic_nametag::{avatar_units, smallest_scale, NametagHeadOffset, NametagsVisible},
-    AvatarSelection, AvatarShape, BeyondMaxAvatars,
+    dynamic_nametag::{smallest_scale, NametagHeadOffset, NametagsVisible, Overhead},
+    AvatarSelection, AvatarShape,
 };
 
 use self::{
@@ -219,7 +217,7 @@ pub struct NametagAssets {
     material: Handle<NametagMaterial>,
     font: Handle<Font>,
     /// The glyph atlas pages the material binds, and their sizes.
-    bound: [Option<(AssetId<Image>, u32)>; 2],
+    bound: text::BoundPages,
 }
 
 fn load_assets(
@@ -232,7 +230,7 @@ fn load_assets(
 ) {
     let font = Font::try_from_bytes(include_bytes!("fonts/Inter_18pt-SemiBold.ttf").to_vec())
         .expect("the embedded nametag font is a font");
-    let atlas = atlases.get_or_create(text::ATLAS, &mut images);
+    let atlas = atlases.get_or_create(text::ATLAS.key, &mut images);
     let page = |page| atlas.page_image(page).map(|(image, _)| image.clone());
     commands.insert_resource(NametagAssets {
         material: materials.add(NametagMaterial {
@@ -925,20 +923,11 @@ fn resolve_voice(
     }
 }
 
-/// Where names are seen from.
-struct TagView {
-    position: Vec3,
-    first_person: bool,
-}
-
-impl TagView {
-    /// Whether the name of a player standing at `player` shows: in range, and not the local
-    /// player's own seen through their eyes. A name out of view is left to frustum culling.
-    fn shows(&self, player: Vec3, is_local: bool) -> bool {
-        let distance = player.distance_squared(self.position);
-        (MIN_DISTANCE * MIN_DISTANCE..=MAX_DISTANCE * MAX_DISTANCE).contains(&distance)
-            && !(is_local && self.first_person)
-    }
+/// Whether the name of a player standing at `player` is in range of a camera at `camera`. A
+/// name out of view is left to frustum culling.
+fn in_range(player: Vec3, camera: Vec3) -> bool {
+    (MIN_DISTANCE * MIN_DISTANCE..=MAX_DISTANCE * MAX_DISTANCE)
+        .contains(&player.distance_squared(camera))
 }
 
 fn tag_opacity(distance: f32) -> f32 {
@@ -959,12 +948,8 @@ fn show_tags(
     players: Query<
         (
             &GlobalTransform,
-            Has<PrimaryUser>,
+            Overhead,
             Has<HiddenNametag>,
-            Has<BeyondMaxAvatars>,
-            Has<BlockedOrBanned>,
-            Option<&PlayerModifiers>,
-            Option<&InheritedVisibility>,
             Has<SystemSceneNametag>,
             Has<NametagContent>,
             Has<NametagPlate>,
@@ -976,41 +961,19 @@ fn show_tags(
     let Ok((camera_transform, camera)) = camera.single() else {
         return;
     };
-    let view = TagView {
-        position: camera_transform.translation,
-        first_person: camera.view() == CameraView::FirstPerson,
-    };
+    let first_person = camera.view() == CameraView::FirstPerson;
 
     for (owner, mut nametag) in &mut tags {
         let (shown, name_shown) = players
             .get(owner.parent())
             .ok()
-            .filter(|_| visible.0)
-            .filter(
-                |(
-                    transform,
-                    is_local,
-                    _,
-                    beyond_max,
-                    blocked,
-                    modifiers,
-                    drawn,
-                    system_tag,
-                    ..,
-                )| {
-                    !beyond_max
-                        && !blocked
-                        && !modifiers.is_some_and(|modifiers| modifiers.hide)
-                        // a scene hides its avatars by their visibility, their parents' or a
-                        // scale of nothing
-                        && drawn.is_none_or(|drawn| drawn.get())
-                        && avatar_units(transform).is_some()
-                        // a system scene's avatar is drawn by its own camera, on its own layer:
-                        // its tag shows for that camera, wherever the player's is
-                        && (*system_tag || view.shows(transform.translation(), *is_local))
-                },
-            )
-            .map_or((false, false), |(_, _, hidden, .., named, plated)| {
+            .filter(|(transform, overhead, _, system_tag, ..)| {
+                overhead.shows(&visible, transform, first_person)
+                    // a system scene's avatar is drawn by its own camera, on its own layer: its
+                    // tag shows for that camera, wherever the player's is
+                    && (*system_tag || in_range(transform.translation(), camera_transform.translation))
+            })
+            .map_or((false, false), |(_, _, hidden, _, named, plated)| {
                 let name_shown = named && !hidden;
                 (name_shown || plated, name_shown)
             });
@@ -1154,14 +1117,12 @@ fn follow_glyph_atlas(
     mut assets: ResMut<NametagAssets>,
     mut materials: ResMut<Assets<NametagMaterial>>,
 ) {
-    let atlas = atlases.get_or_create(text::ATLAS, &mut images);
-    let pages = [Page::Sdf, Page::Color].map(|page| atlas.page_image(page));
-    let current = pages.map(|page| page.map(|(image, size)| (image.id(), size)));
-    if assets.bound == current {
+    let atlas = atlases.get_or_create(text::ATLAS.key, &mut images);
+    // most frames nothing has moved, and the assets are not marked changed
+    let assets = assets.bypass_change_detection();
+    let Some([sdf, bitmap]) = text::rebind(atlas, &mut assets.bound) else {
         return;
-    }
-    let [sdf, bitmap] = pages.map(|page| page.map(|(image, _)| image.clone()));
-    assets.bound = current;
+    };
     if let Some(material) = materials.get_mut(&assets.material) {
         material.sdf = sdf.unwrap_or_default();
         material.bitmap = bitmap;
@@ -1391,6 +1352,7 @@ impl TagBuilder<'_, '_> {
     /// The tag's glyphs, the bubble's included while it is up, are its to keep in the atlas.
     fn keep_glyphs(&mut self, tag: Entity, nametag: &Nametag, bubble: Option<&BubbleTexts>) {
         self.commands.entity(tag).insert(glyph_use(
+            &text::ATLAS,
             nametag
                 .name
                 .iter()

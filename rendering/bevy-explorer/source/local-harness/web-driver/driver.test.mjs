@@ -409,6 +409,45 @@ for (const isolated of [true, false]) {
   });
 }
 
+// The start screen: the page's commands are there before the engine's console.
+describe('a page whose engine has not started', { skip: noChrome || noStrip }, () => {
+  const page = {};
+  before(
+    async () => {
+      page.server = await serve({ isolated: true });
+      page.driver = await launch({ url: `${page.server.url}/?mode=hud&engine=off`, chrome });
+    },
+    { timeout: 120_000 }
+  );
+  after(async () => {
+    await page.driver?.close();
+    await page.server?.close();
+  });
+
+  test('is not ready for a caller that needs the engine', async () => {
+    await assert.rejects(page.driver.ready({ timeout: 5_000 }), /did not get window\.engine_console_command and window\.__dclTrustedInput/);
+  });
+
+  test('is ready on its start screen for a caller that asks for it', async () => {
+    await page.driver.ready({ timeout: 60_000, startScreen: true });
+  });
+
+  test('runs the page\'s own commands on its start screen', async () => {
+    assert.equal(JSON.parse(await page.driver.console('/fixture_state', { startScreen: true })).value, 'old');
+  });
+
+  test('clicks a control with real input on its start screen', async () => {
+    assert.equal(JSON.parse(await page.driver.console('/hud_click Save', { startScreen: true })).input, 'trusted');
+  });
+
+  test('says an engine command has nowhere to go yet', async () => {
+    await assert.rejects(
+      page.driver.console('/teleport 0 0', { startScreen: true }),
+      /^Error: the engine has not started, and \/teleport is not a page command$/
+    );
+  });
+});
+
 // A frame of another origin has the binding too, and must get nothing from it.
 describe('a frame of another origin', { skip: noChrome }, () => {
   const page = {};

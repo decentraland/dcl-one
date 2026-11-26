@@ -1,0 +1,108 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+/* Not in Figma: the Explorer HUD's sign-in field. 46px tall with 12px corners; the ring sits 6px outside it.
+   Its focused fill, the ring's 30 % white and its red, the button's hover ruby and 9.6px corners, the error
+   text's pink and the 140ms timing have no token. */
+@layer dcl.components {
+  .root {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .field {
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: 46px;
+    padding: 0 7px 0 12px;
+    gap: 8px;
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-neutrals-snow);
+    transition: background-color 140ms ease; /* = HUD --dur-fast */
+  }
+
+  .field:hover,
+  .field:focus-within {
+    background: #f2f2f2;
+  }
+
+  .field:focus-within::after,
+  .field[data-invalid]::after {
+    content: '';
+    position: absolute;
+    inset: -6px;
+    border: 2.67px solid rgba(255, 255, 255, 0.3); /* = HUD --white-30 */
+    border-radius: var(--dcl-radius-lg);
+    pointer-events: none;
+  }
+
+  /* The ring turns red once the field loses the focus; while focused it keeps the white of the focus ring. */
+  .field[data-invalid]:not(:focus-within)::after {
+    border-color: #e00000; /* = HUD --signin-error-ring */
+  }
+
+  .icon {
+    display: flex;
+    flex: none;
+    color: var(--dcl-neutrals-silver);
+  }
+
+  .input {
+    flex: 1;
+    min-width: 0;
+    height: 28px;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--dcl-neutrals-shadow);
+    font: inherit;
+    font-size: 18px;
+    font-weight: 600;
+    outline: none;
+  }
+
+  .input::placeholder {
+    color: var(--dcl-neutrals-silver);
+    font-weight: 400;
+  }
+
+  .submit {
+    flex: none;
+    width: 58px;
+    height: 32px;
+    border: 0;
+    border-radius: 9.6px; /* = HUD --r-button */
+    background: var(--dcl-brand-ruby);
+    color: var(--dcl-neutrals-white);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 140ms ease; /* = HUD --dur-fast */
+  }
+
+  .submit:hover:not(:disabled) {
+    background: #e41e43;
+  }
+
+  .submit:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .busy {
+    display: flex;
+    width: 58px;
+    justify-content: center;
+  }
+
+  .error {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0;
+    font-size: 14px;
+    color: #ffcdcd; /* = HUD --signin-error-text */
+  }
+}

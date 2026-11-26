@@ -3,7 +3,7 @@
 // is (too long, taken, available…), its price and what CLAIM NAME and MAKE OFFER do come in as props; the
 // page checks the NAME and draws the nametag over the avatar from the same value.
 
-import { Button, Chip, MaskIcon } from '@hud/design'
+import { Chip } from '@hud/design'
 import uniqueIcon from '../assets/names/unique-name.svg'
 import resaleIcon from '../assets/names/resale-name.svg'
 import creditsIcon from '../assets/names/credits-outline.svg'
@@ -17,6 +17,7 @@ import bannerGlowTop from '../assets/names/banner-glow-top.svg'
 import bannerArt from '@hud/assets/backpack/outfits-name-banner.webp'
 import { pressedWith, type PressedWith } from './pressedWith'
 import styles from './ShopNames.module.css'
+import { Button, MaskIcon } from '@dcl/one-ui'
 
 /** What a World is, which the banner's "World" opens in the browser. */
 const WORLDS_DOCS_URL = 'https://docs.decentraland.org/creator/worlds/about/'
@@ -133,7 +134,7 @@ function UniqueName({ value, onChange, clean, maxLength, minLength, limit, suffi
             <Feedback value={value} minLength={minLength} limit={limit} status={status} onMakeOffer={onMakeOffer} onRetry={onRetry} />
           </div>
           <div className={styles.cta}>
-            <Button
+            <Button appearance="hud"
               size="cta"
               disabled={status !== 'available'}
               aria-label={price != null ? `Claim name for ${price} Credits` : 'Claim name'}

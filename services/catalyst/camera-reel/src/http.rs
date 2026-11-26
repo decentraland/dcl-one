@@ -272,7 +272,7 @@ pub(crate) async fn cors(
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(axum::body::Body::from("Requested method is not allowed"))
-                .unwrap();
+                .expect("a constant status always builds a response");
         }
         let mut response = StatusCode::OK.into_response();
         let headers = response.headers_mut();

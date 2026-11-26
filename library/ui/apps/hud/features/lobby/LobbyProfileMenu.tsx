@@ -7,12 +7,13 @@ import playersIcon from '../../assets/map/panel/players.png'
 import settingsIcon from '../../assets/lobby/settings-icn.png'
 import signOutIcon from '../../assets/lobby/sign-out-icn.png'
 import verifiedIcon from '../../assets/lobby/icon-verified.png'
-import { MaskIcon, showConfirm } from '../../design'
+import { showConfirm } from '../../design'
 import { siteUrl } from '@hud-host'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { profilePictureStyle } from './LobbyCards'
 import { moveFocus } from '../../lib/arrowKeys'
 import styles from './LobbyProfileMenu.module.css'
+import { MaskIcon } from '@dcl/one-ui'
 
 const COPIED_MS = 1000
 

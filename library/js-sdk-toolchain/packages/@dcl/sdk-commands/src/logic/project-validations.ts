@@ -131,17 +131,21 @@ export async function startValidations(components: Pick<CliComponents, 'spawner'
       return
     }
 
+    // an aliased sdk (npm:@scope/sdk@x) takes its js-runtime from the same scope
+    const aliasScope = sdkPackageVersion?.match(/^npm:(@[^/]+)\/sdk@/)?.[1]
+    const jsRuntimeVersion = aliasScope ? `npm:${aliasScope}/js-runtime@${sdkVersion}` : sdkVersion
+
     if (
       packageJson.dependencies &&
       (packageJson.dependencies['@dcl/js-runtime'] || packageJson.dependencies['@dcl/sdk'])
     ) {
-      packageJson.dependencies['@dcl/js-runtime'] = sdkVersion
+      packageJson.dependencies['@dcl/js-runtime'] = jsRuntimeVersion
       if (packageJson.devDependencies && packageJson.devDependencies['@dcl/js-runtime']) {
         delete packageJson.devDependencies['@dcl/js-runtime']
       }
     } else {
       packageJson.devDependencies = packageJson.devDependencies || {}
-      packageJson.devDependencies['@dcl/js-runtime'] = sdkVersion
+      packageJson.devDependencies['@dcl/js-runtime'] = jsRuntimeVersion
     }
     await components.fs.writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2), 'utf-8')
   } catch (e: any) {
