@@ -5,7 +5,7 @@ use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use serde_json::{json, Value};
 
 use super::{
-    ContentFileVariantManifests, ContentFileVariantSession, ContentFileVariantsConfig,
+    Base, ContentFileVariantManifests, ContentFileVariantSession, ContentFileVariantsConfig,
     ManifestState,
 };
 use crate::IpfsResource;
@@ -20,6 +20,7 @@ impl Plugin for BevyVariantsDebugPanelPlugin {
                 query: "/bevy_variants",
                 fields: &[
                     ("Variants base url", "base"),
+                    ("Base set by", "baseSource"),
                     ("State", "state"),
                     ("Formats taken", "formats"),
                     (
@@ -66,6 +67,7 @@ pub(super) fn snapshot(
     session: &ContentFileVariantSession,
 ) -> Value {
     let mut counts = [0u64; 5];
+    let route = config.route();
     let mut manifests: Vec<String> = manifests
         .0
         .lock_ignore_poison()
@@ -99,14 +101,19 @@ pub(super) fn snapshot(
     manifests.sort();
 
     let session = session.lock();
-    let state = match (config.base_url(), &session.disabled, config.reported_bc()) {
-        (None, _, _) => "off".to_owned(),
-        (Some(_), Some(reason), _) => format!("off for this session: {reason}"),
-        (Some(_), None, None) => "on, waiting for the renderer's texture formats".to_owned(),
-        (Some(_), None, Some(false)) => {
+    let state = match (&route.base, &session.disabled, config.reported_bc()) {
+        (Base::Off, _, _) => "off".to_owned(),
+        (Base::Pending(_), _, _) => "waiting for the endpoint flag".to_owned(),
+        (Base::On(..), Some(reason), _) => format!("off for this session: {reason}"),
+        (Base::On(..), None, None) => "on, waiting for the renderer's texture formats".to_owned(),
+        (Base::On(..), None, Some(false)) => {
             "on, but the GPU has no BC textures: nothing is replaced".to_owned()
         }
-        (Some(_), None, Some(true)) => "on".to_owned(),
+        (Base::On(..), None, Some(true)) => "on".to_owned(),
+    };
+    let base = match &route.base {
+        Base::On(base_url, _) => Some(base_url.view().as_str()),
+        Base::Pending(_) | Base::Off => None,
     };
     let recent: Vec<String> = session
         .recent
@@ -120,7 +127,8 @@ pub(super) fn snapshot(
         })
         .collect();
     json!({
-        "base": config.base_url().map(|base| base.as_str()),
+        "base": base,
+        "baseSource": route.source,
         "state": state,
         "formats": super::taken_formats(),
         "manifestCounts": counts,
@@ -147,7 +155,7 @@ pub(super) fn snapshot(
         }),
         "recentFallbacks": (!recent.is_empty()).then(|| recent.join("\n")),
         "unavailable": {
-            "base": "Off: --bevy-variants-url, ?bevyVariants= or bevy_variants_url in the config is `off`.",
+            "base": "Off, or waiting for the `bevy-variants-endpoint` flag: see State and Base set by.",
             "manifests": "No scene has asked for a manifest yet.",
             "servedByFormat": "No variant has been served.",
             "fallbacksByFormat": "No chosen variant has fallen back.",

@@ -1145,7 +1145,10 @@ impl NodeProcessing<'_, '_> {
 
                             read_only_mesh_data.primitive_topology().hash(hasher);
 
-                            if let Some(indices) = read_only_mesh_data.indices() {
+                            // the count first, so no index list and an empty one differ
+                            let indices = read_only_mesh_data.indices();
+                            indices.map(|indices| indices.len()).hash(hasher);
+                            if let Some(indices) = indices {
                                 indices.iter().for_each(|index| index.hash(hasher));
                             }
 
