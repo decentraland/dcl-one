@@ -700,7 +700,7 @@ pub struct AppConfig {
     pub scene_imposter_multisample_amount: f32,
     pub scene_imposter_bake: SceneImposterBake,
     pub parcel_grass_setting: ParcelGrassSetting,
-    /// The Landscape Distance setting in metres ([`LandscapeDistance`]).
+    /// The landscape distance in metres ([`LandscapeDistance`]), read at startup.
     pub landscape_distance: f32,
     pub sysinfo_visible: bool,
     pub scene_log_to_console: bool,
@@ -1526,9 +1526,8 @@ pub struct SceneLoadDistance {
     pub load_imposter: f32,
 }
 
-/// The Landscape Distance setting in metres: how far the hills are displaced, the trees, bushes
-/// and stones stand and the cliffs are drawn. Set from the config's `landscape_distance` at
-/// startup ([`LandscapeDistance::from_config`]) and changed by the Graphics setting.
+/// The landscape distance in metres: how far the hills are displaced and the cliffs are drawn.
+/// Set from the config's `landscape_distance` at startup ([`LandscapeDistance::from_config`]).
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct LandscapeDistance(pub f32);
 
