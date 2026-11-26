@@ -12329,3 +12329,201 @@ async fn a_wallet_studio_write_is_bound_to_its_body() {
             .unwrap();
     }
 }
+
+/// [`signed_headers_with`] over the legacy payload (everything folded to
+/// lowercase), signing `signed` and sending `sent` as the metadata: two
+/// spellings the legacy signature treats as the same.
+async fn legacy_signed_headers(
+    w: &Wallet,
+    method: &str,
+    path: &str,
+    signed: &str,
+    sent: &'static str,
+) -> HeaderMap {
+    let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+    let payload =
+        crate::shared::signed_fetch::build_legacy_payload(method, path, &timestamp, signed);
+    let signature = w
+        .signer
+        .sign_message(payload.as_bytes())
+        .await
+        .unwrap()
+        .to_string();
+    let chain = [
+        AuthLink {
+            link_type: AuthLinkType::SIGNER,
+            payload: w.address.clone(),
+            signature: None,
+        },
+        AuthLink {
+            link_type: AuthLinkType::EcdsaSignedEntity,
+            payload,
+            signature: Some(signature),
+        },
+    ];
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTH_TIMESTAMP_HEADER,
+        HeaderValue::from_str(&timestamp).unwrap(),
+    );
+    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static(sent));
+    for (i, link) in chain.iter().enumerate() {
+        headers.insert(
+            axum::http::HeaderName::from_bytes(format!("{AUTH_CHAIN_HEADER_PREFIX}{i}").as_bytes())
+                .unwrap(),
+            HeaderValue::from_str(&serde_json::to_string(link).unwrap()).unwrap(),
+        );
+    }
+    headers
+}
+
+/// A signed body hash holds in either signature format and in any casing of
+/// its key, while the unbound compatibility branch is on: a legacy signature
+/// over `bodySha256` sent as `BODYSHA256` with another body is refused, as is
+/// a metadata that spells the key twice, with nothing written; a DELETE's
+/// signed hash commits to the bytes it sends, so the operator stays.
+#[tokio::test]
+async fn a_studio_write_keeps_its_body_binding_in_every_spelling() {
+    let Some(pool) = pool().await else { return };
+    let writer = scratch_wallet();
+    let settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        admin_token: Some("s3cret".into()),
+        write_admin_addresses: writer.address.clone(),
+        admin_writes_require_bound_body: false,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    let app = app(Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        None,
+    )));
+    let path = "/credits/admin/studios";
+    let sha = |bytes: &[u8]| hex::encode(<sha2::Sha256 as sha2::Digest>::digest(bytes));
+    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    let written = async |name: &str| -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM credits.studios WHERE name = $1")
+            .bind(name)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let signed_for = json!({ "name": unique("Signed") });
+    let hash = sha(signed_for.to_string().as_bytes());
+
+    // Legacy, the key recased in the header: another body is refused.
+    let swapped = unique("Swapped");
+    let signed = json!({ "bodySha256": hash }).to_string();
+    let sent = leak(json!({ "BODYSHA256": hash }).to_string());
+    let headers = legacy_signed_headers(&writer, "post", path, &signed, sent).await;
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        path,
+        headers,
+        Some(json!({ "name": swapped })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a recased key still binds: {v}"
+    );
+    assert_eq!(written(&swapped).await, 0);
+    // Legacy, the key as signed: another body is refused, the signed one written.
+    let sent = leak(signed.clone());
+    let headers = legacy_signed_headers(&writer, "post", path, &signed, sent).await;
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        path,
+        headers,
+        Some(json!({ "name": swapped })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{v}");
+    let headers = legacy_signed_headers(&writer, "post", path, &signed, sent).await;
+    let (status, _, v) = send(&app, "POST", path, headers, Some(signed_for.clone())).await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "the signed body, legacy format: {v}"
+    );
+    let id = v["studio"]["id"].as_str().unwrap().to_string();
+    // Two spellings of the key: refused, whatever they hold.
+    let both = leak(json!({ "bodySha256": hash, "BodySha256": hash }).to_string());
+    let headers = signed_headers_with(&writer, "post", path, both).await;
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        path,
+        headers,
+        Some(json!({ "name": swapped })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "an ambiguous key: {v}");
+    assert_eq!(written(&swapped).await, 0);
+
+    // A DELETE signed for an empty body but sending one keeps its operator.
+    let operator = scratch_wallet().address;
+    let operators = format!("/credits/admin/studios/{id}/operators");
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        &operators,
+        admin_bearer(),
+        Some(json!({ "address": operator })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    let one = format!("{operators}/{operator}");
+    let empty = leak(json!({ "bodySha256": sha(b"") }).to_string());
+    let headers = signed_headers_with(&writer, "delete", &one, empty).await;
+    let (status, _, v) = send(
+        &app,
+        "DELETE",
+        &one,
+        headers,
+        Some(json!({ "anything": 1 })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the bytes sent are what the hash binds: {v}"
+    );
+    let still: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credits.studio_operators WHERE studio_id = $1::uuid",
+    )
+    .bind(&id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(still, 1, "the operator stays");
+    let headers = signed_headers_with(&writer, "delete", &one, empty).await;
+    let (status, _, v) = send(&app, "DELETE", &one, headers, None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "an empty DELETE matching its hash: {v}"
+    );
+
+    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'credits' AND target = $1")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM credits.studios WHERE id = $1::uuid")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}

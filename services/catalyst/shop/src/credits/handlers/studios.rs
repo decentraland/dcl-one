@@ -253,14 +253,16 @@ async fn remove_operator(
     Path((studio_id, address)): Path<(String, String)>,
     original: OriginalUri,
     headers: HeaderMap,
+    body: Bytes,
 ) -> Result<Json<JsonValue>, StudioError> {
+    // The bytes sent, empty or not: a signed hash commits to them.
     let actor = write_gate(
         &state,
         &headers,
         "delete",
         &format!("/admin/studios/{studio_id}/operators/{address}"),
         &original,
-        &[],
+        &body,
     )
     .await?;
     let studio_id = parse_studio_id(&studio_id)?;

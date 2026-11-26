@@ -149,11 +149,21 @@ pub(crate) async fn require_write_admin(
 }
 
 /// The body hash a request's signed metadata commits to: `None` when it signs
-/// none, `Some(None)` when the key holds something other than a string.
+/// none, `Some(None)` when it cannot be read as one. A legacy signature covers
+/// the metadata folded to lowercase, so another casing of the key would verify
+/// as the same commitment: the key is matched in any case, and more than one
+/// spelling of it is refused rather than one picked.
 fn signed_body_hash(headers: &HeaderMap) -> Option<Option<String>> {
     let raw = headers.get(AUTH_METADATA_HEADER)?.to_str().ok()?;
     let metadata: Value = serde_json::from_str(raw).ok()?;
-    let value = metadata.get(BODY_SHA256_KEY)?;
+    let mut spellings = metadata
+        .as_object()?
+        .iter()
+        .filter(|(key, _)| key.eq_ignore_ascii_case(BODY_SHA256_KEY));
+    let (_, value) = spellings.next()?;
+    if spellings.next().is_some() {
+        return Some(None);
+    }
     Some(value.as_str().map(str::to_string))
 }
 
