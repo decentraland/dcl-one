@@ -19,7 +19,10 @@ DO $node_untouched$ DECLARE t record; n bigint; ids text; found text[] := '{}'; 
     IF n > 0 THEN found := found || format('%s: %s rows, first: %s', t.relation, n, ids); END IF;
   END LOOP;
   IF cardinality(found) > 0 THEN RAISE EXCEPTION
-    'builder-server: the node holds builder rows the import did not leave there (created, changed or deleted on the node): %; the node has taken builder writes and the import no longer applies to it',
-    array_to_string(found, '; ');
+    'builder-server: the node holds builder rows the import did not leave there (created, changed or deleted on the node): %; the node has taken builder writes and the import no longer applies to it%',
+    array_to_string(found, '; '),
+    CASE WHEN NOT EXISTS (SELECT 1 FROM dcl_migration.builder_imported) THEN
+      '. The node holds no ledger of an import: if these rows came from an earlier import and creator writes never opened on this node, start over with start_over.sql -v unrecorded_import=on'
+    ELSE '' END;
   END IF;
 END $node_untouched$;

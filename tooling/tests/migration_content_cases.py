@@ -1031,6 +1031,40 @@ class ContentMigrationCases:
     def start_over(self, db):
         self.sql(db, f"\\i {harness.migrate.psql_path(harness.migrate.SOURCES / 'builder-server' / 'start_over.sql')}\n")
 
+    def test_when_the_linked_publications_table_remains_a_start_over_should_refuse_naming_its_release(self):
+        db = self.content_db('content_builder_start_over_linked')
+        self.import_builder(db, 'Upstream', '2026-02-01Z')
+        self.sql(db, "CREATE TABLE builder.linked_collection_publications "
+                     "(collection_id uuid PRIMARY KEY REFERENCES builder.collections (id));\n")
+        before = self.builder_digest(db)
+        with self.assertRaisesRegex(harness.migrate.MigrationError, 'builder-linked-publications-retired.sql'):
+            self.start_over(db)
+        self.assertEqual(self.builder_digest(db), before)
+
+    def test_when_an_earlier_import_kept_no_ledger_a_start_over_should_need_the_operator_to_say_so(self):
+        db = self.content_db('content_builder_start_over_unrecorded')
+        self.import_builder(db, 'Upstream', '2026-02-01Z')
+        self.sql(db, 'DELETE FROM dcl_migration.builder_imported;\n')
+        before = self.builder_digest(db)
+        with self.assertRaisesRegex(harness.migrate.MigrationError, 'start_over.sql -v unrecorded_import=on'):
+            self.start_over(db)
+        self.assertEqual(self.builder_digest(db), before)
+        self.sql(db, '\\set unrecorded_import on\n'
+                     f"\\i {harness.migrate.psql_path(harness.migrate.SOURCES / 'builder-server' / 'start_over.sql')}\n")
+        self.assertEqual(self.sql(db, 'SELECT (SELECT count(*) FROM builder.collections) + '
+                                      '(SELECT count(*) FROM builder.items);\n').strip(), '0')
+
+    def test_when_the_ledger_holds_rows_the_unrecorded_import_switch_should_not_skip_the_check(self):
+        db = self.content_db('content_builder_start_over_recorded')
+        self.import_builder(db, 'Upstream', '2026-02-01Z')
+        self.sql(db, f"INSERT INTO builder.collections (id, name, eth_address, salt) "
+                     f"VALUES ('9e000000-0000-4000-8000-0000000000aa', 'Mine', '{self.STRANGER}', '');\n")
+        before = self.builder_digest(db)
+        with self.assertRaisesRegex(harness.migrate.MigrationError, 'unrecorded_import'):
+            self.sql(db, '\\set unrecorded_import on\n'
+                         f"\\i {harness.migrate.psql_path(harness.migrate.SOURCES / 'builder-server' / 'start_over.sql')}\n")
+        self.assertEqual(self.builder_digest(db), before)
+
     def test_when_upstream_swapped_two_items_parts_a_rerun_should_leave_both_out_and_a_start_over_should_carry_both(self):
         db = self.curated_world('content_builder_item_swap')
         a, b = '7a000000-0000-4000-8000-00000000000a', '7b000000-0000-4000-8000-00000000000b'
