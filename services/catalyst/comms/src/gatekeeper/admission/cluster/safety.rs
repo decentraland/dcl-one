@@ -387,7 +387,10 @@ impl SafetyStore {
         lease.commit().await?;
         Ok(result)
     }
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per dispatch row field"
+    )]
     pub(crate) async fn insert_dispatch(
         &self,
         lease: &mut SafetyLease,

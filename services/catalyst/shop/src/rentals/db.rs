@@ -158,7 +158,6 @@ impl Database {
     /// reader row older than the stored asset row (`nft_updated_at`) creates
     /// the listing and leaves the asset row as it is, `fetched_at` included;
     /// the reply then carries the stored category and search text.
-    #[allow(clippy::too_many_arguments)]
     pub async fn insert_listing(
         &self,
         nft_id: &str,

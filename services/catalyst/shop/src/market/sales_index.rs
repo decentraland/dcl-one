@@ -896,7 +896,10 @@ pub(crate) mod tests {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per event log field"
+    )]
     pub(crate) fn bid_created_log(
         collection: &str,
         token: U256,
@@ -927,7 +930,10 @@ pub(crate) mod tests {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per event log field"
+    )]
     pub(crate) fn bid_accepted_log(
         collection: &str,
         token: U256,

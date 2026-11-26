@@ -149,6 +149,8 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/events-assets-099ac00": to(),
     "/opensea": to(),
     "/comms-gatekeeper": to(),
+    // A world's /about names its room sign-in at this origin's root, which the gateway's `location /` sends to the node.
+    "^/worlds/[^/]+/(?:scenes/[^/]+/)?comms(?:[/?]|$)": to(),
     // Cast 2.0: the gateway's `^~ /cast/` alias to the gatekeeper, except the stream and watch
     // pages (/cast/s/, /cast/w/), which are this app's (infra/gateway/gateway.py).
     // As the gateway, it forwards the path the browser signed (`x-original-path`): the node takes
@@ -187,6 +189,8 @@ const PLAY_MIME: Record<string, string> = {
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".css": "text/css; charset=utf-8",
+  ".glb": "model/gltf-binary",
+  ".otf": "font/otf",
 };
 export function playWebDir(root = fileURLToPath(new URL("../..", import.meta.url))): string {
   if (process.env.PLAY_WEB_DIR) return process.env.PLAY_WEB_DIR;
@@ -201,10 +205,18 @@ function servePlayWeb(): Plugin {
       const dir = playWebDir();
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? "/", "http://localhost");
-        if (!url.pathname.startsWith("/play/")) return next();
-        const rel = decodeURIComponent(url.pathname.slice("/play/".length));
-        const [head] = rel.split("/");
-        if (!head || !served.has(head)) return next();
+        let rel: string;
+        if (url.pathname === "/avatar-preview" || url.pathname === "/avatar-preview/") {
+          // The avatar preview from the same build, where the Sites image serves it (infra/packages/sites.nix).
+          rel = "avatar-preview/index.html";
+        } else if (url.pathname.startsWith("/assets/avatar-preview/")) {
+          rel = "avatar-preview/assets/" + decodeURIComponent(url.pathname.slice("/assets/avatar-preview/".length));
+        } else {
+          if (!url.pathname.startsWith("/play/")) return next();
+          rel = decodeURIComponent(url.pathname.slice("/play/".length));
+          const [head] = rel.split("/");
+          if (!head || !served.has(head)) return next();
+        }
         const file = normalize(join(dir, rel));
         if (!file.startsWith(normalize(dir) + "/") || !existsSync(file) || !statSync(file).isFile()) {
           if (!existsSync(dir)) {

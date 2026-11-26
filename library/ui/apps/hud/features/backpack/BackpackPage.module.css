@@ -53,8 +53,7 @@
 
 /* In the lobby's modal the page is 1600px wide and the close button takes the header's right edge:
    a narrower search, the avatar's column 576px wide with the avatar framed in 576×886 of the preview, and the card without the
-   detail column's 380px. The detail panel has no room beside the grid there: it is absent while
-   nothing is selected and lies over the avatar's column, against the card, while something is. */
+   detail column's 380px. The detail panel has no room beside the grid there, so the modal has none. */
 .inModal .searchWrap {
   right: 82px;
   --search-light-width: 334px;
@@ -105,21 +104,6 @@
 }
 .inModal .contentHead {
   margin-right: 0;
-}
-.inModal .detail {
-  left: -380px;
-  /* ends 12px above the randomize bar, which a short window lifts (--bar-top, in the frame) */
-  height: min(800px, calc(50cqh + 294px));
-}
-.inModal .cardEmotes .detail {
-  height: min(870px, calc(50cqh + 364px));
-}
-.inModal .detailInfo {
-  min-height: 0;
-  overflow-y: auto;
-}
-.inModal .detailEmpty {
-  display: none;
 }
 /* the saved outfits and the banner under them fit the narrower card as a whole */
 .inModal .outfits {
@@ -743,14 +727,6 @@
   border-style: solid;
   border-width: 391px 0 200px;
   border-image: var(--panel-art) 391 0 200 fill / 391px 0 200px stretch;
-}
-.detailClose {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 1;
-  width: 32px;
-  height: 32px;
 }
 .detailEmpty {
   align-items: center;

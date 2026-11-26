@@ -300,7 +300,10 @@ impl Pending {
         self.frames.pop_front()
     }
     // A full queue hands the frame back; boxing it would allocate on the send path.
-    #[allow(clippy::result_large_err)]
+    #[allow(
+        clippy::result_large_err,
+        reason = "a full queue hands the frame back unboxed"
+    )]
     fn push(&mut self, mut frame: Frame, budget: &Arc<OutputBudget>) -> Result<(), Frame> {
         if frame.credit.is_none() {
             frame.credit = budget.reserve();

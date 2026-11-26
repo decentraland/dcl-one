@@ -11,7 +11,7 @@ import { type GotoTarget, randomParcel, worldOfRealm } from '@explorer-core/feat
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
 import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus } from '@explorer-core/engine/protocol'
+import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus, type PreviewStageFraming } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
@@ -257,9 +257,10 @@ export interface BackpackState {
   preview: (urns: string[] | null) => void
   /** Frame part of the preview avatar (follows the selected category). */
   focus: (focus: PreviewFocus) => void
-  /** Where the Shop draws its stage image on screen, for the scene to draw behind the preview avatar;
-   *  null gives the preview the Backpack's backdrop back. */
-  stage: (rect: { x: number; y: number; width: number; height: number } | null) => void
+  /** Where the Shop draws its stage image on screen, for the scene to draw behind the preview avatar, and how its
+   *  page draws the avatar (the catalogue's framing, unless given); null gives the preview the Backpack's backdrop
+   *  back. */
+  stage: (rect: { x: number; y: number; width: number; height: number } | null, framing?: PreviewStageFraming) => void
   /** Play an emote on the preview avatar (again for every call); null stops it. */
   emote: (urn: string | null) => void
   /** Turn the preview avatar by `degrees` about its vertical axis (a drag over it). */
@@ -925,6 +926,8 @@ export interface ChatState {
   playSound: (sound: UiSound) => void
   /** Adds or removes the local user's reaction to a message on the channel shown. */
   react: (messageId: string, emoji: string, remove: boolean) => void
+  /** Reacts with an emoji, shown over the local user's avatar. An emoji the wire does not carry does nothing. */
+  sendReaction: (emoji: string) => void
   /** The Nearby lines, whichever channel is shown. */
   nearby: ChatLine[]
   /** Redraws the bubble over a Nearby sender's head with other words, while it is still that message's. */
@@ -3407,6 +3410,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const reactInChat = useCallback((messageId: string, emoji: string, remove: boolean) => {
     driverRef.current?.send({ kind: 'sendChatReaction', channel: channelRef.current, messageId, emoji, remove })
   }, [])
+  const sendReaction = useCallback((emoji: string) => {
+    driverRef.current?.send({ kind: 'sendReaction', emoji })
+  }, [])
   const bubbleText = useCallback((sender: string, messageId: string, message: string) => {
     driverRef.current?.send({ kind: 'chatBubbleText', sender, messageId, message })
   }, [])
@@ -4216,8 +4222,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const focusPreview = useCallback((focus: PreviewFocus) => {
     driverRef.current?.send({ kind: 'previewFocus', focus })
   }, [])
-  const stagePreview = useCallback((rect: { x: number; y: number; width: number; height: number } | null) => {
-    driverRef.current?.send({ kind: 'previewStage', rect })
+  const stagePreview = useCallback((rect: { x: number; y: number; width: number; height: number } | null, framing?: PreviewStageFraming) => {
+    driverRef.current?.send(framing != null ? { kind: 'previewStage', rect, framing } : { kind: 'previewStage', rect })
   }, [])
   const emotePreview = useCallback((urn: string | null) => {
     driverRef.current?.send({ kind: 'previewEmote', urn })
@@ -5520,6 +5526,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       send: sendChat,
       playSound: playUiSound,
       react: reactInChat,
+      sendReaction,
       nearby: messages,
       bubbleText,
       channel,

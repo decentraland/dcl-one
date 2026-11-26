@@ -434,7 +434,10 @@ impl TransactionComponent {
     /// [`Self::reserve_quota`] for a call that is no sale or credits spend: it
     /// also counts toward the relayer's daily budget across every address
     /// (`free_budget`, 0 is no limit), checked and taken under one global lock.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per budget and call field"
+    )]
     pub async fn reserve_free_call(
         &self,
         max_transactions_per_day: i64,
@@ -457,7 +460,10 @@ impl TransactionComponent {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per budget and call field"
+    )]
     async fn reserve(
         &self,
         max_transactions_per_day: i64,

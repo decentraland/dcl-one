@@ -1741,7 +1741,9 @@ operator's unblock
 transaction that clears its block. Readers are the credits claim (`EXISTS` by
 address, folded into the captcha claim and the balance reports as
 `is_blocked_for_claiming`; the spend and the reservation read the operator's
-block alone, so a flag never holds credits a wallet has) and the admin list
+block alone, so a flag never holds credits a wallet has), a studio's grant
+(`studio_grants.rs`, `EXISTS` by address under the studio's lock, after the
+studio's own checks) and the admin list
 (`GET /credits/admin/flags`, by address or paged by `flagged_at`). Rows are
 small and few: a flag per wallet reported.
 
@@ -1754,8 +1756,9 @@ INSERT` to one role, or a `SECURITY DEFINER` function, would name the writer
 and keep the flags raised while no listener is up: the next step if the
 database gains other roles.
 
-Invariants: a flag is a signal, not a verdict: it holds the credits claim
-alone, and the admin's unflag or the operator's unblock deletes it; nothing
+Invariants: a flag is a signal, not a verdict: it holds the credits claim and
+refuses a studio's grant to the wallet, nothing else, and the admin's unflag
+or the operator's unblock deletes it; nothing
 else does, and a flag never expires. A wallet has at most one flag (the
 primary key); flagging it again keeps `flagged_at` and takes the new source,
 IP and links. Addresses are lower-cased and checked by the table; the handler
@@ -1766,7 +1769,7 @@ gains it from the object pass, so no step exists.
 
 `credits.studios`, `credits.studio_operators` and
 `credits.studio_budget_entries` (`schemas/60_ops.sql`;
-`shop/src/credits/studios.rs`) hold credits-server's
+`shop/src/credits/studios.rs`, `studio_grants.rs`) hold credits-server's
 studios: scene studios that give Credits out of a budget an operator assigns.
 A studio has a name (unique ignoring case) and a status (`active` or
 `paused`); its operators are the wallets that act for it; its budget is a
@@ -1779,21 +1782,49 @@ Writers are the operator routes under `/credits/admin/studios` and
 pause or resume a studio, add or remove an operator, and record a deposit or
 an adjustment. Each writes one `ops.admin_audit` row in its own transaction
 (`studio.create`, `studio.update`, `studio.operator.add`,
-`studio.operator.remove`, `studio.budget`). Readers are the same routes: the
-studio list (one aggregate of every entry grouped by studio, and of the
-operators), a studio's figures, operators and history page (newest first, by
-`studio_budget_entries_studio_idx`, whose `INCLUDE (usd_cents)` also answers
-the balance), and the day's new budget, read under the deposits lock by
-`studio_budget_entries_inflow_idx`. Rows are few: an operator's studios, their
-wallets, and a budget entry per deposit, adjustment or grant.
+`studio.operator.remove`, `studio.budget`). A studio's own operators grant
+Credits to players out of its budget, signed fetch with no admin gate
+(`POST /credits/operator/studios/{id}/grants` and its `/shop-api` twin, paced
+at 60 per operator wallet a minute). Its signature counts over the mount's
+path or the credits host's own route, never a foreign prefix ending with it;
+a contract wallet's is checked with the uncached EIP-1654 validator; and a
+signed `bodySha256` must be the body's. A grant writes, in one transaction, the
+player's paid credit as an admin grant does (`credits.wallets`,
+`credits.ledger` with its `ops.admin_audit` row, the operator as actor, and
+the "A gift from {studio}" notice) and the `grant` entry naming that ledger
+row, with the operator as `created_by` and the reason as `note`. Readers are
+the same routes: the studio list (one aggregate of every entry grouped by
+studio, and of the operators), a studio's figures, operators and history page
+(newest first, by `studio_budget_entries_studio_idx`, whose
+`INCLUDE (usd_cents)` also answers the balance), the day's new budget, read
+under the deposits lock by `studio_budget_entries_inflow_idx`, an operator's
+studios (`GET /credits/operator/studios`, by `studio_operators_address_idx`)
+and one of them with its grants (`GET /credits/operator/studios/{id}`, from one
+REPEATABLE READ, READ ONLY snapshot), and a player's gifts (the `gifts` block of
+`GET /credits/users/{address}/credit-orders`: the wallet's ledger `grant` rows
+with an admin `grant` audit row or named by a budget entry, by
+`ledger_address_id_idx`, the total and the page from one REPEATABLE READ, READ
+ONLY snapshot; a gift that is not a whole number of cents within
+`Number.MAX_SAFE_INTEGER` cannot take that shape and is left out of both,
+counted in a warning; a migrated Decentraland grant has neither link and is not
+listed until #2473). The credits report calls a grant `studio_grant` only on
+proof a studio paid for it: a budget entry that names it, or credits-server's
+own record of a studio grant (an imported audit with `upstreamCreditId` and
+`studioName`); a `studioName` alone, as the admin route once wrote it, stays
+`grant`. Rows are few: an operator's studios,
+their wallets, and a budget entry per deposit, adjustment or grant.
 
 Locks: a change that adds budget first takes the service-wide advisory lock
 (`pg_advisory_xact_lock`, the first 15 hex digits of the SHA-256 of
 `studio-budget-deposits`, credits-server's), then the studio's row
 (`FOR UPDATE`); any other budget change, and adding or removing an operator,
-takes the studio's row alone. Each statement after a lock reads a snapshot
-taken after it was granted (READ COMMITTED), so a balance or the day's total
-is never read from before the previous holder committed.
+takes the studio's row alone, and so does a grant, which then takes the
+player's wallet row (no path takes a wallet row before a studio row). Each
+transaction pins READ COMMITTED whatever the session default, so each statement
+after a lock reads a snapshot taken after it was granted, and a balance, the
+day's total, a grant's operators or its studio's status is never read from
+before the previous holder committed: of two grants racing for the last of a
+budget, the second waits for the row and sees the first's entry.
 
 Invariants: a studio's balance never goes below zero (checked under its row
 lock before the entry is written). The new budget written in one UTC day of
@@ -1804,7 +1835,13 @@ deposits lock, so the day it is counted in is the day the next check reads.
 An idempotency key is used once per studio (`studio_budget_entries_idempotency_uidx`)
 with the hash of the request it wrote: a repeat with the same request answers
 that entry before any ceiling or balance check, and with another request is
-refused. A `grant` names exactly one ledger row and no other kind names one
+refused; a grant hashes `["grant", ...]` and a budget change `["budget", ...]`,
+so a key is never answered for the other kind. A grant is refused, writing
+nothing, unless its operator acts for the studio when the row is locked, the
+studio is `active`, the player is not one of its operators, the balance covers
+it, the player carries no flag, and it gives at most
+`CREDITS_STUDIO_GRANT_MAX_CENTS` (unset or negative refuses every grant,
+fail-closed). A `grant` names exactly one ledger row and no other kind names one
 (`studio_budget_entries_ledger_check`, `studio_budget_entries_ledger_uidx`);
 the ledger row cannot be deleted under it. Entries are never updated or
 deleted. Addresses are lower-cased and checked by the table; the handlers
@@ -2590,13 +2627,23 @@ The published sales readers use a 10-second PostgreSQL statement timeout. Recent
 
 `/v1/owners/top` ranks a creator's current holders using the NFT folds and current item and collection metadata. Both mainnet sales publications must be ready. The same snapshot supplies MANA spend from the published sales of the creator's items. Ethereum v1 Issue logs identify an item within its collection and Polygon v2 token IDs encode the item ID. The query aggregates and ranks holders before paging, within a five-second statement timeout. The 30-second page cache is keyed by both NFT publications, the sales generations and heights, and the metadata proofs, including native catalogue projection generations and heights. Every request rechecks the publications on its snapshot. One cold owner-ranking request can run concurrently on its own permit. `/v1/items` reads distinct pickers for the returned item IDs using `picks_item_idx`. Picks by the same wallet on multiple lists count once.
 
-Accounts, rankings and volume cache successful answers for 30 seconds across append-only advances. Each request checks the current publication and auxiliary sources in one snapshot. A rewind, replaced source identity, backfilled history or correction to a published sale changes the cache key. A withdrawn or expired required publication returns HTTP 503 even for a cached query. Warm hits bypass the query limits. Cold accounts and other analytics have separate limits of one and two concurrent reads. Sales pages have four. Seller summary, store stats, proceeds and the sales leg of activity share four slots. A request waits up to 250 milliseconds for a seller slot before opening the read transaction. Excess read requests receive HTTP 503. Activity logs when the wait expires and returns its available legs. The accounts address selector accepts up to 50 distinct wallets. Lifetime creator rankings require seller and settlement evidence for every relevant mint in the requested history.
+Accounts, rankings and volume cache successful answers for 30 seconds across append-only advances. Each request checks the current publication and auxiliary sources in one snapshot. A rewind, replaced source identity, backfilled history or correction to a published sale changes the cache key. A withdrawn or expired required publication returns HTTP 503 even for a cached query. Warm hits bypass the query limits. Cold accounts and other analytics have separate limits of one and two concurrent reads. Sales pages have four. Seller summary, store stats, proceeds and the sales leg of activity share four slots. A request waits up to 250 milliseconds for a seller slot before opening the read transaction. Excess read requests receive HTTP 503. Activity logs when the wait expires and returns its available legs. The accounts address selector accepts up to 50 distinct wallets. Creator rankings check the items and Polygon collections catalogue copies and the Polygon collection log in the published sales snapshot. Each mirror's freshness budget and the index publication deadlines bound cached answers.
+
+Period creator rankings attribute mint counts and net mint amounts to the collection creator at the execution position. An indexed earlier transfer supplies the creator, or the first later transfer in the published prefix proves the previous creator. When the prefix has no transfer, the query uses a verified seed in that prefix or a catalogue row updated by the time of the latest published execution. A rewind deletes seeds beyond its retained block. A store mint uses the seller proved at Issue. Collectors and collections remain cumulative and use distinct buyer addresses and network/contract pairs. Settlement evidence is required for mints in the earnings period. Creatorship evidence also covers the older mints contributing to the cumulative relationships.
+
+Lifetime primary sorts include a collection founder with delegated mints even when their seller sales are zero. They sort on attributed mint count or net mint amount and display the account's own lifetime seller sales, collections and earnings on networks where it founded a collection. The default lifetime earnings ranking requires seller sales. Founder attribution can use a Polygon catalogue row whose update time is covered by the published collection fold. While the walk is ahead of the fold, the latest event in the fold supplies that time bound.
 
 Accounts read `shop.sale_account_total` for monetary totals. The sale fold credits net proceeds to the public seller, including the first consideration beneficiary of a mediated bid. Payout recipients retain their separate fee and royalty amounts. The publication upgrade repairs the UTC days containing affected bids from stored evidence before readers use those totals.
 
-The special-execution index supports scans of store, trade and NAME-fee executions by network, kind and published block. The unresolved-asset index bounds the seller-evidence scans to priced bids and assets whose seller is missing. Token history uses the priced token lookup, with contract as a further constraint, and sale-type pages use the priced kind and block lookup.
+The special-execution index supports scans of store, trade and NAME-fee executions by network, kind and published block. The unresolved-asset index bounds the seller-evidence scans to priced bids and assets whose seller is missing. Token history uses the priced token lookup, with contract as a further constraint, and sale-type pages use the priced kind and block lookup. The creator ranking uses `collection_event_creatorship_position_idx` to find the transfer before or after a mint. The index adds one entry per creatorship transfer.
 
 The schema object pass creates the sales read indexes. On an existing large ledger, prebuild the definitions in `schemas/30_shop.sql` with `CREATE INDEX CONCURRENTLY` outside a transaction before running `catalyst schema migrate`. Inspect `pg_index.indisvalid` and `pg_get_indexdef(indexrelid)` for each prebuilt index. If a build was interrupted, drop its invalid index concurrently and rebuild it before the migration's name-based check.
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS collection_event_creatorship_position_idx
+    ON shop.collection_event (network, contract_address, block_number, log_index)
+    WHERE kind = 'creatorship_transferred';
+```
 
 ### Wallet activity transfers
 
@@ -2691,7 +2738,9 @@ default, and social writes are), each a reader of tables other areas own, with o
   waits instead until the index's publication covers its block, row or not,
   however long that takes (the notices' rule, `ItemWait::decide` in
   `catalyst_chain_index::catalogue`); a sale older than
-  `BADGES_EVENT_MAX_AGE_SECS` gets no badge and never waits. The page,
+  `BADGES_EVENT_MAX_AGE_SECS` gets no badge and never waits, and one that
+  grows older than it while it waits passes without a badge, as under the
+  mirrors. The page,
   its goods' item types and the wait come from one snapshot. Without
   `MARKETPLACE_MIRRORS_ENABLED` no pass ever completes, so the sales job is
   not started (logged at startup);
@@ -3560,7 +3609,7 @@ deleted past a rewind. A process that runs the collections mirror
 also projects it into `shop.collections` and `shop.items` (see
 "Projection"). Either way, the publication means everything the fold wrote
 is complete to `folded_block`.
-Account inventory and lifetime creator rankings require the Polygon log
+Account inventory and creator rankings require the Polygon log
 publication. Creatorship transitions are indexed by contract and by both
 wallet roles.
 
@@ -3869,8 +3918,10 @@ its current check (a mirror pass, or none):
     `MARKETPLACE_COLLECTIONS_INDEX_OWNS`; they then drain under whichever
     rule applies. A frozen producer shows as a growing lag:
     `shop_notification_cursor_lag{producer}` for the sale, bid and royalty
-    notices (blocks between the cursor and the published block it reads up
-    to, set each time a pass locks the cursor) and
+    notices (set after each page: 0 once a page reads everything up to the
+    published block, for bids the lower of the sales and nft indexes',
+    otherwise the blocks still ahead of the cursor; a pass whose index is
+    not published leaves it as it was) and
     `badges_processor_cursor_lag{source}` for the badge sales logs.
   - A sale's description, its collection membership and its wait come from
     one snapshot (the royalty notices' from the statement that joins the
@@ -5441,14 +5492,13 @@ Invariants:
   the two the rows hold an unpublished fold: a read then answers the
   envelope rather than rows past the published block. A walk that advanced
   without folding leaves the book at the published block, still read.
-- A database that predates the table fills it in the schema run that creates
-  it. The seed statements after each `CREATE TABLE` (follow-ups, so they run
-  only then) record each network's nft `fold_through` and its recovery
-  point's hash as the book's marker (no point: the book does not stand and
-  the first fold refolds it whole), then apply the fold's rules to every
-  token up to that block. They hold no
-  creation, supersession or end past what the nft fold folded; the next fold
-  takes the rest.
+- A database that predates the table gets it empty and with no marker. The
+  schema run reads no log: a whole book is one statement of minutes on a
+  real node, past the run's 60 s statement limit, and it would run inside
+  the run's single transaction. Without a marker the book does not stand, so
+  readers answer the `nft-index` envelope, and the first nft fold after the
+  upgrade refolds it whole in the fold's own transaction (its own statement
+  limit), then publishes it with the fold.
 
 Reads, each on one `REPEATABLE READ, READ ONLY` snapshot that also checks the
 nft cursor (published within 30 minutes on the networks read, from the chain
@@ -5514,7 +5564,7 @@ quarter sold and 30% cancelled by id, 130,050 left open:
 
 | Operation | Time |
 |---|---|
-| the seed in the schema run (1M orders from 6.6M log rows, bounded by the nft fold) | 20.4 s, plus 2.8 s for the seven indexes |
+| the first fold after an upgrade, from an empty table (1M orders from 6.6M log rows) | 20.4 s, plus 2.8 s for the seven indexes when it was the schema run's seed |
 | a rebuild over a filled table (no row changes): Polygon / Ethereum | 11.1 s / 7.7 s |
 | a rebuild of Polygon from an empty table (after a rewind) | 25.5 s |
 | a steady pass (the last 1,000 Polygon blocks, nested loops) | 6.6 ms |

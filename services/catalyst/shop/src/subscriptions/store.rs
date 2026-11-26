@@ -121,7 +121,10 @@ impl Subscriptions {
     /// rows, or the mailbox (case and `+tag` folded) `max_email`, other than
     /// this row; the wallet and mailbox locks make count and insert one step.
     /// `false` when a cap refused it.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per row field and cap"
+    )]
     pub async fn upsert_capped(
         &self,
         address: &str,

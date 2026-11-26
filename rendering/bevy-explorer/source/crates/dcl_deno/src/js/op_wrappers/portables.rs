@@ -1,5 +1,7 @@
+use crate::js::errors::OpError;
+use crate::js::plain::JsPlain;
 use common::rpc::SpawnResponse;
-use deno_core::{error::AnyError, op2, OpDecl, OpState};
+use deno_core::{op2, OpDecl, OpState};
 use std::{cell::RefCell, rc::Rc};
 
 // list of op declarations
@@ -12,31 +14,33 @@ pub fn ops() -> Vec<OpDecl> {
     ]
 }
 
-#[op2(async)]
-#[serde]
+#[op2]
 async fn op_portable_spawn(
     state: Rc<RefCell<OpState>>,
     #[string] pid: Option<String>,
     #[string] ens: Option<String>,
-) -> Result<SpawnResponse, AnyError> {
-    dcl_js::portables::op_portable_spawn(state, pid, ens).await
+) -> Result<JsPlain<SpawnResponse>, OpError> {
+    Ok(JsPlain(
+        dcl_js::portables::op_portable_spawn(state, pid, ens).await?,
+    ))
 }
 
-#[op2(async)]
+#[op2]
 async fn op_portable_kill(
     state: Rc<RefCell<OpState>>,
     #[string] pid: String,
-) -> Result<bool, AnyError> {
-    dcl_js::portables::op_portable_kill(state, pid).await
+) -> Result<bool, OpError> {
+    Ok(dcl_js::portables::op_portable_kill(state, pid).await?)
 }
 
-#[op2(async)]
-async fn op_portable_exit(state: Rc<RefCell<OpState>>) -> Result<bool, AnyError> {
-    dcl_js::portables::op_portable_exit(state).await
+#[op2]
+async fn op_portable_exit(state: Rc<RefCell<OpState>>) -> Result<bool, OpError> {
+    Ok(dcl_js::portables::op_portable_exit(state).await?)
 }
 
-#[op2(async)]
-#[serde]
-async fn op_portable_list(state: Rc<RefCell<OpState>>) -> Result<Vec<SpawnResponse>, AnyError> {
-    dcl_js::portables::op_portable_list(state).await
+#[op2]
+async fn op_portable_list(
+    state: Rc<RefCell<OpState>>,
+) -> Result<JsPlain<Vec<SpawnResponse>>, OpError> {
+    Ok(JsPlain(dcl_js::portables::op_portable_list(state).await?))
 }
