@@ -56,11 +56,11 @@ pub struct PrimaryUser {
 impl Default for PrimaryUser {
     fn default() -> Self {
         Self {
-            walk_speed: 2.5,
-            jog_speed: 8.18,
-            run_speed: 11.0,
-            jump_height: 1.9,
-            run_jump_height: 2.95,
+            walk_speed: 1.5,
+            jog_speed: 8.0,
+            run_speed: 10.0,
+            jump_height: 1.0,
+            run_jump_height: 1.5,
             block_all: false,
             block_run: false,
             block_walk: false,
@@ -391,6 +391,9 @@ pub struct SceneDrivenAnimationRequest {
     // dedups per-avatar so leaving identical entries across consecutive updates doesn't
     // re-fire; the scene clears the list on frames it doesn't want sound.
     pub sounds: Vec<String>,
+    // The scene is a startup portable, as the movement scene is, so the clip's file name says the
+    // avatar's motion (`ClipMotion::of_clip`). False for remote requests.
+    pub movement_scene: bool,
 }
 
 // Current scene-driven animation playback state, written by `play_current_emote` in
@@ -748,7 +751,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 5;
+pub const SETTINGS_GENERATION: u32 = 6;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -902,6 +905,8 @@ impl AppConfig {
     /// so every saved config lands on Medium.
     /// gen 5: Render Resolution moves in 10% steps; move a value saved between steps to its
     /// nearest step.
+    /// gen 6: new defaults for the player speeds and jump heights, which now measure a jump
+    /// released at once. A value still on its old default moves to the new default.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -919,6 +924,20 @@ impl AppConfig {
         if self.settings_generation < 5 {
             self.graphics
                 .set_render_scale_steps(self.graphics.render_scale_steps());
+        }
+        if self.settings_generation < 6 {
+            let (saved, new) = (&mut self.player_settings, &default.player_settings);
+            for (value, old, new) in [
+                (&mut saved.walk_speed, 2.5, new.walk_speed),
+                (&mut saved.jog_speed, 8.18, new.jog_speed),
+                (&mut saved.run_speed, 11.0, new.run_speed),
+                (&mut saved.jump_height, 1.9, new.jump_height),
+                (&mut saved.run_jump_height, 2.95, new.run_jump_height),
+            ] {
+                if *value == old {
+                    *value = new;
+                }
+            }
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -2035,6 +2054,7 @@ pub struct AvatarDynamicState {
     /// smart wearable or a scene-spawned portable drives, a suppression holds or a force pushes the
     /// player.
     pub own_displacement: Vec3,
+    /// Height of the feet above the ground the avatar can stand on.
     pub ground_height: f32,
     pub jump_time: f64,
     pub move_kind: MoveKind,
@@ -3054,6 +3074,51 @@ mod tests {
             config.reset_outdated_settings();
             assert_eq!(config.graphics.render_scale, migrated);
         }
+    }
+
+    #[test]
+    fn reset_outdated_settings_moves_movement_still_on_the_old_defaults() {
+        // written by the old build and read back through JSON, as at startup
+        let saved = |settings_generation, walk_speed| {
+            let old = AppConfig {
+                settings_generation,
+                player_settings: PrimaryUser {
+                    walk_speed,
+                    jog_speed: 8.18,
+                    run_speed: 11.0,
+                    jump_height: 1.9,
+                    run_jump_height: 2.95,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut config = AppConfig::from_json(&serde_json::to_vec(&old).unwrap());
+            config.reset_outdated_settings();
+            config
+        };
+        let moved = |user: &PrimaryUser| {
+            (
+                user.jog_speed,
+                user.run_speed,
+                user.jump_height,
+                user.run_jump_height,
+            )
+        };
+
+        let config = saved(5, 2.5);
+        assert_eq!(config.player_settings.walk_speed, 1.5);
+        assert_eq!(moved(&config.player_settings), (8.0, 10.0, 1.0, 1.5));
+        assert_eq!(config.settings_generation, SETTINGS_GENERATION);
+
+        // a value the player set stays
+        let config = saved(5, 3.2);
+        assert_eq!(config.player_settings.walk_speed, 3.2);
+        assert_eq!(moved(&config.player_settings), (8.0, 10.0, 1.0, 1.5));
+
+        // a config already on the current generation chose these values
+        let config = saved(SETTINGS_GENERATION, 2.5);
+        assert_eq!(config.player_settings.walk_speed, 2.5);
+        assert_eq!(moved(&config.player_settings), (8.18, 11.0, 1.9, 2.95));
     }
 
     #[test]

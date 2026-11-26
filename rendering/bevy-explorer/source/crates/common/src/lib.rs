@@ -12,6 +12,7 @@ pub mod inputs;
 pub mod memory;
 #[cfg(test)]
 mod memory_tests;
+pub mod movement_clip;
 pub mod partition;
 pub mod perf;
 pub mod platform_ban;
