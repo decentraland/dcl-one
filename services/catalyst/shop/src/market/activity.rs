@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 use super::SharedState;
 use super::activity_transfers::{Transfer, transfers_of_address};
 use super::bids::{Bid, BidFilters, list_bids};
-use super::orders::{Order, OrderFilters, list_orders};
+use super::orders::{BookRoute, Order, OrderFilters, list_orders_for};
 use super::readers::READER_MAX_FIRST;
 use super::sales::Sale;
 use super::signed::{MARKETPLACE_AUTH_SIGNERS, require_auth_metadata};
@@ -183,7 +183,7 @@ pub async fn user_activity(
                 skip: Some(skip),
                 ..Default::default()
             };
-            async move { list_orders(state, &f).await }
+            async move { list_orders_for(state, &f, BookRoute::Activity).await }
         }),
         pages("orders", |skip| {
             let f = OrderFilters {
@@ -192,7 +192,7 @@ pub async fn user_activity(
                 skip: Some(skip),
                 ..Default::default()
             };
-            async move { list_orders(state, &f).await }
+            async move { list_orders_for(state, &f, BookRoute::Activity).await }
         }),
         trades_of_address(
             &state.pool,

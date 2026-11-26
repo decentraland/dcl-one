@@ -30,6 +30,7 @@ pub const SECTION: DebugSection = DebugSection {
             "Shown over avatars (Chat bubbles and reactions setting)",
             "world",
         ),
+        ("Shown on screen (Chat Reactions setting)", "screenLane"),
         ("Picks played", "picked"),
         ("Picks waiting to be sent", "outbox"),
         ("Picks refused", "refusedPicks"),
@@ -75,23 +76,24 @@ pub const SECTION: DebugSection = DebugSection {
 };
 
 /// Report the reactions as JSON: `world` (the Chat bubbles and reactions setting lets them
-/// show over avatars), `picked` (the local user's picks that played, which no peer's reaction
-/// moves), `outbox` (the local user's picks not yet sent), `refusedPicks` (their picks that
-/// were no emoji the wire carries, or had no wallet to send them), `sent` (messages put on a
-/// room's transport, one per emoji per send: none with no room to carry it),
-/// `received` (peers' messages), `queued` (the reactions waiting to play, and the senders with
-/// any waiting or inside the gap after their last), `played`, `particles` (those alive, those
-/// of them drawn as of the last frame, and those waiting for their emoji's glyphs: to be
-/// rastered, or for room in a full atlas), `atlas` (the size in pixels of the glyph atlas page
-/// the emoji are drawn from, 0 before the first), `streamed` (the reactions passed to the HUD)
-/// to `subscribers` streams, and `dropped`, by cause: `blocked` (messages and waiting
-/// reactions of a sender blocked or banned), `duplicate` (a message's copy by another room),
-/// `unknownEmoji`, `rateLimited` (messages), `queueFull` (reactions that gave way to newer
-/// ones), `particleCap` (reactions that played with no particle, as many as may be alive),
-/// `notShown` (reactions that played with no particle, their player having no avatar or a
-/// hidden one, being far from the camera, or being the local user in first person) and
-/// `noGlyphs` (reactions that played with no particle, their emoji not laid out or having no
-/// glyph in colour). The counts are of this session.
+/// show over avatars), `screenLane` (the "Chat Reactions" setting passes them to the HUD),
+/// `picked` (the local user's picks that played, which no peer's reaction moves), `outbox` (the
+/// local user's picks not yet sent), `refusedPicks` (their picks that were no emoji the wire
+/// carries, or had no wallet to send them), `sent` (messages put on a room's transport, one per
+/// emoji per send: none with no room to carry it), `received` (peers' messages), `queued` (the
+/// reactions waiting to play, and the senders with any waiting or inside the gap after their
+/// last), `played`, `particles` (those alive, those of them drawn as of the last frame, and
+/// those waiting for their emoji's glyphs: to be rastered, or for room in a full atlas),
+/// `atlas` (the size in pixels of the glyph atlas page the emoji are drawn from, 0 before the
+/// first), `streamed` (the reactions passed to the HUD) to `subscribers` streams, and
+/// `dropped`, by cause: `blocked` (messages and waiting reactions of a sender blocked or
+/// banned), `duplicate` (a message's copy by another room), `unknownEmoji`, `rateLimited`
+/// (messages), `queueFull` (reactions that gave way to newer ones), `particleCap` (reactions
+/// that played with no particle, as many as may be alive), `notShown` (reactions that played
+/// with no particle, their player having no avatar or a hidden one, being far from the camera,
+/// or being the local user in first person) and `noGlyphs` (reactions that played with no
+/// particle, their emoji not laid out or having no glyph in colour). The counts are of this
+/// session.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/reaction_state")]
 pub struct ReactionStateCommand;
@@ -120,6 +122,7 @@ pub fn reaction_state(
     cmd.reply_ok(
         json!({
             "world": config.chat_bubble_visibility != ChatBubbleVisibility::None,
+            "screenLane": config.chat_reactions,
             "picked": stats.picked,
             "outbox": outboxes.iter().map(ReactionOutbox::waiting).sum::<u32>(),
             "refusedPicks": stats.refused_picks,
