@@ -609,7 +609,7 @@ fn spawn_autopilot_crowd(
         *phase = AutopilotPhase::Ending { exit_code: 1 };
         return;
     }
-    session.max_avatars = Some(UNCAPPED);
+    session.max_avatars = Some(SessionGraphics::NO_AVATAR_CAP);
     // the grid stands in front of where the player faces, so the camera sees it whatever the
     // realm's spawn heading
     let (yaw, _, _) = player.rotation().to_euler(EulerRot::YXZ);
