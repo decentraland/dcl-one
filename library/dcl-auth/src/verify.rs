@@ -504,7 +504,7 @@ fn is_signer_address(value: &str) -> bool {
 
 /// The chain's shape, and the index of its scoped link. Scoped links are accepted only for
 /// a request with a service.
-fn check_structure(
+pub(crate) fn check_structure(
     chain: &AuthChain,
     request: Option<RequestRules<'_>>,
 ) -> Result<Option<usize>, AuthError> {
