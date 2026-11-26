@@ -649,6 +649,18 @@ impl Credits {
             .await?;
         }
         alerts::record_cap_near_limit(&mut tx, &c.salt, &c.tx_hash).await?;
+        // The feed's line, once: a replayed debit was reported when recorded.
+        if kind == "purchase" && !spent.replayed {
+            alerts::record_purchase_settled(
+                &mut tx,
+                &c.salt,
+                chain_id,
+                &c.tx_hash,
+                &c.value_wei,
+                recovered,
+            )
+            .await?;
+        }
         tx.commit().await?;
         // This pass inserted the log's settlement row (its key), so the log
         // and the pledge's move are counted once, after the commit.
