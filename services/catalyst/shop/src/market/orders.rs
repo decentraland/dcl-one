@@ -268,7 +268,7 @@ pub(super) fn trade_row_order(r: &sqlx::postgres::PgRow) -> Order {
 pub async fn open_trade_orders(
     state: &MarketplaceState,
     wanted: &[(String, String, String, String)],
-) -> Result<std::collections::HashMap<(String, String, String), Order>, Response> {
+) -> Result<HashMap<(String, String, String), Order>, Response> {
     if wanted.is_empty() {
         return Ok(Default::default());
     }
@@ -283,8 +283,8 @@ pub(super) async fn open_trade_orders_on<'e>(
     conn: impl sqlx::PgExecutor<'e>,
     wanted: &[(String, String, String, String)],
     now: chrono::NaiveDateTime,
-) -> Result<std::collections::HashMap<(String, String, String), Order>, sqlx::Error> {
-    let mut out = std::collections::HashMap::new();
+) -> Result<HashMap<(String, String, String), Order>, sqlx::Error> {
+    let mut out = HashMap::new();
     if wanted.is_empty() {
         return Ok(out);
     }

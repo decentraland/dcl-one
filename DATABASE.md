@@ -5556,10 +5556,11 @@ otherwise returns the named `trade-events-index` response.
 - the total: each network's count capped at 5,000, or at the deep window
   for a deeper page, summed, as the subgraph reader counted;
 - open-by-items queries the requested contracts together on that snapshot.
-  A lateral legacy query takes each contract's cheapest window using the
-  open-price index. The v3 query ranks each contract's newest 1,000 backed
+  A lateral legacy query takes each contract's cheapest window using
+  `legacy_order_open_idx` on contract address and price. The v3 query ranks each contract's newest 1,000 backed
   listings. The merge compares their full integer prices and applies the
-  item filter after the `perContract` cut. Graph-backed legacy orders keep their page limit
+  item filter after the `perContract` cut. The local statement shares a
+  10-second bound across all requested contracts. Graph-backed legacy orders keep their page limit
   and use one batched query for the local v3 leg.
 
 Writers that predate the book's marker (an earlier binary's nft fold during
