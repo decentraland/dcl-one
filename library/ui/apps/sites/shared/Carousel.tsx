@@ -9,7 +9,7 @@ import {
   type PointerEvent,
   type ReactNode
 } from 'react'
-import { Button } from '../shared/Button/Button'
+import { Button } from '../../../components/Button/Button'
 import { GeneralLeftArrow, GeneralRightArrow } from '../../../foundations/icons'
 import styles from './Carousel.module.css'
 
@@ -300,12 +300,17 @@ function Carousel<T>({
       {total > 1 ? (
         <>
           <div className={`${styles.arrow} ${styles.arrowStart}`}>
-            <Button variant="quaternary" aria-label={labels.previous} onClick={() => move(-1)}>
+            <Button
+              size="lg"
+              variant="quaternary"
+              aria-label={labels.previous}
+              onClick={() => move(-1)}
+            >
               <GeneralLeftArrow size={24} aria-hidden="true" />
             </Button>
           </div>
           <div className={`${styles.arrow} ${styles.arrowEnd}`}>
-            <Button variant="quaternary" aria-label={labels.next} onClick={() => move(1)}>
+            <Button size="lg" variant="quaternary" aria-label={labels.next} onClick={() => move(1)}>
               <GeneralRightArrow size={24} aria-hidden="true" />
             </Button>
           </div>
