@@ -659,10 +659,18 @@ fn set_system_scene_nametags(
     let scenes = system_scenes.iter().count();
     let words = match scenes {
         1 => words,
+        _ if words.is_empty() => words,
+        0 => {
+            warn!(
+                "no system scene to take {} nametag words: dropped",
+                words.len()
+            );
+            Vec::new()
+        }
         _ => {
-            if !words.is_empty() {
-                warn!("{scenes} system scenes: their nametag words can't be told apart and are dropped");
-            }
+            warn!(
+                "{scenes} system scenes: their nametag words can't be told apart and are dropped"
+            );
             Vec::new()
         }
     };
