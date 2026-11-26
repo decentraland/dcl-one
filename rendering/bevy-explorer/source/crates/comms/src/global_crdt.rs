@@ -538,6 +538,7 @@ impl GlobalCrdtState {
 #[derive(Component, Debug)]
 #[require(common::structs::ForeignAvatar)]
 pub struct ForeignPlayer {
+    /// The same as the entity's `PlayerAddress`; use that for local or foreign players.
     pub address: Address,
     /// the crdt context (player-presence view) this player entity belongs to; the same
     /// wallet connected to several rooms is a separate entity in each room's context
