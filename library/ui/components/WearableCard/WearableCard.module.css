@@ -3,8 +3,8 @@
    The host passes the tile, flap, ring and panel pictures (--wearable-card-*, set from the `art` prop); the
    `plain` rules draw each part without one. --item-rarity comes from rarity.module.css. These rules sit
    outside the cascade layer: the card is a native button a host's reset would restyle. The tile and cover
-   corners (12.6px, 10.9px), the action's 9.6px corners, the 22 % black, the 60 % shadow cover, the smart
-   badge's gradient, the weights and the 100ms timing have no token. */
+   corners (12.6px, 10.9px), the action's 9.6px corners, the plain ring's 18px corners, the 22 % black, the
+   60 % shadow cover, the smart badge's gradient, the weights and the 100ms timing have no token. */
 .card {
   position: relative;
   display: block;
@@ -49,6 +49,7 @@
   position: absolute;
   inset: 0;
   border-radius: 12.6px;
+  background-image: var(--wearable-card-tile);
   background-position: top center;
   background-size: 100% auto;
   overflow: hidden;

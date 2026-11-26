@@ -23,9 +23,11 @@
   padding: var(--rail-bleed-top, var(--rail-bleed, 0px)) var(--rail-bleed, 0px) var(--rail-bleed, 0px);
   scroll-padding-left: var(--rail-bleed, 0px);
 }
+/* --paged-rail-gap is the gap prop. Not --rail-gap, which the Lobby's rails read: a card inherits what the track sets. */
 .track {
   display: flex;
   width: max-content;
+  gap: var(--paged-rail-gap);
 }
 .track > * {
   scroll-snap-align: start;

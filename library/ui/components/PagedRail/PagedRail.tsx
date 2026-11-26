@@ -193,7 +193,7 @@ export function PagedRail({
             : undefined
         }
       >
-        <div className={styles.track} style={{ gap }}>
+        <div className={styles.track} style={{ '--paged-rail-gap': `${gap}px` } as CSSProperties}>
           {children}
         </div>
       </div>

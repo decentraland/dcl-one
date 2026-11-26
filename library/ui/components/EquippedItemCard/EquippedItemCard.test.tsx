@@ -1,7 +1,20 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { EquippedItemCard } from './EquippedItemCard'
+
+// jsdom applies no stylesheet, so what the link's classes do is read from the rules.
+const sheet = readFileSync(join(__dirname, 'EquippedItemCard.module.css'), 'utf8')
+
+/** The declarations of the stylesheet's first rule for `selector`, outside any at-rule. */
+function rule(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const found = new RegExp(`(?:^|\\n)${escaped} \\{([^}]*)\\}`).exec(sheet)
+  if (!found) throw new Error(`no rule ${selector}`)
+  return found[1] ?? ''
+}
 
 const RARITIES = [
   'common',
@@ -122,8 +135,20 @@ describe('EquippedItemCard', () => {
       expect(container.querySelectorAll('[data-rarity] > span')).toHaveLength(3)
     })
 
-    it('should keep the link in the card when pinned, reached with Tab', async () => {
+    it('should hide the link until the card is hovered, when not pinned', () => {
+      render(<EquippedItemCard name="Hat" shopUrl={SHOP} />)
+      expect(cardOf('Hat')).toHaveClass('hasShop')
+      expect(cardOf('Hat')).not.toHaveClass('pinnedShop')
+      expect(rule('.shopBtn')).toContain('visibility: hidden;')
+      expect(rule('.hasShop:hover .shopBtn')).toContain('visibility: visible;')
+    })
+
+    it('should keep the link shown in the card when pinned, reached with Tab', async () => {
       render(<EquippedItemCard name="Hat" shopUrl={SHOP} pinShop />)
+      expect(cardOf('Hat')).toHaveClass('pinnedShop')
+      expect(cardOf('Hat')).not.toHaveClass('hasShop')
+      expect(rule('.pinnedShop .shopBtn')).toContain('position: static;')
+      expect(rule('.pinnedShop .shopBtn')).toContain('visibility: visible;')
       await userEvent.tab()
       expect(screen.getByRole('link', { name: 'Shop' })).toHaveFocus()
     })

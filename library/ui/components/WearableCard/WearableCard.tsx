@@ -131,6 +131,7 @@ export function WearableCard({
         : text.equip
   const ringed = pick ? selected : equipped
   const hostArt = {
+    '--wearable-card-tile': url(art?.tile),
     '--wearable-card-flap': url(art?.flap),
     '--wearable-card-ring': url(art?.ring),
     '--wearable-card-hover-panel': url(art?.hoverPanel)
@@ -165,10 +166,7 @@ export function WearableCard({
           aria-hidden="true"
         />
       )}
-      <span
-        className={[styles.body, art?.tile == null && styles.plainTile].filter(Boolean).join(' ')}
-        style={art?.tile == null ? undefined : { backgroundImage: url(art.tile) }}
-      >
+      <span className={[styles.body, art?.tile == null && styles.plainTile].filter(Boolean).join(' ')}>
         {thumbnail && !failed && (
           <img className={styles.thumb} src={thumbnail} alt="" onError={() => setFailedSrc(thumbnail)} />
         )}

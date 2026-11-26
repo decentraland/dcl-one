@@ -30,6 +30,17 @@ function tone(selector: string): string {
   return value
 }
 
+const sheet = readFileSync(join(__dirname, 'WearableCard.module.css'), 'utf8')
+
+/** The declarations of the card stylesheet's top-level rule for `selector`. */
+function rule(selector: string): string {
+  const found = [...sheet.matchAll(/([^{}]+)\{([^}]*)\}/g)].find(
+    ([, head]) => (head ?? '').replace(/\/\*[\s\S]*?\*\//g, '').trim() === selector
+  )
+  if (!found) throw new Error(`no rule ${selector}`)
+  return found[2] ?? ''
+}
+
 const card = (name: string) => screen.getByRole('button', { name })
 
 describe('WearableCard', () => {
@@ -67,7 +78,7 @@ describe('WearableCard', () => {
   })
 
   describe("when the host passes its art", () => {
-    it('should draw the tile with the picture, and hand the shapes to the stylesheet', () => {
+    it('should hand every picture to the stylesheet as a custom property, the tile included', () => {
       render(
         <WearableCard
           name="Hat"
@@ -75,14 +86,16 @@ describe('WearableCard', () => {
         />
       )
       const root = card('Hat')
+      expect(root.style.getPropertyValue('--wearable-card-tile')).toBe('url("/tile.webp")')
       expect(root.style.getPropertyValue('--wearable-card-flap')).toBe('url("/flap.webp")')
       expect(root.style.getPropertyValue('--wearable-card-ring')).toBe('url("/ring.webp")')
       expect(root.style.getPropertyValue('--wearable-card-hover-panel')).toBe('url("/panel.webp")')
-      const tiles = [...root.querySelectorAll<HTMLElement>('span')].filter(
-        (span) => span.style.backgroundImage !== ''
-      )
-      expect(tiles).toHaveLength(1)
-      expect(tiles[0]?.style.backgroundImage).toBe('url("/tile.webp")')
+      for (const span of root.querySelectorAll<HTMLElement>('span')) expect(span.getAttribute('style')).toBeNull()
+      expect(root.querySelector('.body')).not.toHaveClass('plainTile')
+    })
+
+    it('should draw the tile from the picture it is handed', () => {
+      expect(rule('.body')).toContain('background-image: var(--wearable-card-tile);')
     })
 
     it('should quote an inlined picture whole', () => {
@@ -99,12 +112,14 @@ describe('WearableCard', () => {
       expect(root.getAttribute('style') ?? '').toBe('')
       for (const span of root.querySelectorAll<HTMLElement>('span'))
         expect(span.style.backgroundImage).toBe('')
+      expect(root.querySelector('.body')).toHaveClass('plainTile')
     })
 
     it('should set only the pictures it was given', () => {
       render(<WearableCard name="Hat" art={{ ring: '/ring.webp' }} />)
       const root = card('Hat')
       expect(root.style.getPropertyValue('--wearable-card-ring')).toBe('url("/ring.webp")')
+      expect(root.style.getPropertyValue('--wearable-card-tile')).toBe('')
       expect(root.style.getPropertyValue('--wearable-card-flap')).toBe('')
       expect(root.style.getPropertyValue('--wearable-card-hover-panel')).toBe('')
     })

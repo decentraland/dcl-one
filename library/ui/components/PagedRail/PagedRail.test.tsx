@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactElement } from 'react'
@@ -475,7 +477,7 @@ describe('PagedRail', () => {
   })
 
   describe('when the caller places it', () => {
-    it("should carry the caller's class and the bleed as custom properties", async () => {
+    it("should carry the caller's class, and the bleed and the gap as custom properties", async () => {
       layout(194, 600, 600)
       const { container } = await renderSettled(
         <PagedRail perPage={3} gap={8} bleed={12} bleedTop={58} variant="shop" className="mine">
@@ -487,7 +489,14 @@ describe('PagedRail', () => {
       const viewport = root.firstElementChild as HTMLElement
       expect(viewport.style.getPropertyValue('--rail-bleed')).toBe('12px')
       expect(viewport.style.getPropertyValue('--rail-bleed-top')).toBe('58px')
-      expect((viewport.firstElementChild as HTMLElement).style.gap).toBe('8px')
+      const track = viewport.firstElementChild as HTMLElement
+      expect(track.style.getPropertyValue('--paged-rail-gap')).toBe('8px')
+      expect(track.style.gap).toBe('')
+    })
+
+    it('should space the cards by the gap it is handed', () => {
+      const sheet = readFileSync(join(__dirname, 'PagedRail.module.css'), 'utf8')
+      expect(/(?:^|\n)\.track \{([^}]*)\}/.exec(sheet)?.[1]).toContain('gap: var(--paged-rail-gap);')
     })
 
     it('should set no bleed without one, and the top bleed alone when only it is given', async () => {

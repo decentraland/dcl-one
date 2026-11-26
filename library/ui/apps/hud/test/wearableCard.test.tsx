@@ -9,8 +9,7 @@ import hoverPanel from '../assets/backpack/hover-bg.webp'
 // HUD's art: the rarity's tile texture and the flap, outline and hover panel shapes.
 const RARITIES: Rarity[] = ['base', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic']
 
-const tileOf = (card: HTMLElement): string =>
-  [...card.querySelectorAll<HTMLElement>('span')].map((span) => span.style.backgroundImage).filter(Boolean).join()
+const tileOf = (card: HTMLElement): string => card.style.getPropertyValue('--wearable-card-tile')
 
 describe('WearableCard', () => {
   it.each(RARITIES)('draws a %s card on that rarity\'s texture', (rarity) => {
