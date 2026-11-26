@@ -1102,10 +1102,17 @@ mod tests {
                 .replace_checked(
                     1,
                     Duration::from_secs(2),
-                    vec![selected],
+                    vec![selected.clone()],
                     Some(&shared.control)
                 )
                 .is_empty()
+        );
+        assert!(
+            !shared
+                .current
+                .replace_checked(1, Duration::from_secs(2), vec![selected], None)
+                .is_empty(),
+            "admitted without the control filter"
         );
     }
 
