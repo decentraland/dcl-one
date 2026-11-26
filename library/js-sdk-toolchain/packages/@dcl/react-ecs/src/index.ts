@@ -1,6 +1,7 @@
 import { engine, pointerEventsSystem } from '@dcl/ecs'
 import { ReactEcs } from './react-ecs'
-import { createReactBasedUiSystem, ReactBasedUiSystem } from './system'
+import type { ReactBasedUiSystem } from './system'
+import { createReactBasedUiSystem } from './system'
 
 export * from './components'
 export * from './system'

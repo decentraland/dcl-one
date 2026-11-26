@@ -106,9 +106,10 @@ pub struct AboutBff {
 }
 
 fn network_id(eth_network: &str) -> u64 {
+    if let Some(pair) = crate::shared::network::ChainPair::from_eth_network(eth_network) {
+        return pair.chain_ids().0 as u64;
+    }
     match eth_network {
-        "mainnet" => 1,
-        "sepolia" => 11155111,
         "goerli" => 5,
         "ropsten" => 3,
         "rinkeby" => 4,
@@ -154,6 +155,10 @@ fn above_ninety_percent(
 /// CPUs, and `MemTotal`/`MemAvailable` from `/proc/meminfo` (`totalmem`,
 /// `freemem`). A figure that cannot be read counts as not overloaded; off
 /// Linux there is no memory figure.
+#[allow(
+    unsafe_code,
+    reason = "libc load average and CPU count, as Node's `os` module reads them"
+)]
 fn resources_overloaded() -> bool {
     #[cfg(unix)]
     let mut load = [0f64; 3];

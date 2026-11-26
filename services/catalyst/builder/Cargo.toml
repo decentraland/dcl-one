@@ -44,3 +44,6 @@ catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
+
+[lints]
+workspace = true

@@ -1,7 +1,7 @@
+import type { Entity } from '@dcl/sdk/ecs'
 import {
   AvatarModifierArea,
   AvatarModifierType,
-  Entity,
   MainCamera,
   Transform,
   VirtualCamera,

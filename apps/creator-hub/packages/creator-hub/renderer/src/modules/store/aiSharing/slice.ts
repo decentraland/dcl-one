@@ -17,11 +17,13 @@ import { flush } from './upload';
 
 export * from './selectors';
 
-/** Backoff between failed uploads: 1, 2, 4… minutes, capped at an hour. */
+/** Backoff between failed uploads: 1, 2, 4… minutes, capped at an hour before the jitter below. */
 const MIN_BACKOFF_MS = 60_000;
 const MAX_BACKOFF_MS = 60 * 60_000;
 // Each wait is stretched by a random 0–20%, so clients that failed together (an outage, the
-// day's quota) don't all come back in the same second. Never shortened: Retry-After holds.
+// day's quota) don't all come back in the same second. Never shortened: Retry-After holds. So the
+// longest wait is 72 minutes; clamping after the jitter would bring every capped client back at
+// the same instant again.
 export const BACKOFF_JITTER = 0.2;
 
 export type DeleteStatus = 'idle' | 'confirming' | 'deleting' | 'deleted' | 'failed';
@@ -41,6 +43,8 @@ export interface DigestsState {
   generation: number;
   digests: api.AiSharingDigest[];
   next: string | null;
+  // Pages on screen, so a reload after an erasure brings back as many.
+  pages: number;
 }
 
 export interface WalletBackoff {
@@ -81,8 +85,15 @@ const initialState: AiSharingState = {
   queueShown: 0,
   versionMismatch: false,
   shared: { status: 'idle', generation: 0, turns: [], next: null, erasing: [] },
-  digests: { status: 'idle', generation: 0, digests: [], next: null },
+  digests: { status: 'idle', generation: 0, digests: [], next: null, pages: 0 },
 };
+
+/** A rejection from a load that a newer reset or erasure already replaced. */
+const isStale = (payload: unknown, generation: number) =>
+  typeof payload === 'object' &&
+  payload !== null &&
+  'generation' in payload &&
+  payload.generation !== generation;
 
 const slice = createSlice({
   name: 'aiSharing',
@@ -184,9 +195,11 @@ const slice = createSlice({
           ? payload.digests
           : [...state.digests.digests, ...payload.digests];
         state.digests.next = payload.next;
+        state.digests.pages = payload.reset ? payload.pages : state.digests.pages + payload.pages;
         state.digests.status = 'loaded';
       })
-      .addCase(loadDigests.rejected, state => {
+      .addCase(loadDigests.rejected, (state, { payload }) => {
+        if (isStale(payload, state.digests.generation)) return;
         state.digests.status = 'failed';
       })
       .addCase(eraseSharedTurn.pending, (state, { meta }) => {

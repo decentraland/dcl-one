@@ -1448,7 +1448,7 @@ fn visit_projections(
             .with_error_backoff(Duration::from_secs(30))
     };
     let chain_id = settings.chain_id(net);
-    let mainnet = chain_id == net.chain_id();
+    let mainnet = settings.serves_mainnet(net);
     if settings.nft_enabled {
         let gate: Gate = {
             let state = state.clone();
@@ -1573,6 +1573,21 @@ fn visit_projections(
             market_cfg(),
         );
     }
+    if settings.collections_enabled && net == ChainNet::Ethereum && mainnet {
+        // The closed collections-v1 set: a static filter, no gate.
+        let project = settings.collections_owned.contains(&ChainNet::Ethereum);
+        add(
+            "collections-index",
+            state.chain_rpc_url(net),
+            Arc::new(move || {
+                Arc::new(super::collections_v1::CollectionsV1Index::projecting(
+                    project,
+                ))
+            }),
+            None,
+            market_cfg(),
+        );
+    }
     if settings.third_party_registry_enabled && net == ChainNet::Matic && mainnet {
         add(
             "third-party-registry-index",
@@ -1630,7 +1645,7 @@ pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs, rentals: Option<bo
     log_switches(state, rentals);
     for net in ChainNet::ALL {
         if state.settings.market.indexes.sales_enabled
-            && state.settings.market.indexes.chain_id(net) == net.chain_id()
+            && state.settings.market.indexes.serves_mainnet(net)
             && let Some(url) = state.chain_rpc_url(net)
         {
             let state = state.clone();
@@ -1737,7 +1752,7 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
     let settings = &state.settings.market.indexes;
     let any_url =
         |f: &dyn Fn(ChainNet) -> Option<String>| ChainNet::ALL.into_iter().any(|n| f(n).is_some());
-    let polygon_mainnet = settings.chain_id(ChainNet::Matic) == ChainNet::Matic.chain_id();
+    let polygon_mainnet = settings.serves_mainnet(ChainNet::Matic);
     if !polygon_mainnet {
         tracing::info!(
             chain_id = settings.chain_id(ChainNet::Matic),
@@ -1745,7 +1760,7 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
         );
     }
     for net in ChainNet::ALL {
-        if settings.mana_transfers_enabled && settings.chain_id(net) != net.chain_id() {
+        if settings.mana_transfers_enabled && !settings.serves_mainnet(net) {
             tracing::info!(
                 network = net.db_name(),
                 "mainnet-only MANA transfer walk is off for this catalogue"
@@ -1759,7 +1774,7 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
         );
     } else {
         for net in ChainNet::ALL {
-            if (net == ChainNet::Matic || settings.chain_id(net) == net.chain_id())
+            if (net == ChainNet::Matic || settings.serves_mainnet(net))
                 && state.catalogue_rpc_url(net).is_none()
             {
                 tracing::warn!(
@@ -1817,6 +1832,23 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
         tracing::warn!(
             job = "collections-index",
             "collections index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=): it stays off"
+        );
+    }
+    let ethereum_walk = settings.serves_mainnet(ChainNet::Ethereum)
+        && state.chain_rpc_url(ChainNet::Ethereum).is_some();
+    if settings.collections_enabled && settings.serves_mainnet(ChainNet::Ethereum) && !ethereum_walk
+    {
+        tracing::warn!(
+            job = "collections-index",
+            "collections index enabled but no Ethereum JSON-RPC endpoint is configured (TRADE_RPC_URLS 1=, else ETH_RPC_URL): the collections-v1 walk stays off"
+        );
+    }
+    if settings.collections_owned.contains(&ChainNet::Ethereum)
+        && !(settings.collections_enabled && ethereum_walk)
+    {
+        tracing::warn!(
+            job = "collections-index",
+            "MARKETPLACE_COLLECTIONS_INDEX_OWNS lists ethereum, but this process runs no collections-v1 walk (it needs MARKETPLACE_COLLECTIONS_INDEX_ENABLED, Ethereum mainnet and an Ethereum JSON-RPC endpoint), so it walks and projects nothing on Ethereum"
         );
     }
     if settings.third_party_registry_enabled

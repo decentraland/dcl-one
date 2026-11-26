@@ -221,6 +221,42 @@ enum ExploreCommand {
         #[arg(long)]
         file: String,
     },
+    /// Make wallets events moderators (`explore.moderators`, the old events
+    /// service's `ADMIN_ADDRESSES`): they see pending events and administer
+    /// schedules and profile settings from the next request on. `--addresses`
+    /// takes that variable's comma-separated value as it was; an entry that is
+    /// not exactly a wallet address refuses the whole list. A listed wallet
+    /// keeps its row, so a re-run adds nothing. Each new row records
+    /// `--added-by` and an `explore`/`events.moderator.add` audit row by
+    /// `cli:<wallet>`. Prints the outcome as JSON. Not behind
+    /// OPS_WRITES_ENABLED: a seed is operator data.
+    ModeratorsAdd {
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// Comma-separated wallet addresses.
+        #[arg(long)]
+        addresses: String,
+        /// The operator wallet recorded as `added_by` and in the audit actor.
+        #[arg(long, value_parser = wallet)]
+        added_by: String,
+    },
+    /// Remove events moderators (`--addresses` as for `moderators-add`),
+    /// each with an `events.moderator.remove` audit row by `cli:<actor>`.
+    ModeratorsRemove {
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// Comma-separated wallet addresses.
+        #[arg(long)]
+        addresses: String,
+        /// The operator wallet recorded in the audit actor.
+        #[arg(long, value_parser = wallet)]
+        actor: String,
+    },
+    /// Print the events moderators as JSON.
+    ModeratorsList {
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -539,6 +575,22 @@ enum SchemaCommand {
     Functions,
 }
 
+/// A one-connection pool over a bootstrapped database, for an operator command.
+async fn operator_pool(database_url: &str) -> anyhow::Result<sqlx::PgPool> {
+    tracing_subscriber::fmt().with_target(false).init();
+    let pool = db::connect_pool(
+        database_url,
+        &db::PoolSettings {
+            max_connections: 1,
+            ..Default::default()
+        },
+    )
+    .await
+    .context("connecting to DATABASE_URL")?;
+    db::bootstrap(&pool).await?;
+    Ok(pool)
+}
+
 /// `catalyst schema layout`.
 fn schema_layout() -> String {
     catalyst::schema_migrate::layout(
@@ -550,9 +602,12 @@ fn schema_layout() -> String {
 }
 
 fn main() -> anyhow::Result<()> {
-    // The posture writes the environment clap reads, so it expands first,
-    // while this is the only thread.
-    posture::apply_to_process_env()?;
+    // The posture writes the environment clap reads, so it expands first.
+    // SAFETY: no other thread has started yet.
+    #[allow(unsafe_code, reason = "the posture writes the process environment")]
+    unsafe {
+        posture::apply_to_process_env()?;
+    }
     // The complete clap tree exceeds the default Windows debug stack. This
     // parser-only thread returns plain values and finishes before V8 or runtime
     // initialization.
@@ -604,6 +659,10 @@ fn serve_preflight(config: &Config, env: &posture::Lookup) -> anyhow::Result<()>
     Ok(())
 }
 
+#[allow(
+    clippy::print_stdout,
+    reason = "subcommands print their reports, JSON and SQL to stdout"
+)]
 async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Command::Serve(config) => catalyst::serve::serve(*config).await,
@@ -783,6 +842,42 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             };
             let out =
                 explore::places::interactions::import_upstream_likes(&pool, reader.lines()).await?;
+            println!("{}", serde_json::to_string(&out)?);
+            Ok(())
+        }
+        Command::Explore {
+            command:
+                ExploreCommand::ModeratorsAdd {
+                    database_url,
+                    addresses,
+                    added_by,
+                },
+        } => {
+            let pool = operator_pool(&database_url).await?;
+            let out =
+                explore::events::moderators::apply_cli(&pool, &addresses, &added_by, true).await?;
+            println!("{}", serde_json::to_string(&out)?);
+            Ok(())
+        }
+        Command::Explore {
+            command:
+                ExploreCommand::ModeratorsRemove {
+                    database_url,
+                    addresses,
+                    actor,
+                },
+        } => {
+            let pool = operator_pool(&database_url).await?;
+            let out =
+                explore::events::moderators::apply_cli(&pool, &addresses, &actor, false).await?;
+            println!("{}", serde_json::to_string(&out)?);
+            Ok(())
+        }
+        Command::Explore {
+            command: ExploreCommand::ModeratorsList { database_url },
+        } => {
+            let pool = operator_pool(&database_url).await?;
+            let out = explore::events::moderators::list(&pool).await?;
             println!("{}", serde_json::to_string(&out)?);
             Ok(())
         }

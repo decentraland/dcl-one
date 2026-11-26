@@ -7,10 +7,11 @@ import { useEffect, useState } from 'react'
 import type { AppNotification } from '@explorer-core/engine/protocol'
 import { loadGiftItem, type GiftableKind, type GiftItem } from '@explorer-core/features/gifting/giftItem'
 import { knownUserColor, useProfile } from '../session/profileStore'
-import { Button, openPopup } from '../../design'
+import { openPopup } from '../../design'
 import { nativeProfileImage } from '@hud-host'
 import { ItemTile, RaysPopup } from '../rewards/RewardPopup'
 import styles from './GiftReceivedPopup.module.css'
+import { Button } from '@dcl/one-ui'
 
 const GIFT_TYPE = 'transfer_received'
 export const GIFT_ON_ITS_WAY = "It's on its way to your Backpack."
@@ -101,10 +102,10 @@ export function GiftReceivedPopup({
         {name}
       </p>
       <div className={styles.actions}>
-        <Button variant="secondary" size="lg" onClick={onClose}>
+        <Button appearance="hud" variant="secondary" size="lg" onClick={onClose}>
           CLOSE
         </Button>
-        <Button size="lg" onClick={() => onOpenBackpack(kind)}>
+        <Button appearance="hud" size="lg" onClick={() => onOpenBackpack(kind)}>
           GO TO BACKPACK
         </Button>
       </div>

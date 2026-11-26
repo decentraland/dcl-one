@@ -2,8 +2,8 @@
 // the session. It is large on purpose, since the picture just changed under the player, and it
 // closes itself after a while.
 import { useEffect } from 'react'
+import { Button } from '@dcl/one-ui'
 import type { AutoGraphicsNotice } from '@explorer-core/engine/generated'
-import { Button } from '../../design'
 import styles from './AutoGraphicsBanner.module.css'
 
 export const AUTO_GRAPHICS_TITLE = 'Graphics lowered to keep things smooth'
@@ -45,6 +45,7 @@ export function AutoGraphicsBanner({ notice, dismiss, settingsOpen, openSettings
         <p className={styles.note}>{AUTO_GRAPHICS_REASSURANCE}</p>
         <div className={styles.actions}>
           <Button
+            appearance="hud"
             variant="secondary"
             size="md"
             onClick={() => {
@@ -54,7 +55,7 @@ export function AutoGraphicsBanner({ notice, dismiss, settingsOpen, openSettings
           >
             Settings
           </Button>
-          <Button variant="primary" size="md" onClick={dismiss}>
+          <Button appearance="hud" variant="primary" size="md" onClick={dismiss}>
             OK
           </Button>
         </div>

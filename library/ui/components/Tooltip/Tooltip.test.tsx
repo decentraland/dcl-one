@@ -1145,3 +1145,88 @@ describe('when tooltip content or availability changes', () => {
     expect(html).not.toContain('role="tooltip"')
   })
 })
+
+describe('when the tip takes the hud appearance', () => {
+  it('should keep the tip in the page beside its anchor, with the hud classes and the shortcut', () => {
+    const { container } = render(
+      <Tooltip appearance="hud" label="Friends" shortcut="L" side="top" className="host">
+        <button>Open</button>
+      </Tooltip>
+    )
+    const tip = screen.getByRole('tooltip')
+    expect(tip).toHaveTextContent('Friends[L]')
+    expect(tip.parentElement).toBe(container.firstElementChild)
+    expect(tip.className).toMatch(/\bhud\b|_hud_/)
+    expect(tip).toHaveClass('tt__tip--top')
+    expect(container.firstElementChild).toHaveClass('host')
+    expect(container.firstElementChild!.className).toMatch(/hudRoot/)
+    expect(container.firstElementChild!.className).not.toMatch(/\broot\b|_root_/)
+  })
+
+  it('should mark the rail, the paragraph and the end-aligned tips', () => {
+    render(
+      <>
+        <Tooltip appearance="hud" variant="rail" label="rail">
+          <button>a</button>
+        </Tooltip>
+        <Tooltip appearance="hud" side="bottom" multiline label="paragraph">
+          <button>b</button>
+        </Tooltip>
+        <Tooltip appearance="hud" side="bottom" align="end" label="end">
+          <button>c</button>
+        </Tooltip>
+      </>
+    )
+    expect(screen.getByText('rail').className).toMatch(/hudRail/)
+    expect(screen.getByText('paragraph').className).toMatch(/hudMultiline/)
+    expect(screen.getByText('end').className).toMatch(/hudEnd/)
+  })
+
+  it('should not align a rail or a paragraph tip to the end', () => {
+    render(
+      <>
+        <Tooltip appearance="hud" variant="rail" side="top" align="end" label="rail">
+          <button>a</button>
+        </Tooltip>
+        <Tooltip appearance="hud" side="bottom" multiline align="end" label="paragraph">
+          <button>b</button>
+        </Tooltip>
+      </>
+    )
+    expect(screen.getByText('rail').className).not.toMatch(/hudEnd/)
+    expect(screen.getByText('paragraph').className).not.toMatch(/hudEnd/)
+  })
+
+  it('should stay in the page when a floating option is passed', () => {
+    const { container } = render(
+      <Tooltip appearance="hud" portal keepInViewport label="Friends">
+        <button>Open</button>
+      </Tooltip>
+    )
+    expect(screen.getByRole('tooltip').parentElement).toBe(container.firstElementChild)
+  })
+
+  it('should draw no tip while disabled or without a label', () => {
+    render(
+      <>
+        <Tooltip appearance="hud" label="Friends" disabled>
+          <button>a</button>
+        </Tooltip>
+        <Tooltip appearance="hud" label="">
+          <button>b</button>
+        </Tooltip>
+      </>
+    )
+    expect(screen.queryByRole('tooltip')).toBeNull()
+  })
+
+  it('should leave the default tip without the hud classes', () => {
+    const { container } = render(
+      <Tooltip label="Friends" variant="rail" multiline>
+        <button>Open</button>
+      </Tooltip>
+    )
+    expect(screen.getByRole('tooltip').className).not.toMatch(/hud/)
+    expect(container.firstElementChild!.className).not.toMatch(/hudRoot/)
+  })
+})

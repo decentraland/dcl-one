@@ -1,7 +1,9 @@
-import { CliComponents } from '../../components'
-import { LinkerResponse } from '../../linker-dapp/routes'
-import { CliError, CliErrorName } from '../../logic/error'
-import { createDeploymentState, DeploymentResult, IDeploymentStateComponent } from './state'
+import type { CliComponents } from '../../components'
+import type { LinkerResponse } from '../../linker-dapp/routes'
+import type { CliErrorName } from '../../logic/error'
+import { CliError } from '../../logic/error'
+import type { DeploymentResult, IDeploymentStateComponent } from './state'
+import { createDeploymentState } from './state'
 
 export type DeployContext = {
   signal: AbortSignal

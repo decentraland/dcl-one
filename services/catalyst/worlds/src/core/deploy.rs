@@ -696,6 +696,7 @@ pub(super) enum Check<'a> {
 
 /// The publish checks in the old service's order. `anchor_ms` dates the timestamp window:
 /// now, or a partial upload's first batch.
+#[allow(clippy::too_many_arguments, reason = "shared publish path")]
 pub(super) async fn validate(
     state: &SharedState,
     mut conn: Option<&mut sqlx::PgConnection>,
@@ -942,7 +943,7 @@ pub(super) async fn validate(
     }
     let size: i64 = sizes.values().copied().fold(0, i64::saturating_add);
     // A staging batch that skipped the permission resolves the owner here; it is refused alike.
-    let cap = match conn.as_deref_mut() {
+    let cap = match conn {
         Some(conn) => {
             state
                 .scene_cap_on(
@@ -987,7 +988,10 @@ pub(super) async fn validate(
 }
 
 /// A publish the store refused, or the scene row's creation time (ms).
-#[allow(clippy::result_large_err, clippy::too_many_arguments)] // The refusal is the answer itself.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the publish carries the request, the entity and its validation"
+)]
 pub(super) async fn publish(
     state: &SharedState,
     headers: &HeaderMap,
@@ -1029,7 +1033,10 @@ pub(super) async fn publish(
     .await)
 }
 
-#[allow(clippy::result_large_err, clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the publish carries the request, the entity and its validation"
+)]
 pub(super) async fn persist_publish_on(
     state: &SharedState,
     conn: &mut sqlx::PgConnection,
@@ -1277,7 +1284,6 @@ async fn deploy_entity_inner(
 }
 
 /// The entity JSON of an uploaded or stored entity file, at most [`MAX_ENTITY_FILE_SIZE_BYTES`].
-#[allow(clippy::result_large_err)] // The refusal is the answer itself.
 pub(super) async fn read_entity_file(file: &SpooledFile) -> Result<Value, Response> {
     if file.len() > MAX_ENTITY_FILE_SIZE_BYTES {
         return Err(err_one(entity_file_too_large_error()));
@@ -1289,7 +1295,6 @@ pub(super) async fn read_entity_file(file: &SpooledFile) -> Result<Value, Respon
 }
 
 /// The entity JSON of entity file bytes.
-#[allow(clippy::result_large_err)] // The refusal is the answer itself.
 pub(super) fn parse_entity(bytes: &[u8]) -> Result<Value, Response> {
     if bytes.len() > MAX_ENTITY_FILE_SIZE_BYTES {
         return Err(err_one(entity_file_too_large_error()));

@@ -379,7 +379,7 @@ async fn serve(
     let mut response = Response::builder()
         .status(StatusCode::OK)
         .body(opened.into_body(head))
-        .unwrap();
+        .expect("a constant status always builds a response");
     apply_headers(&mut response, &base_headers);
     Ok(response)
 }

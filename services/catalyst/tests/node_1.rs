@@ -1,7 +1,17 @@
 //! Node integration tests that need no socket budget, one binary for several files so a
 //! build links few test executables. Each file stays a module named after it.
+#![allow(
+    clippy::unwrap_used,
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "test support"
+)]
 // explore_parity needs it.
 #![recursion_limit = "256"]
+
+// Support shared by several modules, loaded once; the modules `use crate::<name>`.
+#[path = "support/db.rs"]
+mod db;
 
 #[path = "content_live.rs"]
 mod content_live;

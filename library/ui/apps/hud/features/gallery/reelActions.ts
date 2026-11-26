@@ -1,5 +1,5 @@
 import { createElement, type ReactNode } from 'react'
-import { MaskIcon, showConfirm, showToast } from '../../design'
+import { showConfirm, showToast } from '../../design'
 import { DownloadedToast } from './DownloadedToast'
 import checkIcon from '../../assets/lobby/checkmark-icn-thin.png'
 import warningIcon from '../../assets/startup/warning.png'
@@ -7,6 +7,7 @@ import { isNativeHud, serviceUrl } from '@hud-host'
 import { cefDownloadOutcome } from '@explorer-core/lib/cefNativeBridge'
 import { worldOfRealm } from '@explorer-core/features/lobby/goto'
 import type { MapState, TravelOutcome } from '../session/useEngineSession'
+import { MaskIcon } from '@dcl/one-ui'
 
 export const REEL_MESSAGES = {
   shareToX: 'Happening right now in @decentraland.\n\nCome hang out 👋\n\n',

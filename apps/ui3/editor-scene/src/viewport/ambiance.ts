@@ -67,7 +67,8 @@ export function setupEditorAmbiance(): void {
     if (state.status !== 'ready') return
     spawned = true
 
-    BevyApi.consoleCommand('time', [DUSK_HOURS, '0']).catch((e) =>
+    // --force: the editor's dusk beats any time of day the edited scene sets
+    BevyApi.consoleCommand('time', [DUSK_HOURS, '0', '--force']).catch((e) =>
       log.debug('ambiance: time command failed', e)
     )
 

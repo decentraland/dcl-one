@@ -12,8 +12,15 @@ export type AiSharingDevEnv = {
   VITE_AI_SHARING_API_URL?: string;
 };
 
+// Only the two keys, never a bare `import.meta.env`: Vite would inline the whole env object, every
+// build-time `VITE_*` value, into the release bundle.
+export const buildEnv = (): AiSharingDevEnv => ({
+  DEV: import.meta.env.DEV,
+  VITE_AI_SHARING_API_URL: import.meta.env.VITE_AI_SHARING_API_URL,
+});
+
 /** The dev build's override, or '' when there is none or this is not a dev build. */
-export function devAiSharingUrl(env: AiSharingDevEnv = import.meta.env): string {
+export function devAiSharingUrl(env: AiSharingDevEnv = buildEnv()): string {
   if (!env.DEV) return '';
   return (env.VITE_AI_SHARING_API_URL ?? '').trim();
 }

@@ -1,7 +1,7 @@
 import path from 'path'
-import { Scene } from '@dcl/schemas'
+import type { Scene } from '@dcl/schemas'
 
-import { CliComponents } from '../../components'
+import type { CliComponents } from '../../components'
 import { SCENE_FILE } from '../../logic/scene-validations'
 
 export function getMinimalSceneJson(): Partial<Scene> & { ecs7: boolean; runtimeVersion: string } {

@@ -1057,10 +1057,15 @@ impl<'a> RoomServiceClient<'a> {
 
     pub async fn list_rooms(&self) -> Result<Vec<String>, RoomServiceError> {
         let body = self.call("ListRooms", "", serde_json::json!({})).await?;
-        Ok(room_inventory(&body)?
+        room_inventory(&body)?
             .iter()
-            .map(|room| room["name"].as_str().expect("validated name").to_owned())
-            .collect())
+            .map(|room| {
+                room["name"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or(RoomServiceError::InvalidResponse)
+            })
+            .collect()
     }
 
     pub async fn get_room_info(

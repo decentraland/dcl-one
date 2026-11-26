@@ -1,28 +1,31 @@
 import * as readline from 'readline'
 import { randomBytes } from 'crypto'
-import { ChainId, Scene } from '@dcl/schemas'
-import { AuthChain } from '@dcl/crypto'
-import { Lifecycle } from '@well-known-components/interfaces'
-import { createCatalystClient, createContentClient, CatalystClient, ContentClient } from 'dcl-catalyst-client'
+import type { Scene } from '@dcl/schemas'
+import { ChainId } from '@dcl/schemas'
+import type { AuthChain } from '@dcl/crypto'
+import type { Lifecycle } from '@well-known-components/interfaces'
+import type { CatalystClient, ContentClient } from 'dcl-catalyst-client'
+import { createCatalystClient, createContentClient } from 'dcl-catalyst-client'
 import { getCatalystServersFromCache } from 'dcl-catalyst-client/dist/contracts-snapshots'
 import { hexToBytes } from 'eth-connect'
 import { ethSign } from '@dcl/crypto/dist/crypto'
 import { Authenticator } from '@dcl/crypto'
 
-import { CliComponents } from '../../components'
-import { IFile } from '../../logic/scene-validations'
-import { LinkerResponse } from '../../linker-dapp/routes'
+import type { CliComponents } from '../../components'
+import type { IFile } from '../../logic/scene-validations'
+import type { LinkerResponse } from '../../linker-dapp/routes'
 import { setRoutes } from '../../linker-dapp/routes'
 import { createWallet } from '../../logic/account'
-import { IFuture } from '../../logic/future'
+import type { IFuture } from '../../logic/future'
 import { getEstateRegistry, getLandRegistry } from '../../logic/config'
 import { getObject } from '../../logic/coordinates'
 import { getPointers } from '../../logic/catalyst-requests'
 import { drainResponse, withDeadline } from '../../logic/fetch'
 import { CliError } from '../../logic/error'
-import { Router } from '@well-known-components/http-server'
-import { dAppOptions, runDapp } from '../../run-dapp'
-import { IDeploymentComponent } from './deployment'
+import type { Router } from '@well-known-components/http-server'
+import type { dAppOptions } from '../../run-dapp'
+import { runDapp } from '../../run-dapp'
+import type { IDeploymentComponent } from './deployment'
 import { setDeployResourceRoutes } from './routes'
 
 /**
@@ -141,7 +144,8 @@ export function buildDeleteScenesFromWorldPayload(worldName: string): string {
   const path = `/entities/${encodedName}`
   const timestamp = String(Date.now())
   const metadata = '{}'
-  return ['delete', path, timestamp, metadata].join(':').toLowerCase()
+  // crypto-middleware 6.x: method and path folded, metadata verbatim
+  return ['delete', path.toLowerCase(), timestamp, metadata].join(':')
 }
 
 export async function deleteWorldScenes(
