@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes } from 'react';
 import { Provider } from 'react-redux';
-import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';

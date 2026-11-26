@@ -24,74 +24,15 @@
 .shop-subnav *::after { box-sizing: border-box; }
 
 .shop-subnav__tabs {
-  margin-right: auto;
-  display: flex;
-  gap: 50px;
-  height: 100%;
+  flex: 1 1 auto;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
 }
-.shop-subnav__tabs::-webkit-scrollbar { display: none; }
-@media (min-width: 1280px) {
-  .shop-subnav__tabs { flex-shrink: 0; }
-}
-@media (max-width: 1200px) {
-  .shop-subnav__tabs { mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent); }
-}
-.shop-subnav__tabs a {
-  display: flex;
-  align-items: center;
-  height: 100%;
-  white-space: nowrap;
-  text-transform: uppercase;
-  letter-spacing: 0.46px;
-  font-size: 15px;
-  font-weight: 600;
-  color: #a09ba8;
-  text-decoration: none;
-  border-bottom: 4px solid transparent;
-}
-.shop-subnav__tabs a:hover { color: #fff; border-bottom-color: rgba(255, 255, 255, 0.1); }
-.shop-subnav__tabs a.active { color: #fff; border-bottom-color: #ff2d55; }
-@keyframes shop-tab-rainbow {
-  0%, 100% { background-position: 0 0; }
-  50% { background-position: 100% 0; }
-}
-.shop-subnav__tabs a[data-event],
-.shop-subnav__tabs a[data-event]:hover,
-.shop-subnav__tabs a[data-event].active {
-  background: linear-gradient(to right, #6666ff, #0099ff, #00ff00, #ff3399, #6666ff);
-  background-size: 400% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: shop-tab-rainbow 6s ease-in-out infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .shop-subnav__tabs a[data-event] { animation: none; }
-}
-
 .shop-subnav__divider { display: none; }
 
 .shop-subnav .shop-search {
   flex: 1 0 240px;
   max-width: 496px;
 }
-.shop-subnav .shop-search form {
-  height: 40px;
-  gap: 8px;
-  padding: 0 12px;
-  border-radius: 50px;
-  border: 1px solid #c6bcd7;
-  background: rgba(255, 255, 255, 0.1);
-}
-.shop-subnav .shop-search form:focus-within { border-color: #fff; }
-/* Upstream's field sets no face, so it renders in the browser's default control font. */
-.shop-subnav .shop-search input { font-family: revert; font-size: 17px; letter-spacing: -0.2px; color: #fff; }
-.shop-subnav .shop-search input::placeholder { color: #cfcdd4; opacity: 1; }
-.shop-subnav .shop-search__icon { color: #fcfcfc; }
-
 .shop-subnav__credits {
   position: relative;
   display: inline-flex;
@@ -157,13 +98,7 @@ button.shop-subnav__icon {
     gap: 12px 8px;
     padding: 12px var(--shop-gutter, 54px) 0;
   }
-  .shop-subnav__tabs {
-    order: 6;
-    flex: 1 0 100%;
-    height: auto;
-    mask-image: none;
-  }
-  .shop-subnav__tabs a { height: 52px; }
+  .shop-subnav__tabs { order: 6; flex: 1 0 100%; }
   .shop-subnav .shop-search { order: 5; flex: 1 0 100%; max-width: none; }
   .shop-subnav__divider { order: 5; }
   .shop-subnav__credits { order: 1; }
@@ -180,26 +115,8 @@ button.shop-subnav__icon {
     border: 1px solid transparent;
     border-top-color: rgba(255, 255, 255, 0.3);
   }
-  .shop-subnav .shop-search form { border-radius: 12px; padding: 0 12px; }
-  .shop-subnav .shop-search input { font-size: 14px; }
-  .shop-subnav__tabs { gap: 16px; }
-  .shop-subnav__tabs a {
-    height: 44px;
-    font-size: 12px;
-    letter-spacing: 0.038em;
-    padding: 8px 0 12px;
-  }
-}
-/* After the width rules, as upstream's NavBar.styles.ts: a touch device keeps 16px at any width, below which
-   iOS zooms the page on focus. */
-@media (pointer: coarse) {
-  .shop-subnav .shop-search input { font-size: 16px; }
 }
 
-.shop-subnav__tabs a[data-mobile-only] { display: none; }
-@media (max-width: 768px) {
-  .shop-subnav__tabs a[data-mobile-only] { display: flex; }
-}
 @media (max-width: 900px) {
   .shop-subnav[data-set="marketplace"] .shop-subnav__divider { display: none; }
 }
@@ -221,42 +138,14 @@ button.shop-subnav__icon {
   border-bottom: 1px solid rgba(255, 255, 255, 0.2);
   pointer-events: none;
 }
-.shop-subnav[data-set="marketplace"] .shop-subnav__tabs { gap: 32px; mask-image: none; }
-.shop-subnav[data-set="marketplace"] .shop-subnav__tabs a {
-  position: relative;
-  padding: 19px 0;
-  border-bottom: 0;
-  text-transform: none;
-  letter-spacing: -0.2px;
-  font-size: 17px;
-  line-height: 26px;
-  font-weight: 400;
-  color: #cfcdd4;
-}
-.shop-subnav[data-set="marketplace"] .shop-subnav__tabs a:hover { color: #fff; }
-.shop-subnav[data-set="marketplace"] .shop-subnav__tabs a.active { color: #fff; font-weight: 600; }
-.shop-subnav[data-set="marketplace"] .shop-subnav__tabs a.active::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  border-bottom: 3px solid #ff2d55;
-  border-radius: 10px;
-}
 @media (max-width: 900px) {
   .shop-subnav[data-set="marketplace"] { height: auto; padding: 12px 24px 0; }
-  .shop-subnav[data-set="marketplace"] .shop-subnav__tabs a { height: auto; }
 }
 @media (max-width: 768px) {
   .shop-subnav[data-set="marketplace"] { padding: 22px 0 0; }
   .shop-subnav[data-set="marketplace"]::after { display: none; }
   .shop-subnav[data-set="marketplace"] .shop-subnav__icon { display: none; }
-  .shop-subnav[data-set="marketplace"] .shop-subnav__tabs {
-    gap: 0;
-    mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
-  }
-  .shop-subnav[data-set="marketplace"] .shop-subnav__tabs a { margin: 0 16px; padding: 0 0 20px; font-size: 15px; }
+  .shop-subnav[data-set="marketplace"] .shop-subnav__tabs { padding-inline: 16px; }
 }
 
 [data-site-layout-content] > .cs.shop-chrome {

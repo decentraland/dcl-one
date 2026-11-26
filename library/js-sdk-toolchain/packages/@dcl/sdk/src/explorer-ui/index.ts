@@ -1,13 +1,10 @@
-import {
-  engine,
-  ExplorerItemPurchaseResult,
-  ExplorerUi,
-  ExplorerUiEventsResult,
+import type {
   GrowOnlyValueSetComponentDefinition,
   IEngine,
   PBExplorerItemPurchaseResult,
   PBExplorerUiEventsResult
 } from '@dcl/ecs'
+import { engine, ExplorerItemPurchaseResult, ExplorerUi, ExplorerUiEventsResult } from '@dcl/ecs'
 import { openExplorerUi, OpenExplorerUiResult } from '~system/RestrictedActions'
 
 export { ExplorerUi, OpenExplorerUiResult }
