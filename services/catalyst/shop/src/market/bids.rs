@@ -30,12 +30,12 @@
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, Postgres, Row, Transaction};
 
-use super::chain_walk::{self, ChainNet, Cursor, INDEXER_NFT, INDEXER_SALES, READY_WINDOW};
+use super::chain_walk::{self, ChainNet, Cursor, INDEXER_NFT, INDEXER_SALES};
 use super::graph;
 use super::owned_items::{self, Rule};
 use super::readers::{self, GraphPage, Ttl, seconds_to_ms};
@@ -492,27 +492,10 @@ pub fn polygon_book_here(state: &MarketplaceState) -> bool {
     owned_items::walks_here(state) && state.settings.market.indexes.sales_enabled
 }
 
-/// Whether the Polygon sales cursor `c` is published at `now` as the bid
-/// book trusts it: its whole history walked and a fold published within
-/// [`READY_WINDOW`], bound to `chain_id` (the chain the node serves on
-/// Polygon, `Settings::catalogue`) and out of quarantine.
-/// `shop.nft_bid` changes only in a fold's commit and in a rewind, which
-/// clears the marker, so, as `owned_items::fresh` for the nft index, this
-/// does not compare `folded_block` with `last_block`: each pass advances
-/// `last_block` before it folds, so that equality is false for part of
-/// every pass while the table holds a published fold.
-pub fn sales_published(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
-    let Some(folded_at) = c.folded_at else {
-        return false;
-    };
-    let age = now.naive_utc().signed_duration_since(folded_at);
-    c.indexer == INDEXER_SALES
-        && c.full_history
-        && c.folded_block.is_some()
-        && c.quarantined_at.is_none()
-        && c.chain_id == Some(chain_id)
-        && age >= ChronoDuration::zero()
-        && age <= READY_WINDOW
+/// Whether the Polygon sales cursor has a fresh published fold on the
+/// served chain. A forward walk can advance without changing that fold.
+fn sales_published(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> bool {
+    c.indexer == INDEXER_SALES && chain_walk::fresh_fold_on(c, chain_id, now).is_some()
 }
 
 /// What a bid's seller is read against on a [`bids_snapshot`].
@@ -570,10 +553,7 @@ pub(super) async fn bids_snapshot(
     let sales = chain_walk::cursor(&mut *tx, INDEXER_SALES, ChainNet::Matic)
         .await
         .map_err(db)?;
-    let Some(published) = sales
-        .filter(|c| sales_published(c, chain, now))
-        .and_then(|c| c.folded_block)
-    else {
+    let Some(sales) = sales.filter(|c| sales_published(c, chain, now)) else {
         return Err(unavailable(
             Source::SalesIndex,
             "the matic sales index is not published (catching up, rewound after a reorg, stopped, or MARKETPLACE_SALES_INDEX_ENABLED off)",
@@ -587,7 +567,7 @@ pub(super) async fn bids_snapshot(
     .fetch_optional(&mut *tx)
     .await
     .map_err(db)?;
-    if book != Some(published) {
+    if !chain_walk::holds_published_fold(book, &sales) {
         return Err(unavailable(
             Source::SalesIndex,
             "the matic bid book holds a fold the sales index has not published yet",
@@ -1071,7 +1051,7 @@ mod tests {
             last_block_time: None,
             fold_through: Some(100),
             folded_block: Some(100),
-            folded_at: Some(now.naive_utc() - ChronoDuration::minutes(1)),
+            folded_at: Some(now.naive_utc() - chrono::Duration::minutes(1)),
             full_history: true,
             reorg_rewinds: 0,
             updated_at: now.naive_utc(),
@@ -1112,7 +1092,7 @@ mod tests {
             ..published.clone()
         }));
         assert!(not(Cursor {
-            folded_at: Some(now.naive_utc() - ChronoDuration::minutes(31)),
+            folded_at: Some(now.naive_utc() - chrono::Duration::minutes(31)),
             ..published.clone()
         }));
         assert!(not(Cursor {
