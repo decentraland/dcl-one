@@ -65,6 +65,13 @@ pub const CONCURRENT_READS: usize = 4;
 /// How long the listener waits for a notification before it pings its
 /// connection.
 const LISTENER_IDLE: Duration = Duration::from_secs(60);
+/// How long the listener's connect and `LISTEN` may take before it gives the
+/// connection up.
+const LISTENER_REGISTER: Duration = Duration::from_secs(10);
+/// Listener connections one process holds at once: the live one and those
+/// given up on a stall whose cleanup has not ended. Past it the listener waits
+/// for one to close, and the streams fall back on their refresh.
+pub(crate) const MAX_LISTENER_CONNECTIONS: usize = 2;
 
 /// The process's listener on [`CHANNEL`] and the streams it wakes.
 pub struct BalanceChanges {
@@ -79,6 +86,8 @@ pub struct BalanceChanges {
     shutdown: OnceLock<CancellationToken>,
     /// How long the listener waits for a notification before it pings.
     listener_idle: Duration,
+    /// How long the listener's connect and `LISTEN` may take.
+    listener_register: Duration,
     /// Where the listener connects; `None` is the request pool's database.
     listener_at: Option<sqlx::postgres::PgConnectOptions>,
 }
@@ -123,20 +132,23 @@ impl BalanceChanges {
             listening: AtomicBool::new(false),
             shutdown: OnceLock::new(),
             listener_idle: LISTENER_IDLE,
+            listener_register: LISTENER_REGISTER,
             listener_at: None,
         }
     }
 
-    /// The listener connecting to `at` and pinging after `idle`, for a test
-    /// that stalls its connection.
+    /// The listener connecting to `at`, pinging after `idle` and giving up a
+    /// registration after `register`, for a test that stalls its connection.
     #[cfg(test)]
     pub(crate) fn listening_at(
         mut self,
         at: sqlx::postgres::PgConnectOptions,
         idle: Duration,
+        register: Duration,
     ) -> Self {
         self.listener_at = Some(at);
         self.listener_idle = idle;
+        self.listener_register = register;
         self
     }
 
@@ -257,26 +269,52 @@ fn ensure_listening(state: &SharedState) {
 /// Listens on [`CHANNEL`] for as long as the process runs, reconnecting with
 /// backoff; every (re)connect wakes every stream. The listener holds its
 /// connection for good, so it gets its own, outside the request pool: it
-/// never takes a slot a request needs. A connection idle for
-/// [`LISTENER_IDLE`] is pinged, so a half-open one is replaced; each attempt
-/// connects through a pool of its own, because a dropped listener returns its
-/// connection only after its cleanup (`UNLISTEN *`) answers, which a stalled
-/// socket never does.
+/// never takes a slot a request needs. Registering (connect and `LISTEN`) and
+/// a ping each have a deadline, and a connection idle for [`LISTENER_IDLE`]
+/// is pinged, so a half-open one is replaced. A dropped listener keeps its
+/// connection until its cleanup (`UNLISTEN *`) answers, which a stalled socket
+/// never does: each attempt connects through a pool of its own, closed once
+/// given up so the connection closes when that cleanup ends, and the pools
+/// still holding one cap the attempts at [`MAX_LISTENER_CONNECTIONS`].
 async fn listen(state: &SharedState) {
+    use futures::FutureExt as _;
     let changes = &state.balance_changes;
     let at = changes
         .listener_at
         .clone()
         .unwrap_or_else(|| (*state.credits.pool.connect_options()).clone());
+    // How long the server has to answer a ping.
+    let answer = changes.listener_idle.min(Duration::from_secs(10));
+    let mut closing: Vec<sqlx::PgPool> = Vec::new();
+    let mut waiting = false;
     let mut backoff = Duration::from_secs(1);
     loop {
+        closing.retain(|pool| pool.size() > 0);
+        if closing.len() >= MAX_LISTENER_CONNECTIONS {
+            if !std::mem::replace(&mut waiting, true) {
+                tracing::warn!(
+                    stalled = closing.len(),
+                    channel = CHANNEL,
+                    "the balance streams' listener waits for a stalled connection to close; the streams refresh on their own meanwhile"
+                );
+            }
+            tokio::time::sleep(jittered(backoff)).await;
+            continue;
+        }
+        waiting = false;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(1)
             .min_connections(0)
             .connect_lazy_with(at.clone());
         let ended: sqlx::Result<()> = async {
-            let mut listener = PgListener::connect_with(&pool).await?;
-            listener.listen(CHANNEL).await?;
+            let registered = async {
+                let mut listener = PgListener::connect_with(&pool).await?;
+                listener.listen(CHANNEL).await?;
+                Ok::<_, sqlx::Error>(listener)
+            };
+            let mut listener = tokio::time::timeout(changes.listener_register, registered)
+                .await
+                .map_err(|_| sqlx::Error::PoolTimedOut)??;
             backoff = Duration::from_secs(1);
             changes.announce_everyone();
             loop {
@@ -287,17 +325,18 @@ async fn listen(state: &SharedState) {
                     Ok(Err(error)) => return Err(error),
                     Err(_) => {
                         let ping = sqlx::query("SELECT 1").execute(&mut listener);
-                        tokio::time::timeout(
-                            changes.listener_idle.min(Duration::from_secs(10)),
-                            ping,
-                        )
-                        .await
-                        .map_err(|_| sqlx::Error::PoolTimedOut)??;
+                        tokio::time::timeout(answer, ping)
+                            .await
+                            .map_err(|_| sqlx::Error::PoolTimedOut)??;
                     }
                 }
             }
         }
         .await;
+        // `close` marks the pool closed at once; polling it once only starts
+        // the wait for the connection, which the cap does instead.
+        let _ = pool.close().now_or_never();
+        closing.push(pool);
         if let Err(error) = ended {
             tracing::warn!(%error, channel = CHANNEL, "the balance streams' listener lost its connection; reconnecting");
         }

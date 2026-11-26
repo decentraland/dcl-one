@@ -11731,51 +11731,173 @@ async fn an_opening_balance_stream_waits_for_a_read_permit() {
 
 /// A TCP proxy to `target` that can stall the connections it holds: their
 /// sockets stay open and nothing passes either way, while connections opened
-/// afterwards pass.
+/// afterwards pass, until [`StallProxy::resume`] lets them pass again or
+/// [`StallProxy::release`] closes them. It can also stall the next connection
+/// for good (until released) as soon as its client sends `LISTEN`, so the
+/// server's acknowledgement never arrives.
 struct StallProxy {
     port: u16,
     stall: Arc<tokio::sync::watch::Sender<u64>>,
+    resume: Arc<tokio::sync::watch::Sender<u64>>,
+    release: Arc<tokio::sync::watch::Sender<u64>>,
+    hold_next_listen: Arc<std::sync::atomic::AtomicBool>,
+    accepted: Arc<AtomicUsize>,
+    open: Arc<AtomicUsize>,
+    peak: Arc<AtomicUsize>,
+}
+
+/// One connection the proxy holds, counted while it lives.
+struct Held(Arc<AtomicUsize>);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl StallProxy {
     async fn start(target: String) -> Self {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let stall = Arc::new(tokio::sync::watch::channel(0_u64).0);
-        let stalls = stall.clone();
+        let signal = || Arc::new(tokio::sync::watch::channel(0_u64).0);
+        let proxy = Self {
+            port,
+            stall: signal(),
+            resume: signal(),
+            release: signal(),
+            hold_next_listen: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            accepted: Arc::new(AtomicUsize::new(0)),
+            open: Arc::new(AtomicUsize::new(0)),
+            peak: Arc::new(AtomicUsize::new(0)),
+        };
+        let (stall, resume, release) = (
+            proxy.stall.clone(),
+            proxy.resume.clone(),
+            proxy.release.clone(),
+        );
+        let hold_next_listen = proxy.hold_next_listen.clone();
+        let (accepted, open, peak) = (
+            proxy.accepted.clone(),
+            proxy.open.clone(),
+            proxy.peak.clone(),
+        );
         tokio::spawn(async move {
             while let Ok((mut client, _)) = listener.accept().await {
-                let mut stalled = stalls.subscribe();
-                let opened_at = *stalled.borrow_and_update();
+                accepted.fetch_add(1, Ordering::SeqCst);
+                peak.fetch_max(open.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+                let held = Held(open.clone());
+                let mut stalled = stall.subscribe();
+                let mut seen = *stalled.borrow_and_update();
+                let mut resumed = resume.subscribe();
+                resumed.borrow_and_update();
+                let mut released = release.subscribe();
+                released.borrow_and_update();
+                let hold_listen = hold_next_listen.swap(false, Ordering::SeqCst);
                 let target = target.clone();
                 tokio::spawn(async move {
+                    let _held = held;
                     let Ok(mut server) = tokio::net::TcpStream::connect(target).await else {
                         return;
                     };
-                    tokio::select! {
-                        _ = tokio::io::copy_bidirectional(&mut client, &mut server) => {}
-                        () = async {
+                    let (mut from_client, mut to_client) = client.split();
+                    let (mut from_server, mut to_server) = server.split();
+                    let (mut up, mut down) = ([0_u8; 8192], [0_u8; 8192]);
+                    loop {
+                        let stall_now = async {
                             loop {
-                                let generation = *stalled.borrow_and_update();
-                                if generation > opened_at || stalled.changed().await.is_err() {
+                                if *stalled.borrow_and_update() > seen {
+                                    return;
+                                }
+                                if stalled.changed().await.is_err() {
+                                    std::future::pending::<()>().await;
+                                }
+                            }
+                        };
+                        tokio::select! {
+                            read = from_client.read(&mut up) => {
+                                let n = match read { Ok(0) | Err(_) => return, Ok(n) => n };
+                                if hold_listen && up[..n].windows(6).any(|w| w == b"LISTEN") {
+                                    let _ = released.changed().await;
+                                    return;
+                                }
+                                if to_server.write_all(&up[..n]).await.is_err() {
                                     return;
                                 }
                             }
-                        } => {
-                            // Open and silent for good: a half-open connection.
-                            std::future::pending::<()>().await;
+                            read = from_server.read(&mut down) => {
+                                let n = match read { Ok(0) | Err(_) => return, Ok(n) => n };
+                                if to_client.write_all(&down[..n]).await.is_err() {
+                                    return;
+                                }
+                            }
+                            () = stall_now => {
+                                // Open and silent: a half-open connection.
+                                tokio::select! {
+                                    _ = released.changed() => return,
+                                    _ = resumed.changed() => {}
+                                }
+                                // Stalls sent while it was stalled are over.
+                                seen = *stalled.borrow_and_update();
+                            }
                         }
                     }
                 });
             }
         });
-        Self { port, stall }
+        proxy
     }
 
     /// Stalls every connection open now.
     fn stall(&self) {
         self.stall.send_modify(|generation| *generation += 1);
     }
+
+    /// Lets every stalled connection pass again.
+    fn resume(&self) {
+        self.resume.send_modify(|generation| *generation += 1);
+    }
+
+    /// Closes every stalled connection.
+    fn release(&self) {
+        self.release.send_modify(|generation| *generation += 1);
+    }
+
+    /// Stalls the next connection when its client sends `LISTEN`.
+    fn hold_next_listen(&self) {
+        self.hold_next_listen.store(true, Ordering::SeqCst);
+    }
+
+    fn accepted(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+
+    fn open(&self) -> usize {
+        self.open.load(Ordering::SeqCst)
+    }
+
+    fn peak(&self) -> usize {
+        self.peak.load(Ordering::SeqCst)
+    }
+}
+
+/// A state whose balance listener connects through `proxy`, pings after
+/// 300ms and gives up a registration after 2s, and whose streams refresh only
+/// hourly: a change reaches an open
+/// stream only by notification.
+fn stalling_state(pool: &PgPool, proxy: &StallProxy) -> SharedState {
+    let options = (*pool.connect_options()).clone();
+    let mut state = test_state(pool.clone(), StateCfg::default());
+    Arc::get_mut(&mut state)
+        .expect("an unshared state")
+        .balance_changes =
+        super::stream::BalanceChanges::with_limits(std::time::Duration::from_secs(3600), 8, 100)
+            .listening_at(
+                options.host("127.0.0.1").port(proxy.port),
+                std::time::Duration::from_millis(300),
+                std::time::Duration::from_secs(2),
+            );
+    state
 }
 
 /// The listener's connection goes half-open (nothing answers, nothing
@@ -11787,16 +11909,7 @@ async fn the_balance_listener_recovers_from_a_stalled_connection() {
     let Some(pool) = pool().await else { return };
     let options = (*pool.connect_options()).clone();
     let proxy = StallProxy::start(format!("{}:{}", options.get_host(), options.get_port())).await;
-    let mut state = test_state(pool.clone(), StateCfg::default());
-    Arc::get_mut(&mut state)
-        .expect("an unshared state")
-        .balance_changes =
-        super::stream::BalanceChanges::with_limits(std::time::Duration::from_secs(3600), 8, 100)
-            .listening_at(
-                options.clone().host("127.0.0.1").port(proxy.port),
-                std::time::Duration::from_millis(300),
-            );
-    let app = app(state);
+    let app = app(stalling_state(&pool, &proxy));
     let wallet = scratch_wallet();
     seed_paid_credits(&pool, &wallet.address, "10").await;
     let (status, mut body) = open_balance_stream(&app, &wallet).await;
@@ -11835,5 +11948,115 @@ async fn the_balance_listener_recovers_from_a_stalled_connection() {
             - heard["usd"]["balanceCents"].as_i64().unwrap(),
         20
     );
+    cleanup(&pool, &wallet.address).await;
+}
+
+/// Adds `credits` to a wallet's available balance with a direct write.
+async fn add_available(pool: &PgPool, address: &str, credits: &str) {
+    sqlx::query(
+        "UPDATE credits.wallets SET available = available + $2::numeric WHERE address = $1",
+    )
+    .bind(address)
+    .bind(credits)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Waits up to 15 seconds for `holds`.
+async fn eventually(what: &str, holds: impl Fn() -> bool) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+    while !holds() {
+        assert!(tokio::time::Instant::now() < deadline, "never: {what}");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// Stall after stall, the listener replaces its connection only while fewer
+/// than its cap are open: the stalled ones it gave up never pile up, and at
+/// the cap it makes no attempt. Once they answer again, their cleanup ends
+/// and they close (none is kept idle to fill the cap); the listener listens
+/// again, and a change reaches the open stream by notification (the refresh
+/// is an hour away).
+#[tokio::test]
+async fn the_balance_listener_caps_its_stalled_connections() {
+    let Some(pool) = pool().await else { return };
+    let options = (*pool.connect_options()).clone();
+    let proxy = StallProxy::start(format!("{}:{}", options.get_host(), options.get_port())).await;
+    let app = app(stalling_state(&pool, &proxy));
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    let (status, mut body) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut buffer = String::new();
+    let wait = std::time::Duration::from_secs(15);
+    let first = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the first balance");
+    let cap = super::stream::MAX_LISTENER_CONNECTIONS;
+    for _ in 0..cap + 2 {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        proxy.stall();
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    }
+    assert_eq!(proxy.peak(), cap, "the stalled connections never pile up");
+    assert_eq!(proxy.open(), cap);
+    let accepted = proxy.accepted();
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    assert_eq!(proxy.accepted(), accepted, "no attempt at the cap");
+
+    proxy.resume();
+    eventually("a connection once the stalled ones close", || {
+        proxy.accepted() > accepted
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    add_available(&pool, &wallet.address, "2").await;
+    let heard = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("heard once listening again");
+    assert_eq!(
+        heard["usd"]["balanceCents"].as_i64().unwrap()
+            - first["usd"]["balanceCents"].as_i64().unwrap(),
+        20
+    );
+    assert_eq!(proxy.open(), 1, "only the live connection is open");
+    cleanup(&pool, &wallet.address).await;
+}
+
+/// The listener's first connection never sees its `LISTEN` acknowledged: the
+/// registration's deadline gives it up, the next connection listens, and a
+/// change reaches the open stream by notification.
+#[tokio::test]
+async fn the_balance_listener_gives_up_an_unanswered_listen() {
+    let Some(pool) = pool().await else { return };
+    let options = (*pool.connect_options()).clone();
+    let proxy = StallProxy::start(format!("{}:{}", options.get_host(), options.get_port())).await;
+    proxy.hold_next_listen();
+    let app = app(stalling_state(&pool, &proxy));
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "10").await;
+    let (status, mut body) = open_balance_stream(&app, &wallet).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut buffer = String::new();
+    let wait = std::time::Duration::from_secs(15);
+    let first = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("the first balance");
+    eventually("a second connection after the unanswered LISTEN", || {
+        proxy.accepted() >= 2
+    })
+    .await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    add_available(&pool, &wallet.address, "1").await;
+    let heard = next_sse_event(&mut body, &mut buffer, wait)
+        .await
+        .expect("heard on the second connection");
+    assert_eq!(
+        heard["usd"]["balanceCents"].as_i64().unwrap()
+            - first["usd"]["balanceCents"].as_i64().unwrap(),
+        10
+    );
+    proxy.release();
     cleanup(&pool, &wallet.address).await;
 }

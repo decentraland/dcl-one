@@ -1779,7 +1779,11 @@ The reader is the balance stream (`GET /credits/users/{address}/credits/stream`,
 `shop/src/credits/stream.rs`). One `LISTEN` connection per process, opened
 with its first stream from a pool of its own (one connection, outside the
 request pool, so it never takes a slot a request needs), wakes the streams of
-the announced wallet alone; an idle connection is pinged every minute. Each
+the announced wallet alone; an idle connection is pinged every minute, and
+connecting plus `LISTEN` must answer within 10 seconds. A connection given up
+on a stall stays open until its `UNLISTEN *` cleanup ends, and closes then: a
+process holds at most two listener connections, and at that cap it waits
+while its streams rely on their own re-reads. Each
 stream re-reads its balance when its wallet is announced, and on its own
 about every minute: what only the clock changes, a credit or a pledge
 expiring, reaches it that way. A read that fails is retried with backoff,
