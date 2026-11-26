@@ -245,7 +245,7 @@ describe('the Saved Outfits slots', () => {
     })
 
     it('should show that slot as being saved', () => {
-      expect(within(screen.getByRole('group', { name: 'Saving outfit 3' })).getByRole('status', { name: 'Loading' })).toBeInTheDocument()
+      expect(within(screen.getByRole('group', { name: 'Saving outfit 3' })).getByRole('progressbar', { name: 'Loading' })).toBeInTheDocument()
     })
 
     it('should not offer that slot to save into', () => {
@@ -288,7 +288,7 @@ describe('the Saved Outfits slots', () => {
     })
 
     it('should show a spinner in that outfit\'s EQUIP button', () => {
-      expect(within(equipButtonOf(1)).getByRole('status', { name: 'Loading' })).toBeInTheDocument()
+      expect(within(equipButtonOf(1)).getByRole('progressbar', { name: 'Loading' })).toBeInTheDocument()
     })
 
     it('should mark that EQUIP button busy and not let it be pressed again', () => {
