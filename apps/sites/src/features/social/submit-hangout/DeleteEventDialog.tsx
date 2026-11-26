@@ -21,10 +21,11 @@ export default function DeleteEventDialog({ busy, error, onCancel, onConfirm }: 
   /** The Delete button that started the delete, set by its click. */
   const deleteButton = useRef<HTMLButtonElement | null>(null);
   const wasBusy = useRef(busy);
+  // A delete that ends without deleting, or is refused before it starts, hands focus back to Delete event.
   useEffect(() => {
-    if (wasBusy.current && !busy) deleteButton.current?.focus();
+    if (!busy && (wasBusy.current || error)) deleteButton.current?.focus();
     wasBusy.current = busy;
-  }, [busy]);
+  }, [busy, error]);
   const confirm = (event: MouseEvent<HTMLButtonElement>) => {
     deleteButton.current = event.currentTarget;
     event.currentTarget.closest("dialog")?.focus();
@@ -39,7 +40,7 @@ export default function DeleteEventDialog({ busy, error, onCancel, onConfirm }: 
       closeButton={false}
       tabIndex={-1}
       initialFocusRef={cancelButton}
-      // Every action is disabled meanwhile: Tab would leave focus on the page behind.
+      // Every action is disabled meanwhile: Tab would move focus out of the dialog to the browser.
       onKeyDown={(event) => { if (busy && event.key === "Tab") event.preventDefault(); }}
       actions={<>
         <Button ref={cancelButton} size="lg" variant="inverse" disabled={busy} onClick={onCancel}>{text("Cancel")}</Button>
