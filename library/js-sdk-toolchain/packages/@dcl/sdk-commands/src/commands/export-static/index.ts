@@ -3,15 +3,16 @@ import i18next from 'i18next'
 
 import { declareArgs } from '../../logic/args'
 import { hashV1 } from '@dcl/hashing'
-import { CliComponents } from '../../components'
-import { SceneProject } from '../../logic/project-validations'
+import type { CliComponents } from '../../components'
+import type { SceneProject } from '../../logic/project-validations'
 import {
   getProjectPublishableFilesWithHashes,
   b64HashingFunction,
   projectFilesToContentMappings
 } from '../../logic/project-files'
 import { CliError } from '../../logic/error'
-import { Entity, EntityType } from '@dcl/schemas'
+import type { Entity } from '@dcl/schemas'
+import { EntityType } from '@dcl/schemas'
 import { colors } from '../../components/log'
 import {
   printCurrentProjectStarting,
@@ -24,7 +25,7 @@ import {
 import { createStaticRealm } from '../../logic/realm'
 import { getBaseCoords } from '../../logic/scene-validations'
 import { getValidWorkspace } from '../../logic/workspace-validations'
-import { Result } from 'arg'
+import type { Result } from 'arg'
 
 interface Options {
   args: Result<typeof args>

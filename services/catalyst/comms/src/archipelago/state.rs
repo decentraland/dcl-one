@@ -24,7 +24,6 @@ crate::shared::send_sync_once! {
         pub enforcement: Arc<Enforcement>,
         pub statistics: Arc<crate::stats::Reader>,
         pub(crate) _statistics_subscription: crate::gatekeeper::bus::NatsSubscription,
-        pub connector_metrics: Arc<crate::stats::runtime::Metrics>,
         pub observations: super::observations::Observations,
         pub started_at: std::time::Instant,
         pub started: std::sync::atomic::AtomicBool,
@@ -46,6 +45,13 @@ crate::shared::send_sync_once! {
 
 pub type AppState = Arc<AppStateInner>;
 
+impl AppStateInner {
+    /// The serve listener has started and has not begun draining.
+    pub fn listener_ready(&self) -> bool {
+        self.started.load(std::sync::atomic::Ordering::Acquire) && !self.restart.is_cancelled()
+    }
+}
+
 /// A socket's hold on the pending-handshake share, global and per source; released at the
 /// welcome or when the socket ends.
 pub(crate) struct PendingHandshake {
@@ -58,7 +64,7 @@ pub(crate) struct PendingHandshake {
 /// new joins: a client that completes its handshake promptly is never the oldest for long.
 pub struct PendingHandshakes {
     max: usize,
-    inner: std::sync::Mutex<PendingInner>,
+    inner: parking_lot::Mutex<PendingInner>,
 }
 
 #[derive(Default)]
@@ -84,7 +90,7 @@ impl PendingHandshakes {
 
     /// Takes a place for a new socket, evicting the oldest pending socket when the share is full.
     pub fn admit(self: &Arc<Self>) -> PendingSlot {
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut inner = self.inner.lock();
         if inner.held.len() >= self.max
             && let Some((_, oldest)) = inner.held.pop_first()
         {
@@ -106,17 +112,13 @@ impl PendingHandshakes {
 
     /// Sockets currently holding a place.
     pub fn held(&self) -> usize {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .held
-            .len()
+        self.inner.lock().held.len()
     }
 }
 
 impl Drop for PendingSlot {
     fn drop(&mut self) {
-        let mut inner = self.set.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut inner = self.set.inner.lock();
         if inner.held.remove(&self.id).is_some() {
             crate::gatekeeper::admission::cluster::metrics::ws_pending_handshakes(inner.held.len());
         }
@@ -127,7 +129,7 @@ impl Drop for PendingSlot {
 /// that cannot be attributed to one client is not counted.
 pub struct IpSlots {
     max: usize,
-    held: std::sync::Mutex<std::collections::HashMap<String, usize>>,
+    held: parking_lot::Mutex<std::collections::HashMap<String, usize>>,
 }
 
 /// One socket's share of its source; released on drop.
@@ -151,7 +153,7 @@ impl IpSlots {
             return Ok(None);
         };
         let source = crate::shared::client_ip::source_key(ip);
-        let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
+        let mut held = self.held.lock();
         let count = held.entry(source.clone()).or_default();
         if *count >= self.max {
             return Err(());
@@ -171,7 +173,7 @@ impl IpSlots {
 
 impl Drop for IpSlot {
     fn drop(&mut self) {
-        let mut held = self.slots.held.lock().unwrap_or_else(|e| e.into_inner());
+        let mut held = self.slots.held.lock();
         if let Some(count) = held.get_mut(&self.source) {
             *count -= 1;
             if *count == 0 {

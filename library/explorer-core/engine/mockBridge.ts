@@ -398,8 +398,8 @@ const mockEquippedEmotes = (): Emote[] =>
 
 const v = (name: string): { name: string; description: string } => ({ name, description: '' })
 
-const choice = (name: string, category: string, variants: string[], value: number): Setting => ({ name, category, description: '', minValue: 0, maxValue: variants.length - 1, namedVariants: variants.map(v), value, default: value, stepSize: 1 })
-const level = (name: string, category: string, value: number, max = 100, min = 0, stepSize = 1): Setting => ({ name, category, description: '', minValue: min, maxValue: max, namedVariants: [], value, default: value, stepSize })
+const choice = (name: string, category: string, variants: string[], value: number): Setting => ({ name, category, description: '', minValue: 0, maxValue: variants.length - 1, namedVariants: variants.map(v), value, default: value, stepSize: 1, disabled: false })
+const level = (name: string, category: string, value: number, max = 100, min = 0, stepSize = 1): Setting => ({ name, category, description: '', minValue: min, maxValue: max, namedVariants: [], value, default: value, stepSize, disabled: false })
 const ON_OFF = ['Off', 'On']
 // Stateful so the mock's controls actually move when changed (setSetting → re-emit). The rows, their
 // names, order and values are the reference client's settings pages (Graphics, Sounds, Controls,
@@ -733,6 +733,15 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
 
   const reply = (msg: SceneToPage): void => {
     ch.postMessage({ to: 'page', msg } satisfies Envelope)
+  }
+
+  // A saved outfit's work takes a moment, as the scene's does, so the slot's busy state shows.
+  const outfitWork = (slot: number, action: 'save' | 'delete' | 'equip', work: () => void): void => {
+    reply({ kind: 'outfitBusy', slot, action, busy: true })
+    setTimeout(() => {
+      work()
+      reply({ kind: 'outfitBusy', slot, action, busy: false })
+    }, 800)
   }
 
   // ?mockportables=1: the portables the mock engine lists. The jetpack runs until the player stops it
@@ -1089,6 +1098,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       for (const [ty, allowed] of [['Fetch', true], ['OpenUrl', false], ['MovePlayer', true]] as const) {
         reply({ kind: 'permissionUsed', ty, sceneName: 'Genesis Plaza', scene, realm, allowed })
       }
+      // and the scene holding the camera, for the list's "In force now"
+      reply({ kind: 'permissionUsed', ty: 'ForceCamera', sceneName: 'Genesis Plaza', scene, realm, allowed: true, inForce: true })
       setTimeout(
         () =>
           reply({
@@ -1140,6 +1151,12 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
 
+    if (msg.kind === 'watchSkyTime') {
+      // ?mocksky=1 → a scene holds the time of day at 22:00, so the Skybox menu shows locked.
+      const held = new URLSearchParams(location.search).get('mocksky') === '1'
+      if (msg.on) reply({ kind: 'skyTime', state: held ? { hours: 22, locked: true, speed: 12, followsClock: false } : { hours: 10, locked: false, speed: 12, followsClock: true } })
+      return
+    }
     if (msg.kind === 'watchMapPlayers') {
       if (msg.on) reply({ kind: 'mapPlayers', players: MOCK_NEARBY_PLAYERS })
       return
@@ -1360,27 +1377,33 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'saveOutfit') {
-      // Capture the full current look (equippedNow includes the off-catalog item), so a saved slot
-      // equals the equipped set and shows the "matches current look" marker.
-      mockOutfits.outfits = mockOutfits.outfits.filter((o) => o.slot !== msg.slot)
-      mockOutfits.outfits.push({ slot: msg.slot, outfit: mockOutfit(equippedNow().map((w) => w.urn)) })
-      mockOutfits.outfits.sort((a, b) => a.slot - b.slot)
-      reply({ kind: 'outfits', metadata: mockOutfits })
+      outfitWork(msg.slot, 'save', () => {
+        // Capture the full current look (equippedNow includes the off-catalog item), so a saved slot
+        // equals the equipped set and shows the "matches current look" marker.
+        mockOutfits.outfits = mockOutfits.outfits.filter((o) => o.slot !== msg.slot)
+        mockOutfits.outfits.push({ slot: msg.slot, outfit: mockOutfit(equippedNow().map((w) => w.urn)) })
+        mockOutfits.outfits.sort((a, b) => a.slot - b.slot)
+        reply({ kind: 'outfits', metadata: mockOutfits })
+      })
       return
     }
     if (msg.kind === 'deleteOutfit') {
-      mockOutfits.outfits = mockOutfits.outfits.filter((o) => o.slot !== msg.slot)
-      reply({ kind: 'outfits', metadata: mockOutfits })
+      outfitWork(msg.slot, 'delete', () => {
+        mockOutfits.outfits = mockOutfits.outfits.filter((o) => o.slot !== msg.slot)
+        reply({ kind: 'outfits', metadata: mockOutfits })
+      })
       return
     }
     if (msg.kind === 'equipOutfit') {
-      // Reflect the outfit's wearables as equipped so the Wearables tab updates too.
-      const found = mockOutfits.outfits.find((o) => o.slot === msg.slot)
-      if (found) {
-        const set = new Set(found.outfit.wearables)
-        for (const w of wardrobe()) w.equipped = set.has(w.urn)
-        reply({ kind: 'wearables', equipped: equippedNow(), bodyShape: BASE_MALE, colors: mockColors })
-      }
+      outfitWork(msg.slot, 'equip', () => {
+        // Reflect the outfit's wearables as equipped so the Wearables tab updates too.
+        const found = mockOutfits.outfits.find((o) => o.slot === msg.slot)
+        if (found) {
+          const set = new Set(found.outfit.wearables)
+          for (const w of wardrobe()) w.equipped = set.has(w.urn)
+          reply({ kind: 'wearables', equipped: equippedNow(), bodyShape: BASE_MALE, colors: mockColors })
+        }
+      })
       return
     }
     if (msg.kind === 'setNearbyMute') {
@@ -1860,19 +1883,39 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'getGalleryPhoto') {
-      reply({
-        kind: 'galleryPhoto',
-        id: msg.id,
-        meta: {
-          userName: o.hasPreviousLogin ? 'Mojito' : 'Guest',
-          userAddress: o.userId,
-          sceneName: 'Genesis Plaza',
-          x: -9,
-          y: 14,
-          realm: 'main',
-          people: MOCK_NEARBY.slice(0, 3).map((m) => ({ address: m.address, name: m.name || 'Guest', isGuest: false }))
-        }
-      })
+      const photo = mockGallery.find((p) => p.id === msg.id)
+      // Covers a person with collectibles, one with none, and an official wallet.
+      const wearablesOf = [MOCK_COLLECTIBLE_EQUIPPED.map((w) => w.urn), [], MOCK_OFF_CATALOG_EQUIPPED.map((w) => w.urn)]
+      setTimeout(
+        () =>
+          reply({
+            kind: 'galleryPhoto',
+            id: msg.id,
+            meta: {
+              dateTime: photo?.dateTime,
+              userName: o.hasPreviousLogin ? 'Mojito' : 'Guest',
+              userAddress: o.userId,
+              sceneName: 'Genesis Plaza',
+              x: -9,
+              y: 14,
+              realm: 'main',
+              people: MOCK_NEARBY.slice(0, 3).map((m, i) => ({
+                address: m.address,
+                name: m.name || 'Guest',
+                isGuest: false,
+                wearables: wearablesOf[i],
+                official: i === 2
+              }))
+            }
+          }),
+        o.latency
+      )
+      return
+    }
+    if (msg.kind === 'getGalleryWearables') {
+      const known = [...MOCK_COLLECTIBLE_EQUIPPED, ...MOCK_OFF_CATALOG_EQUIPPED]
+      const wearables = msg.urns.map((urn) => known.find((w) => w.urn === urn)).filter((w): w is Wearable => w != null)
+      setTimeout(() => reply({ kind: 'galleryWearables', requestId: msg.requestId, ok: true, wearables }), o.latency)
       return
     }
     if (msg.kind === 'quit') return

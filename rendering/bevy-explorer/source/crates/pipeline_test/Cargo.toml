@@ -11,3 +11,5 @@ workspace = true
 [dependencies]
 bevy = { workspace = true }
 assets = { workspace = true }
+# the error type of the device's uncaptured-error callback
+wgpu = { workspace = true }

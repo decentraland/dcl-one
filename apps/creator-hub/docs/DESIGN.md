@@ -4,7 +4,7 @@ The visual language for the two UIs in this repo: the **`@dcl/inspector`** web U
 
 **Scope: two systems, one boundary.** Creator Hub renders the inspector inside an `<iframe>`, and no token crosses that boundary. Inspector code uses only the `vars.css` tokens documented in most of this file. Creator Hub renderer code uses only the ui3 atoms and the tokens in `theme.css` and `ui3-bridge.css` ([Creator Hub (renderer)](#creator-hub-renderer)). Don't import renderer tokens into the inspector, and don't apply `vars.css` to Creator Hub.
 
-**The UI moves to ui3.** The inspector and Creator Hub UI is being rebuilt in dcl-one's [`apps/ui3`](https://github.com/decentraland/dcl-one/tree/main/apps/ui3), a plain-CSS React UI, and token names follow ui3's ([Token naming](#token-naming)). Until then this file documents the current inspector and Creator Hub, and Figma still wins where it draws.
+**The UI moves to `library/ui`.** The components the inspector and Creator Hub share with other apps move to dcl-one's [`library/ui`](../../../library/ui) and are imported from `@dcl/one-ui`; `apps/ui3` is not their destination ([ADR](../../../docs/adr/2026-11-24-library-ui-single-source.md)). Today the renderer uses the `apps/ui3` atoms and token names follow ui3's ([Token naming](#token-naming)). Until a component moves, this file documents the current inspector and Creator Hub, and Figma still wins where it draws.
 
 **Not our brand kit.** Anthropic brand assets (Poppins/Lora, orange `#d97757`, etc.) and the `brand-guidelines` skill do **not** apply to this codebase. The inspector's brand is Decentraland: pink `--primary-main #ff2d55`, the cyan UI-Designer accent, and Inter.
 
@@ -145,7 +145,7 @@ All inspector tokens are CSS custom properties on `:root` in **`packages/inspect
 
 ### Token naming
 
-A canonical token name is its name in dcl-one's [`apps/ui3`](https://github.com/decentraland/dcl-one/tree/main/apps/ui3) (`src/atoms/primitives.css` and `surface-tokens.css`), the UI's new standard (user decision). Both token files define each mapped token under its ui3 name with our current value, and keep every older name as an alias of it (`--primary-main: var(--brand)`), so nothing repaints. The older names, the ui2-style `--palette-*` / `--shape-*` names included, are legacy: they stay valid in code and are marked "(legacy)" where this doc prescribes one. `--primary-main` is legacy for `--brand` in every one of its mentions below. New CSS uses the ui3 name. Where ui3's value differs from ours, our value stays and the row says drift, to decide later. A token with no ui3 equivalent keeps its current name (names are the user's call), and `--mui-*` are ui2's own runtime variables, left as they are.
+A canonical token name is its name in dcl-one's [`apps/ui3`](https://github.com/decentraland/dcl-one/tree/main/apps/ui3) (`src/atoms/primitives.css` and `surface-tokens.css`), the names the renderer's shared atoms read (user decision). Both token files define each mapped token under its ui3 name with our current value, and keep every older name as an alias of it (`--primary-main: var(--brand)`), so nothing repaints. The older names, the ui2-style `--palette-*` / `--shape-*` names included, are legacy: they stay valid in code and are marked "(legacy)" where this doc prescribes one. `--primary-main` is legacy for `--brand` in every one of its mentions below. New CSS uses the ui3 name. Where ui3's value differs from ours, our value stays and the row says drift, to decide later. A token with no ui3 equivalent keeps its current name (names are the user's call), and `--mui-*` are ui2's own runtime variables, left as they are.
 
 | Legacy | World | ui3 name | Our value | ui3 value | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -848,7 +848,7 @@ No interaction states drawn. Shared chrome: fill Shadow, 12px radius, 44 tall, p
 
 Set `20819:309`, 4 variants (Top `20819:310`, Bottom `20819:314`, Right `20819:327`, Left `20819:331`). Size 111.77 × 317.54. Read October 27, 2026. Code: main · inspector `ui/InfoTooltip` · Creator Hub ui2 `Tooltip`.
 
-Placement variants, no states. Shared: container fill Onix, 12px radius, padding 16 / 20, text `H7 Regular` Snow centred, `max-width: 300px`; peak a 26 × 26 Onix square, 5px radius, rotated 45° (a 36.77 box), overlapping the container by 26px so ~11px shows; drop shadow `0 2px 3px rgba(0,0,0,.25)` on the whole. The Tooltips board `20819:272` repeats these values. Code: inspector `ui/InfoTooltip` (the shared ui3 `atoms/Tooltip`: `--gray-0` `#43404a` fill, 10px radius, padding 6 / 10, 12px / 600 text, `max-width: 250px`, `--shadow-tooltip`, no peak) and `Toolbar.css .CameraModeTooltip`; Creator Hub ui2 `Tooltip` (MUI default `rgba(97,97,97,.92)` fill, 11px, no ui2 override).
+Placement variants, no states. Shared: container fill Onix, 12px radius, padding 16 / 20, text `H7 Regular` Snow centred, `max-width: 300px`; peak a 26 × 26 Onix square, 5px radius, rotated 45° (a 36.77 box), overlapping the container by 26px so ~11px shows; drop shadow `0 2px 3px rgba(0,0,0,.25)` on the whole. The Tooltips board `20819:272` repeats these values. Code: inspector `ui/InfoTooltip` (the shared `Tooltip` from `library/ui/components/Tooltip`: `--gray-0` `#43404a` fill, 10px radius, padding 6 / 10, 12px / 600 text, `max-width: 250px`, `--shadow-tooltip`, no peak) and `Toolbar.css .CameraModeTooltip`; Creator Hub ui2 `Tooltip` (MUI default `rgba(97,97,97,.92)` fill, 11px, no ui2 override).
 
 | Variant | State | Peak | Size (with "Text") | Inspector token | Creator Hub token | Contrast | A11y |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -3101,7 +3101,7 @@ Creator Hub's own chrome (home, scenes list, editor shell, settings, and modals)
 
 The brand pink matches the inspector's `--primary-main`, but it's defined separately on each side of the iframe. Change both, or neither.
 
-**ui3 names (user decision).** Creator Hub's UI moves to dcl-one `apps/ui3`, so its tokens take ui3's names (`apps/ui3/src/atoms/primitives.css` and `surface-tokens.css`) as additive aliases. A new token is defined under its ui3 name, with our value. An existing name stays and points at it (`--old: var(--ui3-name)`), keeping our value, so nothing repaints. A token ui3 has no name for gets one in ui3's scheme, which the user confirms before it lands. ui3's `--menu-bg` is a gradient; ours (`#35333b`) keeps its name. The inspector's `vars.css` keeps its own names: no token crosses the iframe.
+**ui3 names (user decision).** The renderer uses dcl-one's `apps/ui3` atoms, so its tokens take ui3's names (`apps/ui3/src/atoms/primitives.css` and `surface-tokens.css`) as additive aliases. A new token is defined under its ui3 name, with our value. An existing name stays and points at it (`--old: var(--ui3-name)`), keeping our value, so nothing repaints. A token ui3 has no name for gets one in ui3's scheme, which the user confirms before it lands. ui3's `--menu-bg` is a gradient; ours (`#35333b`) keeps its name. The inspector's `vars.css` keeps its own names: no token crosses the iframe.
 
 **Figma alignment of the status, surface, and hover tokens.** `--error`, `--danger`, `--background`, `--bg`, `--primary-hover` and `--purple-banner` carry Figma's System/Red, System/Orange, Neutrals/Shadow, Primary Light 1 and Brand/Purple values.
 
@@ -4046,7 +4046,7 @@ Everything here is current and unresolved. Design owns the Figma-side defects; t
 
 ### Code gaps
 
-Code that doesn't follow Figma or these conventions yet. Every row is open: no PR is planned, and UI work moves to dcl-one `apps/ui3` (see the note at the top), so these describe the current inspector and Creator Hub.
+Code that doesn't follow Figma or these conventions yet. Every row is open: no PR is planned, and the shared components move to dcl-one `library/ui` (see the note at the top), so these describe the current inspector and Creator Hub.
 
 | Set or area | Gap | Where | Owner | Status |
 | --- | --- | --- | --- | --- |

@@ -153,7 +153,11 @@ function Audience({ stats, trend }: { stats: StoreStats; trend: ReturnType<typeo
           <div className="seller-tile" data-testid="store-tile-royalties">
             <span className="seller-tile__key">Royalties</span>
             <span className="seller-tile__value">
-              ≈ {formatMana(((stats.royalties.volumeWei * 25_000n) / 1_000_000n) as ManaWei, { group: true, decimals: 2 })} <span className="seller-tile__unit">MANA</span>
+              {stats.royalties.royaltiesWei === null ? "Unavailable" : (
+                <>
+                  {formatMana(stats.royalties.royaltiesWei as ManaWei, { group: true, decimals: 2 })} <span className="seller-tile__unit">MANA</span>
+                </>
+              )}
             </span>
             <span className="seller-tile__foot">
               {plural(stats.royalties.resales, "resale", "resales")} · {formatMana(stats.royalties.volumeWei as ManaWei, { group: true, decimals: 2 })} MANA traded

@@ -119,9 +119,10 @@ pub(crate) fn valid_eth_address(s: &str) -> bool {
 }
 
 fn chain_id(network: &str) -> u64 {
+    if let Some(pair) = crate::shared::network::ChainPair::from_eth_network(network) {
+        return pair.chain_ids().0 as u64;
+    }
     match network {
-        "mainnet" => 1,
-        "sepolia" => 11_155_111,
         "goerli" => 5,
         _ => 1,
     }

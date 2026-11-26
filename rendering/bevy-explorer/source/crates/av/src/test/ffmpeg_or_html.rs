@@ -13,7 +13,9 @@ use dcl_component::{
 };
 use dcl_types::SceneId;
 use ipfs::IpfsIoPlugin;
-use livestream_manager::{plugin::LivestreamManagerPlugin, ActiveReceiver, ReceiverImage};
+use livestream_manager::{
+    plugin::LivestreamManagerPlugin, ActiveReceiver, ReceiverImage, LIVEKIT_CURRENT_STREAM,
+};
 use scene_runner::{
     renderer_context::RendererSceneContext, update_world::material::VideoTextureOutput,
     ContainerEntity, SceneRunnerPlugin,
@@ -23,7 +25,7 @@ use wasm_bindgen_test::*;
 
 use crate::{
     plugin::AVPlayerPlugin, AVPlayer, AVSinks, AudioStream, InScene, ShouldBePlaying, Stream,
-    VideoPlayer, LIVEKIT_VIDEO_STREAM,
+    VideoPlayer,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -262,7 +264,7 @@ fn test_insert_livekit_audio_stream() {
         .world_mut()
         .spawn((
             AudioStream(PbAudioStream {
-                url: LIVEKIT_VIDEO_STREAM.to_owned(),
+                url: LIVEKIT_CURRENT_STREAM.to_owned(),
                 ..Default::default()
             }),
             ContainerEntity {
@@ -442,7 +444,7 @@ fn test_insert_livekit_video_player() {
         .world_mut()
         .spawn((
             VideoPlayer(PbVideoPlayer {
-                src: LIVEKIT_VIDEO_STREAM.to_owned(),
+                src: LIVEKIT_CURRENT_STREAM.to_owned(),
                 ..Default::default()
             }),
             ContainerEntity {
@@ -582,7 +584,7 @@ fn test_removing_livekit_video_player() {
         .world_mut()
         .spawn((
             VideoPlayer(PbVideoPlayer {
-                src: LIVEKIT_VIDEO_STREAM.to_owned(),
+                src: LIVEKIT_CURRENT_STREAM.to_owned(),
                 ..Default::default()
             }),
             ContainerEntity {
@@ -662,7 +664,7 @@ fn test_livekit_video_player_without_should_be_playing_should_not_be_receiver() 
         .world_mut()
         .spawn((
             VideoPlayer(PbVideoPlayer {
-                src: LIVEKIT_VIDEO_STREAM.to_owned(),
+                src: LIVEKIT_CURRENT_STREAM.to_owned(),
                 ..Default::default()
             }),
             ContainerEntity {
@@ -870,7 +872,7 @@ pub(super) fn test_source_change() {
     app.world_mut()
         .entity_mut(video_player)
         .insert(VideoPlayer(PbVideoPlayer {
-            src: LIVEKIT_VIDEO_STREAM.to_owned(),
+            src: LIVEKIT_CURRENT_STREAM.to_owned(),
             ..Default::default()
         }));
 
@@ -1052,7 +1054,7 @@ fn test_clearing_a_video_source_shows_black() {
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_clearing_a_stream_source_shows_black() {
     let mut app = min_test_app();
-    let video_player = spawn_playing_video_player(&mut app, LIVEKIT_VIDEO_STREAM);
+    let video_player = spawn_playing_video_player(&mut app, LIVEKIT_CURRENT_STREAM);
     let stream_handle = video_texture_output(&app, video_player);
 
     app.world_mut()
@@ -1114,4 +1116,57 @@ fn test_despawn_av_player() {
         .id();
 
     app.world_mut().entity_mut(video_player).despawn();
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn selected_cast_track_is_a_stream_without_a_url_decoder() {
+    let mut app = min_test_app();
+    let screen = spawn_playing_video_player(&mut app, "livekit-video://speaker/TR_camera");
+    assert!(app.world().entity(screen).contains::<Stream>());
+    assert!(!app
+        .world()
+        .entity(screen)
+        .contains::<AVSinks<VideoPlayer>>());
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn selected_cast_source_switches_back_to_automatic_and_clears() {
+    use livestream_manager::SelectedVideoReceiver;
+    let mut app = min_test_app();
+    let screen = spawn_playing_video_player(&mut app, "livekit-video://stream:camera/TR_camera");
+    assert_eq!(
+        app.world()
+            .get::<SelectedVideoReceiver>(screen)
+            .unwrap()
+            .0
+            .identity,
+        "stream:camera"
+    );
+    for src in ["livekit-video://speaker/TR_screen", LIVEKIT_CURRENT_STREAM] {
+        app.world_mut()
+            .entity_mut(screen)
+            .insert(VideoPlayer(PbVideoPlayer {
+                src: src.to_owned(),
+                ..Default::default()
+            }));
+        assert!(app.world().get::<Stream>(screen).is_some());
+        assert!(app.world().get::<ActiveReceiver>(screen).is_some());
+        assert!(!app
+            .world()
+            .entity(screen)
+            .contains::<AVSinks<VideoPlayer>>());
+        assert_eq!(
+            app.world().get::<SelectedVideoReceiver>(screen).is_none(),
+            src == LIVEKIT_CURRENT_STREAM
+        );
+    }
+    app.world_mut()
+        .entity_mut(screen)
+        .insert(VideoPlayer(PbVideoPlayer::default()));
+    assert!(app.world().get::<Stream>(screen).is_none());
+    assert!(app.world().get::<SelectedVideoReceiver>(screen).is_none());
+    assert!(app.world().get::<ReceiverImage>(screen).is_none());
+    assert!(is_black(&app, &video_texture_output(&app, screen)));
 }

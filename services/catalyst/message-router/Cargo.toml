@@ -48,8 +48,7 @@ prost.workspace = true
 getrandom.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
-metrics.workspace = true
-metrics-exporter-prometheus.workspace = true
+dcl-metrics.workspace = true
 
 [build-dependencies]
 prost-build.workspace = true
@@ -61,3 +60,6 @@ tokio = { workspace = true, features = ["test-util"] }
 toml.workspace = true
 dcl-livekit-token.workspace = true
 tower = { version = "0.5", features = ["util"] }
+
+[lints.clippy]
+unwrap_used = "deny"

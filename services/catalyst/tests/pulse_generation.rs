@@ -2,10 +2,8 @@
 #[cfg(unix)]
 #[path = "support/auth.rs"]
 mod auth;
-#[path = "support/db.rs"]
-mod db;
-#[path = "support/gate.rs"]
-mod gate;
+use crate::db;
+use crate::gate;
 use catalyst::comms::interfaces::PulseGeneration;
 
 #[cfg(unix)]

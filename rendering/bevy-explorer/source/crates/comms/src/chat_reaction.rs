@@ -81,14 +81,20 @@ pub fn canonical_emoji(emoji: &str) -> Option<String> {
     }
 }
 
+/// The Unity atlas tile for an emoji, or `None` if the atlas has none.
+fn emoji_atlas_tile(emoji: &str) -> Option<i32> {
+    ATLAS.tiles.get(atlas_name(emoji).as_str()).copied()
+}
+
+/// The Unity atlas tile for what a user picked, however the picker spelt the emoji. `None` for
+/// text that is no one emoji, and for an emoji the atlas has no tile for.
+pub fn picked_emoji_tile(picked: &str) -> Option<i32> {
+    canonical_emoji(picked).and_then(|emoji| emoji_atlas_tile(&emoji))
+}
+
 /// The Unity atlas tile for an emoji: its own tile if the atlas has one, else ⬜.
 pub fn emoji_to_atlas_index(emoji: &str) -> i32 {
-    let atlas = &*ATLAS;
-    atlas
-        .tiles
-        .get(atlas_name(emoji).as_str())
-        .copied()
-        .unwrap_or(atlas.unmapped)
+    emoji_atlas_tile(emoji).unwrap_or(ATLAS.unmapped)
 }
 
 /// The emoji a Unity atlas tile shows, or `None` for an index outside the atlas.
@@ -255,6 +261,19 @@ mod tests {
         // unity has no flags
         assert_eq!(emoji_to_atlas_index("🇬🇧"), ATLAS.unmapped);
         assert_eq!(atlas_index_to_emoji(ATLAS.unmapped), Some(UNMAPPED));
+        // the strict lookup tells an emoji the atlas lacks from the blank tile itself
+        assert_eq!(emoji_atlas_tile("🇬🇧"), None);
+        assert_eq!(emoji_atlas_tile(UNMAPPED), Some(ATLAS.unmapped));
+        assert_eq!(emoji_atlas_tile("👍"), Some(emoji_to_atlas_index("👍")));
+        // a pick is taken in the picker's spelling, and only if it is one emoji
+        assert_eq!(picked_emoji_tile("👍"), Some(emoji_to_atlas_index("👍")));
+        assert_eq!(
+            picked_emoji_tile("\u{2764}"),
+            Some(emoji_to_atlas_index("\u{2764}\u{fe0f}"))
+        );
+        assert_eq!(picked_emoji_tile("🇬🇧"), None);
+        assert_eq!(picked_emoji_tile("thumbs up"), None);
+        assert_eq!(picked_emoji_tile("👍👍"), None);
         // unity's picker sends a keycap as its first codepoint
         let hash = ATLAS.tiles["0023"];
         assert_eq!(atlas_index_to_emoji(hash), Some("#️⃣"));

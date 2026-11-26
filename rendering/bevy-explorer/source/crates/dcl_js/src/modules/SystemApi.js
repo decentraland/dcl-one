@@ -284,6 +284,11 @@ module.exports.getServiceUrls = async function() {
     return Object.fromEntries(await Deno.core.ops.op_get_service_urls())
 }
 
+// string[]: the official wallets the nametags mark, lowercase 0x addresses
+module.exports.getOfficialWallets = async function() {
+    return await Deno.core.ops.op_get_official_wallets()
+}
+
 // {
 //   terms: boolean, // the terms aren't accepted on this install; the world is held until they are
 //   newProfile: boolean, // the account has no profile; its new one deploys with the next setAvatar
@@ -404,6 +409,31 @@ module.exports.sendChatReaction = function(channel, messageId, emoji, remove) {
   Deno.core.ops.op_send_chat_reaction(channel, messageId, emoji, remove ?? false)
 }
 
+// get situational reactions as they play (the local user's included) as a stream
+// type Reaction = {
+//   from: string,
+//   emoji: string,
+// }
+module.exports.getReactionStream = async function() {
+  const rid = await Deno.core.ops.op_get_reaction_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_reaction_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// the local user reacts with an emoji, shown over their avatar; an emoji the wire has no
+// index for does nothing
+module.exports.sendReaction = function(emoji) {
+  Deno.core.ops.op_send_reaction(emoji)
+}
+
 module.exports.quit = function() {
     Deno.core.ops.op_quit();
 }
@@ -519,7 +549,8 @@ module.exports.setMicEnabled = function(enabled) {
     Deno.core.ops.op_set_mic_enabled(enabled);
 }
 
-// [{ userId: string, hideAvatar: bool, hideProfile: bool }]
+// [{ userId: string, hideAvatar: bool, hideProfile: bool, pulseAbsent: bool }]
+// An entry can report Pulse absence with both hide flags false.
 module.exports.getAvatarModifiers = async function() {
     return await Deno.core.ops.op_get_avatar_modifiers();
 }

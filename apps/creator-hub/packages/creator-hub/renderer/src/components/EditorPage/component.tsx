@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import {
   ArrowBackIosIcon,
   PlayCircleIcon,
@@ -10,7 +10,7 @@ import {
 } from '@ui/atoms/icons-material';
 import IconButton from '@ui/atoms/IconButton';
 import Spinner from '@ui/atoms/Spinner';
-import Tooltip from '@ui/atoms/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 
 import { isClientNotInstalledError } from '/shared/types/client';
 import { isProjectError } from '/shared/types/projects';

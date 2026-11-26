@@ -6,18 +6,41 @@ The exact `/places/place?position=...` and `/places/world?name=...` endpoints, i
 
 The exact `/events/assets/event-default.webp` path serves Catalyst's bundled event image. Event uploads and mirrored posters use the node's `PUBLIC_URL` plus the `/events-assets-099ac00` mount. The bundled image uses the `/events` mount; `EVENTS_BASE_URL` remains the legacy website origin used by sitemaps, world-event default posters and Slack links. Notification page links use the independent `EVENTS_SITE_URL` Sites origin (default `https://decentraland.org`).
 
+## Event poster conversion
+
+A native player requests an event poster through `/metamorph-api/convert` without a width. For the configured node's poster mounts, its bundled default and the canonical event bucket, JPEG and PNG sources retain their original bytes on the first and repeat requests. WebP and GIF sources produce a still image with a longest side of up to 960 pixels. Opaque stills use JPEG. Stills with transparency use PNG and are resized once more to fit within 640 × 640 pixels if the first PNG exceeds 2 MiB. Other image formats, including AVIF, return HTTP 415 on this native route.
+
+The browser converter `/media/convert` accepts an explicit width of 80, 160, 320, 640 or 960. Direct asset requests return the original artwork.
+
+Set `node_base` to the public node URL, including any deployment prefix. These examples inspect the response headers for the same bundled poster.
+
+```sh
+node_base=https://node.example.org
+poster="$node_base/events/assets/event-default.webp"
+
+# Native player's final raster
+curl --head --get --data-urlencode "url=$poster" "$node_base/metamorph-api/convert"
+
+# Browser's 640-pixel thumbnail
+curl --head --get --data-urlencode "url=$poster" --data-urlencode 'width=640' "$node_base/media/convert"
+```
+
+The node's remote-source policy applies to both requests. A restricted node may return 403. A saturated thumbnail queue returns 503 with `Retry-After: 1`. Successes advertise a one-day public cache lifetime. When checking a change of representation, compare a previously requested native URL with a fresh one. A CDN or player can serve a cached copy until its one-day freshness lifetime expires. If an immediate refresh is required, invalidate the affected native conversion URLs at the edge and check the player cache separately. [Event poster decision](../../docs/adr/2026-11-24-event-poster-raster-delivery.md)
+
+## Gateway operations
+
 Referral quotas, the `POST /entities` burst limit and daily quota, the
-`/auth-api` pending sign-in caps and the
-`/contents` rate limit use the backend TCP peer by default. Configure
+`/auth-api` pending sign-in caps, the `/contents` rate limit and the budget of
+contract-wallet signature checks use the backend TCP peer by default. Configure
 `HTTP_TRUSTED_PROXY_CIDRS` on the API process with the direct backend proxy
 networks (the gateway's container network), and ensure those proxies overwrite
 a single valid `X-Real-IP`. An
 empty setting trusts no forwarded header (only a loopback peer may name the
 client to the other per-client limits and IP bindings) and therefore buckets
 traffic behind a non-loopback gateway under that gateway's peer address: every
-deployer then shares one deploy limit. `/auth-api` instead skips its
-per-network cap for an untrusted private or loopback peer and keeps only its
-global cap. The API logs one warning when an untrusted private peer forwards
+deployer then shares one deploy limit. For an untrusted private or loopback
+peer, the contract-wallet budget counts nothing, and `/auth-api` skips its
+per-network cap and keeps only its global cap. The API logs one warning when an untrusted private peer forwards
 `X-Real-IP`, and `/auth-api` one the first time it sees an untrusted private or
 loopback peer. Missing or malformed X-Real-IP from a trusted peer
 fails closed. This API-side setting is separate from
@@ -73,7 +96,15 @@ upstream host names served under another prefix: `abcdn` and `abgen-cdn` →
 `rpc-social-service-ea` → `/social-rpc`, `market` → `/shop`, `storage` →
 `/world-storage`, `comms-gatekeeper-local` → `/comms-gatekeeper`; `peer` and
 `worlds` are the root. `gateway.<domain>/<sub>/...` uses the same table, and a
-path already under the target prefix is not prefixed twice. A scene builds a service
+path already under the target prefix is not prefixed twice. On `credits`, the
+paths credits-server itself serves under `/credits` (the bare `/credits`,
+`/credits/packs`, `/credits/checkout`, `/credits/orders/...` and
+`/credits/authorize...`) are prefixed too, since the node serves them under its
+`/credits` mount. `/credits/authorize-publication` and `/credits/iap/...` are
+prefixed the same way for parity, though the node does not serve them yet.
+Any other `/credits/...` path is taken as already prefixed: Stripe's
+`/credits/webhook`, and the node's own `/credits/packs/{sku}/...` and
+`/credits/checkout/{id}`. A scene builds a service
 URL from its realm base URL, so the realm hosts `worlds-content-server`,
 `realm-provider` and `realm-provider-ea` leave a path under `/comms-gatekeeper/`
 or `/cast-presenter-service/` unprefixed; no service of these hosts has such a path.

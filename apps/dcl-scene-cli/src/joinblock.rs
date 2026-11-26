@@ -214,7 +214,7 @@ pub fn deep_link_extra(
 /// The engine's default startup portable; its baked public world host is
 /// CORS-blocked from a foreign web-explorer origin, so `portables=` repoints
 /// it at the realm's own same-origin `/world/…` mirror.
-pub const CONTROLLER_WORLD: &str = "basiccontroller.dcl.eth";
+pub const CONTROLLER_WORLD: &str = "movecontroller.dcl.eth";
 
 /// Percent-encodes what a query value must not carry raw while leaving `:`
 /// `/` `,` alone, so the printed URL stays readable (`form_encode` would
@@ -845,7 +845,7 @@ mod tests {
         );
         assert_eq!(
             pinned,
-            "&portables=http%3A%2F%2F10.1.2.20%3A5600%2Fworld%2Fbasiccontroller.dcl.eth"
+            "&portables=http%3A%2F%2F10.1.2.20%3A5600%2Fworld%2Fmovecontroller.dcl.eth"
         );
     }
 

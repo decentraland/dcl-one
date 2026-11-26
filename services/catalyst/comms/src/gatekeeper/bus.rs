@@ -12,10 +12,11 @@
 //! Handlers are invoked from the subscription's own task: one that panics is contained so the
 //! remaining subjects keep delivering, mirroring upstream's never-throws contract.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 
 /// Invoked once per message with the concrete subject it arrived on and its payload. Must not
 /// panic; one that does is caught, but the message is lost.
@@ -195,7 +196,7 @@ struct InProcessShared {
 
 impl SubscriptionRegistry for InProcessShared {
     fn cancel(&self, id: u64) {
-        self.subs.lock().unwrap().remove(&id);
+        self.subs.lock().remove(&id);
     }
 }
 
@@ -232,14 +233,14 @@ impl InProcessBus {
     /// Everything published so far, in order, including messages that were also delivered to a
     /// local subscriber.
     pub fn published(&self) -> Vec<(String, Vec<u8>)> {
-        self.shared.published.lock().unwrap().clone()
+        self.shared.published.lock().clone()
     }
 
     /// Every request made so far, in order, answered or not: one made while the link is down is
     /// recorded too, so a test can tell "nothing was asked" from "nothing got through".
     #[cfg(any(test, feature = "test-support"))]
     pub fn requested(&self) -> Vec<(String, Vec<u8>)> {
-        self.shared.requested.lock().unwrap().clone()
+        self.shared.requested.lock().clone()
     }
 
     /// Simulates the link going away: publishes report [`PublishOutcome::NoConnection`] and
@@ -262,7 +263,7 @@ impl InProcessBus {
     }
 
     pub fn respond_to_requests(&self, responder: NatsResponder) {
-        *self.shared.responder.lock().unwrap() = Some(responder);
+        *self.shared.responder.lock() = Some(responder);
     }
 
     /// Delivers a message to the matching subscribers without recording it as published: how a
@@ -271,7 +272,7 @@ impl InProcessBus {
     /// One member of each queue group is picked, like the broker's own distribution.
     pub fn inject(&self, subject: &str, payload: &[u8]) {
         let handlers: Vec<NatsHandler> = {
-            let subs = self.shared.subs.lock().unwrap();
+            let subs = self.shared.subs.lock();
             let mut grouped: HashMap<(String, String), NatsHandler> = HashMap::new();
             let mut ungrouped: Vec<NatsHandler> = Vec::new();
             for sub in subs.values() {
@@ -321,7 +322,7 @@ impl NatsBus for InProcessBus {
         handler: NatsHandler,
     ) -> NatsSubscription {
         let id = self.shared.next_id.fetch_add(1, Ordering::Relaxed);
-        self.shared.subs.lock().unwrap().insert(
+        self.shared.subs.lock().insert(
             id,
             InProcessSub {
                 subject: subject.to_string(),
@@ -345,7 +346,6 @@ impl NatsBus for InProcessBus {
         self.shared
             .published
             .lock()
-            .unwrap()
             .push((subject.to_string(), payload.clone()));
         self.inject(subject, &payload);
         if self.shared.unconfirmed.load(Ordering::Relaxed) {
@@ -366,7 +366,6 @@ impl NatsBus for InProcessBus {
             self.shared
                 .statistics
                 .lock()
-                .unwrap()
                 .control(request)
                 .encode()
                 .ok_or(RequestError::Invalid)
@@ -382,12 +381,11 @@ impl NatsBus for InProcessBus {
         self.shared
             .requested
             .lock()
-            .unwrap()
             .push((subject.to_string(), payload.clone()));
         if !self.is_ready() {
             return Err(RequestError::NoConnection);
         }
-        let responder = self.shared.responder.lock().unwrap().clone();
+        let responder = self.shared.responder.lock().clone();
         responder.ok_or(RequestError::NoResponders)?(subject, &payload)
     }
 }

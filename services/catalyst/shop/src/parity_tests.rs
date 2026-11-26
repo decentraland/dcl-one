@@ -134,15 +134,22 @@ async fn seed_item(pool: &PgPool, contract: &str, item_id: &str, creator: &str) 
         pool,
         super::market::graph::Network::Matic,
         137,
+        false,
         &[collection],
     )
     .await
     .unwrap();
     let mut item = mirrors::items::fixture(contract, item_id, "wearable_v2", "Seeded item");
     item["creator"] = json!(creator);
-    mirrors::items::upsert(pool, super::market::graph::Network::Matic, 137, &[item])
-        .await
-        .unwrap();
+    mirrors::items::upsert(
+        pool,
+        super::market::graph::Network::Matic,
+        137,
+        false,
+        &[item],
+    )
+    .await
+    .unwrap();
 }
 
 async fn cleanup_mirror(pool: &PgPool, contracts: &[String]) {
@@ -689,6 +696,7 @@ async fn campaigns_are_operator_data_read_publicly_with_the_builder_shape() {
         &pool,
         super::market::graph::Network::Matic,
         137,
+        false,
         &[mirrors::collections::fixture(
             &unapproved,
             "Pending",
@@ -1050,7 +1058,6 @@ async fn the_import_check_admits_a_creators_item_order_and_keeps_a_token_in_mana
 
     // Before the mirrors have a pass the answer is the envelope, not a refusal.
     sqlx::query("DELETE FROM shop.mirror_state WHERE mirror IN ('collections', 'items') AND network = 'matic'").execute(&pool).await.unwrap();
-    state.mirror_ready.clear();
     let (status, body) = call(
         app(),
         "POST",
@@ -1062,7 +1069,6 @@ async fn the_import_check_admits_a_creators_item_order_and_keeps_a_token_in_mana
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(body["source"], "collections-mirror");
     mark_mirrors_ready(&pool).await;
-    state.mirror_ready.clear();
     seed_item(&pool, &contract, "0", &creator).await;
     sqlx::query("INSERT INTO economy.price_snapshots (source, mana_usd, taken_at) VALUES ('coingecko', 0.25, timezone('UTC', now()) + interval '1 day')").execute(&pool).await.unwrap();
 
@@ -1265,71 +1271,22 @@ async fn a_store_without_an_entity_is_empty_and_its_stats_read_the_mirror() {
     let (status, _) = get(app(), "/v1/stores/not-an-address").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    // The stats need both collections readers; one network alone is the envelope naming the other.
-    let (status, body) = get(app(), &format!("/v1/stores/{owner}/stats")).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    assert_eq!(body["source"], "collections-subgraph:ethereum");
+    // Both a single graph and two configured graphs leave unpublished
+    // sales unavailable. Published empty responses are covered by sale_routes.
     let both = super::market::tests::support::state_with_empty_readers(Some(pool.clone())).await;
-    let (status, body) = get(
-        market_router(both.clone()),
-        &format!("/v1/stores/{owner}/stats?from=1&to=2"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let d = &body["data"];
-    assert_eq!(
-        (
-            d["currency"].as_str(),
-            d["summary"]["total"].as_i64(),
-            d["collections"][0]["contractAddress"].as_str()
-        ),
-        (Some("MANA"), Some(0), Some(contract.as_str())),
-        "{d}"
-    );
-    assert_eq!(
-        (
-            d["collections"][0]["items"][0]["itemId"].as_str(),
-            d["collections"][0]["items"][0]["sold"].as_i64(),
-            d["collections"][0]["items"][0]["minted"].as_str()
-        ),
-        (Some("0"), Some(0), Some("10"))
-    );
-    let (status, _) = get(
-        market_router(both.clone()),
-        &format!("/v1/stores/{owner}/stats?from=5&to=1"),
-    )
-    .await;
+    for router in [app(), market_router(both)] {
+        for uri in [
+            format!("/v1/stores/{owner}/stats"),
+            format!("/v1/proceeds?seller={owner}"),
+            format!("/v1/proceeds/summary?seller={owner}"),
+        ] {
+            let (status, body) = get(router.clone(), &uri).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri} {body}");
+            assert_eq!(body["source"], "sales-index");
+        }
+    }
+    let (status, _) = get(app(), &format!("/v1/stores/{owner}/stats?from=5&to=1")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-
-    // Proceeds over readers with nothing: empty rows, zero totals, MANA settlement stated.
-    let (status, body) = get(
-        market_router(both.clone()),
-        &format!("/v1/proceeds?seller={owner}"),
-    )
-    .await;
-    assert_eq!(
-        (
-            status,
-            body["total"].as_i64(),
-            body["data"].as_array().map(Vec::len)
-        ),
-        (StatusCode::OK, Some(0), Some(0)),
-        "{body}"
-    );
-    let (status, body) = get(
-        market_router(both),
-        &format!("/v1/proceeds/summary?seller={owner}"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        (
-            body["data"]["netWei"].as_str(),
-            body["data"]["settlement"].as_str(),
-            body["data"]["treasuryRouting"].as_bool()
-        ),
-        (Some("0"), Some("mana"), Some(false))
-    );
     let (status, _) = get(app(), "/v1/proceeds").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "a seller is required");
 

@@ -47,6 +47,237 @@
   }
 }
 
+/* Not in Figma: the Explorer HUD's strips. The selected tab is the one with `aria-selected`. The HUD's orange,
+   its white washes, its idle and hover tints and its easing curves have no token. */
+@layer dcl.components {
+  /* pill: filled pills, the selected one orange. */
+  .hudPill {
+    flex-wrap: wrap;
+    gap: var(--dcl-space-8);
+  }
+
+  .hudPill > [role='tab'] {
+    height: 34px;
+    padding: 0 18px;
+    border-radius: var(--dcl-radius-full);
+    background: rgba(255, 255, 255, 0.08);
+    transition:
+      transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1),
+      background-color 140ms ease;
+  }
+
+  .hudPill > [role='tab']:hover:not(:disabled) {
+    transform: scale(1.06);
+  }
+
+  .hudPill > [role='tab']:hover:not(:disabled):not([aria-selected='true']) {
+    background: var(--dcl-transparencies-white-10);
+  }
+
+  .hudPill > [role='tab'][aria-selected='true'],
+  .hudPill > [role='tab'][aria-selected='true']:hover {
+    background: #ff743a;
+    animation: hud-pill-pop 0.24s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  /* underline: bare labels on a hairline; the selected one's underline slides in. A host on a dark card sets
+     --tab-ink for brighter idle labels. */
+  .hudUnderline {
+    gap: 28px;
+    border-bottom: 1px solid var(--dcl-transparencies-white-10);
+  }
+
+  .hudUnderline > [role='tab'] {
+    position: relative;
+    padding: 12px 2px;
+    color: var(--tab-ink, var(--dcl-transparencies-white-60));
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    transition: color 140ms ease;
+  }
+
+  .hudUnderline > [role='tab']::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    bottom: -1px;
+    left: 0;
+    height: 2px;
+    background: var(--dcl-primary-primary);
+    transform: scaleX(0);
+    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .hudUnderline > [role='tab']:hover:not(:disabled),
+  .hudUnderline > [role='tab'][aria-selected='true'] {
+    color: var(--dcl-neutrals-snow);
+  }
+
+  .hudUnderline > [role='tab'][aria-selected='true']::after {
+    transform: scaleX(1);
+  }
+
+  /* fill: equal-width tabs across the strip, all labels white, an inset thick underline. */
+  .hudFill {
+    gap: 0;
+    height: 100%;
+    border-bottom: 0;
+  }
+
+  .hudFill > [role='tab'] {
+    flex: 1 1 0;
+    justify-content: center;
+    gap: 6px;
+    height: 100%;
+    padding: 0;
+    color: var(--dcl-neutrals-snow);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  .hudFill > [role='tab']::after {
+    right: 10px;
+    bottom: 0;
+    left: 10px;
+    height: 3px;
+  }
+
+  .hudFill > [role='tab']:not([aria-selected='true']):hover:not(:disabled)::after {
+    background: var(--dcl-transparencies-white-10);
+    transform: scaleX(1);
+  }
+
+  /* section: large icon pills, the sections of a menu page. */
+  .hudSection {
+    gap: 14px;
+  }
+
+  .hudSection > [role='tab'] {
+    gap: 13px;
+    height: 42px;
+    padding: 0 14px 0 8px;
+    border-radius: var(--dcl-radius-md);
+    background: rgba(120, 90, 160, 0.14);
+    font-size: 18px;
+    font-weight: 600;
+    transition: transform 83ms cubic-bezier(0.333, 0, 0.667, 1);
+  }
+
+  /* shop: the section tabs of the Shop's title bar, tighter and on a white wash. */
+  .hudShop {
+    gap: 10px;
+  }
+
+  .hudShop > [role='tab'] {
+    gap: var(--dcl-space-4);
+    height: 42px;
+    padding: 0 14px 0 10px;
+    border-radius: var(--dcl-radius-md);
+    background: var(--dcl-transparencies-white-10);
+    font-size: 18px;
+    font-weight: 600;
+    transition: transform 83ms cubic-bezier(0.333, 0, 0.667, 1);
+  }
+
+  .hudSection > [role='tab']:hover:not(:disabled),
+  .hudShop > [role='tab']:hover:not(:disabled) {
+    transform: scale(1.04);
+  }
+
+  .hudSection > [role='tab']:active:not(:disabled),
+  .hudShop > [role='tab']:active:not(:disabled) {
+    animation: hud-press-bounce 583ms cubic-bezier(0.333, 0, 0.667, 1);
+  }
+
+  .hudSection > [role='tab'][aria-selected='true'],
+  .hudSection > [role='tab'][aria-selected='true']:hover,
+  .hudShop > [role='tab'][aria-selected='true'],
+  .hudShop > [role='tab'][aria-selected='true']:hover {
+    background: #ff743a;
+  }
+
+  /* subtab: tall labels on a divider, the selected one with a thick underline. */
+  .hudSubtab {
+    gap: 28px;
+    height: 70px;
+  }
+
+  .hudSubtab > [role='tab'] {
+    position: relative;
+    gap: var(--dcl-space-8);
+    height: 70px;
+    padding: 0 2px;
+    color: rgba(255, 255, 255, 0.68);
+    font-size: 16px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .hudSubtab > [role='tab']::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 4px;
+    background: transparent;
+    transition: background-color 83ms linear;
+  }
+
+  .hudSubtab > [role='tab']:hover:not(:disabled):not([aria-selected='true'])::after {
+    background: rgba(255, 255, 255, 0.26);
+  }
+
+  .hudSubtab > [role='tab'][aria-selected='true'] {
+    color: var(--dcl-neutrals-snow);
+  }
+
+  .hudSubtab > [role='tab'][aria-selected='true']::after {
+    background: var(--dcl-primary-primary);
+  }
+}
+
+@keyframes hud-pill-pop {
+  0% {
+    transform: scale(0.92);
+  }
+
+  60% {
+    transform: scale(1.08);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes hud-press-bounce {
+  0% {
+    transform: scale(1.04);
+  }
+
+  14% {
+    transform: scale(0.9);
+  }
+
+  23% {
+    transform: scale(0.9);
+  }
+
+  43% {
+    transform: scale(1.04);
+  }
+
+  72% {
+    transform: scale(0.95);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
 @layer dcl.components {
   .routeRoot {
     box-sizing: border-box;
@@ -114,6 +345,17 @@
   }
   .routeText {
     composes: routeLabel from '../Tabs/Tabs.module.css';
+  }
+  /* Create remounts the bar with each route. Start the incoming underline at its centre on mount. */
+  @media (prefers-reduced-motion: no-preference) {
+    @starting-style {
+      .routeRoot[data-page='create'] .routeLink[aria-current] {
+        --tab-scale: 0;
+        background-position:
+          center bottom var(--tab-underline-offset),
+          left 0 bottom var(--tab-underline-offset);
+      }
+    }
   }
   .routeLink:focus-visible {
     outline-offset: -2px;
@@ -236,6 +478,50 @@
   @media (max-width: 767px) {
     .routeRoot[data-page='blog'] .routeControls {
       display: none;
+    }
+  }
+}
+
+@layer dcl.components {
+  /* ShopChrome supplies the surrounding search, shortcuts and responsive rows. */
+  .routeRoot[data-layout='links'] {
+    display: block;
+    padding: 0;
+    min-height: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .routeRoot[data-layout='links'] .routeNavigation {
+    width: 100%;
+    padding: 0;
+  }
+  @media (width > 768px) {
+    .routeItem[data-mobile-only] {
+      display: none;
+    }
+  }
+
+  @media (forced-colors: none) {
+    .routeItem[data-accent='campaign'] .routeLink > span {
+      color: transparent;
+      background-image: var(--dcl-gradient-rainbow);
+      background-size: 200% 100%;
+      background-clip: text;
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .routeItem[data-accent='campaign'] .routeLink > span {
+      animation: campaignGradient 6s ease-in-out infinite alternate;
+    }
+  }
+
+  @keyframes campaignGradient {
+    from {
+      background-position-x: 0%;
+    }
+    to {
+      background-position-x: 100%;
     }
   }
 }

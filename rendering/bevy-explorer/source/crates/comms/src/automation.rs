@@ -11,12 +11,11 @@ use alloy_core::primitives::Address;
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::{
-    structs::{MicState, PrimaryUser},
+    structs::{MicState, PlayerAddress, PrimaryUser},
     util::AsH160,
 };
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use serde_json::{json, Value};
-use wallet::Wallet;
 
 use crate::{
     chat_marker_things,
@@ -50,6 +49,7 @@ impl Plugin for CommsAutomationPlugin {
             fields: &[
                 ("Microphone available", "mic.available"),
                 ("Microphone enabled", "mic.enabled"),
+                ("Turned off by the scene", "mic.sceneBlocked"),
                 ("LiveKit available", "livekit"),
             ],
             actions: &[],
@@ -155,34 +155,18 @@ fn is_chat_message(event: &ChatEvent, me: Option<Entity>) -> bool {
         && crate::community_chat::community_id(&event.channel).is_none()
 }
 
-/// The sender's address: the local player's own, or a foreign player's.
-fn sender_address(
-    sender: Entity,
-    own: Option<(Entity, Address)>,
-    foreign: impl Fn(Entity) -> Option<Address>,
-) -> Option<Address> {
-    match own {
-        Some((entity, address)) if entity == sender => Some(address),
-        _ => foreign(sender),
-    }
-}
-
 fn record_chat(
     mut events: EventReader<ChatEvent>,
     mut log: ResMut<ChatLog>,
     primary: Query<Entity, With<PrimaryUser>>,
-    foreign: Query<&ForeignPlayer>,
-    wallet: Res<Wallet>,
+    players: Query<&PlayerAddress>,
 ) {
     if events.is_empty() {
         return;
     }
     let me = primary.single().ok();
-    let own = me.zip(wallet.address());
     for event in events.read().filter(|event| is_chat_message(event, me)) {
-        let address = sender_address(event.sender, own, |entity| {
-            foreign.get(entity).ok().map(|player| player.address)
-        });
+        let address = players.get(event.sender).ok().map(|address| address.0);
         log.push(ChatEntry {
             timestamp: event.timestamp,
             channel: event.channel.clone(),
@@ -328,7 +312,8 @@ type VoiceRooms<'w, 's> =
 type ActiveSpeakers<'w, 's> = Query<'w, 's, &'static LivekitParticipant, With<ActiveSpeaker>>;
 
 /// Report, as JSON, the microphone as `mic` (`available`, `enabled`, and `sceneBlocked` while the
-/// scene the player stands in turns nearby voice off) and, in a build with the
+/// scene the player stands in turns nearby voice off or its room refused the player as banned)
+/// and, in a build with the
 /// `livekit` feature, `connected` (a realm or scene voice room is connected), `rooms` (each
 /// `scene` and the shared room `state`, including paused and admission failures),
 /// `speakers` (addresses speaking now, the local player's included) and `call` (the private
@@ -346,18 +331,15 @@ fn voice_state_cmd(
     #[cfg(feature = "livekit")] speakers: ActiveSpeakers,
     #[cfg(feature = "livekit")] call: Option<Res<crate::voice_chat::VoiceChat>>,
     #[cfg(feature = "livekit")] call_mic: Option<Res<crate::voice_chat::CallMic>>,
-    #[cfg(feature = "livekit")] focus: Option<Res<common::structs::ClientWindowFocus>>,
+    #[cfg(feature = "livekit")] focus: crate::livekit::mic::MicrophoneFocus,
     #[cfg(feature = "livekit")] call_participants: crate::voice_chat::CallParticipants,
 ) {
     if let Some(Ok(_)) = input.take() {
         #[cfg(feature = "livekit")]
-        let call = call
-            .zip(call_mic)
-            .zip(focus)
-            .map(|((call, call_mic), focus)| {
-                serde_json::to_value(call.snapshot(&call_mic, *focus, &call_participants))
-                    .unwrap_or(Value::Null)
-            });
+        let call = call.zip(call_mic).map(|(call, call_mic)| {
+            serde_json::to_value(call.snapshot(&call_mic, focus.get(), &call_participants))
+                .unwrap_or(Value::Null)
+        });
         #[cfg(not(feature = "livekit"))]
         let call = None;
         #[cfg(feature = "livekit")]
@@ -479,34 +461,21 @@ mod tests {
     }
 
     #[test]
-    fn a_sender_is_the_local_player_a_foreign_player_or_unknown() {
-        let me = Entity::from_raw(1);
-        let other = Entity::from_raw(2);
-        let foreign = |entity| (entity == other).then(|| address(9));
-        let own = Some((me, address(5)));
-        assert_eq!(sender_address(me, own, foreign), Some(address(5)));
-        assert_eq!(sender_address(other, own, foreign), Some(address(9)));
-        assert_eq!(sender_address(Entity::from_raw(3), own, foreign), None);
-        // not signed in: the local player has no address
-        assert_eq!(sender_address(me, None, foreign), None);
-    }
-
-    #[test]
     fn chat_events_are_recorded_with_their_senders() {
-        let mut wallet = Wallet::default();
-        wallet.finalize_as_guest();
-        let own = wallet.address().unwrap();
-
         let mut app = App::new();
         app.add_event::<ChatEvent>()
             .init_resource::<ChatLog>()
-            .insert_resource(wallet)
             .add_systems(Update, record_chat);
-        let me = app.world_mut().spawn(PrimaryUser::default()).id();
+        let me = app
+            .world_mut()
+            .spawn((PrimaryUser::default(), PlayerAddress(address(5))))
+            .id();
+        let other = app.world_mut().spawn(PlayerAddress(address(9))).id();
         let gone = app.world_mut().spawn_empty().id();
         app.world_mut().despawn(gone);
         for ev in [
             event(me, "Nearby", "mine"),
+            event(other, "Nearby", "theirs"),
             event(Entity::PLACEHOLDER, "Nearby", "a console line"),
             event(gone, "Nearby", "from someone who left"),
             event(me, &format!("{:#x}", address(3)), "a dm"),
@@ -516,10 +485,14 @@ mod tests {
         app.update();
 
         let log = app.world().resource::<ChatLog>();
-        assert_eq!(log.total, 2);
-        assert_eq!(messages(log, 10), ["mine", "from someone who left"]);
-        assert_eq!(log.entries[0].address, Some(own));
-        assert_eq!(log.entries[1].address, None);
+        assert_eq!(log.total, 3);
+        assert_eq!(
+            messages(log, 10),
+            ["mine", "theirs", "from someone who left"]
+        );
+        assert_eq!(log.entries[0].address, Some(address(5)));
+        assert_eq!(log.entries[1].address, Some(address(9)));
+        assert_eq!(log.entries[2].address, None);
     }
 
     #[test]

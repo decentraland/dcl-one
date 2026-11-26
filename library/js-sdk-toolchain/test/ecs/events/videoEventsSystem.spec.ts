@@ -1,11 +1,5 @@
-import {
-  components,
-  createVideoEventsSystem,
-  Engine,
-  IEngine,
-  VideoEventsSystem,
-  VideoState
-} from '../../../packages/@dcl/ecs/src'
+import type { IEngine, VideoEventsSystem } from '../../../packages/@dcl/ecs/src'
+import { components, createVideoEventsSystem, Engine, VideoState } from '../../../packages/@dcl/ecs/src'
 
 describe('Video events helper system should', () => {
   const engine: IEngine = Engine()

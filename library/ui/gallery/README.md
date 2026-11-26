@@ -4,6 +4,12 @@ A review page for the hand-written runtime components that `@dcl/one-ui` exports
 
 The sidebar lists the foundations first, then the components grouped by kind, then the HUD, then a collapsed Figma reference section: the generated Review (`figma/review`), previews generated from the Figma capture for comparison, which apps never use. The generated Review itself is unchanged and keeps its own deep links. Only names present in both the runtime and Figma lists (Button, NavBar and others) carry a `runtime` or `Figma` label. Selecting an entry navigates in place (back and forward work), so the sidebar keeps its scroll position. A grouped export opens by its own name (`?component=EventCardHost` shows the EventCard page).
 
+The heading of each group (Foundations, each kind of component, HUD) is a button that collapses and expands its list, and the button under the filter collapses every group, or expands them all once every one is collapsed. The browser remembers the collapsed groups (`localStorage`; without it they last for the visit). Opening a page expands the group that lists it, and a filter shows every match whatever is collapsed: the collapse buttons stay focusable and do nothing until it is cleared.
+
+## Components Showcase
+
+`Showcase`, the first entry under Components, draws every component page on one canvas (`src/frame/ComponentShowcase.tsx`): the groups in the sidebar's order, each page under its name, which opens the page itself, and its summary. It renders the registry's examples with the canvas's own example view, so a page and the Showcase cannot differ. A page whose content is positioned against the viewport (a `minHeight` in its entry: Modal, NavBar, Dropdown) is drawn in a canvas of its own inside the Showcase, loaded as it nears the window, so a dialog covers its own page only. That canvas spans the Showcase's padding, so its viewport is the chosen width, and it is an embedded canvas (`frame.html?component=Modal&embedded=1`): the Modal example that opens on load starts closed there, since opening would take the keyboard focus from wherever the reviewer is on the page. A page name links to its page at the chosen width, which the gallery tells the canvas when it changes (`WIDTH_MESSAGE`).
+
 ## HUD
 
 The HUD section shows the Explorer HUD's Showcase (`apps/hud/design/Showcase.tsx`, `?showcase=1` in a HUD host), its single source: `Showcase` opens every section, and each section has a page of its own, named in `apps/hud/design/ShowcaseIndex.ts`. A component shown on another section opens it by its own name (`?hud=MenuRow` shows MenuPanel). The glyphs (`apps/hud/design/Glyphs.tsx`) have a page the gallery draws itself, every glyph, as it draws the foundations' icons: a Showcase section would keep the glyphs the HUD does not use in the HUD's design chunk.
@@ -29,7 +35,7 @@ pnpm exec vite build --config gallery/vite.config.ts --mode hosted && node galle
 pnpm exec tsc -p gallery/tsconfig.json && node node_modules/typescript-7/bin/tsc -p gallery/tsconfig.hud.json
 ```
 
-To review a pull request without building it, download the `ui-review-<sha>` artifact of its Shared UI library run, unzip it into a folder such as `ui-review`, run `python3 -m http.server 8080 --directory ui-review` and open http://localhost:8080/gallery/. `--mode hosted` builds the gallery alone into `gallery/dist`, without the Figma reference, for a hosted preview.
+`--mode hosted` builds the gallery alone into `gallery/dist`, without the Figma reference: the build Sites serves and pull request previews publish.
 
 The Sites image serves that hosted build at `/ui-gallery/` (`infra/packages/ui-gallery.nix`, [ADR](../../../docs/adr/2026-11-20-ui-gallery-on-sites.md)), so a deployment shows the gallery of the main commit it was deployed from. Its pages carry `noindex`.
 
@@ -40,10 +46,17 @@ The build writes `figma/review/review-dist/gallery/`, beside the generated Revie
 | URL                                       | Opens                                                      |
 | ----------------------------------------- | ---------------------------------------------------------- |
 | `gallery/?component=Button&width=375`     | a runtime page at a canvas width (`fill` when omitted)     |
+| `gallery/?component=Showcase`             | every component page, in one canvas                        |
 | `gallery/?foundations=icons`              | a runtime foundations page                                 |
 | `gallery/?hud=Tabs&width=1280`            | a HUD Showcase section in a HUD window of that width       |
 | `gallery/?hud=Showcase`                   | every HUD Showcase section, then the glyphs, in one window |
 | `gallery/?source=generated&component=...` | the generated Review, with every other parameter forwarded |
+
+## Review a pull request
+
+Once publication is configured ([ADR](../../../docs/adr/2026-11-20-ui-gallery-previews.md), which also lists what is checked before a preview is published), a pull request from this repository that changes a file under `library/ui` gets one comment from `github-actions[bot]` whose **Open preview** button opens the hosted gallery built from that pull request. The line under it names the commit it was built from and the date the preview is available until, at least: five days after its upload. A preview runs the pull request's code on a host outside Decentraland's sites, so never connect a wallet or sign anything there, as the comment's warning says. The link follows the latest head: it updates a few minutes after the head's Shared UI library run and its key scan pass. Pull requests from forks get no link. The preview host serves every page under a Content-Security-Policy that admits only the gallery's own files (`PREVIEW_CSP` in `tooling/ui-gallery-publish.py`); the Shared UI library run opens the hosted build under that policy (`check-build.mjs --csp`), so a page that needs anything else fails the pull request.
+
+Without a link, download the `ui-review-<sha>` artifact of the pull request's Shared UI library run, unzip it into a folder such as `ui-review`, run `python3 -m http.server 8080 --directory ui-review` and open http://localhost:8080/gallery/ (the gallery beside the Figma reference) or http://localhost:8080/ui-gallery/ (the hosted gallery the link opens).
 
 ## Coverage
 

@@ -16,20 +16,18 @@
 //!
 //! An unknown never cancels, since a cancellation does not reopen: no
 //! published index, no indexed row, or an index that has not yet seen past
-//! the listing's creation (the create route checks the owner against the
-//! marketplace subgraph, which the land-authz index can trail) leave the
-//! listing open. So does a token in the Rentals contract whose rent the
-//! rentals index has not reached: the latest indexed rent names who the
+//! the listing's creation leave it open. So does a token in the Rentals
+//! contract whose rent the rentals index has not reached: the latest indexed rent names who the
 //! contract holds the token for only when it is no older than the token's
 //! arrival there (the job compares blocks, the refresh route the rent's
-//! block time with the asset row's `updated_at`). Every write is guarded by
+//! block time with the latest transfer time). Every write is guarded by
 //! `status = 'open'`, so a rent the fold recorded meanwhile wins.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use sqlx::{PgPool, Row};
+use sqlx::{PgConnection, PgPool, Row};
 use uuid::Uuid;
 
 use super::index;
@@ -49,7 +47,7 @@ const POLL_SECS: u64 = 60;
 /// `owner` is the asset's current owner (`None`: unknown);
 /// `custody_lessor` the lessor of the rent the Rentals contract holds the
 /// asset under, read only when the owner is that contract (`None`: unknown,
-/// which includes a latest indexed rent older than the asset's arrival).
+/// an empty string means the published arrival has no covering rent).
 pub fn cancel_reason(
     expired: bool,
     dissolved: bool,
@@ -78,36 +76,28 @@ pub fn cancel_reason(
 /// and block time. The arguments are the SQL for the venue, the asset's
 /// contract and its token id.
 macro_rules! latest_rent_sql {
-    ($venue:literal, $contract:literal, $token:literal) => {
+    ($venue:literal, $contract:literal, $token:literal, $head:literal, $network:literal) => {
         concat!(
-            "SELECT lower(x.signer) AS signer, x.block_number, x.block_time FROM shop.rental_event x \
-             WHERE x.network = 'ethereum' AND x.rentals_address = ",
+            "SELECT lower(x.signer) AS signer, x.block_number, x.log_index, x.block_time FROM shop.rental_event x \
+             WHERE x.network = ",
+            $network,
+            " AND x.rentals_address = ",
             $venue,
             " AND x.kind = 'rented' AND x.contract_address = ",
             $contract,
             " AND x.token_id = ",
             $token,
+            " AND x.block_number <= ",
+            $head,
             " ORDER BY x.block_number DESC, x.log_index DESC LIMIT 1"
         )
     };
 }
 
-/// The lessor the Rentals contract (`$1`) holds the asset (`$2`, `$3`) for,
-/// the legacy `isAssetControlledByLessor` read: the lessor of the latest
-/// indexed rent, or no row when that rent is older than the asset row the
-/// route read (`$4`, its `updated_at`). A transfer into the contract stamps
-/// that row, and a rent lands in the block of its transfer or later, so an
-/// older rent means the rentals index has not reached the one the contract
-/// holds the asset under.
-const CUSTODY_SQL: &str = concat!(
-    "SELECT ren.signer FROM (",
-    latest_rent_sql!("$1", "$2", "$3::numeric"),
-    ") ren WHERE ren.block_time >= $4"
-);
-
-async fn cancel(
-    pool: &PgPool,
+async fn cancel_on(
+    conn: &mut PgConnection,
     cancels: &[(Uuid, &'static str)],
+    membership: Option<(i64, i64)>,
     now: NaiveDateTime,
 ) -> Result<u64, sqlx::Error> {
     if cancels.is_empty() {
@@ -116,14 +106,24 @@ async fn cancel(
     let ids: Vec<Uuid> = cancels.iter().map(|c| c.0).collect();
     let reasons: Vec<&str> = cancels.iter().map(|c| c.1).collect();
     Ok(sqlx::query(
-        "UPDATE signatures.rentals r SET status = 'cancelled', cancel_reason = u.reason, updated_at = $3 \
-         FROM UNNEST($1::uuid[], $2::text[]) AS u(id, reason) \
-         WHERE r.id = u.id AND r.status = 'open'",
+        // PostgreSQL rechecks the locked asset after a concurrent fill commits.
+        "WITH locked AS MATERIALIZED (
+             SELECT r.id, u.reason FROM UNNEST($1::uuid[], $2::text[]) AS u(id, reason)
+             JOIN signatures.rentals r ON r.id=u.id
+             JOIN signatures.rental_assets a USING (contract_address, token_id)
+             WHERE r.status='open' AND (u.reason <> 'dissolved' OR
+                 (a.membership_block <= $4 AND r.created_at < to_timestamp($5) AT TIME ZONE 'UTC'))
+             ORDER BY a.contract_address, a.token_id FOR UPDATE OF a
+         )
+         UPDATE signatures.rentals r SET status='cancelled', cancel_reason=u.reason, updated_at=$3
+         FROM locked u WHERE r.id=u.id AND r.status='open'",
     )
     .bind(&ids)
     .bind(&reasons)
     .bind(now)
-    .execute(pool)
+    .bind(membership.map(|(block, _)| block))
+    .bind(membership.map(|(_, time)| time as f64))
+    .execute(&mut *conn)
     .await?
     .rows_affected())
 }
@@ -143,7 +143,7 @@ pub async fn cancel_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<u64, sq
 
 /// Every open listing of the index's registries whose asset the index
 /// holds, with what decides it. `$1`/`$2` the LAND and Estate registries,
-/// `$3` the folded block, `$4` whether the rentals index is published.
+/// `$3` the folded block, `$4` the published Rentals height from the same snapshot.
 /// `moved` is whether the latest folded transfer came after the listing;
 /// `dissolved` needs the estate's row, no parcels, and a folded head newer
 /// than the listing (`$5`, the head's block time). `custody_lessor` is the
@@ -156,6 +156,16 @@ const OWNERSHIP_SQL: &str = concat!(
     "
 SELECT r.id, l.lessor, r.rental_contract_address, t.owner,
        COALESCE(to_timestamp(lt.block_time) AT TIME ZONE 'UTC' > r.created_at, false) AS moved,
+       COALESCE(
+           $4::bigint >= lt.block_number
+           AND NOT EXISTS (
+               SELECT 1 FROM shop.rental_event pending
+               WHERE pending.network=$6 AND pending.rentals_address=r.rental_contract_address
+                 AND pending.contract_address=r.contract_address AND pending.token_id=r.token_id
+                 AND pending.kind='rented'
+                 AND pending.block_number > $4::bigint AND pending.block_number >= lt.block_number
+           ), false
+       ) AS custody_known,
        (r.contract_address = $2
         AND to_timestamp($5) AT TIME ZONE 'UTC' > r.created_at
         AND NOT EXISTS (SELECT 1 FROM land_authz.estate_land el WHERE el.estate_token_id = r.token_id)) AS dissolved,
@@ -164,7 +174,7 @@ FROM signatures.rentals r
 JOIN signatures.rental_listings l ON l.id = r.id
 JOIN land_authz.token_right t ON t.token_address = r.contract_address AND t.token_id = r.token_id
 LEFT JOIN LATERAL (
-    SELECT e.block_number, e.block_time FROM land_authz.authz_event e
+    SELECT e.block_number, e.log_index, e.block_time FROM land_authz.authz_event e
     WHERE e.token_address = r.contract_address AND e.token_id = r.token_id AND e.kind = 'transfer'
       AND e.block_number <= $3
     ORDER BY e.block_number DESC, e.log_index DESC LIMIT 1
@@ -173,10 +183,12 @@ LEFT JOIN LATERAL (",
     latest_rent_sql!(
         "r.rental_contract_address",
         "r.contract_address",
-        "r.token_id"
+        "r.token_id",
+        "$4::bigint",
+        "$6"
     ),
-    ") ren ON $4 AND ren.block_number >= lt.block_number
-WHERE r.status = 'open' AND r.contract_address IN ($1, $2)"
+    ") ren ON (ren.block_number,ren.log_index) > (lt.block_number,lt.log_index) AND ren.block_number <= $4::bigint AND r.chain_id=$7
+WHERE r.status = 'open' AND r.contract_address IN ($1, $2) AND r.chain_id=$7"
 );
 
 /// Closes the open listings whose asset changed owner or whose estate was
@@ -185,9 +197,9 @@ WHERE r.status = 'open' AND r.contract_address IN ($1, $2)"
 pub async fn cancel_moved(
     pool: &PgPool,
     land: LandNetwork,
+    indexed_custody: bool,
     now: DateTime<Utc>,
 ) -> Result<Option<u64>, sqlx::Error> {
-    let rentals_ready = index::ready(pool, now).await;
     let Some(mut snapshot) = crate::market::nft_reads::land_snapshot(pool, land).await else {
         return Ok(None);
     };
@@ -201,41 +213,95 @@ pub async fn cancel_moved(
     .bind(folded)
     .fetch_optional(&mut *snapshot.tx)
     .await?;
+    let Some(chain) = index::RentalsChain::from_land_network(land.network) else {
+        return Ok(None);
+    };
+    // LAND establishes a third-party transfer or an empty estate independently.
+    let rentals_cursor = if indexed_custody {
+        crate::market::chain_walk::cursor(
+            &mut *snapshot.tx,
+            chain.indexer(),
+            crate::market::chain_walk::ChainNet::Ethereum,
+        )
+        .await?
+        .filter(|cursor| {
+            crate::market::chain_walk::fresh_fold_on(cursor, chain.id(), now).is_some()
+        })
+    } else {
+        None
+    };
+    let rentals_head = rentals_cursor
+        .as_ref()
+        .and_then(|cursor| cursor.folded_block);
     let rows = sqlx::query(OWNERSHIP_SQL)
         .bind(land.land_registry.to_ascii_lowercase())
         .bind(land.estate_registry.to_ascii_lowercase())
         .bind(folded)
-        .bind(rentals_ready)
+        .bind(rentals_head)
         .bind(head_time.unwrap_or(0) as f64)
+        .bind(chain.event_network())
+        .bind(chain.id())
         .fetch_all(&mut *snapshot.tx)
         .await?;
+    let mut land_cancels = Vec::new();
+    let mut custody_cancels = Vec::new();
+    for row in rows {
+        let lessor: &str = row.get("lessor");
+        let venue: &str = row.get("rental_contract_address");
+        // A burn is a transfer away. Only a post-listing transfer can close it.
+        let owner = row.get::<bool, _>("moved").then(|| {
+            row.get::<Option<String>, _>("owner")
+                .unwrap_or_else(|| alloy_primitives::Address::ZERO.to_string())
+        });
+        let custody = row.get::<bool, _>("custody_known").then(|| {
+            row.get::<Option<&str>, _>("custody_lessor")
+                .unwrap_or_default()
+        });
+        if let Some(reason) = cancel_reason(
+            false,
+            row.get("dissolved"),
+            owner.as_deref(),
+            lessor,
+            venue,
+            custody,
+        ) {
+            let verdict = (row.get("id"), reason);
+            if reason == REASON_TRANSFERRED
+                && owner
+                    .as_deref()
+                    .is_some_and(|o| o.eq_ignore_ascii_case(venue))
+            {
+                custody_cancels.push(verdict);
+            } else {
+                land_cancels.push(verdict);
+            }
+        }
+    }
     snapshot.tx.rollback().await?;
-    let cancels: Vec<(Uuid, &'static str)> = rows
-        .iter()
-        .filter_map(|r| {
-            let lessor: String = r.get("lessor");
-            let venue: String = r.get("rental_contract_address");
-            let owner: Option<String> = r.get("owner");
-            let moved: bool = r.get("moved");
-            let custody: Option<String> = r.get("custody_lessor");
-            // A burned token (no owner) after the listing is a transfer away.
-            let owner = match (owner, moved) {
-                (_, false) => None,
-                (Some(o), true) => Some(o),
-                (None, true) => Some(alloy_primitives::Address::ZERO.to_string()),
-            };
-            cancel_reason(
-                false,
-                r.get("dissolved"),
-                owner.as_deref(),
-                &lessor,
-                &venue,
-                custody.as_deref(),
-            )
-            .map(|reason| (r.get("id"), reason))
-        })
-        .collect();
-    cancel(pool, &cancels, now.naive_utc()).await.map(Some)
+    if land_cancels.is_empty() && custody_cancels.is_empty() {
+        return Ok(Some(0));
+    }
+
+    // Fence each decision against the publications it used through commit.
+    let mut tx = pool.begin().await?;
+    if lock_land_publication(&mut tx, land).await?.as_ref() != Some(&snapshot.cursor) {
+        return Ok(None);
+    }
+    if !custody_cancels.is_empty() {
+        let current = index::lock_cursor(&mut tx, chain).await?;
+        if current.as_ref().is_some_and(|cursor| {
+            Some(cursor) == rentals_cursor.as_ref()
+                && crate::market::chain_walk::fresh_fold_on(cursor, chain.id(), now).is_some()
+        }) {
+            land_cancels.append(&mut custody_cancels);
+        } else if land_cancels.is_empty() {
+            return Ok(None);
+        }
+    }
+    let membership = head_time.map(|time| (folded, time));
+    let written = cancel_on(&mut tx, &land_cancels, membership, now.naive_utc()).await?;
+    tx.commit().await?;
+    Ok(Some(written))
 }
 
 /// What one pass did.
@@ -250,45 +316,47 @@ pub struct Pass {
 pub async fn run_pass(
     pool: &PgPool,
     land: Option<LandNetwork>,
+    indexed_custody: bool,
     now: DateTime<Utc>,
 ) -> Result<Pass, sqlx::Error> {
     let expired = cancel_expired(pool, now).await?;
     let moved = match land {
-        Some(land) => cancel_moved(pool, land, now).await?,
+        Some(land) => cancel_moved(pool, land, indexed_custody, now).await?,
         None => None,
     };
     Ok(Pass { expired, moved })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SyncOutcome {
+    Applied,
+    LandUnavailable,
+    RentalsUnavailable,
 }
 
 /// The refresh route's status sync of one listing: its own Rentals logs
 /// first (while the rentals index is published), then, if it is still
 /// open, expiry and the asset row the route has just read (`nft`; `None`
 /// when the reader found no such token, which decides nothing). The asset
-/// row counts only when its `updated_at` is newer than the stored
-/// `rental_assets.nft_updated_at`, which the route then raises to it and
-/// never lowers (`refresh_metadata_for_rental`).
+/// must have newer LAND evidence than the stored asset time to establish
+/// a transfer, custody change or dissolved estate.
 pub async fn sync_listing(
     pool: &PgPool,
     id: Uuid,
     nft: Option<&LandNft>,
     now: DateTime<Utc>,
-) -> Result<(), sqlx::Error> {
+) -> Result<SyncOutcome, sqlx::Error> {
     let venue: Option<String> =
         sqlx::query_scalar("SELECT rental_contract_address FROM signatures.rentals WHERE id = $1")
             .bind(id)
             .fetch_optional(pool)
             .await?;
     let Some(venue) = venue else {
-        return Ok(());
+        return Ok(SyncOutcome::Applied);
     };
-    let rentals_ready = index::ready(pool, now).await;
-    if rentals_ready {
-        index::fold_listing(pool, &venue, id, now).await?;
-    }
     let row = sqlx::query(
         "SELECT r.status::text AS status, r.expiration < $2 AS expired, l.lessor, \
-                r.contract_address, r.token_id::text AS token_id, \
-                extract(epoch FROM a.nft_updated_at)::bigint AS stored_at \
+                r.created_at, r.contract_address, r.token_id::text AS token_id, r.chain_id::bigint AS chain_id, a.membership_block, a.metadata_block \
          FROM signatures.rentals r JOIN signatures.rental_listings l ON l.id = r.id \
          JOIN signatures.rental_assets a ON a.contract_address = r.contract_address AND a.token_id = r.token_id \
          WHERE r.id = $1",
@@ -298,30 +366,100 @@ pub async fn sync_listing(
     .fetch_optional(pool)
     .await?;
     let Some(row) = row else {
-        return Ok(());
+        return Ok(SyncOutcome::Applied);
     };
-    if row.get::<String, _>("status") != "open" {
-        return Ok(());
+    let chain = index::RentalsChain::from_id(row.get("chain_id"))
+        .filter(|chain| venue.eq_ignore_ascii_case(chain.venue()))
+        .filter(|chain| {
+            matches!(chain, index::RentalsChain::Mainnet)
+                || nft.is_some_and(|asset| asset.land_cursor_updated_at.is_some())
+        });
+    if let Some(chain) = chain
+        && index::fold_listing(pool, chain, &venue, id, now)
+            .await?
+            .is_none()
+    {
+        return Ok(SyncOutcome::RentalsUnavailable);
+    }
+    let mut tx = pool.begin().await?;
+    if let Some(expected) = nft.and_then(|n| n.land_cursor_updated_at) {
+        let Some(chain) = chain else {
+            return Ok(SyncOutcome::LandUnavailable);
+        };
+        if !land_publication_matches(&mut tx, chain.land(), expected).await? {
+            return Ok(SyncOutcome::LandUnavailable);
+        }
+    }
+    let rentals_cursor = if let Some(chain) = chain {
+        let Some(cursor) = index::lock_cursor(&mut tx, chain).await? else {
+            tx.rollback().await?;
+            return Ok(SyncOutcome::RentalsUnavailable);
+        };
+        if crate::market::chain_walk::fresh_fold_on(&cursor, chain.id(), now).is_none() {
+            tx.rollback().await?;
+            return Ok(SyncOutcome::RentalsUnavailable);
+        }
+        Some(cursor)
+    } else {
+        None
+    };
+    let still_open: bool =
+        sqlx::query_scalar("SELECT status = 'open' FROM signatures.rentals WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .unwrap_or(false);
+    if !still_open {
+        tx.rollback().await?;
+        return Ok(SyncOutcome::Applied);
     }
     let lessor: String = row.get("lessor");
-    // The asset row decides only when it is newer than the stored one: a
-    // reader answering from an older block must not close the listing.
-    let stored_at: i64 = row.get("stored_at");
-    let nft = nft.filter(|n| n.updated_at > stored_at);
-    let owner = nft.map(|n| n.owner_address.as_str());
-    let custody: Option<String> = match nft {
-        Some(n) if rentals_ready && n.owner_address.eq_ignore_ascii_case(&venue) => {
-            sqlx::query_scalar(CUSTODY_SQL)
-                .bind(&venue)
-                .bind(row.get::<String, _>("contract_address"))
-                .bind(row.get::<String, _>("token_id"))
-                .bind(n.updated_at)
-                .fetch_optional(pool)
-                .await?
+    // Compare published source versions independently from legacy metadata timestamps.
+    let stored_metadata_block: i64 = row.get("metadata_block");
+    let created_at = row
+        .get::<NaiveDateTime, _>("created_at")
+        .and_utc()
+        .timestamp();
+    // Metadata can be filled while custody evidence is still unpublished.
+    // Recheck the covering rent for a current venue observation on each refresh.
+    let current = nft.filter(|n| n.metadata_block >= stored_metadata_block);
+    let transfer = current
+        .filter(|n| n.transferred_at > created_at || n.owner_address.eq_ignore_ascii_case(&venue));
+    let owner = transfer.map(|n| n.owner_address.as_str());
+    let custody: Option<String> = match transfer {
+        Some(n) if n.owner_address.eq_ignore_ascii_case(&venue) => {
+            if let (Some(chain), Some(cursor)) = (chain, rentals_cursor.as_ref()) {
+                let evidence = index::rent_evidence_at(
+                    &mut tx,
+                    chain,
+                    &venue,
+                    row.get("contract_address"),
+                    row.get("token_id"),
+                    cursor.folded_block,
+                )
+                .await?;
+                match evidence.coverage(n.transfer_block, Some(n.metadata_block), n.transferred_at)
+                {
+                    index::RentCoverage::Pending => None,
+                    index::RentCoverage::NoCoveringRent => Some(String::new()),
+                    index::RentCoverage::Covered => evidence.signer,
+                }
+            } else {
+                // Non-walking chains have no local custody evidence. A token
+                // at the Rentals venue stays unknown and cannot be cancelled.
+                None
+            }
         }
         _ => None,
     };
-    let dissolved = nft.is_some_and(|n| n.category == "estate" && n.estate_size == Some(0));
+
+    let dissolved = nft.is_some_and(|n| {
+        n.category == "estate"
+            && n.estate_size == Some(0)
+            && n.metadata_block >= stored_metadata_block
+            && n.membership_block >= row.get::<i64, _>("membership_block")
+            && n.membership_checked_at.is_some_and(|at| at > created_at)
+    });
     if let Some(reason) = cancel_reason(
         row.get("expired"),
         dissolved,
@@ -330,9 +468,48 @@ pub async fn sync_listing(
         &venue,
         custody.as_deref(),
     ) {
-        cancel(pool, &[(id, reason)], now.naive_utc()).await?;
+        cancel_on(
+            &mut tx,
+            &[(id, reason)],
+            nft.and_then(|n| Some((n.membership_block, n.membership_checked_at?))),
+            now.naive_utc(),
+        )
+        .await?;
     }
-    Ok(())
+    tx.commit().await?;
+    Ok(SyncOutcome::Applied)
+}
+
+pub(super) async fn land_publication_matches(
+    conn: &mut PgConnection,
+    land: LandNetwork,
+    expected_updated_at: NaiveDateTime,
+) -> Result<bool, sqlx::Error> {
+    Ok(lock_land_publication(conn, land)
+        .await?
+        .is_some_and(|cursor| cursor.updated_at == expected_updated_at))
+}
+
+/// Hold the cursor stable while applying the same observation as the asset reader.
+async fn lock_land_publication(
+    conn: &mut PgConnection,
+    land: LandNetwork,
+) -> Result<Option<crate::land_authz::indexer::Cursor>, sqlx::Error> {
+    use crate::land_authz::indexer::{cursor_observed, observation_ready};
+    let locked =
+        sqlx::query("SELECT network FROM land_authz.index_cursor WHERE network=$1 FOR SHARE")
+            .bind(land.network)
+            .fetch_optional(&mut *conn)
+            .await?;
+    if locked.is_none() {
+        return Ok(None);
+    }
+    Ok(cursor_observed(&mut *conn, land.network)
+        .await?
+        .filter(|observation| {
+            observation_ready(observation, land.land_registry, land.estate_registry)
+        })
+        .map(|observation| observation.cursor))
 }
 
 /// Attaches the leased `rental-listing-status` job: [`run_pass`] every
@@ -340,6 +517,9 @@ pub async fn sync_listing(
 pub fn spawn(state: &Arc<MarketplaceState>, jobs: &Jobs) {
     let pool = state.pool.clone();
     let land = state.land_network();
+    let indexed_custody = land
+        .is_some_and(|net| net.network == crate::land_authz::LAND_MAINNET.network)
+        || crate::market::owned_items::walks_here(state);
     jobs.spawn_periodic_leased(
         "rental-listing-status",
         PeriodicCfg::every(Duration::from_secs(POLL_SECS))
@@ -348,14 +528,14 @@ pub fn spawn(state: &Arc<MarketplaceState>, jobs: &Jobs) {
         move |ctx| {
             let pool = pool.clone();
             async move {
-                let pass = run_pass(&pool, land, Utc::now()).await?;
+                let pass = run_pass(&pool, land, indexed_custody, Utc::now()).await?;
                 if pass.expired > 0 || pass.moved.unwrap_or(0) > 0 {
                     tracing::info!(expired = pass.expired, moved = ?pass.moved, "rental listings cancelled");
                 }
                 ctx.progress(match pass.moved {
                     Some(m) => format!("{} expired, {m} transferred or dissolved cancelled", pass.expired),
                     None => format!(
-                        "{} expired cancelled; transfers wait for the land-authz index",
+                        "{} expired cancelled; ownership decisions wait for a current published snapshot",
                         pass.expired
                     ),
                 });
@@ -426,7 +606,9 @@ mod tests {
     }
 
     use crate::db::scratch::{OwnedDatabase, Schema};
-    use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_MAINNET, LAND_REGISTRY_MAINNET};
+    use crate::land_authz::{
+        ESTATE_REGISTRY_MAINNET, LAND_MAINNET, LAND_REGISTRY_MAINNET, LAND_SEPOLIA,
+    };
     use crate::rentals::index::tests::seed_listing;
 
     async fn listing(pool: &PgPool, contract: &str, token: &str, sig: u8) -> Uuid {
@@ -476,7 +658,7 @@ mod tests {
         let expired = listing(pool, LAND_REGISTRY_MAINNET, "1", 1).await;
         let live = listing(pool, LAND_REGISTRY_MAINNET, "2", 2).await;
         expire(pool, expired).await;
-        let pass = run_pass(pool, None, Utc::now()).await.unwrap();
+        let pass = run_pass(pool, None, false, Utc::now()).await.unwrap();
         assert_eq!(
             pass,
             Pass {
@@ -489,11 +671,9 @@ mod tests {
         db.drop().await;
     }
 
-    /// Ownership and dissolution from the land-authz index: a transfer after
-    /// the listing cancels it, one before it (the index trailing the
-    /// subgraph the create read) does not; an estate without parcels is
-    /// dissolved; the Rentals contract's custody and an unindexed token keep
-    /// the listing; nothing moves while the index is not published.
+    /// A transfer after listing or a dissolved estate cancels the listing.
+    /// An earlier transfer, Rentals custody, an unknown token or an
+    /// unpublished index leaves it open.
     #[tokio::test]
     async fn the_pass_cancels_transferred_assets_and_dissolved_estates() {
         let Some(db) = OwnedDatabase::new("rental_moved", Schema::Full, 2).await else {
@@ -524,11 +704,19 @@ mod tests {
         .await
         .unwrap();
 
-        let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
+        publish_rentals_index(pool).await;
+        let pass = run_pass(pool, Some(LAND_MAINNET), true, Utc::now())
             .await
             .unwrap();
         assert_eq!(pass.moved, None, "no published land-authz cursor");
         assert_eq!(state_of(pool, transferred).await, open());
+        assert_eq!(state_of(pool, dissolved).await, open());
+        assert_eq!(state_of(pool, custody).await, open());
+
+        sqlx::query("UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals'")
+            .execute(pool)
+            .await
+            .unwrap();
 
         sqlx::query(
             "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
@@ -540,7 +728,8 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
-        let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
+
+        let pass = run_pass(pool, Some(LAND_MAINNET), true, Utc::now())
             .await
             .unwrap();
         assert_eq!(pass.moved, Some(2));
@@ -548,8 +737,9 @@ mod tests {
             state_of(pool, transferred).await,
             cancelled(REASON_TRANSFERRED)
         );
+        assert_eq!(state_of(pool, custody).await, open());
         assert_eq!(state_of(pool, dissolved).await, cancelled(REASON_DISSOLVED));
-        for id in [trailing, kept, custody, unindexed, whole] {
+        for id in [trailing, kept, unindexed, whole] {
             assert_eq!(state_of(pool, id).await, open(), "{id}");
         }
         db.drop().await;
@@ -564,6 +754,7 @@ mod tests {
             return;
         };
         let pool = &db.pool;
+        publish_rentals_index(pool).await;
         let row = |owner: &str, category: &str, estate_size: Option<i32>| LandNft {
             nft_id: "x".into(),
             category: category.into(),
@@ -575,6 +766,12 @@ mod tests {
             created_at: 0,
             // Newer than the seeded `nft_updated_at`.
             updated_at: Utc::now().timestamp() + 60,
+            transferred_at: Utc::now().timestamp() + 60,
+            transfer_block: Some(1),
+            membership_block: 1,
+            metadata_block: 1,
+            membership_checked_at: Some(Utc::now().timestamp() + 60),
+            land_cursor_updated_at: None,
         };
         let now = Utc::now();
 
@@ -591,6 +788,7 @@ mod tests {
         );
         let older = LandNft {
             updated_at: 1_600_000_000,
+            transferred_at: 1_600_000_000,
             ..row(OTHER, "parcel", None)
         };
         sync_listing(pool, held, Some(&older), now).await.unwrap();
@@ -621,6 +819,27 @@ mod tests {
             open(),
             "an unknown size is not dissolved"
         );
+        sqlx::query(
+            "UPDATE signatures.rental_assets SET nft_updated_at=to_timestamp($1) AT TIME ZONE 'UTC'
+            WHERE contract_address=$2 AND token_id=10",
+        )
+        .bind(now.timestamp() - 120)
+        .bind(ESTATE_REGISTRY_MAINNET)
+        .execute(pool)
+        .await
+        .unwrap();
+        let trailing = LandNft {
+            membership_checked_at: Some(now.timestamp() - 60),
+            ..row(LESSOR, "estate", Some(0))
+        };
+        sync_listing(pool, estate, Some(&trailing), now)
+            .await
+            .unwrap();
+        assert_eq!(
+            state_of(pool, estate).await,
+            open(),
+            "LAND's empty observation predates the listing"
+        );
         sync_listing(pool, estate, Some(&row(LESSOR, "estate", Some(0))), now)
             .await
             .unwrap();
@@ -635,6 +854,10 @@ mod tests {
 
         // A nonce bump the rentals index holds counts once it is published.
         let bumped = listing(pool, LAND_REGISTRY_MAINNET, "3", 4).await;
+        sqlx::query("DELETE FROM shop.chain_cursor WHERE indexer='rentals'")
+            .execute(pool)
+            .await
+            .unwrap();
         let bump = index::decode_log(
             &index::tests::asset_index_log(
                 LESSOR,
@@ -649,13 +872,9 @@ mod tests {
         .unwrap()
         .unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        index::insert_events(
-            &mut conn,
-            crate::market::chain_walk::ChainNet::Ethereum,
-            &[bump],
-        )
-        .await
-        .unwrap();
+        index::insert_events(&mut conn, index::RentalsChain::Mainnet, &[bump])
+            .await
+            .unwrap();
         drop(conn);
         sync_listing(pool, bumped, Some(&row(LESSOR, "parcel", None)), now)
             .await
@@ -667,7 +886,21 @@ mod tests {
         );
         sqlx::query(
             "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
-             VALUES ('rentals', 'ethereum', 1, 50, 50, timezone('UTC', now()), true, 1)",
+             VALUES ('rentals', 'ethereum', 1, 49, 49, timezone('UTC', now()), true, 1)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sync_listing(pool, bumped, Some(&row(LESSOR, "parcel", None)), Utc::now())
+            .await
+            .unwrap();
+        assert_eq!(
+            state_of(pool, bumped).await,
+            open(),
+            "the nonce bump is above the published height"
+        );
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block=50, folded_block=50 WHERE indexer='rentals'",
         )
         .execute(pool)
         .await
@@ -691,18 +924,14 @@ mod tests {
                 50,
                 1,
             ),
-            1_700_000_000,
+            Utc::now().timestamp() + 120,
         )
         .unwrap()
         .unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        index::insert_events(
-            &mut conn,
-            crate::market::chain_walk::ChainNet::Ethereum,
-            &[rent],
-        )
-        .await
-        .unwrap();
+        index::insert_events(&mut conn, index::RentalsChain::Mainnet, &[rent])
+            .await
+            .unwrap();
         drop(conn);
         sync_listing(pool, stale, None, Utc::now()).await.unwrap();
         assert_eq!(state_of(pool, stale).await, ("executed".into(), None));
@@ -730,13 +959,9 @@ mod tests {
         .unwrap()
         .unwrap();
         let mut conn = pool.acquire().await.unwrap();
-        index::insert_events(
-            &mut conn,
-            crate::market::chain_walk::ChainNet::Ethereum,
-            &[rent],
-        )
-        .await
-        .unwrap();
+        index::insert_events(&mut conn, index::RentalsChain::Mainnet, &[rent])
+            .await
+            .unwrap();
     }
 
     async fn publish_rentals_index(pool: &PgPool) {
@@ -747,6 +972,386 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    async fn wait_for_cursor_lock(pool: &PgPool) {
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                let waiting: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+                     WHERE datname=current_database() AND wait_event_type='Lock' \
+                       AND query ILIKE '%shop.chain_cursor%' AND query ILIKE '%FOR SHARE%')",
+                )
+                .fetch_one(pool)
+                .await
+                .unwrap();
+                if waiting {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("decision waits for the published cursor lock");
+    }
+
+    async fn wait_for_land_cursor_lock(pool: &PgPool) {
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                let waiting: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+                     WHERE datname=current_database() AND wait_event_type='Lock' \
+                       AND query ILIKE '%land_authz.index_cursor%' AND query ILIKE '%FOR SHARE%')",
+                )
+                .fetch_one(pool)
+                .await
+                .unwrap();
+                if waiting {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("PATCH waits for the observed LAND cursor lock");
+    }
+
+    #[tokio::test]
+    async fn refresh_revalidates_the_rentals_cursor_before_folding_events() {
+        let Some(db) = OwnedDatabase::new("rental_refresh_cursor_rewind", Schema::Full, 4).await
+        else {
+            return;
+        };
+        let pool = &db.pool;
+        let id = listing(pool, LAND_REGISTRY_MAINNET, "33", 33).await;
+        publish_rentals_index(pool).await;
+        let bump = index::decode_log(
+            &index::tests::asset_index_log(
+                LESSOR,
+                LAND_REGISTRY_MAINNET,
+                alloy_primitives::U256::from(33u8),
+                1,
+                50,
+                0,
+            ),
+            1_700_000_000,
+        )
+        .unwrap()
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        index::insert_events(&mut conn, index::RentalsChain::Mainnet, &[bump])
+            .await
+            .unwrap();
+        drop(conn);
+
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query(
+            "SELECT 1 FROM shop.chain_cursor WHERE indexer='rentals' AND network='ethereum' FOR UPDATE",
+        )
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+        let route_pool = pool.clone();
+        let refresh =
+            tokio::spawn(async move { sync_listing(&route_pool, id, None, Utc::now()).await });
+        wait_for_cursor_lock(pool).await;
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals' AND network='ethereum'",
+        )
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+        lock.commit().await.unwrap();
+
+        assert_eq!(
+            refresh.await.unwrap().unwrap(),
+            SyncOutcome::RentalsUnavailable
+        );
+        assert_eq!(state_of(pool, id).await, open());
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn status_pass_discards_cancellation_after_a_rentals_rewind() {
+        let Some(db) = OwnedDatabase::new("rental_status_cursor_rewind", Schema::Full, 4).await
+        else {
+            return;
+        };
+        let pool = &db.pool;
+        let id = listing(pool, LAND_REGISTRY_MAINNET, "34", 34).await;
+        publish_rentals_index(pool).await;
+        sqlx::query(
+            "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
+             VALUES ($1, $2, $3, 5, 5, timezone('UTC', now()), true)",
+        )
+        .bind(LAND_MAINNET.network)
+        .bind(LAND_MAINNET.land_registry)
+        .bind(LAND_MAINNET.estate_registry)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) VALUES ($1, 34, $2, 5, 0)",
+        )
+        .bind(LAND_MAINNET.land_registry)
+        .bind(RENTALS)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) VALUES (5, 0, $1, $2, 'transfer', 34, $3)",
+        )
+        .bind(Utc::now().timestamp() + 3600)
+        .bind(LAND_MAINNET.land_registry)
+        .bind(RENTALS)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query(
+            "SELECT 1 FROM shop.chain_cursor WHERE indexer='rentals' AND network='ethereum' FOR UPDATE",
+        )
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+        let status_pool = pool.clone();
+        let pass = tokio::spawn(async move {
+            cancel_moved(&status_pool, LAND_MAINNET, true, Utc::now()).await
+        });
+        wait_for_cursor_lock(pool).await;
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_block=NULL WHERE indexer='rentals' AND network='ethereum'",
+        )
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+        lock.commit().await.unwrap();
+
+        assert_eq!(pass.await.unwrap().unwrap(), None);
+        assert_eq!(state_of(pool, id).await, open());
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn refresh_discards_land_cancellation_after_a_rewind() {
+        let Some(db) = OwnedDatabase::new("rental_patch_land_rewind", Schema::Full, 4).await else {
+            return;
+        };
+        let pool = &db.pool;
+        let id = listing(pool, LAND_REGISTRY_MAINNET, "35", 35).await;
+        publish_rentals_index(pool).await;
+        sqlx::query(
+            "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
+             VALUES ($1, $2, $3, 5, 5, timezone('UTC', now()), true)",
+        )
+        .bind(LAND_MAINNET.network)
+        .bind(LAND_MAINNET.land_registry)
+        .bind(LAND_MAINNET.estate_registry)
+        .execute(pool)
+        .await
+        .unwrap();
+        let land_cursor_updated_at: chrono::NaiveDateTime =
+            sqlx::query_scalar("SELECT updated_at FROM land_authz.index_cursor WHERE network=$1")
+                .bind(LAND_MAINNET.network)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        let nft = LandNft {
+            nft_id: "test".into(),
+            category: "parcel".into(),
+            owner_address: OTHER.into(),
+            search_text: String::new(),
+            distance_to_plaza: None,
+            adjacent_to_road: None,
+            estate_size: None,
+            created_at: 1,
+            updated_at: Utc::now().timestamp() + 3600,
+            transferred_at: Utc::now().timestamp() + 3600,
+            transfer_block: Some(5),
+            membership_block: 0,
+            metadata_block: 5,
+            membership_checked_at: None,
+            land_cursor_updated_at: Some(land_cursor_updated_at),
+        };
+
+        let mut lock = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM land_authz.index_cursor WHERE network=$1 FOR UPDATE")
+            .bind(LAND_MAINNET.network)
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        let route_pool = pool.clone();
+        let refresh =
+            tokio::spawn(
+                async move { sync_listing(&route_pool, id, Some(&nft), Utc::now()).await },
+            );
+        wait_for_land_cursor_lock(pool).await;
+        sqlx::query("UPDATE land_authz.index_cursor SET folded_block=NULL WHERE network=$1")
+            .bind(LAND_MAINNET.network)
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        lock.commit().await.unwrap();
+
+        assert_eq!(
+            refresh.await.unwrap().unwrap(),
+            SyncOutcome::LandUnavailable
+        );
+        assert_eq!(state_of(pool, id).await, open());
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn sepolia_status_keeps_unknown_venue_custody_open() {
+        let Some(db) = OwnedDatabase::new("rental_sepolia_status", Schema::Full, 2).await else {
+            return;
+        };
+        let pool = &db.pool;
+        let venue = crate::rentals::signature::rentals_contract(11_155_111).unwrap();
+        let id = seed_listing(
+            pool,
+            LAND_SEPOLIA.land_registry,
+            "55",
+            ["0", "0", "0"],
+            &format!("0x{}", hex::encode([55u8; 65])),
+            LESSOR,
+            venue,
+        )
+        .await;
+        // The shared fixture defaults to mainnet. Exercise the signed Sepolia chain.
+        sqlx::query("UPDATE signatures.rentals SET chain_id=11155111 WHERE id=$1")
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE signatures.rental_assets SET chain_id=11155111 WHERE contract_address=$1",
+        )
+        .bind(LAND_SEPOLIA.land_registry)
+        .execute(pool)
+        .await
+        .unwrap();
+        let ix = index::RentalsIndex::sepolia(false);
+        use crate::market::chain_walk::{ChainIndex, IndexSettings, test_owner};
+        let owner = test_owner(pool, &ix, &IndexSettings::default()).await;
+        sqlx::query("INSERT INTO shop.rental_event (network, block_number, log_index, block_time, rentals_address, kind, contract_address, token_id, signer, tenant, rental_days, price_per_day, signature, tx_hash)
+                SELECT 'sepolia', 40, 0, 1800000000, rental_contract_address, 'rented', contract_address, token_id, $2, $3, 1, 1, signature, '0xtx' FROM signatures.rentals WHERE id=$1")
+            .bind(id).bind(LESSOR).bind(OTHER).execute(pool).await.unwrap();
+        ix.fold(pool, None, 40, &owner).await.unwrap();
+        assert_eq!(
+            state_of(pool, id).await,
+            open(),
+            "the Sepolia log walk only supplies wallet history"
+        );
+        let now = Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
+             VALUES ($1, $2, $3, 40, 40, timezone('UTC', now()), true)",
+        )
+        .bind(LAND_SEPOLIA.network)
+        .bind(LAND_SEPOLIA.land_registry)
+        .bind(LAND_SEPOLIA.estate_registry)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) VALUES ($1, 55, $2, 40, 0)",
+        )
+        .bind(LAND_SEPOLIA.land_registry)
+        .bind(venue)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, token_id, account, kind) VALUES (40, 0, $1, $2, 55, $3, 'transfer')",
+        )
+        .bind(now + 60)
+        .bind(LAND_SEPOLIA.land_registry)
+        .bind(venue)
+        .execute(pool)
+        .await
+        .unwrap();
+        // A separately published archival cursor on the same database does
+        // not change the status policy of a graph-only Sepolia process.
+        sqlx::query("UPDATE shop.chain_cursor SET last_block=42,folded_block=41,folded_at=timezone('UTC',now()),full_history=true WHERE indexer='rentals_sepolia'").execute(pool).await.unwrap();
+        assert_eq!(
+            cancel_moved(pool, LAND_SEPOLIA, false, Utc::now())
+                .await
+                .unwrap(),
+            Some(0),
+            "there is no custody evidence for the venue"
+        );
+        assert_eq!(state_of(pool, id).await, open());
+        // A transfer away from the venue is established by LAND alone.
+        sqlx::query(
+            "UPDATE land_authz.token_right SET owner=$1, updated_block=41 WHERE token_id=55",
+        )
+        .bind(OTHER)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, token_id, account, kind) VALUES (41, 0, $1, $2, 55, $3, 'transfer')")
+            .bind(now + 61).bind(LAND_SEPOLIA.land_registry).bind(OTHER).execute(pool).await.unwrap();
+        sqlx::query(
+            "UPDATE land_authz.index_cursor SET last_block=41, folded_block=41 WHERE network=$1",
+        )
+        .bind(LAND_SEPOLIA.network)
+        .execute(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            cancel_moved(pool, LAND_SEPOLIA, false, Utc::now())
+                .await
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(state_of(pool, id).await, cancelled(REASON_TRANSFERRED));
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn a_sepolia_catalogue_writer_refolds_listings_after_an_archival_writer() {
+        use crate::land_authz::LAND_SEPOLIA;
+        use crate::market::chain_walk::{ChainIndex, IndexSettings, test_owner};
+        use crate::rentals::index::RentalsIndex;
+        let venue = index::RentalsChain::Sepolia.venue();
+        let Some(db) =
+            crate::market::tests::support::OwnDb::create("sepolia_listing_cutover").await
+        else {
+            return;
+        };
+        let pool = &db.pool;
+        let id = index::tests::seed_listing(
+            pool,
+            LAND_SEPOLIA.land_registry,
+            "55",
+            ["0"; 3],
+            "0xabc123",
+            LESSOR,
+            venue,
+        )
+        .await;
+        sqlx::query("UPDATE signatures.rentals SET chain_id=11155111 WHERE id=$1")
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+        let archive = RentalsIndex::sepolia(false);
+        let writer = RentalsIndex::sepolia(true);
+        let settings = IndexSettings::default();
+        let owner = test_owner(pool, &archive, &settings).await;
+        sqlx::query("INSERT INTO shop.rental_event(network,block_number,log_index,block_time,rentals_address,kind,contract_address,token_id,signer,tenant,rental_days,price_per_day,signature,tx_hash)
+            SELECT 'sepolia',40,1,1800000000,rental_contract_address,'rented',contract_address,token_id,$2,$3,1,1,signature,'0xtx' FROM signatures.rentals WHERE id=$1")
+            .bind(id).bind(LESSOR).bind(OTHER).execute(pool).await.unwrap();
+        archive.fold(pool, Some(40), 40, &owner).await.unwrap();
+        assert_eq!(state_of(pool, id).await, open());
+        let owner = test_owner(pool, &writer, &settings).await;
+        writer.fold(pool, Some(40), 40, &owner).await.unwrap();
+        assert_eq!(state_of(pool, id).await.0, "executed");
+        let generation:i64=sqlx::query_scalar("SELECT position FROM shop.worker_progress WHERE worker='rental_listing_generation' AND scope=11155111").fetch_one(pool).await.unwrap();
+        assert_eq!(generation, owner.generation);
+        db.drop().await;
     }
 
     /// Publishes the land-authz index at `block`, or moves it there.
@@ -765,12 +1370,10 @@ mod tests {
         .unwrap();
     }
 
-    /// The job's custody leg: a token in the Rentals contract keeps its
-    /// listing while the rentals index is not published, and once it is, the
-    /// latest indexed rent decides only when its block is at or after the
-    /// token's transfer into the contract. An older rent by another lessor
-    /// (the token arrived through a rent the index has not reached, such as
-    /// an accepted offer) leaves the listing open.
+    /// The job's custody leg: a token in the Rentals contract stays unknown
+    /// until the Rentals cursor reaches its arrival. Once published, a
+    /// covering rent keeps the listing only when it names this lessor; no
+    /// covering rent means nobody holds custody and cancels it.
     #[tokio::test]
     async fn the_pass_reads_custody_from_a_rent_no_older_than_the_arrival() {
         let Some(db) = OwnedDatabase::new("rental_custody", Schema::Full, 2).await else {
@@ -781,35 +1384,70 @@ mod tests {
         let held = listing(pool, land, "1", 1).await;
         let rented_by_other = listing(pool, land, "2", 2).await;
         let unindexed = listing(pool, land, "3", 3).await;
+        let no_rent = listing(pool, land, "4", 4).await;
+        let cursor_behind_arrival = listing(pool, land, "5", 5).await;
         let later = Utc::now().timestamp() + 3_600;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "INSERT INTO land_authz.token_right (token_address, token_id, owner, updated_block, updated_log) VALUES \
-                ('{land}', 1, '{RENTALS}', 40, 0), ('{land}', 2, '{RENTALS}', 40, 1), ('{land}', 3, '{RENTALS}', 40, 2); \
+                ('{land}', 1, '{RENTALS}', 40, 0), ('{land}', 2, '{RENTALS}', 40, 1), ('{land}', 3, '{RENTALS}', 40, 2), \
+                ('{land}', 4, '{RENTALS}', 40, 3), ('{land}', 5, '{RENTALS}', 45, 0); \
              INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, account) VALUES \
                 (40, 0, {later}, '{land}', 'transfer', 1, '{RENTALS}'), (40, 1, {later}, '{land}', 'transfer', 2, '{RENTALS}'), \
-                (40, 2, {later}, '{land}', 'transfer', 3, '{RENTALS}')"
+                (40, 2, {later}, '{land}', 'transfer', 3, '{RENTALS}'), (40, 3, {later}, '{land}', 'transfer', 4, '{RENTALS}'), \
+                (45, 0, {later}, '{land}', 'transfer', 5, '{RENTALS}')"
         )))
         .execute(pool)
         .await
         .unwrap();
-        publish_land_index(pool, 40).await;
+        publish_land_index(pool, 45).await;
         // The rent of each transfer's block, and for token 3 only a rent
         // from before the previous lessor's claim.
         index_rent(pool, 1, LESSOR, 40, later).await;
         index_rent(pool, 2, OTHER, 41, later).await;
         index_rent(pool, 3, OTHER, 10, 1_600_000_000).await;
 
-        let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
+        let pass = run_pass(pool, Some(LAND_MAINNET), true, Utc::now())
             .await
             .unwrap();
-        assert_eq!(pass.moved, Some(0), "the rentals index is not published");
+        assert_eq!(pass.moved, Some(0), "no published custody evidence");
         assert_eq!(state_of(pool, rented_by_other).await, open());
 
         publish_rentals_index(pool).await;
-        let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block=40,folded_block=40 WHERE indexer='rentals'",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        let withheld = run_pass(pool, Some(LAND_MAINNET), true, Utc::now())
             .await
             .unwrap();
-        assert_eq!(pass.moved, Some(1));
+        assert_eq!(withheld.moved, Some(2));
+        assert_eq!(
+            state_of(pool, rented_by_other).await,
+            open(),
+            "rent 41 is above the published Rentals head"
+        );
+        assert_eq!(
+            state_of(pool, unindexed).await,
+            cancelled(REASON_TRANSFERRED)
+        );
+        assert_eq!(state_of(pool, no_rent).await, cancelled(REASON_TRANSFERRED));
+        assert_eq!(
+            state_of(pool, cursor_behind_arrival).await,
+            open(),
+            "the Rentals cursor has not reached the transfer into custody"
+        );
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block=50,folded_block=50 WHERE indexer='rentals'",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        let pass = run_pass(pool, Some(LAND_MAINNET), true, Utc::now())
+            .await
+            .unwrap();
+        assert_eq!(pass.moved, Some(2));
         assert_eq!(
             state_of(pool, rented_by_other).await,
             cancelled(REASON_TRANSFERRED),
@@ -818,17 +1456,13 @@ mod tests {
         assert_eq!(state_of(pool, held).await, open(), "held for the lessor");
         assert_eq!(
             state_of(pool, unindexed).await,
-            open(),
-            "a rent older than the arrival does not say who it is held for"
+            cancelled(REASON_TRANSFERRED)
         );
-
-        // The rent the token arrived under, once indexed, keeps the listing.
-        index_rent(pool, 3, LESSOR, 42, later).await;
-        let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
-            .await
-            .unwrap();
-        assert_eq!(pass.moved, Some(0));
-        assert_eq!(state_of(pool, unindexed).await, open());
+        assert_eq!(state_of(pool, no_rent).await, cancelled(REASON_TRANSFERRED));
+        assert_eq!(
+            state_of(pool, cursor_behind_arrival).await,
+            cancelled(REASON_TRANSFERRED)
+        );
         db.drop().await;
     }
 
@@ -867,7 +1501,8 @@ mod tests {
         .unwrap();
 
         publish_land_index(pool, 2).await;
-        let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
+        publish_rentals_index(pool).await;
+        let pass = run_pass(pool, Some(LAND_MAINNET), true, Utc::now())
             .await
             .unwrap();
         assert_eq!(pass.moved, Some(0));
@@ -888,7 +1523,7 @@ mod tests {
         );
 
         publish_land_index(pool, 5).await;
-        let pass = run_pass(pool, Some(LAND_MAINNET), Utc::now())
+        let pass = run_pass(pool, Some(LAND_MAINNET), true, Utc::now())
             .await
             .unwrap();
         assert_eq!(pass.moved, Some(3));
@@ -901,11 +1536,8 @@ mod tests {
         db.drop().await;
     }
 
-    /// The refresh route's custody read: with the asset row naming the
-    /// Rentals contract, the latest indexed rent decides only when it is no
-    /// older than that row. An older rent by another lessor (the rentals
-    /// index has not reached the rent the token arrived under) leaves the
-    /// listing open.
+    /// The refresh route treats an older rent as no custody record for the
+    /// token's current arrival, so the listing is transferred away.
     #[tokio::test]
     async fn the_refresh_reads_custody_from_a_rent_no_older_than_the_asset_row() {
         let Some(db) = OwnedDatabase::new("rental_refresh_custody", Schema::Full, 2).await else {
@@ -923,6 +1555,12 @@ mod tests {
             estate_size: None,
             created_at: 0,
             updated_at: arrived,
+            transferred_at: arrived,
+            transfer_block: Some(40),
+            membership_block: 0,
+            metadata_block: 1,
+            membership_checked_at: None,
+            land_cursor_updated_at: None,
         };
         publish_rentals_index(pool).await;
 
@@ -933,8 +1571,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             state_of(pool, unindexed).await,
-            open(),
-            "a rent older than the asset row does not say who it is held for"
+            cancelled(REASON_TRANSFERRED),
+            "a rent older than the arrival does not cover custody"
         );
         index_rent(pool, 1, OTHER, 40, arrived).await;
         sync_listing(pool, unindexed, Some(&in_custody), Utc::now())
@@ -968,7 +1606,6 @@ mod tests {
         let decoded = |log| index::decode_log(&log, 1_700_000_000).unwrap().unwrap();
         let token = alloy_primitives::U256::from(1u8);
         let mut conn = pool.acquire().await.unwrap();
-        let net = crate::market::chain_walk::ChainNet::Ethereum;
         let bump = decoded(index::tests::asset_index_log(
             LESSOR,
             LAND_REGISTRY_MAINNET,
@@ -977,10 +1614,13 @@ mod tests {
             50,
             0,
         ));
-        index::insert_events(&mut conn, net, &[bump]).await.unwrap();
-        let verdicts = index::changed_verdicts(&mut conn, RENTALS, -1, None)
+        index::insert_events(&mut conn, index::RentalsChain::Mainnet, &[bump])
             .await
             .unwrap();
+        let verdicts =
+            index::changed_verdicts(&mut conn, index::RentalsChain::Mainnet, RENTALS, -1, None)
+                .await
+                .unwrap();
         assert_eq!(
             verdicts
                 .iter()
@@ -990,7 +1630,7 @@ mod tests {
         );
 
         expire(pool, id).await;
-        run_pass(pool, None, Utc::now()).await.unwrap();
+        run_pass(pool, None, false, Utc::now()).await.unwrap();
         assert_eq!(state_of(pool, id).await, cancelled(REASON_EXPIRED));
         let written = index::apply_verdicts(&mut conn, &verdicts, Utc::now().naive_utc())
             .await
@@ -1009,10 +1649,13 @@ mod tests {
             51,
             0,
         ));
-        index::insert_events(&mut conn, net, &[rent]).await.unwrap();
-        let verdicts = index::changed_verdicts(&mut conn, RENTALS, -1, None)
+        index::insert_events(&mut conn, index::RentalsChain::Mainnet, &[rent])
             .await
             .unwrap();
+        let verdicts =
+            index::changed_verdicts(&mut conn, index::RentalsChain::Mainnet, RENTALS, -1, None)
+                .await
+                .unwrap();
         let written = index::apply_verdicts(&mut conn, &verdicts, Utc::now().naive_utc())
             .await
             .unwrap();

@@ -50,7 +50,7 @@ describe('profile passport', () => {
   it("draws the user's picture with no online dot, as unity-explorer's passport does", () => {
     render(<ProfilePassport profile={profile} onClose={vi.fn()} />)
     const picture = screen.getAllByRole('img', { name: 'kurd' })[0]
-    expect(picture.parentElement?.querySelector('[class*="dot"]')).toBeNull()
+    expect(picture.parentElement?.querySelector('[class*="hudDot"]')).toBeNull()
   })
 
   it.each([
@@ -236,7 +236,7 @@ describe('passport equipped items', () => {
     expect(shop.map((a) => a.getAttribute('href')).sort()).toEqual([SHOP_TIARA, SHOP_DISCO].sort())
     for (const a of shop) {
       expect(a).toHaveAttribute('target', '_blank')
-      expect(a).toHaveAttribute('rel', 'noopener')
+      expect(a).toHaveAttribute('rel', 'noopener noreferrer')
     }
   })
 
@@ -292,7 +292,8 @@ describe('passport photos', () => {
     remove: vi.fn(async () => ({ ok: true })),
     metas: {},
     loadPhoto: vi.fn(),
-    onTeleport: vi.fn(() => true)
+    loadWearables: vi.fn(async () => []),
+    onJumpIn: vi.fn(() => true)
   })
   async function openPhotos(isSelf: boolean, a = actions()): Promise<PassportPhotoActions> {
     const fetcher = vi.fn(async (_address: string, offset: number, limit: number) => ({ ok: true, photos: reel.slice(offset, offset + limit), total: reel.length, max: 500 }))
@@ -316,10 +317,10 @@ describe('passport photos', () => {
     expect(screen.queryByRole('button', { name: 'Photo options' })).toBeNull()
   })
 
-  it('the photo viewer covers the passport panel', async () => {
+  it('the photo viewer opens outside the passport panel', async () => {
     await openPhotos(false)
     await userEvent.click(screen.getAllByRole('button', { name: 'Open photo' })[0])
-    expect(screen.getByRole('dialog', { name: 'Photo' }).parentElement).toHaveAttribute('data-tab', 'photos')
+    expect(screen.getByRole('dialog', { name: 'Photo' }).closest('[data-tab]')).toBeNull()
   })
 
   it.each([

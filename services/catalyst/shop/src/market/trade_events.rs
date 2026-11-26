@@ -11,16 +11,29 @@
 //! offchain-marketplace-contract 87350c6): uses are counted per (signer,
 //! keccak256(signature)); a cancellation is keyed by (caller, hash), so only
 //! the signer's cancels a trade; V3 keys cancellations on the trade's
-//! EIP-712 digest, which the fold computes from the stored trade.
+//! EIP-712 digest: the one the trade stored when it was created or imported
+//! (`shop.trades.trade_digest`), else the one the fold rebuilds from the
+//! stored trade, accepted only when the signature recovers the signer over
+//! it. A V3 trade with no such digest is marked (`digest_failed_at`) and
+//! retried after [`DIGEST_RETRY`]; its cancellation would go unseen, so the
+//! open-listing reads leave it out.
 //!
-//! Readers use the verdict only while the network's cursor is published
-//! (`chain_walk::is_ready`): an index still catching up could show a stale
-//! signature index as a cancellation. Then `unified_trades` drops closed
-//! trades from every open-listing feed, `/v1/bids` reports `sold` and
-//! `cancelled`, and `GET /v1/trades/{hashed_signature}/accept` answers the
-//! notification event of an executed trade; before, the accept route answers
-//! the unavailable envelope and the feeds keep the expiry and local
-//! cancellation rule.
+//! The verdicts close a trade only while the network's cursor is published
+//! (`crate::chain_index::catalogue::published_sql_on`: a fold published within 30 minutes; a
+//! pass in progress keeps the previous publish): an index still catching up
+//! could show a stale signature index as a cancellation, and would miss the
+//! latest executions.
+//! So the open-listing reads fail closed: every route that lists, prices or
+//! reports the status of trades answers the unavailable envelope naming
+//! this index until it is current on every network ([`require_current`],
+//! called by `trades::ready`; the stored records of `/v1/trades` carry no
+//! status and wait for the trades mirror only), and
+//! `unified_trades` lists a trade only while its network's cursor is ready
+//! and its open verdict is published ([`listable_on_chain_sql`]), in the same
+//! statement, so a cursor that falls behind after the gate drops the trade
+//! instead of listing it again. `/v1/bids` reports `sold` and `cancelled`
+//! from the same verdicts, and `GET /v1/trades/{hashed_signature}/accept`
+//! answers the notification event of an executed trade.
 
 use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::HashMap;
@@ -28,7 +41,6 @@ use std::str::FromStr;
 
 use alloy_primitives::Address;
 use alloy_sol_types::{SolType, sol};
-use anyhow::Context;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -84,7 +96,10 @@ type Deployment = (&'static str, u64, bool);
 /// 2026-09-25; V1 is the squid's `OffChainMarketplace`, still holding the
 /// most mirrored trades. Testnet blocks (Amoy, Sepolia, the addresses of
 /// `listings::offchain_marketplaces` and the dApps' `OffChainMarketplace`):
-/// the same bisection, 2026-11-02. Sepolia has no V1.
+/// the same bisection, 2026-11-02. Sepolia V1 is pinned in
+/// decentraland/marketplace-squid-core@85c6832e96e5459b37f0f315b8e384693684e12d,
+/// src/eth/addresses/sepolia.ts. Its creation transaction is
+/// 0xd813aee88f1e1a21783ca8fa44868e926b9e2ddee3a73cc69919fcebd0edd337.
 const DEPLOYMENTS: [(i64, &[Deployment]); 4] = [
     (
         listings::MATIC_MAINNET,
@@ -149,6 +164,11 @@ const DEPLOYMENTS: [(i64, &[Deployment]); 4] = [
     (
         listings::ETHEREUM_SEPOLIA,
         &[
+            (
+                "0x54bdd3ffc1448bdab0251f05dd554eec803adb2f",
+                6_770_056,
+                false,
+            ),
             (
                 "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
                 9_455_328,
@@ -254,6 +274,7 @@ fn assets_json(assets: &[AssetTuple]) -> Value {
                     "contractAddress": format!("{:#x}", a.contractAddress),
                     "value": a.value.to_string(),
                     "beneficiary": format!("{:#x}", a.beneficiary),
+                    "extra": format!("0x{}", hex::encode(&a.extra)),
                 })
             })
             .collect(),
@@ -354,7 +375,7 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<TradeEvent>, D
     }))
 }
 
-/// Appends a window's rows (`ON CONFLICT (network, block_number, log_index) DO NOTHING`).
+/// Appends a window's logs. Replaying the same execution can complete older asset data.
 pub async fn insert_events(
     conn: &mut PgConnection,
     net: ChainNet,
@@ -368,7 +389,16 @@ pub async fn insert_events(
              SELECT $1, b, i, t, m, k, c, h, n::numeric, s, a, x \
              FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::jsonb[], $12::text[]) \
                   AS u(b, i, t, m, k, c, h, n, s, a, x) \
-             ON CONFLICT (network, block_number, log_index) DO NOTHING",
+             ON CONFLICT (network, block_number, log_index) DO UPDATE SET assets = EXCLUDED.assets, tx_hash=EXCLUDED.tx_hash, \
+                 block_time=EXCLUDED.block_time, caller=EXCLUDED.caller \
+             WHERE trade_event.kind = 'traded' AND EXCLUDED.kind = 'traded' \
+               AND (trade_event.tx_hash='' OR trade_event.tx_hash=EXCLUDED.tx_hash) \
+               AND trade_event.marketplace_address=EXCLUDED.marketplace_address AND trade_event.signer=EXCLUDED.signer \
+               AND trade_event.hashed_signature = EXCLUDED.hashed_signature \
+               AND (trade_event.caller='' OR trade_event.caller=EXCLUDED.caller) \
+               AND (trade_event.block_time=0 OR trade_event.block_time=EXCLUDED.block_time) \
+               AND (trade_event.assets,trade_event.tx_hash,trade_event.block_time,trade_event.caller) IS DISTINCT FROM \
+                   (EXCLUDED.assets,EXCLUDED.tx_hash,EXCLUDED.block_time,EXCLUDED.caller)",
         )
         .bind(net.db_name())
         .bind(chunk.iter().map(|r| r.block_number).collect::<Vec<_>>())
@@ -389,14 +419,25 @@ pub async fn insert_events(
     Ok(written)
 }
 
-/// The stored trade as the signed struct, to recompute its EIP-712 digest.
-async fn trade_creation(pool: &PgPool, trade_id: uuid::Uuid) -> anyhow::Result<TradeCreation> {
-    let head = sqlx::query("SELECT signer, signature, type::text AS type, network, chain_id, checks FROM shop.trades WHERE id = $1")
+/// The stored trade as the signed struct, to rebuild its EIP-712 digest;
+/// `Ok(Err(why))` when the row cannot be read as one (its checks do not
+/// parse, or it is gone). A database error is the outer `Err`: the fold
+/// stops and retries, it never records a digest failure it did not prove.
+async fn trade_creation(
+    pool: &PgPool,
+    trade_id: uuid::Uuid,
+) -> Result<Result<TradeCreation, String>, sqlx::Error> {
+    let Some(head) = sqlx::query("SELECT signer, signature, type::text AS type, network, chain_id, checks FROM shop.trades WHERE id = $1")
         .bind(trade_id)
-        .fetch_one(pool)
-        .await?;
-    let checks: TradeChecksInput =
-        serde_json::from_value(head.get::<Value, _>("checks")).context("the stored checks")?;
+        .fetch_optional(pool)
+        .await?
+    else {
+        return Ok(Err("the trade is no longer stored".to_string()));
+    };
+    let checks: TradeChecksInput = match serde_json::from_value(head.get::<Value, _>("checks")) {
+        Ok(checks) => checks,
+        Err(e) => return Ok(Err(format!("the stored checks: {e}"))),
+    };
     let assets = sqlx::query(
         "SELECT ta.direction::text AS direction, ta.asset_type::int4 AS asset_type, ta.contract_address, ta.extra, ta.beneficiary, \
                 erc20.amount::text AS amount, erc721.token_id, item.item_id \
@@ -426,7 +467,7 @@ async fn trade_creation(pool: &PgPool, trade_id: uuid::Uuid) -> anyhow::Result<T
             received.push(input)
         }
     }
-    Ok(TradeCreation {
+    Ok(Ok(TradeCreation {
         signer: head.get("signer"),
         signature: head.get("signature"),
         trade_type: head.get("type"),
@@ -435,17 +476,82 @@ async fn trade_creation(pool: &PgPool, trade_id: uuid::Uuid) -> anyhow::Result<T
         checks,
         sent,
         received,
-    })
+    }))
 }
 
-/// Rows the digest step computes per fold, the bound of one statement's work.
+/// Rows the digest step settles per statement, the bound of one batch's work.
 const DIGEST_BATCH: i64 = 2_000;
 
-/// The V3 trades of `net` without a verdict row yet get one with their
-/// digest (the status is the fold's): the EIP-712 signing hash of the stored
-/// trade against its marketplace's domain. A trade whose row cannot be
-/// rebuilt gets a NULL digest and is logged (its V3 cancellation cannot be
-/// matched; the other legs still apply).
+/// How long a V3 trade whose digest could not be established waits before
+/// the digest step tries it again: permanent failures stay cheap, and a
+/// digest that arrives later (an import, a repaired row, a fixed rebuild) is
+/// picked up within minutes. SQL interval text.
+const DIGEST_RETRY: &str = "10 minutes";
+
+/// Whether `signature` recovers `signer` over `digest`: the digest is the
+/// one the trade was signed over. Every trade source verifies an ECDSA
+/// signature of an EOA (this node's `POST /v1/trades`, marketplace-server's
+/// `resolveTradeSignature`), so a digest that fails here keys no
+/// cancellation of that trade.
+fn signed_over(digest: &str, signature: &str, signer: &str) -> bool {
+    let Ok(bytes) = hex::decode(digest.trim_start_matches("0x")) else {
+        return false;
+    };
+    let Ok(digest) = <[u8; 32]>::try_from(bytes.as_slice()) else {
+        return false;
+    };
+    crate::auth::recover::recover_address_from_digest(&digest, signature)
+        .is_ok_and(|recovered| recovered.eq_ignore_ascii_case(signer))
+}
+
+/// A V3 trade the digest step settles.
+struct DigestCandidate {
+    id: uuid::Uuid,
+    contract: String,
+    signer: String,
+    signature: String,
+    stored: Option<String>,
+}
+
+/// The digest of `c` rebuilt from its stored row against its marketplace's
+/// domain on `chain_id`, when the signature recovers the signer over it;
+/// `Ok(Err(why))` when it cannot be established.
+async fn rebuilt_digest(
+    pool: &PgPool,
+    chain_id: i64,
+    c: &DigestCandidate,
+) -> Result<Result<String, String>, sqlx::Error> {
+    let Some(domain) = domain_of(chain_id, &c.contract) else {
+        return Ok(Err(format!("no EIP-712 domain for {}", c.contract)));
+    };
+    let trade = match trade_creation(pool, c.id).await? {
+        Ok(trade) => trade,
+        Err(why) => return Ok(Err(why)),
+    };
+    let digest = match listings::signing_hash(&trade, &domain) {
+        Ok(h) => format!("{h:#x}"),
+        Err(e) => return Ok(Err(e.to_string())),
+    };
+    if !signed_over(&digest, &c.signature, &c.signer) {
+        return Ok(Err(
+            "the signature does not recover the signer over the digest rebuilt from the row"
+                .to_string(),
+        ));
+    }
+    Ok(Ok(digest))
+}
+
+/// The digest step: every V3 trade of `net` without a verdict row, and every
+/// one whose row has no digest and whose last failure is older than
+/// [`DIGEST_RETRY`] (or that never had one: a row the fold created first, or
+/// one from before failures were marked), gets its digest: the stored one
+/// when the signature recovers the signer over it, else the one rebuilt from
+/// the row on the same condition. A row that gains a digest is refolded
+/// (`folded_block = -1`), since its cancellation may already be in the log;
+/// one that cannot get one is marked `digest_failed_at` and logged. A
+/// verified digest is never overwritten. Returns the trades settled: each
+/// leaves the candidate set (a digest, or a failure newer than the
+/// backoff), so the caller's loop ends.
 async fn fill_v3_digests(
     pool: &PgPool,
     net: ChainNet,
@@ -457,34 +563,44 @@ async fn fill_v3_digests(
         .filter(|(_, _, v3)| *v3)
         .map(|(a, _, _)| a.to_string())
         .collect();
-    let ids: Vec<(uuid::Uuid, String)> = sqlx::query_as(
-        "SELECT t.id, lower(t.contract) FROM shop.trades t \
+    let candidates: Vec<DigestCandidate> = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT t.id, lower(t.contract) AS contract, t.signer, t.signature, t.trade_digest FROM shop.trades t \
+         LEFT JOIN shop.trade_chain_state s ON s.trade_id = t.id \
          WHERE lower(t.network) = $1 AND lower(t.contract) = ANY($2) \
-           AND NOT EXISTS (SELECT 1 FROM shop.trade_chain_state s WHERE s.trade_id = t.id) \
-         LIMIT $3",
-    )
+           AND (s.trade_id IS NULL \
+                OR (s.digest IS NULL AND (s.digest_failed_at IS NULL \
+                    OR s.digest_failed_at <= timezone('UTC', now()) - interval '{DIGEST_RETRY}'))) \
+         LIMIT $3"
+    )))
     .bind(net.db_name())
     .bind(&v3)
     .bind(DIGEST_BATCH)
     .fetch_all(pool)
-    .await?;
+    .await?
+    .iter()
+    .map(|r| DigestCandidate {
+        id: r.get("id"),
+        contract: r.get("contract"),
+        signer: r.get("signer"),
+        signature: r.get("signature"),
+        stored: r.get("trade_digest"),
+    })
+    .collect();
     let mut rows: (Vec<uuid::Uuid>, Vec<Option<String>>) = (Vec::new(), Vec::new());
-    for (id, contract) in &ids {
-        let digest = match (
-            domain_of(chain_id, contract),
-            trade_creation(pool, *id).await,
-        ) {
-            (Some(domain), Ok(trade)) => listings::signing_hash(&trade, &domain)
-                .map(|h| format!("{h:#x}"))
-                .map_err(|e| anyhow::anyhow!("{e}")),
-            (None, _) => Err(anyhow::anyhow!("no EIP-712 domain for {contract}")),
-            (_, Err(e)) => Err(e),
+    for c in &candidates {
+        let digest = match c
+            .stored
+            .as_deref()
+            .filter(|d| signed_over(d, &c.signature, &c.signer))
+        {
+            Some(stored) => Ok(stored.to_string()),
+            None => rebuilt_digest(pool, chain_id, c).await?,
         };
-        rows.0.push(*id);
+        rows.0.push(c.id);
         rows.1.push(match digest {
             Ok(d) => Some(d),
-            Err(e) => {
-                tracing::warn!(trade = %id, error = %e, "trade-events: cannot rebuild the V3 digest of a stored trade");
+            Err(why) => {
+                tracing::warn!(trade = %c.id, stored = c.stored.is_some(), error = %why, "trade-events: no verified V3 digest for a stored trade; it is not listed until one is established");
                 None
             }
         });
@@ -493,9 +609,14 @@ async fn fill_v3_digests(
         // Each batch commits on its own, after the owner check.
         let mut tx = pool.begin().await?;
         sqlx::query(
-            "INSERT INTO shop.trade_chain_state (trade_id, network, digest, status, folded_block) \
-             SELECT id, $1, d, 'open', -1 FROM UNNEST($2::uuid[], $3::text[]) AS u(id, d) \
-             ON CONFLICT (trade_id) DO NOTHING",
+            "INSERT INTO shop.trade_chain_state (trade_id, network, digest, digest_failed_at, status, folded_block) \
+             SELECT id, $1, d, CASE WHEN d IS NULL THEN timezone('UTC', now()) END, 'open', -1 \
+             FROM UNNEST($2::uuid[], $3::text[]) AS u(id, d) \
+             ON CONFLICT (trade_id) DO UPDATE SET \
+                 digest = EXCLUDED.digest, \
+                 digest_failed_at = EXCLUDED.digest_failed_at, \
+                 folded_block = CASE WHEN EXCLUDED.digest IS NULL THEN shop.trade_chain_state.folded_block ELSE -1 END \
+             WHERE shop.trade_chain_state.digest IS NULL",
         )
         .bind(net.db_name())
         .bind(&rows.0)
@@ -505,7 +626,7 @@ async fn fill_v3_digests(
         owner.check(&mut tx).await?;
         tx.commit().await?;
     }
-    Ok(ids.len())
+    Ok(candidates.len())
 }
 
 /// The verdict of every touched trade of `net`: trades without a folded row
@@ -584,8 +705,8 @@ ON CONFLICT (trade_id) DO UPDATE SET
     executed_at = EXCLUDED.executed_at,
     folded_block = EXCLUDED.folded_block";
 
-/// The digest step until no V3 trade lacks a row, then the verdict fold, in
-/// one transaction for the fold. Returns the verdicts written.
+/// The digest step until no V3 trade is left to settle, then the verdict
+/// fold, in one transaction for the fold. Returns the verdicts written.
 pub async fn fold(
     pool: &PgPool,
     net: ChainNet,
@@ -719,29 +840,12 @@ impl ChainIndex for TradeEventsIndex {
     }
 }
 
-/// The networks whose trade verdicts readers may use at `now`, each read on
-/// the chain `indexes` configures for it.
-pub async fn ready_networks(
-    pool: &PgPool,
-    indexes: &chain_walk::IndexSettings,
-    now: chrono::DateTime<Utc>,
-) -> Vec<ChainNet> {
-    let mut out = Vec::new();
-    for net in ChainNet::ALL {
-        if chain_walk::ready_cursor_on(pool, INDEXER_TRADE_EVENTS, net, indexes.chain_id(net), now)
-            .await
-            .is_some()
-        {
-            out.push(net);
-        }
-    }
-    out
-}
-
-/// The SQL predicate "the chain closed trade `t`" for the open-listing
-/// feeds, with the readiness rule inline (a bound `now_p`): a verdict of a
-/// network whose index is not published, or is bound to another chain than
-/// this process serves, is ignored ([`verdicts_ready_sql`]).
+/// The SQL predicate "the chain closed trade `t`", with the readiness rule
+/// inline (a bound `now_p`): a verdict of a network whose index is not
+/// published, or is bound to another chain than this process serves, is
+/// ignored ([`verdicts_ready_sql`]). For the duplicate-listing refusal,
+/// where an unpublished verdict must keep counting the trade as open; the
+/// open-listing feeds read [`listable_on_chain_sql`].
 pub fn closed_on_chain_sql(t: &str, now_p: &str) -> String {
     format!(
         "EXISTS (SELECT 1 FROM shop.trade_chain_state tcs \
@@ -751,14 +855,172 @@ pub fn closed_on_chain_sql(t: &str, now_p: &str) -> String {
     )
 }
 
+/// The SQL predicate "the trade-events verdicts of trade `t`'s network are
+/// current" (a bound `now_p`): its cursor is published, recent and bound to
+/// the chain this process serves ([`verdicts_ready_sql`]).
+pub fn verdicts_current_sql(t: &str, now_p: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM shop.chain_cursor tcr \
+                 WHERE tcr.indexer = 'trade_events' AND tcr.network = lower({t}.network) AND {ready})",
+        ready = verdicts_ready_sql("tcr", now_p)
+    )
+}
+
+/// The SQL predicate "trade `t` is a V3 trade whose cancellation digest
+/// could not be established" (`trade_chain_state.digest_failed_at`): its
+/// cancellation would go unseen.
+pub fn unverifiable_sql(t: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM shop.trade_chain_state tcu \
+                 WHERE tcu.trade_id = {t}.id AND tcu.digest_failed_at IS NOT NULL)"
+    )
+}
+
+/// The SQL predicate "trade `t` may be served as an open listing" for the
+/// open-listing feeds (a bound `now_p`): its network has published verdicts
+/// and folded this trade's recorded events. The trade needs an open
+/// verdict from a venue the index watches. A late import may already have
+/// closed in the log. For V3, the fold also needs its cancellation digest.
+/// A trade can arrive between the indexer's digest pass and verdict fold.
+pub fn listable_on_chain_sql(t: &str, now_p: &str) -> String {
+    let watched = DEPLOYMENTS
+        .iter()
+        .flat_map(|(chain, deployments)| {
+            deployments
+                .iter()
+                .map(move |(address, _, requires_digest)| {
+                    format!("({chain}::bigint, '{address}', {requires_digest})")
+                })
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "EXISTS (SELECT FROM shop.chain_cursor c
+                 JOIN (VALUES {watched}) AS venue(chain_id, address, requires_digest)
+                   ON venue.chain_id = c.chain_id AND venue.address = lower({t}.contract)
+                 JOIN shop.trade_chain_state s ON s.trade_id = {t}.id AND s.network = c.network
+                 WHERE c.indexer = 'trade_events' AND c.network = lower({t}.network)
+                   AND c.chain_id = {t}.chain_id AND {ready}
+                   AND s.status = 'open' AND s.digest_failed_at IS NULL
+                   AND s.folded_block BETWEEN 0 AND c.folded_block
+                   AND (NOT venue.requires_digest OR s.digest IS NOT NULL)
+                   AND NOT EXISTS (
+                       SELECT FROM shop.trade_event e
+                       WHERE e.network = c.network AND e.marketplace_address = venue.address
+                         AND e.block_number > c.folded_block
+                         AND e.hashed_signature IN ({t}.hashed_signature, s.digest)
+                         AND ((e.kind = 'traded' AND e.signer = {t}.signer)
+                           OR (e.kind = 'signature_cancelled' AND e.caller = {t}.signer))
+                   )
+                   AND NOT EXISTS (
+                       SELECT FROM shop.trade_event e
+                       WHERE e.network = c.network AND e.marketplace_address = venue.address
+                         AND e.block_number > c.folded_block AND e.new_index IS NOT NULL
+                         AND e.kind = 'signer_index_increased' AND e.caller = {t}.signer
+                   )
+                   AND NOT EXISTS (
+                       SELECT FROM shop.trade_event e
+                       WHERE e.network = c.network AND e.marketplace_address = venue.address
+                         AND e.block_number > c.folded_block AND e.new_index IS NOT NULL
+                         AND e.kind = 'contract_index_increased'
+                   ))",
+        ready = verdicts_ready_sql("c", now_p),
+    )
+}
+
+/// The networks of `nets` whose trade-events verdicts are not current at
+/// `now` on `conn` ([`verdicts_ready_sql`]), in the order asked.
+pub async fn stale_networks_on(
+    conn: &mut PgConnection,
+    nets: &[ChainNet],
+    now: chrono::DateTime<Utc>,
+) -> Result<Vec<ChainNet>, sqlx::Error> {
+    let names: Vec<&str> = nets.iter().map(|n| n.db_name()).collect();
+    let stale: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT n.network FROM unnest($2::text[]) WITH ORDINALITY AS n(network, i) \
+         WHERE NOT EXISTS (SELECT 1 FROM shop.chain_cursor c \
+                           WHERE c.indexer = 'trade_events' AND c.network = n.network AND {ready}) \
+         ORDER BY n.i",
+        ready = verdicts_ready_sql("c", "$1")
+    )))
+    .bind(now.naive_utc())
+    .bind(&names)
+    .fetch_all(conn)
+    .await?;
+    Ok(stale.iter().filter_map(|n| ChainNet::parse(n)).collect())
+}
+
+/// What the envelope says of the networks whose verdicts are not current.
+pub fn stale_message(stale: &[ChainNet]) -> String {
+    let names: Vec<&str> = stale.iter().map(|n| n.db_name()).collect();
+    format!(
+        "the trade-events index has not published a fold on {} within the last 30 minutes: sold and cancelled off-chain listings cannot be told from open ones until it does",
+        names.join(" and ")
+    )
+}
+
+/// `Err(envelope)` unless the trade-events verdicts are current on every
+/// network ([`stale_networks_on`]): the gate of every route that lists,
+/// prices or reports the status of trades (`trades::ready`). A database
+/// error reads as not current: the envelope, never a guess.
+pub async fn require_current(state: &MarketplaceState) -> Result<(), Response> {
+    let mut conn = match state.pool.acquire().await {
+        Ok(conn) => conn,
+        Err(e) => return Err(unreadable(e)),
+    };
+    require_current_on(&mut conn, Utc::now()).await
+}
+
+/// [`require_current`] read on `conn` at `now`: a reader that runs its
+/// reads in one snapshot decides on the cursors that snapshot sees.
+pub async fn require_current_on(
+    conn: &mut PgConnection,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), Response> {
+    current_on(conn, now)
+        .await
+        .map_err(|(source, why)| unavailable(source, &why))
+}
+
+/// [`require_current_on`], typed: the source that refused and why, for a
+/// caller that carries them through its own error (a cursor read that
+/// failed is not current either).
+pub async fn current_on(
+    conn: &mut PgConnection,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), (Source, String)> {
+    match stale_networks_on(conn, &ChainNet::ALL, now).await {
+        Ok(stale) if stale.is_empty() => Ok(()),
+        Ok(stale) => Err((Source::TradeEventsIndex, stale_message(&stale))),
+        Err(e) => Err(unreadable_reason(e)),
+    }
+}
+
+/// The envelope of a cursor read that failed: not current, never a guess.
+fn unreadable(e: sqlx::Error) -> Response {
+    let (source, why) = unreadable_reason(e);
+    unavailable(source, &why)
+}
+
+/// [`unreadable`]'s source and reason.
+fn unreadable_reason(e: sqlx::Error) -> (Source, String) {
+    tracing::warn!(error = %e, "cannot read shop.chain_cursor; treating the trade-events index as not current");
+    (
+        Source::TradeEventsIndex,
+        "the trade-events index state cannot be read".to_string(),
+    )
+}
+
 /// The readiness rule of the trade-events cursor as the verdict SQL reads
-/// it: [`chain_walk::ready_sql_on`] with the chains this process serves
+/// it: the publish marker ([`crate::chain_index::catalogue::published_sql_on`]: a fold
+/// published within 30 minutes, not `folded_block = last_block`, which every
+/// pass breaks while it walks and folds), with the chains this process serves
 /// ([`super::catalog::served_chains`], the trade-events walk's
 /// `MARKETPLACE_INDEX_CHAIN_ID_*`), so a cursor bound to another chain never
 /// lends its verdicts.
-fn verdicts_ready_sql(alias: &str, now_p: &str) -> String {
+pub(crate) fn verdicts_ready_sql(alias: &str, now_p: &str) -> String {
     let (ethereum, matic) = super::catalog::served_chains();
-    chain_walk::ready_sql_on(alias, now_p, ethereum, matic)
+    crate::chain_index::catalogue::published_sql_on(alias, now_p, ethereum, matic)
 }
 
 /// The chain verdict of trade `t` (`sold` | `cancelled`), NULL when open or
@@ -852,10 +1114,10 @@ pub(super) async fn bid_asset(
     let contract = asset.contract_address.to_ascii_lowercase();
     Ok(match (asset.asset_type, &asset.token_id, &asset.item_id) {
         (crate::types::ASSET_TYPE_ERC721, Some(token), _) => {
-            nft_meta(pool, land_image_base, &net, &contract, token).await?
+            nft_meta(pool, land_image_base, &net, bid.chain_id, &contract, token).await?
         }
         (crate::types::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
-            item_meta(pool, &net, &contract, item).await?
+            item_meta(pool, &net, bid.chain_id, &contract, item).await?
         }
         _ => None,
     })
@@ -963,12 +1225,12 @@ pub(crate) struct StoredTrade {
 }
 
 async fn stored_trade(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     hashed_signature: &str,
 ) -> Result<Option<StoredTrade>, sqlx::Error> {
     let Some(head) = sqlx::query("SELECT id::text AS id, network, signer, type::text AS type, contract FROM shop.trades WHERE hashed_signature = $1")
         .bind(hashed_signature)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await?
     else {
         return Ok(None);
@@ -982,7 +1244,7 @@ async fn stored_trade(
          WHERE ta.trade_id = $1::uuid ORDER BY ta.direction ASC, ta.created_at, ta.id",
     )
     .bind(head.get::<String, _>("id"))
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     let sent_amount = assets
         .iter()
@@ -1018,17 +1280,19 @@ fn category_of_item_type(item_type: &str) -> &'static str {
 }
 
 /// An item asset from the items mirror: the creator is the seller.
-pub(crate) async fn item_meta(
-    pool: &PgPool,
+pub(crate) async fn item_meta<'e>(
+    conn: impl sqlx::PgExecutor<'e>,
     network: &str,
+    chain_id: i64,
     contract: &str,
     item_id: &str,
 ) -> Result<Option<AssetMeta>, sqlx::Error> {
-    let row = sqlx::query("SELECT image, creator, rarity, name, item_type FROM shop.items WHERE network = $1 AND contract_address = $2 AND item_id = $3::numeric")
+    let row = sqlx::query("SELECT image, creator, rarity, name, item_type FROM shop.items WHERE network = $1 AND contract_address = $2 AND item_id = $3::numeric AND chain_id=$4 AND ($4 IN (1,137) OR testnet_verified)")
         .bind(network)
         .bind(contract)
         .bind(item_id)
-        .fetch_optional(pool)
+        .bind(chain_id as i32)
+        .fetch_optional(conn)
         .await?;
     Ok(row.map(|r| AssetMeta {
         image: r.get::<Option<String>, _>("image").unwrap_or_default(),
@@ -1044,8 +1308,9 @@ pub(crate) async fn item_meta(
 
 /// [`item_meta`] of many `(contract, item_id)` at once, keyed as asked.
 pub(crate) async fn item_metas(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     network: &str,
+    chain_id: i64,
     keys: &[(String, String)],
 ) -> Result<HashMap<(String, String), AssetMeta>, sqlx::Error> {
     let (contracts, items): (Vec<String>, Vec<String>) = keys
@@ -1056,12 +1321,13 @@ pub(crate) async fn item_metas(
     let rows = sqlx::query(
         "SELECT u.contract, u.item, i.image, i.creator, i.rarity, i.name, i.item_type \
          FROM UNNEST($2::text[], $3::text[]) AS u(contract, item) \
-         JOIN shop.items i ON i.network = $1 AND i.contract_address = u.contract AND i.item_id = u.item::numeric",
+         JOIN shop.items i ON i.network = $1 AND i.contract_address = u.contract AND i.item_id = u.item::numeric AND i.chain_id=$4 AND ($4 IN (1,137) OR i.testnet_verified)",
     )
     .bind(network)
     .bind(&contracts)
     .bind(&items)
-    .fetch_all(pool)
+    .bind(chain_id as i32)
+    .fetch_all(conn)
     .await?;
     Ok(rows
         .into_iter()
@@ -1084,12 +1350,14 @@ pub(crate) async fn item_metas(
 
 /// [`nft_meta`] of many `(contract, token_id)` at once, keyed as asked.
 pub(crate) async fn nft_metas(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     land_image_base: &str,
     network: &str,
+    chain_id: i64,
     keys: &[(String, String)],
 ) -> Result<HashMap<(String, String), AssetMeta>, sqlx::Error> {
-    let found = super::nft_reads::asset_metas(pool, land_image_base, network, keys).await?;
+    let found =
+        super::nft_reads::asset_metas(conn, land_image_base, network, chain_id, keys).await?;
     Ok(found
         .into_iter()
         .map(|((contract, token), n)| {
@@ -1110,15 +1378,17 @@ pub(crate) async fn nft_metas(
 
 /// An nft asset from the nft index (collections and names) or the LAND
 /// index: its current owner is the seller, as the old squid read had it.
-pub(crate) async fn nft_meta(
-    pool: &PgPool,
+pub(crate) async fn nft_meta<'e>(
+    conn: impl sqlx::PgExecutor<'e>,
     land_image_base: &str,
     network: &str,
+    chain_id: i64,
     contract: &str,
     token_id: &str,
 ) -> Result<Option<AssetMeta>, sqlx::Error> {
     if let Some(n) =
-        super::nft_reads::asset_meta(pool, land_image_base, network, contract, token_id).await?
+        super::nft_reads::asset_meta(conn, land_image_base, network, chain_id, contract, token_id)
+            .await?
     {
         return Ok(Some(AssetMeta {
             image: n.image,
@@ -1138,6 +1408,8 @@ pub(crate) async fn nft_meta(
 /// trade is known and the chain has no execution of it.
 async fn accepted_event(
     state: &MarketplaceState,
+    conn: &mut PgConnection,
+    published_block: i64,
     trade: &StoredTrade,
     caller: &str,
 ) -> Result<Option<Value>, Response> {
@@ -1145,33 +1417,39 @@ async fn accepted_event(
     let executed: Option<i64> = sqlx::query_scalar(
         "SELECT e.block_time FROM shop.trade_event e \
          WHERE e.hashed_signature = (SELECT hashed_signature FROM shop.trades WHERE id = $1::uuid) \
-           AND e.kind = 'traded' AND e.network = $2 AND e.marketplace_address = $3 \
+           AND e.kind = 'traded' AND e.network = $2 AND e.marketplace_address = $3 AND e.block_number <= $4 \
          ORDER BY e.block_number DESC, e.log_index DESC LIMIT 1",
     )
     .bind(&trade.id)
     .bind(&network)
     .bind(&trade.contract)
-    .fetch_optional(&state.pool)
+    .bind(published_block)
+    .fetch_optional(&mut *conn)
     .await
     .map_err(|e| super::wire::ApiError::internal(e.to_string()).into_response())?;
     if executed.is_none() {
         return Ok(None);
     }
+    let Some(net) = ChainNet::parse(&network) else {
+        return Ok(None);
+    };
+    let chain_id = state.settings.market.indexes.chain_id(net);
     let mut metas = Vec::new();
     for (asset_type, contract, token_id, item_id) in &trade.assets {
         let meta = match (*asset_type, token_id, item_id) {
             (crate::types::ASSET_TYPE_ERC721, Some(token), _) => {
                 nft_meta(
-                    &state.pool,
+                    &mut *conn,
                     &state.settings.land_image_base_url,
                     &network,
+                    chain_id,
                     contract,
                     token,
                 )
                 .await
             }
             (crate::types::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
-                item_meta(&state.pool, &network, contract, item).await
+                item_meta(&mut *conn, &network, chain_id, contract, item).await
             }
             _ => Ok(None),
         }
@@ -1208,7 +1486,17 @@ pub async fn get_trade_accepted_event(
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
     let hashed_signature = hashed_signature.to_ascii_lowercase();
-    let trade = match stored_trade(&state.pool, &hashed_signature).await {
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return unreadable(e),
+    };
+    if let Err(e) = sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await
+    {
+        return unreadable(e);
+    }
+    let trade = match stored_trade(&mut tx, &hashed_signature).await {
         Ok(Some(t)) => t,
         Ok(None) => {
             return envelope_error(
@@ -1225,10 +1513,13 @@ pub async fn get_trade_accepted_event(
         );
     };
     let chain = state.settings.market.indexes.chain_id(net);
-    if chain_walk::ready_cursor_on(&state.pool, INDEXER_TRADE_EVENTS, net, chain, Utc::now())
-        .await
-        .is_none()
-    {
+    let cursor = match chain_walk::cursor(&mut *tx, INDEXER_TRADE_EVENTS, net).await {
+        Ok(cursor) => cursor,
+        Err(e) => return unreadable(e),
+    };
+    let Some(published_block) =
+        cursor.and_then(|c| chain_walk::fresh_fold_on(&c, chain, Utc::now()))
+    else {
         return unavailable(
             Source::TradeEventsIndex,
             &format!(
@@ -1236,7 +1527,7 @@ pub async fn get_trade_accepted_event(
                 net.db_name()
             ),
         );
-    }
+    };
     let timestamp = pairs
         .iter()
         .find(|(k, _)| k == "timestamp")
@@ -1248,7 +1539,7 @@ pub async fn get_trade_accepted_event(
         .find(|(k, _)| k == "caller")
         .map(|(_, v)| v.clone())
         .unwrap_or_default();
-    match accepted_event(&state, &trade, &caller).await {
+    match accepted_event(&state, &mut tx, published_block, &trade, &caller).await {
         Err(r) => r,
         Ok(None) => envelope_error(
             StatusCode::NOT_FOUND,
@@ -1280,7 +1571,7 @@ pub async fn status(pool: &PgPool, indexes: &chain_walk::IndexSettings) -> Value
             net.db_name().to_string(),
             json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready_on(&c, indexes.chain_id(net), Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
+            "ready": chain_walk::fresh_fold_on(&c, indexes.chain_id(net), Utc::now()).is_some(), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
             "chainId": c.chain_id, "quarantine": c.quarantine_reason,
         }))),
         );
@@ -1296,7 +1587,7 @@ pub fn parse_address(s: &str) -> Option<Address> {
 pub(crate) mod tests {
     use super::*;
     use alloy_primitives::{B256, FixedBytes, U256, keccak256};
-    use alloy_sol_types::SolValue;
+    use alloy_sol_types::{SolValue, sol_data};
 
     #[test]
     fn the_topics_are_the_keccak_of_their_signatures() {
@@ -1369,12 +1660,40 @@ pub(crate) mod tests {
             net: ChainNet::Ethereum,
             chain_id: 11_155_111,
         };
-        assert_eq!(sepolia.start_block(), 9_455_328);
+        assert_eq!(sepolia.start_block(), 6_770_056);
         // No mainnet address is walked on a testnet, and an unknown chain walks nothing.
         for (a, _, _) in deployments(80_002) {
             assert!(!deployments(137).iter().any(|(m, _, _)| m == a), "{a}");
         }
         assert!(deployments(10).is_empty());
+    }
+
+    /// Publishes the trade-events index on both networks, each on its
+    /// mainnet chain, current now: the state the routes that list, price or
+    /// report the status of trades require ([`require_current`]), for the
+    /// tests that read trades without walking the index. A cursor already
+    /// there is made current.
+    pub(crate) async fn publish_cursors(pool: &PgPool) {
+        publish_cursors_at(pool, None).await
+    }
+
+    /// [`publish_cursors`] folded at `at` (a read's fixed clock), else now.
+    pub(crate) async fn publish_cursors_at(pool: &PgPool, at: Option<chrono::NaiveDateTime>) {
+        for net in ChainNet::ALL {
+            sqlx::query(
+                "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, fold_through, folded_block, folded_at, full_history, chain_id) \
+                 VALUES ('trade_events', $1, 0, 10, 10, 10, COALESCE($3, timezone('UTC', now())), true, $2) \
+                 ON CONFLICT (indexer, network) DO UPDATE SET folded_block = shop.chain_cursor.last_block, \
+                     fold_through = shop.chain_cursor.last_block, folded_at = EXCLUDED.folded_at, \
+                     full_history = true, chain_id = EXCLUDED.chain_id, quarantined_at = NULL, quarantine_reason = NULL",
+            )
+            .bind(net.db_name())
+            .bind(net.chain_id())
+            .bind(at)
+            .execute(pool)
+            .await
+            .expect("the trade-events cursors are published");
+        }
     }
 
     pub(crate) fn topic_of(addr: &str) -> String {
@@ -1425,7 +1744,13 @@ pub(crate) mod tests {
                     .unwrap(),
                 value: U256::from(10u8).pow(U256::from(18u8)),
                 beneficiary: Address::from_str(signer).unwrap(),
-                extra: vec![].into(),
+                extra: (
+                    false,
+                    U256::from(1u8),
+                    vec![Address::from_str(signer).unwrap()],
+                )
+                    .abi_encode_params()
+                    .into(),
             }],
         };
         let data = (trade,).abi_encode_params();
@@ -1482,6 +1807,23 @@ pub(crate) mod tests {
             assert_eq!(assets["sent"][0]["assetType"], "3");
             assert_eq!(assets["sent"][0]["value"], "7");
             assert_eq!(assets["received"][0]["value"], "1000000000000000000");
+            assert_eq!(assets["sent"][0]["extra"], "0x");
+            let extra = assets["received"][0]["extra"].as_str().unwrap();
+            let encoded = hex::decode(extra.strip_prefix("0x").unwrap()).unwrap();
+            let royalties = <(
+                sol_data::Bool,
+                sol_data::Uint<256>,
+                sol_data::Array<sol_data::Address>,
+            )>::abi_decode_params(&encoded)
+            .unwrap();
+            assert_eq!(
+                royalties,
+                (
+                    false,
+                    U256::from(1u8),
+                    vec![Address::from_str(signer).unwrap()]
+                )
+            );
             assert_eq!(assets["uses"], "3");
             assert_eq!((ev.block_number, ev.log_index, ev.block_time), (100, 2, 55));
         }
@@ -1568,8 +1910,10 @@ pub(crate) mod tests {
         let sql = closed_on_chain_sql("t", "$1");
         assert!(
             sql.contains("tcs.trade_id = t.id")
-                && sql.contains("tcc.folded_block = tcc.last_block")
-                && sql.contains("$1 - interval '30 minutes'"),
+                && sql.contains("tcc.folded_block IS NOT NULL")
+                && !sql.contains("tcc.folded_block = tcc.last_block")
+                && sql.contains("$1 - interval '1800 seconds'")
+                && sql.contains("$1 + interval '600 seconds'"),
             "{sql}"
         );
         assert!(chain_status_sql("t", "$2").contains("tcs.status <> 'open'"));

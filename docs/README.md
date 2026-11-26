@@ -13,6 +13,7 @@
 
 ## Architecture decisions
 
+- [Shared service metrics](adr/2026-11-24-shared-service-metrics.md)
 - [Organizing library and services](adr/2026-10-19-organizing-library-services-folders.md)
 - [`comms-e2e`, a tool crate beside the Catalyst domain crates](adr/2026-11-19-comms-e2e-tool-crate.md)
 - [Protocol in dcl-one](adr/2026-10-25-protocol-in-dcl-one.md)
@@ -25,6 +26,7 @@
 - [Explorer tests through the console](adr/2026-10-29-explorer-tests-through-the-console.md)
 - [Vendored Basis Universal transcoder](adr/2026-11-04-vendored-basisu.md)
 - [Opt-in UASTC texture upload](adr/2026-11-06-opt-in-uastc-texture-upload.md)
+- [Event posters for native players](adr/2026-11-24-event-poster-raster-delivery.md)
 - [Shared UI library](adr/2026-10-30-shared-ui-library.md)
 - [Shared UI import name](adr/2026-11-09-shared-ui-import-name.md)
 - [Hand-written mappings are checked against a tracked manifest](adr/2026-11-20-figma-mapping-manifest.md)
@@ -36,12 +38,15 @@
 - [Community chat message router](adr/2026-11-18-community-chat-message-router.md)
 - [World presence counts as online](adr/2026-11-21-world-presence-counts-as-online.md)
 - [Explorer avatar spring bones (proposed)](adr/2026-11-16-explorer-avatar-spring-bones.md)
+- [Native scene runtime on upstream deno_core](adr/2026-11-09-native-scene-runtime-on-upstream-deno.md)
 - [Dormant schema release definitions (proposed)](adr/2026-11-04-dormant-schema-release-definitions.md)
 - [Referral trusted proxy ingress (proposed)](adr/2026-11-04-referral-trusted-proxy-ingress.md)
 - [Referral Slack effect budget (proposed)](adr/2026-11-04-referral-slack-effect-budget.md)
 - [Social schema v3 activation (proposed)](adr/2026-11-04-social-schema-v3-activation.md)
 - [Referral reward recovery (proposed)](adr/2026-11-04-social-runtime-boundaries.md)
 - [Scene proxy for browser scenes (proposed)](adr/2026-11-14-scene-proxy.md)
+- [library/ui is the single source of UI components (proposed)](adr/2026-11-24-library-ui-single-source.md)
+- [The Explorer HUD imports the shared UI entry (proposed)](adr/2026-11-24-explorer-hud-shared-entry.md)
 - [Web app server state](adr/2026-11-04-web-app-server-state.md)
 
 Verify compatibility, readiness and performance claims against evidence at the

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 
-import Tooltip from '@ui/atoms/Tooltip';
+import { Tooltip } from '@dcl/one-ui';
 import { useDismiss } from '@ui/atoms/useDismiss';
 
 import { misc } from '#preload';

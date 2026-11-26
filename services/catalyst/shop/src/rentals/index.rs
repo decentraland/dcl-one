@@ -42,6 +42,80 @@ pub const INDEXER_RENTALS: &str = "rentals";
 pub const RENTALS_MAINNET: &str = "0x3a1469499d0be105d4f77045ca403a5f6dc2f3f5";
 pub const RENTALS_MAINNET_START_BLOCK: u64 = 16_070_889;
 
+const RENTALS_SEPOLIA: &str = "0xe70db6319e9cee3f604909bdade58d1f5c1cf702";
+const RENTALS_SEPOLIA_START_BLOCK: u64 = 3_831_254;
+pub(crate) const INDEXER_RENTALS_SEPOLIA: &str = "rentals_sepolia";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RentalsChain {
+    Mainnet,
+    Sepolia,
+}
+
+impl RentalsChain {
+    pub(crate) fn from_id(chain_id: i64) -> Option<Self> {
+        match chain_id {
+            1 => Some(Self::Mainnet),
+            11_155_111 => Some(Self::Sepolia),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn land(self) -> crate::land_authz::LandNetwork {
+        match self {
+            Self::Mainnet => crate::land_authz::LAND_MAINNET,
+            Self::Sepolia => crate::land_authz::LAND_SEPOLIA,
+        }
+    }
+
+    pub(crate) fn from_land_network(network: &str) -> Option<Self> {
+        match network {
+            "ethereum" | "ethereum-mainnet" => Some(Self::Mainnet),
+            "ethereum-sepolia" => Some(Self::Sepolia),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn id(self) -> i64 {
+        match self {
+            Self::Mainnet => 1,
+            Self::Sepolia => 11_155_111,
+        }
+    }
+
+    pub(crate) fn indexer(self) -> &'static str {
+        match self {
+            Self::Mainnet => INDEXER_RENTALS,
+            Self::Sepolia => INDEXER_RENTALS_SEPOLIA,
+        }
+    }
+
+    pub(crate) fn event_network(self) -> &'static str {
+        match self {
+            Self::Mainnet => "ethereum",
+            Self::Sepolia => "sepolia",
+        }
+    }
+
+    pub(crate) fn venue(self) -> &'static str {
+        match self {
+            Self::Mainnet => RENTALS_MAINNET,
+            Self::Sepolia => RENTALS_SEPOLIA,
+        }
+    }
+
+    pub(crate) fn registries(self) -> [&'static str; 2] {
+        use crate::land_authz::{
+            ESTATE_REGISTRY_MAINNET, ESTATE_REGISTRY_SEPOLIA, LAND_REGISTRY_MAINNET,
+            LAND_REGISTRY_SEPOLIA,
+        };
+        match self {
+            Self::Mainnet => [LAND_REGISTRY_MAINNET, ESTATE_REGISTRY_MAINNET],
+            Self::Sepolia => [LAND_REGISTRY_SEPOLIA, ESTATE_REGISTRY_SEPOLIA],
+        }
+    }
+}
+
 /// `AssetRented(address indexed _contractAddress, uint256 indexed _tokenId, address _lessor, address _tenant, address _operator, uint256 _rentalDays, uint256 _pricePerDay, bool _isExtension, address _sender, bytes _signature)`.
 pub const TOPIC_ASSET_RENTED: &str =
     "0xfe3b2e4cd1e8ad8d90abfd715fe3d39a303e0a6e9adde116d5d10bebfa678d80";
@@ -246,9 +320,9 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<RentalEvent>, 
 }
 
 /// Appends a window's rows (`ON CONFLICT (network, block_number, log_index) DO NOTHING`).
-pub async fn insert_events(
+pub(super) async fn insert_events(
     conn: &mut PgConnection,
-    net: ChainNet,
+    chain: RentalsChain,
     rows: &[RentalEvent],
 ) -> Result<usize, sqlx::Error> {
     let mut written = 0;
@@ -263,7 +337,7 @@ pub async fn insert_events(
                   AS u(b, i, t, ra, k, c, tok, s, te, o, d, p, x, se, sg, n, h) \
              ON CONFLICT (network, block_number, log_index) DO NOTHING",
         )
-        .bind(net.db_name())
+        .bind(chain.event_network())
         .bind(chunk.iter().map(|r| r.block_number).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.log_index).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.block_time).collect::<Vec<_>>())
@@ -306,10 +380,12 @@ pub async fn insert_events(
 /// are `[contract, signer, asset]`.
 /// `$3`, when set, narrows it to one listing (the refresh route).
 const VERDICT_SQL: &str = "
-WITH new_rent AS (
-    SELECT DISTINCT e.signature FROM shop.rental_event e
+WITH visible_events AS NOT MATERIALIZED (
+    SELECT * FROM shop.rental_event WHERE block_number <= $5
+), new_rent AS (
+    SELECT DISTINCT e.signature FROM visible_events e
     WHERE $3::uuid IS NULL AND $1 >= 0 AND e.kind = 'rented'
-      AND e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1
+      AND e.network = $4 AND e.rentals_address = $2 AND e.block_number > $1
 ),
 listing AS (
     SELECT r.id, r.contract_address, r.token_id, lower(r.signature) AS signature, r.status::text AS status,
@@ -318,38 +394,38 @@ listing AS (
            l.lessor, l.tenant
     FROM signatures.rentals r JOIN signatures.rental_listings l ON l.id = r.id
     LEFT JOIN new_rent nr ON nr.signature = lower(r.signature)
-    WHERE upper(r.network) = 'ETHEREUM' AND r.rental_contract_address = $2
+    WHERE upper(r.network) = 'ETHEREUM' AND r.rental_contract_address = $2 AND r.chain_id = $6
       AND ($1 < 0 OR r.status IN ('open', 'executed')
            OR (r.status = 'cancelled' AND CASE WHEN $3::uuid IS NULL
                THEN nr.signature IS NOT NULL
                ELSE EXISTS (
-                   SELECT 1 FROM shop.rental_event e WHERE e.signature = lower(r.signature) AND e.kind = 'rented'
-                     AND e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1) END))
+                   SELECT 1 FROM visible_events e WHERE e.signature = lower(r.signature) AND e.kind = 'rented'
+                     AND e.network = $4 AND e.rentals_address = $2 AND e.block_number > $1) END))
       AND ($3::uuid IS NULL OR r.id = $3)
 ),
 touched AS (
     SELECT l.* FROM listing l
     WHERE $1 < 0
-       OR EXISTS (SELECT 1 FROM shop.rental_event e WHERE e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1
+       OR EXISTS (SELECT 1 FROM visible_events e WHERE e.network = $4 AND e.rentals_address = $2 AND e.block_number > $1
                     AND e.contract_address = l.contract_address AND e.token_id = l.token_id)
-       OR EXISTS (SELECT 1 FROM shop.rental_event e WHERE e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1
+       OR EXISTS (SELECT 1 FROM visible_events e WHERE e.network = $4 AND e.rentals_address = $2 AND e.block_number > $1
                     AND e.kind = 'signer_index_updated' AND e.signer = l.lessor)
-       OR EXISTS (SELECT 1 FROM shop.rental_event e WHERE e.network = 'ethereum' AND e.rentals_address = $2 AND e.block_number > $1
+       OR EXISTS (SELECT 1 FROM visible_events e WHERE e.network = $4 AND e.rentals_address = $2 AND e.block_number > $1
                     AND e.kind = 'contract_index_updated')
 )
 SELECT t.id, t.status, t.cancel_reason, rented.block_time AS rented_at, rented.tenant AS rented_tenant, rented.rental_days,
        (rented.block_number IS NOT NULL AND EXISTS (
-            SELECT 1 FROM shop.rental_event c WHERE c.network = 'ethereum' AND c.rentals_address = $2 AND c.kind = 'claimed'
+            SELECT 1 FROM visible_events c WHERE c.network = $4 AND c.rentals_address = $2 AND c.kind = 'claimed'
               AND c.contract_address = t.contract_address AND c.token_id = t.token_id
               AND (c.block_number, c.log_index) > (rented.block_number, rented.log_index))) AS claimed,
-       (COALESCE((SELECT max(e.new_index) FROM shop.rental_event e WHERE e.network = 'ethereum' AND e.rentals_address = $2 AND e.kind = 'contract_index_updated'), 0) > t.contract_nonce
-        OR COALESCE((SELECT max(e.new_index) FROM shop.rental_event e WHERE e.network = 'ethereum' AND e.rentals_address = $2 AND e.kind = 'signer_index_updated' AND e.signer = t.lessor), 0) > t.signer_nonce
-        OR COALESCE((SELECT max(e.new_index) FROM shop.rental_event e WHERE e.network = 'ethereum' AND e.rentals_address = $2 AND e.kind = 'asset_index_updated'
+       (COALESCE((SELECT max(e.new_index) FROM visible_events e WHERE e.network = $4 AND e.rentals_address = $2 AND e.kind = 'contract_index_updated'), 0) > t.contract_nonce
+        OR COALESCE((SELECT max(e.new_index) FROM visible_events e WHERE e.network = $4 AND e.rentals_address = $2 AND e.kind = 'signer_index_updated' AND e.signer = t.lessor), 0) > t.signer_nonce
+        OR COALESCE((SELECT max(e.new_index) FROM visible_events e WHERE e.network = $4 AND e.rentals_address = $2 AND e.kind = 'asset_index_updated'
                        AND e.signer = t.lessor AND e.contract_address = t.contract_address AND e.token_id = t.token_id), 0) > t.asset_nonce) AS invalidated
 FROM touched t
 LEFT JOIN LATERAL (
-    SELECT e.block_number, e.log_index, e.block_time, e.tenant, e.rental_days FROM shop.rental_event e
-    WHERE e.network = 'ethereum' AND e.rentals_address = $2 AND e.kind = 'rented' AND e.signature = t.signature
+    SELECT e.block_number, e.log_index, e.block_time, e.tenant, e.rental_days FROM visible_events e
+    WHERE e.network = $4 AND e.rentals_address = $2 AND e.kind = 'rented' AND e.signature = t.signature
       AND e.contract_address = t.contract_address AND e.token_id = t.token_id
     ORDER BY e.block_number, e.log_index LIMIT 1
 ) rented ON true";
@@ -394,16 +470,20 @@ pub fn fold_may_write(current: &str, cancel_reason: Option<&str>, status: &str) 
 
 /// The verdicts of the touched listings that differ from what is stored
 /// (only `listing`'s when set).
-pub async fn changed_verdicts(
+pub(super) async fn changed_verdicts(
     conn: &mut PgConnection,
+    chain: RentalsChain,
     venue: &str,
     since: i64,
-    listing: Option<uuid::Uuid>,
+    listing: Option<(uuid::Uuid, i64)>,
 ) -> Result<Vec<Verdict>, sqlx::Error> {
     let rows = sqlx::query(VERDICT_SQL)
         .bind(since)
         .bind(venue)
-        .bind(listing)
+        .bind(listing.map(|(id, _)| id))
+        .bind(chain.event_network())
+        .bind(listing.map_or(i64::MAX, |(_, published)| published))
+        .bind(chain.id())
         .fetch_all(&mut *conn)
         .await?;
     Ok(rows
@@ -524,21 +604,47 @@ async fn reopen(
 }
 
 /// The fold: the touched listings' verdicts written in one transaction.
-pub async fn fold(
+pub(super) async fn fold(
     pool: &PgPool,
+    chain: RentalsChain,
     venue: &str,
     since: Option<i64>,
     now: DateTime<Utc>,
     owner: &chain_walk::Owner,
 ) -> anyhow::Result<u64> {
-    let since = since.unwrap_or(-1);
     let mut tx = pool.begin().await?;
+    // A previous writer could have advanced the Sepolia event log without
+    // folding listings. Reconcile its stored history on the first fold
+    // of each new owner generation, including after a rollback/re-upgrade.
+    let since = if chain == RentalsChain::Sepolia {
+        let previous: Option<i64> = sqlx::query_scalar(
+            "SELECT position FROM shop.worker_progress
+            WHERE worker='rental_listing_generation' AND scope=$1",
+        )
+        .bind(chain.id())
+        .fetch_optional(&mut *tx)
+        .await?;
+        if previous == Some(owner.generation) {
+            since
+        } else {
+            None
+        }
+    } else {
+        since
+    }
+    .unwrap_or(-1);
     sqlx::query("SET LOCAL statement_timeout = '600s'")
         .execute(&mut *tx)
         .await?;
     chain_walk::analyze_if_stale(&mut tx, "shop", "rental_event", since < 0).await?;
-    let verdicts = changed_verdicts(&mut tx, venue, since, None).await?;
+    let verdicts = changed_verdicts(&mut tx, chain, venue, since, None).await?;
     let written = apply_verdicts(&mut tx, &verdicts, now.naive_utc()).await?;
+    if chain == RentalsChain::Sepolia {
+        sqlx::query("INSERT INTO shop.worker_progress(worker,scope,position,ceiling)
+            VALUES ('rental_listing_generation',$1,$2,$2) ON CONFLICT(worker,scope) DO UPDATE SET
+            position=EXCLUDED.position,ceiling=EXCLUDED.ceiling WHERE shop.worker_progress.position<>EXCLUDED.position")
+            .bind(chain.id()).bind(owner.generation).execute(&mut *tx).await?;
+    }
     owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(written)
@@ -547,31 +653,65 @@ pub async fn fold(
 /// The fold of one listing (the refresh route) over every indexed event of
 /// `venue`, as an incremental fold sees it: only an `open` or `executed`
 /// listing moves. Run only while the index is [`ready`].
-pub async fn fold_listing(
+pub(super) async fn fold_listing(
     pool: &PgPool,
+    chain: RentalsChain,
     venue: &str,
     listing: uuid::Uuid,
     now: DateTime<Utc>,
-) -> Result<u64, sqlx::Error> {
+) -> Result<Option<u64>, sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let verdicts = changed_verdicts(&mut tx, venue, 0, Some(listing)).await?;
+    let cursor = lock_cursor(&mut tx, chain).await?;
+    let Some(published) = cursor
+        .filter(|cursor| chain_walk::fresh_fold_on(cursor, chain.id(), now).is_some())
+        .and_then(|cursor| cursor.folded_block)
+    else {
+        tx.rollback().await?;
+        return Ok(None);
+    };
+    // Keep the publication row locked while deriving and writing the verdict.
+    // A rewind cannot withdraw this evidence between the read and commit.
+    let verdicts = changed_verdicts(&mut tx, chain, venue, 0, Some((listing, published))).await?;
     let written = apply_verdicts(&mut tx, &verdicts, now.naive_utc()).await?;
     tx.commit().await?;
-    Ok(written)
+    Ok(Some(written))
 }
 
-/// The walk of one Rentals deployment on Ethereum (the mainnet proxy, or a
-/// test deployment: the address and the block it was deployed in).
+/// Lock and read the Rentals publication row for a decision that writes from
+/// its event log. Keep the lock until the caller commits the dependent write.
+pub(super) async fn lock_cursor(
+    conn: &mut PgConnection,
+    chain: RentalsChain,
+) -> Result<Option<chain_walk::Cursor>, sqlx::Error> {
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {} FROM shop.chain_cursor WHERE indexer=$1 AND network=$2 FOR SHARE",
+        chain_walk::CURSOR_COLUMNS
+    )))
+    .bind(chain.indexer())
+    .bind(ChainNet::Ethereum.db_name())
+    .fetch_optional(&mut *conn)
+    .await
+}
+
+/// Each venue has its own event history. The served catalogue also derives listing statuses.
 pub struct RentalsIndex {
     pub venue: String,
     pub start: u64,
+    chain: RentalsChain,
+    fold_listings: bool,
 }
 
 impl RentalsIndex {
     pub fn mainnet() -> Self {
+        Self::at(RENTALS_MAINNET, RENTALS_MAINNET_START_BLOCK)
+    }
+
+    pub fn sepolia(fold_listings: bool) -> Self {
         Self {
-            venue: RENTALS_MAINNET.to_string(),
-            start: RENTALS_MAINNET_START_BLOCK,
+            fold_listings,
+            venue: RENTALS_SEPOLIA.to_string(),
+            start: RENTALS_SEPOLIA_START_BLOCK,
+            chain: RentalsChain::Sepolia,
         }
     }
 
@@ -579,6 +719,8 @@ impl RentalsIndex {
         Self {
             venue: venue.to_ascii_lowercase(),
             start,
+            chain: RentalsChain::Mainnet,
+            fold_listings: true,
         }
     }
 }
@@ -586,11 +728,15 @@ impl RentalsIndex {
 #[async_trait::async_trait]
 impl ChainIndex for RentalsIndex {
     fn indexer(&self) -> &'static str {
-        INDEXER_RENTALS
+        self.chain.indexer()
     }
 
     fn net(&self) -> ChainNet {
         ChainNet::Ethereum
+    }
+
+    fn chain_id(&self) -> i64 {
+        self.chain.id()
     }
 
     fn start_block(&self) -> u64 {
@@ -623,13 +769,14 @@ impl ChainIndex for RentalsIndex {
                 rows.push(row);
             }
         }
-        Ok(insert_events(conn, ChainNet::Ethereum, &rows).await?)
+        Ok(insert_events(conn, self.chain, &rows).await?)
     }
 
     async fn rewind(&self, conn: &mut PgConnection, to: i64) -> anyhow::Result<()> {
         // The cursor's cleared fold marker makes the next fold a rebuild,
         // which revisits every listing of the venue from the remaining log.
-        sqlx::query("DELETE FROM shop.rental_event WHERE network = 'ethereum' AND rentals_address = $1 AND block_number > $2")
+        sqlx::query("DELETE FROM shop.rental_event WHERE network = $1 AND rentals_address = $2 AND block_number > $3")
+            .bind(self.chain.event_network())
             .bind(&self.venue)
             .bind(to)
             .execute(&mut *conn)
@@ -644,55 +791,249 @@ impl ChainIndex for RentalsIndex {
         _upto: i64,
         owner: &chain_walk::Owner,
     ) -> anyhow::Result<bool> {
-        let written = fold(pool, &self.venue, since, Utc::now(), owner).await?;
-        tracing::info!(venue = %self.venue, listings = written, "rentals index: folded");
+        if self.fold_listings {
+            let written = fold(pool, self.chain, &self.venue, since, Utc::now(), owner).await?;
+            tracing::info!(venue = %self.venue, listings = written, "rentals index: folded");
+        }
         Ok(true)
     }
 }
 
-/// Whether this index walks `venue`: only the mainnet Rentals contract.
-pub fn walks(venue: &str) -> bool {
-    venue.eq_ignore_ascii_case(RENTALS_MAINNET)
+/// The latest rent and the publication that vouches for it, from one SQL snapshot.
+pub(super) struct RentEvidence {
+    pub(super) cursor: Option<chain_walk::Cursor>,
+    pub(super) published_through: Option<i64>,
+    pub(super) has_unpublished_rent: bool,
+    pub(super) rent_block: Option<i64>,
+    pub(super) rent_time: Option<i64>,
+    pub(super) signer: Option<String>,
+    pub(super) observed_ends_at: Option<i64>,
 }
 
-/// The asset's most recent rent at `venue`: its lessor and when it ends
-/// (unix seconds; the rentals subgraph's `endsAt`, block time plus days).
-pub async fn latest_rent(
+impl RentEvidence {
+    pub(super) fn coverage(
+        &self,
+        transfer_block: Option<i64>,
+        observed_block: Option<i64>,
+        transferred_at: i64,
+    ) -> RentCoverage {
+        let Some(head) = self.published_through else {
+            return RentCoverage::Pending;
+        };
+        let Some(required_through) = transfer_block.or(observed_block) else {
+            return RentCoverage::Pending;
+        };
+        if head < required_through {
+            return RentCoverage::Pending;
+        }
+        if self.has_unpublished_rent {
+            return RentCoverage::Pending;
+        }
+        let covered = match transfer_block {
+            Some(block) => self
+                .rent_block
+                .is_some_and(|rent| (block..=head).contains(&rent)),
+            // Graph readers have no transfer block. Their snapshot block
+            // proves the owner and the transfer time they report.
+            None => {
+                self.rent_block.is_some_and(|rent| rent <= head)
+                    && self.rent_time.is_some_and(|time| time >= transferred_at)
+            }
+        };
+        if covered {
+            RentCoverage::Covered
+        } else {
+            RentCoverage::NoCoveringRent
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RentCoverage {
+    Pending,
+    NoCoveringRent,
+    Covered,
+}
+
+pub(super) async fn rent_evidence(
     pool: &PgPool,
+    chain: RentalsChain,
     venue: &str,
     contract_address: &str,
     token_id: &str,
-) -> sqlx::Result<Option<(String, i64)>> {
-    sqlx::query_as(
-        "SELECT signer, block_time + rental_days::bigint * 86400 FROM shop.rental_event \
-         WHERE rentals_address = $1 AND contract_address = $2 AND token_id = $3::numeric AND kind = 'rented' \
-         ORDER BY block_number DESC, log_index DESC LIMIT 1",
+    now: DateTime<Utc>,
+) -> sqlx::Result<RentEvidence> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *tx)
+        .await?;
+    let evidence = published_rent(&mut tx, chain, venue, contract_address, token_id, now).await?;
+    tx.commit().await?;
+    Ok(evidence)
+}
+
+pub(super) async fn published_rent(
+    conn: &mut PgConnection,
+    chain: RentalsChain,
+    venue: &str,
+    contract_address: &str,
+    token_id: &str,
+    now: DateTime<Utc>,
+) -> sqlx::Result<RentEvidence> {
+    let cursor = chain_walk::cursor(&mut *conn, chain.indexer(), ChainNet::Ethereum).await?;
+    let head = cursor
+        .as_ref()
+        .filter(|c| chain_walk::fresh_fold_on(c, chain.id(), now).is_some())
+        .and_then(|c| c.folded_block);
+    let mut evidence =
+        rent_evidence_at(conn, chain, venue, contract_address, token_id, head).await?;
+    evidence.cursor = cursor;
+    Ok(evidence)
+}
+
+pub(super) async fn rent_evidence_at(
+    conn: &mut PgConnection,
+    chain: RentalsChain,
+    venue: &str,
+    contract_address: &str,
+    token_id: &str,
+    published_through: Option<i64>,
+) -> sqlx::Result<RentEvidence> {
+    #[derive(sqlx::FromRow)]
+    struct EvidenceRows {
+        has_unpublished_rent: bool,
+        rent_block: Option<i64>,
+        rent_time: Option<i64>,
+        signer: Option<String>,
+        observed_ends_at: Option<i64>,
+    }
+    let rows = sqlx::query_as::<_, EvidenceRows>(
+        "SELECT EXISTS (
+                    SELECT 1 FROM shop.rental_event pending
+                    WHERE pending.network=$1 AND pending.rentals_address=$2
+                      AND pending.contract_address=$3 AND pending.token_id=$4::numeric
+                      AND pending.kind='rented'
+                      AND ($5::bigint IS NULL OR pending.block_number > $5::bigint)
+                ) AS has_unpublished_rent,
+                r.block_number AS rent_block, r.block_time AS rent_time, r.signer,
+                observed.ends_at AS observed_ends_at
+         FROM (VALUES (1)) AS anchor(n)
+         LEFT JOIN LATERAL (
+             SELECT block_number, block_time, signer
+             FROM shop.rental_event WHERE network=$1 AND rentals_address=$2
+               AND contract_address=$3 AND token_id=$4::numeric AND kind='rented'
+               AND $5::bigint IS NOT NULL AND block_number <= $5::bigint
+             ORDER BY block_number DESC, log_index DESC LIMIT 1
+         ) r ON true
+         LEFT JOIN LATERAL (
+             SELECT block_time + rental_days::bigint * 86400 AS ends_at
+             FROM shop.rental_event WHERE network=$1 AND rentals_address=$2
+               AND contract_address=$3 AND token_id=$4::numeric AND kind='rented'
+             ORDER BY block_number DESC, log_index DESC LIMIT 1
+         ) observed ON true",
     )
+    .bind(chain.event_network())
     .bind(venue.to_ascii_lowercase())
     .bind(contract_address.to_ascii_lowercase())
     .bind(token_id)
-    .fetch_optional(pool)
+    .bind(published_through)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(RentEvidence {
+        cursor: None,
+        published_through,
+        has_unpublished_rent: rows.has_unpublished_rent,
+        rent_block: rows.rent_block,
+        rent_time: rows.rent_time,
+        signer: rows.signer,
+        observed_ends_at: rows.observed_ends_at,
+    })
+}
+
+/// A direct LAND owner can already have rented out the token beyond the LAND
+/// fold. Only use observed events to refuse a new listing. No Rentals cursor
+/// is needed to accept one. The caller holds the observed LAND revision.
+pub(super) async fn observed_running_rent(
+    conn: &mut PgConnection,
+    chain: RentalsChain,
+    contract: &str,
+    token_id: &str,
+    transfer_block: i64,
+    now: DateTime<Utc>,
+) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "WITH transfer AS (
+            SELECT block_number, log_index FROM land_authz.authz_event
+            WHERE token_address=$1 AND token_id=$2::numeric AND kind='transfer' AND block_number=$3
+            ORDER BY log_index DESC LIMIT 1
+        ), events AS (
+            SELECT r.kind, r.is_extension, r.block_time, r.rental_days, r.block_number, r.log_index
+            FROM shop.rental_event r, transfer t
+            WHERE r.network=$6 AND r.rentals_address=$4 AND r.contract_address=$1
+              AND r.token_id=$2::numeric AND r.kind IN ('rented','claimed')
+              AND (r.block_number,r.log_index) >= (t.block_number,t.log_index)
+        ), period AS (
+            SELECT kind,block_time,block_number,log_index FROM events
+            WHERE kind='claimed' OR is_extension IS NOT TRUE
+            ORDER BY block_number DESC,log_index DESC LIMIT 1
+        )
+        SELECT EXISTS (
+            SELECT 1 FROM period p WHERE p.kind='rented'
+              AND p.block_time + 86400 * (
+                  SELECT sum(e.rental_days) FROM events e WHERE e.kind='rented'
+                    AND (e.block_number,e.log_index) >= (p.block_number,p.log_index)
+              ) > $5
+        )",
+    )
+    .bind(contract.to_ascii_lowercase())
+    .bind(token_id)
+    .bind(transfer_block)
+    .bind(chain.venue())
+    .bind(now.timestamp())
+    .bind(chain.event_network())
+    .fetch_one(conn)
     .await
 }
 
 /// Whether the statuses may be trusted at `now` (the cursor is published).
 pub async fn ready(pool: &PgPool, now: DateTime<Utc>) -> bool {
-    chain_walk::ready_cursor(pool, INDEXER_RENTALS, ChainNet::Ethereum, now)
+    ready_on(pool, RentalsChain::Mainnet, now).await
+}
+
+pub(super) async fn ready_on(pool: &PgPool, chain: RentalsChain, now: DateTime<Utc>) -> bool {
+    chain_walk::cursor(pool, chain.indexer(), ChainNet::Ethereum)
         .await
+        .ok()
+        .flatten()
+        .and_then(|c| chain_walk::fresh_fold_on(&c, chain.id(), now))
         .is_some()
 }
 
 /// The index's state for the status route and the tests.
 pub async fn status(pool: &PgPool) -> Value {
-    let c = chain_walk::cursor(pool, INDEXER_RENTALS, ChainNet::Ethereum)
-        .await
-        .ok()
-        .flatten();
-    json!({
-        "ethereum": c.map(|c| json!({
+    async fn cursor_status(
+        pool: &PgPool,
+        chain: RentalsChain,
+        now: DateTime<Utc>,
+    ) -> Option<Value> {
+        let c = chain_walk::cursor(pool, chain.indexer(), ChainNet::Ethereum)
+            .await
+            .ok()
+            .flatten()?;
+        Some(json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
-        })),
+            "ready": chain_walk::fresh_fold_on(&c, chain.id(), now).is_some(), "reorgRewinds": c.reorg_rewinds,
+            "divergedAt": c.diverged_at,
+        }))
+    }
+    let now = Utc::now();
+    let (ethereum, sepolia) = tokio::join!(
+        cursor_status(pool, RentalsChain::Mainnet, now),
+        cursor_status(pool, RentalsChain::Sepolia, now),
+    );
+    json!({
+        "ethereum": ethereum,
+        "sepolia": sepolia,
         "venue": RENTALS_MAINNET,
     })
 }
@@ -703,6 +1044,40 @@ pub(crate) mod tests {
     use alloy_primitives::{U256, keccak256};
     use alloy_sol_types::SolValue;
 
+    #[test]
+    fn graph_custody_requires_a_published_rent_covering_the_reported_transfer_time() {
+        let mut rent = RentEvidence {
+            cursor: None,
+            published_through: Some(12),
+            has_unpublished_rent: false,
+            rent_block: Some(12),
+            rent_time: Some(120),
+            signer: Some("lessor".into()),
+            observed_ends_at: Some(200),
+        };
+        assert_eq!(
+            rent.coverage(None, Some(12), 130),
+            RentCoverage::NoCoveringRent
+        );
+        assert_eq!(rent.coverage(None, Some(12), 120), RentCoverage::Covered);
+        rent.published_through = Some(11);
+        assert_eq!(rent.coverage(None, Some(12), 120), RentCoverage::Pending);
+        rent.published_through = Some(12);
+        rent.has_unpublished_rent = true;
+        assert_eq!(rent.coverage(None, Some(12), 120), RentCoverage::Pending);
+        rent.has_unpublished_rent = false;
+        rent.rent_block = None;
+        assert_eq!(
+            rent.coverage(Some(12), Some(12), 120),
+            RentCoverage::NoCoveringRent
+        );
+        rent.published_through = None;
+        assert_eq!(
+            rent.coverage(Some(12), Some(12), 120),
+            RentCoverage::Pending
+        );
+    }
+
     /// A fold at the present time by the projection's owner, claimed as a
     /// process without leases claims it.
     async fn fold_as_owner(pool: &PgPool, venue: &str, since: Option<i64>) -> anyhow::Result<u64> {
@@ -712,7 +1087,15 @@ pub(crate) mod tests {
             &chain_walk::IndexSettings::default(),
         )
         .await;
-        fold(pool, venue, since, Utc::now(), &owner).await
+        fold(
+            pool,
+            RentalsChain::Mainnet,
+            venue,
+            since,
+            Utc::now(),
+            &owner,
+        )
+        .await
     }
 
     #[test]
@@ -1167,7 +1550,7 @@ pub(crate) mod tests {
         .iter()
         .map(|l| at_venue(decode_log(l, 1_700_000_000).unwrap().unwrap()))
         .collect();
-        insert_events(&mut conn, ChainNet::Ethereum, &rows)
+        insert_events(&mut conn, RentalsChain::Mainnet, &rows)
             .await
             .unwrap();
         drop(conn);
@@ -1179,9 +1562,16 @@ pub(crate) mod tests {
         .await;
 
         assert_eq!(
-            fold(&pool, &venue, Some(99), Utc::now(), &owner)
-                .await
-                .unwrap(),
+            fold(
+                &pool,
+                RentalsChain::Mainnet,
+                &venue,
+                Some(99),
+                Utc::now(),
+                &owner
+            )
+            .await
+            .unwrap(),
             3
         );
         assert_eq!(
@@ -1201,22 +1591,36 @@ pub(crate) mod tests {
             .unwrap()
             .unwrap(),
         );
-        insert_events(&mut conn, ChainNet::Ethereum, &[claim])
+        insert_events(&mut conn, RentalsChain::Mainnet, &[claim])
             .await
             .unwrap();
         drop(conn);
         assert_eq!(
-            fold(&pool, &venue, Some(102), Utc::now(), &owner)
-                .await
-                .unwrap(),
+            fold(
+                &pool,
+                RentalsChain::Mainnet,
+                &venue,
+                Some(102),
+                Utc::now(),
+                &owner
+            )
+            .await
+            .unwrap(),
             1,
             "only the claimed one moves"
         );
         assert_eq!(status_of(&pool, rented).await.0, "claimed");
         assert_eq!(
-            fold(&pool, &venue, Some(110), Utc::now(), &owner)
-                .await
-                .unwrap(),
+            fold(
+                &pool,
+                RentalsChain::Mainnet,
+                &venue,
+                Some(110),
+                Utc::now(),
+                &owner
+            )
+            .await
+            .unwrap(),
             0,
             "nothing new past the fold's block"
         );
@@ -1225,7 +1629,16 @@ pub(crate) mod tests {
         // the listing (the venue's other listings' verdicts still hold).
         sqlx::query("DELETE FROM shop.rental_event WHERE network = 'ethereum' AND contract_address = $1 AND token_id = 1").bind(&land).execute(&pool).await.unwrap();
         assert_eq!(
-            fold(&pool, &venue, None, Utc::now(), &owner).await.unwrap(),
+            fold(
+                &pool,
+                RentalsChain::Mainnet,
+                &venue,
+                None,
+                Utc::now(),
+                &owner
+            )
+            .await
+            .unwrap(),
             1
         );
         assert_eq!(status_of(&pool, rented).await.0, "open");
@@ -1298,7 +1711,7 @@ pub(crate) mod tests {
         let mut conn = pool.acquire().await.unwrap();
         insert_events(
             &mut conn,
-            ChainNet::Ethereum,
+            RentalsChain::Mainnet,
             &[
                 at_venue(asset_index_log(
                     &lessor,
@@ -1328,7 +1741,7 @@ pub(crate) mod tests {
         let mut conn = pool.acquire().await.unwrap();
         insert_events(
             &mut conn,
-            ChainNet::Ethereum,
+            RentalsChain::Mainnet,
             &[at_venue(asset_index_log(
                 &lessor,
                 &land,
@@ -1355,7 +1768,7 @@ pub(crate) mod tests {
         let mut conn = pool.acquire().await.unwrap();
         insert_events(
             &mut conn,
-            ChainNet::Ethereum,
+            RentalsChain::Mainnet,
             &[at_venue(rented_log(
                 &land,
                 U256::from(3u8),
@@ -1544,7 +1957,7 @@ pub(crate) mod tests {
         let mut conn = pool.acquire().await.unwrap();
         insert_events(
             &mut conn,
-            ChainNet::Ethereum,
+            RentalsChain::Mainnet,
             &[rent(3, 9_300), rent(1, 9_320)],
         )
         .await
@@ -1629,10 +2042,14 @@ pub(crate) mod tests {
             e
         };
         let mut conn = pool.acquire().await.unwrap();
-        insert_events(&mut conn, ChainNet::Ethereum, &[rent(9_320), rent(9_330)])
-            .await
-            .unwrap();
-        let verdicts = changed_verdicts(&mut conn, &venue, 9_310, None)
+        insert_events(
+            &mut conn,
+            RentalsChain::Mainnet,
+            &[rent(9_320), rent(9_330)],
+        )
+        .await
+        .unwrap();
+        let verdicts = changed_verdicts(&mut conn, RentalsChain::Mainnet, &venue, 9_310, None)
             .await
             .unwrap();
         drop(conn);
@@ -1721,7 +2138,7 @@ pub(crate) mod tests {
         let mut conn = pool.acquire().await.unwrap();
         insert_events(
             &mut conn,
-            ChainNet::Ethereum,
+            RentalsChain::Mainnet,
             &[at_venue(asset_index_log(
                 &lessor,
                 &land,
@@ -1796,7 +2213,7 @@ pub(crate) mod tests {
         let mut conn = pool.acquire().await.unwrap();
         insert_events(
             &mut conn,
-            ChainNet::Ethereum,
+            RentalsChain::Mainnet,
             &[at_venue(rented_log(
                 &land,
                 U256::from(2u8),

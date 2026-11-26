@@ -19,7 +19,7 @@ describe.each(["pending", "failed", "manageable", "not manageable"] as const)("w
       profile: null, profileError: null,
       communities: state === "manageable" ? [{ id: "preselected", name: "Managed community" }] : [],
       communitiesError: state === "failed" ? "Unavailable" : null,
-      schedules: [], schedulesError: null, worlds: [], worldsError: null,
+      worlds: [], worldsError: null,
     };
     user = userEvent.setup();
     render(<MemoryRouter initialEntries={["/edit?step=details"]}>

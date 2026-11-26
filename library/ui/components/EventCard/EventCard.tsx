@@ -73,6 +73,8 @@ export type EventCardProps = {
   linkComponent?: EventCardLinkComponent
   /** The title's heading level. */
   headingLevel?: 2 | 3 | 4 | 5 | 6
+  /** Fades the cover alone (an event still in review); the text keeps its contrast. */
+  dimmed?: boolean
 }
 
 function Anchor(props: EventCardLinkProps) {
@@ -105,7 +107,8 @@ export function EventCard({
   announcement,
   showAnnouncement = false,
   linkComponent: Link = Anchor,
-  headingLevel = 3
+  headingLevel = 3,
+  dimmed = false
 }: EventCardProps) {
   const Heading = `h${headingLevel}` as const
   const hasActions = actions !== undefined && actions !== null && actions !== false
@@ -175,7 +178,7 @@ export function EventCard({
           ) : null}
           {status}
         </div>
-        <div className={styles.media}>
+        <div className={styles.media} data-dimmed={dimmed || undefined}>
           <CardImage className={styles.cover} src={image} alt="" priority={priority} />
           {badges}
         </div>
@@ -194,7 +197,7 @@ export function EventCard({
         .join(' ')}
     >
       {showMedia ? (
-        <div className={styles.media}>
+        <div className={styles.media} data-dimmed={dimmed || undefined}>
           {image ? (
             <CardImage className={styles.cover} src={image} alt="" priority={priority} />
           ) : null}

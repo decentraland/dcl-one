@@ -14,6 +14,14 @@ describe('NavCreditsBalance', () => {
     })
   })
 
+  describe('when showing a Shop balance without a purchase link', () => {
+    it('should expose its amount as text', () => {
+      render(<NavCreditsBalance as="span" variant="shop" label="0" />)
+      expect(screen.getByText('0')).toBeVisible()
+      expect(screen.queryByRole('link')).toBeNull()
+    })
+  })
+
   describe('when given the app router link', () => {
     it('renders through it, keeps the caller class and forwards the click', () => {
       const onClick = vi.fn()

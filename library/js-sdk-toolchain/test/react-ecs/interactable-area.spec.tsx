@@ -1,4 +1,5 @@
-import { Entity, YGPositionType, YGUnit } from '../../packages/@dcl/ecs/dist'
+import type { Entity } from '../../packages/@dcl/ecs/dist'
+import { YGPositionType, YGUnit } from '../../packages/@dcl/ecs/dist'
 import { components } from '../../packages/@dcl/ecs/src'
 import { InteractableArea, ReactEcs } from '../../packages/@dcl/react-ecs/src'
 import { CANVAS_ROOT_ENTITY } from '../../packages/@dcl/react-ecs/src/components/uiTransform'

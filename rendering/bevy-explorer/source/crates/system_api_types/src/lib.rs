@@ -254,6 +254,15 @@ pub struct ChatReactionData {
     pub remove: bool,
 }
 
+/// A situational reaction as it plays: an emoji shown for `from`, the local user or a peer.
+#[derive(Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReactionData {
+    pub from: String,
+    pub emoji: String,
+}
+
 #[derive(Clone, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct VoiceMessage {
@@ -655,6 +664,7 @@ pub struct AvatarModifierState {
     pub user_id: String,
     pub hide_avatar: bool,
     pub hide_profile: bool,
+    pub pulse_absent: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1037,6 +1047,8 @@ pub struct SettingInfo {
     pub step_size: f32,
     pub value: f32,
     pub default: f32,
+    /// True while another setting's value overrides this one.
+    pub disabled: bool,
 }
 
 /// A color as the catalyst `outfits` entity stores it. Other explorers read a missing `a` as 0.
@@ -1089,4 +1101,20 @@ pub struct OutfitSlotData {
 pub struct OutfitsData {
     pub outfits: Vec<OutfitSlotData>,
     pub names_for_extra_slots: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SetAvatarData;
+
+    #[test]
+    fn an_equip_without_the_wearables_list_deserializes() {
+        let patch: SetAvatarData = serde_json::from_value(serde_json::json!({
+            "equip": { "wearableUrns": ["urn:hat"], "emoteUrns": [], "forceRender": ["hair"] }
+        }))
+        .unwrap();
+        let equip = patch.equip.unwrap();
+        assert_eq!(equip.force_render, vec!["hair"]);
+        assert!(equip.wearables.is_empty());
+    }
 }

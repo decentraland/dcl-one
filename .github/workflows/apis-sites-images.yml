@@ -345,8 +345,8 @@ jobs:
       - name: Export the tested APIs package
         if: steps.cache-writer.outputs.allowed == 'true' && steps.cache-saves.outputs.apis == 'true'
         run: |
-          # The node and the cast-bot it starts (CAST_BOT_BIN), both in the APIs image.
-          for package in catalyst cast-bot; do
+          # The node, the cast-bot it starts (CAST_BOT_BIN) and the message router, all in the APIs image.
+          for package in catalyst cast-bot message-router; do
             cache_drv=$(nix eval --raw ".#$package.drvPath")
             image_drv=$(nix eval --raw --impure "git+file:.?lfs=1#$package.drvPath")
             if [ "$cache_drv" != "$image_drv" ]; then
@@ -356,7 +356,7 @@ jobs:
           done
           mkdir -p .cache/apis-nix
           # Runtime closures only: no extra Cargo target tree or dependency build cache.
-          nix copy --to "file://$PWD/.cache/apis-nix?compression=zstd&compression-level=3" .#catalyst .#cast-bot
+          nix copy --to "file://$PWD/.cache/apis-nix?compression=zstd&compression-level=3" .#catalyst .#cast-bot .#message-router
           du -sh .cache/apis-nix
       - name: Save the tested APIs package
         if: steps.cache-writer.outputs.allowed == 'true' && steps.cache-saves.outputs.apis == 'true'
@@ -448,6 +448,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.source.outputs.sha || github.sha }}
+      - name: Fetch the shared UI's Git LFS assets
+        # The HUD's checked input graph (react-web/shared-inputs.json) holds the images and videos the
+        # @dcl/one-ui entry reaches, and its generator and validator refuse an unmaterialized pointer.
+        run: git lfs pull --include "library/ui/assets/**,library/ui/apps/sites/assets/**"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           run-id: ${{ needs.source.outputs.run_id || github.run_id }}
@@ -481,6 +485,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.source.outputs.sha || github.sha }}
+      - name: Fetch the shared UI's Git LFS assets
+        # The HUD's checked input graph (react-web/shared-inputs.json) holds the images and videos the
+        # @dcl/one-ui entry reaches, and its generator and validator refuse an unmaterialized pointer.
+        run: git lfs pull --include "library/ui/assets/**,library/ui/apps/sites/assets/**"
       - name: Skip superseded main publication
         id: current
         working-directory: .

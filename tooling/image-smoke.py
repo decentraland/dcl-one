@@ -53,6 +53,9 @@ def main():
                     json.loads(docker('image', 'inspect', args.apis).stdout)[0]['Config']['Env'])
     assert 'CAST_BOT_BIN' in apis_env, 'The APIs image must name its cast-bot'
     docker('run', '--rm', '--read-only', '--network', 'none', '--entrypoint', apis_env['CAST_BOT_BIN'], args.apis)
+    # The message router, run as its own container from the APIs image, loads: its help exits 0.
+    docker('run', '--rm', '--read-only', '--network', 'none', '--entrypoint', '/bin/catalyst-message-router',
+           args.apis, '--help')
 
     name = 'foundation-image-smoke-' + secrets.token_hex(5)
     db, api, sites = (name + suffix for suffix in ('-db', '-api', '-sites'))
