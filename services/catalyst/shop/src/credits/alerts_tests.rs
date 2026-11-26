@@ -752,6 +752,72 @@ async fn slack_rate_limiting_holds_the_rest_of_the_pass() {
 }
 
 #[tokio::test]
+async fn sustained_slack_rate_limiting_expires_a_two_day_old_held_alert() {
+    let Some(db) = OwnDatabase::create("alerts_hold_age").await else {
+        return;
+    };
+    let credits = Credits::new(db.pool.clone());
+    let (url, hook) = webhook(StatusCode::TOO_MANY_REQUESTS).await;
+    *hook.headers.lock().unwrap() = vec![("retry-after", "120".into())];
+    let delivery = Delivery::new(Some(url), SHOP, Outbound::for_tests());
+
+    queue_one(&db.pool).await;
+    let t0 = now().with_nanosecond(0).unwrap() + chrono::Duration::hours(1);
+    let cutoff = t0 + chrono::Duration::seconds(120);
+    sqlx::query(
+        "INSERT INTO credits.alerts (kind, dedupe_key, payload, created_at, next_attempt_at) \
+         VALUES ($1, '0xdef', jsonb_build_object('salt', '0xdef'), $2, $3)",
+    )
+    .bind(alerts::SUBMITTED_UNCONSUMED)
+    .bind(cutoff - chrono::Duration::days(2))
+    .bind(t0)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        delivery.run_pass(&credits, t0).await.unwrap(),
+        PassOutcome {
+            retried: 2,
+            ..PassOutcome::default()
+        }
+    );
+    assert_eq!(
+        delivery.run_pass(&credits, cutoff).await.unwrap(),
+        PassOutcome {
+            retried: 1,
+            failed: 1,
+            ..PassOutcome::default()
+        }
+    );
+    let held = sqlx::query_as::<_, (String, i32, Option<String>, Option<chrono::NaiveDateTime>)>(
+        "SELECT status, attempts, last_error, finished_at FROM credits.alerts WHERE dedupe_key = '0xdef'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        held,
+        (
+            "failed".into(),
+            0,
+            Some("Slack hold age limit reached".into()),
+            Some(cutoff),
+        )
+    );
+    {
+        let bodies = hook.bodies.lock().unwrap();
+        assert_eq!(bodies.len(), 2);
+        assert!(
+            bodies
+                .iter()
+                .all(|body| body["text"].as_str().unwrap().contains("0xabc"))
+        );
+    }
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn slack_retry_after_is_capped_at_thirty_minutes() {
     let Some(db) = OwnDatabase::create("alerts_retry_after_cap").await else {
         return;
