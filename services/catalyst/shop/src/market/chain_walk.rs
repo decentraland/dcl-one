@@ -231,6 +231,10 @@ impl IndexSettings {
         }
     }
 
+    pub fn serves_mainnet(&self, net: ChainNet) -> bool {
+        self.chain_id(net) == net.chain_id()
+    }
+
     /// Refuses a chain that is neither the network's mainnet nor its
     /// testnet: the walk would read another network's contracts.
     pub fn check_supported_chain_ids(&self) -> Result<(), String> {
@@ -265,11 +269,10 @@ impl IndexSettings {
         Ok(())
     }
 
-    pub fn check_chains(&self) -> Result<(), String> {
+    pub fn check_catalogue_pair(&self) -> Result<(), String> {
         self.check_supported_chain_ids()?;
         if (self.nft_enabled || self.sales_enabled)
-            && ((self.chain_id_ethereum == ChainNet::Ethereum.chain_id())
-                != (self.chain_id_matic == ChainNet::Matic.chain_id()))
+            && (self.serves_mainnet(ChainNet::Ethereum) != self.serves_mainnet(ChainNet::Matic))
         {
             return Err("the NFT catalogue requires the Ethereum/Polygon mainnet pair (1/137) or Sepolia/Amoy (11155111/80002)".into());
         }
@@ -1004,6 +1007,19 @@ pub(crate) fn fresh_fold_on(c: &Cursor, chain_id: i64, now: DateTime<Utc>) -> Op
             && age >= ChronoDuration::zero()
             && age <= READY_WINDOW
     })
+}
+
+/// The fresh published height on this chain, including while its walk is ahead.
+pub(crate) async fn published_block<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    indexer: &str,
+    net: ChainNet,
+    chain_id: i64,
+    now: DateTime<Utc>,
+) -> Result<Option<i64>, sqlx::Error> {
+    Ok(cursor(executor, indexer, net)
+        .await?
+        .and_then(|c| fresh_fold_on(&c, chain_id, now)))
 }
 
 /// [`is_ready_on`] for the indexes that read mainnet only: every index but
@@ -2305,8 +2321,8 @@ async fn walk(
                     out.requests += spent.requests;
                 }
                 Ok(_) => break,
-                Err(e) if e.downcast_ref::<Diverged>().is_some() => {
-                    out.requests += e.downcast_ref::<Diverged>().unwrap().requests;
+                Err(e) if let Some(requests) = e.downcast_ref::<Diverged>().map(|d| d.requests) => {
+                    out.requests += requests;
                     return diverged(
                         pool,
                         source,
@@ -2508,26 +2524,26 @@ mod tests {
             ),
             (1, 137)
         );
-        assert!(defaults.check_chains().is_ok());
+        assert!(defaults.check_catalogue_pair().is_ok());
         let testnet = IndexSettings {
             chain_id_ethereum: 11_155_111,
             chain_id_matic: 80_002,
             ..defaults.clone()
         };
-        assert!(testnet.check_chains().is_ok());
+        assert!(testnet.check_catalogue_pair().is_ok());
         let mixed = IndexSettings {
             nft_enabled: true,
             chain_id_matic: 80_002,
             ..defaults.clone()
         };
-        assert!(mixed.check_chains().is_err());
+        assert!(mixed.check_catalogue_pair().is_err());
         assert!(
             IndexSettings {
                 chain_id_ethereum: ChainNet::Ethereum.testnet_chain_id(),
                 chain_id_matic: ChainNet::Matic.chain_id(),
                 ..mixed
             }
-            .check_chains()
+            .check_catalogue_pair()
             .is_err()
         );
         for (ethereum, matic) in [(137, 137), (1, 1), (1, 80_001), (80_002, 80_002), (1, 0)] {
@@ -2536,7 +2552,10 @@ mod tests {
                 chain_id_matic: matic,
                 ..defaults.clone()
             };
-            assert!(wrong.check_chains().is_err(), "{ethereum} / {matic}");
+            assert!(
+                wrong.check_catalogue_pair().is_err(),
+                "{ethereum} / {matic}"
+            );
         }
     }
 

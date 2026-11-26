@@ -28,7 +28,7 @@ pub(crate) fn market_settings(
     config: &Config,
     self_hosts: &[String],
 ) -> anyhow::Result<shop::market::Settings> {
-    let settings = shop::market::Settings::from_config(
+    Ok(shop::market::Settings::from_config(
         config,
         &shop::market::Upstreams {
             eth_collections_subgraph_url: config
@@ -115,8 +115,7 @@ pub(crate) fn market_settings(
             config.marketplace.marketplace_tip_max_pending,
         )?)
         .with_trusted_proxies(config.node.http_trusted_proxy_cidrs.clone()),
-    );
-    Ok(settings)
+    ))
 }
 
 fn checked_indexes(
@@ -309,9 +308,7 @@ mod tests {
         let mut config =
             Config::parse_env_for_tests([("DATABASE_URL", "postgres:///catalyst")]).unwrap();
         config.marketplace.marketplace_index_chain_id_ethereum = 999;
-        let error = market_settings(&config, &[])
-            .err()
-            .expect("unsupported chain");
+        let error = market_settings(&config, &[]).expect_err("unsupported chain");
         assert!(
             error
                 .to_string()

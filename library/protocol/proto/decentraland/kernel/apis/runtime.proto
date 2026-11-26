@@ -13,7 +13,14 @@ message GetRealmResponse {
 }
 
 message GetWorldTimeResponse {
+  // seconds since midnight of the time of day the sky shows
   int32 seconds = 1;
+  // the scene the player stands in holds the time of day and the player may not change it
+  optional bool locked = 2;
+  // the speed of the player's clock, in seconds of the day per second; 0 when it is stopped
+  optional float speed = 3;
+  // the player's clock sets the sky: no scene's time does
+  optional bool follows_clock = 4;
 }
 
 message GetRealmRequest {}

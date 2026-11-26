@@ -208,25 +208,26 @@ fn world_batch(state: &CommsState, rooms: &[String]) -> Vec<WorldName> {
             worlds.insert(world.key().to_owned(), world);
         }
     }
-    let after = state.world_access_cursor.lock().unwrap().clone();
+    let after = state.world_access_cursor.lock().clone();
     let mut selected: Vec<_> = worlds
         .values()
         .filter(|world| after.as_deref().is_none_or(|after| world.key() > after))
         .take(WORLD_BATCH)
         .cloned()
         .collect();
-    if selected.len() < WORLD_BATCH && after.is_some() {
+    if selected.len() < WORLD_BATCH
+        && let Some(after) = after.as_deref()
+    {
         let remaining = WORLD_BATCH - selected.len();
         selected.extend(
             worlds
                 .values()
-                .filter(|world| world.key() <= after.as_deref().unwrap())
+                .filter(|world| world.key() <= after)
                 .take(remaining)
                 .cloned(),
         );
     }
-    *state.world_access_cursor.lock().unwrap() =
-        selected.last().map(|world| world.key().to_owned());
+    *state.world_access_cursor.lock() = selected.last().map(|world| world.key().to_owned());
     selected
 }
 
@@ -442,7 +443,7 @@ mod recheck_regressions {
                 .execute(&pool).await.unwrap();
             sqlx::raw_sql("CREATE FUNCTION social.fail_test_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.world_name='a-fault.dcl.eth' AND NEW.next_attempt_at='infinity'::timestamp THEN RAISE EXCEPTION 'injected completion failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_test_completion BEFORE UPDATE ON social.world_access_rechecks FOR EACH ROW EXECUTE FUNCTION social.fail_test_completion();")
                 .execute(&pool).await.unwrap();
-            let calls = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+            let calls = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
             let app = axum::Router::new().route("/twirp/livekit.RoomService/{method}", axum::routing::post({
                 let calls = calls.clone();
                 move |axum::extract::Path(method): axum::extract::Path<String>, axum::Json(body): axum::Json<serde_json::Value>| {
@@ -452,7 +453,7 @@ mod recheck_regressions {
                             return axum::Json(serde_json::json!({"rooms":[{"name":"world-a-fault.dcl.eth"},{"name":"world-b-later.dcl.eth"},{"name":"world-c-live.dcl.eth"}]}));
                         }
                         assert_eq!(method, "ListParticipants");
-                        calls.lock().unwrap().push(body["room"].as_str().unwrap().to_owned());
+                        calls.lock().push(body["room"].as_str().unwrap().to_owned());
                         axum::Json(serde_json::json!({"participants":[]}))
                     }
                 }
@@ -489,7 +490,7 @@ mod recheck_regressions {
             .await
             .unwrap();
             assert_eq!(pending, 2, "failed policy must retain retryable schedules");
-            assert!(calls.lock().unwrap().is_empty());
+            assert!(calls.lock().is_empty());
             // Retry the actual durable obligations on the next maintenance tick.
             sqlx::query(
                 "UPDATE social.world_access_rechecks SET next_attempt_at=timestamp '2000-01-01'",
@@ -509,7 +510,7 @@ mod recheck_regressions {
                 ]
             );
             {
-                let calls = calls.lock().unwrap();
+                let calls = calls.lock();
                 assert_eq!(
                     calls
                         .iter()
@@ -752,7 +753,7 @@ mod roster_regressions {
     /// Nobody is evicted on an undecided setting.
     #[tokio::test]
     async fn a_failed_access_read_retains_the_pass_and_evicts_nobody() {
-        let calls = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let calls = Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
         let fixture = axum::Router::new().route(
             "/twirp/livekit.RoomService/{method}",
             axum::routing::post({
@@ -760,7 +761,7 @@ mod roster_regressions {
                 move |axum::extract::Path(method): axum::extract::Path<String>| {
                     let calls = calls.clone();
                     async move {
-                        calls.lock().unwrap().push(method.clone());
+                        calls.lock().push(method.clone());
                         axum::Json(match method.as_str() {
                             "ListRooms" => serde_json::json!({"rooms":[{"name":"world-faulted.dcl.eth"}]}),
                             "ListParticipants" => serde_json::json!({"participants":[{"identity":format!("0x{:040x}", 1),"sid":"PA_1"}]}),
@@ -801,7 +802,6 @@ mod roster_regressions {
         assert_eq!(
             calls
                 .lock()
-                .unwrap()
                 .iter()
                 .filter(|method| *method != "ListRooms")
                 .count(),

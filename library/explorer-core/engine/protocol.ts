@@ -299,6 +299,7 @@ export type PageToScene =
   | GetPlaceRequest
   | GetWorldAccessRequest
   | WatchMapPlayersRequest
+  | WatchSkyTimeRequest
   | SetPhotoModeRequest
   | TakePhotoRequest
   | GetGalleryPhotoRequest
@@ -1172,6 +1173,9 @@ export interface PermissionUsedMessage {
   scene: string
   realm: string
   allowed: boolean
+  /** Absent for a use. Present when what the permission allows starts (true) or stops (false)
+   *  acting on the player, such as a camera the scene holds; `allowed` is then true. */
+  inForce?: boolean
 }
 
 /** The portable experiences the player can see and stop (scene → page, from getPortablesStream):
@@ -2089,6 +2093,25 @@ export interface MapPlayer {
   z: number
 }
 
+/** The Skybox menu opens or closes; while it is open the scene reports the time of day, at once
+ *  and then once a second. */
+export interface WatchSkyTimeRequest {
+  kind: 'watchSkyTime'
+  on: boolean
+}
+
+/** The time of day as `~system/Runtime.getWorldTime` reports it. */
+export interface SkyTime {
+  /** The hour the sky shows, 0 to 24. */
+  hours: number
+  /** The scene the player stands in holds the time of day and the player may not change it. */
+  locked: boolean
+  /** The speed of the player's clock; 0 when it is stopped. */
+  speed: number
+  /** The player's clock sets the sky: no scene's time does. */
+  followsClock: boolean
+}
+
 /** The page's map starts or stops showing the other players; while it does the scene reports them. */
 export interface WatchMapPlayersRequest {
   kind: 'watchMapPlayers'
@@ -2592,6 +2615,8 @@ export type SceneToPage =
   | PlaceMessage
   | WorldAccessMessage
   | { kind: 'connectivity'; state: ConnectivitySnapshot }
+  /** The time of day for the Skybox menu, while the page watches it (`watchSkyTime`). */
+  | { kind: 'skyTime'; state: SkyTime }
   | { kind: 'connectivityRetry'; requestId: string; error?: string }
   | BridgeUnavailableMessage
   | VoiceChatStateMessage

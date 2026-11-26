@@ -45,6 +45,7 @@ impl Plugin for SceneDebugPanelPlugin {
             .add_console_command::<SceneState, _>(scene_state)
             .add_console_command::<SceneContent, _>(scene_content)
             .add_console_command::<LoadingState, _>(loading_state)
+            .add_console_command::<PermissionsInForceState, _>(permissions_in_force_state)
             .add_console_command::<TextureState, _>(texture_state)
             .add_debug_section(DebugSection {
                 title: "Current Scene",
@@ -171,6 +172,13 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Broken scenes", "broken"),
                 ],
                 actions: &[("Reload current parcel scene", "/reload --current")],
+                inputs: &[],
+            })
+            .add_debug_section(DebugSection {
+                title: "Scene permissions in force",
+                query: "/permissions_in_force",
+                fields: &[("In force now (scene, permission)", "inForce")],
+                actions: &[],
                 inputs: &[],
             })
             .add_debug_section(DebugSection {
@@ -577,6 +585,26 @@ fn scene_content(
         "visibleMaterials": visible_materials.len(), "textures": textures.len(),
         "colliders": colliders.map_or(0, SceneColliderData::collider_count),
         "collidersOutOfBounds": colliders.map_or(0, SceneColliderData::out_of_bounds_count)}).to_string());
+}
+
+/// Report, as JSON, the permissions whose effect acts on the player now: `inForce`, a list of
+/// `scene` (the hash of the scene that causes it) and `type`.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/permissions_in_force")]
+struct PermissionsInForceState;
+
+fn permissions_in_force_state(
+    mut input: ConsoleCommand<PermissionsInForceState>,
+    in_force: Res<crate::permissions::PermissionsInForce>,
+) {
+    if let Some(Ok(_)) = input.take() {
+        let list = in_force
+            .0
+            .iter()
+            .map(|(scene, ty)| json!({"scene": scene, "type": ty}))
+            .collect::<Vec<_>>();
+        input.reply_ok(json!({ "inForce": list }).to_string());
+    }
 }
 
 #[derive(clap::Parser, ConsoleCommand)]

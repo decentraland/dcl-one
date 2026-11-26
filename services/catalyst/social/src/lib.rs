@@ -57,6 +57,7 @@ pub use metrics::FAMILIES as SERVICE_FAMILIES;
 pub mod rpc;
 pub mod segment_webhooks;
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::unwrap_used, reason = "test support")]
 pub mod test_fixtures;
 pub mod writes;
 
