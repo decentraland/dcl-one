@@ -316,8 +316,9 @@ export class Worlds {
   public readonly usesCanonicalManagement: boolean;
 
   constructor(purpose: WorldsPurpose = 'content') {
-    const configured = config.get('WORLDS_CONTENT_SERVER_URL').replace(/\/+$/, '');
-    this.usesCanonicalManagement = purpose === 'management' && configured === DCL_DEV_WORLDS_URL;
+    const configured = config.get('WORLDS_CONTENT_SERVER_URL');
+    this.usesCanonicalManagement =
+      purpose === 'management' && configured.replace(/\/+$/, '') === DCL_DEV_WORLDS_URL;
     this.url = this.usesCanonicalManagement ? CANONICAL_WORLDS_URL : configured;
   }
 

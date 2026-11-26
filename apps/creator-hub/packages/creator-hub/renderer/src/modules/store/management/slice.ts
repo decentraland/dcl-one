@@ -345,10 +345,17 @@ export const unpublishWorldScene = createAsyncThunk(
     if (WorldsAPI.usesCanonicalManagement) {
       // The upstream deletes by parcel. Recheck the selected entity before signing so an
       // already-replaced scene is not selected for removal. The read and DELETE are separate.
-      const scenes = await fetchWorldSceneList(WorldsAPI, worldName);
+      const [x, y] = sceneCoord.split(',').map(Number);
+      const page =
+        entityId && /^-?\d+,-?\d+$/.test(sceneCoord)
+          ? await WorldsAPI.fetchWorldScenes(worldName, { limit: 1, x1: x, x2: x, y1: y, y2: y })
+          : null;
+      const scene = page?.scenes?.[0];
       if (
-        !entityId ||
-        !scenes?.some(scene => scene.entityId === entityId && scene.parcels.includes(sceneCoord))
+        page?.total !== 1 ||
+        !scene ||
+        scene.entityId !== entityId ||
+        !scene.parcels?.includes(sceneCoord)
       ) {
         await dispatch(fetchWorldScenes({ worldName }));
         throw new Error('The selected scene could not be confirmed on the Worlds server.');
