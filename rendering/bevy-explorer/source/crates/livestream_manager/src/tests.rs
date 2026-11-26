@@ -1751,3 +1751,162 @@ fn selected_receivers_rebind_on_late_arrival_and_source_change() {
         .get::<SelectedVideoTransmitter>(screen)
         .is_none());
 }
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn automatic_video_is_shown_only_while_an_automatic_receiver_exists() {
+    use crate::{AutomaticVideoShown, SelectedVideoReceiver, VideoTrackSource};
+    let mut app = min_app();
+    app.update();
+    let presentation = app.world_mut().spawn(TransmitterKind::Presentation).id();
+    app.world_mut().spawn((
+        ActiveReceiver,
+        SelectedVideoReceiver(VideoTrackSource {
+            scene_hash: "scene".to_owned(),
+            identity: "stream:camera".to_owned(),
+            track_sid: "TR_camera".to_owned(),
+        }),
+    ));
+    app.update();
+    app.update();
+    app.update();
+    // the cast stays on for its audio, but nothing shows its video
+    test_states(
+        &mut app,
+        TransmissionKind::Cast,
+        Transmitter::On,
+        Receiver::On,
+    );
+    assert!(app.world().get::<ActiveTransmitter>(presentation).is_some());
+    assert!(app
+        .world()
+        .get::<AutomaticVideoShown>(presentation)
+        .is_none());
+
+    let automatic = app.world_mut().spawn(ActiveReceiver).id();
+    app.update();
+    assert!(app
+        .world()
+        .get::<AutomaticVideoShown>(presentation)
+        .is_some());
+
+    app.world_mut()
+        .entity_mut(automatic)
+        .remove::<ActiveReceiver>();
+    app.update();
+    assert!(app
+        .world()
+        .get::<AutomaticVideoShown>(presentation)
+        .is_none());
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn track_urls_round_trip_and_reject_other_sources() {
+    use crate::{is_livekit_video, livekit_track_url, VideoTrackSource, LIVEKIT_CURRENT_STREAM};
+    let url = livekit_track_url("stream:camera", "TR_camera");
+    assert_eq!(
+        VideoTrackSource::from_url("scene", &url),
+        Some(VideoTrackSource {
+            scene_hash: "scene".to_owned(),
+            identity: "stream:camera".to_owned(),
+            track_sid: "TR_camera".to_owned(),
+        })
+    );
+    assert!(is_livekit_video(&url));
+    assert!(is_livekit_video(LIVEKIT_CURRENT_STREAM));
+    for other in [
+        LIVEKIT_CURRENT_STREAM,
+        "livekit-video:///TR_camera",
+        "livekit-video://speaker/",
+        "livekit-video://speaker/TR/extra",
+        "https://example.com/speaker/TR_camera",
+    ] {
+        assert_eq!(VideoTrackSource::from_url("scene", other), None, "{other}");
+    }
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn a_screen_moving_between_outputs_of_one_track_never_leaves_it_undemanded() {
+    use crate::{
+        AutomaticVideoShown, SelectedVideoReceiver, SelectedVideoTransmitter, VideoTrackSource,
+    };
+
+    #[derive(Resource, Default)]
+    struct OtherDemandAtRelease(Vec<bool>);
+
+    let mut app = min_app();
+    app.init_resource::<OtherDemandAtRelease>();
+    app.add_observer(
+        |trigger: Trigger<OnRemove, SelectedVideoTransmitter>,
+         tracks: Query<Has<AutomaticVideoShown>>,
+         mut log: ResMut<OtherDemandAtRelease>| {
+            log.0.push(tracks.get(trigger.target()).unwrap_or(false));
+        },
+    );
+    app.add_observer(
+        |trigger: Trigger<OnRemove, AutomaticVideoShown>,
+         tracks: Query<Has<SelectedVideoTransmitter>>,
+         mut log: ResMut<OtherDemandAtRelease>| {
+            log.0.push(tracks.get(trigger.target()).unwrap_or(false));
+        },
+    );
+    app.update();
+    let source = VideoTrackSource {
+        scene_hash: "scene".to_owned(),
+        identity: "presentation-bot:room".to_owned(),
+        track_sid: "TR_presentation".to_owned(),
+    };
+    let presentation = app
+        .world_mut()
+        .spawn((source.clone(), TransmitterKind::Presentation))
+        .id();
+    let screen = app
+        .world_mut()
+        .spawn((ActiveReceiver, SelectedVideoReceiver(source.clone())))
+        .id();
+    app.update();
+    app.update();
+    app.update();
+    assert!(app.world().get::<ActiveTransmitter>(presentation).is_some());
+    assert!(app
+        .world()
+        .get::<SelectedVideoTransmitter>(presentation)
+        .is_some());
+
+    // selected -> automatic, as a source change does it: the receiver is replaced
+    app.world_mut()
+        .entity_mut(screen)
+        .remove::<(ActiveReceiver, SelectedVideoReceiver)>()
+        .insert(ActiveReceiver);
+    app.update();
+    assert!(app
+        .world()
+        .get::<AutomaticVideoShown>(presentation)
+        .is_some());
+    assert!(app
+        .world()
+        .get::<SelectedVideoTransmitter>(presentation)
+        .is_none());
+
+    // automatic -> selected
+    app.world_mut()
+        .entity_mut(screen)
+        .remove::<ActiveReceiver>()
+        .insert((SelectedVideoReceiver(source), ActiveReceiver));
+    app.update();
+    assert!(app
+        .world()
+        .get::<AutomaticVideoShown>(presentation)
+        .is_none());
+    assert!(app
+        .world()
+        .get::<SelectedVideoTransmitter>(presentation)
+        .is_some());
+
+    assert_eq!(
+        app.world().resource::<OtherDemandAtRelease>().0,
+        [true, true]
+    );
+}

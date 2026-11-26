@@ -9,8 +9,8 @@ use common::{debug_panic, util::AsH160};
 use dcl_component::proto_components::sdk::components::VideoState;
 use livestream_manager::{
     ActiveAudioTransmitter, ActiveTransmitter, ActiveVideoCast, AudioTransmitterKind,
-    AudioTransmitterVolume, SelectedVideoTransmitter, TransmissionImageResized, TransmitterKind,
-    VideoTrackSource,
+    AudioTransmitterVolume, AutomaticVideoShown, SelectedVideoTransmitter,
+    TransmissionImageResized, TransmitterKind, VideoTrackSource,
 };
 #[cfg(target_arch = "wasm32")]
 use media::VideoData;
@@ -87,8 +87,10 @@ impl Plugin for LivekitTrackPlugin {
         app.add_observer(video_track_is_now_unsubscribed);
         #[cfg(target_arch = "wasm32")]
         app.add_observer(start_video_outputs);
-        app.add_observer(selected_transmitter_added);
+        app.add_observer(video_output_demanded::<SelectedVideoTransmitter>);
         app.add_observer(selected_transmitter_removed);
+        app.add_observer(video_output_demanded::<AutomaticVideoShown>);
+        app.add_observer(automatic_video_hidden);
 
         app.add_observer(active_transmitter_added);
         app.add_observer(active_transmitter_removed);
@@ -671,6 +673,7 @@ fn start_video_outputs(
         (
             &LivekitTrack,
             Option<&ActiveTransmitter>,
+            Has<AutomaticVideoShown>,
             Option<&SelectedVideoTransmitter>,
             Has<HtmlMediaEntity>,
             Has<SelectedHtmlMediaEntity>,
@@ -679,7 +682,8 @@ fn start_video_outputs(
     >,
 ) {
     let entity = trigger.target();
-    let Ok((track, automatic, selected, has_automatic, has_selected)) = tracks.get(entity) else {
+    let Ok((track, automatic, shown, selected, has_automatic, has_selected)) = tracks.get(entity)
+    else {
         return;
     };
     let Some(RemoteTrack::Video(video)) = track.track() else {
@@ -701,7 +705,7 @@ fn start_video_outputs(
             image: output.image.clone(),
         }
     };
-    if let Some(output) = automatic.filter(|_| !has_automatic) {
+    if let Some(output) = automatic.filter(|_| shown && !has_automatic) {
         commands.entity(entity).try_insert(adopt(output));
     }
     if let Some(output) = selected.filter(|_| !has_selected) {
@@ -761,8 +765,8 @@ fn queue_frame_copy(
     }
 }
 
-fn selected_transmitter_added(
-    trigger: Trigger<OnAdd, SelectedVideoTransmitter>,
+fn video_output_demanded<T: Component>(
+    trigger: Trigger<OnAdd, T>,
     mut commands: Commands,
     tracks: Query<Has<Subscribed>>,
 ) {
@@ -777,7 +781,7 @@ fn selected_transmitter_added(
 fn selected_transmitter_removed(
     trigger: Trigger<OnRemove, SelectedVideoTransmitter>,
     mut commands: Commands,
-    tracks: Query<Has<ActiveTransmitter>>,
+    tracks: Query<Has<AutomaticVideoShown>>,
 ) {
     #[cfg(target_arch = "wasm32")]
     commands
@@ -793,18 +797,9 @@ fn selected_transmitter_removed(
 
 fn active_transmitter_added(
     trigger: Trigger<OnAdd, ActiveTransmitter>,
-    mut commands: Commands,
     active_transmitters: Query<&ActiveTransmitter>,
-    tracks: Query<Has<Subscribed>>,
 ) {
     let entity = trigger.target();
-    if tracks.get(entity).unwrap_or(false) {
-        #[cfg(target_arch = "wasm32")]
-        commands.entity(entity).trigger(StartVideoOutputs);
-    } else {
-        commands.entity(entity).trigger(SubscribeToTrack);
-    }
-
     let Ok(active_transmitter) = active_transmitters.get(entity) else {
         unreachable!("Infallible query.");
     };
@@ -813,24 +808,34 @@ fn active_transmitter_added(
 
 fn active_transmitter_removed(
     trigger: Trigger<OnRemove, ActiveTransmitter>,
-    mut commands: Commands,
     active_transmitters: Query<&ActiveTransmitter>,
-    tracks: Query<Has<SelectedVideoTransmitter>>,
+) {
+    let entity = trigger.target();
+    let Ok(active_transmitter) = active_transmitters.get(entity) else {
+        unreachable!("Infallible query.");
+    };
+    active_transmitter.send_if_modified(VideoState::VsLoading);
+}
+
+fn automatic_video_hidden(
+    trigger: Trigger<OnRemove, AutomaticVideoShown>,
+    mut commands: Commands,
+    tracks: Query<(Option<&ActiveTransmitter>, Has<SelectedVideoTransmitter>)>,
 ) {
     let entity = trigger.target();
     #[cfg(target_arch = "wasm32")]
     commands.entity(entity).try_remove::<HtmlMediaEntity>();
-    if !tracks.get(entity).unwrap_or(false) {
+    let (automatic, selected) = tracks.get(entity).unwrap_or_default();
+    // the next screen to show the automatic output must not start from this track's state
+    if let Some(automatic) = automatic {
+        automatic.send_if_modified(VideoState::VsLoading);
+    }
+    if !selected {
         commands.entity(entity).queue_handled(
             entity_command::trigger(UnsubscribeToTrack),
             bevy::ecs::error::debug,
         );
     }
-
-    let Ok(active_transmitter) = active_transmitters.get(entity) else {
-        unreachable!("Infallible query.");
-    };
-    active_transmitter.send_if_modified(VideoState::VsLoading);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -841,14 +846,15 @@ fn copy_frame(
     mut tracks: Query<(
         Entity,
         Option<&ActiveTransmitter>,
+        Has<AutomaticVideoShown>,
         Option<&SelectedVideoTransmitter>,
         &mut VideoFrameReceiver,
     )>,
     mut images: ResMut<Assets<Image>>,
     time: Res<Time<Real>>,
 ) {
-    for (entity, automatic, selected, mut receiver) in &mut tracks {
-        let outputs = [automatic, selected.map(|s| &s.0)];
+    for (entity, automatic, shown, selected, mut receiver) in &mut tracks {
+        let outputs = [automatic.filter(|_| shown), selected.map(|s| &s.0)];
         if outputs.iter().all(Option::is_none) {
             continue;
         }

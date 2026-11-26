@@ -39,6 +39,8 @@ impl Plugin for LivestreamManagerPlugin {
                 transmission_kind,
                 manage_streams.run_if(in_state(TransmissionState::NeedStream)),
                 manage_casts.run_if(in_state(TransmissionState::Cast)),
+                automatic_video_shown,
+                release_selected_video_transmitters,
             )
                 .chain(),
         );
@@ -152,7 +154,7 @@ struct ManagingAudioStreams(Vec<Entity>);
 #[relationship(relationship_target = ManagingAudioStreams)]
 struct AudioStreamer(Entity);
 
-fn empty_automatic_image() -> Image {
+fn empty_output_image() -> Image {
     let mut image = Image::new_fill(
         Extent3d {
             width: 8,
@@ -173,7 +175,7 @@ fn empty_automatic_image() -> Image {
 }
 
 fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
-    let handle = images.add(empty_automatic_image());
+    let handle = images.add(empty_output_image());
     let (state_sender, _) = tokio::sync::watch::channel(VideoState::VsLoading);
 
     commands.spawn(LivestreamManager {
@@ -306,12 +308,16 @@ fn transmitter_on(
 
 fn transmitter_off(
     _trigger: Trigger<OnRemove, ActiveTransmitter>,
+    mut commands: Commands,
     mut next_state: ResMut<NextState<Transmitter>>,
 ) {
     debug!(
         "Transmitter {} removed, transmitters are now Off",
         _trigger.target()
     );
+    commands
+        .entity(_trigger.target())
+        .try_remove::<AutomaticVideoShown>();
     next_state.set(Transmitter::Off);
 }
 
@@ -449,7 +455,7 @@ fn clear_automatic_image(
     let Some(image) = images.get_mut(&manager.image) else {
         return;
     };
-    *image = empty_automatic_image();
+    *image = empty_output_image();
     manager.state.send_replace(VideoState::VsLoading);
     resized.write(TransmissionImageResized);
 }
@@ -519,24 +525,8 @@ fn transfer_receiver_volume(
 }
 
 fn selected_output(images: &mut Assets<Image>) -> ActiveTransmitter {
-    let mut image = Image::new_fill(
-        Extent3d {
-            width: 8,
-            height: 8,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        &[0, 0, 0, 255],
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::all(),
-    );
-    image.texture_descriptor.usage = TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING;
-    #[cfg(target_arch = "wasm32")]
-    {
-        image.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
-    }
     ActiveTransmitter {
-        image: images.add(image),
+        image: images.add(empty_output_image()),
         state: tokio::sync::watch::channel(VideoState::VsLoading).0,
     }
 }
@@ -604,8 +594,36 @@ fn selected_video_receivers(
             });
         }
     }
-    for (track, _, output) in &tracks {
-        if output.is_some() && !requested.contains_key(&track) {
+}
+
+/// Receivers keep [`Receiver::On`] for the cast audio whichever video they show; the automatic
+/// video is only marked as needed while a receiver shows it.
+fn automatic_video_shown(
+    mut commands: Commands,
+    automatic_receivers: Query<(), (With<ActiveReceiver>, Without<SelectedVideoReceiver>)>,
+    transmitters: Query<(Entity, Has<AutomaticVideoShown>), With<ActiveTransmitter>>,
+) {
+    let shown = !automatic_receivers.is_empty();
+    for (transmitter, has_shown) in &transmitters {
+        if shown && !has_shown {
+            commands.entity(transmitter).try_insert(AutomaticVideoShown);
+        } else if !shown && has_shown {
+            commands
+                .entity(transmitter)
+                .try_remove::<AutomaticVideoShown>();
+        }
+    }
+}
+
+/// Runs after the automatic demand is updated, so a track that a screen moves between its
+/// selected and automatic outputs is never released while it is still shown.
+fn release_selected_video_transmitters(
+    mut commands: Commands,
+    receivers: Query<&SelectedVideoReceiver, With<ActiveReceiver>>,
+    tracks: Query<(Entity, &VideoTrackSource), With<SelectedVideoTransmitter>>,
+) {
+    for (track, source) in &tracks {
+        if !receivers.iter().any(|selected| selected.0 == *source) {
             commands
                 .entity(track)
                 .try_remove::<SelectedVideoTransmitter>();
