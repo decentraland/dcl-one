@@ -4,10 +4,11 @@
 //! database did not hold.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use parking_lot::Mutex;
 use sqlx::PgPool;
 use tokio::sync::{Semaphore, broadcast};
 
@@ -40,19 +41,18 @@ impl MissMemo {
     fn hit(&self, entity: &str) -> bool {
         self.map
             .lock()
-            .ok()
-            .and_then(|m| m.get(entity).copied())
+            .get(entity)
+            .copied()
             .is_some_and(|at| at.elapsed() < NOT_FOUND_TTL)
     }
 
     fn record(&self, entity: &str) {
-        if let Ok(mut m) = self.map.lock() {
-            if m.len() >= NOT_FOUND_MAX {
-                m.retain(|_, at| at.elapsed() < NOT_FOUND_TTL);
-            }
-            if m.len() < NOT_FOUND_MAX {
-                m.insert(entity.to_string(), Instant::now());
-            }
+        let mut m = self.map.lock();
+        if m.len() >= NOT_FOUND_MAX {
+            m.retain(|_, at| at.elapsed() < NOT_FOUND_TTL);
+        }
+        if m.len() < NOT_FOUND_MAX {
+            m.insert(entity.to_string(), Instant::now());
         }
     }
 }
@@ -106,7 +106,7 @@ impl RenderQueue {
         }
 
         let (leader, mut rx, tx) = {
-            let mut map = self.inner.inflight.lock().unwrap();
+            let mut map = self.inner.inflight.lock();
             if let Some(existing) = map.get(entity) {
                 (false, existing.subscribe(), existing.clone())
             } else {
@@ -226,11 +226,7 @@ struct InflightGuard {
 impl Drop for InflightGuard {
     fn drop(&mut self) {
         {
-            let mut map = self
-                .inner
-                .inflight
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut map = self.inner.inflight.lock();
             map.remove(&self.entity);
         }
         let outcome = self
@@ -282,7 +278,6 @@ mod tests {
         assert!(!memo.hit("b"));
         memo.map
             .lock()
-            .unwrap()
             .insert("old".into(), Instant::now() - NOT_FOUND_TTL * 2);
         assert!(!memo.hit("old"));
     }
