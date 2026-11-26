@@ -436,6 +436,10 @@ use crate::shared::collections::ITEM_SHIFT as TWO_POW_216;
 
 /// The keys a fold past `$2` touches, counted before the fold decides its
 /// join strategy (`NESTED_LOOP_TOUCHED_MAX`); the same two arms as the
+/// How long one pass of the nft walk spends on the legacy order book's
+/// open rebuild (`legacy_orders::run_rebuild`) before it walks.
+const LEGACY_BOOK_REBUILD_PER_PASS: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// fold's `touched`.
 const COUNT_TOUCHED_SQL: &str = "
 SELECT count(*) FROM (
@@ -1155,6 +1159,14 @@ impl ChainIndex for NftIndex {
         cursor: Option<(u64, &str)>,
     ) -> anyhow::Result<chain_walk::Spent> {
         self.reset();
+        // The legacy order book's open rebuild, a batch of contracts a
+        // transaction, within this pass's share of time: it never holds back
+        // the nft fold, and a restart resumes at the last batch committed.
+        let deadline = std::time::Instant::now() + LEGACY_BOOK_REBUILD_PER_PASS;
+        if let Err(error) = super::legacy_orders::run_rebuild(pool, self.net, owner, deadline).await
+        {
+            tracing::warn!(network = self.net.db_name(), %error, "legacy order book: rebuild batch deferred");
+        }
         let owed: Vec<WalkedContract> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT contract_address, walked_from_block, backfill_from_block, backfilled_to_block FROM shop.nft_contract \
              WHERE network = $1 AND {BACKFILL_PENDING_SQL} ORDER BY walked_from_block, contract_address"

@@ -5941,6 +5941,11 @@ async fn the_order_book_agrees_with_the_subgraph_on_transfers_away_and_back() {
     super::legacy_orders::fold(&mut tx, super::chain_walk::ChainNet::Matic, -1)
         .await
         .unwrap();
+    while super::legacy_orders::rebuild_batch(&mut tx, super::chain_walk::ChainNet::Matic, 100)
+        .await
+        .unwrap()
+        == super::legacy_orders::RebuildStep::Batched
+    {}
     tx.commit().await.unwrap();
     republish_nft(&pool).await;
     for (token, (label, events)) in traces.iter().enumerate() {

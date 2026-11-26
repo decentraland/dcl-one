@@ -756,6 +756,27 @@ CREATE TABLE shop.legacy_order_refold (
     CONSTRAINT legacy_order_refold_network_known CHECK (network IN ('ethereum', 'matic'))
 );
 
+-- A whole refold of a network's legacy order book in progress
+-- (services/catalyst/shop/src/market/legacy_orders.rs, `rebuild_batch`). The
+-- nft fold never refolds the book itself: a book that does not stand (never
+-- folded, rewound, on a lost branch, or the nft walk rebuilt) is emptied and
+-- this row opened, and the nft walk's pass then refolds it a batch of
+-- contracts per transaction, from `next_contract` (the last contract done;
+-- NULL: none yet), so a slow network never holds back the nft fold's
+-- publication and a restart resumes where the last batch committed. `upto`
+-- is the nft walk's block when the rebuild opened (lowered by a rewind): the
+-- last step refolds every token with an order event past it, takes the
+-- queued refolds, writes the book's marker and deletes this row. While it
+-- exists the book does not stand and is not read. Workload: one row per
+-- network at most, for the length of a rebuild.
+CREATE TABLE shop.legacy_order_rebuild (
+    network text PRIMARY KEY,
+    upto bigint NOT NULL,
+    next_contract varchar(42),
+    started_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT legacy_order_rebuild_network_known CHECK (network IN ('ethereum', 'matic'))
+);
+
 -- Queues the token of an order event written at or below its network's book
 -- marker. Only order events fire it; one past the marker is the fold's own.
 -- An `ON CONFLICT DO UPDATE` whose `WHERE` is false updates nothing and does
@@ -818,10 +839,11 @@ CREATE TABLE shop.legacy_order (
 );
 
 -- A database that predates the table gets it empty and with no marker, so
--- the book does not stand: the first nft fold after the upgrade refolds it
--- whole, in the fold's own transaction, and readers refuse it until that fold
--- is published. The schema run never reads `shop.nft_event`: a whole book is
--- a large statement, and the run is not where a statement may take minutes.
+-- the book does not stand: the first nft fold after the upgrade opens a
+-- rebuild (`shop.legacy_order_rebuild`) that the nft walk refolds a batch of
+-- contracts at a time, and readers refuse the book until it is done. The
+-- schema run never reads `shop.nft_event`: a whole book is a large statement,
+-- and the run is not where a statement may take minutes.
 
 -- A token's orders: the fold's and the rewind's per-token rewrite, and
 -- /v1/orders?contractAddress=&tokenId= (which names no network).

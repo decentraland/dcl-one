@@ -5516,13 +5516,19 @@ Invariants:
   the two the rows hold an unpublished fold: a read then answers the
   envelope rather than rows past the published block. A walk that advanced
   without folding leaves the book at the published block, still read.
-- A database that predates the table gets it empty and with no marker. The
-  schema run reads no log: a whole book is one statement of minutes on a
-  real node, past the run's 60 s statement limit, and it would run inside
-  the run's single transaction. Without a marker the book does not stand, so
-  readers answer the `nft-index` envelope, and the first nft fold after the
-  upgrade refolds it whole in the fold's own transaction (its own statement
-  limit), then publishes it with the fold.
+- The nft fold never refolds the book whole. A book that does not stand
+  (a database that predates the table, a rewind, a lost branch, an nft
+  rebuild) is emptied in the nft fold's transaction and a rebuild opened in
+  `shop.legacy_order_rebuild` at the nft walk's last block; the nft fold
+  publishes as usual and only the book's readers answer the `nft-index`
+  envelope. Each nft walk pass then spends up to 10 s on it: a batch of 100
+  contracts with an order event (a loose scan of `nft_event_token_idx`)
+  refolded whole per transaction, the last contract done recorded, so a
+  restart resumes there. The last step refolds every token with an order
+  event past the rebuild's block and the refolds queued meanwhile (the
+  trigger keeps queueing while the marker holds that block without a hash),
+  writes the marker and deletes the row. A rewind during a rebuild lowers its
+  block. The schema run reads no log.
 
 The page, count and readiness checks share a `REPEATABLE READ, READ ONLY`
 snapshot. An explicit network or chain-bound contract can narrow the NFT

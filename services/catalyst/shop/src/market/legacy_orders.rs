@@ -46,6 +46,8 @@
 //! book only while it stands and its marker reaches the published nft fold
 //! ([`caught_up`]).
 
+use std::sync::LazyLock;
+
 use sqlx::PgConnection;
 
 use super::chain_walk::ChainNet;
@@ -118,13 +120,59 @@ const STANDS_SQL: &str = "SELECT b.folded_through FROM shop.legacy_order_cursor 
          AND k.block_number = b.folded_through AND k.block_hash = b.through_hash \
      WHERE b.network = $1";
 
-/// Folds `net`'s orders on the nft fold's transaction and records the nft
-/// walk's last block and hash as the book's marker; the rows written. The
-/// nft fold's `since` (`-1`: a rebuild) is lowered to the book's marker
-/// while the book stands. A rebuild, or a book that does not stand (never
-/// folded, rewound, or on a branch the nft walk no longer has), deletes the
-/// network's orders first and refolds them whole.
+/// The order fold of a batch of contracts (`$4`): every order of each of
+/// their tokens with an order event, over its whole history, by
+/// [`FOLD_SQL`]'s rules (`$2` unused, bound for the shared statement).
+static FOLD_CONTRACTS_SQL: LazyLock<String> = LazyLock::new(|| {
+    let rest = FOLD_SQL
+        .find("), created AS (")
+        .expect("FOLD_SQL names its created CTE");
+    format!(
+        "WITH touched AS (
+    SELECT DISTINCT contract_address, token_id FROM shop.nft_event
+    WHERE network = $1 AND contract_address = ANY($4) AND $2::bigint IS NOT NULL
+      AND kind IN ('order_created', 'order_successful', 'order_cancelled'){}",
+        &FOLD_SQL[rest..]
+    )
+});
+
+/// The next contracts with an order event after `$2` (NULL: from the first),
+/// at most `$3`, by a loose scan of `nft_event_token_idx`: one index probe a
+/// contract, not a scan of the log.
+const NEXT_CONTRACTS_SQL: &str = "WITH RECURSIVE c(addr, n) AS (
+    (SELECT e.contract_address, 1 FROM shop.nft_event e
+     WHERE e.network = $1 AND e.contract_address > coalesce($2, '')
+     ORDER BY e.contract_address LIMIT 1)
+    UNION ALL
+    SELECT (SELECT e.contract_address FROM shop.nft_event e
+            WHERE e.network = $1 AND e.contract_address > c.addr
+            ORDER BY e.contract_address LIMIT 1), c.n + 1
+    FROM c WHERE c.addr IS NOT NULL AND c.n < $3
+)
+SELECT addr FROM c WHERE addr IS NOT NULL";
+
+/// The contracts a rebuild batch refolds, at most.
+pub const REBUILD_CONTRACTS_PER_BATCH: i64 = 100;
+
+/// Folds `net`'s orders on the nft fold's transaction while the book stands:
+/// the orders touched past the lower of the nft fold's `since` and the
+/// book's marker, and the queued refolds, then the nft walk's last block and
+/// hash as the marker; the rows written. It never refolds the book whole in
+/// the nft fold's transaction: a book that does not stand (never folded,
+/// rewound, on a branch the nft walk no longer has) or a rebuild of the nft
+/// index (`since = -1`) opens a rebuild instead ([`open_rebuild`]), which
+/// the nft walk's pass runs a batch at a time ([`rebuild_batch`]); while one
+/// is open this folds nothing.
 pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::Result<u64> {
+    let rebuilding: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM shop.legacy_order_rebuild WHERE network = $1)",
+    )
+    .bind(net.db_name())
+    .fetch_one(&mut *conn)
+    .await?;
+    if rebuilding {
+        return Ok(0);
+    }
     let stands: Option<i64> = sqlx::query_scalar(STANDS_SQL)
         .bind(net.db_name())
         .bind(super::chain_walk::INDEXER_NFT)
@@ -132,30 +180,10 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
         .await?;
     let since = match stands {
         Some(through) if since >= 0 => since.min(through),
-        _ => -1,
-    };
-    // A whole refold reads every token: the nft fold may have turned hash
-    // and merge joins off for its own few touched rows (a transaction-local
-    // setting), so they are on for this statement and restored after it.
-    let planner: Option<(String, String)> = if since < 0 {
-        sqlx::query("DELETE FROM shop.legacy_order WHERE network = $1")
-            .bind(net.db_name())
-            .execute(&mut *conn)
-            .await?;
-        let saved = sqlx::query_as(
-            "SELECT current_setting('enable_hashjoin'), current_setting('enable_mergejoin')",
-        )
-        .fetch_one(&mut *conn)
-        .await?;
-        sqlx::query("SET LOCAL enable_hashjoin = on")
-            .execute(&mut *conn)
-            .await?;
-        sqlx::query("SET LOCAL enable_mergejoin = on")
-            .execute(&mut *conn)
-            .await?;
-        Some(saved)
-    } else {
-        None
+        _ => {
+            open_rebuild(conn, net).await?;
+            return Ok(0);
+        }
     };
     let written = sqlx::query(FOLD_SQL)
         .bind(net.db_name())
@@ -164,13 +192,12 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
         .execute(&mut *conn)
         .await?
         .rows_affected();
-    if let Some((hash, merge)) = planner {
-        sqlx::query("SELECT set_config('enable_hashjoin', $1, true), set_config('enable_mergejoin', $2, true)")
-            .bind(hash)
-            .bind(merge)
-            .execute(&mut *conn)
-            .await?;
-    }
+    write_marker(conn, net).await?;
+    Ok(written)
+}
+
+/// The book's marker: the nft walk's last block and its hash.
+async fn write_marker(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<()> {
     sqlx::query(
         "INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash) \
          SELECT network, last_block, last_block_hash FROM shop.chain_cursor WHERE indexer = $2 AND network = $1 \
@@ -180,7 +207,143 @@ pub async fn fold(conn: &mut PgConnection, net: ChainNet, since: i64) -> sqlx::R
     .bind(super::chain_walk::INDEXER_NFT)
     .execute(&mut *conn)
     .await?;
-    Ok(written)
+    Ok(())
+}
+
+/// Empties `net`'s book and opens its rebuild at the nft walk's last block.
+/// The marker keeps that block with no hash: the book does not stand (no
+/// reader takes it), and the refold trigger keeps queueing the order events
+/// a repair writes at or below it, which the rebuild's last step takes.
+async fn open_rebuild(conn: &mut PgConnection, net: ChainNet) -> sqlx::Result<()> {
+    sqlx::query("DELETE FROM shop.legacy_order WHERE network = $1")
+        .bind(net.db_name())
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM shop.legacy_order_refold WHERE network = $1")
+        .bind(net.db_name())
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash) \
+         SELECT network, last_block, NULL FROM shop.chain_cursor WHERE indexer = $2 AND network = $1 \
+         ON CONFLICT (network) DO UPDATE SET folded_through = EXCLUDED.folded_through, through_hash = NULL",
+    )
+    .bind(net.db_name())
+    .bind(super::chain_walk::INDEXER_NFT)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "INSERT INTO shop.legacy_order_rebuild (network, upto) \
+         SELECT network, last_block FROM shop.chain_cursor WHERE indexer = $2 AND network = $1 \
+         ON CONFLICT (network) DO UPDATE SET upto = EXCLUDED.upto, next_contract = NULL, started_at = EXCLUDED.started_at",
+    )
+    .bind(net.db_name())
+    .bind(super::chain_walk::INDEXER_NFT)
+    .execute(&mut *conn)
+    .await?;
+    tracing::info!(network = net.db_name(), "legacy order book: rebuild opened");
+    Ok(())
+}
+
+/// What one [`rebuild_batch`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RebuildStep {
+    /// No rebuild is open on the network.
+    Idle,
+    /// A batch of contracts was refolded; more remain.
+    Batched,
+    /// The last step ran: the book stands at the nft walk's last block.
+    Finished,
+}
+
+/// One step of `net`'s open rebuild, on the caller's transaction (the
+/// caller fences it): the next batch of at most `per_batch` contracts with
+/// an order event, refolded whole and recorded as done; or, once none
+/// remain, the last step: every token with an order event past `upto` and
+/// every queued refold, then the marker, and the rebuild row deleted.
+pub async fn rebuild_batch(
+    conn: &mut PgConnection,
+    net: ChainNet,
+    per_batch: i64,
+) -> sqlx::Result<RebuildStep> {
+    let open: Option<(i64, Option<String>)> = sqlx::query_as(
+        "SELECT upto, next_contract FROM shop.legacy_order_rebuild WHERE network = $1 FOR UPDATE",
+    )
+    .bind(net.db_name())
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((upto, next)) = open else {
+        return Ok(RebuildStep::Idle);
+    };
+    let contracts: Vec<String> = sqlx::query_scalar(NEXT_CONTRACTS_SQL)
+        .bind(net.db_name())
+        .bind(next.as_deref())
+        .bind(per_batch.max(1))
+        .fetch_all(&mut *conn)
+        .await?;
+    if let Some(last) = contracts.last() {
+        sqlx::query("SET LOCAL enable_hashjoin = on")
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("SET LOCAL enable_mergejoin = on")
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query(sqlx::AssertSqlSafe(FOLD_CONTRACTS_SQL.as_str()))
+            .bind(net.db_name())
+            .bind(upto)
+            .bind(super::nft_index::ZERO_ADDRESS)
+            .bind(&contracts)
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("UPDATE shop.legacy_order_rebuild SET next_contract = $2 WHERE network = $1")
+            .bind(net.db_name())
+            .bind(last)
+            .execute(&mut *conn)
+            .await?;
+        return Ok(RebuildStep::Batched);
+    }
+    sqlx::query(FOLD_SQL)
+        .bind(net.db_name())
+        .bind(upto)
+        .bind(super::nft_index::ZERO_ADDRESS)
+        .execute(&mut *conn)
+        .await?;
+    write_marker(conn, net).await?;
+    sqlx::query("DELETE FROM shop.legacy_order_rebuild WHERE network = $1")
+        .bind(net.db_name())
+        .execute(&mut *conn)
+        .await?;
+    tracing::info!(
+        network = net.db_name(),
+        "legacy order book: rebuild finished"
+    );
+    Ok(RebuildStep::Finished)
+}
+
+/// Runs `net`'s open rebuild, one fenced transaction a batch, until it
+/// finishes or `deadline` passes; whether it finished (or none was open).
+/// The nft walk's pass calls it, so a restart resumes at the last batch.
+pub async fn run_rebuild(
+    pool: &sqlx::PgPool,
+    net: ChainNet,
+    owner: &super::chain_walk::Owner,
+    deadline: std::time::Instant,
+) -> anyhow::Result<bool> {
+    loop {
+        let mut tx = pool.begin().await?;
+        // The cursor first, as every writer of the nft projections takes it.
+        owner.check(&mut tx).await?;
+        sqlx::query("SET LOCAL statement_timeout = '600s'")
+            .execute(&mut *tx)
+            .await?;
+        let step = rebuild_batch(&mut tx, net, REBUILD_CONTRACTS_PER_BATCH).await?;
+        tx.commit().await?;
+        match step {
+            RebuildStep::Idle | RebuildStep::Finished => return Ok(true),
+            RebuildStep::Batched if std::time::Instant::now() >= deadline => return Ok(false),
+            RebuildStep::Batched => {}
+        }
+    }
 }
 
 /// Whether `net`'s order book may be read beside the published nft fold on
@@ -243,6 +406,11 @@ pub async fn rewind(
     .bind(to)
     .execute(&mut *conn)
     .await?;
+    sqlx::query("UPDATE shop.legacy_order_rebuild SET upto = LEAST(upto, $2) WHERE network = $1")
+        .bind(net.db_name())
+        .bind(to)
+        .execute(&mut *conn)
+        .await?;
     sqlx::query(
         "DELETE FROM shop.legacy_order o USING UNNEST($2::text[], $3::text[]) AS g(c, t) \
          WHERE o.network = $1 AND o.contract_address = g.c AND o.token_id = g.t::numeric",
@@ -393,11 +561,28 @@ mod tests {
         .unwrap()
     }
 
+    /// The nft fold's book fold, then any rebuild it opened run to the end,
+    /// a batch a transaction (one contract a batch, so every test crosses
+    /// batches), as the nft walk's pass runs it.
     async fn fold_matic(pool: &PgPool, since: i64) -> u64 {
         let mut tx = pool.begin().await.unwrap();
         let n = fold(&mut tx, ChainNet::Matic, since).await.unwrap();
         tx.commit().await.unwrap();
+        finish_rebuild(pool).await;
         n
+    }
+
+    async fn finish_rebuild(pool: &PgPool) -> usize {
+        let mut batches = 0;
+        loop {
+            let mut tx = pool.begin().await.unwrap();
+            let step = rebuild_batch(&mut tx, ChainNet::Matic, 1).await.unwrap();
+            tx.commit().await.unwrap();
+            match step {
+                RebuildStep::Batched => batches += 1,
+                RebuildStep::Idle | RebuildStep::Finished => return batches,
+            }
+        }
     }
 
     /// The log of the rules: an order a later one on its token supersedes
@@ -544,6 +729,101 @@ mod tests {
             0,
             "an incremental fold over the standing book changes nothing"
         );
+        db.drop().await;
+    }
+
+    /// The nft fold never refolds the book: over a book that does not stand
+    /// it opens a rebuild and writes nothing, so the nft index publishes
+    /// while the book is refused. The rebuild then runs a batch of contracts
+    /// a transaction (here one, over two contracts), and a sale a repair
+    /// writes below the open rebuild's block meanwhile is queued by the
+    /// trigger and taken by the last step; the book then stands.
+    #[tokio::test]
+    async fn a_rebuild_runs_outside_the_nft_fold_a_batch_at_a_time() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("legacy_orders_batches").await
+        else {
+            return;
+        };
+        seed_log(&db.pool, 41).await;
+        // A second contract with the same log, so the rebuild takes two batches.
+        sqlx::query(
+            "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address, amount, expires_at, detail) \
+             SELECT network, block_number, log_index + 1, block_time, kind, emitter, '0x00000000000000000000000000000000000000c2', token_id, from_address, to_address, amount, expires_at, \
+                    '0x' || repeat('f', 64) \
+             FROM shop.nft_event WHERE contract_address = $1 AND kind = 'order_created' AND detail = $2",
+        )
+        .bind(C)
+        .bind(id(0xc))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        nft_cursor(&db.pool, 50, Some(50), Some(50)).await;
+        let mut tx = db.pool.begin().await.unwrap();
+        assert_eq!(fold(&mut tx, ChainNet::Matic, 50).await.unwrap(), 0);
+        tx.commit().await.unwrap();
+        assert_eq!(
+            book(&db.pool).await,
+            Vec::new(),
+            "the nft fold wrote no order"
+        );
+        assert!(!stands(&db.pool).await);
+        let open: (i64, Option<String>) = sqlx::query_as(
+            "SELECT upto, next_contract FROM shop.legacy_order_rebuild WHERE network = 'matic'",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(open, (50, None));
+        // Another nft fold while it is open folds nothing.
+        let mut tx = db.pool.begin().await.unwrap();
+        assert_eq!(fold(&mut tx, ChainNet::Matic, 50).await.unwrap(), 0);
+        tx.commit().await.unwrap();
+        // One batch, then a repair of e's missed sale at 42 (below 50).
+        let mut tx = db.pool.begin().await.unwrap();
+        assert_eq!(
+            rebuild_batch(&mut tx, ChainNet::Matic, 1).await.unwrap(),
+            RebuildStep::Batched
+        );
+        tx.commit().await.unwrap();
+        assert!(!stands(&db.pool).await, "still rebuilding");
+        let (m1, _) = markets();
+        let mut tx = db.pool.begin().await.unwrap();
+        nft_index::insert_events(
+            &mut tx,
+            ChainNet::Matic,
+            &[nft_index::NftEvent {
+                block_number: 42,
+                log_index: 0,
+                block_time: 420,
+                kind: "order_successful",
+                emitter: m1.to_string(),
+                contract_address: C.to_string(),
+                token_id: "4".to_string(),
+                from_address: Some(SELLER.to_string()),
+                to_address: Some(BUYER.to_string()),
+                amount: Some("500".to_string()),
+                expires_at: None,
+                detail: Some(id(0xe)),
+                tx_hash: Some(format!("0x{:064x}", 42)),
+            }],
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        assert!(
+            finish_rebuild(&db.pool).await >= 1,
+            "the second contract's batch"
+        );
+        let rows = book(&db.pool).await;
+        assert!(rows.contains(&expected()[4]), "the repaired sale: {rows:?}");
+        assert_eq!(rows.len(), expected().len() + 1, "both contracts' orders");
+        assert_eq!(book_through(&db.pool).await, Some(50));
+        assert!(stands(&db.pool).await);
+        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.legacy_order_rebuild")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 0);
         db.drop().await;
     }
 
