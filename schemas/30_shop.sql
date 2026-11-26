@@ -203,6 +203,12 @@ CREATE TABLE shop.items (
     mirrored_at timestamp without time zone NOT NULL,
     -- The subgraph `Item.searchText`, for the lambdas catalog's `textSearch`.
     search_text text,
+    -- The item minters holding an allowance, in the order first granted, and
+    -- what each holds (the collections index's fold; empty in the mirror's
+    -- copy, which has no item minters).
+    minters text[] NOT NULL DEFAULT '{}',
+    minter_allowances numeric(78,0)[] NOT NULL DEFAULT '{}',
+    testnet_verified boolean NOT NULL DEFAULT false,
     PRIMARY KEY (network, contract_address, item_id),
     CONSTRAINT items_urn_key UNIQUE (urn),
     CONSTRAINT items_network_known CHECK (network IN ('ethereum', 'matic')),
@@ -243,10 +249,98 @@ CREATE TABLE shop.mirror_state (
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     chain_id bigint,
     pass_block_hash text,
+    marks_item_rows boolean NOT NULL DEFAULT false,
+    CONSTRAINT mirror_state_verified_item_rows CHECK (
+        mirror <> 'items' OR marks_item_rows OR
+        (pass_block_hash IS NULL AND COALESCE(chain_id,0) NOT IN (11155111,80002))
+    ),
     PRIMARY KEY (mirror, network),
     CONSTRAINT mirror_state_known_mirror CHECK (mirror IN ('collections', 'items')),
     CONSTRAINT mirror_state_network_known CHECK (network IN ('ethereum', 'matic'))
 );
+
+-- Keep the attribution fields from the last completed Ethereum v1 mirror
+-- passes. The next full sweep updates the live catalogue before it publishes.
+CREATE TABLE shop.v1_royalty_collection (
+    contract_address text PRIMARY KEY,
+    urn text NOT NULL,
+    creator text NOT NULL
+);
+
+CREATE TABLE shop.v1_royalty_item (
+    urn text PRIMARY KEY,
+    contract_address text NOT NULL,
+    creator text NOT NULL
+);
+
+CREATE INDEX v1_royalty_item_creator_idx ON shop.v1_royalty_item (creator);
+
+CREATE OR REPLACE FUNCTION shop.publish_v1_royalty_catalogue(
+    p_mirror text, p_started timestamp without time zone, p_finished timestamp without time zone
+) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+    IF p_mirror = 'collections' THEN
+        DELETE FROM shop.v1_royalty_collection saved
+        WHERE NOT EXISTS (
+            SELECT FROM shop.collections c
+            WHERE c.network = 'ethereum' AND c.chain_id = 1
+              AND c.contract_address = saved.contract_address
+              AND c.mirrored_at BETWEEN p_started AND p_finished
+        );
+
+        INSERT INTO shop.v1_royalty_collection AS saved (contract_address, urn, creator)
+        SELECT c.contract_address, c.urn, c.creator
+        FROM shop.collections c
+        WHERE c.network = 'ethereum' AND c.chain_id = 1
+          AND c.mirrored_at BETWEEN p_started AND p_finished
+        ON CONFLICT (contract_address) DO UPDATE SET urn = EXCLUDED.urn, creator = EXCLUDED.creator
+        WHERE (saved.urn, saved.creator) IS DISTINCT FROM (EXCLUDED.urn, EXCLUDED.creator);
+    ELSIF p_mirror = 'items' THEN
+        DELETE FROM shop.v1_royalty_item saved
+        WHERE NOT EXISTS (
+            SELECT FROM shop.items i
+            WHERE i.network = 'ethereum' AND i.chain_id = 1 AND i.item_type = 'wearable_v1'
+              AND i.urn = saved.urn AND i.mirrored_at BETWEEN p_started AND p_finished
+        );
+
+        INSERT INTO shop.v1_royalty_item AS saved (urn, contract_address, creator)
+        SELECT i.urn, i.contract_address, i.creator
+        FROM shop.items i
+        WHERE i.network = 'ethereum' AND i.chain_id = 1 AND i.item_type = 'wearable_v1'
+          AND i.mirrored_at BETWEEN p_started AND p_finished
+        ON CONFLICT (urn) DO UPDATE SET contract_address = EXCLUDED.contract_address, creator = EXCLUDED.creator
+        WHERE (saved.contract_address, saved.creator) IS DISTINCT FROM (EXCLUDED.contract_address, EXCLUDED.creator);
+    END IF;
+END;
+$$;
+
+-- This trigger uses columns written by both old and new mirror workers.
+CREATE OR REPLACE FUNCTION shop.publish_v1_royalties_on_completion() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.network = 'ethereum' THEN
+            PERFORM shop.publish_v1_royalty_catalogue(OLD.mirror, NULL, NULL);
+        END IF;
+        RETURN OLD;
+    END IF;
+
+    IF NEW.network = 'ethereum'
+       AND (TG_OP = 'INSERT' OR NEW.last_complete_pass_at IS DISTINCT FROM OLD.last_complete_pass_at) THEN
+        PERFORM shop.publish_v1_royalty_catalogue(
+            NEW.mirror,
+            CASE WHEN NEW.chain_id = 1 OR (NEW.chain_id IS NULL AND NEW.pass_block_hash IS NULL)
+                THEN NEW.pass_started_at END,
+            NEW.last_complete_pass_at
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER publish_v1_royalties_on_completion
+AFTER INSERT OR UPDATE OF last_complete_pass_at OR DELETE ON shop.mirror_state
+FOR EACH ROW EXECUTE FUNCTION shop.publish_v1_royalties_on_completion();
 
 -- ── Stage 5: local authority (behind DATA_WRITES_ENABLED) ───────────────────
 --
@@ -283,8 +377,28 @@ CREATE TABLE shop.picks (
 
 -- The per-list page (WHERE list_id ORDER BY created_at DESC).
 CREATE INDEX picks_list_id_idx ON shop.picks (list_id, created_at DESC);
+
 -- The catalog's pick counts: GROUP BY item_id WHERE item_id = ANY($1).
 CREATE INDEX picks_item_idx ON shop.picks (item_id);
+
+-- The Transak partner access token every replica shares (`market::transak`).
+-- Transak invalidates the previous token whenever it issues a new one, so one
+-- replica refreshes it at a time. It claims the row by setting
+-- `refreshing_until` in one statement, while no claim is live and the token
+-- still needs replacing. It calls Transak holding no transaction, then stores
+-- the token and clears the claim. A failed refresh keeps the claim for 10 s,
+-- so the others back off. The other replicas read the row.
+-- `access_token` and `expires_at` are NULL until the first refresh.
+-- `refreshed_at` limits refreshes driven by a 401 to one per 30 s. One row.
+-- The token is a bearer, never logged.
+CREATE TABLE shop.transak_access_token (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    access_token text,
+    expires_at timestamp without time zone,
+    refreshed_at timestamp without time zone,
+    refreshing_until timestamp without time zone,
+    CONSTRAINT transak_access_token_complete CHECK ((access_token IS NULL) = (expires_at IS NULL))
+);
 
 CREATE TABLE shop.list_acl (
     list_id uuid NOT NULL REFERENCES shop.lists(id) ON DELETE CASCADE,
@@ -416,8 +530,16 @@ CREATE TABLE shop.chain_cursor (
     -- cleared by the rewind or by a pass that proves the cursor again.
     -- Readers of the height without the publication skip it meanwhile.
     diverged_at timestamp without time zone,
+    -- Raised by the rebuild that clears the projection and by the estate
+    -- repair's refold: with reorg_rewinds, every rewrite of rows in place.
+    rebuilds integer NOT NULL DEFAULT 0,
+    -- An old binary omits this column when claiming its lease. It cannot
+    -- take the Sepolia trades cursor and publish a history missing V1.
+    sepolia_trade_v1 boolean NOT NULL DEFAULT false,
     PRIMARY KEY (indexer, network),
     CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee', 'rentals_sepolia', 'third_party_registry', 'collections')),
+    CONSTRAINT chain_cursor_sepolia_trade_v1 CHECK (
+        indexer <> 'trade_events' OR chain_id IS DISTINCT FROM 11155111 OR sepolia_trade_v1 OR quarantined_at IS NOT NULL),
     CONSTRAINT chain_cursor_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT chain_cursor_fold_within_indexed CHECK (fold_through IS NULL OR fold_through <= last_block),
     CONSTRAINT chain_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block),
@@ -487,8 +609,10 @@ CREATE TABLE shop.nft_contract (
 -- nftAddress for the three legacy order kinds, whose emitter is the
 -- marketplace); `amount` is the order price or the v1 issued id; `detail`
 -- the legacy order id, the v1 wearable id, the registered subdomain or the
--- registry's data string; `tx_hash` the transaction of an `order_successful`
--- (NULL on other kinds and on rows indexed before it was recorded).
+-- registry's data string; `tx_hash` the log's transaction, NULL on a row
+-- indexed before the walk recorded it (an `order_successful` before 0040,
+-- another kind before transfers' transactions were recorded) until a replay
+-- of the same log fills it.
 CREATE TABLE shop.nft_event (
     network text NOT NULL,
     block_number bigint NOT NULL,
@@ -518,6 +642,12 @@ CREATE INDEX nft_event_token_idx ON shop.nft_event (network, contract_address, t
 
 -- Successful marketplace fills by network and block range.
 CREATE INDEX nft_event_successful_order ON shop.nft_event(network,block_number) WHERE kind='order_successful';
+
+-- The transfer leg of /v1/activity (`activity_transfers`): a wallet's
+-- newest transfers out and in on one network, each side walked by time
+-- (then position; a legacy row can carry time 0) to its cap.
+CREATE INDEX nft_event_transfer_from_idx ON shop.nft_event (network, from_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
+CREATE INDEX nft_event_transfer_to_idx ON shop.nft_event (network, to_address, block_time DESC, block_number DESC, log_index DESC) WHERE kind = 'transfer';
 
 -- The ownership fold of the collections' and names' transfers: owner is the
 -- latest Transfer's `to` (NULL once burned), the mint the first; item_id and
@@ -586,6 +716,129 @@ CREATE TABLE shop.nft_order (
 -- The open legacy orders of a contract set (the prices histogram, isOnSale,
 -- the estate stats): WHERE status = 'open' AND expires_at > $now.
 CREATE INDEX nft_order_open_idx ON shop.nft_order (network, contract_address, expires_at) WHERE status = 'open';
+
+-- How far each network's legacy order book (`shop.legacy_order`) is folded,
+-- and from which branch: the nft walk's last block and its hash when the
+-- order fold last ran, in the nft fold's transaction. No row (a database
+-- that predates the book) means the book does not stand: readers refuse it,
+-- and the next nft fold folds it whole. The book stands only while the nft
+-- walk's recovery point at that
+-- block (`shop.chain_checkpoint`) still has that hash: a rewind (by any
+-- binary) drops the points past its target, so a branch republished at the
+-- same height brings another hash, and a book left behind past the kept
+-- points loses its point. The order fold refolds the orders touched past the
+-- lower of this block and the nft fold's own marker, so the book catches up
+-- with nft folds that ran without it (a replica on an earlier binary during a
+-- rollout); a book that no longer stands, or a rebuild, is refolded whole
+-- after its rows are deleted. A reader serves the book only while it stands
+-- and its block reaches the published nft fold (`folded_block`). This
+-- binary's rewind lowers the block to its target and clears the hash.
+CREATE TABLE shop.legacy_order_cursor (
+    network text PRIMARY KEY,
+    folded_through bigint NOT NULL,
+    through_hash text,
+    CONSTRAINT legacy_order_cursor_network_known CHECK (network IN ('ethereum', 'matic'))
+);
+
+-- The tokens whose order events a writer changed at or below the book's
+-- marker (`shop.legacy_order_cursor`): the sale-history repair fills a sale's
+-- buyer, seller or block time, or inserts a sale the walk missed, on blocks
+-- the book has already folded, so a fold that refolds only the tokens touched
+-- past its marker would never see them. The trigger below queues them for
+-- every writer, an earlier binary's included; the next order fold refolds
+-- them and deletes them in its transaction, and a rebuild clears the
+-- network's. Workload: a few rows per repair window, emptied by the next fold.
+CREATE TABLE shop.legacy_order_refold (
+    network text NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    token_id numeric(78,0) NOT NULL,
+    PRIMARY KEY (network, contract_address, token_id),
+    CONSTRAINT legacy_order_refold_network_known CHECK (network IN ('ethereum', 'matic'))
+);
+
+-- Queues the token of an order event written at or below its network's book
+-- marker. Only order events fire it; one past the marker is the fold's own.
+-- An `ON CONFLICT DO UPDATE` whose `WHERE` is false updates nothing and does
+-- not fire it.
+CREATE FUNCTION shop.queue_legacy_order_refold() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO shop.legacy_order_refold (network, contract_address, token_id)
+    SELECT NEW.network, NEW.contract_address, NEW.token_id
+    FROM shop.legacy_order_cursor c
+    WHERE c.network = NEW.network AND NEW.block_number <= c.folded_through
+    ON CONFLICT DO NOTHING;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER nft_event_order_refold
+AFTER INSERT OR UPDATE ON shop.nft_event
+FOR EACH ROW WHEN (NEW.kind IN ('order_created', 'order_successful', 'order_cancelled'))
+EXECUTE FUNCTION shop.queue_legacy_order_refold();
+
+-- Every legacy Marketplace order ever created, one row per order (the order
+-- book of /v1/orders, /v1/orders/open-by-items and the activity orders
+-- leg), folded from `shop.nft_event` in the nft fold's transaction
+-- (services/catalyst/shop/src/market/legacy_orders.rs) with the subgraphs'
+-- rules: an OrderCreated opens the order; the OrderSuccessful or
+-- OrderCancelled naming its id marks it sold (with the buyer and the price
+-- paid) or cancelled; a later OrderCreated on the same token, on either
+-- Marketplace of the network, cancels it unless one of those follows. The
+-- latest creation of an id is the order. `open` is the folded state: a
+-- reader reports an open order as `transferred` unless the token's owner
+-- source proves its seller holds it, and keeps only the orders of
+-- contracts it serves.
+-- expires_at is milliseconds (the log's normalised value), the times unix
+-- seconds. Workload: one row per OrderCreated (`DATABASE.md` "Legacy
+-- Marketplace orders"); a fold rewrites the orders of the tokens an order
+-- event past its marker touched, a rewind deletes them and the rebuild that
+-- follows restores them.
+CREATE TABLE shop.legacy_order (
+    network text NOT NULL,
+    marketplace_address varchar(42) NOT NULL,
+    order_id text NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    token_id numeric(78,0) NOT NULL,
+    seller varchar(42) NOT NULL,
+    buyer varchar(42),
+    price numeric(78,0) NOT NULL,
+    expires_at bigint NOT NULL,
+    status text NOT NULL,
+    created_block bigint NOT NULL,
+    created_log integer NOT NULL,
+    created_at bigint NOT NULL,
+    updated_block bigint NOT NULL,
+    updated_log integer NOT NULL,
+    updated_at bigint NOT NULL,
+    PRIMARY KEY (network, marketplace_address, order_id),
+    CONSTRAINT legacy_order_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT legacy_order_status_known CHECK (status IN ('open', 'sold', 'cancelled')),
+    CONSTRAINT legacy_order_price_nonneg CHECK (price >= 0)
+);
+
+-- A database that predates the table gets it empty and with no marker, so
+-- the book does not stand: the first nft fold after the upgrade refolds it
+-- whole, in the fold's own transaction, and readers refuse it until that fold
+-- is published. The schema run never reads `shop.nft_event`: a whole book is
+-- a large statement, and the run is not where a statement may take minutes.
+
+-- A token's orders: the fold's and the rewind's per-token rewrite, and
+-- /v1/orders?contractAddress=&tokenId= (which names no network).
+CREATE INDEX legacy_order_token_idx ON shop.legacy_order (contract_address, token_id);
+-- An owner's orders, newest first (/v1/orders?owner=, the activity orders leg).
+CREATE INDEX legacy_order_seller_idx ON shop.legacy_order (seller, created_at DESC);
+-- The orders a buyer filled (/v1/orders?buyer=, the activity orders leg).
+CREATE INDEX legacy_order_buyer_idx ON shop.legacy_order (buyer) WHERE buyer IS NOT NULL;
+-- The newest-first and recently-updated windows over every order
+-- (/v1/orders without a filter, sortBy=recently_updated).
+CREATE INDEX legacy_order_created_idx ON shop.legacy_order (created_at DESC);
+CREATE INDEX legacy_order_updated_idx ON shop.legacy_order (updated_at DESC);
+-- Open orders cheapest first: a contract's (/v1/orders/open-by-items,
+-- /v1/orders?contractAddress=&status=open) and every contract's
+-- (/v1/orders?status=open&sortBy=cheapest).
+CREATE INDEX legacy_order_open_idx ON shop.legacy_order (contract_address, price) WHERE status = 'open';
+CREATE INDEX legacy_order_open_price_idx ON shop.legacy_order (price) WHERE status = 'open';
 
 -- LAND and estate names and descriptions from Update and CreateEstate.
 -- The latest parcel Update or the latest valid estate document supplies both fields.
@@ -16930,6 +17183,9 @@ CREATE TABLE shop.sale_execution (
     block_time bigint NOT NULL,
     PRIMARY KEY (network, block_number, log_index)
 );
+CREATE INDEX sale_execution_read_special
+    ON shop.sale_execution (network, kind, block_number, log_index) WHERE kind IN ('store', 'trade', 'name_fee');
+CREATE INDEX sale_execution_read_time ON shop.sale_execution (block_time DESC,network,block_number,log_index);
 CREATE INDEX sale_execution_tx ON shop.sale_execution (network, tx_hash, log_index);
 CREATE INDEX sale_execution_day ON shop.sale_execution (network, ((block_time / 86400) * 86400));
 CREATE INDEX sale_execution_pending_creator ON shop.sale_execution (network, creator_attempted_at NULLS FIRST, block_number) WHERE kind='store' AND NOT creator_checked;
@@ -16957,6 +17213,14 @@ CREATE TABLE shop.sale_asset (
     FOREIGN KEY (network, block_number, log_index)
        REFERENCES shop.sale_execution ON DELETE CASCADE
 );
+CREATE INDEX sale_asset_read_unresolved
+    ON shop.sale_asset (network, block_number, log_index, ordinal) WHERE price > 0 AND (seller IS NULL OR kind = 'bid');
+CREATE INDEX sale_asset_read_seller ON shop.sale_asset (network,seller,block_number) WHERE price>0;
+CREATE INDEX sale_asset_read_buyer ON shop.sale_asset (network,buyer,block_number) WHERE price>0;
+CREATE INDEX sale_asset_read_token ON shop.sale_asset (network, token_id, contract_address) WHERE price > 0;
+CREATE INDEX sale_asset_read_kind ON shop.sale_asset (network, kind, block_number) WHERE price > 0;
+CREATE INDEX sale_asset_read_item ON shop.sale_asset (network,contract_address,item_id) WHERE price>0;
+CREATE INDEX sale_asset_read_price ON shop.sale_asset (price DESC,public_id) WHERE price>0;
 
 CREATE INDEX sale_asset_priced_buyer ON shop.sale_asset(network,buyer,seller,contract_address,currency) WHERE price>0 AND seller IS NOT NULL;
 
@@ -16978,6 +17242,7 @@ CREATE TABLE shop.sale_payment (
     FOREIGN KEY (network, block_number, log_index)
        REFERENCES shop.sale_execution ON DELETE CASCADE
 );
+CREATE INDEX sale_payment_read_beneficiary ON shop.sale_payment (network,beneficiary,block_number) WHERE consideration;
 CREATE TABLE shop.sale_payout (
     network text NOT NULL,
     block_number bigint NOT NULL,
@@ -17034,6 +17299,15 @@ CREATE TABLE shop.sale_first_purchase (
 );
 CREATE INDEX sale_first_day ON shop.sale_first_purchase(network,first_day);
 
+-- The Polygon MANA/USD oracle's close of each UTC day, including
+-- days whose last round had no positive answer.
+CREATE TABLE shop.mana_usd_daily (
+    day date PRIMARY KEY,
+    usd numeric CHECK (usd > 0),
+    round_id numeric(25,0) CHECK (round_id > 0),
+    CONSTRAINT mana_usd_daily_rate_round_check CHECK (usd IS NULL OR round_id IS NOT NULL)
+);
+
 -- One common source prefix per network. Capture each dependency's revision
 -- independently so that withdrawals invalidate reads at the same height.
 CREATE TABLE shop.sale_publication (
@@ -17045,8 +17319,36 @@ CREATE TABLE shop.sale_publication (
     input_epochs uuid[] NOT NULL,
     input_revisions bigint[] NOT NULL,
     late_collections bigint NOT NULL,
-    published_at timestamp without time zone
+    published_at timestamp without time zone,
+    -- The block through which shop.nft_last_sale holds every published
+    -- sale of the network, and the generation it was kept for; NULL until
+    -- the fold has filled it. A table kept for another generation (history
+    -- replaced or a published sale corrected without it) is not read and is
+    -- rebuilt.
+    last_sale_through bigint,
+    last_sale_generation uuid
 );
+
+-- The latest public sale of each token (`sale_reads/public_sales.sql`: a
+-- positive price in the network's MANA; a trade only when it moved one
+-- asset), for the `soldAt` of /v1/nfts and its recently sold sort. The
+-- sales fold writes it in the transaction that publishes each window. A
+-- window's sales replace older ones. A changed history deletes the rows
+-- past the prefix it keeps and restores each token's earlier sale. A
+-- reader takes it only from a valid publication whose `last_sale_through`
+-- reaches the published block. Workload: one row per sold token, written by
+-- the fold (a window's tokens per pass), read by joining a page's
+-- candidates on the primary key.
+CREATE TABLE shop.nft_last_sale (
+    network text NOT NULL CHECK (network IN ('ethereum', 'matic')),
+    contract_address text NOT NULL,
+    token_id numeric(78,0) NOT NULL,
+    sold_at bigint NOT NULL,
+    block_number bigint NOT NULL,
+    PRIMARY KEY (network, contract_address, token_id)
+);
+-- The rows a changed history deletes: WHERE network = $1 AND block_number > $2.
+CREATE INDEX nft_last_sale_block ON shop.nft_last_sale (network, block_number);
 
 -- Sparse fee configuration changes. Look up the last event before a
 -- particular execution, including a change earlier in the same block.
@@ -17113,8 +17415,9 @@ CREATE TABLE shop.name_purchase (
 -- CollectionStore (`mint`: a mirrored collection's Issue whose `_caller` is
 -- the store; `buyer` the beneficiary, `item_id` the item sold, `price` what
 -- the store's `Bought` in the same transaction charged for it, NULL on rows
--- indexed before it was read) and the ERC721BidV2 lifecycle (`bid_created` with the
--- bidder in `buyer`, the price and the expiry in unix seconds;
+-- indexed before it was read) and the bid lifecycle of ERC721BidV2 on Polygon
+-- and ERC721Bid on Ethereum (`bid_created` with the
+-- bidder in `buyer`, the price, the expiry in unix seconds and the fingerprint;
 -- `bid_accepted` with the seller and the price; `bid_cancelled`), each with
 -- the venue in `emitter`, the asset and its transaction. Workload: one row
 -- per kept log, appended with the cursor advance (hundreds a day at the
@@ -17139,6 +17442,9 @@ CREATE TABLE shop.sale_event (
     expires_at bigint,
     tx_hash varchar(66) NOT NULL,
     bid_fee numeric(78,0) CHECK (bid_fee IS NULL OR (bid_fee >= 0 AND kind = 'bid_accepted')),
+    -- A BidCreated's `_fingerprint`, as 0x-prefixed hex ('0x' when empty);
+    -- NULL on every other kind and on a creation walked before it was kept.
+    fingerprint text CHECK (fingerprint IS NULL OR kind = 'bid_created'),
     PRIMARY KEY (network, block_number, log_index),
     CONSTRAINT sale_event_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT sale_event_kind_known CHECK (kind IN ('mint', 'bid_created', 'bid_accepted', 'bid_cancelled')),
@@ -17155,8 +17461,8 @@ CREATE INDEX sale_event_bid_accepted ON shop.sale_event(network,block_number) WH
 -- (contract_address, token_id, buyer) ORDER BY block_number, log_index).
 CREATE INDEX sale_event_bidder_idx ON shop.sale_event (network, contract_address, token_id, buyer, block_number, log_index) WHERE kind <> 'mint';
 
--- The bids fold: one row per bidder and token, as the ERC721BidV2 contract
--- keeps them (`bidIdByTokenAndBidder`: a new bid by the same bidder on the
+-- The bids fold, per network: one row per bidder and token, as the bid
+-- contracts keep them (`bidIdByTokenAndBidder`: a new bid by the same bidder on the
 -- same token replaces the old one without a cancellation). `bid_id`, price
 -- and expiry come from the latest `bid_created` of the key; `status` from
 -- the latest event at or after it (open, accepted, cancelled), or
@@ -17182,6 +17488,8 @@ CREATE TABLE shop.nft_bid (
     updated_block bigint NOT NULL,
     updated_log_index integer NOT NULL,
     updated_at bigint NOT NULL,
+    -- The defining creation's fingerprint (`sale_event.fingerprint`).
+    fingerprint text,
     PRIMARY KEY (network, contract_address, token_id, bidder),
     CONSTRAINT nft_bid_id_unique UNIQUE (network, bid_id),
     CONSTRAINT nft_bid_network_known CHECK (network IN ('ethereum', 'matic')),
@@ -17194,6 +17502,94 @@ CREATE INDEX nft_bid_seller_unknown_idx ON shop.nft_bid (network) WHERE seller I
 
 -- The fold's "open bids a later acceptance invalidated".
 CREATE INDEX nft_bid_open_idx ON shop.nft_bid (network) WHERE status = 'open';
+
+-- Whether a fold-written projection holds a write its cursor has not
+-- published yet, whichever binary wrote it. A statement trigger on the
+-- projection (`note_projection_write`) marks it `pending` for the networks a
+-- write touched; a trigger on the cursor (`acknowledge_projection_writes`)
+-- clears it when a publication commits (`folded_block` and `folded_at` set,
+-- even at the same height). The walk publishes a fold only after it commits
+-- and reads the head, so a reader serves a projection only while it is not
+-- pending (`chain_walk::rows_published_on`). That binds a writer that
+-- predates a reader's own fold marker (an earlier binary during a rollout),
+-- and a write at the published height (a seller filled, an owner corrected)
+-- as much as one past it. A raw walk advance writes nothing and stays
+-- served; a rewind's deletes wait for the next publication on whatever
+-- branch, at whatever height. `written_through` is the cursor's last block
+-- at the latest write, for an operator. Written in the writer's transaction.
+CREATE TABLE shop.projection_write (
+    indexer text NOT NULL,
+    network text NOT NULL,
+    projection text NOT NULL,
+    pending boolean NOT NULL,
+    written_through bigint NOT NULL,
+    PRIMARY KEY (indexer, network, projection),
+    CONSTRAINT projection_write_network_known CHECK (network IN ('ethereum', 'matic'))
+);
+-- A database that gains the table may hold a fold an existing writer has
+-- committed and not published: every projection starts pending, and the
+-- next publication serves it again.
+INSERT INTO shop.projection_write (indexer, network, projection, pending, written_through)
+SELECT c.indexer, c.network, p.projection, true, c.last_block
+FROM shop.chain_cursor c
+JOIN (VALUES ('nft', 'nft'), ('nft', 'legacy_order'), ('sales', 'nft_bid')) AS p (indexer, projection)
+  ON p.indexer = c.indexer;
+
+-- The trigger of every projection `shop.projection_write` follows: its
+-- argument names the cursor's indexer, its transition table (`written`) the
+-- rows the statement inserted, updated or deleted, so a no-op upsert or an
+-- empty statement marks nothing.
+CREATE FUNCTION shop.note_projection_write() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO shop.projection_write AS w (indexer, network, projection, pending, written_through)
+    SELECT c.indexer, c.network, TG_TABLE_NAME, true, c.last_block
+    FROM shop.chain_cursor c
+    WHERE c.indexer = TG_ARGV[0] AND EXISTS (SELECT 1 FROM written r WHERE r.network = c.network)
+    ON CONFLICT (indexer, network, projection) DO UPDATE
+        SET pending = true, written_through = EXCLUDED.written_through
+    WHERE NOT w.pending OR w.written_through IS DISTINCT FROM EXCLUDED.written_through;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER nft_written_insert AFTER INSERT ON shop.nft
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_written_update AFTER UPDATE ON shop.nft
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_written_delete AFTER DELETE ON shop.nft
+REFERENCING OLD TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER legacy_order_written_insert AFTER INSERT ON shop.legacy_order
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER legacy_order_written_update AFTER UPDATE ON shop.legacy_order
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER legacy_order_written_delete AFTER DELETE ON shop.legacy_order
+REFERENCING OLD TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('nft');
+CREATE TRIGGER nft_bid_written_insert AFTER INSERT ON shop.nft_bid
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('sales');
+CREATE TRIGGER nft_bid_written_update AFTER UPDATE ON shop.nft_bid
+REFERENCING NEW TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('sales');
+CREATE TRIGGER nft_bid_written_delete AFTER DELETE ON shop.nft_bid
+REFERENCING OLD TABLE AS written FOR EACH STATEMENT EXECUTE FUNCTION shop.note_projection_write('sales');
+
+-- A publication of a cursor (its `folded_block` and `folded_at` set, by any
+-- binary's `mark_folded`) acknowledges every pending write to its
+-- projections: the published fold is the one they hold.
+CREATE FUNCTION shop.acknowledge_projection_writes() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.folded_block IS NOT NULL AND NEW.folded_at IS NOT NULL
+       AND (TG_OP = 'INSERT' OR NEW.folded_at IS DISTINCT FROM OLD.folded_at
+            OR NEW.folded_block IS DISTINCT FROM OLD.folded_block) THEN
+        UPDATE shop.projection_write SET pending = false
+        WHERE indexer = NEW.indexer AND network = NEW.network AND pending;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER chain_cursor_publication AFTER INSERT OR UPDATE OF folded_block, folded_at ON shop.chain_cursor
+FOR EACH ROW EXECUTE FUNCTION shop.acknowledge_projection_writes();
 
 -- The nft walk's rewinds, for the bids fold: a seller inferred from the nft
 -- walk's transfers may name an owner the rewind took away, so the next fold
@@ -17211,8 +17607,8 @@ CREATE TABLE shop.bid_seller_recheck (
 
 -- The venues a sale's royalties are computed for, with the cut the pinned
 -- contracts charge (`royaltiesCutPerMillion()`, read once at start and
--- compared: a difference is a warning, never a rewrite). Four rows on
--- Polygon: the legacy marketplace and the store charge no royalties.
+-- compared: a difference is a warning, never a rewrite). Polygon and Amoy
+-- use separate venue addresses. The legacy marketplace and stores charge no royalties.
 CREATE TABLE shop.sale_venue (
     network text NOT NULL,
     address varchar(42) NOT NULL,
@@ -17229,7 +17625,10 @@ INSERT INTO shop.sale_venue (network, address, kind, royalties_cut_per_million) 
     ('matic', '0x02080031b45a3c67d338dd4a2cc309d28756a160', 'marketplace_v1', 0),
     ('matic', '0x480a0f4e360e8964e68858dd231c2922f1df45ef', 'marketplace_v2', 25000),
     ('matic', '0xb96697fa4a3361ba35b774a42c58daccaad1b8e1', 'bid_v2', 25000),
-    ('matic', '0x214ffc0f0103735728dc66b61a22e4f163e275ae', 'store', 0);
+    ('matic', '0x214ffc0f0103735728dc66b61a22e4f163e275ae', 'store', 0),
+    ('matic', '0x0c8ad1f6aadf89d2eb19f01a100a6143108fe2b0', 'marketplace_v2', 25000),
+    ('matic', '0x4b66eab79cc03a96fb6275cfcdf23c0db431606d', 'bid_v2', 25000),
+    ('matic', '0xe36abc9ec616c83caaa386541380829106149d68', 'store', 0);
 
 -- Bounded sweeps retain unresolved work; ceilings freeze each cohort so new
 -- arrivals cannot indefinitely defer retry. Scope is the chain id, or zero
@@ -17257,6 +17656,7 @@ CREATE TABLE shop.third_party_registry_event (
     provider_id text NOT NULL,
     state jsonb NOT NULL,
     receipt jsonb,
+    is_review boolean,
     PRIMARY KEY (block_number, log_index)
 );
 
@@ -17313,6 +17713,18 @@ CREATE TABLE shop.collection_event (
 -- take them first.
 CREATE INDEX collection_event_created_idx ON shop.collection_event (network, contract_address)
     WHERE kind = 'proxy_created';
+CREATE INDEX collection_event_creator_account_idx
+    ON shop.collection_event (network, account, block_number) WHERE kind = 'creatorship_transferred';
+CREATE INDEX collection_event_creator_previous_idx
+    ON shop.collection_event (network, previous_account, block_number) WHERE kind = 'creatorship_transferred';
+-- Point-in-history creator lookups for mints use only creatorship transitions.
+CREATE INDEX collection_event_creatorship_position_idx
+    ON shop.collection_event (network, contract_address, block_number, log_index) WHERE kind = 'creatorship_transferred';
+
+-- A collection's history in chain order, mints aside (a few hundred thousand
+-- rows): the fold of the collections it replays from their creation.
+CREATE INDEX collection_event_replay_idx ON shop.collection_event (network, contract_address, block_number, log_index)
+    WHERE kind <> 'issue';
 
 -- The collections each factory lists (`collections(i)` at index `idx`), read
 -- by the collections index's gate before each attempt: the walk's address
@@ -17328,6 +17740,20 @@ CREATE TABLE shop.collection_hint (
     idx integer NOT NULL,
     address varchar(42) NOT NULL,
     finalized boolean NOT NULL,
+    -- The finalized block a final row was read at (by its hash), and that
+    -- hash (both NULL for a provisional row, and for a final row written
+    -- before they were recorded). Until the row is `verified`: at or below
+    -- the cursor of a walk with its full history, the walk's log decides
+    -- (the factory's idx-th walked ProxyCreated naming this address by that
+    -- height proves it; anything else undoes it); otherwise the gate asks
+    -- the hash at that height, and another one undoes it. A row with no
+    -- hash is proven by the walk's log where the walk holds its slot (its
+    -- height becomes the creation's block), else undone. A rewind below the
+    -- height undoes a row too. Undone, the row is provisional again, to be
+    -- read on the branch the chain took.
+    read_block bigint,
+    read_hash text,
+    verified boolean NOT NULL DEFAULT false,
     PRIMARY KEY (network, address),
     CONSTRAINT collection_hint_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT collection_hint_lowercase CHECK (factory = lower(factory) AND address = lower(address)),
@@ -17340,10 +17766,14 @@ CREATE UNIQUE INDEX collection_hint_final_idx ON shop.collection_hint (network, 
 
 -- What a collection's initialize set without an event (name, symbol,
 -- creator, approval, editability), read once by the collections index's
--- gate at Polygon's finalized block, kept with it in
--- `read_block`. A projection takes a value from it only when no walked event
--- sets it and `read_block` is at or below the block it folds to. Not
--- rewound: a finalized block's state. One row per collection.
+-- gate for a walked collection at the walk's own cursor block, by the hash
+-- the walk stored for it (`read_block`, `read_hash`), under the walk's owner
+-- and epoch fence: so it is of the walked branch, and written `verified`.
+-- A rewind below `read_block` deletes it. A projection takes a value from it
+-- only when it is verified, no walked event sets the value and `read_block`
+-- is at or below the block it folds to. A row written before reads were
+-- proven (no hash, not verified) is never taken; the first proven read
+-- replaces it. One row per collection.
 CREATE TABLE shop.collection_seed (
     network text NOT NULL,
     contract_address varchar(42) NOT NULL,
@@ -17353,9 +17783,49 @@ CREATE TABLE shop.collection_seed (
     is_approved boolean NOT NULL,
     is_editable boolean NOT NULL,
     read_block bigint NOT NULL,
+    read_hash text,
+    verified boolean NOT NULL DEFAULT false,
     read_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     PRIMARY KEY (network, contract_address),
     CONSTRAINT collection_seed_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT collection_seed_lowercase CHECK (contract_address = lower(contract_address) AND creator = lower(creator)),
     CONSTRAINT collection_seed_block_nonneg CHECK (read_block >= 0)
+);
+
+-- One row per network the collections walk has rewound or rebuilt: `epoch`
+-- grows in the transaction of each rewind (an operator's rebuild included).
+-- The gate's reads of the chain (factory lists, creation reads) are written
+-- only when the epoch, with the walk's owner generation, has not moved
+-- since they began, so no read of a branch the walk left is written after
+-- it left it. `checked_through` is the last height the gate checked the
+-- reads at; the next check goes on past it (NULL: from the lowest).
+CREATE TABLE shop.collection_walk (
+    network text PRIMARY KEY,
+    epoch bigint NOT NULL DEFAULT 0,
+    checked_through bigint,
+    CONSTRAINT collection_walk_network_known CHECK (network IN ('ethereum', 'matic'))
+);
+
+-- One row per network the collections index folds into shop.collections and
+-- shop.items (MARKETPLACE_COLLECTIONS_INDEX_OWNS). `owned_at` is set in the
+-- transaction of the fold's first projection: from then the fold is the
+-- network's only writer of both tables, and the collections mirror refuses
+-- to write it (both take the network's advisory lock, the mirror shared and
+-- the fold exclusive, around the check and the write); a hand-back clears
+-- it. `projected_through` is the block the projected rows stand at; NULL
+-- (after a rewind, or before the first projection) makes the next fold
+-- rebuild the network's rows from the whole log. `pending` counts the walked
+-- collections without a row at that block (waiting for their creation read):
+-- the catalogue is complete only at 0. `generation` grows with every
+-- projection and hand-back, so two reads under the same generation read the
+-- same rows.
+CREATE TABLE shop.collection_projection (
+    network text PRIMARY KEY,
+    owned_at timestamp without time zone,
+    projected_through bigint,
+    pending integer NOT NULL DEFAULT 0,
+    generation bigint NOT NULL DEFAULT 0,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT collection_projection_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT collection_projection_pending_nonneg CHECK (pending >= 0)
 );

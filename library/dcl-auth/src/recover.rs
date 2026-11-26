@@ -1,17 +1,11 @@
-use alloy_primitives::{Address, B256, Signature};
+use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 
 use super::error::AuthError;
+use super::eth_address::{format_address, from_verifying_key};
 
 pub fn recover_address(message: &[u8], signature: &str) -> Result<String, AuthError> {
-    let sig_bytes = parse_signature_hex(signature)?;
-    reject_high_s(&sig_bytes)?;
-    let sig = parse_signature(&sig_bytes)?;
-
-    let recovered: Address = sig
-        .recover_address_from_msg(message)
-        .map_err(|e| AuthError::RecoveryFailed(format!("ecrecover failed: {}", e)))?;
-
-    Ok(format!("{:#x}", recovered))
+    let digest = alloy_primitives::eip191_hash_message(message);
+    recover_address_from_digest(&digest.0, signature)
 }
 
 pub fn recover_address_from_digest(
@@ -20,13 +14,12 @@ pub fn recover_address_from_digest(
 ) -> Result<String, AuthError> {
     let sig_bytes = parse_signature_hex(signature)?;
     reject_high_s(&sig_bytes)?;
-    let sig = parse_signature(&sig_bytes)?;
+    let (sig, recovery_id) = parse_signature(&sig_bytes)?;
 
-    let recovered: Address = sig
-        .recover_address_from_prehash(&B256::from(*digest))
+    let key = VerifyingKey::recover_from_prehash(digest, &sig, recovery_id)
         .map_err(|e| AuthError::RecoveryFailed(format!("ecrecover failed: {}", e)))?;
 
-    Ok(format!("{:#x}", recovered))
+    Ok(format_address(&from_verifying_key(&key)))
 }
 
 const SECP256K1_N: [u8; 32] = [
@@ -81,7 +74,7 @@ fn parse_signature_hex(hex: &str) -> Result<[u8; 65], AuthError> {
 
 /// The recovery id is v in {0, 1} or {27, 28}, as `@dcl/crypto` reads it; every other v
 /// byte is refused rather than folded onto a parity, so one signature has one spelling.
-fn parse_signature(bytes: &[u8; 65]) -> Result<Signature, AuthError> {
+fn parse_signature(bytes: &[u8; 65]) -> Result<(Signature, RecoveryId), AuthError> {
     let parity = match bytes[64] {
         0 | 27 => false,
         1 | 28 => true,
@@ -91,7 +84,9 @@ fn parse_signature(bytes: &[u8; 65]) -> Result<Signature, AuthError> {
             )));
         }
     };
-    Ok(Signature::from_bytes_and_parity(&bytes[..64], parity))
+    let sig = Signature::from_slice(&bytes[..64])
+        .map_err(|e| AuthError::RecoveryFailed(format!("ecrecover failed: {}", e)))?;
+    Ok((sig, RecoveryId::new(parity, false)))
 }
 
 #[cfg(test)]
@@ -210,10 +205,33 @@ mod tests {
     }
 
     #[test]
+    fn an_r_of_zero_or_at_least_n_is_refused_with_a_valid_low_s() {
+        let mut sig = [0u8; 65];
+        sig[63] = 1;
+        sig[64] = 27;
+        assert!(parse_signature(&sig).is_err(), "r = 0");
+        sig[..32].copy_from_slice(&SECP256K1_N);
+        assert!(parse_signature(&sig).is_err(), "r = n");
+        sig[..32].fill(0xff);
+        assert!(parse_signature(&sig).is_err(), "r > n");
+        sig[..32].copy_from_slice(&SECP256K1_N);
+        sig[31] -= 1;
+        assert!(parse_signature(&sig).is_ok(), "r = n - 1");
+    }
+
+    #[test]
     fn test_v_normalization() {
         let mut bytes = [0u8; 65];
         bytes[64] = 27;
-        let sig = parse_signature(&bytes);
-        assert!(sig.is_err() || !sig.unwrap().v());
+        assert!(parse_signature(&bytes).is_err());
+        let mut one = [0u8; 65];
+        one[31] = 1;
+        one[63] = 1;
+        one[64] = 27;
+        let (_, recovery_id) = parse_signature(&one).unwrap();
+        assert!(!recovery_id.is_y_odd());
+        one[64] = 28;
+        let (_, recovery_id) = parse_signature(&one).unwrap();
+        assert!(recovery_id.is_y_odd());
     }
 }

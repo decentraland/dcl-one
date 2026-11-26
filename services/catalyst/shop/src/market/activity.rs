@@ -1,28 +1,36 @@
-//! `GET /v1/activity?address=` (signed by that address, a marketplace or
-//! builder signer): one wallet's market history, newest first: the sales
+//! `GET /v1/activity` (a marketplace or builder signer): the signing
+//! wallet's market history, newest first. Like marketplace-server, it needs no
+//! `address`; one that is sent must name the signer, or the read is refused
+//! rather than answered for another wallet. The history holds the sales
 //! it bought and sold, the bids it placed and received, the orders it
-//! created and filled, and the trades it signed or is a beneficiary of.
-//! Each source is read to its newest 500 (the old internal cap; the
-//! subgraph readers in pages of 100, the trades from the local table), the
-//! events are merged by time, one per transaction and role (or per
-//! token/time/role without a transaction), and paged in memory (`limit` at
-//! most 500, `offset`). A source that cannot be read contributes nothing,
-//! as before.
+//! created and filled, the trades it signed or is a beneficiary of, and the
+//! NFTs it sent and received outside a sale ([`super::activity_transfers`]).
+//! Each leg contributes up to 500 events. Both sales roles read the same
+//! published snapshot. Activity merges the available legs by time, keeps
+//! one event per transaction and role (each transfer by its id: one
+//! transaction can move several NFTs), and pages the result in memory. A
+//! leg that cannot be read contributes nothing and the answer stays a 200
+//! with the legs that answered; the `x-activity-unavailable-sources` header
+//! ([`UNAVAILABLE_SOURCES_HEADER`]) names the source of each unavailable
+//! envelope that left a bid, order or transfer leg out (the order legs'
+//! `nft-index` and `land-authz-index`, a reader's subgraph), so a client can
+//! tell a partial history from a complete one.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use axum::Json;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::SharedState;
+use super::activity_transfers::{Transfer, transfers_of_address};
 use super::bids::{Bid, BidFilters, list_bids};
 use super::orders::{Order, OrderFilters, list_orders};
 use super::readers::READER_MAX_FIRST;
-use super::sales::{Sale, SaleFilters, list_sales};
+use super::sales::Sale;
 use super::signed::{MARKETPLACE_AUTH_SIGNERS, require_auth_metadata};
 use super::trades::{Trade, TradeAsset, trades_of_address};
 use super::wire::{ApiError, get_number_parameter};
@@ -32,7 +40,14 @@ use crate::shared::signed_fetch::{
 use crate::types::{ASSET_TYPE_ERC20, ASSET_TYPE_USD_PEGGED_MANA};
 
 const INTERNAL_FETCH_CAP: i64 = 500;
+
+/// The response header naming, sorted and comma-separated, the source of
+/// each unavailable envelope that left a leg out of the activity; absent
+/// when no leg was left out that way.
+pub const UNAVAILABLE_SOURCES_HEADER: &str = "x-activity-unavailable-sources";
 const MAX_PAGE_SIZE: i64 = 500;
+const TRANSFER_SENT: &str = "transfer_sent";
+const TRANSFER_RECEIVED: &str = "transfer_received";
 
 #[derive(Debug, Serialize)]
 pub struct ActivityEvent {
@@ -69,19 +84,19 @@ fn network_name<T: Serialize>(network: &T) -> String {
         .unwrap_or_default()
 }
 
-/// Every page of a subgraph-backed source up to the internal cap.
-async fn pages<T, F, Fut>(fetch: F) -> Vec<T>
+/// Collect the paged bid and order legs up to the internal cap, one page
+/// after another, and the source an unavailable envelope named when a page
+/// failed with one.
+async fn pages<T, F, Fut>(fetch: F) -> (Vec<T>, Option<String>)
 where
     F: Fn(i64) -> Fut,
     Fut: std::future::Future<Output = Result<(Vec<T>, i64), Response>>,
 {
-    let skips: Vec<i64> = (0..INTERNAL_FETCH_CAP)
-        .step_by(READER_MAX_FIRST as usize)
-        .collect();
-    let results = futures::future::join_all(skips.into_iter().map(&fetch)).await;
+    // One page at a time: a leg read from the shop's indexes holds a pooled
+    // read snapshot per page, and a page that comes back short ends the leg.
     let mut out = Vec::new();
-    for result in results {
-        match result {
+    for skip in (0..INTERNAL_FETCH_CAP).step_by(READER_MAX_FIRST as usize) {
+        match fetch(skip).await {
             Ok((rows, _)) => {
                 let short = (rows.len() as i64) < READER_MAX_FIRST;
                 out.extend(rows);
@@ -89,10 +104,33 @@ where
                     break;
                 }
             }
-            Err(_) => break,
+            Err(response) => return (out, unavailable_source(response).await),
         }
     }
-    out
+    (out, None)
+}
+
+/// The `source` an unavailable envelope names; `None` for another failure.
+async fn unavailable_source(response: Response) -> Option<String> {
+    if response.status() != StatusCode::SERVICE_UNAVAILABLE {
+        return None;
+    }
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .ok()?;
+    serde_json::from_slice::<Value>(&body)
+        .ok()?
+        .get("source")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// A leg's rows, recording the source that left it short in `unavailable`.
+fn leg_rows<T>(leg: (Vec<T>, Option<String>), unavailable: &mut BTreeSet<String>) -> Vec<T> {
+    if let Some(source) = leg.1 {
+        unavailable.insert(source);
+    }
+    leg.0
 }
 
 pub async fn user_activity(
@@ -100,33 +138,23 @@ pub async fn user_activity(
     address: &str,
     limit: Option<i64>,
     offset: Option<i64>,
-) -> (Vec<ActivityEvent>, i64) {
+) -> (Vec<ActivityEvent>, i64, BTreeSet<String>) {
     let limit = limit
         .filter(|v| *v > 0)
         .unwrap_or(MAX_PAGE_SIZE)
         .min(MAX_PAGE_SIZE);
     let offset = offset.filter(|v| *v > 0).unwrap_or(0);
     let lower = address.to_lowercase();
-    let first = Some(READER_MAX_FIRST);
-    let (sales_buyer, sales_seller, bids_bidder, bids_seller, orders_owner, orders_buyer, trades) = tokio::join!(
-        pages(|skip| {
-            let f = SaleFilters {
-                buyer: Some(lower.clone()),
-                first,
-                skip: Some(skip),
-                ..Default::default()
-            };
-            async move { list_sales(state, &f).await }
-        }),
-        pages(|skip| {
-            let f = SaleFilters {
-                seller: Some(lower.clone()),
-                first,
-                skip: Some(skip),
-                ..Default::default()
-            };
-            async move { list_sales(state, &f).await }
-        }),
+    let (
+        (sales_buyer, sales_seller),
+        bids_bidder,
+        bids_seller,
+        orders_owner,
+        orders_buyer,
+        trades,
+        transfers,
+    ) = tokio::join!(
+        super::sale_reads::activity_sales(state, &lower, INTERNAL_FETCH_CAP),
         pages(|skip| {
             let f = BidFilters {
                 bidder: Some(lower.clone()),
@@ -148,7 +176,7 @@ pub async fn user_activity(
         pages(|skip| {
             let f = OrderFilters {
                 owner: Some(lower.clone()),
-                first,
+                first: Some(READER_MAX_FIRST),
                 skip: Some(skip),
                 ..Default::default()
             };
@@ -157,7 +185,7 @@ pub async fn user_activity(
         pages(|skip| {
             let f = OrderFilters {
                 buyer: Some(lower.clone()),
-                first,
+                first: Some(READER_MAX_FIRST),
                 skip: Some(skip),
                 ..Default::default()
             };
@@ -169,7 +197,20 @@ pub async fn user_activity(
             INTERNAL_FETCH_CAP,
             super::trades::mirrored_since(&state.settings, chrono::Utc::now().naive_utc()),
         ),
+        transfers_of_address(state, &lower, INTERNAL_FETCH_CAP),
     );
+    let mut unavailable: BTreeSet<String> = transfers
+        .unavailable
+        .iter()
+        .map(|source| source.to_string())
+        .collect();
+    if !transfers.unavailable.is_empty() {
+        tracing::debug!(sources = ?transfers.unavailable, "activity omitted the transfers of a network whose indexes are not published");
+    }
+    let bids_bidder = leg_rows(bids_bidder, &mut unavailable);
+    let bids_seller = leg_rows(bids_seller, &mut unavailable);
+    let orders_owner = leg_rows(orders_owner, &mut unavailable);
+    let orders_buyer = leg_rows(orders_buyer, &mut unavailable);
     let trades = trades.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "activity: the trades leg failed");
         Vec::new()
@@ -196,6 +237,18 @@ pub async fn user_activity(
             .map(|o| order_to_event(o, "order_filled")),
     );
     events.extend(trades.iter().map(trade_to_event));
+    events.extend(
+        transfers
+            .sent
+            .iter()
+            .map(|t| transfer_to_event(t, TRANSFER_SENT)),
+    );
+    events.extend(
+        transfers
+            .received
+            .iter()
+            .map(|t| transfer_to_event(t, TRANSFER_RECEIVED)),
+    );
     events.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
     let mut seen = HashSet::new();
     events.retain(|e| seen.insert(dedup_key(e)));
@@ -207,6 +260,7 @@ pub async fn user_activity(
             .take(limit as usize)
             .collect(),
         total,
+        unavailable,
     )
 }
 
@@ -216,7 +270,18 @@ pub async fn get_activity(
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Response {
     match activity(&state, &headers, &pairs).await {
-        Ok(envelope) => Json(envelope).into_response(),
+        Ok((envelope, unavailable)) => {
+            let mut response = Json(envelope).into_response();
+            let names = unavailable.into_iter().collect::<Vec<_>>().join(", ");
+            if let Ok(value) = HeaderValue::from_str(&names)
+                && !names.is_empty()
+            {
+                response
+                    .headers_mut()
+                    .insert(HeaderName::from_static(UNAVAILABLE_SOURCES_HEADER), value);
+            }
+            response
+        }
         Err(e) => e.into_response(),
     }
 }
@@ -226,8 +291,8 @@ pub async fn get_activity(
 /// signature a 401 (a contract wallet's chain is checked with the node's
 /// EIP-1654 validator; one its contract refuses is a failing signature), an
 /// EIP-1654 chain on a node without a validator a 501, a contract-wallet
-/// check that cannot run (the RPC failed) a 503, never accepted, anything
-/// else malformed a 400.
+/// check that cannot run (the RPC failed) a 503, never accepted, one the
+/// client source's budget refused a 429, anything else malformed a 400.
 fn refusal(e: SignedFetchError) -> ApiError {
     match e {
         SignedFetchError::Expired { .. } => ApiError::unauthorized("Expired signature"),
@@ -239,6 +304,10 @@ fn refusal(e: SignedFetchError) -> ApiError {
             503,
             "The contract-wallet signature cannot be checked right now",
         ),
+        SignedFetchError::RateLimited => ApiError::http(
+            429,
+            "Too many contract-wallet signature checks; retry later",
+        ),
         _ => ApiError::bad_request("Invalid Auth Chain"),
     }
 }
@@ -247,14 +316,13 @@ async fn activity(
     state: &super::MarketplaceState,
     headers: &HeaderMap,
     pairs: &[(String, String)],
-) -> Result<ActivityEnvelope, ApiError> {
+) -> Result<(ActivityEnvelope, BTreeSet<String>), ApiError> {
     if !headers.contains_key(format!("{AUTH_CHAIN_HEADER_PREFIX}0").as_str())
         || !headers.contains_key(AUTH_TIMESTAMP_HEADER)
     {
         return Err(ApiError::bad_request("Invalid Auth Chain"));
     }
     require_auth_metadata(headers, MARKETPLACE_AUTH_SIGNERS, None)?;
-    super::signed::admit_contract_wallet_check(state.eip1654.as_deref(), headers)?;
     let recovered = signed_fetch::require_signer(
         headers,
         "get",
@@ -265,21 +333,25 @@ async fn activity(
     .await
     .map_err(refusal)?
     .into_string();
-    let query_address = pairs
+    // The signer is the wallet read, as in marketplace-server. An `address`
+    // naming another wallet is refused, never answered with the signer's.
+    let requested = pairs
         .iter()
         .find(|(k, _)| k == "address")
-        .map(|(_, v)| v.to_lowercase())
-        .ok_or_else(|| ApiError::bad_request("Unauthorized"))?;
-    if recovered != query_address {
+        .map(|(_, v)| v.to_lowercase());
+    if requested.is_some_and(|requested| requested != recovered) {
         return Err(ApiError::bad_request("Forbidden: address mismatch"));
     }
     let limit = get_number_parameter("limit", pairs)?;
     let offset = get_number_parameter("offset", pairs)?;
-    let (data, total) = user_activity(state, &recovered, limit, offset).await;
-    Ok(ActivityEnvelope { data, total })
+    let (data, total, unavailable) = user_activity(state, &recovered, limit, offset).await;
+    Ok((ActivityEnvelope { data, total }, unavailable))
 }
 
 fn dedup_key(e: &ActivityEvent) -> String {
+    if matches!(e.event_type.as_str(), TRANSFER_SENT | TRANSFER_RECEIVED) {
+        return format!("id:{}", e.id);
+    }
     match &e.tx_hash {
         Some(tx) => format!("tx:{}:{}", tx.to_lowercase(), e.event_type),
         None => format!(
@@ -352,6 +424,28 @@ fn order_to_event(o: &Order, ty: &str) -> ActivityEvent {
             Some(o.owner.clone())
         },
         details: json!({ "order": o }),
+    }
+}
+
+/// A transfer as marketplace-server's event: the counterparty is the
+/// receiver of a sent one and the sender of a received one.
+fn transfer_to_event(t: &Transfer, ty: &str) -> ActivityEvent {
+    ActivityEvent {
+        id: format!("{ty}:{}", t.id),
+        timestamp: t.timestamp,
+        network: network_name(&t.network),
+        event_type: ty.to_string(),
+        tx_hash: t.tx_hash.clone(),
+        contract_address: Some(t.contract_address.clone()),
+        token_id: Some(t.token_id.clone()),
+        item_id: t.item_id.clone(),
+        price: None,
+        counterparty: Some(if ty == TRANSFER_SENT {
+            t.to.clone()
+        } else {
+            t.from.clone()
+        }),
+        details: json!({ "transfer": t }),
     }
 }
 
@@ -617,7 +711,7 @@ mod tests {
         .execute(&state.pool)
         .await
         .unwrap();
-        let (events, _) = user_activity(&state, &me, None, None).await;
+        let (events, _, _) = user_activity(&state, &me, None, None).await;
         let ids: Vec<&str> = events.iter().map(|e| e.id.as_str()).collect();
         for (id, want) in [
             (&local, true),
@@ -636,7 +730,8 @@ mod tests {
     /// The route over the local trades (no subgraph configured, so the
     /// reader legs contribute nothing, as a failing source did before): the
     /// signer's own trades and the ones naming it as beneficiary, not a
-    /// stranger's; the old status and wording of every refusal.
+    /// stranger's, with or without `address`; the old status and wording of
+    /// every refusal.
     #[tokio::test]
     async fn activity_answers_the_signer_its_trades_and_refuses_as_before() {
         use crate::shared::signed_fetch::test_support::{address, signed_headers};
@@ -711,6 +806,28 @@ mod tests {
             "{body}"
         );
 
+        // No address, as marketplace-server's clients ask: the signer's own.
+        let (status, body) = call(
+            state.clone(),
+            "/v1/activity",
+            signed_headers("get", "/v1/activity", marketplace, true).await,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+        let ids: Vec<&str> = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["id"].as_str())
+            .collect();
+        for (id, want) in [(&mine, true), (&to_me, true), (&stranger, false)] {
+            assert_eq!(
+                ids.contains(&format!("trade_created:{id}").as_str()),
+                want,
+                "{id}: {ids:?}"
+            );
+        }
+
         let (status, body) = call(
             state.clone(),
             &format!("/v1/activity?address={other}"),
@@ -780,6 +897,69 @@ mod tests {
             .execute(&state.pool)
             .await
             .unwrap();
+    }
+
+    fn transfer(id: &str) -> Transfer {
+        Transfer {
+            id: id.into(),
+            from: "0xfrom".into(),
+            to: "0xto".into(),
+            contract_address: "0xnft".into(),
+            token_id: "42".into(),
+            item_id: None,
+            category: Some("wearable".into()),
+            tx_hash: Some("0xtx".into()),
+            timestamp: 1_700_000_000_000,
+            network: Network::Matic,
+            chain_id: ChainId::MaticMainnet,
+        }
+    }
+
+    /// marketplace-server's transfer events: the receiver is a sent
+    /// transfer's counterparty and the sender a received one's, no price,
+    /// the transfer in `details`, and each move of one transaction kept.
+    #[test]
+    fn transfer_events_name_the_other_side_and_keep_each_move_of_a_transaction() {
+        let sent = transfer_to_event(&transfer("matic-10-1"), TRANSFER_SENT);
+        let received = transfer_to_event(&transfer("matic-10-1"), TRANSFER_RECEIVED);
+        assert_eq!(
+            (
+                sent.id.as_str(),
+                sent.counterparty.as_deref(),
+                received.id.as_str(),
+                received.counterparty.as_deref(),
+                sent.price.as_deref(),
+                sent.network.as_str(),
+            ),
+            (
+                "transfer_sent:matic-10-1",
+                Some("0xto"),
+                "transfer_received:matic-10-1",
+                Some("0xfrom"),
+                None,
+                "MATIC",
+            )
+        );
+        let wire = serde_json::to_value(&sent).unwrap();
+        assert_eq!(
+            (
+                wire["type"].as_str(),
+                wire["txHash"].as_str(),
+                wire["tokenId"].as_str(),
+                wire["details"]["transfer"]["chainId"].as_u64(),
+                wire["details"]["transfer"]["category"].as_str(),
+            ),
+            (
+                Some("transfer_sent"),
+                Some("0xtx"),
+                Some("42"),
+                Some(137),
+                Some("wearable")
+            )
+        );
+        let other = transfer_to_event(&transfer("matic-10-2"), TRANSFER_SENT);
+        assert_ne!(dedup_key(&sent), dedup_key(&other));
+        assert_eq!(dedup_key(&sent), "id:transfer_sent:matic-10-1");
     }
 
     #[test]

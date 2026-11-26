@@ -23,25 +23,27 @@ pub(super) async fn unclaimed_land(
 ) -> Result<Vec<String>, axum::response::Response> {
     use super::chain_walk::{self, ChainNet};
     use super::{Source, unavailable};
-    use crate::land_authz::LAND_MAINNET;
-    use crate::rentals::index::{INDEXER_RENTALS, RENTALS_MAINNET};
+    use crate::rentals::index::RentalsChain;
+    let chain = RentalsChain::from_land_network(&land.cursor.network)
+        .ok_or_else(super::nft_reads::land_unavailable)?;
 
     let land_head = land
         .cursor
         .folded_block
         .ok_or_else(super::nft_reads::land_unavailable)?;
     let conn = &mut *land.tx;
-    let cursor = chain_walk::cursor(&mut *conn, INDEXER_RENTALS, ChainNet::Ethereum)
+    let cursor = chain_walk::cursor(&mut *conn, chain.indexer(), ChainNet::Ethereum)
         .await
         .map_err(super::nft_reads::read_error)?;
-    let Some(head) = cursor.and_then(|c| chain_walk::fresh_fold_on(&c, 1, chrono::Utc::now()))
+    let Some(head) =
+        cursor.and_then(|c| chain_walk::fresh_fold_on(&c, chain.id(), chrono::Utc::now()))
     else {
         return Err(unavailable(
             Source::RentalsIndex,
             "The rentals index is not ready",
         ));
     };
-    let registries = [LAND_MAINNET.land_registry, LAND_MAINNET.estate_registry];
+    let registries = chain.registries();
     let behind: bool = sqlx::query_scalar(
         "SELECT EXISTS (
             SELECT 1 FROM land_authz.authz_event e
@@ -52,7 +54,7 @@ pub(super) async fn unclaimed_land(
     )
     .bind(head)
     .bind(registries.as_slice())
-    .bind(RENTALS_MAINNET)
+    .bind(chain.venue())
     .bind(land_head)
     .fetch_one(&mut *conn)
     .await
@@ -70,14 +72,14 @@ pub(super) async fn unclaimed_land(
     sqlx::query_scalar(
         "WITH candidates AS (
             SELECT DISTINCT e.contract_address,e.token_id FROM shop.rental_event e
-            WHERE e.network='ethereum' AND e.rentals_address=$1 AND e.signer=$2
+            WHERE e.network=$6 AND e.rentals_address=$1 AND e.signer=$2
               AND e.kind='rented' AND e.block_number <= $3 AND e.contract_address=ANY($4)
         )
         SELECT c.contract_address || '-' || c.token_id::text FROM candidates c
         JOIN land_authz.token_right t ON (t.token_address,t.token_id)=(c.contract_address,c.token_id)
         CROSS JOIN LATERAL (
             SELECT e.kind,e.signer,e.block_number,e.log_index FROM shop.rental_event e
-            WHERE e.network='ethereum' AND e.rentals_address=$1 AND e.block_number <= $3
+            WHERE e.network=$6 AND e.rentals_address=$1 AND e.block_number <= $3
               AND (e.contract_address,e.token_id)=(c.contract_address,c.token_id)
               AND e.kind IN ('rented','claimed')
             ORDER BY e.block_number DESC,e.log_index DESC LIMIT 1
@@ -90,8 +92,37 @@ pub(super) async fn unclaimed_land(
         WHERE t.owner=$1 AND latest.kind='rented' AND latest.signer=$2
           AND (latest.block_number,latest.log_index) >= (arrival.block_number,arrival.log_index)",
     )
-    .bind(RENTALS_MAINNET).bind(owner.to_ascii_lowercase()).bind(head).bind(registries.as_slice()).bind(land_head)
+    .bind(chain.venue()).bind(owner.to_ascii_lowercase()).bind(head).bind(registries.as_slice()).bind(land_head).bind(chain.event_network())
         .fetch_all(conn).await.map_err(super::nft_reads::read_error)
+}
+
+/// Before the reader cutover, the standalone Sepolia walk published the raw
+/// events without deriving signed listing statuses. Check the generation of
+/// both publications on the page snapshot before using those statuses.
+pub(super) async fn require_sepolia_listings(
+    conn: &mut sqlx::PgConnection,
+) -> Result<(), axum::response::Response> {
+    use crate::rentals::index::RentalsChain;
+    let chain = RentalsChain::Sepolia;
+    let sql = format!("SELECT EXISTS(SELECT 1 FROM shop.chain_cursor c
+        JOIN shop.worker_progress p ON p.worker='rental_listing_generation' AND p.scope=$2 AND p.position=c.owner_generation
+        WHERE c.indexer=$3 AND c.network='ethereum' AND {})",
+        crate::chain_index::catalogue::published_sql_on("c","$1",chain.id(),super::chain_walk::ChainNet::Matic.testnet_chain_id()));
+    let ready: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(chrono::Utc::now().naive_utc())
+        .bind(chain.id())
+        .bind(chain.indexer())
+        .fetch_one(conn)
+        .await
+        .map_err(super::nft_reads::read_error)?;
+    if ready {
+        Ok(())
+    } else {
+        Err(super::unavailable(
+            super::Source::RentalsIndex,
+            "Sepolia rental listings have not been published for the current Rentals history",
+        ))
+    }
 }
 
 /// The old `get_open_rentals` bound.
@@ -124,6 +155,7 @@ pub fn statuses(requested: &[String]) -> Vec<String> {
 /// statuses, oldest first so a later listing of the same asset wins.
 pub async fn listings_of_nfts<'e>(
     conn: impl sqlx::PgExecutor<'e>,
+    chain_id: i64,
     nft_ids: &[String],
     statuses: &[String],
 ) -> Result<Vec<RentalListing>, sqlx::Error> {
@@ -131,11 +163,12 @@ pub async fn listings_of_nfts<'e>(
         return Ok(Vec::new());
     }
     let sql = format!(
-        "{COLUMNS} AND a.nft_id = ANY($1) AND r.status = ANY($2::signatures.rental_status[]) ORDER BY r.created_at, r.id"
+        "{COLUMNS} AND r.chain_id=$3 AND a.nft_id = ANY($1) AND r.status = ANY($2::signatures.rental_status[]) ORDER BY r.created_at, r.id"
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(nft_ids)
         .bind(statuses)
+        .bind(chain_id)
         .fetch_all(conn)
         .await?;
     Ok(rows.iter().map(row_to_listing).collect())
@@ -144,17 +177,19 @@ pub async fn listings_of_nfts<'e>(
 /// The newest [`NEWEST_LISTINGS`] listings in these statuses.
 pub async fn newest_listings<'e>(
     conn: impl sqlx::PgExecutor<'e>,
+    chain_id: i64,
     statuses: &[String],
 ) -> Result<Vec<RentalListing>, sqlx::Error> {
     if statuses.is_empty() {
         return Ok(Vec::new());
     }
     let sql = format!(
-        "{COLUMNS} AND r.status = ANY($1::signatures.rental_status[]) ORDER BY r.created_at DESC, r.id LIMIT $2"
+        "{COLUMNS} AND r.chain_id=$3 AND r.status = ANY($1::signatures.rental_status[]) ORDER BY r.created_at DESC, r.id LIMIT $2"
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(statuses)
         .bind(NEWEST_LISTINGS)
+        .bind(chain_id)
         .fetch_all(conn)
         .await?;
     Ok(rows.iter().map(row_to_listing).collect())
@@ -224,7 +259,7 @@ mod tests {
         .await;
         let bare = listing(&pool, &contract, "cancelled", "3 days", &[]).await;
 
-        let got = listings_of_nfts(&pool, std::slice::from_ref(&nft_id), &statuses(&[]))
+        let got = listings_of_nfts(&pool, 1, std::slice::from_ref(&nft_id), &statuses(&[]))
             .await
             .unwrap();
         assert_eq!(
@@ -250,6 +285,7 @@ mod tests {
         );
         let all = listings_of_nfts(
             &pool,
+            1,
             std::slice::from_ref(&nft_id),
             &statuses(&["open".into(), "executed".into(), "cancelled".into()]),
         )
@@ -260,7 +296,7 @@ mod tests {
             [executed.as_str(), open.as_str()],
             "oldest first, the period-less one left out"
         );
-        let newest = newest_listings(&pool, &statuses(&["executed".into()]))
+        let newest = newest_listings(&pool, 1, &statuses(&["executed".into()]))
             .await
             .unwrap();
         assert!(
@@ -268,7 +304,7 @@ mod tests {
                 && !newest.iter().any(|l| l.id == open || l.id == bare)
         );
         assert!(
-            newest_listings(&pool, &statuses(&["bogus".into()]))
+            newest_listings(&pool, 1, &statuses(&["bogus".into()]))
                 .await
                 .unwrap()
                 .is_empty()

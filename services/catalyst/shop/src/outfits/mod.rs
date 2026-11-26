@@ -235,13 +235,19 @@ impl IntoResponse for ApiError {
 }
 
 /// A refusal before signature verification (a scene-signed chain, a
-/// non-canonical `signer`) is a 400 as upstream's `rejectIfSigner`; every
+/// non-canonical `signer`) is a 400 as upstream's `rejectIfSigner`; a
+/// contract-wallet check the client source's budget refused is a 429; every
 /// other refusal is the static 401 body.
 fn signed_fetch_error(e: SignedFetchError) -> ApiError {
     match e {
         SignedFetchError::MalformedChain { ref detail } if e.is_metadata_refusal() => {
             ApiError::bad_request("invalid_signer", detail.clone())
         }
+        SignedFetchError::RateLimited => ApiError::Labelled {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            label: "rate_limited",
+            message: Some(e.to_string()),
+        },
         other => {
             tracing::debug!(error = %other, "signed-fetch verification failed for an outfits route");
             ApiError::Unauthorized

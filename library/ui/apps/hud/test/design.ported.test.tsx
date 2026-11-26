@@ -1,32 +1,11 @@
 // Smoke test for the design primitives ported from eordano/dcl-react-ui: each must
 // mount and render without throwing. Behaviour lives with its consumers; this just
 // guards the port (compiles AND renders).
+import { CharCounter, EmptyState, FieldLabel, Spinner } from '@dcl/one-ui'
 import { act, render, screen } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
 import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
-import {
-  Modal,
-  ModalTitle,
-  ModalActions,
-  ModalShell,
-  Checkbox,
-  Spinner,
-  SearchField,
-  FieldLabel,
-  CharCounter,
-  ContextMenu,
-  Dropdown,
-  EmptyState,
-  PageHeader,
-  Coin,
-  ManaIcon,
-  Search,
-  Close,
-  SocialIcon,
-  StarWalletIcon,
-  DclLogomark,
-  ManaMark
-} from '../design'
+import { Modal, ModalTitle, ModalActions, ModalShell, SearchField, ContextMenu, Dropdown, Coin, ManaIcon, Search, Close, SocialIcon, StarWalletIcon, DclLogomark, ManaMark } from '../design'
 
 describe('ported design primitives', () => {
   it('render without throwing', () => {
@@ -38,15 +17,13 @@ describe('ported design primitives', () => {
         <ModalActions>
           <button>ok</button>
         </ModalActions>
-        <Checkbox checked onChange={() => {}}>label</Checkbox>
-        <Spinner />
+        <Spinner variant="thin" />
         <SearchField value="" onChange={() => {}} />
         <FieldLabel htmlFor="x">Field</FieldLabel>
         <CharCounter current={3} max={10} />
         <ContextMenu items={[{ label: 'Item', onClick: () => {} }, { kind: 'separator' }]} />
         <Dropdown options={['a', 'b']} value="a" onChange={() => {}} />
         <EmptyState title="Nothing here" />
-        <PageHeader title="Places" />
         <Coin />
         <ManaIcon />
         <Search />

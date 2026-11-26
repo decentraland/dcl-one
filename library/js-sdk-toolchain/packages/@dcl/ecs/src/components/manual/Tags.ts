@@ -1,5 +1,5 @@
-import { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine/types'
-import { Entity } from '../../engine'
+import type { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine/types'
+import type { Entity } from '../../engine'
 import { Schemas } from '../../schemas'
 
 export interface TagsType {

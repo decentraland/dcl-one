@@ -26,27 +26,34 @@
 //! the item id decoded from its token id; a v1 token's is its collection's
 //! URN (`shop.collections`) and the wearable id of its Issue log. The
 //! inventory lists also join the item (`shop.items`) for its name, rarity,
-//! category and price, and need the items mirror's first complete pass.
+//! category and price, and need the items mirror's first complete pass, or,
+//! on a network the collections index owns, its descriptive verdict, read in
+//! the same snapshot as the rows.
 //!
 //! Every memo of an answer derived from the index (an owner's copies here,
 //! the lists, the backpack, profiles and outfits) is keyed by the
 //! [`Publications`] it was read under, so a hit serves only while the same
 //! publication stands: a rewind withdraws it (and the read fails closed),
 //! and the refill publishes another, under which the old branch's answer is
-//! never found.
+//! never found. An inventory's key also holds the catalogue copy its items
+//! were named from (the gate's snapshot reads it), so a republication of the
+//! catalogue alone misses it too.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use axum::response::Response;
-use chrono::{DateTime, Duration as ChronoDuration, NaiveDateTime, Utc};
+#[cfg(test)]
+use chrono::Duration as ChronoDuration;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use sqlx::{PgConnection, PgPool, Postgres, Row, Transaction};
 
 use crate::shared::cache::TtlMap;
 
+use super::catalogue::{self, CatalogueCopies, NetworkState, Purpose};
 use super::chain_walk::{self, ChainNet, Cursor, INDEXER_NFT, READY_WINDOW};
-use super::nft_index::DCL_REGISTRAR;
+use super::nft_index::Catalogue;
 use super::{MarketplaceState, Source, is_valid_eth_address, unavailable};
 
 /// How long an owner's copies are memoized: a burst of backpack, list and
@@ -82,15 +89,21 @@ pub type OwnedTokens = HashMap<String, HashMap<String, Vec<String>>>;
 pub struct Publications {
     pub ethereum: Option<(i64, NaiveDateTime)>,
     pub matic: Option<(i64, NaiveDateTime)>,
+    /// For a read that names its items from the catalogue (an inventory),
+    /// the catalogue copy of each network it read them from
+    /// ([`Publications::naming`]), so a republication of the catalogue alone
+    /// gives the memo a new key.
+    pub catalogue: Option<CatalogueCopies>,
 }
 
 impl Publications {
     /// What `conn` sees of the nft cursors.
-    pub async fn read(conn: &mut PgConnection) -> Result<Self, sqlx::Error> {
+    pub async fn read(conn: &mut PgConnection, catalogue: Catalogue) -> Result<Self, sqlx::Error> {
         let rows: Vec<(String, Option<i64>, Option<NaiveDateTime>)> = sqlx::query_as(
-            "SELECT network, folded_block, folded_at FROM shop.chain_cursor WHERE indexer = $1",
+            "SELECT network, folded_block, folded_at FROM shop.chain_cursor WHERE indexer = $1 AND full_history AND quarantined_at IS NULL AND chain_id=CASE network WHEN 'ethereum' THEN $2::bigint ELSE $3::bigint END",
         )
         .bind(INDEXER_NFT)
+        .bind(catalogue.chain_id(ChainNet::Ethereum)).bind(catalogue.chain_id(ChainNet::Matic))
         .fetch_all(conn)
         .await?;
         let mut out = Self::default();
@@ -105,6 +118,15 @@ impl Publications {
         Ok(out)
     }
 
+    /// These publications, and the catalogue copies `conn`'s snapshot sees:
+    /// the key of an answer that names its items from the catalogue.
+    pub async fn naming(self, conn: &mut PgConnection) -> Result<Self, sqlx::Error> {
+        Ok(Self {
+            catalogue: Some(CatalogueCopies::read(conn).await?),
+            ..self
+        })
+    }
+
     /// [`Publications::read`] for a memo's lookup key. A fill is filed under
     /// what its own ownership read observed ([`Observed`]), never under this
     /// key read before it: a withdrawn network's `None` recurs, so a later
@@ -116,7 +138,7 @@ impl Publications {
             return Ok(Self::default());
         }
         let mut conn = state.pool.acquire().await?;
-        Self::read(&mut conn).await
+        Self::read(&mut conn, state.settings.catalogue()).await
     }
 }
 
@@ -168,41 +190,32 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub fn holds(self, c: &Cursor, now: DateTime<Utc>) -> bool {
-        match self {
-            Rule::Complete => complete(c),
-            Rule::Fresh => fresh(c, now),
-        }
+    #[cfg(test)]
+    fn holds(self, c: &Cursor, now: DateTime<Utc>) -> bool {
+        self.holds_on(Catalogue::Mainnet, c, now)
+    }
+
+    fn holds_on(self, catalogue: Catalogue, c: &Cursor, now: DateTime<Utc>) -> bool {
+        let Some(net) = ChainNet::parse(&c.network) else {
+            return false;
+        };
+        let expected = catalogue.chain_id(net);
+        c.indexer == INDEXER_NFT
+            && match (self, catalogue) {
+                (Self::Complete, Catalogue::Mainnet) => {
+                    c.full_history
+                        && c.quarantined_at.is_none()
+                        && c.chain_id == Some(expected)
+                        && c.folded_block.is_some()
+                        && c.folded_at.is_some()
+                }
+                _ => chain_walk::fresh_fold_on(c, expected, now).is_some(),
+            }
     }
 }
 
-/// The whole history walked and the last fold published, with no rewind or
-/// unpublish since, read from the chain the network names and out of
-/// quarantine (as [`chain_walk::is_ready_on`] requires of every index).
-pub fn complete(c: &Cursor) -> bool {
-    c.indexer == INDEXER_NFT
-        && c.full_history
-        && c.folded_block.is_some()
-        && c.folded_at.is_some()
-        && c.quarantined_at.is_none()
-        && ChainNet::parse(&c.network).is_some_and(|net| c.chain_id == Some(net.chain_id()))
-}
-
-/// [`complete`], published within [`READY_WINDOW`] at `now`.
-pub fn fresh(c: &Cursor, now: DateTime<Utc>) -> bool {
-    let Some(folded_at) = c.folded_at else {
-        return false;
-    };
-    let age = now.naive_utc().signed_duration_since(folded_at);
-    complete(c) && age >= ChronoDuration::zero() && age <= READY_WINDOW
-}
-
-/// Whether this node walks the nft index: its switch is on and the node
-/// serves mainnet, the only chains (1, 137) the walk reads. Without it a
-/// profile is served as deployed and the inventory routes answer the
-/// unavailable envelope.
 pub fn walks_here(state: &MarketplaceState) -> bool {
-    state.settings.market.indexes.nft_enabled && state.settings.eth_network.trim() == "mainnet"
+    state.settings.walks_catalogue()
 }
 
 /// Why a read did not run.
@@ -253,10 +266,24 @@ pub fn category_networks(category: &str) -> &'static [ChainNet] {
     }
 }
 
-/// `Err(NotReady)` unless `nets` meet `rule` at `now` (and, with `items`,
-/// the items mirror finished a pass on each), on `conn`.
+/// The catalogue state of one network, as the gate reads it, and whether its
+/// items mirror pass marks testnet item rows.
+static ITEMS_STATE_SQL: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "SELECT {columns}, COALESCE(st_mi.marks_item_rows, false) AS marks_item_rows \
+         FROM (SELECT $1::text AS network) AS n {joins}",
+        columns = catalogue::STATE_COLUMNS,
+        joins = *catalogue::STATE_JOINS,
+    )
+});
+
+/// `Err(NotReady)` unless `nets` meet `rule` at `now` and, with `items`,
+/// each one's catalogue can name the items: the items mirror finished a pass
+/// on it, or the collections index owns it and answers a descriptive read
+/// (the inventories show the items' names, rarities and categories).
 pub async fn check(
     conn: &mut PgConnection,
+    catalogue: Catalogue,
     nets: &[ChainNet],
     rule: Rule,
     items: bool,
@@ -264,7 +291,7 @@ pub async fn check(
 ) -> Result<(), ReadError> {
     for &net in nets {
         let cursor = chain_walk::cursor(&mut *conn, INDEXER_NFT, net).await?;
-        if !cursor.is_some_and(|c| rule.holds(&c, now)) {
+        if !cursor.is_some_and(|c| rule.holds_on(catalogue, &c, now)) {
             return Err(ReadError::NotReady(
                 Source::NftIndex,
                 format!(
@@ -274,20 +301,31 @@ pub async fn check(
             ));
         }
         if items {
-            let mirrored: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM shop.mirror_state WHERE mirror = 'items' AND network = $1 AND last_complete_pass_at IS NOT NULL)",
-            )
-            .bind(net.db_name())
-            .fetch_one(&mut *conn)
-            .await?;
-            if !mirrored {
-                return Err(ReadError::NotReady(
-                    Source::ItemsMirror,
-                    format!(
-                        "the {} items mirror has not completed a pass: the owned items have no name, rarity or category yet",
-                        net.db_name()
-                    ),
-                ));
+            let row = sqlx::query(sqlx::AssertSqlSafe(ITEMS_STATE_SQL.as_str()))
+                .bind(net.db_name())
+                .fetch_one(&mut *conn)
+                .await?;
+            let state = NetworkState::from_row(&row)?;
+            let chain = catalogue.chain_id(net);
+            match state.owned_verdict(chain, Purpose::Describe, now) {
+                Some(verdict) => {
+                    verdict.map_err(|why| ReadError::NotReady(Source::CollectionsIndex, why))?;
+                }
+                None => {
+                    let mainnet = catalogue == Catalogue::Mainnet;
+                    let bound = state.items_chain == Some(chain)
+                        || (state.items_chain.is_none() && mainnet);
+                    let marks: bool = row.try_get("marks_item_rows")?;
+                    if state.items_pass.is_none() || !bound || !(mainnet || marks) {
+                        return Err(ReadError::NotReady(
+                            Source::ItemsMirror,
+                            format!(
+                                "the {} items mirror has not completed a pass: the owned items have no name, rarity or category yet",
+                                net.db_name()
+                            ),
+                        ));
+                    }
+                }
             }
         }
     }
@@ -298,6 +336,7 @@ pub async fn check(
 /// index for one answer runs on it.
 pub async fn snapshot(
     pool: &PgPool,
+    catalogue: Catalogue,
     nets: &[ChainNet],
     rule: Rule,
     items: bool,
@@ -306,17 +345,18 @@ pub async fn snapshot(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
-    check(&mut tx, nets, rule, items, Utc::now()).await?;
+    check(&mut tx, catalogue, nets, rule, items, Utc::now()).await?;
     Ok(tx)
 }
 
 /// A passed inventory gate: the snapshot the gate was checked on, which
-/// [`owned_copies`] reads the rows from. One request opens one.
+/// [`owned_copies`] reads the rows from, and what that snapshot sees of the
+/// nft index and the catalogue. One request opens one.
 pub struct Gate(Transaction<'static, Postgres>, Publications);
 
 impl Gate {
-    /// The publications the gate's snapshot sees: the key of every memo of
-    /// an answer read on it.
+    /// The publications and catalogue copies the gate's snapshot sees: the
+    /// key of every memo of an answer read on it.
     pub fn publications(&self) -> Publications {
         self.1
     }
@@ -333,12 +373,23 @@ pub async fn require_inventory(
 ) -> Result<Gate, Response> {
     if !walks_here(state) {
         return Err(not_ready(
-            "this node does not walk the nft index (MARKETPLACE_NFT_INDEX_ENABLED off, or a network other than mainnet)",
+            "this node does not walk the nft index (MARKETPLACE_NFT_INDEX_ENABLED off, or a different catalogue pair)",
         ));
     }
+    let catalogue = state.settings.catalogue();
     let gate = async {
-        let mut tx = snapshot(&state.pool, category_networks(category), Rule::Fresh, true).await?;
-        let publications = Publications::read(&mut tx).await?;
+        let mut tx = snapshot(
+            &state.pool,
+            state.settings.catalogue(),
+            category_networks(category),
+            Rule::Fresh,
+            true,
+        )
+        .await?;
+        let publications = Publications::read(&mut tx, catalogue)
+            .await?
+            .naming(&mut tx)
+            .await?;
         Ok::<_, ReadError>(Gate(tx, publications))
     };
     gate.await.map_err(|e| {
@@ -354,14 +405,14 @@ SELECT i.urn, n.token_id::text AS token_id, n.transferred_at, COALESCE(i.price::
        i.rarity, i.name, i.category, i.item_type \
 FROM shop.nft n \
 JOIN shop.items i ON i.network = n.network AND i.contract_address = n.contract_address AND i.item_id = n.item_id \
-WHERE n.owner = $1 AND n.network = 'matic' AND 'matic' = ANY($3) AND i.item_type = ANY($2) \
+WHERE n.owner = $1 AND n.network = 'matic' AND 'matic' = ANY($3) AND ($5 OR (i.testnet_verified AND i.chain_id=$6)) AND i.item_type = ANY($2) \
 UNION ALL \
 SELECT i.urn, n.token_id::text, n.transferred_at, COALESCE(i.price::text, '0'), i.rarity, i.name, i.category, i.item_type \
 FROM shop.nft n \
 JOIN shop.collections c ON c.network = n.network AND c.contract_address = n.contract_address \
 JOIN shop.items i ON i.urn = c.urn || ':' || n.wearable_id \
 WHERE n.owner = $1 AND n.network = 'ethereum' AND 'ethereum' = ANY($3) AND n.contract_address <> $4 \
-  AND n.wearable_id IS NOT NULL AND i.item_type = ANY($2)";
+  AND n.wearable_id IS NOT NULL AND ($5 OR (i.testnet_verified AND c.testnet_verified AND i.chain_id=$7 AND c.chain_id=$7)) AND i.item_type = ANY($2)";
 
 fn item_types(category: &str) -> Vec<String> {
     let types: &[&str] = if category == "emote" {
@@ -385,6 +436,7 @@ pub fn sort_copies(copies: &mut [OwnedCopy]) {
 
 async fn read_copies(
     conn: &mut PgConnection,
+    catalogue: Catalogue,
     owner: &str,
     category: &str,
 ) -> Result<Vec<OwnedCopy>, sqlx::Error> {
@@ -396,7 +448,10 @@ async fn read_copies(
         .bind(owner)
         .bind(item_types(category))
         .bind(&nets)
-        .bind(DCL_REGISTRAR)
+        .bind(catalogue.registrar())
+        .bind(catalogue == Catalogue::Mainnet)
+        .bind(catalogue.chain_id(ChainNet::Matic) as i32)
+        .bind(catalogue.chain_id(ChainNet::Ethereum) as i32)
         .fetch_all(conn)
         .await?;
     let mut copies: Vec<OwnedCopy> = rows
@@ -437,7 +492,7 @@ pub async fn owned_copies(
         .owned_items
         .owned
         .get_or_fetch(key, || async {
-            read_copies(&mut tx, &owner, category)
+            read_copies(&mut tx, state.settings.catalogue(), &owner, category)
                 .await
                 .map(Arc::new)
                 .map_err(ReadError::Db)
@@ -478,13 +533,21 @@ impl ItemRef {
 /// or off-chain URN, is `None` and never owned (the URN a holder is matched
 /// on must equal the inventory's exactly).
 pub fn parse_item_urn(urn: &str) -> Option<ItemRef> {
+    parse_catalogue_urn(urn, Catalogue::Mainnet)
+}
+
+fn parse_catalogue_urn(urn: &str, catalogue: Catalogue) -> Option<ItemRef> {
     let parts: Vec<&str> = urn.split(':').collect();
     let ["urn", "decentraland", network, kind, collection, item] = parts.as_slice() else {
         return None;
     };
+    let (l1, l2) = match catalogue {
+        Catalogue::Mainnet => ("ethereum", "matic"),
+        Catalogue::Testnet => ("sepolia", "amoy"),
+    };
     match (*network, *kind) {
-        ("matic" | "ethereum", "collections-v2") => {
-            let net = if *network == "matic" {
+        (name, "collections-v2") if name == l1 || name == l2 => {
+            let net = if *network == l2 {
                 ChainNet::Matic
             } else {
                 ChainNet::Ethereum
@@ -504,9 +567,9 @@ pub fn parse_item_urn(urn: &str) -> Option<ItemRef> {
                 item_id: item.to_string(),
             })
         }
-        ("ethereum", "collections-v1") if !collection.is_empty() && !item.is_empty() => {
+        (name, "collections-v1") if name == l1 && !collection.is_empty() && !item.is_empty() => {
             Some(ItemRef::V1 {
-                collection_urn: format!("urn:decentraland:ethereum:collections-v1:{collection}"),
+                collection_urn: format!("urn:decentraland:{l1}:collections-v1:{collection}"),
                 wearable_id: item.to_string(),
             })
         }
@@ -536,7 +599,7 @@ struct Requests {
     nets: Vec<ChainNet>,
 }
 
-fn requests(requested: &HashSet<(String, String)>) -> Requests {
+fn requests(catalogue: Catalogue, requested: &HashSet<(String, String)>) -> Requests {
     let mut out = Requests {
         v2: Vec::new(),
         v1: Vec::new(),
@@ -547,7 +610,7 @@ fn requests(requested: &HashSet<(String, String)>) -> Requests {
         if !is_valid_eth_address(&owner) {
             continue;
         }
-        let Some(item) = parse_item_urn(urn) else {
+        let Some(item) = parse_catalogue_urn(urn, catalogue) else {
             continue;
         };
         if !out.nets.contains(&item.net()) {
@@ -637,12 +700,13 @@ fn collect_tokens(owned: &mut OwnedTokens, rows: &[sqlx::postgres::PgRow]) {
 /// Which of the `(owner, URN)` pairs are held, with their tokens newest
 /// transfer first, under `rule` on the networks the URNs name. Nothing
 /// parseable asked: an empty answer without a read.
+#[cfg(test)]
 pub async fn owned_tokens(
     pool: &PgPool,
     requested: &HashSet<(String, String)>,
     rule: Rule,
 ) -> Result<OwnedTokens, ReadError> {
-    owned_tokens_observed(pool, requested, rule)
+    owned_tokens_observed(pool, Catalogue::Mainnet, requested, rule)
         .await
         .map(|(owned, _)| owned)
 }
@@ -651,20 +715,21 @@ pub async fn owned_tokens(
 /// parseable asked, no read).
 pub async fn owned_tokens_observed(
     pool: &PgPool,
+    catalogue: Catalogue,
     requested: &HashSet<(String, String)>,
     rule: Rule,
 ) -> Result<(OwnedTokens, Option<Observed>), ReadError> {
-    let r = requests(requested);
+    let r = requests(catalogue, requested);
     if r.v2.is_empty() && r.v1.is_empty() {
         return Ok((HashMap::new(), None));
     }
-    let mut tx = snapshot(pool, &r.nets, rule, false).await?;
-    let publications = Publications::read(&mut tx).await?;
+    let mut tx = snapshot(pool, catalogue, &r.nets, rule, false).await?;
+    let publications = Publications::read(&mut tx, catalogue).await?;
     let owned = read_tokens(&mut tx, &r).await?;
     tx.rollback().await.ok();
-    let fresh_until = match rule {
-        Rule::Fresh => publications.fresh_until(&r.nets),
-        Rule::Complete => None,
+    let fresh_until = match (rule, catalogue) {
+        (Rule::Fresh, _) | (_, Catalogue::Testnet) => publications.fresh_until(&r.nets),
+        (Rule::Complete, Catalogue::Mainnet) => None,
     };
     Ok((
         owned,
@@ -682,6 +747,7 @@ pub async fn owned_tokens_observed(
 /// before a transfer is never filed under the items' later publication.
 pub async fn owned_tokens_and_names(
     pool: &PgPool,
+    catalogue: Catalogue,
     requested: &HashSet<(String, String)>,
     owners: &[String],
     rule: Rule,
@@ -693,23 +759,23 @@ pub async fn owned_tokens_and_names(
     ),
     ReadError,
 > {
-    let r = requests(requested);
+    let r = requests(catalogue, requested);
     let mut nets = r.nets.clone();
     if !nets.contains(&ChainNet::Ethereum) {
         nets.push(ChainNet::Ethereum);
     }
-    let mut tx = snapshot(pool, &nets, rule, false).await?;
-    let publications = Publications::read(&mut tx).await?;
+    let mut tx = snapshot(pool, catalogue, &nets, rule, false).await?;
+    let publications = Publications::read(&mut tx, catalogue).await?;
     let owned = if r.v2.is_empty() && r.v1.is_empty() {
         HashMap::new()
     } else {
         read_tokens(&mut tx, &r).await?
     };
-    let names = super::names::read_owned_names_of(&mut tx, owners).await?;
+    let names = super::names::read_owned_names_of(catalogue, &mut tx, owners).await?;
     tx.rollback().await.ok();
-    let fresh_until = match rule {
-        Rule::Fresh => publications.fresh_until(&nets),
-        Rule::Complete => None,
+    let fresh_until = match (rule, catalogue) {
+        (Rule::Fresh, _) | (_, Catalogue::Testnet) => publications.fresh_until(&nets),
+        (Rule::Complete, Catalogue::Mainnet) => None,
     };
     Ok((
         owned,
@@ -740,7 +806,8 @@ pub(crate) mod test_support {
     }
 
     /// Publishes the nft index of `nets` `age` ago (a complete walk at
-    /// block 100) and, with `items`, records the items mirror's pass.
+    /// block 100, its legacy order book folded through it) and, with
+    /// `items`, records the items mirror's pass.
     pub async fn publish(pool: &PgPool, nets: &[ChainNet], items: bool, age: std::time::Duration) {
         for net in nets {
             sqlx::query(
@@ -752,6 +819,24 @@ pub(crate) mod test_support {
             .bind(net.db_name())
             .bind(age.as_secs_f64())
             .bind(net.chain_id())
+            .execute(pool)
+            .await
+            .unwrap();
+            // The fold that published it folded the legacy order book too,
+            // on the branch of the walk's recovery point at block 100.
+            sqlx::query(
+                "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) \
+                 VALUES ('nft', $1, 100, '0x' || repeat('0', 64), 0) ON CONFLICT DO NOTHING",
+            )
+            .bind(net.db_name())
+            .execute(pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO shop.legacy_order_cursor (network, folded_through, through_hash) VALUES ($1, 100, '0x' || repeat('0', 64)) \
+                 ON CONFLICT (network) DO UPDATE SET folded_through = 100, through_hash = EXCLUDED.through_hash",
+            )
+            .bind(net.db_name())
             .execute(pool)
             .await
             .unwrap();
@@ -890,7 +975,7 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let r = requests(&requested);
+        let r = requests(Catalogue::Mainnet, &requested);
         assert_eq!((r.v2.len(), r.v1.len()), (1, 0));
         assert_eq!(r.v2[0].0, owner.to_lowercase(), "owners are lowercased");
         assert_eq!(r.nets, vec![ChainNet::Matic]);
@@ -928,5 +1013,64 @@ mod tests {
                 ("2", 100, "1")
             ]
         );
+    }
+
+    /// The inventories name the items they list: on a network the
+    /// collections index owns, from its descriptive publication, read in
+    /// the snapshot of the check; the items mirror's pass a takeover left
+    /// recorded never stands in for it, and an old publication still serves.
+    #[tokio::test]
+    async fn on_an_owned_network_the_items_follow_the_index() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        use super::super::catalogue::owning;
+        let nets = [ChainNet::Matic];
+        test_support::publish(&pool, &nets, true, std::time::Duration::from_secs(60)).await;
+        let checked = |pool: PgPool| async move {
+            let mut conn = pool.acquire().await.unwrap();
+            check(
+                &mut conn,
+                Catalogue::Mainnet,
+                &nets,
+                Rule::Fresh,
+                true,
+                Utc::now(),
+            )
+            .await
+        };
+        assert!(
+            checked(pool.clone()).await.is_ok(),
+            "the mirror serves Polygon"
+        );
+
+        // Published two hours ago: a descriptive read still serves it.
+        owning::own(&pool, "matic", 137, 100, 2 * 3600).await;
+        assert!(checked(pool.clone()).await.is_ok());
+
+        // Rewound, or walked on another chain: refused by the index, though
+        // the items mirror's pass is recorded.
+        owning::rewind(&pool, "matic").await;
+        match checked(pool.clone()).await {
+            Err(ReadError::NotReady(Source::CollectionsIndex, _)) => {}
+            other => panic!("rewound: {other:?}"),
+        }
+        owning::own(&pool, "matic", 80002, 100, 60).await;
+        match checked(pool.clone()).await {
+            Err(ReadError::NotReady(Source::CollectionsIndex, _)) => {}
+            other => panic!("another chain: {other:?}"),
+        }
+
+        // Handed back (the hand-back clears the network's rows and the
+        // mirrors' passes with the ownership): the mirror's rule again.
+        assert!(
+            super::super::collections_projection::hand_back(&pool, ChainNet::Matic)
+                .await
+                .unwrap()
+        );
+        match checked(pool.clone()).await {
+            Err(ReadError::NotReady(Source::ItemsMirror, _)) => {}
+            other => panic!("handed back: {other:?}"),
+        }
     }
 }

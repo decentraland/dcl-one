@@ -5,10 +5,11 @@
 // the session; the popup renders through the shared popup layer.
 
 import type { AppNotification } from '@explorer-core/engine/protocol'
-import { Button, openPopup, rarityOf, rarityTile, type Rarity } from '../../design'
+import { openPopup, rarityOf, rarityTile, type Rarity } from '../../design'
 import { nativeProfileImage } from '@hud-host'
 import { CategoryIcon } from '../backpack/categoryIcons'
 import styles from './RewardPopup.module.css'
+import { Button } from '@dcl/one-ui'
 
 export const REWARD_TYPE = 'reward_in_progress'
 
@@ -105,7 +106,7 @@ export function RewardPopup({ reward, onCollect }: { reward: Reward; onCollect: 
       <ItemTile rarity={reward.rarity} image={reward.image} category={reward.category} />
       {reward.name != null && <p className={styles.name}>{reward.name}</p>}
       <p className={styles.note}>Processing may take a few minutes, but you&apos;ll be notified as soon as it&apos;s in your Backpack!</p>
-      <Button size="lg" onClick={onCollect}>
+      <Button appearance="hud" size="lg" onClick={onCollect}>
         COLLECT
       </Button>
     </RaysPopup>

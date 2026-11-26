@@ -12,7 +12,7 @@ use sqlx::types::Json;
 use super::SharedState;
 use super::http::{ApiError, Ok2};
 use super::index::RentalsChain;
-use crate::market::chain_walk::ready_sql_on;
+use crate::chain_index::catalogue::published_sql_on;
 use crate::market::{Source, is_valid_eth_address, unavailable};
 
 #[derive(Deserialize)]
@@ -106,7 +106,7 @@ SELECT COALESCE((
     WHERE latest.kind = 'rented' AND (latest.signer = $1 OR latest.tenant = $1)
 ), '[]'::jsonb)
 FROM published",
-        ready = ready_sql_on("c", "$5", chain.id(), 137)
+        ready = published_sql_on("c", "$5", chain.id(), 137)
     );
     let rows: Option<Json<Vec<Rental>>> = sqlx::query_scalar(sqlx::AssertSqlSafe(query))
         .bind(wallet)

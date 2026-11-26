@@ -200,6 +200,7 @@ describes cache scope, trust boundaries, stale-entry replacement and retention.
 - APIs and Sites set `COMMIT_HASH` to the build revision (`unversioned` outside git): APIs report it in `/about` and the status routes, Sites in `window.__DCL_PUBLIC__.commitHash`, which `/play`'s sign-in screens show as their build when the Vite build recorded none. A deployment's own `COMMIT_HASH` overrides it.
 - APIs listen on 5210, Sites on 5212, as `1000:1000`. APIs need `DATABASE_URL`, posture, public URL, encryption key and integration secrets, and, behind the gateway, `HTTP_TRUSTED_PROXY_CIDRS` with the gateway's network ([gateway](../gateway/README.md)); Sites needs `CATALYST_URL`, `CATALYST_DATABASE_URL` and a session secret.
 - Sites' `/download` takes two addresses from the deployment: `EXPLORER_INSTALLERS_URL` is the host of the Explorer launcher installers (unset, the page offers no installer, the home page's download call leads to `/download` and `/download_success` answers 404: the node serves none), and `DOWNLOAD_COUNTS_URL` is the JSON of the download counts per platform (unset or unreachable, the page shows no total and the home page shows "+400K").
+- Sites' `/shop/cart` can send one document that a shared cache (a CDN) may keep: with `SHOP_CART_SHARED_CACHE=true` (off when unset) and `PUBLIC_CATALYST_URL` set (the document's links must not come from a request), a top-level navigation gets `Cache-Control: public, max-age=0, s-maxage=60`, `CDN-Cache-Control: max-age=60, stale-while-revalidate=300` and `Vary: Sec-Fetch-Dest`, without the visitor's session, wallet or language (`apps/sites/src/routes/shop/shared-cart.ts`). Browsers keep no copy. Turn it on only behind a cache that keys on `Sec-Fetch-Dest` and that a deploy purges.
 - Behind the gateway, `/play` dials Pulse on the page's host. Pulse is UDP, which an HTTP-only front (a CDN proxy, a load balancer) cannot carry, so a deployment whose Pulse sits elsewhere sets `PUBLIC_PULSE_SERVER` (`host[:port]`, port 7743 when omitted) on Sites, which hands it to `/play` as `window.__DCL_PUBLIC__.pulseServer`. Where `/play` composes services from a base domain instead (a `decentraland.*` subdomain, or a `?baseDomain=` other than the page host), it ignores it. The engine writes the Pulse host into every link it syncs, so changing or removing `PUBLIC_PULSE_SERVER` later sends links that still carry the old host through the untrusted-link gate.
 - Sites' blog (`/blog`) reads cms-server, the Contentful cache decentraland/sites reads: `BLOG_CMS_URL` is its full `<origin>/spaces/<space>/environments/<environment>` base. Unset, or with the CMS unreachable, the blog pages answer 503. TODO(cms-migration): point `BLOG_CMS_URL` at the in-tree catalyst CMS area once cms-server is migrated into dcl-one; today it is the external cms-server.
 - Sites' sign-in (`/auth/login`) offers each option only when its public identifier is set, the same ones decentraland.org ships: `THIRDWEB_CLIENT_ID` (email codes), `MAGIC_API_KEY` (Magic's publishable key: Google, Apple, Discord, X) and `WALLETCONNECT_PROJECT_ID`. A different identifier signs the same account into a different wallet. Magic must allow the site's origin and `<origin>/auth/callback`. `FEATURE_FLAGS_ORIGIN` names the site whose `dapps-sign-in-primary-option` rollout lays it out (decentraland.org when unset). Locally, `tooling/dev.py` takes the three identifiers, and nothing else of the shell's, from the environment it is started in.
@@ -222,11 +223,61 @@ Testnet mirrors default to the Polygon registry subgraph. Once `catalyst index` 
 registry history, API replicas prefer the native index and can serve manager and slot details.
 The NFT worker supplies wallet holdings for open mappings.
 
+The marketplace historical holdings API serves the subgraph worker at
+`/v1/historical/*` on the marketplace gateway. Set `HISTORICAL_ADMIN_TOKEN_FILE`
+to the credential corresponding to the worker's `subgraph-historical-api-token`.
+The routes use the Ethereum and Polygon mainnet indexes. An existing
+database needs schema step 0094 and the registry review repair before the
+full Polygon history is available. Moving the marketplace API host to this
+gateway preserves the worker's request paths.
+
+The Wert card on-ramp (`POST /v1/wert/sign` under `/shop-api` and `/marketplace-api`)
+needs four settings:
+- `WERT_PRIVATE_KEY_FILE` and `WERT_PUBLICATION_FEES_PRIVATE_KEY_FILE`: Wert's 32-byte
+  Ed25519 partner keys in hex. The plain variables are refused.
+- `WERT_API_URL`: Wert's partner API, over https.
+- `WERT_API_KEY`, or `WERT_API_KEY_FILE`.
+
+Without them, the route answers 503 naming them. A partial set fails startup. The
+route writes nothing to the database, so it answers while `DATA_WRITES_ENABLED` is off.
+
+The Transak card on-ramp (`/v1/transak/widget-url`, `/v1/transak/orders/{id}` and
+`PUT /v1/transak/access-token`, under `/shop-api` and `/marketplace-api`) needs
+six settings:
+- `TRANSAK_API_URL` and `TRANSAK_API_GATEWAY_URL`, over https;
+- `TRANSAK_API_KEY` and `TRANSAK_API_SECRET`, plain or as `_FILE`;
+- `TRANSAK_REFRESH_ACCESS_TOKEN_AUTH`: the bearer of the forced refresh, at least
+  32 bytes;
+- `TRANSAK_REFERRER_DOMAIN`: the bare host Transak registered for the partner.
+
+Without them, the routes answer 503 naming them. A partial set fails startup.
+Run `catalyst schema migrate` before deploying: it creates
+`shop.transak_access_token`, the one access token the replicas share.
+
+**Never configure a node with the Transak partner key marketplace-server is
+serving with.** Transak invalidates the previous token on each refresh, and
+marketplace-server never refreshes on a 401. The node's first refresh would
+leave marketplace-server's Redis token dead, and production Transak with it,
+until that token expires (up to 7 days) or someone calls marketplace-server's
+`PUT /v1/transak/access-token`. Use separate partner credentials, or set the
+six `TRANSAK_*` only at the cutover, once marketplace-server has stopped
+serving Transak. No posture or default config sets them, so a node keeps the
+unavailable envelope until an operator does. When marketplace-server
+refreshes, the node itself recovers: its next 401 refreshes once, at most
+once per 30 s.
+
 Collections index upgrade: run `catalyst schema migrate` before deploying the updated index worker.
-Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The index is off
-under every posture; `MARKETPLACE_COLLECTIONS_INDEX_ENABLED=true` with a Polygon RPC in `TRADE_RPC_URLS`
-(chain 137) starts its walk from block 15,202,000. Nothing reads it yet: the catalogue keeps serving the
-collections subgraph's copy.
+Step `0063_shop_collections_index` admits the `collections` index in `shop.chain_cursor`. The mirror
+posture enables `MARKETPLACE_COLLECTIONS_INDEX_ENABLED`. A Polygon RPC in `TRADE_RPC_URLS` (chain 137)
+lets it walk from block 15,202,000. Polygon accounts and creator rankings return HTTP 503
+until the collections and sales indexes publish their required history. Polygon accounts also require
+a fresh committee fold covering the published sales block. To warm the walks ahead of the API upgrade,
+enable the switches on the index worker and wait for the required publications before rolling out the sales readers.
+On a populated ledger, prebuild `collection_event_creatorship_position_idx` with
+`CREATE INDEX CONCURRENTLY` before running `catalyst schema migrate`. See the sales-read
+index procedure in `DATABASE.md`.
+The catalogue continues to
+read the collections mirror unless the on-chain projection owns that network.
 
 Trade digest upgrade: run `catalyst schema migrate` before deploying. Step `0069_shop_trade_digest` adds
 `shop.trades.trade_digest` and `shop.trade_chain_state.digest_failed_at`, and needs no backfill: the next

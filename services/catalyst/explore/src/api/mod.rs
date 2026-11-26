@@ -164,6 +164,11 @@ pub struct Settings {
     pub bff_url: String,
     /// The one app whose flags document is mirrored (`explorer`).
     pub feature_flags_app: String,
+    /// `EVENTS_FEATURE_FLAGS_URL`, no trailing slash: where `events.json` is
+    /// read for the Foundation names; empty reads none.
+    pub events_flags_url: String,
+    /// `EVENTS_FEATURE_FLAGS_USER_ID`: that request's `X-Address-Hash`.
+    pub events_flags_user_id: Option<String>,
     /// The least age of a stored tile grid revision before a changed one
     /// replaces it ([`map::MIN_PUBLISH_INTERVAL`]; none in tests).
     pub map_min_publish_interval: Duration,
@@ -261,6 +266,14 @@ impl Settings {
             ),
             bff_url: value_or(&config.explore.bff_url, "/bff".into()),
             feature_flags_app: "explorer".into(),
+            events_flags_url: value_or(&config.explore.events_feature_flags_url, String::new()),
+            events_flags_user_id: config
+                .explore
+                .events_feature_flags_user_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string),
             map_min_publish_interval: map::MIN_PUBLISH_INTERVAL,
             version: env!("CARGO_PKG_VERSION").to_string(),
             commit_hash: config.commit_hash().unwrap_or_default(),
@@ -354,6 +367,8 @@ impl Settings {
             comms_fixed_adapter: "offline:offline".into(),
             bff_url: "/bff".into(),
             feature_flags_app: "explorer".into(),
+            events_flags_url: String::new(),
+            events_flags_user_id: None,
             map_min_publish_interval: Duration::ZERO,
             version: "test".into(),
             commit_hash: String::new(),
@@ -444,6 +459,11 @@ impl Settings {
                 false,
             ),
             (
+                "EVENTS_FEATURE_FLAGS_URL",
+                Some(self.events_flags_url.as_str()).filter(|u| !u.is_empty()),
+                false,
+            ),
+            (
                 "OPENSEA_FALLBACK_URL",
                 self.opensea.fallback.as_deref(),
                 false,
@@ -491,8 +511,10 @@ impl Settings {
 }
 
 fn network_id(eth_network: &str) -> u64 {
+    if let Some(pair) = crate::shared::network::ChainPair::from_eth_network(eth_network) {
+        return pair.chain_ids().0 as u64;
+    }
     match eth_network {
-        "sepolia" => 11155111,
         "goerli" => 5,
         _ => 1,
     }
@@ -615,9 +637,10 @@ impl State {
     /// (doubling to an hour) and the next one starts over from the persisted
     /// marker. Upstream mirrors require `EXPLORER_MIRRORS_ENABLED`; the tile
     /// grid is built from this node's own database whatever that switch says
-    /// (`explorer-map-grid`, leased, every minute, a failed pass backing off
-    /// to five minutes); local maintenance, the denylist snapshot reload and
-    /// the tile grid reload (`explorer-map-grid-reload`) run on every process.
+    /// (`explorer-map-grid`, leased: a build when its inputs change, watched
+    /// every 5 s, a failed pass backing off to five minutes); local
+    /// maintenance, the denylist snapshot reload and the tile grid reload
+    /// (`explorer-map-grid-reload`, every 10 s) run on every process.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         auth_api::spawn_identity_sweeper(self, jobs);
         self.auth_sockets.spawn(self, jobs);
@@ -641,20 +664,14 @@ impl State {
             },
         );
         let s = self.clone();
-        jobs.spawn_periodic_leased(
-            map::JOB,
-            PeriodicCfg::every(map::BUILD_INTERVAL)
-                .with_jitter(Duration::from_secs(10))
-                .with_error_backoff(Duration::from_secs(300)),
-            move |ctx| {
-                let s = s.clone();
-                async move { map::run_pass(&s, &ctx).await }
-            },
-        );
+        jobs.spawn_leased(map::JOB, move |ctx| {
+            let s = s.clone();
+            async move { map::watch(&s, &ctx).await }
+        });
         let s = self.clone();
         jobs.spawn_periodic(
             map::RELOAD_JOB,
-            PeriodicCfg::every(map::BUILD_INTERVAL)
+            PeriodicCfg::every(map::FOLLOW_INTERVAL)
                 .with_jitter(Duration::from_secs(10))
                 .after_first_interval(),
             move |_ctx| {
@@ -676,6 +693,25 @@ impl State {
                         Ok(())
                     }
                 },
+            );
+        }
+        // The Foundation names follow the flags service whatever the mirror switch says.
+        if !self.settings.events_flags_url.is_empty() {
+            let s = self.clone();
+            jobs.spawn_periodic_leased(
+                feature_flags::EVENTS_JOB,
+                PeriodicCfg::every(crate::events::foundation::REFRESH_INTERVAL)
+                    .with_jitter(Duration::from_secs(30)),
+                move |_ctx| {
+                    let s = s.clone();
+                    async move { feature_flags::refresh_events(&s).await }
+                },
+            );
+        } else if self.settings.mirrors_enabled && !self.settings.sources.feature_flags.is_empty() {
+            tracing::warn!(
+                "EXPLORER_MIRRORS_ENABLED=true with EXPLORER_FEATURE_FLAGS_SOURCE_URL set but EVENTS_FEATURE_FLAGS_URL \
+                 empty: the explorer flags mirror no longer reads events.json, so the Foundation event creators \
+                 stay at the last stored list; set EVENTS_FEATURE_FLAGS_URL"
             );
         }
         if !self.settings.mirrors_enabled {

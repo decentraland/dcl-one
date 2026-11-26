@@ -14,7 +14,7 @@ let
   binary = args: pkgs.fetchurl (args // { meta.sourceProvenance = [ lib.sourceTypes.binaryNativeCode ]; });
   v8 = pkgs.callPackage ./librusty-v8.nix {
     v8Version = lockVersion "v8";
-    v8Hashes.x86_64-linux = "sha256-f7aDA74Jn2h4rp9sACGHX4DBbN6yevgWCEKdfI1fJDU=";
+    v8Hashes.x86_64-linux = "sha256-WGn9twcbHyHyAKl86X0gElh34PMc2ALtmd4sU/SIsGw=";
   };
   # The cef-dll-sys version is <crate version>+<CEF version>; the archive name
   # adds the commit and the Chromium version of that CEF build.

@@ -106,12 +106,12 @@ wasm-opt = ["-Oz"]
 naga_oil = { git = "https://github.com/decentraland/dcl-one", rev = "b90aa836dcd1f0226779473c5550e9e04b37f224" }
 draco-oxide-decoder = { git = "https://github.com/decentraland/dcl-one", rev = "ffbc6f625b3da35793a7ed3e3666f62e746ce2be" }
 draco-oxide-core = { git = "https://github.com/decentraland/dcl-one", rev = "ffbc6f625b3da35793a7ed3e3666f62e746ce2be" }
-bevy = { git = "https://github.com/decentraland/dcl-one", rev = "a6e4fa2f494d40f2d035e0e90f1b608d95a0f0e5" }
-bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "a6e4fa2f494d40f2d035e0e90f1b608d95a0f0e5" }
-bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "a6e4fa2f494d40f2d035e0e90f1b608d95a0f0e5" }
-bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "a6e4fa2f494d40f2d035e0e90f1b608d95a0f0e5" }
-bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "a6e4fa2f494d40f2d035e0e90f1b608d95a0f0e5" }
-bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "a6e4fa2f494d40f2d035e0e90f1b608d95a0f0e5" }
+bevy = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
+bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
+bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
+bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
+bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
+bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
 gltf = { git = "https://github.com/gltf-rs/gltf", rev = "50d65229" }
 gltf-json = { git = "https://github.com/gltf-rs/gltf", rev = "50d65229" }
 winit = { git = "https://github.com/decentraland/dcl-one", rev = "ee0414e120eb9837c1f5892a325791dddb586cc2" }
@@ -121,7 +121,7 @@ naga = { git = "https://github.com/decentraland/dcl-one", rev = "189227bff6dafe7
 bevy_console = { git = "https://github.com/decentraland/dcl-one", rev = "62b94f3c152da9e748d7790c7e9126aed493d327" }
 bevy_kira_audio = { git = "https://github.com/decentraland/dcl-one", rev = "343c72eb0e0e4b232aea96a4f5210209d06e113b" }
 [patch."https://github.com/robtfm/bevy"]
-bevy = { git = "https://github.com/decentraland/dcl-one", rev = "a6e4fa2f494d40f2d035e0e90f1b608d95a0f0e5" }
+bevy = { git = "https://github.com/decentraland/dcl-one", rev = "2264d9493b5d9ca09ade28dd3ce774932c8c5b2a" }
 
 [patch."https://github.com/robtfm/bevy_ecss"]
 bevy_ecss = { git = "https://github.com/decentraland/dcl-one", rev = "da37b8fbfd7d2561257254f4ae9370ca33a71acb" }
