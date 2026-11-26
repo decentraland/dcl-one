@@ -12,7 +12,7 @@ use sqlx::types::Json;
 use super::SharedState;
 use super::http::{ApiError, Ok2};
 use super::index::RentalsChain;
-use crate::market::chain_walk::published_sql_on;
+use crate::chain_index::catalogue::published_sql_on;
 use crate::market::{Source, is_valid_eth_address, unavailable};
 
 #[derive(Deserialize)]

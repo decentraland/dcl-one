@@ -1029,6 +1029,67 @@ pub(crate) async fn published_block<'e>(
         .and_then(|c| fresh_fold_on(&c, chain_id, now)))
 }
 
+/// Whether a projection holds exactly the fold its cursor `c` published,
+/// judged by `marker`: the block the projection's own fold wrote with its
+/// rows, in the fold's transaction (`None` before its first such fold).
+///
+/// The walk commits a fold, then records it ([`record_fold`]) and publishes
+/// it ([`mark_folded`]) after reading the head, each in a transaction of its
+/// own. Between the fold's commit and its publication the projection's rows
+/// already hold the next fold while `folded_block` still names the previous
+/// one, and a stalled head read stretches that interval; `fold_through` and
+/// `folded_block` do not move with the rows, so they cannot tell. A marker
+/// written with the rows can: a reader serves the projection only while it
+/// equals the published block, read on the same snapshot as the rows. A walk
+/// that advanced without folding leaves both at the published block, still
+/// served.
+pub fn holds_published_fold(marker: Option<i64>, c: &Cursor) -> bool {
+    marker.is_some() && marker == c.folded_block
+}
+
+/// [`holds_published_fold`] for the cursor of `indexer` on `net`, read on
+/// `conn` (the reader's snapshot); false without a cursor.
+pub async fn holds_published_fold_on(
+    conn: &mut PgConnection,
+    indexer: &str,
+    net: ChainNet,
+    marker: Option<i64>,
+) -> Result<bool, sqlx::Error> {
+    Ok(cursor(&mut *conn, indexer, net)
+        .await?
+        .is_some_and(|c| holds_published_fold(marker, &c)))
+}
+
+/// Whether every projection named in `projections` holds the fold the
+/// cursor of `indexer` on `net` published, read on `conn` (the reader's
+/// snapshot): its `folded_block` is set and none of them holds a write that
+/// no publication has acknowledged since. `shop.projection_write` marks each
+/// write pending through statement triggers in the schema, and a trigger on
+/// the cursor clears it when a publication commits, whichever binary wrote
+/// or published. This holds also against a writer that predates a
+/// projection's own fold marker ([`holds_published_fold`]), as an earlier
+/// binary is during a rollout, and against a write at the published height.
+/// A raw walk advance writes nothing and stays served.
+pub async fn rows_published_on(
+    conn: &mut PgConnection,
+    indexer: &str,
+    net: ChainNet,
+    projections: &[&str],
+) -> Result<bool, sqlx::Error> {
+    let published: Option<bool> = sqlx::query_scalar(
+        "SELECT c.folded_block IS NOT NULL AND NOT EXISTS ( \
+             SELECT 1 FROM shop.projection_write w \
+             WHERE w.indexer = c.indexer AND w.network = c.network AND w.projection = ANY($3) AND w.pending) \
+         FROM shop.chain_cursor c WHERE c.indexer = $1 AND c.network = $2",
+    )
+    .bind(indexer)
+    .bind(net.db_name())
+    .bind(projections)
+    .fetch_optional(conn)
+    .await?;
+    Ok(published.unwrap_or(false))
+}
+
 /// [`is_ready_on`] for the indexes that read mainnet only: every index but
 /// `trade_events`, whose readers pass the chain they configured.
 pub fn is_ready(c: &Cursor, now: DateTime<Utc>) -> bool {
@@ -1056,8 +1117,6 @@ pub fn ready_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: 
           AND {alias}.folded_at <= {now_p} AND {alias}.folded_at >= {now_p} - interval '30 minutes')"
     )
 }
-
-pub use crate::chain_index::catalogue::published_sql_on;
 
 pub(crate) use crate::chain_index::catalogue::MAX_CLOCK_SKEW;
 
@@ -2552,6 +2611,24 @@ mod tests {
                 "{ethereum} / {matic}"
             );
         }
+    }
+
+    /// A projection is served only at the fold its cursor published: a
+    /// marker its fold wrote ahead of the publication (committed, not yet
+    /// published), behind it (folded by a writer that kept no marker), or
+    /// missing does not stand; a walk advanced past an unchanged fold does.
+    #[test]
+    fn a_projection_holds_only_the_published_fold() {
+        let now = Utc::now();
+        let published = cursor_row(100, Some(100), Some(now), true);
+        assert!(holds_published_fold(Some(100), &published));
+        assert!(!holds_published_fold(Some(101), &published));
+        assert!(!holds_published_fold(Some(99), &published));
+        assert!(!holds_published_fold(None, &published));
+        let advanced = cursor_row(120, Some(100), Some(now), true);
+        assert!(holds_published_fold(Some(100), &advanced));
+        let unpublished = cursor_row(120, None, None, true);
+        assert!(!holds_published_fold(Some(120), &unpublished));
     }
 
     fn cursor_row(last: i64, folded: Option<i64>, at: Option<DateTime<Utc>>, full: bool) -> Cursor {
