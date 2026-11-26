@@ -318,8 +318,8 @@ State, in every build:
   no room to carry it),
   `received` (peers' messages), `queued` (the reactions waiting to play, and the senders with any
   waiting or inside the gap after their last), `played`, `particles` (alive, drawn as of the last
-  frame, and waiting for their emoji's glyphs), `atlas` (the size in pixels of the glyph atlas
-  page the emoji are drawn from), `streamed` (the reactions passed to the HUD) to `subscribers`
+  frame, and waiting for their emoji's glyphs: to be rastered, or for room in a full atlas),
+  `atlas` (the size in pixels of the glyph atlas page the emoji are drawn from), `streamed` (the reactions passed to the HUD) to `subscribers`
   streams, and `dropped` by cause: `blocked`, `duplicate`, `unknownEmoji`, `rateLimited`,
   `queueFull`, `particleCap`, `notShown` (reactions that played with no particle, nothing
   being drawn over their player: no avatar or a hidden one, far from the camera, or the local

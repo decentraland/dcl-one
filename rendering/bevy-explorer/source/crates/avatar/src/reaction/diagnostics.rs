@@ -81,8 +81,9 @@ pub const SECTION: DebugSection = DebugSection {
 /// room's transport, one per emoji per send: none with no room to carry it), `received` (peers'
 /// messages), `queued` (the reactions waiting to play, and the senders with any waiting or
 /// inside the gap after their last), `played`, `particles` (those alive, those of them drawn as
-/// of the last frame, and those waiting for their emoji's glyphs), `atlas` (the size in pixels
-/// of the glyph atlas page the emoji are drawn from, 0 before the first), `streamed` (the
+/// of the last frame, and those waiting for their emoji's glyphs: to be rastered, or for room
+/// in a full atlas), `atlas` (the size in pixels of the glyph atlas page the emoji are drawn
+/// from, 0 before the first), `streamed` (the
 /// reactions passed to the HUD) to `subscribers` streams, and `dropped`, by cause: `blocked`
 /// (messages and waiting reactions of a sender blocked or banned), `duplicate` (a message's
 /// copy by another room), `unknownEmoji`, `rateLimited` (messages), `queueFull` (reactions that
@@ -104,8 +105,7 @@ pub fn reaction_state(
     queues: Query<&ReactionQueue>,
     assets: Res<ReactionAssets>,
     particles: Query<(&ReactionParticle, &Visibility)>,
-    mut atlases: ResMut<GlyphAtlases>,
-    mut images: ResMut<Assets<Image>>,
+    atlases: Res<GlyphAtlases>,
 ) {
     let Some(Ok(_)) = cmd.take() else {
         return;
@@ -134,10 +134,11 @@ pub fn reaction_state(
                 count(|_, visibility, _| *visibility != Visibility::Hidden),
                 count(|particle, _, generation| particle.built != Some(generation)),
             ],
-            // read from the atlas: the assets follow it only while a particle is alive
+            // read from the atlas, which is made when the first emoji is drawn from it: the
+            // assets follow it only while a particle is alive
             "atlas": atlases
-                .get_or_create(ATLAS.key, &mut images)
-                .page_image(Page::Color)
+                .get(&ATLAS.key)
+                .and_then(|atlas| atlas.page_image(Page::Color))
                 .map_or(0, |(_, size)| size),
             "streamed": stats.streamed,
             "subscribers": stats.subscribers,
@@ -258,20 +259,23 @@ pub fn reaction_simulate(
 /// Have the reactions' glyph atlas rebuilt at its next upkeep, as a glyph that finds no room
 /// in it does: its textures are replaced, the glyphs no particle shows are freed and every
 /// particle alive gets a mesh for the new page. An atlas with no glyph to free is left as it
-/// is. Replies with nothing; `atlas` and `particles` in `/reaction_state` show what followed.
+/// is, and so is one no emoji has been drawn from yet. Replies with nothing; `atlas` and
+/// `particles` in `/reaction_state` show what followed.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/reaction_atlas_rebuild")]
 pub struct ReactionAtlasRebuildCommand;
 
 pub fn reaction_atlas_rebuild(
     mut cmd: ConsoleCommand<ReactionAtlasRebuildCommand>,
-    mut atlases: ResMut<GlyphAtlases>,
-    mut images: ResMut<Assets<Image>>,
+    mut commands: Commands,
 ) {
     if let Some(Ok(_)) = cmd.take() {
-        atlases
-            .get_or_create(ATLAS.key, &mut images)
-            .request_rebuild();
+        // the atlases are written only when the command is given, not asked for every frame
+        commands.queue(|world: &mut World| {
+            if let Some(atlas) = world.resource_mut::<GlyphAtlases>().get_mut(&ATLAS.key) {
+                atlas.request_rebuild();
+            }
+        });
         cmd.reply_ok("");
     }
 }
