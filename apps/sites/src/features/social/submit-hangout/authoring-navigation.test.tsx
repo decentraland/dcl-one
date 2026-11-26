@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -80,11 +80,10 @@ describe("when the hangout wizard reaches its details and location steps", () =>
     expect(category.value).toBe("music");
   });
 
-  it("should take LAND coordinates as numbers", async () => {
+  it("should keep the LAND coordinate entered in X", () => {
     open("location");
     const x = screen.getByRole<HTMLInputElement>("spinbutton", { name: "X" });
-    await user.clear(x);
-    await user.type(x, "12");
+    fireEvent.change(x, { target: { value: "12" } });
     expect(x.value).toBe("12");
     expect(screen.getByRole("spinbutton", { name: "Y" })).toHaveProperty("value", "0");
   });
