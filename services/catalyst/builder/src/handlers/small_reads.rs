@@ -99,8 +99,7 @@ pub async fn get_addresses(
     headers: axum::http::HeaderMap,
 ) -> Result<Response, ApiError> {
     let q = ListQuery::parse(raw.as_deref());
-    let review_flow = crate::handlers::collections::review_flow_asked(&state, &q).await?;
-    let request = PublishedAddresses::new(&q, review_flow)?;
+    let request = PublishedAddresses::new(&q)?;
     let data = state.items.published_addresses(&request).await?;
     crate::limits::charge(&state, &headers, None, crate::limits::ADDRESSES_TOKENS);
     let mut response = Json(ApiData::ok(data)).into_response();
