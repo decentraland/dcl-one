@@ -6,6 +6,13 @@ import type { WorldDeployment } from './worlds';
 // TheGraph has a limit of a maximum of 1000 results per entity per query
 const MAX_RESULTS = 1000;
 
+/**
+ * The content server's LAND list answers every parcel and estate of a wallet in one
+ * response; a large holder's runs to megabytes on a cold cache. The deadline covers
+ * reading the body too.
+ */
+const LANDS_ACCESS_TIMEOUT_MS = 30_000;
+
 /** A large estate can hold hundreds of parcels; the content server takes them in batches. */
 const MAX_POINTERS_PER_REQUEST = 100;
 
@@ -386,6 +393,17 @@ export type LandQueryResult = {
   operatorAuthorizations: AuthorizationEvent<{ owner: { address: string } }>[];
 };
 
+/**
+ * The content server's `lands-access` answer: the subgraph lists, plus the land of
+ * every owner whose UpdateManager or ApprovalForAll grant to the wallet is in force,
+ * per registry. Its authorizations are the current state, one per counterparty,
+ * registry and kind; `timestamp` is `"0"` when the index has no block time for one.
+ */
+export type LandsAccessResult = LandQueryResult & {
+  grantorParcels: ParcelFields[];
+  grantorEstates: EstateFields[];
+};
+
 type AuthorizationEvent<T> = T & {
   type: string;
   isApproved: boolean;
@@ -443,7 +461,58 @@ export const colorByRole: Record<RoleType, string> = {
   [RoleType.MANAGER]: Color.LUISXVI_VIOLET,
 };
 
+/**
+ * The body parsed as JSON, read through a reader of our own so the deadline can cancel
+ * it: past `ms` the stream is cancelled (the producer stops) and the read rejects.
+ */
+async function readJsonWithin<T>(response: Response, ms: number): Promise<T> {
+  if (!response.body) throw new Error('The LAND list answered without a body');
+  const reader = response.body.getReader();
+  const expired = new Error(`The LAND list did not finish within ${ms} ms`);
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(expired);
+      void reader.cancel().catch(() => undefined);
+    }, ms);
+  });
+  const chunks: Uint8Array[] = [];
+  try {
+    for (;;) {
+      const { done, value } = await Promise.race([reader.read(), deadline]);
+      // A cancel resolves the pending read as done: that is the deadline, not the end.
+      if (timedOut) throw expired;
+      if (done) break;
+      chunks.push(value);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+  const bytes = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes)) as T;
+}
+
+/** The index's answer, refused when a list the LAND page relies on is missing. */
+function checkedLandsAccess(data: LandsAccessResult): LandsAccessResult {
+  for (const list of ['grantorParcels', 'grantorEstates'] as const) {
+    if (!Array.isArray(data?.[list])) throw new Error(`The LAND list answered without ${list}`);
+  }
+  return data;
+}
+
 export class Lands {
+  /**
+   * Set where the configured peer does not serve `lands-access` yet: the LAND list
+   * then comes from the land-manager subgraph. Unset, it comes from the peer's
+   * land-authz index; the choice is the environment's, never a fallback.
+   */
   private subgraph = config.get('LAND_MANAGER_SUBGRAPH');
   private LAND_REGISTRY_ADDRESS = config.get('LAND_REGISTRY_ADDRESS');
   private ESTATE_REGISTRY_ADDRESS = config.get('ESTATE_REGISTRY_ADDRESS');
@@ -479,6 +548,35 @@ export class Lands {
     }
   }
 
+  /**
+   * Every list the LAND page needs, from the content server's land-authz index
+   * (`POST /lambdas/users/{address}/lands-access`). A failed, unready or stalled
+   * read throws rather than answering an empty list of LAND.
+   */
+  private async fetchLandsAccess(
+    address: string,
+    tenantTokenIds: string[],
+    lessorTokenIds: string[],
+  ): Promise<LandsAccessResult> {
+    const startedAt = Date.now();
+    const response: Response = await fetch(
+      `${this.PEER_URL}/lambdas/users/${address}/lands-access`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ tenantTokenIds, lessorTokenIds }),
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      },
+      LANDS_ACCESS_TIMEOUT_MS,
+    );
+    if (!response.ok) {
+      // The status is the answer; releasing the body is best effort, never awaited.
+      void response.body?.cancel().catch(() => undefined);
+      throw new Error(`Failed to fetch the LAND list: ${response.status}`);
+    }
+    const left = Math.max(0, LANDS_ACCESS_TIMEOUT_MS - (Date.now() - startedAt));
+    return checkedLandsAccess(await readJsonWithin<LandsAccessResult>(response, left));
+  }
+
   private fetchGrantorLand(parcelOwners: string[], estateOwners: string[]) {
     if (parcelOwners.length === 0 && estateOwners.length === 0) {
       return Promise.resolve<GrantorLandQueryResult>({ parcels: [], estates: [] });
@@ -496,13 +594,15 @@ export class Lands {
   ): Promise<[Land[], Authorization[]]> => {
     const address = _address.toLowerCase();
 
-    // Every page before any reduction: the latest authorization event of a kind can sit on
-    // a later page than the event it supersedes.
-    const data = await this.queryAllPages<LandQueryResult>(getLandQuery, {
-      address,
-      tenantTokenIds,
-      lessorTokenIds,
-    });
+    // From the subgraph, every page before any reduction: the latest authorization event of
+    // a kind can sit on a later page than the event it supersedes.
+    const data: LandQueryResult | LandsAccessResult = this.subgraph
+      ? await this.queryAllPages<LandQueryResult>(getLandQuery, {
+          address,
+          tenantTokenIds,
+          lessorTokenIds,
+        })
+      : await this.fetchLandsAccess(address, tenantTokenIds, lessorTokenIds);
 
     const lands: Land[] = [];
     const landUpdateManagers = new Set<string>();
@@ -523,10 +623,15 @@ export class Lands {
       landGrantors: grantorsOn(this.LAND_REGISTRY_ADDRESS),
       estateGrantors: grantorsOn(this.ESTATE_REGISTRY_ADDRESS),
     };
-    const grantorLand = await this.fetchGrantorLand(
-      [...access.landGrantors],
-      [...access.estateGrantors],
-    );
+    // The index answers the grantors' land itself; the subgraph needs a second query.
+    // The environment's source answers it: the index in its own list, the subgraph
+    // through a second query.
+    const grantorLand = this.subgraph
+      ? await this.fetchGrantorLand([...access.landGrantors], [...access.estateGrantors])
+      : {
+          parcels: (data as LandsAccessResult).grantorParcels,
+          estates: (data as LandsAccessResult).grantorEstates,
+        };
 
     // parcels and estates that I own
     for (const parcel of data.ownerParcels) {

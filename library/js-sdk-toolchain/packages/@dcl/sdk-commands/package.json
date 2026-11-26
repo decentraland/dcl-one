@@ -11,10 +11,9 @@
     "@dcl/ecs": "workspace:*",
     "@dcl/gltf-validator-ts": "1.0.14",
     "@dcl/hashing": "workspace:*",
-    "@dcl/inspector": "7.36.3",
+    "@dcl/inspector": "7.59.0",
     "@dcl/linker-dapp": "0.16.0",
     "@dcl/mini-comms": "1.0.1-20230216163137.commit-a4c75be",
-    "@dcl/protocol": "link:../../../../protocol",
     "@dcl/quests-client": "^1.0.3",
     "@dcl/quests-manager": "^0.1.4",
     "@dcl/rpc": "^1.1.1",
@@ -28,10 +27,11 @@
     "arg": "^5.0.2",
     "chokidar": "^4.0.3",
     "dcl-catalyst-client": "^23.0.0",
-    "esbuild": "^0.18.17",
-    "i18next": "^25.8.4",
+    "esbuild": "^0.28.2",
+    "i18next": "^26.3.4",
     "i18next-fs-backend": "^2.6.1",
     "ignore": "^5.2.4",
+    "protobufjs": "7.6.6",
     "qrcode": "^1.5.4",
     "typescript": "^5.0.2",
     "undici": "^7.16.0",
@@ -57,8 +57,9 @@
   "license": "Apache-2.0",
   "minCliVersion": "3.14.1",
   "repository": {
-    "url": "git+https://github.com/decentraland/js-sdk-toolchain",
-    "directory": "packages/@dcl/sdk-commands"
+    "type": "git",
+    "url": "git+https://github.com/decentraland/dcl-one.git",
+    "directory": "library/js-sdk-toolchain/packages/@dcl/sdk-commands"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && rm -rf dist/locales && cp -r src/locales dist/locales && cp src/logic/*.template src/logic/runtime-script.ts dist/logic/",

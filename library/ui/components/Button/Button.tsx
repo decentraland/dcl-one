@@ -85,7 +85,8 @@ type DefaultLook = {
   forceState?: 'hover' | 'pressed' | 'focus'
   contentLayout?: 'intrinsic' | 'fill'
 } & ({ iconOnly?: false } | ({ iconOnly: true } & AccessibleName)) &
-  ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName))
+  ({ variant?: Exclude<Variant, 'iconOnly'> } | ({ variant: 'iconOnly' } & AccessibleName)) &
+  ({ tone?: never } | { tone?: 'danger'; variant?: 'primary' | 'outline'; iconOnly?: false })
 
 /**
  * Not in Figma: the Explorer HUD's button. Its content is the button's own children, laid out in a
@@ -178,6 +179,7 @@ function DefaultButton(props: DefaultProps) {
     label,
     variant = 'primary',
     size = 'xl',
+    tone,
     viewport = 'desktop',
     loading = false,
     leadingIcon,
@@ -231,6 +233,7 @@ function DefaultButton(props: DefaultProps) {
   const common = {
     className: classes,
     'data-variant': appearance,
+    'data-tone': tone,
     'data-size': size,
     'data-viewport': viewport,
     'data-icon-only': compact || undefined,

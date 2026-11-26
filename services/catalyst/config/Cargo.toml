@@ -6,6 +6,7 @@ description = "Process configuration: the environment the node reads at startup 
 publish = false
 
 [dependencies]
+catalyst-shared = { path = "../shared" }
 ipnet.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
