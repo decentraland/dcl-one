@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use common::sync::MutexExt;
 use deno_core::{op2, FromV8, OpDecl, OpState};
 use deno_web::{BlobError, BlobPart, BlobStoreTrait};
 use uuid::Uuid;
@@ -47,8 +48,7 @@ impl Drop for Slice {
         let entry = self
             .slices
             .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .lock_ignore_poison()
             .remove(&(self as *const Self as usize));
         drop(entry);
     }
@@ -79,14 +79,12 @@ fn op_blob_slice_part(
         state.put(Slices::default());
     }
     let slices = state.borrow::<Slices>().clone();
-    let mut live = slices
-        .0
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut live = slices.0.lock_ignore_poison();
+    // `part` is dropped after `live`: dropping a `Slice` locks the table.
     let (root, base) = live
         .get(&(Arc::as_ptr(&part) as *const () as usize))
         .cloned()
-        .unwrap_or((part, 0));
+        .unwrap_or_else(|| (part.clone(), 0));
     let slice = Arc::new(Slice {
         root: root.clone(),
         start: base + start,
