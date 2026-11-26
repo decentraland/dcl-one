@@ -865,6 +865,43 @@ describe('when looking at what was shared', () => {
     expect(store.getState().aiSharing.shared.turns.map(t => t.recordId)).toEqual(['b']);
     expect(store.getState().workspace.settings.aiDataSharing?.[ADDRESS]?.consent).toBe('granted');
   });
+
+  it('should load the summaries on screen again, without the erased conversation', async () => {
+    const summary = (id: string) => ({
+      conversationId: id,
+      goal: 'a door',
+      outcome: 'achieved' as const,
+      frictions: [],
+      createdAt: NOW,
+    });
+    vi.mocked(api.listTurns).mockResolvedValue(ok({ records: [turn('a'), turn('b')], next: null }));
+    vi.mocked(api.listDigests)
+      .mockResolvedValueOnce(ok({ digests: [summary('conv-a'), summary('conv-b')], next: null }))
+      .mockResolvedValueOnce(ok({ digests: [summary('conv-b')], next: null }));
+    vi.mocked(api.eraseTurn).mockResolvedValue(ok({ deleted: 1 }));
+    const store = setup({ consent: granted });
+    await store.dispatch(actions.loadSharedTurns({ reset: true }));
+    await store.dispatch(actions.loadDigests({ reset: true }));
+
+    await store.dispatch(actions.eraseSharedTurn('a'));
+    await settled();
+
+    expect(api.listDigests).toHaveBeenCalledTimes(2);
+    expect(store.getState().aiSharing.digests.digests.map(d => d.conversationId)).toEqual([
+      'conv-b',
+    ]);
+  });
+
+  it('should not load summaries that were never shown', async () => {
+    vi.mocked(api.listTurns).mockResolvedValue(ok({ records: [turn('a')], next: null }));
+    vi.mocked(api.eraseTurn).mockResolvedValue(ok({ deleted: 1 }));
+    const store = setup({ consent: granted });
+    await store.dispatch(actions.loadSharedTurns({ reset: true }));
+
+    await store.dispatch(actions.eraseSharedTurn('a'));
+
+    expect(api.listDigests).not.toHaveBeenCalled();
+  });
 });
 
 describe('when the first reply was stopped', () => {

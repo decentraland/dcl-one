@@ -43,14 +43,18 @@ export const loadSharedTurns = createAsyncThunk(
   },
 );
 
-/** Erases one shared turn; sharing stays on. */
+/**
+ * Erases one shared turn; sharing stays on. The service drops the summary of its conversation
+ * with it, so summaries already on screen are loaded again.
+ */
 export const eraseSharedTurn = createAsyncThunk(
   'aiSharing/eraseSharedTurn',
-  async (recordId: string, { rejectWithValue }) => {
+  async (recordId: string, { dispatch, getState, rejectWithValue }) => {
     const wallet = currentWallet();
     if (wallet === null) return rejectWithValue('Signed out');
     const response = await api.eraseTurn(wallet, recordId);
     if (!response.ok) return rejectWithValue(response.error);
+    if (getState().aiSharing.digests.status !== 'idle') void dispatch(loadDigests({ reset: true }));
     return recordId;
   },
 );

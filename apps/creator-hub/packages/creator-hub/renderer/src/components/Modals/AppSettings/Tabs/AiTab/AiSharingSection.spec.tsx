@@ -246,6 +246,18 @@ describe('when deleting everything', () => {
     expect(sharingSwitch().getAttribute('aria-checked')).toBe('false');
   });
 
+  it('should say one turn, not one turns', async () => {
+    vi.mocked(api.eraseAll).mockResolvedValue(ok({ deleted: 1 }));
+    mount({ consent: granted });
+
+    fireEvent.click(screen.getByRole('button', { name: copy.delete }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: copy.delete_confirm_yes }));
+    });
+
+    expect(await screen.findByText('Deleted 1 shared turn.')).toBeTruthy();
+  });
+
   it('should say when the delete failed', async () => {
     vi.mocked(api.eraseAll).mockResolvedValue({ ok: false, status: 503, error: 'down' } as never);
     mount({ consent: granted });
