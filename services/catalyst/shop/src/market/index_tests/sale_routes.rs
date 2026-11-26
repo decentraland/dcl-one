@@ -1996,6 +1996,7 @@ async fn creator_rankings_attribute_delegated_mints_at_the_execution_position() 
     const OTHER_COLLECTION: &str = "0x2020202020202020202020202020202020202020";
     const STORE_COLLECTION: &str = "0x3030303030303030303030303030303030303030";
     const OLD_COLLECTOR: &str = "0x4040404040404040404040404040404040404040";
+    const WALK_AHEAD_COLLECTION: &str = "0x5050505050505050505050505050505050505050";
     const CORRECTED_CREATOR: &str = "0xfffffffffffffffffffffffffffffffffffffffe";
     let Some(db) = ScratchDb::create().await else {
         return;
@@ -2039,8 +2040,9 @@ async fn creator_rankings_attribute_delegated_mints_at_the_execution_position() 
         .unwrap();
     }
     sqlx::query(
-        "INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at)
-         SELECT m,n,'test',timezone('UTC',now()) FROM unnest(ARRAY['items','collections']) m
+        "INSERT INTO shop.mirror_state(mirror,network,source_url,last_complete_pass_at,chain_id,pass_block_hash,marks_item_rows)
+         SELECT m,n,'test',timezone('UTC',now()),CASE WHEN n='ethereum' THEN 1 ELSE 137 END,
+                '0x'||repeat('a',64),m='items' FROM unnest(ARRAY['items','collections']) m
          CROSS JOIN unnest(ARRAY['ethereum','matic']) n",
     )
     .execute(&db.pool)
@@ -2256,6 +2258,30 @@ async fn creator_rankings_attribute_delegated_mints_at_the_execution_position() 
         let (code, volume) = get_json(&app, &path).await;
         assert_eq!(code, StatusCode::OK, "{volume}");
         assert_eq!(volume["data"], json!([bob, alice]));
+    }
+
+    // Replace the proof without changing the completion time. An Ethereum
+    // mint still requires its item on the served chain.
+    for (chain_id, proof, expected) in [(11155111, 'b', false), (1, 'c', true)] {
+        sqlx::query("UPDATE shop.items SET chain_id=$1 WHERE network='ethereum'")
+            .bind(chain_id)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE shop.mirror_state SET pass_block_hash=$1 WHERE network='ethereum' AND mirror='items'",
+        )
+        .bind(format!("0x{}", proof.to_string().repeat(64)))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let (code, result) = get_json(&app, &count_path).await;
+        if expected {
+            assert_eq!((code, result), (StatusCode::OK, counts.clone()));
+        } else {
+            assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+            assert_eq!(result["source"], "collections-index");
+        }
     }
 
     let (code, month) = get_json(&app, "/v1/rankings/creators/month").await;
@@ -2509,5 +2535,66 @@ async fn creator_rankings_attribute_delegated_mints_at_the_execution_position() 
         (StatusCode::OK, corrected)
     );
     assert_eq!(get_json(&app, &lifetime).await, lifetime_page);
+
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET last_block=$1,last_block_hash=$2,last_block_time=$3,
+                sale_history_revision=sale_history_revision+1
+         WHERE network='matic' AND indexer='collections'",
+    )
+    .bind(polygon + 20)
+    .bind(format!("0x{:064x}", polygon + 20))
+    .bind(recent + 30)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(get_json(&app, &lifetime).await, lifetime_page);
+    sqlx::query(
+        "WITH events AS (
+            INSERT INTO shop.collection_event(network,block_number,log_index,block_time,
+                kind,contract_address,account,previous_account)
+            VALUES('matic',$1-10,1,$2,'proxy_created',$3,$3,NULL),
+                  ('matic',$1+1,1,$4,'creatorship_transferred',$3,$5,$6)
+         )
+         INSERT INTO shop.collections(network,contract_address,chain_id,name,creator,owner,urn,
+            is_completed,is_approved,is_editable,created_at,updated_at,reviewed_at,mirrored_at)
+         VALUES('matic',$3,137,'Walk ahead',$5,$5,'urn:decentraland:matic:collections-v2:walk-ahead',
+            true,true,false,$2,$4,$2,timezone('UTC',now()))",
+    )
+    .bind(polygon)
+    .bind(recent - 10)
+    .bind(WALK_AHEAD_COLLECTION)
+    .bind(recent + 4)
+    .bind(BOB)
+    .bind(ALICE)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at=timezone('UTC',now())
+         WHERE network='matic' AND mirror='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, ahead) = get_json(&app, &lifetime).await;
+    assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE, "{ahead}");
+    assert_eq!(ahead["source"], "collections-index");
+
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_block=last_block,folded_at=timezone('UTC',now())
+         WHERE network='matic' AND indexer='collections'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (code, recovered) = get_json(&app, &lifetime).await;
+    assert_eq!(code, StatusCode::OK, "{recovered}");
+    let founder = recovered["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == ALICE)
+        .unwrap();
+    assert_eq!(founder["collections"], 2);
     db.drop().await;
 }

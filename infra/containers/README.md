@@ -238,6 +238,9 @@ lets it walk from block 15,202,000. Polygon accounts and creator rankings return
 until the collections and sales indexes publish their required history. Polygon accounts also require
 a fresh committee fold covering the published sales block. To warm the walks ahead of the API upgrade,
 enable the switches on the index worker and wait for the required publications before rolling out the sales readers.
+On a populated ledger, prebuild `collection_event_creatorship_position_idx` with
+`CREATE INDEX CONCURRENTLY` before running `catalyst schema migrate`. See the sales-read
+index procedure in `DATABASE.md`.
 The catalogue continues to
 read the collections mirror unless the on-chain projection owns that network.
 

@@ -2568,13 +2568,19 @@ Accounts, rankings and volume cache successful answers for 30 seconds across app
 
 Period creator rankings attribute mint counts and net mint amounts to the collection creator at the execution position. An indexed earlier transfer supplies the creator, or the first later transfer in the published prefix proves the previous creator. When the prefix has no transfer, the query uses a verified seed in that prefix or a catalogue row updated by the time of the latest published execution. A rewind deletes seeds beyond its retained block. A store mint uses the seller proved at Issue. Collectors and collections remain cumulative and use distinct buyer addresses and network/contract pairs. Settlement evidence is required for mints in the earnings period. Creatorship evidence also covers the older mints contributing to the cumulative relationships.
 
-Lifetime primary sorts include a collection founder with delegated mints even when their seller sales are zero. They sort on attributed mint count or net mint amount and display the account's own lifetime seller sales, collections and earnings on networks where it founded a collection. The default lifetime earnings ranking requires seller sales.
+Lifetime primary sorts include a collection founder with delegated mints even when their seller sales are zero. They sort on attributed mint count or net mint amount and display the account's own lifetime seller sales, collections and earnings on networks where it founded a collection. The default lifetime earnings ranking requires seller sales. Founder attribution can use a Polygon catalogue row whose update time is covered by the published collection fold. While the walk is ahead of the fold, the latest event in the fold supplies that time bound.
 
 Accounts read `shop.sale_account_total` for monetary totals. The sale fold credits net proceeds to the public seller, including the first consideration beneficiary of a mediated bid. Payout recipients retain their separate fee and royalty amounts. The publication upgrade repairs the UTC days containing affected bids from stored evidence before readers use those totals.
 
 The special-execution index supports scans of store, trade and NAME-fee executions by network, kind and published block. The unresolved-asset index bounds the seller-evidence scans to priced bids and assets whose seller is missing. Token history uses the priced token lookup, with contract as a further constraint, and sale-type pages use the priced kind and block lookup. The creator ranking uses `collection_event_creatorship_position_idx` to find the transfer before or after a mint. The index adds one entry per creatorship transfer.
 
 The schema object pass creates the sales read indexes. On an existing large ledger, prebuild the definitions in `schemas/30_shop.sql` with `CREATE INDEX CONCURRENTLY` outside a transaction before running `catalyst schema migrate`. Inspect `pg_index.indisvalid` and `pg_get_indexdef(indexrelid)` for each prebuilt index. If a build was interrupted, drop its invalid index concurrently and rebuild it before the migration's name-based check.
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS collection_event_creatorship_position_idx
+    ON shop.collection_event (network, contract_address, block_number, log_index)
+    WHERE kind = 'creatorship_transferred';
+```
 
 ### Wallet activity transfers
 

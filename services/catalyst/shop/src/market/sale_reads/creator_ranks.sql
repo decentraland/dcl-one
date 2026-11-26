@@ -1,19 +1,31 @@
 , catalogue_time_bound AS MATERIALIZED (
     -- The latest published execution gives a conservative on-chain time bound.
-    SELECT e.block_time FROM shop.sale_publication p JOIN shop.sale_execution e USING(network)
-    WHERE p.network='matic' AND e.block_number<=p.block_number
-    ORDER BY e.block_number DESC,e.log_index DESC LIMIT 1
-), mint_creators AS MATERIALIZED (
+    SELECT latest.block_time FROM shop.sale_publication p
+    CROSS JOIN LATERAL (
+        SELECT e.block_time FROM shop.sale_execution e
+        WHERE e.network=p.network AND e.block_number<=p.block_number
+        ORDER BY e.block_number DESC,e.log_index DESC LIMIT 1
+    ) latest
+    WHERE p.network='matic'
+), mint_inputs AS (
+    -- Resolve payments for the earnings window. Older mints contribute
+    -- relationship evidence without needing a settled payment.
+    SELECT network,block_number,log_index,contract_address,buyer,block_time,venue_kind,seller,creator,settled,net
+    FROM sold WHERE kind='mint' AND block_time >= $7
+    UNION ALL
+    SELECT network,block_number,log_index,contract_address,buyer,block_time,venue_kind,seller,creator,NULL,NULL
+    FROM sales WHERE $7>0 AND kind='mint' AND block_time < $7
+), mint_creators AS (
     -- Store attribution is proved at Issue, before the Bought execution.
     -- A trade uses the creator at Traded, even within a creation block.
-    SELECT s.network,s.block_number,s.log_index,s.ordinal,s.contract_address,s.buyer,s.block_time,
+    SELECT s.network,s.contract_address,s.buyer,s.block_time,s.seller,s.settled,s.net,
            CASE WHEN s.venue_kind='store' THEN s.seller
                 WHEN s.network='matic' THEN coalesce(earlier.account,later.previous_account,
                     CASE WHEN earlier.log_index IS NULL AND later.log_index IS NULL
                          THEN coalesce(seed.creator,c.creator) END)
                 ELSE s.creator END AS creator
-    FROM sales s JOIN shop.sale_publication pub USING(network)
-    LEFT JOIN founders f ON (f.network,f.contract_address)=(s.network,s.contract_address)
+    FROM mint_inputs s JOIN shop.sale_publication pub USING(network)
+    LEFT JOIN factory_creations f ON (f.network,f.contract_address)=(s.network,s.contract_address)
       AND (f.created_block,f.created_log)<(s.block_number,s.log_index)
     LEFT JOIN LATERAL (
         SELECT t.account,t.log_index FROM shop.collection_event t
@@ -32,23 +44,19 @@
     LEFT JOIN shop.collection_seed seed ON (seed.network,seed.contract_address)=(f.network,f.contract_address)
       AND seed.verified AND seed.read_hash IS NOT NULL
       AND seed.read_block BETWEEN f.created_block AND pub.block_number
+    -- The collections subgraph updates Collection.updatedAt on a creator transfer.
     LEFT JOIN shop.collections c ON (c.network,c.contract_address)=(f.network,f.contract_address)
       AND c.chain_id=137 AND c.created_at=f.created_at
       AND c.updated_at<=(SELECT block_time FROM catalogue_time_bound)
-    WHERE s.kind='mint'
 ), primary_sales AS MATERIALIZED (
     SELECT m.creator AS id,
            count(*) FILTER (WHERE m.block_time >= $7 AND ($7>0 OR eligible.address IS NOT NULL)) AS mints,
-           coalesce(sum(p.net) FILTER (WHERE $7>0 OR eligible.address IS NOT NULL),0) AS net,
+           coalesce(sum(m.net) FILTER (WHERE $7>0 OR eligible.address IS NOT NULL),0) AS net,
            count(DISTINCT m.buyer) AS collectors,
            count(DISTINCT (m.network,m.contract_address)) AS collections,
-           bool_or(m.block_time >= $7 AND (p.seller IS NULL OR NOT p.settled)) AS missing_payment
+           bool_or(m.block_time >= $7 AND (m.seller IS NULL OR NOT m.settled)) AS missing_payment
     FROM mint_creators m
-    LEFT JOIN collections eligible ON (eligible.network,eligible.address)=(m.network,m.creator)
-    LEFT JOIN (
-        SELECT network,block_number,log_index,ordinal,seller,settled,net
-        FROM sold WHERE kind='mint' AND block_time >= $7
-    ) p ON (p.network,p.block_number,p.log_index,p.ordinal)=(m.network,m.block_number,m.log_index,m.ordinal)
+    LEFT JOIN collections eligible ON $7=0 AND (eligible.network,eligible.address)=(m.network,m.creator)
     GROUP BY m.creator
 ), lifetime_sellers AS (
     SELECT s.seller AS id,count(*) AS sales,count(DISTINCT s.buyer) AS collectors
