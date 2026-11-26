@@ -69,8 +69,8 @@ const ITEM_OTHER_MODEL = 'bafkreidt4shc7ymjpyczl3qv7kuk4jf5r254fdi4lbycn5jjtiauq
 const ITEM_EMPTY = 'bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku'
 const ITEM_DRAFT_MODEL = 'bafkreigtbcabv6bu27zstecfipauq63zdag7z3qmjbku3cfytp4cykvkka'
 const ITEM_NEVER = 'bafkreievhgfj53hbqd5f4dgteqoeoovwkos2zkxzyjrtartamlmuyo44ay'
-/** Upstream's bucket URL when no S3 endpoint overrides it (`getBucketURL()` of bucket `conformance`). */
-const BUCKET_URL = 'https://conformance.s3.amazonaws.com'
+/** Upstream's bucket URL (`getBucketURL()` of bucket `conformance`) with `AWS_STORAGE_URL` on the reserved host `s3.example`. */
+const BUCKET_URL = 'https://s3.example/conformance'
 const ADDRESS = {
   owner: '0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e',
   stranger: '0xcd6884d4258edc833f31ac773e24affe6a7d3154',
@@ -3552,7 +3552,7 @@ function requestBody(item) {
   return { body: form, recorded: { body: null, multipart: item.multipart } }
 }
 
-/** `value` with the fake bucket's origin `bucket` written as upstream's own bucket URL. */
+/** `value` with the fake bucket's origin `bucket` written as `BUCKET_URL`. */
 function bucketNamed(value, bucket) {
   return bucket ? value.split(bucket).join(BUCKET_URL) : value
 }

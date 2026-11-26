@@ -597,10 +597,10 @@ test('the fake S3 stores, copies and deletes objects as the AWS SDK expects', ()
   assert.equal(s3Answer('HEAD', '/s3/conformance/contents/bafk1', {}, Buffer.alloc(0), objects), undefined)
 })
 
-test('a redirect into the fake bucket is recorded under upstream\'s own bucket URL', () => {
+test('a redirect into the fake bucket is recorded under the bucket URL upstream answers for a reserved storage host', () => {
   const { bucketNamed } = require(script)
   const bucket = 'http://127.0.0.1:41234/s3/conformance'
-  assert.equal(bucketNamed(`Moved Permanently. Redirecting to ${bucket}/contents/bafk1`, bucket), 'Moved Permanently. Redirecting to https://conformance.s3.amazonaws.com/contents/bafk1')
+  assert.equal(bucketNamed(`Moved Permanently. Redirecting to ${bucket}/contents/bafk1`, bucket), 'Moved Permanently. Redirecting to https://s3.example/conformance/contents/bafk1')
   assert.equal(bucketNamed('unchanged', undefined), 'unchanged')
 })
 
