@@ -931,7 +931,6 @@ impl AppConfig {
         self.scene_imposter_multisample_amount = default.scene_imposter_multisample_amount;
         self.parcel_grass_setting = default.parcel_grass_setting;
         self.max_avatars = default.max_avatars;
-        self.max_avatars_unlimited = default.max_avatars_unlimited;
         self.max_videos = default.max_videos;
     }
 
