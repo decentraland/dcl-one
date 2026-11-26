@@ -1,7 +1,7 @@
 // from: shop@94584a5c:app/src/lib/storeStats.spec.ts (ported with its module)
 import { describe, it, expect } from 'vitest'
 import { bucketSales, buildStoreStats, TREND_POINTS } from './storeStats'
-import type { SaleRow } from './sales'
+import type { SaleRow, SalesSummary } from './sales'
 import type { PublishableItem } from './builder'
 import type { CollectionSaleState } from './collections'
 
@@ -352,10 +352,10 @@ describe('buildStoreStats with the server summary', () => {
     earnedWei: '4500000000000000000000',
     earnedUsd: '0',
     unpricedSales: 9_000,
-    byCollection: [{ contractAddress: COLLECTION, sold: 8_400, earnedWei: '4200000000000000000000' }],
+    byCollection: [{ contractAddress: COLLECTION, sold: 8_400, earnedWei: '4200000000000000000000', earnedUsd: '0', unpricedSales: 8_400 }],
     byItem: [{ contractAddress: COLLECTION, itemId: '0', soldLifetime: 12_345 }],
     royalties: { resales: 77, volumeWei: '900000000000000000000', royaltiesWei: '2000000000000000000' }
-  }
+  } satisfies SalesSummary
 
   const withSummary = (over: Partial<Parameters<typeof buildStoreStats>[0]> = {}) =>
     build({

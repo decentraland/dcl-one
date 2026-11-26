@@ -14,6 +14,7 @@ import { IssueForm } from "../components/IssueModal";
 import { ImportListingsView } from "../components/ImportListings";
 import type { PublishableItem } from "../lib/builder";
 import type { ImportItem } from "../lib/import";
+import type { SalesSummary } from "../lib/sales";
 import { setShopCapabilities } from "../lib/featureFlags";
 import { marketplaceOn } from "../../market/testing-flags";
 import { primeRemoteFlags } from "../../discovery/lib/remoteFlags";
@@ -98,7 +99,7 @@ describe("Store settings: the owner's own store", () => {
   });
 });
 
-const summary = { total: 3, mints: 2, resales: 1, earnedWei: MANA(10), earnedUsd: "0", unpricedSales: 3, byCollection: [{ contractAddress: BOOK.collection, sold: 2, earnedWei: MANA(6) }], byItem: [], royalties: { resales: 4, volumeWei: MANA(40), royaltiesWei: MANA(3) } };
+const summary = { total: 3, mints: 2, resales: 1, earnedWei: MANA(10), earnedUsd: "0", unpricedSales: 3, byCollection: [{ contractAddress: BOOK.collection, sold: 2, earnedWei: MANA(6), earnedUsd: "0", unpricedSales: 2 }], byItem: [], royalties: { resales: 4, volumeWei: MANA(40), royaltiesWei: MANA(3) } } satisfies SalesSummary;
 const storeRoutes = (over: FakeRoute[] = []): FakeRoute[] => [
   ...over,
   { method: "GET", path: /^\/v1\/sales\/summary$/, reply: () => ({ body: { data: summary } }) },
