@@ -165,6 +165,32 @@ reservations to the original internal key.
 See [public identifiers for mirrored world scenes](docs/adr/2026-11-26-mirrored-world-scene-place-ids.md)
 for how the mirror confirms a match and retries it.
 
+Genesis local content keeps its parcel-derived internal UUID. The Places
+mirror records raw UUID sightings by pass and page before deduplication, and
+publishes unique base/CID matches only after a complete pass from the
+production Places origin. A replay replaces the same page's evidence.
+Page receipts require contiguous offsets, a consistent reported total, and
+that many input rows before a pass can replace the trusted snapshot.
+The most recent complete snapshot has one row per eligible public place.
+An abandoned pass holds at most the mirror's existing page ceiling and its
+staged rows are discarded when the next pass starts. A locally authored
+scene's derive writes its deployment ID as part of the existing document.
+`explore.genesis_place_alias` exposes a claimed pair while the current
+catalogue records, content's active base pointer and the local deployment
+all agree. Its source, exact CID and unique eligible upstream UUID are
+required. Changing the active pointer invalidates a proof immediately.
+The claim transaction preserves both catalogue rows, consolidates their
+interaction facts and holds the shared Places writer lock exclusively.
+An existing claim is consolidated again only when there are facts, counts
+or curation under its public key.
+New Genesis claims take the existing sorted per-UUID namespace locks.
+World identity creation takes the same lock before checking Genesis
+reservations. Imports skip already reserved identities.
+The mirror publishes and reconciles its observations once per complete
+pass. Derive reconciles its own IDs inside the page write transaction.
+Existing databases get the tables, index and views from the schema object
+pass and populate them through future mirror and derive work.
+
 Partial batches for one entity hold a session advisory lock from their first
 pending-upload/replay read through the staging or committed-publication decision.
 The guard owns one connection from the shared pool, and every guarded query and

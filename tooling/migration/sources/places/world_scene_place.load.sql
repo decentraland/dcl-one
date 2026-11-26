@@ -27,6 +27,10 @@ WHERE NOT EXISTS (
     SELECT 1 FROM explore.world_scene_public_id claim
     WHERE claim.public_id = s.identity AND claim.identity <> s.identity
 )
+AND NOT EXISTS (
+    SELECT 1 FROM explore.genesis_place_claim claim
+    WHERE claim.public_id = s.identity::text OR claim.local_id = s.identity::text
+)
 AND NOT (
     s.active AND EXISTS (
         SELECT 1 FROM explore.world_scene_place p

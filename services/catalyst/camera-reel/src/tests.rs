@@ -2857,6 +2857,73 @@ async fn world_galleries_include_public_photos_from_hidden_mirrored_and_local_sc
 }
 
 #[tokio::test]
+async fn genesis_gallery_finds_photos_under_both_ids_while_the_cid_matches() {
+    use catalyst_db::scratch::{OwnedDatabase, Schema};
+    let Some(scratch) = OwnedDatabase::new("genesis_gallery", Schema::Full, 2).await else {
+        return;
+    };
+    let gallery = Database::new(scratch.pool.clone(), API_URL, 0, 0);
+    let local = "11111111-1111-5111-8111-111111111111";
+    let public = "22222222-2222-4222-8222-222222222222";
+    let owner = random_address();
+    let local_photo = image(&owner, &tag(), &tag(), true, local);
+    let public_photo = image(&owner, &tag(), &tag(), true, public);
+    for photo in [&local_photo, &public_photo] {
+        gallery.insert_image(photo).await.unwrap();
+    }
+    sqlx::raw_sql(
+        "INSERT INTO explore.mirror_state (mirror, source_url) VALUES ('places','https://places.decentraland.org');
+         INSERT INTO content.active_pointers VALUES ('1,2','scene-cid','scene');
+         INSERT INTO content.local_entities (entity_id, signer) VALUES ('scene-cid','creator');",
+    )
+    .execute(&scratch.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"INSERT INTO explore.place (id, base_position, origin, raw) VALUES
+            ($1, '1,2', 'local', '{"world":false,"deployment_id":"scene-cid","source":"content"}'),
+            ($2, '1,2', 'upstream', '{"world":false,"deployment_id":"scene-cid"}')"#,
+    )
+    .bind(local)
+    .bind(public)
+    .execute(&scratch.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO explore.genesis_place_observed (public_id,base_position,deployment_id) VALUES ($1,'1,2','scene-cid')")
+        .bind(public).execute(&scratch.pool).await.unwrap();
+    sqlx::query("INSERT INTO explore.genesis_place_claim (public_id,local_id) VALUES ($1,$2)")
+        .bind(public)
+        .bind(local)
+        .execute(&scratch.pool)
+        .await
+        .unwrap();
+    for key in [public, local] {
+        let page = gallery
+            .get_place_images_page(key, &Page::Offset(0), 10)
+            .await
+            .unwrap();
+        assert_eq!(page.total, 2);
+        assert!(page.images.iter().any(|p| p.id == local_photo.id));
+        assert!(page.images.iter().any(|p| p.id == public_photo.id));
+    }
+    sqlx::query(
+        "UPDATE content.active_pointers SET entity_id = 'replacement' WHERE pointer = '1,2'",
+    )
+    .execute(&scratch.pool)
+    .await
+    .unwrap();
+    for (key, photo) in [(public, public_photo), (local, local_photo)] {
+        let page = gallery
+            .get_place_images_page(key, &Page::Offset(0), 10)
+            .await
+            .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.images[0].id, photo.id);
+    }
+    scratch.drop().await;
+}
+
+#[tokio::test]
 async fn galleries_find_both_live_scene_ids_and_keep_exact_retired_links() {
     let Some(mut s) = scratch(Settings::new(API_URL)).await else {
         return;

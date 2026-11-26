@@ -28,7 +28,7 @@ Upstream timestamps (timestamp without time zone) are read as UTC.
 
 [[step]]
 name = "place"
-targets = ["explore.place", "explore.place_moderation", "explore.place_ranking"]
+targets = ["explore.place", "explore.place_moderation", "explore.place_ranking", "explore.genesis_place_observed"]
 extract = "place.extract.sql"
 load = "place.load.sql"
 key = ["id"]
@@ -52,7 +52,7 @@ columns = [
 
 [[step]]
 name = "world_scene_place"
-targets = ["explore.world_scene_place", "explore.world_scene_binding", "explore.world_scene_public_id"]
+targets = ["explore.world_scene_place", "explore.world_scene_binding", "explore.world_scene_public_id", "explore.genesis_place_claim"]
 extract = "world_scene_place.extract.sql"
 load = "world_scene_place.load.sql"
 key = ["identity"]

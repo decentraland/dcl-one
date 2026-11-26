@@ -121,6 +121,8 @@ pub async fn bind_public_id(
     let catalogue_id = uuid_sql("catalogue.id");
     let conflict_sql = format!(
         "SELECT EXISTS (SELECT 1 FROM explore.world_scene_place WHERE identity = $1 AND identity <> $2) \
+          OR EXISTS (SELECT 1 FROM explore.genesis_place_claim \
+                     WHERE public_id = $1::uuid::text OR local_id = $1::uuid::text) \
           OR EXISTS (SELECT 1 FROM explore.world_scene_public_id \
                        WHERE identity = $2 AND entity_id IS NOT NULL AND public_id <> $1) \
           OR (NOT EXISTS (SELECT 1 FROM explore.world_scene_public_id \
@@ -592,6 +594,65 @@ mod tests {
                 ]
             );
         }
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn world_identity_loaders_skip_genesis_reservations_and_replay_the_siblings() {
+        let Some(db) = OwnedDatabase::new("genesis_world_import", Schema::Full, 2).await else {
+            return;
+        };
+        let mut tx = db.pool.begin().await.unwrap();
+        sqlx::raw_sql(
+            "INSERT INTO explore.genesis_place_claim (public_id, local_id)
+             VALUES (md5('held.eth/A')::uuid::text, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+             INSERT INTO worlds.worlds (name) VALUES ('held.eth'), ('available.eth');
+             INSERT INTO worlds.world_scenes
+                 (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size)
+             VALUES ('held.eth', 'A', '[]', '{}', 'owner', ARRAY['0,0'], 1),
+                    ('available.eth', 'B', '[]', '{}', 'owner', ARRAY['1,0'], 1);
+             CREATE TEMP TABLE stage (world_name text, identity uuid, entity_id text, parcels text[],
+                 active boolean, created_at timestamptz, updated_at timestamptz) ON COMMIT DROP;
+             INSERT INTO stage VALUES
+                 ('places-import.eth', md5('held.eth/A')::uuid, NULL, ARRAY['0,0'], false, now(), now()),
+                 ('places-import.eth', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', NULL, ARRAY['1,0'], false, now(), now());",
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        for _ in 0..2 {
+            sqlx::raw_sql(include_str!(concat!(
+                env!("DCL_ONE_ROOT"),
+                "/tooling/migration/sources/places/world_scene_place.load.sql"
+            )))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+        sqlx::raw_sql(
+            "TRUNCATE stage;
+             INSERT INTO stage (world_name, entity_id) VALUES ('held.eth', 'A'), ('available.eth', 'B');",
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        for _ in 0..2 {
+            sqlx::raw_sql(include_str!(concat!(
+                env!("DCL_ONE_ROOT"),
+                "/tooling/migration/sources/worlds-content-server/world_scene_place.load.sql"
+            )))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT world_name FROM explore.world_scene_place ORDER BY world_name",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .unwrap();
+        assert_eq!(names, ["available.eth", "places-import.eth"]);
+        tx.commit().await.unwrap();
         db.drop().await;
     }
 

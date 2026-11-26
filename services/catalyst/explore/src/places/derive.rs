@@ -669,6 +669,7 @@ async fn run_once_with_storage(
         let mut page = Vec::with_capacity(candidates.len());
         let mut failed = Vec::new();
         for (mut place, entity, hash, meta) in candidates {
+            place.raw["deployment_id"] = json!(entity);
             if let (Some(storage), Some(hash)) = (storage, hash) {
                 let previous = cached.get(&place.id).filter(|raw| {
                     raw["scene_metadata_entity"].as_str() == Some(entity.as_str())
@@ -767,6 +768,14 @@ async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
         return Ok(());
     }
     let mut tx = pool.begin().await?;
+    let local_ids: Vec<_> = rows
+        .iter()
+        .filter(|p| p.local)
+        .map(|p| p.id.as_str())
+        .collect();
+    if !local_ids.is_empty() {
+        super::interactions::lock_public_id_merge(&mut tx).await?;
+    }
     let inserted: HashMap<String, bool> = sqlx::query(UPSERT)
         .bind(rows.iter().map(|p| p.id.clone()).collect::<Vec<_>>())
         .bind(
@@ -807,6 +816,9 @@ async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
             )
         })
         .collect();
+    if !local_ids.is_empty() {
+        super::genesis_identity::reconcile(&mut tx, Some(&local_ids)).await?;
+    }
     let fresh: Vec<(&DerivedPlace, Vec<String>)> = rows
         .iter()
         .filter(|p| inserted.get(&p.id).copied().unwrap_or(false))

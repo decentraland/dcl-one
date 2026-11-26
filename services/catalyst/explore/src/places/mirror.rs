@@ -110,8 +110,10 @@ const UPSERT: &str = r#"
         highlighted     = EXCLUDED.highlighted,
         raw             = EXCLUDED.raw,
         fetched_at      = timezone('UTC', now()),
-        -- a listed id is the upstream's, even where a local scene derived it first
+        -- A locally authored Genesis row keeps its ID on a collision.
         origin          = 'upstream'
+    WHERE NOT (explore.place.origin = 'local' AND explore.place.raw->>'source' = 'content'
+               AND NOT explore.place.world)
 "#;
 
 const RETIRE_DERIVED: &str =
@@ -285,6 +287,11 @@ async fn fetch_page_once(client: &crate::http::Outbound, url: &str) -> Result<Va
         .with_context(|| format!("GET {url}"))?
         .error_for_status()
         .with_context(|| format!("GET {url}"))?;
+    if url.starts_with(&format!("{}/", super::genesis_identity::TRUSTED_SOURCE))
+        && resp.url().origin().ascii_serialization() != super::genesis_identity::TRUSTED_SOURCE
+    {
+        bail!("trusted Places catalogue request redirected to another origin");
+    }
     let body = read_body_capped(resp, MAX_PAGE_BYTES)
         .await
         .with_context(|| format!("reading {url}"))?;
@@ -381,6 +388,11 @@ pub async fn run_places_pass(
     let base = source.base();
     reclaim_local(pool).await?;
     let start = mirror_state::begin_pass(pool, PLACES_MIRROR, base).await?;
+    let trusted = base == super::genesis_identity::TRUSTED_SOURCE;
+    if !trusted {
+        super::genesis_identity::clear_observations(pool, start.started_at.naive_utc(), base)
+            .await?;
+    }
     let mut out = PassOutcome {
         complete: true,
         fetched_all: true,
@@ -396,7 +408,8 @@ pub async fn run_places_pass(
             out.complete = false;
             return Ok(out);
         }
-        let url = format!("{base}/api/places?limit={PAGE}&offset={offset}");
+        let order = if trusted { "&order_by=updated_at" } else { "" };
+        let url = format!("{base}/api/places?limit={PAGE}&offset={offset}{order}");
         let body = tokio::select! {
             _ = cancel.cancelled() => {
                 out.cancelled = true;
@@ -423,7 +436,18 @@ pub async fn run_places_pass(
                 bail!("places upstream at offset={offset}: {e}");
             }
         };
-        let total = body.get("total").and_then(Value::as_i64).unwrap_or(0);
+        let reported_total = body.get("total").and_then(Value::as_i64);
+        let total = reported_total.unwrap_or(0);
+        if trusted {
+            super::genesis_identity::record_page(
+                pool,
+                start.started_at.naive_utc(),
+                offset,
+                &data,
+                reported_total,
+            )
+            .await?;
+        }
         if data.is_empty() {
             break;
         }
@@ -458,6 +482,9 @@ pub async fn run_places_pass(
     if out.complete && out.upserted > 0 {
         out.retired = retire_derived(pool).await?;
         out.swept = sweep_after_pass(pool, Leg::Places, start.started_at, interval).await;
+    }
+    if out.complete && trusted {
+        super::genesis_identity::finish_pass(pool, start.started_at.naive_utc(), base).await?;
     }
     // The marker's row count is the distinct rows this pass stamped, not the
     // page lengths summed: an id repeated across two upstream pages (seen

@@ -89,7 +89,7 @@ columns = [
 
 [[step]]
 name = "world_scene_place"
-targets = ["explore.world_scene_place", "explore.world_scene_binding"]
+targets = ["explore.world_scene_place", "explore.world_scene_binding", "explore.genesis_place_claim"]
 extract = "world_scene_place.extract.sql"
 load = "world_scene_place.load.sql"
 key = ["world_name", "entity_id"]

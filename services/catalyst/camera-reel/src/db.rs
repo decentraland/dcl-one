@@ -340,7 +340,10 @@ impl Database {
                  JOIN worlds.world_scenes s ON s.world_name = b.world_name AND s.entity_id = b.entity_id \
                    AND s.mirror_source = b.source \
                  JOIN worlds.worlds w ON w.name = b.world_name AND w.mirror_source = b.source \
-                 CROSS JOIN LATERAL (VALUES (b.identity::text), (b.public_id::text)) AS keys(id)))",
+                 CROSS JOIN LATERAL (VALUES (b.identity::text), (b.public_id::text)) AS keys(id) \
+                 UNION SELECT keys.id FROM requested r \
+                 JOIN explore.genesis_place_alias a ON r.uuid::text IN (a.local_id, a.public_id) \
+                 CROSS JOIN LATERAL (VALUES (a.local_id), (a.public_id)) AS keys(id)))",
             );
     }
 

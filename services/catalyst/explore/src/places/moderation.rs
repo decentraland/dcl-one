@@ -212,8 +212,9 @@ async fn resolve_on(
                 }
             }
             let scene = super::scene_identity::is_scene_id_sql("id");
+            let storage = super::query::genesis_storage_key_sql("$1");
             sqlx::query_as(sqlx::AssertSqlSafe(format!(
-                "SELECT {RESOLVE_COLUMNS} FROM explore.place_indexed WHERE id = $1 AND NOT {scene} LIMIT 1"
+                "SELECT {RESOLVE_COLUMNS} FROM explore.place_indexed WHERE id = {storage} AND NOT {scene} LIMIT 1"
             )))
             .bind(id)
             .fetch_optional(&mut *conn)

@@ -138,6 +138,9 @@ pub async fn record_photo(
         WHERE canonical.public_id IS NOT NULL
           AND p.identity IN (SELECT $4::uuid UNION SELECT identity FROM explore.world_scene_public_id WHERE public_id=$4)
           AND $4 IN (p.identity, canonical.public_id)
+        UNION SELECT keys.id FROM explore.genesis_place_alias a
+        CROSS JOIN LATERAL (VALUES (a.local_id), (a.public_id)) keys(id)
+        WHERE $4::uuid::text IN (a.local_id, a.public_id)
     ), receipts AS (
         INSERT INTO social.community_ranking_events(kind,event_key,community_id,occurred_at)
         SELECT 'photo',$1,p.community_id,$3 FROM social.community_places p

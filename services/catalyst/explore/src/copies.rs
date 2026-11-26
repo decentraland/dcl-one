@@ -174,7 +174,9 @@ pub mod origin {
             }
         }
         sqlx::query_scalar(concat!(
-            "SELECT EXISTS (SELECT 1 FROM explore.place WHERE id = $1 AND ",
+            "SELECT EXISTS (SELECT 1 FROM explore.place
+              WHERE id = COALESCE((SELECT local_id FROM explore.genesis_place_alias WHERE public_id = lower($1)),
+                                  (SELECT local_id FROM explore.genesis_place_alias WHERE local_id = lower($1)), $1) AND ",
             local_place!(),
             ") OR EXISTS (SELECT 1 FROM explore.place_world_local WHERE id = $1)"
         ))
@@ -265,6 +267,10 @@ pub mod origin {
     /// partially mirrored scene through this separate read surface.
     pub fn world_scenes_local_only() -> bool {
         super::OwnRowsOnly::current().worlds
+    }
+
+    pub fn places_local_only() -> bool {
+        super::OwnRowsOnly::current().places
     }
 
     pub fn world_scene_rows_sql() -> &'static str {

@@ -1645,6 +1645,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn genesis_identity_objects_upgrade_without_rewriting_world_identities() {
+        let Some(db) = crate::scratch::OwnedDatabase::new(
+            "genesis_identity_upgrade",
+            crate::scratch::Schema::Full,
+            2,
+        )
+        .await
+        else {
+            return;
+        };
+        sqlx::raw_sql(
+            "DROP FUNCTION explore.scene_interaction_entity_id(text);
+             DROP VIEW explore.genesis_place_alias;
+             DROP VIEW explore.genesis_place_candidate;
+             DROP TRIGGER world_scene_identity_reserved_genesis ON explore.world_scene_place;
+             DROP FUNCTION explore.guard_world_scene_genesis_reservation();
+             DROP TABLE explore.genesis_place_claim, explore.genesis_place_observed,
+                 explore.genesis_place_sighting, explore.genesis_place_page;
+             DROP INDEX explore.place_local_genesis_deployment_idx;
+             INSERT INTO explore.world_scene_place (world_name, identity, parcels, active)
+             VALUES ('existing.dcl.eth', '11111111-1111-4111-8111-111111111111', ARRAY['0,0'], false);",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        migrate(&db.pool, crate::SCHEMA_SQL, crate::MIGRATIONS_SQL)
+            .await
+            .unwrap();
+        let unchanged: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM explore.world_scene_place
+                            WHERE identity = '11111111-1111-4111-8111-111111111111' AND NOT active)
+             AND NOT EXISTS (SELECT 1 FROM explore.genesis_place_alias)
+             AND EXISTS (SELECT 1 FROM pg_trigger
+                         WHERE tgrelid = 'explore.world_scene_place'::regclass
+                           AND tgname = 'world_scene_identity_reserved_genesis')",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert!(unchanged);
+        assert!(
+            migrate(&db.pool, crate::SCHEMA_SQL, crate::MIGRATIONS_SQL)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        db.drop().await;
+    }
+
+    #[tokio::test]
     async fn public_scene_claim_objects_upgrade_without_rewriting_existing_identities() {
         let Some(pool) = crate::scratch::pool(2).await else {
             return;

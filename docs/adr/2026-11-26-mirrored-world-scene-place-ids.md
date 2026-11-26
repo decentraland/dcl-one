@@ -1,4 +1,4 @@
-# Public Places identifiers for mirrored world scenes
+# Public Places identifiers for Worlds and Genesis scenes
 
 ## Decision
 
@@ -14,7 +14,30 @@ A local place identity owns storage, grants and interactions. Discovery can publ
 
 Both services can index the same deployment at different times. Until a match is available, the node can serve the scene using its existing local identity. A lookup failure requires no transfer or deletion of stored data.
 
-When a public UUID differs from the local identity and its exact deployment
+When a World's public UUID differs from the local identity and its exact deployment
 proof expires, place detail returns 404 for that public UUID. Place status
 reports a disabled entry and includes it in the count. The local identity
 continues to describe its current deployment.
+
+## Genesis City
+
+A Genesis scene published directly to this node has a local Places UUID derived
+from its base parcel. Production Places assigns its own UUID. The two catalogues
+can receive the same deployment in either order.
+
+Explore reconciles the two records when a complete walk of production Places
+finds one eligible Genesis record for the local scene's base parcel and exact
+active deployment CID. A match also requires the scene to be a live local
+publication. A repeated UUID or an ambiguous match provides insufficient evidence.
+The catalogue mirror and the local scene derivation both retry, so an existing
+pair can converge without another scene deployment.
+
+While the match holds, Places and Destinations publish one entry with the
+production UUID. A link using the parcel-derived UUID opens that entry too.
+Favorites and votes written through either link use the same local interaction
+key. Scene storage continues to use the Genesis realm and base parcel.
+
+If the local deployment changes before production Places indexes the new CID,
+the local link describes the current local scene. The upstream record follows
+the normal catalogue visibility rules and can describe an older deployment.
+Sharing the same parcel alone never makes the two deployments equivalent.

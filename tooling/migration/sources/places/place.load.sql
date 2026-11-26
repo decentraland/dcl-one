@@ -41,7 +41,8 @@ WITH preferred AS (
     LEFT JOIN worlds.world_scenes d
       ON d.world_name = p.world_name AND d.entity_id = p.entity_id AND d.mirror_source = b.source
     LEFT JOIN worlds.worlds w ON w.name = d.world_name AND w.mirror_source = b.source
-    ORDER BY s.interaction_id, (w.name IS NOT NULL) DESC, s.id
+    LEFT JOIN explore.genesis_place_alias g ON g.public_id = s.id AND g.local_id = s.interaction_id
+    ORDER BY s.interaction_id, (w.name IS NOT NULL OR g.public_id IS NOT NULL) DESC, s.id
 )
 UPDATE stage s SET curation_winner = true FROM preferred WHERE s.id = preferred.id;
 
@@ -125,6 +126,9 @@ ON CONFLICT (id) DO UPDATE SET
     fetched_at      = EXCLUDED.fetched_at,
     origin          = 'local'
 WHERE p.raw->>'source' IS DISTINCT FROM 'content'
+  AND NOT EXISTS (
+    SELECT 1 FROM explore.genesis_place_observed trusted WHERE trusted.public_id = p.id
+  )
   AND (p.base_position, p.title, p.description, p.creator_address, p.content_rating,
        p.categories, p.likes, p.dislikes, p.favorites, p.deployed_at, p.disabled,
        p.highlighted, p.raw, p.origin)

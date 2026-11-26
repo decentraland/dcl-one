@@ -103,7 +103,10 @@ pub async fn get_v1_event(
         Some(id) => crate::places::v1::find_destination_for(&state, id, viewer.as_deref()).await?,
         None => None,
     };
-    if let Some(scene) = destination_row.as_ref().filter(|row| row.scene_place) {
+    if let Some(scene) = destination_row
+        .as_ref()
+        .filter(|row| row.scene_place || row.local_scene_id.is_some())
+    {
         destination_id = Some(scene.id.clone());
     }
     let destination = destination_row
@@ -125,11 +128,8 @@ pub async fn get_v1_destination_events(
     let viewer = state.viewer(&headers, "get", uri.path()).await;
     let mut destination_ids = vec![id.to_lowercase()];
     if uuid::Uuid::parse_str(&id).is_ok()
-        && let Some(scene) = state
-            .places
-            .find_world_scene_place(&id, viewer.as_deref())
-            .await?
-            .flatten()
+        && let Some(scene) =
+            crate::places::v1::find_destination_for(&state, &id, viewer.as_deref()).await?
         && scene.storage_id() != scene.id
     {
         destination_ids = vec![scene.storage_id().to_string(), scene.id];

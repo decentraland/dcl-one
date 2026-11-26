@@ -364,9 +364,18 @@ pub async fn set_exclusion(
 }
 
 fn place_curation_sql() -> String {
-    let scene = super::scene_identity::is_scene_id_sql("place.id");
+    let scene = super::scene_identity::is_scene_id_sql("place_indexed.id");
+    let key = super::query::genesis_storage_key_sql("requested.id");
+    let alias = super::rows::GENESIS_PLACE_JOIN;
     format!(
-        "SELECT id, highlighted, world, {EXCLUDE_FROM_RANKING_SQL} AS exclude_from_ranking FROM explore.place WHERE id = ANY($1) AND NOT {scene}"
+        "SELECT requested.id, place_indexed.id AS storage_id,
+                COALESCE(genesis_highlighted, highlighted) AS highlighted, world,
+                COALESCE(genesis_ranking_overlay->'exclude_from_ranking' = 'true'::jsonb,
+                         {EXCLUDE_FROM_RANKING_SQL}) AS exclude_from_ranking
+         FROM unnest($1::text[]) AS requested(id)
+         JOIN explore.place AS place_indexed ON place_indexed.id = {key}
+         {alias}
+         WHERE NOT {scene}"
     )
 }
 
@@ -402,10 +411,11 @@ fn world_resolution_sql() -> String {
 fn clear_candidates_sql(world: bool) -> String {
     let leg = if world { "TRUE" } else { "FALSE" };
     let scene = super::scene_identity::is_scene_id_sql("explore.place_indexed.id");
+    let unshadowed = super::query::GENESIS_UNSHADOWED;
     format!(
         "SELECT id FROM explore.place_indexed WHERE world IS {leg} AND highlighted IS FALSE
          AND {EXCLUDE_FROM_RANKING_SQL} IS FALSE AND {RANKING_IS_SET_SQL} AND id <> ALL($1::text[])
-         AND NOT {scene}"
+         AND NOT {scene} AND {unshadowed}"
     )
 }
 
@@ -428,17 +438,22 @@ pub async fn replace_ranking(
     let mut curation = Vec::new();
     let mut world_backed_ids = Vec::new();
     let mut scene_storage_ids = Vec::new();
+    let mut storage_by_id = HashMap::new();
     if !place_ids.is_empty() {
         curation = sqlx::query(sqlx::AssertSqlSafe(place_curation_sql()))
             .bind(&place_ids)
             .fetch_all(&mut *tx)
             .await?
             .into_iter()
-            .map(|r| CurationRow {
-                id: r.get("id"),
-                highlighted: r.get("highlighted"),
-                exclude_from_ranking: r.get("exclude_from_ranking"),
-                world: r.get("world"),
+            .map(|r| {
+                let id: String = r.get("id");
+                storage_by_id.insert(id.clone(), r.get::<String, _>("storage_id"));
+                CurationRow {
+                    id,
+                    highlighted: r.get("highlighted"),
+                    exclude_from_ranking: r.get("exclude_from_ranking"),
+                    world: r.get("world"),
+                }
             })
             .collect();
         world_backed_ids = sqlx::query_scalar(LOCALLY_SERVED_WORLD_IDS)
@@ -473,6 +488,15 @@ pub async fn replace_ranking(
         }
     }
     let place_buckets = classify_places(places, &curation, &world_backed_ids);
+    let mut writable_keys = HashSet::new();
+    for entry in &place_buckets.writable {
+        let storage = storage_by_id.get(&entry.id).unwrap_or(&entry.id);
+        if !writable_keys.insert(storage) {
+            return Err(ApiError::bad_request(
+                "The same place appears more than once",
+            ));
+        }
+    }
 
     let world_ids: Vec<String> = worlds.iter().map(|e| e.id.clone()).collect();
     let mut matches = Vec::new();
@@ -525,11 +549,18 @@ pub async fn replace_ranking(
         if !in_scope {
             continue;
         }
-        let keep: Vec<String> = writable.iter().map(|e| e.id.clone()).collect();
         let applied: Vec<(String, Value)> = writable
             .iter()
-            .map(|e| (e.id.clone(), json!({ "ranking": e.ranking })))
+            .map(|e| {
+                let id = if world {
+                    &e.id
+                } else {
+                    storage_by_id.get(&e.id).unwrap_or(&e.id)
+                };
+                (id.clone(), json!({ "ranking": e.ranking }))
+            })
             .collect();
+        let keep: Vec<String> = applied.iter().map(|(id, _)| id.clone()).collect();
         let cleared_ids: Vec<String> =
             sqlx::query_scalar(sqlx::AssertSqlSafe(clear_candidates_sql(world)))
                 .bind(&keep)

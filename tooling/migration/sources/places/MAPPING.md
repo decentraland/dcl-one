@@ -60,6 +60,7 @@ which then count twice with the imported facts. Rows upstream does not list
   If another internal identity already holds the exact mirrored
   world and deployment CID, the loader leaves the upstream UUID available
   for mirror verification. Earlier retired identities remain reserved.
+  UUIDs reserved by a verified Genesis scene also stay out of the world-scene load.
 - Favorites and likes: wallets lowercased, non-wallet users skipped; kept only
   for an imported place, an eligible world scene, or any upstream world name.
   Likes from this import carry upstream provenance. Local votes take
@@ -75,6 +76,9 @@ which then count twice with the imported facts. Rows upstream does not list
   the same key after a proof is invalidated.
   When several rows in the catalogue batch fold onto the same key, the
   currently verified UUID supplies moderation and ranking.
+  A Genesis catalogue row present in the trusted Places mirror snapshot remains
+  mirror-owned on replay. Its curation still comes through the import and a
+  verified live alias redirects its interaction facts to the local UUID.
 - `contact_email` and the other public scene metadata travel in `raw`, as the
   upstream API serves them.
 

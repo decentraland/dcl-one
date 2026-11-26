@@ -173,21 +173,3 @@ END;
 $$;
 CREATE TRIGGER world_scene_identity_guarded BEFORE INSERT ON explore.world_scene_place
 FOR EACH ROW EXECUTE FUNCTION explore.guard_world_scene_identity();
-
--- A Places import can arrive before, during or after verification. A reserved
--- public UUID always owns the same durable interaction key, even after its
--- discovery proof expires.
-CREATE FUNCTION explore.scene_interaction_entity_id(input_id text) RETURNS text
-LANGUAGE plpgsql STABLE STRICT AS $$
-DECLARE
-    normalized text := regexp_replace(input_id, '^urn:uuid:', '', 'i');
-BEGIN
-    IF NOT pg_input_is_valid(normalized, 'uuid') THEN
-        RETURN input_id;
-    END IF;
-    RETURN COALESCE((
-        SELECT identity::text FROM explore.world_scene_public_id
-        WHERE public_id = normalized::uuid
-    ), input_id);
-END;
-$$;

@@ -255,7 +255,9 @@ async fn mirrored_votes(
 ) -> Result<MirroredVotes, sqlx::Error> {
     let row = sqlx::query(
         "SELECT likes, dislikes, raw->'like_rate' AS like_rate, raw->'like_score' AS like_score \
-         FROM explore.place WHERE id = $1",
+         FROM explore.place WHERE id = COALESCE(
+             (SELECT public_id FROM explore.genesis_place_alias WHERE local_id = $1), $1
+         )",
     )
     .bind(entity_id)
     .fetch_optional(&mut *tx)
