@@ -445,3 +445,45 @@ describe("a mount that stays silent", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 });
+
+describe("ambient playback", () => {
+  const controls = (posted: { mock: { calls: unknown[][] } }) =>
+    posted.mock.calls
+      .map(([message]) => message as { type?: string; payload?: { namespace?: string; method?: string } })
+      .filter((message) => message.type === "controller_request")
+      .map((message) => `${message.payload?.namespace}.${message.payload?.method}`);
+
+  test("mutes each scene it draws and plays its emote again each time it ends", () => {
+    render(<PreviewFrame options={{ urns: [HOODIE], emote: "fashion" }} ambient onLoad={vi.fn()} onError={vi.fn()} />);
+    const posted = vi.spyOn(frame().contentWindow!, "postMessage");
+    fromPreview({ type: "ready" });
+    expect(controls(posted)).toEqual([]);
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    expect(controls(posted)).toEqual(["emote.disableSound"]);
+    fromPreview({ type: "emote_event", payload: { type: "animation_loop" } });
+    expect(controls(posted)).toEqual(["emote.disableSound"]);
+    fromPreview({ type: "emote_event", payload: { type: "animation_end" } });
+    fromPreview({ type: "emote_event", payload: { type: "animation_end" } });
+    expect(controls(posted)).toEqual(["emote.disableSound", "emote.play", "emote.play"]);
+  });
+
+  test("an emote ending in another preview on the page plays nothing here", () => {
+    render(<PreviewFrame options={{ urns: [HOODIE] }} ambient onLoad={vi.fn()} onError={vi.fn()} />);
+    const posted = vi.spyOn(frame().contentWindow!, "postMessage");
+    fromPreview({ type: "ready" });
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "emote_event", payload: { type: "animation_end" } }, source: window, origin: MAINNET }));
+    });
+    expect(controls(posted)).toEqual([]);
+  });
+
+  test("off by default: a scene keeps its sound and its emote plays once", () => {
+    const { onLoad } = mount({ urns: [HOODIE] });
+    const posted = vi.spyOn(frame().contentWindow!, "postMessage");
+    fromPreview({ type: "ready" });
+    fromPreview({ type: "load", payload: { renderer: "babylon" } });
+    fromPreview({ type: "emote_event", payload: { type: "animation_end" } });
+    expect(onLoad).toHaveBeenCalledWith("babylon");
+    expect(controls(posted)).toEqual([]);
+  });
+});

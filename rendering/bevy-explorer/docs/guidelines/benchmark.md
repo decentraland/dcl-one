@@ -1,10 +1,12 @@
 # Benchmark
 
 The bare-metal A/B benchmark of the web explorer. On self-hosted laptops, Chrome runs a pull
+
 request's web app against main's and the latest release's, interleaved, and the report goes into
 the *Performance* section of the pull request's CI status comment: samples, CPU and GPU frame time
-(average, 1% and 0.1% worst) and exceptions per run against main, and the frame times against the
-latest release, with a verdict for each. It has three parts:
+(average, 1% and 0.1% worst), exceptions per run, and the time to world and to the first ring of
+scenes ready against main, and the frame times against the latest release, with a verdict for each.
+It has three parts:
 
 - the explorer's unattended run (`--autopilot`, `?autopilot` on the web), which writes a CSV and a
   log ([Launch options](#launch-options), [The run](#the-run), [Files](#files));
@@ -158,7 +160,11 @@ profiler's scopes and their self time per run ([profiling](profiling.md); a rele
 the `performance-profiler` feature, lists none), the 15 highest by the
 larger of the two builds' values, so a scope that fell out of one build's top rows stays listed.
 A build's value is the scope's self time summed over its summaries, divided by their number: a
-run whose top 30 leave the scope out counts as 0.
+run whose top 30 leave the scope out counts as 0. Where a run's log holds the load-time entries
+([Files](#files)), *Time to world* (app start to arriving in world; on the web the page load and
+the wasm download and compile come first and are not counted) and *First ring ready* (the spawn
+scene's spawn to it and every scene within one parcel of the player being ready) follow, in
+seconds.
 
 - A value is the **median** of the build's runs, followed by the **(min–max)** range when the runs
   differ. A wide range means a noisy metric, where small differences mean little.
@@ -174,6 +180,9 @@ run whose top 30 leave the scope out counts as 0.
     absolute floor of 32 MiB. Each needs 2 runs per build whose summary line measured the value
     (an `n/a` does not count); with fewer the row reads *⚠️ no verdict — fewer than 2 runs
     measured it*.
+  - **🟢 _N_% faster / 🔴 _N_% slower** on *Time to world* and *First ring ready*: the
+    frame-time rule with an absolute floor of 0.5 s, given 2 runs per build whose log holds the
+    entry; with fewer the row reads *⚠️ no verdict — fewer than 2 runs measured it*.
   - **— informational:** the 0.1% worst rows. They average the two or three worst frames of a run,
     so one OS hiccup moves them by tens of percent; they never get a verdict.
   - **⚠️ no verdict — _reason_:** the sessions cannot be compared. *too few runs*: a build has
@@ -343,6 +352,14 @@ and `AutopilotPhase`.
     time, with commas, colons and equals signs in a name replaced by spaces. The report reads the
     last pair before the exit line whose entry category is `perf_summary`
     (`report/perf_summary.rs`); a log without them gets no hiccup, memory or scope rows.
+  - The load times come from two entries before the exit line (`report/load_times.rs`): the
+    autopilot's `phase Measuring at <s> s` (category `autopilot`, the real time since the app
+    started, `src/autopilot.rs`) and the first `player's scene and first ring ready <ms> ms after the
+    scene spawned` (category `scene_timing`, `crates/scene_runner/src/load_timing.rs`): the spawn
+    arrival, timed while the player waits behind the loading screen for the spawn scene. The
+    ring is taken around the parcel the player waits on, which in a large spawn scene can differ
+    from the spawn point the player is then placed on. A log
+    without one gets no row for it.
 - Both formats live once in `crates/perf_output/src/format.rs`; the desktop sinks and the page's
   stream take its bytes unchanged. The log layer first replaces every credential in a message or
   a category with `REDACTED` (`crates/perf_output/src/scrub.rs`): `access_token=` values, string

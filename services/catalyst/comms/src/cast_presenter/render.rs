@@ -89,10 +89,11 @@ pub fn fit_render_size(page_width: f64, page_height: f64) -> Result<(f64, u32, u
 pub fn is_media_url(url: &str) -> bool {
     static VIDEO: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"youtube\.com|youtu\.be|drive\.google\.com|docs\.google\.com/file|vimeo\.com")
-            .unwrap()
+            .expect("literal regex is valid")
     });
-    static MEDIA: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)\.gif($|\?)|\.mp4($|\?)|\.webm($|\?)").unwrap());
+    static MEDIA: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\.gif($|\?)|\.mp4($|\?)|\.webm($|\?)").expect("literal regex is valid")
+    });
     VIDEO.is_match(url) || MEDIA.is_match(url)
 }
 

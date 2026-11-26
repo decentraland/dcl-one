@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 dcl-http = { workspace = true, features = ["db"] }
 catalyst-shared = { path = "../shared" }
+chrono.workspace = true
 tokio.workspace = true
 axum.workspace = true
 serde.workspace = true
@@ -28,3 +29,6 @@ test-support = ["catalyst-shared/test-support"]
 [dev-dependencies]
 catalyst-shared = { path = "../shared", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
+
+[lints.clippy]
+unwrap_used = "deny"
